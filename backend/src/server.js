@@ -4,6 +4,10 @@ const cors = require('cors');
 
 // Routes
 const authRoutes = require('./routes/auth');
+const holdingsRoutes = require('./routes/holdings');
+
+// Middleware
+const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,6 +24,10 @@ app.get('/health', (req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/holdings', holdingsRoutes);
+
+// Error handling middleware (must be last)
+app.use(errorHandler);
 
 // Start server
 const server = app.listen(PORT, () => {
