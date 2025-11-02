@@ -5,6 +5,7 @@ const cors = require('cors');
 // Routes
 const authRoutes = require('./routes/auth');
 const holdingsRoutes = require('./routes/holdings');
+const accountsRoutes = require('./routes/accounts');
 
 // Middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -24,6 +25,7 @@ app.get('/health', (req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/accounts', accountsRoutes);
 app.use('/api/holdings', holdingsRoutes);
 
 // Error handling middleware (must be last)
