@@ -10,7 +10,9 @@
     "seed": "node scripts/seed.js",
     "setup": "npm run migrate && npm run seed",
     "lint": "eslint src/",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "import": "node scripts/importFromCsv.js",
+    "verify": "node scripts/verifyImport.js"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +22,7 @@
     "axios": "^1.13.1",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
