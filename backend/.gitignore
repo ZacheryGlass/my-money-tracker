@@ -8,6 +8,10 @@ yarn.lock
 .env.local
 .env.*.local
 
+# Google Sheets API credentials and tokens
+credentials.json
+token.json
+
 # IDE
 .vscode/
 .idea/
