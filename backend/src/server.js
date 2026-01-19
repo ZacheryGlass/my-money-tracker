@@ -6,6 +6,11 @@ const cors = require('cors');
 const authRoutes = require('./routes/auth');
 const holdingsRoutes = require('./routes/holdings');
 const accountsRoutes = require('./routes/accounts');
+const dashboardRoutes = require('./routes/dashboard');
+const jobsRoutes = require('./routes/jobs');
+
+// Jobs
+const { initializeJobs } = require('./jobs');
 
 // Middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -27,6 +32,8 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/accounts', accountsRoutes);
 app.use('/api/holdings', holdingsRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/jobs', jobsRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
@@ -34,6 +41,7 @@ app.use(errorHandler);
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  initializeJobs();
 });
 
 module.exports = app;
