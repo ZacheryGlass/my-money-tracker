@@ -31,3 +31,6 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Data exports (generated from Excel/Google Sheets)
+data/exports/
