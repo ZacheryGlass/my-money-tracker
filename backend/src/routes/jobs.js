@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authenticateToken = require('../middleware/auth');
-const { getJobStatus, PriceUpdateJob } = require('../jobs');
+const { getJobStatus, PriceUpdateJob, SnapshotJob } = require('../jobs');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
@@ -87,6 +87,29 @@ router.post('/trigger/price-update', async (req, res, next) => {
     const result = await PriceUpdateJob.run();
     res.json({
       message: 'Price update job completed',
+      result
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/jobs/trigger/snapshot - Manually trigger snapshot creation
+router.post('/trigger/snapshot', async (req, res, next) => {
+  try {
+    // Check if already running
+    const isRunning = await JobLog.isRunning(SnapshotJob.JOB_NAME);
+    if (isRunning) {
+      return res.status(409).json({
+        error: 'Job already running',
+        message: 'A snapshot creation job is currently in progress'
+      });
+    }
+
+    // Run the job
+    const result = await SnapshotJob.run();
+    res.json({
+      message: 'Snapshot creation job completed',
       result
     });
   } catch (error) {

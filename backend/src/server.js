@@ -10,7 +10,7 @@ const dashboardRoutes = require('./routes/dashboard');
 const jobsRoutes = require('./routes/jobs');
 
 // Jobs
-const { initializeJobs } = require('./jobs');
+const { initializeJobs, stopJobs } = require('./jobs');
 
 // Middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -42,6 +42,25 @@ app.use(errorHandler);
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   initializeJobs();
+});
+
+// Graceful shutdown handlers
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  stopJobs();
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  stopJobs();
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });
 
 module.exports = app;
