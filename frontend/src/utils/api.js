@@ -80,6 +80,14 @@ export const history = {
     const response = await api.get('/api/history/tickers', { params });
     return response.data;
   },
+  getAccounts: async (params = {}) => {
+    const response = await api.get('/api/history/accounts', { params });
+    return response.data;
+  },
+  getPortfolio: async (params = {}) => {
+    const response = await api.get('/api/history/portfolio', { params });
+    return response.data;
+  },
 };
 
 export default api;
