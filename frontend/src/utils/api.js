@@ -76,16 +76,43 @@ export const accounts = {
 
 // History API
 export const history = {
+  getPortfolio: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    if (params.startDate) queryParams.append('startDate', params.startDate);
+    if (params.endDate) queryParams.append('endDate', params.endDate);
+    if (params.limit) queryParams.append('limit', params.limit);
+    if (params.offset) queryParams.append('offset', params.offset);
+
+    const queryString = queryParams.toString();
+    const url = `/api/history/portfolio${queryString ? `?${queryString}` : ''}`;
+    const response = await api.get(url);
+    return response.data;
+  },
   getTickers: async (params = {}) => {
-    const response = await api.get('/api/history/tickers', { params });
+    const queryParams = new URLSearchParams();
+    if (params.ticker) queryParams.append('ticker', params.ticker);
+    if (params.account_id) queryParams.append('account_id', params.account_id);
+    if (params.startDate) queryParams.append('startDate', params.startDate);
+    if (params.endDate) queryParams.append('endDate', params.endDate);
+    if (params.limit) queryParams.append('limit', params.limit);
+    if (params.offset) queryParams.append('offset', params.offset);
+
+    const queryString = queryParams.toString();
+    const url = `/api/history/tickers${queryString ? `?${queryString}` : ''}`;
+    const response = await api.get(url);
     return response.data;
   },
   getAccounts: async (params = {}) => {
-    const response = await api.get('/api/history/accounts', { params });
-    return response.data;
-  },
-  getPortfolio: async (params = {}) => {
-    const response = await api.get('/api/history/portfolio', { params });
+    const queryParams = new URLSearchParams();
+    if (params.account_id) queryParams.append('account_id', params.account_id);
+    if (params.startDate) queryParams.append('startDate', params.startDate);
+    if (params.endDate) queryParams.append('endDate', params.endDate);
+    if (params.limit) queryParams.append('limit', params.limit);
+    if (params.offset) queryParams.append('offset', params.offset);
+
+    const queryString = queryParams.toString();
+    const url = `/api/history/accounts${queryString ? `?${queryString}` : ''}`;
+    const response = await api.get(url);
     return response.data;
   },
 };

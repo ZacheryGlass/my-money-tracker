@@ -4,6 +4,7 @@ import Login from './components/Login';
 import HoldingsTable from './components/HoldingsTable';
 import TickerHistory from './pages/TickerHistory';
 import AccountHistory from './pages/AccountHistory';
+import PortfolioTimeline from './pages/PortfolioTimeline';
 
 function App() {
   const { user, loading, logout } = useAuth();
@@ -59,6 +60,16 @@ function App() {
                 >
                   Account History
                 </button>
+                <button
+                  onClick={() => setCurrentPage('portfolio-timeline')}
+                  className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                    currentPage === 'portfolio-timeline'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  Portfolio Timeline
+                </button>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -76,6 +87,7 @@ function App() {
       {currentPage === 'holdings' && <HoldingsTable />}
       {currentPage === 'ticker-history' && <TickerHistory />}
       {currentPage === 'account-history' && <AccountHistory />}
+      {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
     </div>
   );
 }
