@@ -74,9 +74,11 @@ const Login = () => {
           </button>
         </form>
 
-        <p className="mt-4 text-sm text-gray-600 text-center">
-          Default credentials: username=zachery, password=changeme123
-        </p>
+        {import.meta.env.DEV && (
+          <p className="mt-4 text-sm text-gray-600 text-center">
+            Default credentials: username=zachery, password=changeme123
+          </p>
+        )}
       </div>
     </div>
   );

@@ -169,7 +169,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
               </label>
               <input
                 type="number"
-                step="any"
+                step="0.00000001"
                 name="quantity"
                 value={formData.quantity}
                 onChange={handleChange}

@@ -91,13 +91,18 @@ const HoldingsTable = () => {
     }
   };
 
+  // Create accounts map for O(1) lookup
+  const accountsMap = useMemo(() => {
+    return new Map(accounts.map((account) => [account.id, account]));
+  }, [accounts]);
+
   const columns = useMemo(
     () => [
       {
         accessorKey: 'account_name',
         header: 'Account',
         cell: ({ row }) => {
-          const account = accounts.find((a) => a.id === row.original.account_id);
+          const account = accountsMap.get(row.original.account_id);
           return account ? account.name : 'Unknown';
         },
       },
