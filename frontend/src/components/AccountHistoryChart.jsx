@@ -11,6 +11,7 @@ import {
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { format, parseISO } from 'date-fns';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 // Register Chart.js components
 ChartJS.register(
@@ -53,6 +54,8 @@ const AccountHistoryChart = ({
   loading,
   error 
 }) => {
+  const isMobile = useIsMobile();
+  
   const chartData = useMemo(() => {
     if (loading || error) return null;
     
@@ -146,21 +149,24 @@ const AccountHistoryChart = ({
     },
     plugins: {
       legend: {
-        position: 'top',
+        position: isMobile ? 'bottom' : 'top',
         labels: {
           usePointStyle: true,
-          padding: 15,
+          padding: isMobile ? 10 : 15,
+          font: {
+            size: isMobile ? 10 : 12,
+          },
         },
       },
       title: {
         display: true,
         text: 'Account Value History',
         font: {
-          size: 16,
+          size: isMobile ? 14 : 16,
           weight: 'bold',
         },
         padding: {
-          bottom: 20,
+          bottom: isMobile ? 10 : 20,
         },
       },
       tooltip: {
@@ -180,49 +186,55 @@ const AccountHistoryChart = ({
       x: {
         display: true,
         title: {
-          display: true,
+          display: !isMobile,
           text: 'Date',
         },
         ticks: {
           maxRotation: 45,
           minRotation: 45,
+          font: {
+            size: isMobile ? 9 : 11,
+          },
         },
       },
       y: {
         display: true,
         title: {
-          display: true,
+          display: !isMobile,
           text: 'Value (USD)',
         },
         ticks: {
           callback: function(value) {
             return formatCurrency(value);
           },
+          font: {
+            size: isMobile ? 9 : 11,
+          },
         },
       },
     },
-  }), []);
+  }), [isMobile]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96 bg-white rounded-lg shadow">
-        <div className="text-gray-500">Loading chart data...</div>
+      <div className="flex items-center justify-center h-64 md:h-96 bg-white rounded-lg shadow">
+        <div className="text-sm md:text-base text-gray-500">Loading chart data...</div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-96 bg-white rounded-lg shadow">
-        <div className="text-red-500">{error}</div>
+      <div className="flex items-center justify-center h-64 md:h-96 bg-white rounded-lg shadow">
+        <div className="text-sm md:text-base text-red-500">{error}</div>
       </div>
     );
   }
 
   if (!chartData || chartData.datasets.length === 0) {
     return (
-      <div className="flex items-center justify-center h-96 bg-white rounded-lg shadow">
-        <div className="text-gray-500">
+      <div className="flex items-center justify-center h-64 md:h-96 bg-white rounded-lg shadow">
+        <div className="text-sm md:text-base text-gray-500 text-center px-4">
           {selectedAccounts.length === 0 && !showPortfolio
             ? 'Select at least one account or enable portfolio view'
             : 'No data available for the selected options'}
@@ -232,7 +244,7 @@ const AccountHistoryChart = ({
   }
 
   return (
-    <div className="bg-white rounded-lg shadow p-4 h-96">
+    <div className="bg-white rounded-lg shadow p-3 md:p-4 h-64 md:h-96">
       <Line data={chartData} options={options} />
     </div>
   );

@@ -84,14 +84,14 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-6">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-bold text-gray-900">Portfolio Dashboard</h1>
+    <div className="container mx-auto px-4 py-4 md:py-8">
+      <div className="mb-4 md:mb-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Portfolio Dashboard</h1>
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-400"
+            className="w-full sm:w-auto px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-400 touch-manipulation"
           >
             {refreshing ? 'Refreshing...' : 'Refresh'}
           </button>
@@ -105,22 +105,22 @@ const Dashboard = () => {
         )}
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white shadow-md rounded-lg p-6">
-            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Total Assets</h3>
-            <p className="mt-2 text-2xl font-bold text-green-600">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mb-4 md:mb-6">
+          <div className="bg-white shadow-md rounded-lg p-4 md:p-6">
+            <h3 className="text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">Total Assets</h3>
+            <p className="mt-1 md:mt-2 text-xl md:text-2xl font-bold text-green-600">
               {formatCurrency(totalAssets)}
             </p>
           </div>
-          <div className="bg-white shadow-md rounded-lg p-6">
-            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Total Liabilities</h3>
-            <p className="mt-2 text-2xl font-bold text-red-600">
+          <div className="bg-white shadow-md rounded-lg p-4 md:p-6">
+            <h3 className="text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">Total Liabilities</h3>
+            <p className="mt-1 md:mt-2 text-xl md:text-2xl font-bold text-red-600">
               {formatCurrency(totalLiabilities)}
             </p>
           </div>
-          <div className="bg-white shadow-md rounded-lg p-6">
-            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Net Worth</h3>
-            <p className={`mt-2 text-2xl font-bold ${netWorth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <div className="bg-white shadow-md rounded-lg p-4 md:p-6 sm:col-span-2 lg:col-span-1">
+            <h3 className="text-xs md:text-sm font-medium text-gray-500 uppercase tracking-wider">Net Worth</h3>
+            <p className={`mt-1 md:mt-2 text-xl md:text-2xl font-bold ${netWorth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {formatCurrency(netWorth)}
             </p>
           </div>

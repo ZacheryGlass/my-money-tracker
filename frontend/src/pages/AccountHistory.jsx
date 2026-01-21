@@ -155,15 +155,15 @@ const AccountHistory = () => {
   };
 
   return (
-    <div className="container mx-auto px-4 py-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Account History</h1>
-        <p className="text-gray-600">View your account value history over time</p>
+    <div className="container mx-auto px-4 py-4 md:py-6">
+      <div className="mb-4 md:mb-6">
+        <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Account History</h1>
+        <p className="text-sm md:text-base text-gray-600">View your account value history over time</p>
       </div>
 
       {/* Filters Section */}
-      <div className="bg-white rounded-lg shadow p-4 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="bg-white rounded-lg shadow p-3 md:p-4 mb-4 md:mb-6">
+        <div className="grid grid-cols-1 gap-4 md:gap-6">
           {/* Account Selector */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -171,12 +171,12 @@ const AccountHistory = () => {
             </label>
             <div className="border border-gray-300 rounded-md p-3 max-h-48 overflow-y-auto">
               <div className="mb-2 pb-2 border-b border-gray-200">
-                <label className="flex items-center cursor-pointer">
+                <label className="flex items-center cursor-pointer min-h-[44px]">
                   <input
                     type="checkbox"
                     checked={selectedAccounts.length === accounts.length && accounts.length > 0}
                     onChange={handleSelectAll}
-                    className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                    className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 touch-manipulation"
                   />
                   <span className="ml-2 text-sm font-medium text-gray-700">
                     Select All
@@ -184,12 +184,12 @@ const AccountHistory = () => {
                 </label>
               </div>
               {accounts.map((account) => (
-                <label key={account.id} className="flex items-center cursor-pointer py-1">
+                <label key={account.id} className="flex items-center cursor-pointer py-2 min-h-[44px]">
                   <input
                     type="checkbox"
                     checked={selectedAccounts.includes(account.id)}
                     onChange={() => handleAccountToggle(account.id)}
-                    className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                    className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 touch-manipulation"
                   />
                   <span className="ml-2 text-sm text-gray-700">{account.name}</span>
                 </label>
@@ -208,7 +208,7 @@ const AccountHistory = () => {
             <select
               value={dateRangeOption}
               onChange={(e) => setDateRangeOption(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
             >
               {DATE_RANGE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -225,7 +225,7 @@ const AccountHistory = () => {
                     type="date"
                     value={customStartDate}
                     onChange={(e) => setCustomStartDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                   />
                 </div>
                 <div>
@@ -234,7 +234,7 @@ const AccountHistory = () => {
                     type="date"
                     value={customEndDate}
                     onChange={(e) => setCustomEndDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                   />
                 </div>
               </div>
@@ -247,12 +247,12 @@ const AccountHistory = () => {
               Display Options
             </label>
             <div className="space-y-2">
-              <label className="flex items-center cursor-pointer">
+              <label className="flex items-center cursor-pointer min-h-[44px]">
                 <input
                   type="checkbox"
                   checked={showPortfolio}
                   onChange={(e) => setShowPortfolio(e.target.checked)}
-                  className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                  className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 touch-manipulation"
                 />
                 <span className="ml-2 text-sm text-gray-700">
                   Show Total Portfolio

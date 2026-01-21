@@ -9,6 +9,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 const formatCurrency = (value) => {
   return new Intl.NumberFormat('en-US', {
@@ -55,10 +56,12 @@ const COLORS = [
 ];
 
 const TickerHistoryChart = ({ data, tickers }) => {
+  const isMobile = useIsMobile();
+  
   if (!data || data.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg border border-gray-200">
-        <p className="text-gray-500">No data available for the selected criteria</p>
+      <div className="flex items-center justify-center h-48 md:h-64 bg-gray-50 rounded-lg border border-gray-200">
+        <p className="text-sm md:text-base text-gray-500 text-center px-4">No data available for the selected criteria</p>
       </div>
     );
   }
@@ -82,27 +85,28 @@ const TickerHistoryChart = ({ data, tickers }) => {
   const uniqueTickers = tickers || [...new Set(data.map((item) => item.ticker))];
 
   return (
-    <div className="w-full h-96 bg-white rounded-lg p-4">
+    <div className="w-full h-64 md:h-96 bg-white rounded-lg p-2 md:p-4">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={chartData}
-          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+          margin={{ top: 5, right: isMobile ? 5 : 30, left: isMobile ? 0 : 20, bottom: 5 }}
         >
           <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
           <XAxis
             dataKey="date"
             tickFormatter={formatDate}
             stroke="#6B7280"
-            fontSize={12}
+            fontSize={isMobile ? 10 : 12}
+            interval="preserveStartEnd"
           />
           <YAxis
             tickFormatter={formatCurrency}
             stroke="#6B7280"
-            fontSize={12}
-            width={80}
+            fontSize={isMobile ? 10 : 12}
+            width={isMobile ? 60 : 80}
           />
           <Tooltip content={<CustomTooltip />} />
-          {uniqueTickers.length > 1 && <Legend />}
+          {uniqueTickers.length > 1 && <Legend wrapperStyle={{ fontSize: isMobile ? '12px' : '14px' }} />}
           {uniqueTickers.map((ticker, index) => (
             <Line
               key={ticker}
@@ -110,9 +114,9 @@ const TickerHistoryChart = ({ data, tickers }) => {
               dataKey={ticker}
               name={ticker}
               stroke={COLORS[index % COLORS.length]}
-              strokeWidth={2}
-              dot={{ r: 4, fill: COLORS[index % COLORS.length] }}
-              activeDot={{ r: 6 }}
+              strokeWidth={isMobile ? 1.5 : 2}
+              dot={chartData.length < 30 ? { r: isMobile ? 2 : 4, fill: COLORS[index % COLORS.length] } : false}
+              activeDot={{ r: isMobile ? 4 : 6 }}
               connectNulls
             />
           ))}
