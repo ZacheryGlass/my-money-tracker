@@ -7,6 +7,15 @@ const router = express.Router();
 // Apply auth middleware to all routes
 router.use(authenticateToken);
 
+// Helper function to validate date format (YYYY-MM-DD)
+function isValidDate(dateString) {
+  if (!dateString) return true; // Allow undefined/null
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(dateString)) return false;
+  const date = new Date(dateString);
+  return date instanceof Date && !isNaN(date);
+}
+
 // GET /api/history/tickers - List all ticker snapshots with filtering and pagination
 router.get('/tickers', async (req, res) => {
   try {
@@ -53,12 +62,18 @@ router.get('/tickers', async (req, res) => {
     }
 
     if (startDate) {
+      if (!isValidDate(startDate)) {
+        return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
+      }
       conditions.push(`snapshot_date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
 
     if (endDate) {
+      if (!isValidDate(endDate)) {
+        return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
+      }
       conditions.push(`snapshot_date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
@@ -141,12 +156,18 @@ router.get('/accounts', async (req, res) => {
     }
 
     if (startDate) {
+      if (!isValidDate(startDate)) {
+        return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
+      }
       conditions.push(`snapshot_date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
 
     if (endDate) {
+      if (!isValidDate(endDate)) {
+        return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
+      }
       conditions.push(`snapshot_date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
@@ -216,12 +237,18 @@ router.get('/portfolio', async (req, res) => {
     let paramIndex = 1;
 
     if (startDate) {
+      if (!isValidDate(startDate)) {
+        return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
+      }
       conditions.push(`snapshot_date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
 
     if (endDate) {
+      if (!isValidDate(endDate)) {
+        return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
+      }
       conditions.push(`snapshot_date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
