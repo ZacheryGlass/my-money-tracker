@@ -137,14 +137,6 @@ export const history = {
   },
 };
 
-// Dashboard API
-export const dashboard = {
-  getPortfolio: async () => {
-    const response = await api.get('/api/dashboard');
-    return response.data;
-  },
-};
-
 // Export API
 export const exportData = {
   downloadHoldings: async () => {
