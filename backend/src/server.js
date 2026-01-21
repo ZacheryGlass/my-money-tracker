@@ -9,6 +9,7 @@ const accountsRoutes = require('./routes/accounts');
 const dashboardRoutes = require('./routes/dashboard');
 const jobsRoutes = require('./routes/jobs');
 const historyRoutes = require('./routes/history');
+const exportRoutes = require('./routes/export');
 
 // Jobs
 const { initializeJobs, stopJobs } = require('./jobs');
@@ -36,6 +37,7 @@ app.use('/api/holdings', holdingsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/history', historyRoutes);
+app.use('/api/export', exportRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
