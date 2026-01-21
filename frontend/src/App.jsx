@@ -6,6 +6,7 @@ import HoldingsTable from './components/HoldingsTable';
 import TickerHistory from './pages/TickerHistory';
 import AccountHistory from './pages/AccountHistory';
 import PortfolioTimeline from './pages/PortfolioTimeline';
+import StaticAssets from './pages/StaticAssets';
 
 function App() {
   const { user, loading, logout } = useAuth();
@@ -27,6 +28,7 @@ function App() {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'holdings', label: 'Holdings' },
+    { id: 'static-assets', label: 'Static Assets' },
     { id: 'ticker-history', label: 'Ticker History' },
     { id: 'account-history', label: 'Account History' },
     { id: 'portfolio-timeline', label: 'Portfolio Timeline' },
@@ -124,6 +126,7 @@ function App() {
       </nav>
       {currentPage === 'dashboard' && <Dashboard />}
       {currentPage === 'holdings' && <HoldingsTable />}
+      {currentPage === 'static-assets' && <StaticAssets />}
       {currentPage === 'ticker-history' && <TickerHistory />}
       {currentPage === 'account-history' && <AccountHistory />}
       {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
