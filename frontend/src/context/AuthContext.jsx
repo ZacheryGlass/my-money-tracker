@@ -1,23 +1,14 @@
-import { createContext, useState, useContext, useEffect } from 'react';
+import { createContext, useState, useContext } from 'react';
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token'));
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Check if user is logged in on mount
-    const storedToken = localStorage.getItem('token');
+  // Initialize state from localStorage
+  const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const [user, setUser] = useState(() => {
     const storedUser = localStorage.getItem('user');
-    
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-    }
-    setLoading(false);
-  }, []);
+    return storedUser ? JSON.parse(storedUser) : null;
+  });
 
   const login = (token, userData) => {
     localStorage.setItem('token', token);
@@ -34,12 +25,14 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, login, logout, loading: false }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
+// Export useAuth in a separate file would be better, but keeping it here for simplicity
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
