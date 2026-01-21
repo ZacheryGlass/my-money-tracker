@@ -72,19 +72,15 @@ const StaticAssets = () => {
   };
 
   const handleSave = async (data) => {
-    try {
-      if (editingAsset) {
-        await holdingsAPI.update(editingAsset.id, data);
-        showSuccess('Static asset updated successfully');
-      } else {
-        await holdingsAPI.create(data);
-        showSuccess('Static asset created successfully');
-      }
-      await fetchData();
-      setIsFormOpen(false);
-    } catch (error) {
-      throw error; // Let the form handle the error
+    if (editingAsset) {
+      await holdingsAPI.update(editingAsset.id, data);
+      showSuccess('Static asset updated successfully');
+    } else {
+      await holdingsAPI.create(data);
+      showSuccess('Static asset created successfully');
     }
+    await fetchData();
+    setIsFormOpen(false);
   };
 
   const handleDeleteClick = (asset) => {

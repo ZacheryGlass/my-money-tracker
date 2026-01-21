@@ -59,19 +59,15 @@ const HoldingsTable = () => {
   };
 
   const handleSave = async (data) => {
-    try {
-      if (editingHolding) {
-        await holdingsAPI.update(editingHolding.id, data);
-        showSuccess('Holding updated successfully');
-      } else {
-        await holdingsAPI.create(data);
-        showSuccess('Holding created successfully');
-      }
-      await fetchData();
-      setIsFormOpen(false);
-    } catch (error) {
-      throw error; // Let the form handle the error
+    if (editingHolding) {
+      await holdingsAPI.update(editingHolding.id, data);
+      showSuccess('Holding updated successfully');
+    } else {
+      await holdingsAPI.create(data);
+      showSuccess('Holding created successfully');
     }
+    await fetchData();
+    setIsFormOpen(false);
   };
 
   const handleDeleteClick = (holding) => {
