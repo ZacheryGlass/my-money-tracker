@@ -86,6 +86,14 @@ export const accounts = {
   },
 };
 
+// Dashboard API
+export const dashboard = {
+  getPortfolio: async () => {
+    const response = await api.get('/api/dashboard');
+    return response.data;
+  },
+};
+
 // History API
 export const history = {
   getPortfolio: async (params = {}) => {
