@@ -82,7 +82,7 @@ const TickerHistoryChart = ({ data, tickers }) => {
   const uniqueTickers = tickers || [...new Set(data.map((item) => item.ticker))];
 
   return (
-    <div className="w-full bg-white rounded-lg p-4" style={{ height: '384px' }}>
+    <div className="w-full h-96 bg-white rounded-lg p-4">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={chartData}

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { holdings as holdingsAPI, history as historyAPI } from '../utils/api';
 import TickerHistoryChart from '../components/TickerHistoryChart';
 
+const DEFAULT_HISTORY_LIMIT = 100;
+
 const TickerHistory = () => {
   const [historyData, setHistoryData] = useState([]);
   const [holdings, setHoldings] = useState([]);
@@ -58,7 +60,7 @@ const TickerHistory = () => {
         const params = {
           startDate,
           endDate,
-          limit: 100,
+          limit: DEFAULT_HISTORY_LIMIT,
         };
 
         if (selectedTicker) {
@@ -162,7 +164,7 @@ const TickerHistory = () => {
 
         {/* Chart */}
         {!loading && (
-          <div className="bg-white shadow-md rounded-lg p-4" style={{ minHeight: '400px' }}>
+          <div className="bg-white shadow-md rounded-lg p-4 min-h-96">
             <TickerHistoryChart data={historyData} tickers={displayTickers} />
           </div>
         )}
