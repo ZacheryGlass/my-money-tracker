@@ -295,10 +295,10 @@ const PortfolioTimeline = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Portfolio Timeline</h1>
-        <p className="text-gray-600">Track your portfolio value over time</p>
+    <div className="container mx-auto px-4 py-4 md:py-8">
+      <div className="mb-4 md:mb-6">
+        <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Portfolio Timeline</h1>
+        <p className="text-sm md:text-base text-gray-600">Track your portfolio value over time</p>
       </div>
 
       {/* Error Message */}
@@ -315,41 +315,41 @@ const PortfolioTimeline = () => {
       )}
 
       {/* Date Range Selector */}
-      <div className="bg-white shadow-md rounded-lg p-4 mb-6">
-        <div className="flex flex-wrap items-center gap-4">
+      <div className="bg-white shadow-md rounded-lg p-3 md:p-4 mb-4 md:mb-6">
+        <div className="flex flex-col gap-3 md:gap-4">
           <div className="flex flex-wrap gap-2">
             {Object.entries(DATE_RANGES).map(([key, { label }]) => (
               <button
                 key={key}
                 onClick={() => handleRangeChange(key)}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                className={`px-3 md:px-4 py-2 rounded-md text-xs md:text-sm font-medium transition-colors touch-manipulation min-h-[44px] ${
                   selectedRange === key && !useCustomRange
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300'
                 }`}
               >
                 {label}
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-2 border-l pl-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-3 border-t border-gray-200">
             <input
               type="date"
               value={customStartDate}
               onChange={(e) => setCustomStartDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm"
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm min-h-[44px] touch-manipulation"
             />
-            <span className="text-gray-500">to</span>
+            <span className="text-gray-500 text-center sm:px-2">to</span>
             <input
               type="date"
               value={customEndDate}
               onChange={(e) => setCustomEndDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm"
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm min-h-[44px] touch-manipulation"
             />
             <button
               onClick={handleCustomRangeApply}
               disabled={!customStartDate || !customEndDate}
-              className="px-4 py-2 bg-gray-600 text-white rounded-md text-sm hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-gray-600 text-white rounded-md text-sm hover:bg-gray-700 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
             >
               Apply
             </button>
@@ -358,36 +358,36 @@ const PortfolioTimeline = () => {
       </div>
 
       {/* Metrics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-        <div className="bg-white shadow-md rounded-lg p-4">
-          <h3 className="text-sm font-medium text-gray-500 mb-1">Current Value</h3>
-          <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.currentValue)}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 mb-4 md:mb-6">
+        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">Current Value</h3>
+          <p className="text-xl md:text-2xl font-bold text-gray-900 break-words">{formatCurrency(metrics.currentValue)}</p>
         </div>
-        <div className="bg-white shadow-md rounded-lg p-4">
-          <h3 className="text-sm font-medium text-gray-500 mb-1">Total Gain/Loss</h3>
-          <p className={`text-2xl font-bold ${metrics.totalGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">Total Gain/Loss</h3>
+          <p className={`text-xl md:text-2xl font-bold break-words ${metrics.totalGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
             {formatCurrency(metrics.totalGrowth)}
           </p>
-          <p className={`text-sm ${metrics.percentChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <p className={`text-xs md:text-sm ${metrics.percentChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
             {formatPercent(metrics.percentChange)}
           </p>
         </div>
-        <div className="bg-white shadow-md rounded-lg p-4">
-          <h3 className="text-sm font-medium text-gray-500 mb-1">Avg Monthly Change</h3>
-          <p className={`text-2xl font-bold ${metrics.avgMonthlyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">Avg Monthly Change</h3>
+          <p className={`text-xl md:text-2xl font-bold break-words ${metrics.avgMonthlyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
             {formatCurrency(metrics.avgMonthlyChange)}
           </p>
         </div>
-        <div className="bg-white shadow-md rounded-lg p-4">
-          <h3 className="text-sm font-medium text-gray-500 mb-1">All-Time High</h3>
-          <p className="text-2xl font-bold text-green-600">{formatCurrency(metrics.allTimeHigh)}</p>
+        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">All-Time High</h3>
+          <p className="text-xl md:text-2xl font-bold text-green-600 break-words">{formatCurrency(metrics.allTimeHigh)}</p>
           {metrics.peakDate && (
             <p className="text-xs text-gray-500">{formatDateDisplay(metrics.peakDate)}</p>
           )}
         </div>
-        <div className="bg-white shadow-md rounded-lg p-4">
-          <h3 className="text-sm font-medium text-gray-500 mb-1">All-Time Low</h3>
-          <p className="text-2xl font-bold text-red-600">{formatCurrency(metrics.allTimeLow)}</p>
+        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">All-Time Low</h3>
+          <p className="text-xl md:text-2xl font-bold text-red-600 break-words">{formatCurrency(metrics.allTimeLow)}</p>
           {metrics.troughDate && (
             <p className="text-xs text-gray-500">{formatDateDisplay(metrics.troughDate)}</p>
           )}
@@ -395,14 +395,14 @@ const PortfolioTimeline = () => {
       </div>
 
       {/* Chart Controls */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
             <input
               type="checkbox"
               checked={showTrendLine}
               onChange={(e) => setShowTrendLine(e.target.checked)}
-              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 touch-manipulation"
             />
             <span className="text-sm text-gray-700">Show Trend Line</span>
           </label>
@@ -410,21 +410,21 @@ const PortfolioTimeline = () => {
         <button
           onClick={exportToCSV}
           disabled={portfolioData.length === 0}
-          className="px-4 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-4 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 active:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
         >
           Export CSV
         </button>
       </div>
 
       {/* Chart */}
-      <div className="bg-white shadow-md rounded-lg p-4">
+      <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
         {portfolioData.length === 0 ? (
-          <div className="flex items-center justify-center h-[400px] text-gray-500">
+          <div className="flex items-center justify-center h-[300px] md:h-[400px] text-gray-500 text-sm md:text-base">
             No data available for the selected date range
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={400}>
-            <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={300} className="md:!h-[400px]">
+            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
@@ -436,15 +436,16 @@ const PortfolioTimeline = () => {
                 dataKey="snapshot_date"
                 tickFormatter={formatDateAxis}
                 stroke="#6B7280"
-                fontSize={12}
+                fontSize={10}
                 tickLine={false}
+                interval="preserveStartEnd"
               />
               <YAxis
                 tickFormatter={(value) => formatCurrency(value)}
                 stroke="#6B7280"
-                fontSize={12}
+                fontSize={10}
                 tickLine={false}
-                width={80}
+                width={60}
               />
               <Tooltip content={<CustomTooltip />} />
               <Area
@@ -471,7 +472,7 @@ const PortfolioTimeline = () => {
                 <ReferenceDot
                   x={metrics.peakDate}
                   y={metrics.allTimeHigh}
-                  r={6}
+                  r={4}
                   fill="#10B981"
                   stroke="#fff"
                   strokeWidth={2}
@@ -482,7 +483,7 @@ const PortfolioTimeline = () => {
                 <ReferenceDot
                   x={metrics.troughDate}
                   y={metrics.allTimeLow}
-                  r={6}
+                  r={4}
                   fill="#EF4444"
                   stroke="#fff"
                   strokeWidth={2}

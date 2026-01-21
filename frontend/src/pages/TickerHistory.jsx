@@ -96,12 +96,12 @@ const TickerHistory = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">Ticker History</h1>
+    <div className="container mx-auto px-4 py-4 md:py-8">
+      <div className="mb-4 md:mb-6">
+        <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-4">Ticker History</h1>
 
         {/* Filters */}
-        <div className="flex flex-wrap gap-4 items-end mb-6 p-4 bg-gray-50 rounded-lg">
+        <div className="flex flex-col gap-3 md:gap-4 p-3 md:p-4 bg-gray-50 rounded-lg">
           {/* Ticker Selector */}
           <div className="flex flex-col">
             <label className="text-sm font-medium text-gray-700 mb-1">
@@ -110,7 +110,7 @@ const TickerHistory = () => {
             <select
               value={selectedTicker}
               onChange={(e) => setSelectedTicker(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[150px]"
+              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
             >
               <option value="">All Tickers</option>
               {availableTickers.map((ticker) => (
@@ -121,30 +121,33 @@ const TickerHistory = () => {
             </select>
           </div>
 
-          {/* Start Date */}
-          <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-1">
-              Start Date
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+          {/* Date Range */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Start Date */}
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-700 mb-1">
+                Start Date
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
+              />
+            </div>
 
-          {/* End Date */}
-          <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-1">
-              End Date
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            {/* End Date */}
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-700 mb-1">
+                End Date
+              </label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
+              />
+            </div>
           </div>
         </div>
 
@@ -157,14 +160,14 @@ const TickerHistory = () => {
 
         {/* Loading State */}
         {loading && (
-          <div className="flex items-center justify-center h-96 bg-gray-50 rounded-lg">
-            <div className="text-xl text-gray-600">Loading chart data...</div>
+          <div className="flex items-center justify-center h-64 md:h-96 bg-gray-50 rounded-lg">
+            <div className="text-lg md:text-xl text-gray-600">Loading chart data...</div>
           </div>
         )}
 
         {/* Chart */}
         {!loading && (
-          <div className="bg-white shadow-md rounded-lg p-4 min-h-96">
+          <div className="bg-white shadow-md rounded-lg p-3 md:p-4 min-h-64 md:min-h-96">
             <TickerHistoryChart data={historyData} tickers={displayTickers} />
           </div>
         )}

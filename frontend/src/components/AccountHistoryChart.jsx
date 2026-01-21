@@ -146,21 +146,24 @@ const AccountHistoryChart = ({
     },
     plugins: {
       legend: {
-        position: 'top',
+        position: window.innerWidth < 768 ? 'bottom' : 'top',
         labels: {
           usePointStyle: true,
-          padding: 15,
+          padding: window.innerWidth < 768 ? 10 : 15,
+          font: {
+            size: window.innerWidth < 768 ? 10 : 12,
+          },
         },
       },
       title: {
         display: true,
         text: 'Account Value History',
         font: {
-          size: 16,
+          size: window.innerWidth < 768 ? 14 : 16,
           weight: 'bold',
         },
         padding: {
-          bottom: 20,
+          bottom: window.innerWidth < 768 ? 10 : 20,
         },
       },
       tooltip: {
@@ -180,23 +183,29 @@ const AccountHistoryChart = ({
       x: {
         display: true,
         title: {
-          display: true,
+          display: window.innerWidth >= 768,
           text: 'Date',
         },
         ticks: {
           maxRotation: 45,
           minRotation: 45,
+          font: {
+            size: window.innerWidth < 768 ? 9 : 11,
+          },
         },
       },
       y: {
         display: true,
         title: {
-          display: true,
+          display: window.innerWidth >= 768,
           text: 'Value (USD)',
         },
         ticks: {
           callback: function(value) {
             return formatCurrency(value);
+          },
+          font: {
+            size: window.innerWidth < 768 ? 9 : 11,
           },
         },
       },
@@ -205,24 +214,24 @@ const AccountHistoryChart = ({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96 bg-white rounded-lg shadow">
-        <div className="text-gray-500">Loading chart data...</div>
+      <div className="flex items-center justify-center h-64 md:h-96 bg-white rounded-lg shadow">
+        <div className="text-sm md:text-base text-gray-500">Loading chart data...</div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-96 bg-white rounded-lg shadow">
-        <div className="text-red-500">{error}</div>
+      <div className="flex items-center justify-center h-64 md:h-96 bg-white rounded-lg shadow">
+        <div className="text-sm md:text-base text-red-500">{error}</div>
       </div>
     );
   }
 
   if (!chartData || chartData.datasets.length === 0) {
     return (
-      <div className="flex items-center justify-center h-96 bg-white rounded-lg shadow">
-        <div className="text-gray-500">
+      <div className="flex items-center justify-center h-64 md:h-96 bg-white rounded-lg shadow">
+        <div className="text-sm md:text-base text-gray-500 text-center px-4">
           {selectedAccounts.length === 0 && !showPortfolio
             ? 'Select at least one account or enable portfolio view'
             : 'No data available for the selected options'}
@@ -232,7 +241,7 @@ const AccountHistoryChart = ({
   }
 
   return (
-    <div className="bg-white rounded-lg shadow p-4 h-96">
+    <div className="bg-white rounded-lg shadow p-3 md:p-4 h-64 md:h-96">
       <Line data={chartData} options={options} />
     </div>
   );

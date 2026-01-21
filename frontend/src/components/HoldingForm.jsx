@@ -95,10 +95,10 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          <h2 className="text-2xl font-bold mb-4 text-gray-900">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-4 md:p-6">
+          <h2 className="text-xl md:text-2xl font-bold mb-4 text-gray-900">
             {holding ? 'Edit Holding' : 'Add New Holding'}
           </h2>
 
@@ -112,7 +112,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                 name="account_id"
                 value={formData.account_id}
                 onChange={handleChange}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation ${
                   errors.account_id ? 'border-red-500' : 'border-gray-300'
                 }`}
                 disabled={isSubmitting}
@@ -139,7 +139,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                 name="name"
                 value={formData.name}
                 onChange={handleChange}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation ${
                   errors.name ? 'border-red-500' : 'border-gray-300'
                 }`}
                 disabled={isSubmitting}
@@ -160,7 +160,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                 name="ticker"
                 value={formData.ticker}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                 disabled={isSubmitting}
                 placeholder="e.g., BTC, AAPL"
               />
@@ -177,7 +177,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                 name="quantity"
                 value={formData.quantity}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                 disabled={isSubmitting}
                 placeholder="e.g., 1.5"
               />
@@ -194,7 +194,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                 name="manual_value"
                 value={formData.manual_value}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                 disabled={isSubmitting}
                 placeholder="e.g., 50000.00"
               />
@@ -210,7 +210,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                 name="category"
                 value={formData.category}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
                 disabled={isSubmitting}
                 placeholder="e.g., Crypto, Stocks, Property"
               />
@@ -239,19 +239,19 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
             )}
 
             {/* Buttons */}
-            <div className="flex justify-end gap-2 mt-6">
+            <div className="flex flex-col sm:flex-row justify-end gap-2 mt-6">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={isSubmitting}
-                className="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full sm:w-auto px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 active:bg-gray-400 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full sm:w-auto px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
               >
                 {isSubmitting ? 'Saving...' : 'Save'}
               </button>
