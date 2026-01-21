@@ -19,6 +19,18 @@ router.get('/tickers', async (req, res) => {
       offset = 0
     } = req.query;
 
+    // Validate pagination parameters
+    const parsedLimit = parseInt(limit);
+    const parsedOffset = parseInt(offset);
+    
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
+    }
+    
+    if (isNaN(parsedOffset) || parsedOffset < 0) {
+      return res.status(400).json({ error: 'Invalid offset parameter. Must be a non-negative number.' });
+    }
+
     // Build the WHERE clause dynamically based on filters
     const conditions = [];
     const params = [];
@@ -31,8 +43,12 @@ router.get('/tickers', async (req, res) => {
     }
 
     if (account_id) {
+      const parsedAccountId = parseInt(account_id);
+      if (isNaN(parsedAccountId)) {
+        return res.status(400).json({ error: 'Invalid account_id parameter. Must be a number.' });
+      }
       conditions.push(`account_id = $${paramIndex}`);
-      params.push(parseInt(account_id));
+      params.push(parsedAccountId);
       paramIndex++;
     }
 
@@ -69,15 +85,15 @@ router.get('/tickers', async (req, res) => {
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
     
-    const dataParams = [...params, parseInt(limit), parseInt(offset)];
+    const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);
 
     res.status(200).json({
       data: dataResult.rows,
       pagination: {
         total,
-        limit: parseInt(limit),
-        offset: parseInt(offset)
+        limit: parsedLimit,
+        offset: parsedOffset
       }
     });
   } catch (error) {
@@ -97,14 +113,30 @@ router.get('/accounts', async (req, res) => {
       offset = 0
     } = req.query;
 
+    // Validate pagination parameters
+    const parsedLimit = parseInt(limit);
+    const parsedOffset = parseInt(offset);
+    
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
+    }
+    
+    if (isNaN(parsedOffset) || parsedOffset < 0) {
+      return res.status(400).json({ error: 'Invalid offset parameter. Must be a non-negative number.' });
+    }
+
     // Build the WHERE clause dynamically based on filters
     const conditions = [];
     const params = [];
     let paramIndex = 1;
 
     if (account_id) {
+      const parsedAccountId = parseInt(account_id);
+      if (isNaN(parsedAccountId)) {
+        return res.status(400).json({ error: 'Invalid account_id parameter. Must be a number.' });
+      }
       conditions.push(`account_id = $${paramIndex}`);
-      params.push(parseInt(account_id));
+      params.push(parsedAccountId);
       paramIndex++;
     }
 
@@ -139,15 +171,15 @@ router.get('/accounts', async (req, res) => {
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
     
-    const dataParams = [...params, parseInt(limit), parseInt(offset)];
+    const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);
 
     res.status(200).json({
       data: dataResult.rows,
       pagination: {
         total,
-        limit: parseInt(limit),
-        offset: parseInt(offset)
+        limit: parsedLimit,
+        offset: parsedOffset
       }
     });
   } catch (error) {
@@ -165,6 +197,18 @@ router.get('/portfolio', async (req, res) => {
       limit = 30,
       offset = 0
     } = req.query;
+
+    // Validate pagination parameters
+    const parsedLimit = parseInt(limit);
+    const parsedOffset = parseInt(offset);
+    
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
+    }
+    
+    if (isNaN(parsedOffset) || parsedOffset < 0) {
+      return res.status(400).json({ error: 'Invalid offset parameter. Must be a non-negative number.' });
+    }
 
     // Build the WHERE clause dynamically based on filters
     const conditions = [];
@@ -206,15 +250,15 @@ router.get('/portfolio', async (req, res) => {
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
     
-    const dataParams = [...params, parseInt(limit), parseInt(offset)];
+    const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);
 
     res.status(200).json({
       data: dataResult.rows,
       pagination: {
         total,
-        limit: parseInt(limit),
-        offset: parseInt(offset)
+        limit: parsedLimit,
+        offset: parsedOffset
       }
     });
   } catch (error) {
