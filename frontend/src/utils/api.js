@@ -74,4 +74,12 @@ export const accounts = {
   },
 };
 
+// History API
+export const history = {
+  getTickers: async (params = {}) => {
+    const response = await api.get('/api/history/tickers', { params });
+    return response.data;
+  },
+};
+
 export default api;

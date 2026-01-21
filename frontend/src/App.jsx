@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import Login from './components/Login';
 import HoldingsTable from './components/HoldingsTable';
+import TickerHistory from './pages/TickerHistory';
 
 function App() {
   const { user, loading, logout } = useAuth();
+  const [currentPage, setCurrentPage] = useState('holdings');
 
   if (loading) {
     return (
@@ -23,7 +25,31 @@ function App() {
       <nav className="bg-white shadow-sm border-b border-gray-200">
         <div className="container mx-auto px-4 py-4">
           <div className="flex justify-between items-center">
-            <h1 className="text-xl font-bold text-gray-900">My Money Tracker</h1>
+            <div className="flex items-center gap-6">
+              <h1 className="text-xl font-bold text-gray-900">My Money Tracker</h1>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setCurrentPage('holdings')}
+                  className={`px-3 py-1 text-sm rounded-md ${
+                    currentPage === 'holdings'
+                      ? 'bg-blue-100 text-blue-700 font-medium'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Holdings
+                </button>
+                <button
+                  onClick={() => setCurrentPage('ticker-history')}
+                  className={`px-3 py-1 text-sm rounded-md ${
+                    currentPage === 'ticker-history'
+                      ? 'bg-blue-100 text-blue-700 font-medium'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Ticker History
+                </button>
+              </div>
+            </div>
             <div className="flex items-center gap-4">
               <span className="text-gray-600">Welcome, {user.username}</span>
               <button
@@ -36,7 +62,8 @@ function App() {
           </div>
         </div>
       </nav>
-      <HoldingsTable />
+      {currentPage === 'holdings' && <HoldingsTable />}
+      {currentPage === 'ticker-history' && <TickerHistory />}
     </div>
   );
 }
