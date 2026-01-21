@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext';
 import Login from './components/Login';
 import HoldingsTable from './components/HoldingsTable';
 import TickerHistory from './pages/TickerHistory';
+import AccountHistory from './pages/AccountHistory';
 
 function App() {
   const { user, loading, logout } = useAuth();
@@ -30,23 +31,33 @@ function App() {
               <div className="flex gap-4">
                 <button
                   onClick={() => setCurrentPage('holdings')}
-                  className={`px-3 py-1 text-sm rounded-md ${
+                  className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
                     currentPage === 'holdings'
-                      ? 'bg-blue-100 text-blue-700 font-medium'
-                      : 'text-gray-600 hover:text-gray-900'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
                   Holdings
                 </button>
                 <button
                   onClick={() => setCurrentPage('ticker-history')}
-                  className={`px-3 py-1 text-sm rounded-md ${
+                  className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
                     currentPage === 'ticker-history'
-                      ? 'bg-blue-100 text-blue-700 font-medium'
-                      : 'text-gray-600 hover:text-gray-900'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
                   Ticker History
+                </button>
+                <button
+                  onClick={() => setCurrentPage('account-history')}
+                  className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                    currentPage === 'account-history'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  Account History
                 </button>
               </div>
             </div>
@@ -64,6 +75,7 @@ function App() {
       </nav>
       {currentPage === 'holdings' && <HoldingsTable />}
       {currentPage === 'ticker-history' && <TickerHistory />}
+      {currentPage === 'account-history' && <AccountHistory />}
     </div>
   );
 }
