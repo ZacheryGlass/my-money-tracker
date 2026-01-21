@@ -15,7 +15,8 @@ function arrayToCSV(data, headers) {
   
   for (const row of data) {
     const values = headers.map(header => {
-      const value = row[header.toLowerCase().replace(/ /g, '_')];
+      // Use the header as-is since database columns match expected headers
+      const value = row[header];
       // Escape values that contain commas or quotes
       if (value === null || value === undefined) return '';
       const stringValue = String(value);

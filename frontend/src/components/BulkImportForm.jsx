@@ -15,6 +15,12 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
         setError('Please select a CSV file');
         return;
       }
+      // Check file size (limit to 5MB)
+      const maxSize = 5 * 1024 * 1024; // 5MB
+      if (selectedFile.size > maxSize) {
+        setError('File size exceeds 5MB. Please use a smaller file.');
+        return;
+      }
       setFile(selectedFile);
       setError(null);
       setPreview(null);

@@ -153,6 +153,7 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
     const validatedRows = [];
     const duplicates = [];
 
+    // First, validate all rows
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowNum = i + 2; // Account for header row
@@ -189,44 +190,138 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
         continue;
       }
 
-      // Check for duplicates
-      const checkDuplicate = await pool.query(
-        'SELECT id FROM holdings WHERE account_id = $1 AND name = $2 AND (ticker = $3 OR (ticker IS NULL AND $3 IS NULL))',
-        [accountId, row.name.trim(), row.ticker ? row.ticker.trim() : null]
-      );
-
-      const validatedRow = {
+      validatedRows.push({
+        rowNum,
         account_id: accountId,
         account_name: row.account.trim(),
         ticker: row.ticker ? row.ticker.trim() : null,
         name: row.name.trim(),
         quantity: quantity,
         category: row.category ? row.category.trim() : null
-      };
-
-      if (checkDuplicate.rows.length > 0) {
-        duplicates.push({
-          row: rowNum,
-          existing_id: checkDuplicate.rows[0].id,
-          data: validatedRow
-        });
-      } else {
-        validatedRows.push(validatedRow);
-      }
+      });
     }
 
-    // Return preview with validation results
-    res.status(200).json({
-      preview: {
-        total: rows.length,
-        valid: validatedRows.length,
-        duplicates: duplicates.length,
-        errors: errors.length
-      },
-      validRows: validatedRows,
-      duplicates: duplicates,
-      errors: errors
-    });
+    // Batch check for duplicates
+    if (validatedRows.length > 0) {
+      const duplicateCheckQuery = validatedRows.map((row, index) => {
+        return `SELECT $${index * 3 + 1} as account_id, $${index * 3 + 2} as name, $${index * 3 + 3} as ticker, id FROM holdings WHERE account_id = $${index * 3 + 1} AND name = $${index * 3 + 2} AND (ticker = $${index * 3 + 3} OR (ticker IS NULL AND $${index * 3 + 3} IS NULL))`;
+      }).join(' UNION ALL ');
+
+      const params = validatedRows.flatMap(row => [row.account_id, row.name, row.ticker]);
+      
+      try {
+        const duplicateResult = await pool.query(duplicateCheckQuery, params);
+        const duplicateMap = new Map();
+        duplicateResult.rows.forEach(row => {
+          const key = `${row.account_id}-${row.name}-${row.ticker}`;
+          duplicateMap.set(key, row.id);
+        });
+
+        // Separate duplicates from valid rows
+        const finalValidRows = [];
+        for (const row of validatedRows) {
+          const key = `${row.account_id}-${row.name}-${row.ticker}`;
+          const existingId = duplicateMap.get(key);
+          
+          if (existingId) {
+            duplicates.push({
+              row: row.rowNum,
+              existing_id: existingId,
+              data: {
+                account_id: row.account_id,
+                account_name: row.account_name,
+                ticker: row.ticker,
+                name: row.name,
+                quantity: row.quantity,
+                category: row.category
+              }
+            });
+          } else {
+            finalValidRows.push({
+              account_id: row.account_id,
+              account_name: row.account_name,
+              ticker: row.ticker,
+              name: row.name,
+              quantity: row.quantity,
+              category: row.category
+            });
+          }
+        }
+
+        // Return preview with validation results
+        res.status(200).json({
+          preview: {
+            total: rows.length,
+            valid: finalValidRows.length,
+            duplicates: duplicates.length,
+            errors: errors.length
+          },
+          validRows: finalValidRows,
+          duplicates: duplicates,
+          errors: errors
+        });
+      } catch (error) {
+        console.error('Duplicate check error:', error);
+        // Fallback to individual checks if batch query fails
+        const finalValidRows = [];
+        for (const row of validatedRows) {
+          const checkDuplicate = await pool.query(
+            'SELECT id FROM holdings WHERE account_id = $1 AND name = $2 AND (ticker = $3 OR (ticker IS NULL AND $3 IS NULL))',
+            [row.account_id, row.name, row.ticker]
+          );
+
+          if (checkDuplicate.rows.length > 0) {
+            duplicates.push({
+              row: row.rowNum,
+              existing_id: checkDuplicate.rows[0].id,
+              data: {
+                account_id: row.account_id,
+                account_name: row.account_name,
+                ticker: row.ticker,
+                name: row.name,
+                quantity: row.quantity,
+                category: row.category
+              }
+            });
+          } else {
+            finalValidRows.push({
+              account_id: row.account_id,
+              account_name: row.account_name,
+              ticker: row.ticker,
+              name: row.name,
+              quantity: row.quantity,
+              category: row.category
+            });
+          }
+        }
+
+        // Return preview with validation results
+        res.status(200).json({
+          preview: {
+            total: rows.length,
+            valid: finalValidRows.length,
+            duplicates: duplicates.length,
+            errors: errors.length
+          },
+          validRows: finalValidRows,
+          duplicates: duplicates,
+          errors: errors
+        });
+      }
+    } else {
+      // No valid rows
+      res.status(200).json({
+        preview: {
+          total: rows.length,
+          valid: 0,
+          duplicates: 0,
+          errors: errors.length
+        },
+        validRows: [],
+        duplicates: [],
+        errors: errors
+      });
+    }
   } catch (error) {
     console.error('Bulk import error:', error);
     res.status(500).json({ error: 'Server error processing CSV file' });
