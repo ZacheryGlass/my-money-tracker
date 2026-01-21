@@ -42,7 +42,7 @@ const StaticAssets = () => {
       
       // Filter only static assets (holdings without tickers)
       const staticAssets = (holdingsData.holdings || []).filter(
-        (holding) => !holding.ticker && holding.manual_value !== null
+        (holding) => !holding.ticker && holding.manual_value != null
       );
       
       setAssets(staticAssets);
