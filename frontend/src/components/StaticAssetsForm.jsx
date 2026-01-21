@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
 
-const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
+const StaticAssetsForm = ({ isOpen, onClose, onSave, asset, accounts }) => {
   const [formData, setFormData] = useState({
     account_id: '',
-    ticker: '',
     name: '',
-    quantity: '',
     manual_value: '',
     category: '',
     notes: '',
@@ -14,29 +12,25 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (holding) {
+    if (asset) {
       setFormData({
-        account_id: holding.account_id || '',
-        ticker: holding.ticker || '',
-        name: holding.name || '',
-        quantity: holding.quantity || '',
-        manual_value: holding.manual_value || '',
-        category: holding.category || '',
-        notes: holding.notes || '',
+        account_id: asset.account_id || '',
+        name: asset.name || '',
+        manual_value: asset.manual_value || '',
+        category: asset.category || '',
+        notes: asset.notes || '',
       });
     } else {
       setFormData({
         account_id: '',
-        ticker: '',
         name: '',
-        quantity: '',
         manual_value: '',
         category: '',
         notes: '',
       });
     }
     setErrors({});
-  }, [holding, isOpen]);
+  }, [asset, isOpen]);
 
   const validate = () => {
     const newErrors = {};
@@ -47,6 +41,10 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
 
     if (!formData.name || formData.name.trim() === '') {
       newErrors.name = 'Name is required';
+    }
+
+    if (!formData.manual_value || isNaN(formData.manual_value)) {
+      newErrors.manual_value = 'Valid value is required';
     }
 
     setErrors(newErrors);
@@ -65,9 +63,9 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
       const dataToSubmit = {
         account_id: parseInt(formData.account_id),
         name: formData.name.trim(),
-        ticker: formData.ticker ? formData.ticker.trim() : null,
-        quantity: formData.quantity ? parseFloat(formData.quantity) : null,
-        manual_value: formData.manual_value ? parseFloat(formData.manual_value) : null,
+        ticker: null, // Static assets don't have tickers
+        quantity: null, // Static assets don't have quantity
+        manual_value: parseFloat(formData.manual_value),
         category: formData.category ? formData.category.trim() : null,
         notes: formData.notes ? formData.notes.trim() : null,
       };
@@ -75,8 +73,8 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
       await onSave(dataToSubmit);
       onClose();
     } catch (error) {
-      console.error('Error saving holding:', error);
-      const errorMessage = error.response?.data?.error || 'Failed to save holding';
+      console.error('Error saving asset:', error);
+      const errorMessage = error.response?.data?.error || 'Failed to save asset';
       setErrors({ submit: errorMessage });
     } finally {
       setIsSubmitting(false);
@@ -99,7 +97,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <h2 className="text-2xl font-bold mb-4 text-gray-900">
-            {holding ? 'Edit Holding' : 'Add New Holding'}
+            {asset ? 'Edit Static Asset' : 'Add New Static Asset'}
           </h2>
 
           <form onSubmit={handleSubmit}>
@@ -132,7 +130,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
             {/* Name */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Name <span className="text-red-500">*</span>
+                Asset Name <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -143,83 +141,67 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                   errors.name ? 'border-red-500' : 'border-gray-300'
                 }`}
                 disabled={isSubmitting}
-                placeholder="e.g., Bitcoin, Real Estate Property"
+                placeholder="e.g., 702 Antelop St. Scott City, KS"
               />
               {errors.name && (
                 <p className="text-red-500 text-sm mt-1">{errors.name}</p>
               )}
             </div>
 
-            {/* Ticker */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Ticker <span className="text-gray-400 text-xs">(optional)</span>
-              </label>
-              <input
-                type="text"
-                name="ticker"
-                value={formData.ticker}
-                onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isSubmitting}
-                placeholder="e.g., BTC, AAPL"
-              />
-            </div>
-
-            {/* Quantity */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Quantity <span className="text-gray-400 text-xs">(optional)</span>
-              </label>
-              <input
-                type="number"
-                step="0.00000001"
-                name="quantity"
-                value={formData.quantity}
-                onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isSubmitting}
-                placeholder="e.g., 1.5"
-              />
-            </div>
-
             {/* Manual Value */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Manual Value <span className="text-gray-400 text-xs">(optional)</span>
+                Value <span className="text-red-500">*</span>
               </label>
-              <input
-                type="number"
-                step="0.01"
-                name="manual_value"
-                value={formData.manual_value}
-                onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isSubmitting}
-                placeholder="e.g., 50000.00"
-              />
+              <div className="relative">
+                <span className="absolute left-3 top-2 text-gray-500">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  name="manual_value"
+                  value={formData.manual_value}
+                  onChange={handleChange}
+                  className={`w-full pl-8 pr-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    errors.manual_value ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                  disabled={isSubmitting}
+                  placeholder="25000.00"
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Use negative values for liabilities (e.g., -12500 for loans)
+              </p>
+              {errors.manual_value && (
+                <p className="text-red-500 text-sm mt-1">{errors.manual_value}</p>
+              )}
             </div>
 
             {/* Category */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Category <span className="text-gray-400 text-xs">(optional)</span>
+                Category
               </label>
-              <input
-                type="text"
+              <select
                 name="category"
                 value={formData.category}
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isSubmitting}
-                placeholder="e.g., Crypto, Stocks, Property"
-              />
+              >
+                <option value="">Select category</option>
+                <option value="Real Estate">Real Estate</option>
+                <option value="Debt">Debt</option>
+                <option value="Student Loan">Student Loan</option>
+                <option value="Car Loan">Car Loan</option>
+                <option value="Line of Credit">Line of Credit</option>
+                <option value="Other">Other</option>
+              </select>
             </div>
 
             {/* Notes */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Notes <span className="text-gray-400 text-xs">(optional)</span>
+                Notes/Description
               </label>
               <textarea
                 name="notes"
@@ -228,7 +210,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                 rows="3"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isSubmitting}
-                placeholder="Additional notes or description"
+                placeholder="Additional details about this asset or liability"
               />
             </div>
 
@@ -263,4 +245,4 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
   );
 };
 
-export default HoldingForm;
+export default StaticAssetsForm;
