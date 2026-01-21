@@ -1,17 +1,34 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { format, subDays, subMonths, subYears } from 'date-fns';
+import { format, subDays, subMonths, subYears, differenceInDays, parseISO } from 'date-fns';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import { accounts as accountsApi, history as historyApi } from '../utils/api';
 
 const DATE_RANGE_OPTIONS = [
-  { label: '7 Days', value: '7d', getDates: () => ({ start: subDays(new Date(), 7), end: new Date() }) },
-  { label: '30 Days', value: '30d', getDates: () => ({ start: subDays(new Date(), 30), end: new Date() }) },
-  { label: '3 Months', value: '3m', getDates: () => ({ start: subMonths(new Date(), 3), end: new Date() }) },
-  { label: '6 Months', value: '6m', getDates: () => ({ start: subMonths(new Date(), 6), end: new Date() }) },
-  { label: '1 Year', value: '1y', getDates: () => ({ start: subYears(new Date(), 1), end: new Date() }) },
-  { label: 'All Time', value: 'all', getDates: () => ({ start: null, end: null }) },
-  { label: 'Custom', value: 'custom', getDates: () => null },
+  { label: '7 Days', value: '7d', days: 7, getDates: () => ({ start: subDays(new Date(), 7), end: new Date() }) },
+  { label: '30 Days', value: '30d', days: 30, getDates: () => ({ start: subDays(new Date(), 30), end: new Date() }) },
+  { label: '3 Months', value: '3m', days: 90, getDates: () => ({ start: subMonths(new Date(), 3), end: new Date() }) },
+  { label: '6 Months', value: '6m', days: 180, getDates: () => ({ start: subMonths(new Date(), 6), end: new Date() }) },
+  { label: '1 Year', value: '1y', days: 365, getDates: () => ({ start: subYears(new Date(), 1), end: new Date() }) },
+  { label: 'All Time', value: 'all', days: null, getDates: () => ({ start: null, end: null }) },
+  { label: 'Custom', value: 'custom', days: null, getDates: () => null },
 ];
+
+// Calculate appropriate limit based on expected number of data points
+// Each day produces one snapshot, so limit should accommodate the date range
+const calculateLimit = (dateRangeOption, customStartDate, customEndDate) => {
+  if (dateRangeOption === 'custom' && customStartDate && customEndDate) {
+    const days = differenceInDays(parseISO(customEndDate), parseISO(customStartDate));
+    return Math.min(Math.max(days + 1, 30), 100);
+  }
+  
+  const option = DATE_RANGE_OPTIONS.find(opt => opt.value === dateRangeOption);
+  if (option?.days) {
+    return Math.min(option.days + 1, 100);
+  }
+  
+  // For 'all' or undefined, use maximum limit
+  return 100;
+};
 
 const AccountHistory = () => {
   const [accounts, setAccounts] = useState([]);
@@ -71,9 +88,10 @@ const AccountHistory = () => {
       
       try {
         const dateRange = getDateRange();
+        const limit = calculateLimit(dateRangeOption, customStartDate, customEndDate);
         const params = {
           ...dateRange,
-          limit: 100, // Get more data points for charts
+          limit,
         };
 
         const fetchPromises = [];
@@ -117,7 +135,7 @@ const AccountHistory = () => {
     if (accounts.length > 0) {
       fetchHistoryData();
     }
-  }, [accounts, selectedAccounts, showPortfolio, getDateRange]);
+  }, [accounts, selectedAccounts, showPortfolio, getDateRange, dateRangeOption, customStartDate, customEndDate]);
 
   const handleAccountToggle = (accountId) => {
     setSelectedAccounts(prev => {
