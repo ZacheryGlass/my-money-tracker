@@ -9,6 +9,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 const formatCurrency = (value) => {
   return new Intl.NumberFormat('en-US', {
@@ -55,6 +56,8 @@ const COLORS = [
 ];
 
 const TickerHistoryChart = ({ data, tickers }) => {
+  const isMobile = useIsMobile();
+  
   if (!data || data.length === 0) {
     return (
       <div className="flex items-center justify-center h-48 md:h-64 bg-gray-50 rounded-lg border border-gray-200">
@@ -80,8 +83,6 @@ const TickerHistoryChart = ({ data, tickers }) => {
 
   // Get unique tickers from data
   const uniqueTickers = tickers || [...new Set(data.map((item) => item.ticker))];
-
-  const isMobile = window.innerWidth < 768;
 
   return (
     <div className="w-full h-64 md:h-96 bg-white rounded-lg p-2 md:p-4">

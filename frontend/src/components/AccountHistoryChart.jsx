@@ -11,6 +11,7 @@ import {
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { format, parseISO } from 'date-fns';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 // Register Chart.js components
 ChartJS.register(
@@ -53,6 +54,8 @@ const AccountHistoryChart = ({
   loading,
   error 
 }) => {
+  const isMobile = useIsMobile();
+  
   const chartData = useMemo(() => {
     if (loading || error) return null;
     
@@ -146,12 +149,12 @@ const AccountHistoryChart = ({
     },
     plugins: {
       legend: {
-        position: window.innerWidth < 768 ? 'bottom' : 'top',
+        position: isMobile ? 'bottom' : 'top',
         labels: {
           usePointStyle: true,
-          padding: window.innerWidth < 768 ? 10 : 15,
+          padding: isMobile ? 10 : 15,
           font: {
-            size: window.innerWidth < 768 ? 10 : 12,
+            size: isMobile ? 10 : 12,
           },
         },
       },
@@ -159,11 +162,11 @@ const AccountHistoryChart = ({
         display: true,
         text: 'Account Value History',
         font: {
-          size: window.innerWidth < 768 ? 14 : 16,
+          size: isMobile ? 14 : 16,
           weight: 'bold',
         },
         padding: {
-          bottom: window.innerWidth < 768 ? 10 : 20,
+          bottom: isMobile ? 10 : 20,
         },
       },
       tooltip: {
@@ -183,21 +186,21 @@ const AccountHistoryChart = ({
       x: {
         display: true,
         title: {
-          display: window.innerWidth >= 768,
+          display: !isMobile,
           text: 'Date',
         },
         ticks: {
           maxRotation: 45,
           minRotation: 45,
           font: {
-            size: window.innerWidth < 768 ? 9 : 11,
+            size: isMobile ? 9 : 11,
           },
         },
       },
       y: {
         display: true,
         title: {
-          display: window.innerWidth >= 768,
+          display: !isMobile,
           text: 'Value (USD)',
         },
         ticks: {
@@ -205,12 +208,12 @@ const AccountHistoryChart = ({
             return formatCurrency(value);
           },
           font: {
-            size: window.innerWidth < 768 ? 9 : 11,
+            size: isMobile ? 9 : 11,
           },
         },
       },
     },
-  }), []);
+  }), [isMobile]);
 
   if (loading) {
     return (
