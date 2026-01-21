@@ -6,8 +6,9 @@ import {
   getFilteredRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
+import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
 import HoldingForm from './HoldingForm';
+import BulkImportForm from './BulkImportForm';
 
 const HoldingsTable = () => {
   const [holdings, setHoldings] = useState([]);
@@ -20,6 +21,7 @@ const HoldingsTable = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState(null);
   const [deletingHolding, setDeletingHolding] = useState(null);
+  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -85,6 +87,15 @@ const HoldingsTable = () => {
       setError(err.response?.data?.error || 'Failed to delete holding');
       setDeletingHolding(null);
     }
+  };
+
+  const handleBulkImportSuccess = (result) => {
+    showSuccess(`Successfully imported ${result.summary.imported} holdings`);
+    fetchData();
+  };
+
+  const handleExportHoldings = () => {
+    exportData.downloadHoldings();
   };
 
   // Create accounts map for O(1) lookup
@@ -202,6 +213,20 @@ const HoldingsTable = () => {
             Add New Holding
           </button>
 
+          <button
+            onClick={() => setIsBulkImportOpen(true)}
+            className="px-4 py-2 text-white bg-green-600 rounded-md hover:bg-green-700"
+          >
+            Bulk Import
+          </button>
+
+          <button
+            onClick={handleExportHoldings}
+            className="px-4 py-2 text-white bg-purple-600 rounded-md hover:bg-purple-700"
+          >
+            Export CSV
+          </button>
+
           <div className="flex items-center gap-2">
             <label className="text-sm font-medium text-gray-700">Filter by Account:</label>
             <select
@@ -285,6 +310,13 @@ const HoldingsTable = () => {
         onSave={handleSave}
         holding={editingHolding}
         accounts={accounts}
+      />
+
+      {/* Bulk Import Modal */}
+      <BulkImportForm
+        isOpen={isBulkImportOpen}
+        onClose={() => setIsBulkImportOpen(false)}
+        onSuccess={handleBulkImportSuccess}
       />
 
       {/* Delete Confirmation Modal */}

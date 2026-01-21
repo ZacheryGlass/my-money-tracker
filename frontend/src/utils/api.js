@@ -64,6 +64,18 @@ export const holdings = {
     const response = await api.delete(`/api/holdings/${id}`);
     return response.data;
   },
+  bulkImport: async (csvData) => {
+    const response = await api.post('/api/holdings/bulk-import', csvData, {
+      headers: {
+        'Content-Type': 'text/csv',
+      },
+    });
+    return response.data;
+  },
+  bulkImportConfirm: async (rows, skipDuplicates = false) => {
+    const response = await api.post('/api/holdings/bulk-import/confirm', { rows, skipDuplicates });
+    return response.data;
+  },
 };
 
 // Accounts API (for dropdowns)
@@ -122,6 +134,49 @@ export const dashboard = {
   getPortfolio: async () => {
     const response = await api.get('/api/dashboard');
     return response.data;
+  },
+};
+
+// Export API
+export const exportData = {
+  downloadHoldings: async () => {
+    try {
+      const response = await api.get('/api/export/holdings', {
+        responseType: 'blob',
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'holdings.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export error:', error);
+      throw error;
+    }
+  },
+  downloadHistory: async (type = 'tickers', format = 'csv') => {
+    try {
+      const response = await api.get(`/api/export/history?type=${type}&format=${format}`, {
+        responseType: 'blob',
+      });
+
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const filename = `${type}_history.${format}`;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export error:', error);
+      throw error;
+    }
   },
 };
 
