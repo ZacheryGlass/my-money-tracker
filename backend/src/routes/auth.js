@@ -1,7 +1,10 @@
+'use strict';
+
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const authenticateToken = require('../middleware/auth');
+const logger = require('../config/logger');
 
 const router = express.Router();
 
@@ -36,7 +39,7 @@ router.post('/login', async (req, res) => {
 
     res.status(200).json({ token });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error({ err: error }, 'Login error');
     res.status(500).json({ error: 'Server error during login' });
   }
 });
@@ -50,7 +53,7 @@ router.get('/me', authenticateToken, async (req, res) => {
     }
     res.status(200).json({ user });
   } catch (error) {
-    console.error('Get user error:', error);
+    logger.error({ err: error }, 'Get user error');
     res.status(500).json({ error: 'Server error' });
   }
 });

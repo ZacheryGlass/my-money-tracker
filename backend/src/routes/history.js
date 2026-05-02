@@ -1,6 +1,9 @@
+'use strict';
+
 const express = require('express');
 const pool = require('../config/database');
 const authenticateToken = require('../middleware/auth');
+const logger = require('../config/logger');
 
 const router = express.Router();
 
@@ -31,11 +34,11 @@ router.get('/tickers', async (req, res) => {
     // Validate pagination parameters
     const parsedLimit = parseInt(limit);
     const parsedOffset = parseInt(offset);
-    
+
     if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
       return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
     }
-    
+
     if (isNaN(parsedOffset) || parsedOffset < 0) {
       return res.status(400).json({ error: 'Invalid offset parameter. Must be a non-negative number.' });
     }
@@ -88,7 +91,7 @@ router.get('/tickers', async (req, res) => {
 
     // Get paginated data
     const dataQuery = `
-      SELECT 
+      SELECT
         snapshot_date,
         account_id,
         ticker,
@@ -99,7 +102,7 @@ router.get('/tickers', async (req, res) => {
       ORDER BY snapshot_date ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
-    
+
     const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);
 
@@ -112,7 +115,7 @@ router.get('/tickers', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get ticker history error:', error);
+    logger.error({ err: error }, 'Get ticker history error');
     res.status(500).json({ error: 'Server error retrieving ticker history' });
   }
 });
@@ -131,11 +134,11 @@ router.get('/accounts', async (req, res) => {
     // Validate pagination parameters
     const parsedLimit = parseInt(limit);
     const parsedOffset = parseInt(offset);
-    
+
     if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
       return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
     }
-    
+
     if (isNaN(parsedOffset) || parsedOffset < 0) {
       return res.status(400).json({ error: 'Invalid offset parameter. Must be a non-negative number.' });
     }
@@ -182,7 +185,7 @@ router.get('/accounts', async (req, res) => {
 
     // Get paginated data
     const dataQuery = `
-      SELECT 
+      SELECT
         snapshot_date,
         account_id,
         total_value
@@ -191,7 +194,7 @@ router.get('/accounts', async (req, res) => {
       ORDER BY snapshot_date ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
-    
+
     const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);
 
@@ -204,7 +207,7 @@ router.get('/accounts', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get account history error:', error);
+    logger.error({ err: error }, 'Get account history error');
     res.status(500).json({ error: 'Server error retrieving account history' });
   }
 });
@@ -222,11 +225,11 @@ router.get('/portfolio', async (req, res) => {
     // Validate pagination parameters
     const parsedLimit = parseInt(limit);
     const parsedOffset = parseInt(offset);
-    
+
     if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
       return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
     }
-    
+
     if (isNaN(parsedOffset) || parsedOffset < 0) {
       return res.status(400).json({ error: 'Invalid offset parameter. Must be a non-negative number.' });
     }
@@ -258,8 +261,8 @@ router.get('/portfolio', async (req, res) => {
 
     // Get total count for pagination
     const countQuery = `
-      SELECT COUNT(DISTINCT snapshot_date) as total 
-      FROM account_snapshots 
+      SELECT COUNT(DISTINCT snapshot_date) as total
+      FROM account_snapshots
       ${whereClause}
     `;
     const countResult = await pool.query(countQuery, params);
@@ -267,7 +270,7 @@ router.get('/portfolio', async (req, res) => {
 
     // Get aggregated portfolio data
     const dataQuery = `
-      SELECT 
+      SELECT
         snapshot_date,
         SUM(total_value) as total_value
       FROM account_snapshots
@@ -276,7 +279,7 @@ router.get('/portfolio', async (req, res) => {
       ORDER BY snapshot_date ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
-    
+
     const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);
 
@@ -289,7 +292,7 @@ router.get('/portfolio', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get portfolio history error:', error);
+    logger.error({ err: error }, 'Get portfolio history error');
     res.status(500).json({ error: 'Server error retrieving portfolio history' });
   }
 });

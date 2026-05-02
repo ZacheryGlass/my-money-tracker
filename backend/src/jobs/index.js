@@ -1,7 +1,10 @@
+'use strict';
+
 const cron = require('node-cron');
 const PriceUpdateJob = require('./priceUpdateJob');
 const SnapshotJob = require('./snapshotJob');
 const JobLog = require('../models/JobLog');
+const logger = require('../config/logger');
 
 const TIMEZONE = 'America/Mexico_City';
 
@@ -12,11 +15,11 @@ let snapshotTask = null;
 function initializeJobs() {
   // Schedule price update at 8 AM daily
   priceUpdateTask = cron.schedule('0 8 * * *', async () => {
-    console.log('[scheduler] Running scheduled price update...');
+    logger.info('[scheduler] Running scheduled price update...');
     try {
       await PriceUpdateJob.run();
     } catch (error) {
-      console.error('[scheduler] Price update failed:', error.message);
+      logger.error({ err: error }, '[scheduler] Price update failed');
     }
   }, {
     timezone: TIMEZONE
@@ -24,19 +27,17 @@ function initializeJobs() {
 
   // Schedule snapshot creation at 9 AM daily (after price update)
   snapshotTask = cron.schedule('0 9 * * *', async () => {
-    console.log('[scheduler] Running scheduled snapshot creation...');
+    logger.info('[scheduler] Running scheduled snapshot creation...');
     try {
       await SnapshotJob.run();
     } catch (error) {
-      console.error('[scheduler] Snapshot creation failed:', error.message);
+      logger.error({ err: error }, '[scheduler] Snapshot creation failed');
     }
   }, {
     timezone: TIMEZONE
   });
 
-  console.log(`Scheduled jobs initialized (timezone: ${TIMEZONE})`);
-  console.log('  - price-update: 0 8 * * * (8 AM daily)');
-  console.log('  - snapshot-creation: 0 9 * * * (9 AM daily)');
+  logger.info({ timezone: TIMEZONE }, 'Scheduled jobs initialized');
 }
 
 function stopJobs() {
@@ -48,7 +49,7 @@ function stopJobs() {
     snapshotTask.stop();
     snapshotTask.destroy();
   }
-  console.log('[scheduler] Scheduled jobs stopped');
+  logger.info('[scheduler] Scheduled jobs stopped');
 }
 
 async function getJobStatus() {
