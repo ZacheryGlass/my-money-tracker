@@ -42,29 +42,31 @@ app.use('/api/export', exportRoutes);
 // Error handling middleware (must be last)
 app.use(errorHandler);
 
-// Start server
-const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  initializeJobs();
-});
-
-// Graceful shutdown handlers
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  stopJobs();
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
+// Start server only when run directly (not when imported by tests)
+if (require.main === module) {
+  const server = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    initializeJobs();
   });
-});
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  stopJobs();
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
+  // Graceful shutdown handlers
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully...');
+    stopJobs();
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
   });
-});
+
+  process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully...');
+    stopJobs();
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  });
+}
 
 module.exports = app;
