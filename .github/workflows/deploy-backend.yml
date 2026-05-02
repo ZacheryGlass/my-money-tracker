@@ -1,0 +1,44 @@
+name: Deploy backend to Azure App Service
+
+on:
+  # Manual-only until Azure resources exist. Switch to push triggers once
+  # AZURE_BACKEND_APP_NAME and AZURE_BACKEND_PUBLISH_PROFILE are configured.
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20.x'
+  AZURE_WEBAPP_NAME: ${{ vars.AZURE_BACKEND_APP_NAME }}
+  AZURE_WEBAPP_PACKAGE_PATH: backend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install production dependencies
+        working-directory: backend
+        run: npm ci --omit=dev
+
+      - name: Lint
+        working-directory: backend
+        run: |
+          npm install --no-save eslint
+          npm run lint || echo "Lint warnings (non-blocking)"
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_BACKEND_PUBLISH_PROFILE }}
+          package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}

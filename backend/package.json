@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "start:prod": "node scripts/migrate.js && node src/server.js",
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
     "setup": "npm run migrate && npm run seed",
@@ -20,6 +21,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "axios": "^1.13.1",
     "bcrypt": "^6.0.0",
