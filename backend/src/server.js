@@ -1,6 +1,11 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
+const pinoHttp = require('pino-http');
+const rateLimit = require('express-rate-limit');
+
+const logger = require('./config/logger');
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -22,6 +27,22 @@ const PORT = process.env.PORT || 3000;
 
 // Trust the Azure App Service / reverse proxy so req.ip and HTTPS detection work.
 app.set('trust proxy', 1);
+
+// HTTP request logging with per-request ID
+app.use(pinoHttp({
+  logger,
+  genReqId(req) {
+    return req.headers['x-request-id'] || crypto.randomUUID();
+  },
+}));
+
+// Global rate limit: 300 req / 15 min per IP
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+}));
 
 // CORS: in production, restrict to the configured frontend origin(s).
 const corsOrigin = process.env.CORS_ORIGIN;
@@ -52,8 +73,16 @@ app.get('/ready', async (req, res) => {
   }
 });
 
+// Auth rate limit: 10 req / 15 min per IP
+const authRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authRateLimit, authRoutes);
 app.use('/api/accounts', accountsRoutes);
 app.use('/api/holdings', holdingsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
@@ -66,31 +95,29 @@ app.use(errorHandler);
 
 // Start server
 const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  // Allow disabling cron jobs (e.g. on additional scaled instances) so they
-  // only run on a single worker. Default: enabled.
+  logger.info({ port: PORT }, 'Server running');
   if (process.env.RUN_SCHEDULED_JOBS !== 'false') {
     initializeJobs();
   } else {
-    console.log('Scheduled jobs disabled by RUN_SCHEDULED_JOBS=false');
+    logger.info('Scheduled jobs disabled by RUN_SCHEDULED_JOBS=false');
   }
 });
 
 // Graceful shutdown handlers
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
+  logger.info('SIGTERM received, shutting down gracefully...');
   stopJobs();
   server.close(() => {
-    console.log('Server closed');
+    logger.info('Server closed');
     process.exit(0);
   });
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
+  logger.info('SIGINT received, shutting down gracefully...');
   stopJobs();
   server.close(() => {
-    console.log('Server closed');
+    logger.info('Server closed');
     process.exit(0);
   });
 });

@@ -1,5 +1,8 @@
+'use strict';
+
 const axios = require('axios');
 const PriceCache = require('../models/PriceCache');
+const logger = require('../config/logger');
 
 let coinGeckoIdMapCache = null;
 let coinGeckoIdMapCacheTime = 0;
@@ -14,15 +17,15 @@ class PriceService {
       const response = await axios.get(url, { timeout: 5000 });
 
       if (response.status !== 200) {
-        console.log(`Coinbase: Failed ${ticker}. Status: ${response.status}`);
+        logger.warn({ ticker, status: response.status }, 'Coinbase fetch failed');
         return null;
       }
 
       const price = parseFloat(response.data.data.amount);
-      console.log(`Coinbase: ${ticker} -> $${price}`);
+      logger.debug({ ticker, price, source: 'coinbase' }, 'Price fetched');
       return price;
     } catch (error) {
-      console.log(`Coinbase error ${ticker}: ${error.message}`);
+      logger.warn({ ticker, err: error }, 'Coinbase error');
       return null;
     }
   }
@@ -44,12 +47,12 @@ class PriceService {
 
       const response = await axios(url, config);
       if (response.status !== 200) {
-        console.log(`CoinGecko HTTP ${response.status}: ${response.data.toString().slice(0, 300)}`);
+        logger.warn({ status: response.status }, 'CoinGecko non-200 response');
         throw new Error(`CoinGecko HTTP ${response.status}`);
       }
       return response.data;
     } catch (error) {
-      console.log(`CoinGecko fetch error: ${error.message}`);
+      logger.warn({ err: error }, 'CoinGecko fetch error');
       throw error;
     }
   }
@@ -59,7 +62,7 @@ class PriceService {
     try {
       const coinId = idMap[ticker.toUpperCase()];
       if (!coinId) {
-        console.log(`CoinGecko: No ID for "${ticker}".`);
+        logger.debug({ ticker }, 'CoinGecko: no ID mapping found');
         return null;
       }
 
@@ -68,14 +71,14 @@ class PriceService {
       const price = Number(json[coinId] && json[coinId]['usd']);
 
       if (!isFinite(price)) {
-        console.log(`CoinGecko: Missing price for ${ticker}`);
+        logger.warn({ ticker, coinId }, 'CoinGecko: missing price in response');
         return null;
       }
 
-      console.log(`CoinGecko: ${ticker} -> $${price}`);
+      logger.debug({ ticker, price, source: 'coingecko' }, 'Price fetched');
       return price;
     } catch (error) {
-      console.log(`CoinGecko error ${ticker}: ${error.message}`);
+      logger.warn({ ticker, err: error }, 'CoinGecko error');
       return null;
     }
   }
@@ -84,7 +87,7 @@ class PriceService {
   static async getCoinMarketCapPrice(ticker) {
     try {
       if (!process.env.CMC_PRO_API_KEY) {
-        console.log('CoinMarketCap: API key missing.');
+        logger.warn('CoinMarketCap: API key missing');
         return null;
       }
 
@@ -92,10 +95,10 @@ class PriceService {
       const response = await axios.get(url, { timeout: 5000 });
       const price = parseFloat(response.data['data'][ticker.toUpperCase()]['quote']['USD']['price']);
 
-      console.log(`CoinMarketCap: ${ticker} -> $${price}`);
+      logger.debug({ ticker, price, source: 'coinmarketcap' }, 'Price fetched');
       return price;
     } catch (error) {
-      console.log(`CoinMarketCap error ${ticker}: ${error.message}`);
+      logger.warn({ ticker, err: error }, 'CoinMarketCap error');
       return null;
     }
   }
@@ -106,12 +109,12 @@ class PriceService {
 
     // Return cached map if still valid
     if (coinGeckoIdMapCache && (now - coinGeckoIdMapCacheTime) < COINGECKO_CACHE_TTL) {
-      console.log('Using cached filtered Ticker -> ID map.');
+      logger.debug('Using cached CoinGecko ticker->ID map');
       return coinGeckoIdMapCache;
     }
 
     try {
-      console.log('Cache empty or expired. Fetching list from CoinGecko.');
+      logger.info('CoinGecko ID map cache empty or expired, fetching full coin list');
       const url = 'https://api.coingecko.com/api/v3/coins/list?include_platform=false';
       const fullCoinList = await this.fetchCoinGeckoJson(url);
 
@@ -132,14 +135,14 @@ class PriceService {
 
       return filteredMap;
     } catch (error) {
-      console.log(`Error building CoinGecko ID map: ${error.message}`);
+      logger.error({ err: error }, 'Error building CoinGecko ID map');
       return {};
     }
   }
 
   // Main price fetching with waterfall strategy
   static async fetchPrice(ticker) {
-    console.log(`--- Processing Ticker: ${ticker} ---`);
+    logger.info({ ticker }, 'Fetching price');
 
     // Try Coinbase first
     let price = await this.getCoinbasePrice(ticker);
@@ -157,7 +160,7 @@ class PriceService {
         }
       }
     } catch (error) {
-      console.log(`CoinGecko fallback failed: ${error.message}`);
+      logger.warn({ ticker, err: error }, 'CoinGecko fallback failed');
     }
 
     // Try CoinMarketCap third
@@ -166,7 +169,7 @@ class PriceService {
       return { price, source: 'coinmarketcap' };
     }
 
-    console.log(`All providers FAILED for ${ticker}.`);
+    logger.warn({ ticker }, 'All price providers failed');
     return null;
   }
 
@@ -187,7 +190,7 @@ class PriceService {
             success: true
           });
         } catch (error) {
-          console.error(`Failed to cache price for ${ticker}:`, error.message);
+          logger.error({ ticker, err: error }, 'Failed to cache price');
           results.push({
             ticker,
             success: false,

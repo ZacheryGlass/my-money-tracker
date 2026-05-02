@@ -1,3 +1,5 @@
+'use strict';
+
 const express = require('express');
 const Holding = require('../models/Holding');
 const authenticateToken = require('../middleware/auth');
@@ -5,6 +7,7 @@ const { validateHolding } = require('../middleware/validator');
 const pool = require('../config/database');
 const csvParser = require('csv-parser');
 const { Readable } = require('stream');
+const logger = require('../config/logger');
 
 const router = express.Router();
 
@@ -17,7 +20,7 @@ router.get('/', async (req, res) => {
     const holdings = await Holding.findAll();
     res.status(200).json({ holdings });
   } catch (error) {
-    console.error('Get holdings error:', error);
+    logger.error({ err: error }, 'Get holdings error');
     res.status(500).json({ error: 'Server error retrieving holdings' });
   }
 });
@@ -31,7 +34,7 @@ router.get('/:id', async (req, res) => {
     }
     res.status(200).json({ holding });
   } catch (error) {
-    console.error('Get holding error:', error);
+    logger.error({ err: error }, 'Get holding error');
     res.status(500).json({ error: 'Server error retrieving holding' });
   }
 });
@@ -53,7 +56,7 @@ router.post('/', validateHolding, async (req, res) => {
 
     res.status(201).json({ holding });
   } catch (error) {
-    console.error('Create holding error:', error);
+    logger.error({ err: error }, 'Create holding error');
     if (error.code === '23505') {
       return res.status(409).json({ error: 'This holding already exists for this account' });
     }
@@ -89,7 +92,7 @@ router.put('/:id', validateHolding, async (req, res) => {
 
     res.status(200).json({ holding });
   } catch (error) {
-    console.error('Update holding error:', error);
+    logger.error({ err: error }, 'Update holding error');
     if (error.code === '23505') {
       return res.status(409).json({ error: 'This holding already exists for this account' });
     }
@@ -114,7 +117,7 @@ router.delete('/:id', async (req, res) => {
     const result = await Holding.delete(id);
     res.status(200).json({ message: 'Holding deleted successfully', holding: result });
   } catch (error) {
-    console.error('Delete holding error:', error);
+    logger.error({ err: error }, 'Delete holding error');
     res.status(500).json({ error: 'Server error deleting holding' });
   }
 });
@@ -123,7 +126,7 @@ router.delete('/:id', async (req, res) => {
 router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), async (req, res) => {
   try {
     const csvData = req.body;
-    
+
     if (!csvData || csvData.trim() === '') {
       return res.status(400).json({ error: 'No CSV data provided' });
     }
@@ -208,7 +211,7 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
       }).join(' UNION ALL ');
 
       const params = validatedRows.flatMap(row => [row.account_id, row.name, row.ticker]);
-      
+
       try {
         const duplicateResult = await pool.query(duplicateCheckQuery, params);
         const duplicateMap = new Map();
@@ -222,7 +225,7 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
         for (const row of validatedRows) {
           const key = `${row.account_id}-${row.name}-${row.ticker}`;
           const existingId = duplicateMap.get(key);
-          
+
           if (existingId) {
             duplicates.push({
               row: row.rowNum,
@@ -261,7 +264,7 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
           errors: errors
         });
       } catch (error) {
-        console.error('Duplicate check error:', error);
+        logger.error({ err: error }, 'Duplicate check error');
         // Fallback to individual checks if batch query fails
         const finalValidRows = [];
         for (const row of validatedRows) {
@@ -323,7 +326,7 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
       });
     }
   } catch (error) {
-    console.error('Bulk import error:', error);
+    logger.error({ err: error }, 'Bulk import error');
     res.status(500).json({ error: 'Server error processing CSV file' });
   }
 });
@@ -373,7 +376,7 @@ router.post('/bulk-import/confirm', express.json(), async (req, res) => {
       failed: failed
     });
   } catch (error) {
-    console.error('Bulk import confirm error:', error);
+    logger.error({ err: error }, 'Bulk import confirm error');
     res.status(500).json({ error: 'Server error importing holdings' });
   }
 });

@@ -1,6 +1,9 @@
+'use strict';
+
 const express = require('express');
 const pool = require('../config/database');
 const authenticateToken = require('../middleware/auth');
+const logger = require('../config/logger');
 
 const router = express.Router();
 
@@ -15,7 +18,7 @@ router.get('/', async (req, res) => {
     );
     res.status(200).json({ accounts: result.rows });
   } catch (error) {
-    console.error('Get accounts error:', error);
+    logger.error({ err: error }, 'Get accounts error');
     res.status(500).json({ error: 'Server error retrieving accounts' });
   }
 });

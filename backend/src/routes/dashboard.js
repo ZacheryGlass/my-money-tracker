@@ -1,6 +1,9 @@
+'use strict';
+
 const express = require('express');
 const DashboardService = require('../services/DashboardService');
 const authenticateToken = require('../middleware/auth');
+const logger = require('../config/logger');
 
 const router = express.Router();
 
@@ -13,7 +16,7 @@ router.get('/', async (req, res) => {
     const portfolio = await DashboardService.getCurrentPortfolio();
     res.status(200).json(portfolio);
   } catch (error) {
-    console.error('Get dashboard error:', error);
+    logger.error({ err: error }, 'Get dashboard error');
     res.status(500).json({ error: 'Server error retrieving dashboard' });
   }
 });

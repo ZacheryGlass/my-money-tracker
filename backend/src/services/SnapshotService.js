@@ -1,8 +1,10 @@
-const pool = require('../config/database');
+'use strict';
+
 const Holding = require('../models/Holding');
 const PriceCache = require('../models/PriceCache');
 const TickerSnapshot = require('../models/TickerSnapshot');
 const AccountSnapshot = require('../models/AccountSnapshot');
+const logger = require('../config/logger');
 
 class SnapshotService {
   static async createTickerSnapshots(date) {
@@ -35,8 +37,8 @@ class SnapshotService {
         value = parseFloat(holding.manual_value);
         succeeded++;
       } else {
-        // Missing price and no manual value, log warning and skip
-        console.warn(`[snapshot] Warning: No price found for holding ${holding.id} (${holding.name}, ticker: ${holding.ticker})`);
+        // Missing price and no manual value — holding will not appear in this snapshot
+        logger.warn({ holdingId: holding.id, name: holding.name, ticker: holding.ticker }, 'No price found for holding, skipping snapshot');
         failed++;
         continue;
       }
@@ -101,17 +103,17 @@ class SnapshotService {
     // Check if snapshots already exist for this date
     const tickerSnapshotsExist = await TickerSnapshot.existsForDate(date);
     if (tickerSnapshotsExist) {
-      console.log(`[snapshot] Snapshots already exist for ${date}, skipping...`);
+      logger.info({ date }, 'Snapshots already exist, skipping');
       return { skipped: true, reason: 'snapshots_already_exist' };
     }
 
     // Create ticker snapshots
     const tickerResult = await this.createTickerSnapshots(date);
-    console.log(`[snapshot] Created ${tickerResult.created} ticker snapshots (${tickerResult.succeeded} succeeded, ${tickerResult.failed} failed)`);
+    logger.info({ date, created: tickerResult.created, succeeded: tickerResult.succeeded, failed: tickerResult.failed }, 'Ticker snapshots created');
 
     // Create account snapshots
     const accountResult = await this.createAccountSnapshots(date);
-    console.log(`[snapshot] Created ${accountResult.created} account snapshots`);
+    logger.info({ date, created: accountResult.created }, 'Account snapshots created');
 
     return {
       success: true,

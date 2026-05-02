@@ -1,21 +1,24 @@
+'use strict';
+
 const JobLog = require('../models/JobLog');
 const SnapshotService = require('../services/SnapshotService');
+const logger = require('../config/logger');
 
 const JOB_NAME = 'snapshot-creation';
 
 async function run() {
-  console.log(`[${JOB_NAME}] Starting snapshot creation job...`);
+  logger.info({ job: JOB_NAME }, 'Starting snapshot creation job');
 
   // Check for concurrent execution
   const isAlreadyRunning = await JobLog.isRunning(JOB_NAME);
   if (isAlreadyRunning) {
-    console.log(`[${JOB_NAME}] Job already running, skipping...`);
+    logger.info({ job: JOB_NAME }, 'Job already running, skipping');
     return { skipped: true, reason: 'concurrent_execution' };
   }
 
   // Create job log entry
   const jobLog = await JobLog.create(JOB_NAME);
-  console.log(`[${JOB_NAME}] Created job log entry: ${jobLog.id}`);
+  logger.info({ job: JOB_NAME, logId: jobLog.id }, 'Created job log entry');
 
   try {
     // Snapshot is created for today's date, using prices fetched 1 hour earlier at 8 AM
@@ -23,14 +26,14 @@ async function run() {
     today.setHours(0, 0, 0, 0);
     const snapshotDate = today.toISOString().split('T')[0];
 
-    console.log(`[${JOB_NAME}] Creating snapshots for date: ${snapshotDate}`);
+    logger.info({ job: JOB_NAME, snapshotDate }, 'Creating snapshots');
 
     // Create daily snapshots
     const result = await SnapshotService.createDailySnapshots(snapshotDate);
 
     if (result.skipped) {
       await JobLog.complete(jobLog.id, 0, 0, 0, { message: result.reason });
-      console.log(`[${JOB_NAME}] Snapshot creation skipped: ${result.reason}`);
+      logger.info({ job: JOB_NAME, reason: result.reason }, 'Snapshot creation skipped');
       return result;
     }
 
@@ -47,11 +50,11 @@ async function run() {
       accountSnapshots: result.accountSnapshots
     });
 
-    console.log(`[${JOB_NAME}] Completed: ${totalCreated} snapshots created`);
+    logger.info({ job: JOB_NAME, totalCreated }, 'Snapshot creation job completed');
     return result;
 
   } catch (error) {
-    console.error(`[${JOB_NAME}] Job failed:`, error.message);
+    logger.error({ job: JOB_NAME, err: error }, 'Job failed');
     await JobLog.fail(jobLog.id, error.message, { stack: error.stack });
     throw error;
   }

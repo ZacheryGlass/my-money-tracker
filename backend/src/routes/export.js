@@ -1,6 +1,9 @@
+'use strict';
+
 const express = require('express');
 const pool = require('../config/database');
 const authenticateToken = require('../middleware/auth');
+const logger = require('../config/logger');
 
 const router = express.Router();
 
@@ -10,9 +13,9 @@ router.use(authenticateToken);
 // Helper function to convert array to CSV
 function arrayToCSV(data, headers) {
   if (!data || data.length === 0) return headers.join(',') + '\n';
-  
+
   const csvRows = [headers.join(',')];
-  
+
   for (const row of data) {
     const values = headers.map(header => {
       // Use the header as-is since database columns match expected headers
@@ -27,7 +30,7 @@ function arrayToCSV(data, headers) {
     });
     csvRows.push(values.join(','));
   }
-  
+
   return csvRows.join('\n');
 }
 
@@ -35,7 +38,7 @@ function arrayToCSV(data, headers) {
 router.get('/holdings', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         a.name as account,
         h.ticker,
         h.name,
@@ -54,7 +57,7 @@ router.get('/holdings', async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="holdings.csv"');
     res.status(200).send(csv);
   } catch (error) {
-    console.error('Export holdings error:', error);
+    logger.error({ err: error }, 'Export holdings error');
     res.status(500).json({ error: 'Server error exporting holdings' });
   }
 });
@@ -70,7 +73,7 @@ router.get('/history', async (req, res) => {
 
     if (type === 'accounts') {
       query = `
-        SELECT 
+        SELECT
           snapshot_date,
           a.name as account_name,
           total_value
@@ -82,7 +85,7 @@ router.get('/history', async (req, res) => {
       filename = 'account_history';
     } else if (type === 'portfolio') {
       query = `
-        SELECT 
+        SELECT
           snapshot_date,
           SUM(total_value) as total_value
         FROM account_snapshots
@@ -94,7 +97,7 @@ router.get('/history', async (req, res) => {
     } else {
       // Default to tickers
       query = `
-        SELECT 
+        SELECT
           snapshot_date,
           a.name as account_name,
           ticker,
@@ -122,7 +125,7 @@ router.get('/history', async (req, res) => {
       res.status(200).send(csv);
     }
   } catch (error) {
-    console.error('Export history error:', error);
+    logger.error({ err: error }, 'Export history error');
     res.status(500).json({ error: 'Server error exporting history' });
   }
 });
