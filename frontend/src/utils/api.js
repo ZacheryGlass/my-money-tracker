@@ -18,14 +18,25 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle auth errors
+// Handle auth errors and retry on 5xx / network errors (1 retry, 500ms backoff)
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const config = error.config;
+
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       window.location.href = '/login';
+      return Promise.reject(error);
     }
+
+    const isRetryable = !error.response || error.response.status >= 500;
+    if (isRetryable && !config._retried) {
+      config._retried = true;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return api(config);
+    }
+
     return Promise.reject(error);
   }
 );
