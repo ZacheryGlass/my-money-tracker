@@ -1,0 +1,1 @@
+Run tests from the `frontend/` directory with `npm test` (single run) or `npm run test:watch` (watch mode). Uses Vitest with jsdom and `@testing-library/react`. All API calls are mocked with `vi.mock('../utils/api')` so tests are hermetic — no backend or network connection needed.

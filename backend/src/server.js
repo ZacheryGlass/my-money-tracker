@@ -93,33 +93,34 @@ app.use('/api/export', exportRoutes);
 // Error handling middleware (must be last)
 app.use(errorHandler);
 
-// Start server
-const server = app.listen(PORT, () => {
-  logger.info({ port: PORT }, 'Server running');
-  if (process.env.RUN_SCHEDULED_JOBS !== 'false') {
-    initializeJobs();
-  } else {
-    logger.info('Scheduled jobs disabled by RUN_SCHEDULED_JOBS=false');
-  }
-});
-
-// Graceful shutdown handlers
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully...');
-  stopJobs();
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
+// Start server only when run directly (not when imported by tests)
+if (require.main === module) {
+  const server = app.listen(PORT, () => {
+    logger.info({ port: PORT }, 'Server running');
+    if (process.env.RUN_SCHEDULED_JOBS !== 'false') {
+      initializeJobs();
+    } else {
+      logger.info('Scheduled jobs disabled by RUN_SCHEDULED_JOBS=false');
+    }
   });
-});
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down gracefully...');
-  stopJobs();
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
+  process.on('SIGTERM', () => {
+    logger.info('SIGTERM received, shutting down gracefully...');
+    stopJobs();
+    server.close(() => {
+      logger.info('Server closed');
+      process.exit(0);
+    });
   });
-});
+
+  process.on('SIGINT', () => {
+    logger.info('SIGINT received, shutting down gracefully...');
+    stopJobs();
+    server.close(() => {
+      logger.info('Server closed');
+      process.exit(0);
+    });
+  });
+}
 
 module.exports = app;
