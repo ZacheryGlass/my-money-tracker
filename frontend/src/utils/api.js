@@ -26,7 +26,12 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
-      window.location.href = '/login';
+      // Don't redirect when the login call itself fails — let the form display the error.
+      // For other 401s (e.g. expired token), reload to '/' so AuthContext re-initializes.
+      const isLoginCall = error.config?.url?.includes('/api/auth/login');
+      if (!isLoginCall) {
+        window.location.href = '/';
+      }
       return Promise.reject(error);
     }
 

@@ -8,9 +8,9 @@ export const formatCurrency = (value, options = {}) => {
   }).format(value);
 };
 
-export const formatPercent = (value, decimals = 1) => {
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${value.toFixed(decimals)}%`;
+export const formatPercent = (value, decimals = 1, { sign: showSign = true } = {}) => {
+  const prefix = showSign && value >= 0 ? '+' : '';
+  return `${prefix}${value.toFixed(decimals)}%`;
 };
 
 export const formatDateDisplay = (dateString) => {

@@ -101,7 +101,7 @@ const AllocationDonut = ({ items = [], className = '' }) => {
                 {entry.name}
               </span>
               <span className="font-mono text-primary text-xs">
-                {formatPercent(pct, 0)}
+                {formatPercent(pct, 0, { sign: false })}
               </span>
             </div>
           );
