@@ -14,15 +14,11 @@ const TickerHistory = () => {
   const [error, setError] = useState(null);
   const [initialLoading, setInitialLoading] = useState(true);
 
-  // Get unique tickers from holdings
   const availableTickers = useMemo(() => {
-    const tickers = holdings
-      .map((h) => h.ticker)
-      .filter((ticker) => ticker && ticker.trim() !== '');
+    const tickers = holdings.map(h => h.ticker).filter(t => t && t.trim() !== '');
     return [...new Set(tickers)].sort();
   }, [holdings]);
 
-  // Load holdings on mount
   useEffect(() => {
     const loadHoldings = async () => {
       try {
@@ -38,17 +34,14 @@ const TickerHistory = () => {
     loadHoldings();
   }, []);
 
-  // Set default date range (last 30 days)
   useEffect(() => {
     const end = new Date();
     const start = new Date();
     start.setDate(start.getDate() - 30);
-
     setEndDate(end.toISOString().split('T')[0]);
     setStartDate(start.toISOString().split('T')[0]);
   }, []);
 
-  // Fetch history data when filters change
   useEffect(() => {
     if (!startDate || !endDate) return;
 
@@ -57,16 +50,8 @@ const TickerHistory = () => {
       setError(null);
 
       try {
-        const params = {
-          startDate,
-          endDate,
-          limit: DEFAULT_HISTORY_LIMIT,
-        };
-
-        if (selectedTicker) {
-          params.ticker = selectedTicker;
-        }
-
+        const params = { startDate, endDate, limit: DEFAULT_HISTORY_LIMIT };
+        if (selectedTicker) params.ticker = selectedTicker;
         const data = await historyAPI.getTickers(params);
         setHistoryData(data.data || []);
       } catch (err) {
@@ -81,100 +66,87 @@ const TickerHistory = () => {
     fetchHistory();
   }, [selectedTicker, startDate, endDate]);
 
-  // Get tickers to display on chart
   const displayTickers = useMemo(() => {
     if (selectedTicker) return [selectedTicker];
-    return [...new Set(historyData.map((item) => item.ticker))];
+    return [...new Set(historyData.map(item => item.ticker))];
   }, [selectedTicker, historyData]);
 
   if (initialLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-xl text-gray-600">Loading...</div>
+        <div className="text-xl text-secondary">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-4 md:py-8">
+    <div className="container mx-auto px-4 py-4 md:py-8 animate-fade-in">
       <div className="mb-4 md:mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-4">Ticker History</h1>
+        <h1 className="text-xl font-bold text-primary mb-4">Ticker History</h1>
 
-        {/* Filters */}
-        <div className="flex flex-col gap-3 md:gap-4 p-3 md:p-4 bg-gray-50 rounded-lg">
-          {/* Ticker Selector */}
+        <div className="card p-3 md:p-4 flex flex-col gap-3 md:gap-4 mb-4">
           <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-1">
+            <label className="text-xs font-medium text-secondary uppercase tracking-wider mb-1">
               Ticker
             </label>
             <select
               value={selectedTicker}
               onChange={(e) => setSelectedTicker(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
+              className="px-3 py-2 border border-input-border rounded-md focus:outline-none min-h-[44px] touch-manipulation"
             >
               <option value="">All Tickers</option>
               {availableTickers.map((ticker) => (
-                <option key={ticker} value={ticker}>
-                  {ticker}
-                </option>
+                <option key={ticker} value={ticker}>{ticker}</option>
               ))}
             </select>
           </div>
 
-          {/* Date Range */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Start Date */}
             <div className="flex flex-col">
-              <label className="text-sm font-medium text-gray-700 mb-1">
+              <label className="text-xs font-medium text-secondary uppercase tracking-wider mb-1">
                 Start Date
               </label>
               <input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
+                className="px-3 py-2 border border-input-border rounded-md focus:outline-none min-h-[44px] touch-manipulation"
               />
             </div>
-
-            {/* End Date */}
             <div className="flex flex-col">
-              <label className="text-sm font-medium text-gray-700 mb-1">
+              <label className="text-xs font-medium text-secondary uppercase tracking-wider mb-1">
                 End Date
               </label>
               <input
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
+                className="px-3 py-2 border border-input-border rounded-md focus:outline-none min-h-[44px] touch-manipulation"
               />
             </div>
           </div>
         </div>
 
-        {/* Error Message */}
         {error && (
-          <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+          <div className="mb-4 p-4 bg-loss-bg border border-loss text-loss rounded text-sm">
             {error}
           </div>
         )}
 
-        {/* Loading State */}
         {loading && (
-          <div className="flex items-center justify-center h-64 md:h-96 bg-gray-50 rounded-lg">
-            <div className="text-lg md:text-xl text-gray-600">Loading chart data...</div>
+          <div className="flex items-center justify-center h-64 md:h-96 card">
+            <div className="text-lg text-secondary">Loading chart data...</div>
           </div>
         )}
 
-        {/* Chart */}
         {!loading && (
-          <div className="bg-white shadow-md rounded-lg p-3 md:p-4 min-h-64 md:min-h-96">
+          <div className="card p-3 md:p-4 min-h-64 md:min-h-96">
             <TickerHistoryChart data={historyData} tickers={displayTickers} />
           </div>
         )}
 
-        {/* Data Summary */}
         {!loading && historyData.length > 0 && (
-          <div className="mt-4 text-sm text-gray-600">
+          <div className="mt-3 text-sm text-secondary">
             Showing {historyData.length} data points
             {displayTickers.length > 0 &&
               ` for ${displayTickers.length} ticker${displayTickers.length > 1 ? 's' : ''}`}

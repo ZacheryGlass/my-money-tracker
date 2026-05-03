@@ -14,7 +14,7 @@ import { formatCurrency, formatDateAxis } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import ChartTooltip from './ChartTooltip';
 
-const PORTFOLIO_COLOR = '#6B7280';
+const PORTFOLIO_COLOR = '#525D6E';
 
 const AccountHistoryChart = ({
   accountData,
@@ -74,7 +74,7 @@ const AccountHistoryChart = ({
   if (loading) return emptyContainer('Loading chart data...');
   if (error) return (
     <div className="flex items-center justify-center h-64 md:h-96 bg-surface rounded-card border border-border">
-      <div className="text-sm md:text-base text-center px-4" style={{ color: 'var(--loss)' }}>{error}</div>
+      <div className="text-sm md:text-base text-center px-4 text-loss">{error}</div>
     </div>
   );
   if (selectedAccounts.length === 0 && !showPortfolio) {

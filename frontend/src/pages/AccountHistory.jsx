@@ -13,20 +13,13 @@ const DATE_RANGE_OPTIONS = [
   { label: 'Custom', value: 'custom', days: null, getDates: () => null },
 ];
 
-// Calculate appropriate limit based on expected number of data points
-// Each day produces one snapshot, so limit should accommodate the date range
 const calculateLimit = (dateRangeOption, customStartDate, customEndDate) => {
   if (dateRangeOption === 'custom' && customStartDate && customEndDate) {
     const days = differenceInDays(parseISO(customEndDate), parseISO(customStartDate));
     return Math.min(Math.max(days + 1, 30), 100);
   }
-  
   const option = DATE_RANGE_OPTIONS.find(opt => opt.value === dateRangeOption);
-  if (option?.days) {
-    return Math.min(option.days + 1, 100);
-  }
-  
-  // For 'all' or undefined, use maximum limit
+  if (option?.days) return Math.min(option.days + 1, 100);
   return 100;
 };
 
@@ -42,13 +35,11 @@ const AccountHistory = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Load accounts on mount
   useEffect(() => {
     const fetchAccounts = async () => {
       try {
         const data = await accountsApi.getAll();
         setAccounts(data);
-        // Select all accounts by default
         setSelectedAccounts(data.map(acc => acc.id));
       } catch (err) {
         console.error('Error fetching accounts:', err);
@@ -58,15 +49,10 @@ const AccountHistory = () => {
     fetchAccounts();
   }, []);
 
-  // Get effective date range
   const getDateRange = useCallback(() => {
     if (dateRangeOption === 'custom') {
-      return {
-        startDate: customStartDate || undefined,
-        endDate: customEndDate || undefined,
-      };
+      return { startDate: customStartDate || undefined, endDate: customEndDate || undefined };
     }
-    
     const option = DATE_RANGE_OPTIONS.find(opt => opt.value === dateRangeOption);
     if (option && option.getDates) {
       const dates = option.getDates();
@@ -80,39 +66,30 @@ const AccountHistory = () => {
     return {};
   }, [dateRangeOption, customStartDate, customEndDate]);
 
-  // Fetch history data when filters change
   useEffect(() => {
     const fetchHistoryData = async () => {
       setLoading(true);
       setError(null);
-      
+
       try {
         const dateRange = getDateRange();
         const limit = calculateLimit(dateRangeOption, customStartDate, customEndDate);
-        const params = {
-          ...dateRange,
-          limit,
-        };
-
+        const params = { ...dateRange, limit };
         const fetchPromises = [];
 
-        // Fetch account history for selected accounts
         if (selectedAccounts.length > 0) {
-          // Fetch data for each account separately to handle multiple accounts
           const accountPromises = selectedAccounts.map(accountId =>
             historyApi.getAccounts({ ...params, account_id: accountId })
           );
           fetchPromises.push(
             Promise.all(accountPromises).then(results => {
-              const combinedData = results.flatMap(result => result.data || []);
-              setAccountData(combinedData);
+              setAccountData(results.flatMap(result => result.data || []));
             })
           );
         } else {
           setAccountData([]);
         }
 
-        // Fetch portfolio history if enabled
         if (showPortfolio) {
           fetchPromises.push(
             historyApi.getPortfolio(params).then(result => {
@@ -132,53 +109,43 @@ const AccountHistory = () => {
       }
     };
 
-    if (accounts.length > 0) {
-      fetchHistoryData();
-    }
+    if (accounts.length > 0) fetchHistoryData();
   }, [accounts, selectedAccounts, showPortfolio, getDateRange, dateRangeOption, customStartDate, customEndDate]);
 
   const handleAccountToggle = (accountId) => {
-    setSelectedAccounts(prev => {
-      if (prev.includes(accountId)) {
-        return prev.filter(id => id !== accountId);
-      }
-      return [...prev, accountId];
-    });
+    setSelectedAccounts(prev =>
+      prev.includes(accountId) ? prev.filter(id => id !== accountId) : [...prev, accountId]
+    );
   };
 
   const handleSelectAll = () => {
-    if (selectedAccounts.length === accounts.length) {
-      setSelectedAccounts([]);
-    } else {
-      setSelectedAccounts(accounts.map(acc => acc.id));
-    }
+    setSelectedAccounts(
+      selectedAccounts.length === accounts.length ? [] : accounts.map(acc => acc.id)
+    );
   };
 
   return (
-    <div className="container mx-auto px-4 py-4 md:py-6">
+    <div className="container mx-auto px-4 py-4 md:py-6 animate-fade-in">
       <div className="mb-4 md:mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Account History</h1>
-        <p className="text-sm md:text-base text-gray-600">View your account value history over time</p>
+        <h1 className="text-2xl md:text-3xl font-bold text-primary mb-1">Account History</h1>
+        <p className="text-sm text-secondary">View your account value history over time</p>
       </div>
 
-      {/* Filters Section */}
-      <div className="bg-white rounded-lg shadow p-3 md:p-4 mb-4 md:mb-6">
+      <div className="card p-3 md:p-4 mb-4 md:mb-6">
         <div className="grid grid-cols-1 gap-4 md:gap-6">
-          {/* Account Selector */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Accounts
-            </label>
-            <div className="border border-gray-300 rounded-md p-3 max-h-48 overflow-y-auto">
-              <div className="mb-2 pb-2 border-b border-gray-200">
+            <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-2">Accounts</p>
+            <div className="border border-border rounded-md p-3 max-h-48 overflow-y-auto bg-surface">
+              <div className="mb-2 pb-2 border-b border-border">
                 <label className="flex items-center cursor-pointer min-h-[44px]">
                   <input
                     type="checkbox"
                     checked={selectedAccounts.length === accounts.length && accounts.length > 0}
                     onChange={handleSelectAll}
-                    className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 touch-manipulation"
+                    className="h-5 w-5 touch-manipulation"
+                    style={{ accentColor: 'var(--accent)' }}
                   />
-                  <span className="ml-2 text-sm font-medium text-gray-700">
+                  <span className="ml-2 text-sm font-medium" style={{ color: 'var(--accent)' }}>
                     Select All
                   </span>
                 </label>
@@ -189,81 +156,85 @@ const AccountHistory = () => {
                     type="checkbox"
                     checked={selectedAccounts.includes(account.id)}
                     onChange={() => handleAccountToggle(account.id)}
-                    className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 touch-manipulation"
+                    className="h-5 w-5 touch-manipulation"
+                    style={{ accentColor: 'var(--accent)' }}
                   />
-                  <span className="ml-2 text-sm text-gray-700">{account.name}</span>
+                  <span className="ml-2 text-sm text-primary">{account.name}</span>
                 </label>
               ))}
               {accounts.length === 0 && (
-                <p className="text-sm text-gray-500">No accounts found</p>
+                <p className="text-sm text-secondary">No accounts found</p>
               )}
             </div>
           </div>
 
-          {/* Date Range Picker */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Date Range
-            </label>
-            <select
-              value={dateRangeOption}
-              onChange={(e) => setDateRangeOption(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
-            >
-              {DATE_RANGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
+            <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-2">Date Range</p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {DATE_RANGE_OPTIONS.filter(o => o.value !== 'custom').map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setDateRangeOption(option.value)}
+                  className={`px-3 py-2 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[44px] ${
+                    dateRangeOption === option.value
+                      ? 'bg-accent text-inverse'
+                      : 'bg-surface-3 text-secondary hover:text-primary'
+                  }`}
+                >
                   {option.label}
-                </option>
+                </button>
               ))}
-            </select>
-            
+              <button
+                onClick={() => setDateRangeOption('custom')}
+                className={`px-3 py-2 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[44px] ${
+                  dateRangeOption === 'custom'
+                    ? 'bg-accent text-inverse'
+                    : 'bg-surface-3 text-secondary hover:text-primary'
+                }`}
+              >
+                Custom
+              </button>
+            </div>
             {dateRangeOption === 'custom' && (
               <div className="mt-3 space-y-2">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Start Date</label>
+                  <label className="block text-xs text-tertiary mb-1">Start Date</label>
                   <input
                     type="date"
                     value={customStartDate}
                     onChange={(e) => setCustomStartDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
+                    className="w-full px-3 py-2 border border-input-border rounded-md text-sm min-h-[44px] touch-manipulation"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">End Date</label>
+                  <label className="block text-xs text-tertiary mb-1">End Date</label>
                   <input
                     type="date"
                     value={customEndDate}
                     onChange={(e) => setCustomEndDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px] touch-manipulation"
+                    className="w-full px-3 py-2 border border-input-border rounded-md text-sm min-h-[44px] touch-manipulation"
                   />
                 </div>
               </div>
             )}
           </div>
 
-          {/* Display Options */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Display Options
+            <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-2">Display Options</p>
+            <label className="flex items-center cursor-pointer min-h-[44px]">
+              <input
+                type="checkbox"
+                checked={showPortfolio}
+                onChange={(e) => setShowPortfolio(e.target.checked)}
+                className="h-5 w-5 touch-manipulation"
+                style={{ accentColor: 'var(--accent)' }}
+              />
+              <span className="ml-2 text-sm text-primary">Show Total Portfolio</span>
             </label>
-            <div className="space-y-2">
-              <label className="flex items-center cursor-pointer min-h-[44px]">
-                <input
-                  type="checkbox"
-                  checked={showPortfolio}
-                  onChange={(e) => setShowPortfolio(e.target.checked)}
-                  className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 touch-manipulation"
-                />
-                <span className="ml-2 text-sm text-gray-700">
-                  Show Total Portfolio
-                </span>
-              </label>
-            </div>
           </div>
         </div>
       </div>
 
-      {/* Chart Section */}
       <AccountHistoryChart
         accountData={accountData}
         portfolioData={portfolioData}

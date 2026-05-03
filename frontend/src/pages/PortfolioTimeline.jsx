@@ -11,11 +11,12 @@ import {
   ReferenceDot,
 } from 'recharts';
 import { history as historyAPI } from '../utils/api';
+import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
+import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
+import ChartTooltip from '../components/ChartTooltip';
 
-// Pagination constant
 const PAGE_SIZE = 100;
 
-// Date range presets
 const DATE_RANGES = {
   '1M': { label: '1 Month', days: 30 },
   '3M': { label: '3 Months', days: 90 },
@@ -25,44 +26,8 @@ const DATE_RANGES = {
   'ALL': { label: 'All Time', days: null },
 };
 
-// Format currency
-const formatCurrency = (value) => {
-  if (value === null || value === undefined) return '-';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
-};
+const ACCENT = '#00D4AA';
 
-// Format percentage
-const formatPercent = (value) => {
-  if (value === null || value === undefined) return '-';
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${value.toFixed(2)}%`;
-};
-
-// Format date for display
-const formatDateDisplay = (dateString) => {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-};
-
-// Format date for chart axis
-const formatDateAxis = (dateString) => {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  });
-};
-
-// Calculate date range
 const calculateDateRange = (range) => {
   const now = new Date();
   let startDate;
@@ -83,29 +48,11 @@ const calculateDateRange = (range) => {
   };
 };
 
-// Custom tooltip component
-const CustomTooltip = ({ active, payload }) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    return (
-      <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
-        <p className="text-sm text-gray-600 mb-1">{formatDateDisplay(data.snapshot_date)}</p>
-        <p className="text-lg font-semibold text-gray-900">{formatCurrency(data.total_value)}</p>
-      </div>
-    );
-  }
-  return null;
-};
-
-// Calculate linear regression for trend line
 const calculateTrendLine = (data) => {
   if (!data || data.length < 2) return [];
 
   const n = data.length;
-  let sumX = 0;
-  let sumY = 0;
-  let sumXY = 0;
-  let sumX2 = 0;
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
 
   data.forEach((point, i) => {
     const y = parseFloat(point.total_value) || 0;
@@ -134,7 +81,6 @@ const PortfolioTimeline = () => {
   const [useCustomRange, setUseCustomRange] = useState(false);
   const [showTrendLine, setShowTrendLine] = useState(true);
 
-  // Fetch portfolio data
   const fetchPortfolioData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -151,25 +97,13 @@ const PortfolioTimeline = () => {
         endDate = range.endDate;
       }
 
-      // Fetch all data by using a large limit
-      const response = await historyAPI.getPortfolio({
-        startDate,
-        endDate,
-        limit: PAGE_SIZE,
-      });
-
-      // Handle pagination if there's more data
+      const response = await historyAPI.getPortfolio({ startDate, endDate, limit: PAGE_SIZE });
       let allData = response.data || [];
       let offset = PAGE_SIZE;
       const total = response.pagination?.total || 0;
 
       while (offset < total) {
-        const moreResponse = await historyAPI.getPortfolio({
-          startDate,
-          endDate,
-          limit: PAGE_SIZE,
-          offset,
-        });
+        const moreResponse = await historyAPI.getPortfolio({ startDate, endDate, limit: PAGE_SIZE, offset });
         allData = [...allData, ...(moreResponse.data || [])];
         offset += PAGE_SIZE;
       }
@@ -187,20 +121,9 @@ const PortfolioTimeline = () => {
     fetchPortfolioData();
   }, [fetchPortfolioData]);
 
-  // Calculate metrics
   const metrics = useMemo(() => {
     if (!portfolioData || portfolioData.length === 0) {
-      return {
-        currentValue: 0,
-        startValue: 0,
-        totalGrowth: 0,
-        percentChange: 0,
-        avgMonthlyChange: 0,
-        allTimeHigh: 0,
-        allTimeLow: 0,
-        peakDate: null,
-        troughDate: null,
-      };
+      return { currentValue: 0, startValue: 0, totalGrowth: 0, percentChange: 0, avgMonthlyChange: 0, allTimeHigh: 0, allTimeLow: 0, peakDate: null, troughDate: null };
     }
 
     const values = portfolioData.map(d => parseFloat(d.total_value) || 0);
@@ -208,60 +131,35 @@ const PortfolioTimeline = () => {
     const startValue = values[0];
     const totalGrowth = currentValue - startValue;
     const percentChange = startValue !== 0 ? ((currentValue - startValue) / startValue) * 100 : 0;
-
     const allTimeHigh = Math.max(...values);
     const allTimeLow = Math.min(...values);
-
     const peakIndex = values.indexOf(allTimeHigh);
     const troughIndex = values.indexOf(allTimeLow);
     const peakDate = portfolioData[peakIndex]?.snapshot_date;
     const troughDate = portfolioData[troughIndex]?.snapshot_date;
 
-    // Calculate average monthly change
     let avgMonthlyChange = 0;
     if (portfolioData.length >= 2) {
       const firstDate = new Date(portfolioData[0].snapshot_date);
       const lastDate = new Date(portfolioData[portfolioData.length - 1].snapshot_date);
       const months = (lastDate - firstDate) / (1000 * 60 * 60 * 24 * 30.44);
-      if (months > 0) {
-        avgMonthlyChange = totalGrowth / months;
-      }
+      if (months > 0) avgMonthlyChange = totalGrowth / months;
     }
 
-    return {
-      currentValue,
-      startValue,
-      totalGrowth,
-      percentChange,
-      avgMonthlyChange,
-      allTimeHigh,
-      allTimeLow,
-      peakDate,
-      troughDate,
-    };
+    return { currentValue, startValue, totalGrowth, percentChange, avgMonthlyChange, allTimeHigh, allTimeLow, peakDate, troughDate };
   }, [portfolioData]);
 
-  // Add trend line data
   const chartData = useMemo(() => {
     if (!portfolioData || portfolioData.length === 0) return [];
     return showTrendLine ? calculateTrendLine(portfolioData) : portfolioData;
   }, [portfolioData, showTrendLine]);
 
-  // Export to CSV
   const exportToCSV = useCallback(() => {
     if (!portfolioData || portfolioData.length === 0) return;
 
     const headers = ['Date', 'Total Value'];
-    const rows = portfolioData.map(d => [
-      d.snapshot_date,
-      d.total_value,
-    ]);
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.join(',')),
-    ].join('\n');
-
+    const rows = portfolioData.map(d => [d.snapshot_date, d.total_value]);
+    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -273,49 +171,40 @@ const PortfolioTimeline = () => {
     URL.revokeObjectURL(url);
   }, [portfolioData]);
 
-  // Handle preset range change
   const handleRangeChange = (range) => {
     setUseCustomRange(false);
     setSelectedRange(range);
   };
 
-  // Handle custom date range
   const handleCustomRangeApply = () => {
-    if (customStartDate && customEndDate) {
-      setUseCustomRange(true);
-    }
+    if (customStartDate && customEndDate) setUseCustomRange(true);
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-xl text-gray-600">Loading portfolio data...</div>
+        <div className="text-xl text-secondary">Loading portfolio data...</div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-4 md:py-8">
+    <div className="container mx-auto px-4 py-4 md:py-8 animate-fade-in">
       <div className="mb-4 md:mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Portfolio Timeline</h1>
-        <p className="text-sm md:text-base text-gray-600">Track your portfolio value over time</p>
+        <h1 className="text-2xl md:text-3xl font-bold text-primary mb-1">Portfolio Timeline</h1>
+        <p className="text-sm text-secondary">Track your portfolio value over time</p>
       </div>
 
-      {/* Error Message */}
       {error && (
-        <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+        <div className="mb-4 p-4 bg-loss-bg border border-loss rounded text-loss text-sm">
           {error}
-          <button
-            onClick={fetchPortfolioData}
-            className="ml-4 underline hover:no-underline"
-          >
+          <button onClick={fetchPortfolioData} className="ml-4 underline hover:no-underline">
             Retry
           </button>
         </div>
       )}
 
-      {/* Date Range Selector */}
-      <div className="bg-white shadow-md rounded-lg p-3 md:p-4 mb-4 md:mb-6">
+      <div className="card p-3 md:p-4 mb-4 md:mb-6">
         <div className="flex flex-col gap-3 md:gap-4">
           <div className="flex flex-wrap gap-2">
             {Object.entries(DATE_RANGES).map(([key, { label }]) => (
@@ -324,32 +213,32 @@ const PortfolioTimeline = () => {
                 onClick={() => handleRangeChange(key)}
                 className={`px-3 md:px-4 py-2 rounded-md text-xs md:text-sm font-medium transition-colors touch-manipulation min-h-[44px] ${
                   selectedRange === key && !useCustomRange
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300'
+                    ? 'bg-accent text-inverse'
+                    : 'bg-surface-3 text-secondary hover:text-primary'
                 }`}
               >
                 {label}
               </button>
             ))}
           </div>
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-3 border-t border-gray-200">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-3 border-t border-border">
             <input
               type="date"
               value={customStartDate}
               onChange={(e) => setCustomStartDate(e.target.value)}
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm min-h-[44px] touch-manipulation"
+              className="flex-1 px-3 py-2 border border-input-border rounded-md text-sm min-h-[44px] touch-manipulation"
             />
-            <span className="text-gray-500 text-center sm:px-2">to</span>
+            <span className="text-secondary text-center sm:px-2">to</span>
             <input
               type="date"
               value={customEndDate}
               onChange={(e) => setCustomEndDate(e.target.value)}
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm min-h-[44px] touch-manipulation"
+              className="flex-1 px-3 py-2 border border-input-border rounded-md text-sm min-h-[44px] touch-manipulation"
             />
             <button
               onClick={handleCustomRangeApply}
               disabled={!customStartDate || !customEndDate}
-              className="px-4 py-2 bg-gray-600 text-white rounded-md text-sm hover:bg-gray-700 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
+              className="px-4 py-2 bg-surface-3 text-secondary rounded-md text-sm hover:bg-accent hover:text-inverse disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] touch-manipulation transition-colors"
             >
               Apply
             </button>
@@ -357,101 +246,92 @@ const PortfolioTimeline = () => {
         </div>
       </div>
 
-      {/* Metrics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 mb-4 md:mb-6">
-        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">Current Value</h3>
-          <p className="text-xl md:text-2xl font-bold text-gray-900 break-words">{formatCurrency(metrics.currentValue)}</p>
+        <div className="card p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">Current Value</h3>
+          <p className="text-xl md:text-2xl font-bold font-mono text-primary break-words">{formatCurrency(metrics.currentValue)}</p>
         </div>
-        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">Total Gain/Loss</h3>
-          <p className={`text-xl md:text-2xl font-bold break-words ${metrics.totalGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="card p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">Total Gain/Loss</h3>
+          <p className={`text-xl md:text-2xl font-bold font-mono break-words ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
             {formatCurrency(metrics.totalGrowth)}
           </p>
-          <p className={`text-xs md:text-sm ${metrics.percentChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <p className={`text-xs md:text-sm font-mono ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>
             {formatPercent(metrics.percentChange)}
           </p>
         </div>
-        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">Avg Monthly Change</h3>
-          <p className={`text-xl md:text-2xl font-bold break-words ${metrics.avgMonthlyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="card p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">Avg Monthly Change</h3>
+          <p className={`text-xl md:text-2xl font-bold font-mono break-words ${metrics.avgMonthlyChange >= 0 ? 'text-gain' : 'text-loss'}`}>
             {formatCurrency(metrics.avgMonthlyChange)}
           </p>
         </div>
-        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">All-Time High</h3>
-          <p className="text-xl md:text-2xl font-bold text-green-600 break-words">{formatCurrency(metrics.allTimeHigh)}</p>
+        <div className="card p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">All-Time High</h3>
+          <p className="text-xl md:text-2xl font-bold font-mono text-gain break-words">{formatCurrency(metrics.allTimeHigh)}</p>
           {metrics.peakDate && (
-            <p className="text-xs text-gray-500">{formatDateDisplay(metrics.peakDate)}</p>
+            <p className="text-xs text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
           )}
         </div>
-        <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-gray-500 mb-1">All-Time Low</h3>
-          <p className="text-xl md:text-2xl font-bold text-red-600 break-words">{formatCurrency(metrics.allTimeLow)}</p>
+        <div className="card p-3 md:p-4">
+          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">All-Time Low</h3>
+          <p className="text-xl md:text-2xl font-bold font-mono text-loss break-words">{formatCurrency(metrics.allTimeLow)}</p>
           {metrics.troughDate && (
-            <p className="text-xs text-gray-500">{formatDateDisplay(metrics.troughDate)}</p>
+            <p className="text-xs text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>
           )}
         </div>
       </div>
 
-      {/* Chart Controls */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
-            <input
-              type="checkbox"
-              checked={showTrendLine}
-              onChange={(e) => setShowTrendLine(e.target.checked)}
-              className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 touch-manipulation"
-            />
-            <span className="text-sm text-gray-700">Show Trend Line</span>
-          </label>
-        </div>
+        <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
+          <input
+            type="checkbox"
+            checked={showTrendLine}
+            onChange={(e) => setShowTrendLine(e.target.checked)}
+            className="w-5 h-5 touch-manipulation"
+            style={{ accentColor: 'var(--accent)' }}
+          />
+          <span className="text-sm text-secondary">Show Trend Line</span>
+        </label>
         <button
           onClick={exportToCSV}
           disabled={portfolioData.length === 0}
-          className="px-4 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 active:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
+          className="px-4 py-2 bg-surface-3 text-secondary rounded-md text-sm hover:bg-accent hover:text-inverse disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] touch-manipulation transition-colors"
         >
           Export CSV
         </button>
       </div>
 
-      {/* Chart */}
-      <div className="bg-white shadow-md rounded-lg p-3 md:p-4">
+      <div className="card p-3 md:p-4">
         {portfolioData.length === 0 ? (
-          <div className="flex items-center justify-center h-[300px] md:h-[400px] text-gray-500 text-sm md:text-base">
+          <div className="flex items-center justify-center h-[300px] md:h-[400px] text-secondary text-sm md:text-base">
             No data available for the selected date range
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={300} className="md:!h-[400px]">
             <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <defs>
-                <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
-                </linearGradient>
+                {areaGradient('colorValue', ACCENT)}
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <CartesianGrid {...GRID_STYLE} />
               <XAxis
                 dataKey="snapshot_date"
                 tickFormatter={formatDateAxis}
-                stroke="#6B7280"
-                fontSize={10}
-                tickLine={false}
+                {...AXIS_STYLE}
                 interval="preserveStartEnd"
               />
               <YAxis
-                tickFormatter={(value) => formatCurrency(value)}
-                stroke="#6B7280"
-                fontSize={10}
-                tickLine={false}
-                width={60}
+                tickFormatter={formatCurrency}
+                {...AXIS_STYLE}
+                width={75}
               />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip
+                content={<ChartTooltip formatValue={formatCurrency} formatLabel={formatDateAxis} />}
+              />
               <Area
                 type="monotone"
                 dataKey="total_value"
-                stroke="#3B82F6"
+                stroke={ACCENT}
                 strokeWidth={2}
                 fill="url(#colorValue)"
                 name="Portfolio Value"
@@ -460,45 +340,42 @@ const PortfolioTimeline = () => {
                 <Area
                   type="monotone"
                   dataKey="trend_value"
-                  stroke="#9CA3AF"
+                  stroke="#525D6E"
                   strokeWidth={1}
                   strokeDasharray="5 5"
                   fill="none"
                   name="Trend"
                 />
               )}
-              {/* Peak marker */}
               {metrics.peakDate && (
                 <ReferenceDot
                   x={metrics.peakDate}
                   y={metrics.allTimeHigh}
                   r={4}
-                  fill="#10B981"
-                  stroke="#fff"
+                  fill="var(--gain)"
+                  stroke="var(--bg-surface)"
                   strokeWidth={2}
                 />
               )}
-              {/* Trough marker */}
               {metrics.troughDate && metrics.troughDate !== metrics.peakDate && (
                 <ReferenceDot
                   x={metrics.troughDate}
                   y={metrics.allTimeLow}
                   r={4}
-                  fill="#EF4444"
-                  stroke="#fff"
+                  fill="var(--loss)"
+                  stroke="var(--bg-surface)"
                   strokeWidth={2}
                 />
               )}
-              {/* Average line */}
               {portfolioData.length > 0 && (
                 <ReferenceLine
                   y={metrics.startValue}
-                  stroke="#9CA3AF"
-                  strokeDasharray="3 3"
+                  stroke="#525D6E"
+                  strokeDasharray="5 5"
                   label={{
                     value: 'Start',
                     position: 'insideTopRight',
-                    fill: '#9CA3AF',
+                    fill: '#525D6E',
                     fontSize: 10,
                   }}
                 />
@@ -508,30 +385,27 @@ const PortfolioTimeline = () => {
         )}
       </div>
 
-      {/* Period Comparison */}
       {portfolioData.length > 0 && (
-        <div className="mt-6 bg-white shadow-md rounded-lg p-4">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Period Summary</h3>
+        <div className="mt-6 card p-4">
+          <h3 className="text-lg font-semibold text-primary mb-4">Period Summary</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <p className="text-sm text-gray-500">Start Date</p>
-              <p className="text-lg font-medium text-gray-900">
-                {portfolioData.length > 0 ? formatDateDisplay(portfolioData[0].snapshot_date) : '-'}
+              <p className="text-sm text-secondary">Start Date</p>
+              <p className="text-lg font-medium text-primary">
+                {formatDateDisplay(portfolioData[0].snapshot_date)}
               </p>
-              <p className="text-sm text-gray-600">{formatCurrency(metrics.startValue)}</p>
+              <p className="text-sm font-mono text-secondary">{formatCurrency(metrics.startValue)}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-500">End Date</p>
-              <p className="text-lg font-medium text-gray-900">
-                {portfolioData.length > 0
-                  ? formatDateDisplay(portfolioData[portfolioData.length - 1].snapshot_date)
-                  : '-'}
+              <p className="text-sm text-secondary">End Date</p>
+              <p className="text-lg font-medium text-primary">
+                {formatDateDisplay(portfolioData[portfolioData.length - 1].snapshot_date)}
               </p>
-              <p className="text-sm text-gray-600">{formatCurrency(metrics.currentValue)}</p>
+              <p className="text-sm font-mono text-secondary">{formatCurrency(metrics.currentValue)}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-500">Period Change</p>
-              <p className={`text-lg font-medium ${metrics.totalGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <p className="text-sm text-secondary">Period Change</p>
+              <p className={`text-lg font-medium font-mono ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
                 {formatCurrency(metrics.totalGrowth)} ({formatPercent(metrics.percentChange)})
               </p>
             </div>
