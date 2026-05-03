@@ -15,8 +15,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
         setError('Please select a CSV file');
         return;
       }
-      // Check file size (limit to 5MB)
-      const maxSize = 5 * 1024 * 1024; // 5MB
+      const maxSize = 5 * 1024 * 1024;
       if (selectedFile.size > maxSize) {
         setError('File size exceeds 5MB. Please use a smaller file.');
         return;
@@ -80,95 +79,97 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          <h2 className="text-2xl font-bold mb-4 text-gray-900">Bulk Import Holdings</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="bg-surface rounded-card border border-border shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="p-5 border-b border-border">
+          <h2 className="text-lg font-bold text-primary">Bulk Import Holdings</h2>
+        </div>
 
-          {/* File Upload */}
+        <div className="p-5">
           <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-secondary mb-2">
               CSV File
             </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileChange}
-                disabled={importing}
-                className="flex-1 text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50"
-              />
-              <button
-                onClick={handlePreview}
-                disabled={!file || importing}
-                className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {importing && !preview ? 'Loading...' : 'Preview'}
-              </button>
+            <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-border-hover">
+              <div className="flex flex-col items-center gap-3">
+                <p className="text-secondary text-sm">Select a CSV file to import</p>
+                <div className="flex items-center gap-2 w-full justify-center">
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleFileChange}
+                    disabled={importing}
+                    className="flex-1 text-sm text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-accent-muted file:text-accent hover:file:bg-accent-subtle disabled:opacity-50"
+                  />
+                  <button
+                    onClick={handlePreview}
+                    disabled={!file || importing}
+                    className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
+                  >
+                    {importing && !preview ? 'Loading...' : 'Preview'}
+                  </button>
+                </div>
+              </div>
             </div>
-            <p className="text-xs text-gray-500 mt-2">
+            <p className="text-xs text-tertiary mt-2">
               Expected format: account,ticker,name,quantity,category
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-tertiary">
               Example: Crypto,BTC,Bitcoin,0.5,Crypto
             </p>
           </div>
 
-          {/* Error Message */}
           {error && (
-            <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+            <div className="mb-4 bg-loss-bg text-loss border border-loss/20 rounded-lg p-3">
               {error}
             </div>
           )}
 
-          {/* Preview Results */}
           {preview && (
             <div className="mb-6">
-              <h3 className="text-lg font-semibold mb-3 text-gray-900">Import Preview</h3>
-              
-              {/* Summary */}
+              <h3 className="text-lg font-semibold mb-3 text-primary">Import Preview</h3>
+
               <div className="grid grid-cols-4 gap-4 mb-4">
-                <div className="p-3 bg-blue-50 rounded">
-                  <div className="text-2xl font-bold text-blue-700">{preview.preview.total}</div>
-                  <div className="text-xs text-gray-600">Total Rows</div>
+                <div className="bg-surface-3 rounded-lg p-3">
+                  <div className="text-xl font-mono font-bold text-primary">{preview.preview.total}</div>
+                  <div className="text-xs text-secondary">Total Rows</div>
                 </div>
-                <div className="p-3 bg-green-50 rounded">
-                  <div className="text-2xl font-bold text-green-700">{preview.preview.valid}</div>
-                  <div className="text-xs text-gray-600">Valid</div>
+                <div className="bg-gain-bg rounded-lg p-3">
+                  <div className="text-xl font-mono font-bold text-gain">{preview.preview.valid}</div>
+                  <div className="text-xs text-secondary">Valid</div>
                 </div>
-                <div className="p-3 bg-yellow-50 rounded">
-                  <div className="text-2xl font-bold text-yellow-700">{preview.preview.duplicates}</div>
-                  <div className="text-xs text-gray-600">Duplicates</div>
+                <div className="bg-amber-500/10 rounded-lg p-3">
+                  <div className="text-xl font-mono font-bold text-amber-400">{preview.preview.duplicates}</div>
+                  <div className="text-xs text-secondary">Duplicates</div>
                 </div>
-                <div className="p-3 bg-red-50 rounded">
-                  <div className="text-2xl font-bold text-red-700">{preview.preview.errors}</div>
-                  <div className="text-xs text-gray-600">Errors</div>
+                <div className="bg-loss-bg rounded-lg p-3">
+                  <div className="text-xl font-mono font-bold text-loss">{preview.preview.errors}</div>
+                  <div className="text-xs text-secondary">Errors</div>
                 </div>
               </div>
 
-              {/* Valid Rows */}
               {preview.validRows && preview.validRows.length > 0 && (
                 <div className="mb-4">
-                  <h4 className="font-medium text-green-700 mb-2">Valid Holdings ({preview.validRows.length})</h4>
-                  <div className="max-h-40 overflow-y-auto border rounded">
+                  <h4 className="font-medium text-gain mb-2">Valid Holdings ({preview.validRows.length})</h4>
+                  <div className="max-h-40 overflow-y-auto bg-surface rounded-card border border-border">
                     <table className="min-w-full text-xs">
-                      <thead className="bg-gray-50 sticky top-0">
+                      <thead className="bg-surface-2 sticky top-0">
                         <tr>
-                          <th className="px-2 py-1 text-left">Account</th>
-                          <th className="px-2 py-1 text-left">Ticker</th>
-                          <th className="px-2 py-1 text-left">Name</th>
-                          <th className="px-2 py-1 text-left">Quantity</th>
-                          <th className="px-2 py-1 text-left">Category</th>
+                          <th className="px-2 py-1 text-left text-secondary">Account</th>
+                          <th className="px-2 py-1 text-left text-secondary">Ticker</th>
+                          <th className="px-2 py-1 text-left text-secondary">Name</th>
+                          <th className="px-2 py-1 text-left text-secondary">Quantity</th>
+                          <th className="px-2 py-1 text-left text-secondary">Category</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody className="divide-y divide-border">
                         {preview.validRows.map((row, idx) => (
-                          <tr key={idx} className="border-t">
-                            <td className="px-2 py-1">{row.account_name}</td>
-                            <td className="px-2 py-1">{row.ticker || '-'}</td>
-                            <td className="px-2 py-1">{row.name}</td>
-                            <td className="px-2 py-1">{row.quantity || '-'}</td>
-                            <td className="px-2 py-1">{row.category || '-'}</td>
+                          <tr key={idx} className="hover:bg-surface-3">
+                            <td className="px-2 py-1 text-primary">{row.account_name}</td>
+                            <td className="px-2 py-1 text-primary">{row.ticker || '-'}</td>
+                            <td className="px-2 py-1 text-primary">{row.name}</td>
+                            <td className="px-2 py-1 text-primary">{row.quantity || '-'}</td>
+                            <td className="px-2 py-1 text-primary">{row.category || '-'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -177,65 +178,63 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
                 </div>
               )}
 
-              {/* Duplicates */}
               {preview.duplicates && preview.duplicates.length > 0 && (
                 <div className="mb-4">
-                  <h4 className="font-medium text-yellow-700 mb-2">Duplicate Holdings ({preview.duplicates.length})</h4>
-                  <div className="max-h-40 overflow-y-auto border rounded">
+                  <h4 className="font-medium text-amber-400 mb-2">Duplicate Holdings ({preview.duplicates.length})</h4>
+                  <div className="max-h-40 overflow-y-auto bg-surface rounded-card border border-border">
                     <table className="min-w-full text-xs">
-                      <thead className="bg-gray-50 sticky top-0">
+                      <thead className="bg-surface-2 sticky top-0">
                         <tr>
-                          <th className="px-2 py-1 text-left">Row</th>
-                          <th className="px-2 py-1 text-left">Account</th>
-                          <th className="px-2 py-1 text-left">Ticker</th>
-                          <th className="px-2 py-1 text-left">Name</th>
-                          <th className="px-2 py-1 text-left">Existing ID</th>
+                          <th className="px-2 py-1 text-left text-secondary">Row</th>
+                          <th className="px-2 py-1 text-left text-secondary">Account</th>
+                          <th className="px-2 py-1 text-left text-secondary">Ticker</th>
+                          <th className="px-2 py-1 text-left text-secondary">Name</th>
+                          <th className="px-2 py-1 text-left text-secondary">Existing ID</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody className="divide-y divide-border">
                         {preview.duplicates.map((dup, idx) => (
-                          <tr key={idx} className="border-t">
-                            <td className="px-2 py-1">{dup.row}</td>
-                            <td className="px-2 py-1">{dup.data.account_name}</td>
-                            <td className="px-2 py-1">{dup.data.ticker || '-'}</td>
-                            <td className="px-2 py-1">{dup.data.name}</td>
-                            <td className="px-2 py-1">#{dup.existing_id}</td>
+                          <tr key={idx} className="hover:bg-surface-3">
+                            <td className="px-2 py-1 text-primary">{dup.row}</td>
+                            <td className="px-2 py-1 text-primary">{dup.data.account_name}</td>
+                            <td className="px-2 py-1 text-primary">{dup.data.ticker || '-'}</td>
+                            <td className="px-2 py-1 text-primary">{dup.data.name}</td>
+                            <td className="px-2 py-1 text-primary">#{dup.existing_id}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  <label className="flex items-center gap-2 mt-2">
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={skipDuplicates}
                       onChange={(e) => setSkipDuplicates(e.target.checked)}
-                      className="rounded"
+                      className="rounded accent-accent"
                     />
-                    <span className="text-sm text-gray-700">Skip duplicates during import</span>
+                    <span className="text-sm text-secondary">Skip duplicates during import</span>
                   </label>
                 </div>
               )}
 
-              {/* Errors */}
               {preview.errors && preview.errors.length > 0 && (
                 <div className="mb-4">
-                  <h4 className="font-medium text-red-700 mb-2">Errors ({preview.errors.length})</h4>
-                  <div className="max-h-40 overflow-y-auto border rounded">
+                  <h4 className="font-medium text-loss mb-2">Errors ({preview.errors.length})</h4>
+                  <div className="max-h-40 overflow-y-auto bg-surface rounded-card border border-border">
                     <table className="min-w-full text-xs">
-                      <thead className="bg-gray-50 sticky top-0">
+                      <thead className="bg-surface-2 sticky top-0">
                         <tr>
-                          <th className="px-2 py-1 text-left">Row</th>
-                          <th className="px-2 py-1 text-left">Error</th>
-                          <th className="px-2 py-1 text-left">Data</th>
+                          <th className="px-2 py-1 text-left text-secondary">Row</th>
+                          <th className="px-2 py-1 text-left text-secondary">Error</th>
+                          <th className="px-2 py-1 text-left text-secondary">Data</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody className="divide-y divide-border">
                         {preview.errors.map((err, idx) => (
-                          <tr key={idx} className="border-t">
-                            <td className="px-2 py-1">{err.row}</td>
-                            <td className="px-2 py-1">{err.error}</td>
-                            <td className="px-2 py-1 text-xs">{JSON.stringify(err.data)}</td>
+                          <tr key={idx} className="hover:bg-surface-3">
+                            <td className="px-2 py-1 text-primary">{err.row}</td>
+                            <td className="px-2 py-1 text-loss">{err.error}</td>
+                            <td className="px-2 py-1 text-secondary text-xs">{JSON.stringify(err.data)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -246,13 +245,12 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
             </div>
           )}
 
-          {/* Buttons */}
-          <div className="flex justify-end gap-2 mt-6">
+          <div className="p-5 border-t border-border -mx-5 flex justify-end gap-3">
             <button
               type="button"
               onClick={handleClose}
               disabled={importing}
-              className="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
             >
               Cancel
             </button>
@@ -260,7 +258,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
               <button
                 onClick={handleConfirmImport}
                 disabled={importing}
-                className="px-4 py-2 text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
               >
                 {importing ? 'Importing...' : `Import ${preview.validRows.length} Holdings`}
               </button>
