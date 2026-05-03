@@ -1,2 +1,6 @@
 # Personal data files
 *.xlsx
+*.pdf
+
+# Claude Code
+.claude/
