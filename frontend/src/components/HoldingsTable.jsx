@@ -131,13 +131,21 @@ const HoldingsTable = () => {
         accessorKey: 'value',
         header: 'Value',
         cell: ({ row }) => {
-          const value = row.original.manual_value || row.original.current_value || 0;
+          const value = row.original.current_value ?? 0;
           return <span className="font-mono">{formatCurrency(value)}</span>;
         },
       },
       {
         accessorKey: 'category',
         header: 'Category',
+        cell: ({ getValue }) => {
+          const value = getValue();
+          return <span className="text-secondary">{value || '-'}</span>;
+        },
+      },
+      {
+        accessorKey: 'location',
+        header: 'Location',
         cell: ({ getValue }) => {
           const value = getValue();
           return <span className="text-secondary">{value || '-'}</span>;
@@ -309,7 +317,7 @@ const HoldingsTable = () => {
           ) : (
             table.getRowModel().rows.map((row) => {
               const account = accountsMap.get(row.original.account_id);
-              const value = row.original.manual_value || row.original.current_value || 0;
+              const value = row.original.current_value ?? 0;
               return (
                 <div
                   key={row.id}

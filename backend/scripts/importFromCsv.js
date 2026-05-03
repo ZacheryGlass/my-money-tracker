@@ -1,11 +1,23 @@
 #!/usr/bin/env node
 
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
-const pool = require('../src/config/database');
+const { Client } = require('pg');
 
-// Account name to account ID mapping
+let client;
+
+async function getClient() {
+  if (!client) {
+    client = new Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+  }
+  return client;
+}
+
+const pool = { query: async (...args) => (await getClient()).query(...args) };
+
 const ACCOUNT_MAPPING = {
   'Crypto': 1,
   'HSA': 2,
@@ -16,53 +28,58 @@ const ACCOUNT_MAPPING = {
   'Liability': 7
 };
 
-// Static assets to import
+const TICKER_NAMES = {
+  'BTC': 'Bitcoin',
+  'ETH': 'Ether',
+  'XMR': 'Monero',
+  'EOS': 'EOS',
+  'DASH': 'Dash',
+  'MIOTA': 'IOTA',
+  'SOL': 'Solana',
+  'ALGO': 'Algorand',
+  'DOT': 'Polkadot',
+  'ADA': 'Cardano',
+  'ICP': 'Internet Computer',
+  'MATIC': 'Polygon',
+  'LRC': 'Loopring',
+  'USDT': 'Tether',
+  'USDC': 'USD Coin',
+  'XNO': 'Nano',
+  'LINK': 'Chainlink',
+  'DOGE': 'Dogecoin',
+  'TON': 'Toncoin',
+  'PEPE': 'Pepe'
+};
+
 const STATIC_ASSETS = [
   {
     name: '702 Antelop St. Scott City, KS',
-    ticker: '',
-    quantity: 1,
+    manual_value: 25000,
     category: 'Real Estate',
-    accountId: 6  // Real Estate
+    accountId: 6
   }
 ];
 
 const STATIC_LIABILITIES = [
-  {
-    name: 'Student Loans (Great Lakes)',
-    ticker: '',
-    quantity: -1,
-    category: 'Debt',
-    accountId: 7  // Liability
-  },
-  {
-    name: 'M1 LOC (M1 Borrow)',
-    ticker: '',
-    quantity: -1,
-    category: 'Debt',
-    accountId: 7  // Liability
-  },
-  {
-    name: 'Car Loan (Chevy)',
-    ticker: '',
-    quantity: -1,
-    category: 'Debt',
-    accountId: 7  // Liability
-  },
-  {
-    name: 'Car Loan (Honda)',
-    ticker: '',
-    quantity: -1,
-    category: 'Debt',
-    accountId: 7  // Liability
-  }
+  { name: 'Student Loans (Great Lakes)', manual_value: -12512, category: 'Debt', accountId: 7 },
+  { name: 'M1 LOC (M1 Borrow)', manual_value: -12500, category: 'Debt', accountId: 7 },
+  { name: 'Car Loan (Chevy)', manual_value: -1572, category: 'Debt', accountId: 7 },
+  { name: 'Car Loan (Honda)', manual_value: 0, category: 'Debt', accountId: 7 }
 ];
-
-let importLog = [];
 
 function log(message) {
   console.log(message);
-  importLog.push(message);
+}
+
+function readCsv(filepath) {
+  return new Promise((resolve, reject) => {
+    const rows = [];
+    fs.createReadStream(filepath)
+      .pipe(csv())
+      .on('data', (row) => rows.push(row))
+      .on('end', () => resolve(rows))
+      .on('error', reject);
+  });
 }
 
 async function importAccountSheets() {
@@ -82,7 +99,7 @@ async function importAccountSheets() {
     const accountName = filename.replace(' Shares.csv', '');
 
     if (!fs.existsSync(filepath)) {
-      log(`⚠️  SKIPPING ${filename} - file not found`);
+      log(`  SKIP ${filename} - file not found`);
       continue;
     }
 
@@ -92,225 +109,161 @@ async function importAccountSheets() {
 }
 
 async function importAccountSheet(filepath, accountName) {
-  return new Promise((resolve, reject) => {
-    const accountId = ACCOUNT_MAPPING[accountName];
-    if (!accountId) {
-      log(`❌ ERROR: Unknown account name: ${accountName}`);
-      return reject(new Error(`Unknown account: ${accountName}`));
+  const accountId = ACCOUNT_MAPPING[accountName];
+  if (!accountId) {
+    log(`  ERROR: Unknown account name: ${accountName}`);
+    return;
+  }
+
+  const rows = await readCsv(filepath);
+  let insertCount = 0;
+
+  for (const row of rows) {
+    const ticker = (row['Ticker'] || '').trim().toUpperCase();
+    const name = (row['Name'] || '').trim();
+    const quantity = row['Quantity'] ? parseFloat(row['Quantity']) : null;
+
+    if (!ticker || !name) continue;
+    if (['ETFS', 'MUTUAL FUNDS', 'STOCKS'].includes(ticker)) continue;
+
+    const category = accountName === 'Crypto' ? 'Crypto' : 'Securities';
+
+    try {
+      await pool.query(
+        `INSERT INTO holdings (account_id, ticker, name, quantity, category)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (account_id, ticker, name) DO UPDATE SET quantity = $4`,
+        [accountId, ticker, name, quantity, category]
+      );
+      insertCount++;
+    } catch (err) {
+      log(`  Error inserting ${ticker}: ${err.message}`);
     }
+  }
 
-    let rowCount = 0;
-    let insertCount = 0;
-
-    fs.createReadStream(filepath)
-      .pipe(csv())
-      .on('data', async (row) => {
-        rowCount++;
-
-        // Column A = Ticker, Column B = Name, Column K = Value
-        const ticker = (row['Ticker'] || '').trim().toUpperCase();
-        const name = (row['Name'] || '').trim();
-        const value = parseFloat(row['Value'] || 0);
-
-        // Skip rows without ticker
-        if (!ticker) {
-          return;
-        }
-
-        // Skip section headers
-        if (['ETFS', 'MUTUAL FUNDS', 'STOCKS'].includes(ticker)) {
-          return;
-        }
-
-        // Skip very small values (< $1)
-        if (value < 1 && value > -1) {
-          return;
-        }
-
-        // Calculate quantity from value (will be stored, price fetched later)
-        const quantity = 1;  // Placeholder, actual quantity unknown from value alone
-
-        // Insert into holdings table
-        try {
-          const query = `
-            INSERT INTO holdings (account_id, ticker, name, quantity, category)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (account_id, ticker) DO NOTHING
-          `;
-
-          const category = accountName === 'Crypto' ? 'Crypto' : 'Securities';
-          await pool.query(query, [accountId, ticker, name, quantity, category]);
-
-          insertCount++;
-          if (rowCount % 10 === 0) {
-            log(`  Processed ${rowCount} rows, inserted ${insertCount}...`);
-          }
-        } catch (err) {
-          log(`  ⚠️  Error inserting ${ticker}: ${err.message}`);
-        }
-      })
-      .on('end', () => {
-        log(`✅ ${accountName}: Processed ${rowCount} rows, inserted ${insertCount} holdings`);
-        resolve();
-      })
-      .on('error', (err) => {
-        log(`❌ ERROR reading ${filepath}: ${err.message}`);
-        reject(err);
-      });
-  });
+  log(`  ${accountName}: inserted/updated ${insertCount} holdings`);
 }
 
 async function importTickerHistory() {
   log('\n=== IMPORTING TICKER HISTORY ===');
 
   const filepath = path.join(__dirname, '../data/exports/Ticker History.csv');
-
   if (!fs.existsSync(filepath)) {
-    log(`⚠️  SKIPPING Ticker History - file not found`);
+    log('  SKIP Ticker History - file not found');
     return;
   }
 
-  return new Promise((resolve, reject) => {
-    let rowCount = 0;
-    let insertCount = 0;
+  // Build ticker-to-account_id map from holdings table
+  const holdingsResult = await pool.query(
+    'SELECT DISTINCT UPPER(ticker) as ticker, account_id FROM holdings WHERE ticker IS NOT NULL'
+  );
+  const tickerAccountMap = {};
+  for (const row of holdingsResult.rows) {
+    tickerAccountMap[row.ticker] = row.account_id;
+  }
 
-    fs.createReadStream(filepath)
-      .pipe(csv())
-      .on('data', async (row) => {
-        rowCount++;
+  const rows = await readCsv(filepath);
+  let insertCount = 0;
+  let skipCount = 0;
 
-        const timestamp = row['Timestamp'];
-        if (!timestamp) {
-          log(`⚠️  Skipping row ${rowCount}: missing timestamp`);
-          return;
-        }
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const timestamp = row['Timestamp'];
+    if (!timestamp) continue;
 
-        // Convert MM/DD/YYYY HH:MM:SS to ISO timestamp
-        let snapshotDate;
-        try {
-          snapshotDate = parseTimestamp(timestamp);
-        } catch (err) {
-          log(`⚠️  Skipping row ${rowCount}: invalid timestamp format`);
-          return;
-        }
+    let snapshotDate;
+    try {
+      snapshotDate = parseTimestamp(timestamp);
+    } catch {
+      skipCount++;
+      continue;
+    }
 
-        // Process each ticker column (skip Timestamp column)
-        for (const [ticker, value] of Object.entries(row)) {
-          if (ticker === 'Timestamp' || !ticker.trim()) {
-            continue;
-          }
+    for (const [ticker, value] of Object.entries(row)) {
+      if (ticker === 'Timestamp' || !ticker.trim()) continue;
 
-          const amount = parseFloat(value);
-          if (!amount || isNaN(amount)) {
-            continue;
-          }
+      const amount = parseFloat(value);
+      if (isNaN(amount)) continue;
 
-          try {
-            const query = `
-              INSERT INTO ticker_snapshots (ticker, snapshot_date, value_usd)
-              VALUES ($1, $2, $3)
-              ON CONFLICT (ticker, snapshot_date) DO NOTHING
-            `;
+      const tickerUpper = ticker.toUpperCase();
+      const name = TICKER_NAMES[tickerUpper] || tickerUpper;
+      const accountId = tickerAccountMap[tickerUpper] || ACCOUNT_MAPPING['Crypto'];
 
-            await pool.query(query, [ticker.toUpperCase(), snapshotDate, amount]);
-            insertCount++;
-          } catch (err) {
-            log(`  ⚠️  Error inserting snapshot for ${ticker}: ${err.message}`);
-          }
-        }
+      try {
+        await pool.query(
+          `INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (snapshot_date, account_id, ticker) DO NOTHING`,
+          [snapshotDate, accountId, tickerUpper, name, amount]
+        );
+        insertCount++;
+      } catch (err) {
+        log(`  Error inserting snapshot for ${tickerUpper}: ${err.message}`);
+      }
+    }
 
-        if (rowCount % 50 === 0) {
-          log(`  Processed ${rowCount} rows, inserted ${insertCount} snapshots...`);
-        }
-      })
-      .on('end', () => {
-        log(`✅ Ticker History: Processed ${rowCount} rows, inserted ${insertCount} snapshots`);
-        resolve();
-      })
-      .on('error', (err) => {
-        log(`❌ ERROR reading Ticker History: ${err.message}`);
-        reject(err);
-      });
-  });
+    if ((i + 1) % 200 === 0) {
+      log(`  Processed ${i + 1}/${rows.length} rows...`);
+    }
+  }
+
+  log(`  Ticker History: ${insertCount} snapshots inserted, ${skipCount} rows skipped`);
 }
 
 async function importAccountHistory() {
   log('\n=== IMPORTING ACCOUNT HISTORY ===');
 
   const filepath = path.join(__dirname, '../data/exports/Account History.csv');
-
   if (!fs.existsSync(filepath)) {
-    log(`⚠️  SKIPPING Account History - file not found`);
+    log('  SKIP Account History - file not found');
     return;
   }
 
-  return new Promise((resolve, reject) => {
-    let rowCount = 0;
-    let insertCount = 0;
+  const rows = await readCsv(filepath);
+  let insertCount = 0;
+  let skipCount = 0;
 
-    fs.createReadStream(filepath)
-      .pipe(csv())
-      .on('data', async (row) => {
-        rowCount++;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const timestamp = row['Timestamp'];
+    if (!timestamp) continue;
 
-        const timestamp = row['Timestamp'];
-        if (!timestamp) {
-          log(`⚠️  Skipping row ${rowCount}: missing timestamp`);
-          return;
-        }
+    let snapshotDate;
+    try {
+      snapshotDate = parseTimestamp(timestamp);
+    } catch {
+      skipCount++;
+      continue;
+    }
 
-        // Convert timestamp format
-        let snapshotDate;
-        try {
-          snapshotDate = parseTimestamp(timestamp);
-        } catch (err) {
-          log(`⚠️  Skipping row ${rowCount}: invalid timestamp format`);
-          return;
-        }
+    for (const [accountName, value] of Object.entries(row)) {
+      if (accountName === 'Timestamp' || !accountName.trim()) continue;
 
-        // Process each account column
-        for (const [accountName, value] of Object.entries(row)) {
-          if (accountName === 'Timestamp' || !accountName.trim()) {
-            continue;
-          }
+      const amount = parseFloat(value);
+      if (isNaN(amount)) continue;
 
-          const amount = parseFloat(value);
-          if (!amount || isNaN(amount)) {
-            continue;
-          }
+      const accountId = ACCOUNT_MAPPING[accountName];
+      if (!accountId) continue;
 
-          const accountId = ACCOUNT_MAPPING[accountName];
-          if (!accountId) {
-            continue;  // Skip unknown accounts
-          }
+      try {
+        await pool.query(
+          `INSERT INTO account_snapshots (snapshot_date, account_id, total_value)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (snapshot_date, account_id) DO NOTHING`,
+          [snapshotDate, accountId, amount]
+        );
+        insertCount++;
+      } catch (err) {
+        log(`  Error inserting account snapshot: ${err.message}`);
+      }
+    }
 
-          try {
-            const query = `
-              INSERT INTO account_snapshots (account_id, snapshot_date, value_usd)
-              VALUES ($1, $2, $3)
-              ON CONFLICT (account_id, snapshot_date) DO NOTHING
-            `;
+    if ((i + 1) % 200 === 0) {
+      log(`  Processed ${i + 1}/${rows.length} rows...`);
+    }
+  }
 
-            await pool.query(query, [accountId, snapshotDate, amount]);
-            insertCount++;
-          } catch (err) {
-            log(`  ⚠️  Error inserting account snapshot: ${err.message}`);
-          }
-        }
-
-        if (rowCount % 50 === 0) {
-          log(`  Processed ${rowCount} rows, inserted ${insertCount} snapshots...`);
-        }
-      })
-      .on('end', () => {
-        log(`✅ Account History: Processed ${rowCount} rows, inserted ${insertCount} snapshots`);
-        resolve();
-      })
-      .on('error', (err) => {
-        log(`❌ ERROR reading Account History: ${err.message}`);
-        reject(err);
-      });
-  });
+  log(`  Account History: ${insertCount} snapshots inserted, ${skipCount} rows skipped`);
 }
 
 async function importStaticAssets() {
@@ -320,65 +273,50 @@ async function importStaticAssets() {
 
   for (const asset of allStatic) {
     try {
-      const query = `
-        INSERT INTO holdings (account_id, ticker, name, quantity, category)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (account_id, ticker) DO NOTHING
-      `;
-
-      await pool.query(query, [
-        asset.accountId,
-        asset.ticker || null,
-        asset.name,
-        asset.quantity,
-        asset.category
-      ]);
-
-      log(`✅ Imported: ${asset.name}`);
+      const existing = await pool.query(
+        'SELECT id FROM holdings WHERE account_id = $1 AND ticker IS NULL AND name = $2',
+        [asset.accountId, asset.name]
+      );
+      if (existing.rows.length > 0) {
+        log(`  Skipped (exists): ${asset.name}`);
+        continue;
+      }
+      await pool.query(
+        `INSERT INTO holdings (account_id, name, manual_value, category)
+         VALUES ($1, $2, $3, $4)`,
+        [asset.accountId, asset.name, asset.manual_value, asset.category]
+      );
+      log(`  Imported: ${asset.name}`);
     } catch (err) {
-      log(`⚠️  Error importing ${asset.name}: ${err.message}`);
+      log(`  Error importing ${asset.name}: ${err.message}`);
     }
   }
 }
 
 function parseTimestamp(timestamp) {
-  // Expected format: MM/DD/YYYY HH:MM:SS
-  const match = timestamp.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/);
+  const match = timestamp.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!match) throw new Error(`Invalid timestamp: ${timestamp}`);
 
-  if (!match) {
-    throw new Error(`Invalid timestamp format: ${timestamp}`);
-  }
-
-  const [, month, day, year, hour, minute, second] = match;
-  const date = new Date(
-    parseInt(year),
-    parseInt(month) - 1,
-    parseInt(day),
-    parseInt(hour),
-    parseInt(minute),
-    parseInt(second)
-  );
-
-  return date.toISOString();
+  const [, month, day, year] = match;
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 }
 
 async function main() {
   log('Starting CSV import...\n');
 
   try {
-    // Import in order
     await importAccountSheets();
     await importStaticAssets();
     await importTickerHistory();
     await importAccountHistory();
 
     log('\n=== IMPORT COMPLETE ===');
-    log('\nTo verify the import, run: npm run verify');
-
+    if (client) await client.end();
     process.exit(0);
   } catch (err) {
-    log(`\n❌ IMPORT FAILED: ${err.message}`);
+    log(`\nIMPORT FAILED: ${err.message}`);
     console.error(err);
+    if (client) await client.end();
     process.exit(1);
   }
 }

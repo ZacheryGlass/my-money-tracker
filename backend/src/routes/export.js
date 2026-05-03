@@ -43,14 +43,16 @@ router.get('/holdings', async (req, res) => {
         h.ticker,
         h.name,
         h.quantity,
+        h.manual_value,
         h.category,
+        h.location,
         h.notes
       FROM holdings h
       JOIN accounts a ON h.account_id = a.id
       ORDER BY a.name, h.name
     `);
 
-    const headers = ['account', 'ticker', 'name', 'quantity', 'category', 'notes'];
+    const headers = ['account', 'ticker', 'name', 'quantity', 'manual_value', 'category', 'location', 'notes'];
     const csv = arrayToCSV(result.rows, headers);
 
     res.setHeader('Content-Type', 'text/csv');

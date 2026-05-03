@@ -16,7 +16,7 @@ const StaticAssetsForm = ({ isOpen, onClose, onSave, asset, accounts }) => {
       setFormData({
         account_id: asset.account_id || '',
         name: asset.name || '',
-        manual_value: asset.manual_value || '',
+        manual_value: asset.manual_value ?? '',
         category: asset.category || '',
         notes: asset.notes || '',
       });
@@ -68,6 +68,7 @@ const StaticAssetsForm = ({ isOpen, onClose, onSave, asset, accounts }) => {
         manual_value: parseFloat(formData.manual_value),
         category: formData.category ? formData.category.trim() : null,
         notes: formData.notes ? formData.notes.trim() : null,
+        location: asset?.location || null,
       };
 
       await onSave(dataToSubmit);

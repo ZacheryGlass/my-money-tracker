@@ -42,14 +42,14 @@ class DashboardService {
         continue;
       }
 
-      // Determine type based on account name
-      const type = holding.account_name === LIABILITY_ACCOUNT_NAME ? 'Liability' : 'Asset';
+      const type = holding.account_name === LIABILITY_ACCOUNT_NAME ? 'liability' : 'asset';
 
       items.push({
         name: holding.name,
         ticker: holding.ticker || null,
         value: value,
         account: holding.account_name,
+        account_id: holding.account_id,
         category: holding.category,
         type: type
       });

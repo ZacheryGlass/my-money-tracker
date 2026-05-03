@@ -42,16 +42,17 @@ router.get('/:id', async (req, res) => {
 // POST /api/holdings - Create new holding
 router.post('/', validateHolding, async (req, res) => {
   try {
-    const { account_id, ticker, name, quantity, manual_value, category, notes } = req.body;
+    const { account_id, ticker, name, quantity, manual_value, category, notes, location } = req.body;
 
     const holding = await Holding.create(
       account_id,
       ticker,
       name,
-      quantity || null,
-      manual_value || null,
+      quantity ?? null,
+      manual_value ?? null,
       category || null,
-      notes || null
+      notes || null,
+      location || null
     );
 
     res.status(201).json({ holding });
@@ -70,7 +71,7 @@ router.post('/', validateHolding, async (req, res) => {
 // PUT /api/holdings/:id - Update holding
 router.put('/:id', validateHolding, async (req, res) => {
   try {
-    const { account_id, ticker, name, quantity, manual_value, category, notes } = req.body;
+    const { account_id, ticker, name, quantity, manual_value, category, notes, location } = req.body;
     const id = parseInt(req.params.id);
 
     // Check if holding exists
@@ -84,10 +85,11 @@ router.put('/:id', validateHolding, async (req, res) => {
       account_id,
       ticker,
       name,
-      quantity || null,
-      manual_value || null,
+      quantity ?? null,
+      manual_value ?? null,
       category || null,
-      notes || null
+      notes || null,
+      location || null
     );
 
     res.status(200).json({ holding });
@@ -193,6 +195,16 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
         continue;
       }
 
+      const manualValue = row.manual_value ? parseFloat(row.manual_value) : null;
+      if (row.manual_value && isNaN(manualValue)) {
+        errors.push({
+          row: rowNum,
+          error: 'Invalid manual_value',
+          data: row
+        });
+        continue;
+      }
+
       validatedRows.push({
         rowNum,
         account_id: accountId,
@@ -200,7 +212,10 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
         ticker: row.ticker ? row.ticker.trim() : null,
         name: row.name.trim(),
         quantity: quantity,
-        category: row.category ? row.category.trim() : null
+        manual_value: manualValue,
+        category: row.category ? row.category.trim() : null,
+        location: row.location ? row.location.trim() : null,
+        notes: row.notes ? row.notes.trim() : null
       });
     }
 
@@ -236,7 +251,10 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
                 ticker: row.ticker,
                 name: row.name,
                 quantity: row.quantity,
-                category: row.category
+                manual_value: row.manual_value,
+                category: row.category,
+                location: row.location,
+                notes: row.notes
               }
             });
           } else {
@@ -246,7 +264,10 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
               ticker: row.ticker,
               name: row.name,
               quantity: row.quantity,
-              category: row.category
+              manual_value: row.manual_value,
+              category: row.category,
+              location: row.location,
+              notes: row.notes
             });
           }
         }
@@ -283,7 +304,10 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
                 ticker: row.ticker,
                 name: row.name,
                 quantity: row.quantity,
-                category: row.category
+                manual_value: row.manual_value,
+                category: row.category,
+                location: row.location,
+                notes: row.notes
               }
             });
           } else {
@@ -293,7 +317,10 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
               ticker: row.ticker,
               name: row.name,
               quantity: row.quantity,
-              category: row.category
+              manual_value: row.manual_value,
+              category: row.category,
+              location: row.location,
+              notes: row.notes
             });
           }
         }
@@ -350,9 +377,10 @@ router.post('/bulk-import/confirm', express.json(), async (req, res) => {
           row.ticker,
           row.name,
           row.quantity,
-          null, // manual_value
+          row.manual_value ?? null,
           row.category,
-          null  // notes
+          row.notes || null,
+          row.location || null
         );
         imported.push(holding);
       } catch (error) {
