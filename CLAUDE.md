@@ -13,7 +13,7 @@
 # Start both servers (double-click or run from any terminal)
 python scripts/dev.py       # backend :3000, frontend :5173
 
-# Login: zachery / changeme123
+# Login: zachery / password
 ```
 
 ## Architecture

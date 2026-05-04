@@ -1,95 +1,33 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  LayoutDashboard,
+  PieChart,
+  Building2,
+  TrendingUp,
+  History,
+  Calendar,
+  Banknote,
+  CreditCard,
+  LogOut,
+  ChevronLeft,
+  ChevronRight,
+  Menu,
+  User as UserIcon
+} from 'lucide-react';
 import { useIsMobile, useIsDesktop } from '../hooks/useMediaQuery';
 
 const NAV_ITEMS = [
-  {
-    id: 'dashboard',
-    label: 'Dashboard',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="2" width="7" height="7" rx="1" />
-        <rect x="11" y="2" width="7" height="7" rx="1" />
-        <rect x="2" y="11" width="7" height="7" rx="1" />
-        <rect x="11" y="11" width="7" height="7" rx="1" />
-      </svg>
-    ),
-  },
-  {
-    id: 'holdings',
-    label: 'Holdings',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="3" y1="5" x2="17" y2="5" />
-        <line x1="3" y1="10" x2="17" y2="10" />
-        <line x1="3" y1="15" x2="17" y2="15" />
-        <circle cx="3" cy="5" r="1" fill="currentColor" stroke="none" />
-        <circle cx="3" cy="10" r="1" fill="currentColor" stroke="none" />
-        <circle cx="3" cy="15" r="1" fill="currentColor" stroke="none" />
-      </svg>
-    ),
-  },
-  {
-    id: 'static-assets',
-    label: 'Static Assets',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 9L10 3l7 6" />
-        <path d="M5 9v8h10V9" />
-        <rect x="8" y="13" width="4" height="4" />
-      </svg>
-    ),
-  },
-  {
-    id: 'ticker-history',
-    label: 'Ticker History',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="2,14 7,9 11,12 18,5" />
-        <polyline points="14,5 18,5 18,9" />
-      </svg>
-    ),
-  },
-  {
-    id: 'account-history',
-    label: 'Account History',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="12" width="3" height="6" />
-        <rect x="7" y="8" width="3" height="10" />
-        <rect x="12" y="5" width="3" height="13" />
-        <rect x="17" y="2" width="3" height="16" />
-      </svg>
-    ),
-  },
-  {
-    id: 'portfolio-timeline',
-    label: 'Portfolio Timeline',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="2,17 6,11 10,13 14,7 18,3" />
-        <line x1="2" y1="17" x2="18" y2="17" />
-      </svg>
-    ),
-  },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'holdings', label: 'Holdings', icon: PieChart },
+  { id: 'static-assets', label: 'Static Assets', icon: Building2 },
+  { id: 'ticker-history', label: 'Ticker History', icon: TrendingUp },
+  { id: 'account-history', label: 'Account History', icon: History },
+  { id: 'portfolio-timeline', label: 'Portfolio Timeline', icon: Calendar },
+  { id: '_separator_planning', section: 'PLANNING' },
+  { id: 'salary-history', label: 'Salary History', icon: Banknote },
+  { id: 'monthly-expenses', label: 'Monthly Expenses', icon: CreditCard },
 ];
-
-const CollapseIcon = ({ expanded }) => (
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    {expanded ? (
-      <polyline points="13,5 7,10 13,15" />
-    ) : (
-      <polyline points="7,5 13,10 7,15" />
-    )}
-  </svg>
-);
-
-const HamburgerIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="3" y1="5" x2="17" y2="5" />
-    <line x1="3" y1="10" x2="17" y2="10" />
-    <line x1="3" y1="15" x2="17" y2="15" />
-  </svg>
-);
 
 function getStoredExpanded() {
   try {
@@ -106,13 +44,11 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
   const [expanded, setExpanded] = useState(getStoredExpanded);
 
   const showExpanded = isDesktop && expanded;
-  const sidebarWidth = showExpanded ? '240px' : '64px';
 
   useEffect(() => {
     try {
       localStorage.setItem('sidebar-expanded', String(expanded));
-    } catch {
-    }
+    } catch {}
   }, [expanded]);
 
   const handleToggleExpand = () => {
@@ -129,121 +65,163 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
   };
 
   const sidebarContent = (
-    <aside
-      style={{ width: isMobile ? '240px' : sidebarWidth }}
-      className="flex flex-col h-full bg-surface-2 border-r border-border transition-all duration-200 ease-in-out overflow-hidden"
+    <motion.aside
+      initial={false}
+      animate={{ width: isMobile ? '280px' : (showExpanded ? '260px' : '80px') }}
+      className="flex flex-col h-full bg-surface border-r border-border transition-colors duration-300 ease-in-out overflow-hidden z-50"
     >
-      <div className="flex items-center h-14 px-4 border-b border-border flex-shrink-0">
-        <span className="text-accent font-mono font-bold text-base flex-shrink-0">MMT</span>
-        <span
-          className="ml-3 text-sm font-semibold text-primary whitespace-nowrap overflow-hidden transition-all duration-200 ease-in-out"
-          style={{ opacity: (showExpanded || isMobile) ? 1 : 0, width: (showExpanded || isMobile) ? 'auto' : 0 }}
-        >
-          My Money Tracker
-        </span>
+      {/* Header */}
+      <div className="flex items-center h-16 px-5 border-b border-border flex-shrink-0">
+        <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center flex-shrink-0 shadow-glow">
+          <Banknote className="text-inverse w-5 h-5" />
+        </div>
+        {(showExpanded || isMobile) && (
+          <motion.span
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="ml-3 text-sm font-bold tracking-tight text-primary whitespace-nowrap"
+          >
+            My Money Tracker
+          </motion.span>
+        )}
       </div>
 
-      <nav className="flex flex-col gap-1 py-3 px-2 flex-shrink-0">
-        {NAV_ITEMS.map((item) => {
-          const isActive = currentPage === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => handleNavClick(item.id)}
-              className={[
-                'flex items-center gap-3 w-full rounded-md px-2 py-2.5 text-left transition-colors duration-150',
-                isActive
-                  ? 'bg-accent-muted text-accent border-l-[3px] border-accent pl-[5px]'
-                  : 'text-secondary hover:bg-surface-3 hover:text-primary border-l-[3px] border-transparent pl-[5px]',
-              ].join(' ')}
-              title={(!showExpanded && !isMobile) ? item.label : undefined}
-            >
-              <span className="flex-shrink-0">{item.icon}</span>
-              <span
-                className="text-sm font-medium whitespace-nowrap overflow-hidden transition-all duration-200 ease-in-out"
-                style={{ opacity: (showExpanded || isMobile) ? 1 : 0, width: (showExpanded || isMobile) ? 'auto' : 0 }}
+      {/* Navigation */}
+      <nav className="flex-1 overflow-y-auto py-6 px-3 custom-scrollbar">
+        <div className="flex flex-col gap-1.5">
+          {NAV_ITEMS.map((item) => {
+            if (item.section) {
+              return (showExpanded || isMobile) ? (
+                <div key={item.id} className="mt-6 mb-2 px-4">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">
+                    {item.section}
+                  </span>
+                </div>
+              ) : (
+                <div key={item.id} className="my-4 border-t border-border/50 mx-2" />
+              );
+            }
+
+            const Icon = item.icon;
+            const isActive = currentPage === item.id;
+
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleNavClick(item.id)}
+                className={`
+                  flex items-center gap-3 w-full rounded-xl px-3 py-2.5 text-left transition-all duration-200 group relative
+                  ${isActive
+                    ? 'bg-accent/10 text-accent'
+                    : 'text-secondary hover:bg-surface-2 hover:text-primary'}
+                `}
+                title={(!showExpanded && !isMobile) ? item.label : undefined}
               >
-                {item.label}
-              </span>
-            </button>
-          );
-        })}
+                <div className={`
+                  flex items-center justify-center transition-transform duration-200
+                  ${isActive ? 'scale-110' : 'group-hover:scale-110'}
+                `}>
+                  <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
+                </div>
+
+                {(showExpanded || isMobile) && (
+                  <motion.span
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="text-sm font-medium whitespace-nowrap"
+                  >
+                    {item.label}
+                  </motion.span>
+                )}
+
+                {isActive && (
+                  <motion.div
+                    layoutId="active-pill"
+                    className="absolute left-0 w-1 h-6 bg-accent rounded-full"
+                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </nav>
 
-      <div className="flex-1" />
-
-      <div className="px-2 pb-2 border-t border-border pt-3 flex-shrink-0">
-        <div className="flex items-center gap-3 px-2 py-2">
-          <div className="w-8 h-8 rounded-full bg-surface-3 flex items-center justify-center flex-shrink-0">
-            <span className="text-xs font-semibold text-secondary uppercase">
-              {user?.username?.[0] ?? '?'}
-            </span>
+      {/* Footer / User Profile */}
+      <div className="p-3 border-t border-border bg-surface-2/30">
+        <div className={`flex items-center gap-3 px-3 py-3 rounded-xl ${(!showExpanded && !isMobile) ? 'justify-center' : ''}`}>
+          <div className="w-9 h-9 rounded-full bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 text-secondary">
+            <UserIcon size={18} />
           </div>
-          <span
-            className="text-sm text-secondary whitespace-nowrap overflow-hidden transition-all duration-200 ease-in-out flex-1 min-w-0 truncate"
-            style={{ opacity: (showExpanded || isMobile) ? 1 : 0, width: (showExpanded || isMobile) ? 'auto' : 0 }}
-          >
-            {user?.username}
-          </span>
+          {(showExpanded || isMobile) && (
+            <span className="text-sm font-semibold text-primary truncate leading-tight">
+              {user?.username}
+            </span>
+          )}
         </div>
+
         <button
           onClick={onLogout}
-          className="flex items-center gap-3 w-full rounded-md px-2 py-2.5 text-left text-secondary hover:bg-surface-3 hover:text-primary transition-colors duration-150 border-l-[3px] border-transparent pl-[5px]"
+          className={`
+            flex items-center gap-3 w-full rounded-xl px-3 py-2.5 mt-2 text-left text-secondary
+            hover:bg-loss/10 hover:text-loss transition-all duration-200 group
+            ${(!showExpanded && !isMobile) ? 'justify-center' : ''}
+          `}
           title={(!showExpanded && !isMobile) ? 'Logout' : undefined}
         >
-          <span className="flex-shrink-0">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M13 5l4 5-4 5" />
-              <path d="M17 10H7" />
-              <path d="M7 3H4a1 1 0 00-1 1v12a1 1 0 001 1h3" />
-            </svg>
-          </span>
-          <span
-            className="text-sm font-medium whitespace-nowrap overflow-hidden transition-all duration-200 ease-in-out"
-            style={{ opacity: (showExpanded || isMobile) ? 1 : 0, width: (showExpanded || isMobile) ? 'auto' : 0 }}
-          >
-            Logout
-          </span>
+          <LogOut size={20} className="group-hover:translate-x-0.5 transition-transform" />
+          {(showExpanded || isMobile) && (
+            <span className="text-sm font-medium">Logout</span>
+          )}
         </button>
       </div>
 
+      {/* Collapse Toggle */}
       {isDesktop && (
         <button
           onClick={handleToggleExpand}
-          className="flex items-center justify-center h-10 border-t border-border text-tertiary hover:text-secondary hover:bg-surface-3 transition-colors duration-150 flex-shrink-0"
-          title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          className="flex items-center justify-center h-12 border-t border-border text-tertiary hover:text-primary hover:bg-surface-3 transition-all duration-200"
         >
-          <CollapseIcon expanded={expanded} />
+          {expanded ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
         </button>
       )}
-    </aside>
+    </motion.aside>
   );
 
   if (isMobile) {
     return (
       <>
-        {mobileOpen && (
-          <div
-            className="fixed inset-0 z-40"
-            style={{ backgroundColor: 'var(--bg-overlay)' }}
-            onClick={onMobileClose}
-          />
-        )}
-        <div
-          className="fixed left-0 top-0 h-full z-50 transition-transform duration-200 ease-in-out"
-          style={{ transform: mobileOpen ? 'translateX(0)' : 'translateX(-100%)' }}
-        >
-          {sidebarContent}
-        </div>
+        <AnimatePresence>
+          {mobileOpen && (
+            <>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+                onClick={onMobileClose}
+              />
+              <motion.div
+                initial={{ x: '-100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '-100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                className="fixed left-0 top-0 h-full z-50 shadow-2xl"
+              >
+                {sidebarContent}
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
       </>
     );
   }
 
   return (
-    <div className="sticky top-0 h-screen flex-shrink-0" style={{ width: sidebarWidth, transition: 'width 200ms ease-in-out' }}>
+    <div className="sticky top-0 h-screen flex-shrink-0 z-50">
       {sidebarContent}
     </div>
   );
 }
 
-export { HamburgerIcon };
+export const HamburgerIcon = Menu;

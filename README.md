@@ -58,7 +58,7 @@ cp .env.example .env
 # Run migrations to create database schema
 npm run migrate
 
-# Seed initial user (default: username=zachery, password=changeme123)
+# Seed initial user (default: username=zachery, password=password)
 npm run seed
 
 # Start development server (with hot reload)

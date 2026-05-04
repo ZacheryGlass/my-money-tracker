@@ -88,7 +88,7 @@ PORT=3000
 NODE_ENV=development
 DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@$PG_HOST:$PG_PORT/$DB_NAME
 JWT_SECRET=$JWT_SECRET
-INITIAL_PASSWORD=changeme123
+INITIAL_PASSWORD=password
 CMC_PRO_API_KEY=
 CG_API_KEY=
 TZ=America/Mexico_City
@@ -125,5 +125,5 @@ Setup complete. To start the app:
 
 Then open http://localhost:5173 and log in:
   username: zachery
-  password: changeme123
+  password: password
 EOF

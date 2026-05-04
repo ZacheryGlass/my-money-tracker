@@ -8,7 +8,7 @@ async function seedDatabase() {
   try {
     // Seed default user
     const username = 'zachery';
-    const password = process.env.INITIAL_PASSWORD || 'changeme123';
+    const password = process.env.INITIAL_PASSWORD || 'password';
     const passwordHash = await bcrypt.hash(password, 10);
 
     const result = await pool.query(

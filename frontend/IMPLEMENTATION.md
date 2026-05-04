@@ -193,7 +193,7 @@ npm run lint
 
 1. **Login**: 
    - Navigate to `/login`
-   - Enter credentials (default: username=zachery, password=changeme123)
+   - Enter credentials (default: username=zachery, password=password)
    - JWT token stored in localStorage
    - Redirected to dashboard
 

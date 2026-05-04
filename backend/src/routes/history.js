@@ -35,8 +35,8 @@ router.get('/tickers', async (req, res) => {
     const parsedLimit = parseInt(limit);
     const parsedOffset = parseInt(offset);
 
-    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
-      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 10000) {
+      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 10000.' });
     }
 
     if (isNaN(parsedOffset) || parsedOffset < 0) {
@@ -135,8 +135,8 @@ router.get('/accounts', async (req, res) => {
     const parsedLimit = parseInt(limit);
     const parsedOffset = parseInt(offset);
 
-    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
-      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 10000) {
+      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 10000.' });
     }
 
     if (isNaN(parsedOffset) || parsedOffset < 0) {
@@ -226,8 +226,8 @@ router.get('/portfolio', async (req, res) => {
     const parsedLimit = parseInt(limit);
     const parsedOffset = parseInt(offset);
 
-    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
-      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 100.' });
+    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 10000) {
+      return res.status(400).json({ error: 'Invalid limit parameter. Must be between 1 and 10000.' });
     }
 
     if (isNaN(parsedOffset) || parsedOffset < 0) {

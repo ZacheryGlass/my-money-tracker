@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { holdings as holdingsAPI, history as historyAPI } from '../utils/api';
 import TickerHistoryChart from '../components/TickerHistoryChart';
 
-const DEFAULT_HISTORY_LIMIT = 100;
+const DEFAULT_HISTORY_LIMIT = 10000;
 
 const TickerHistory = () => {
   const [historyData, setHistoryData] = useState([]);
@@ -36,10 +36,8 @@ const TickerHistory = () => {
 
   useEffect(() => {
     const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - 30);
     setEndDate(end.toISOString().split('T')[0]);
-    setStartDate(start.toISOString().split('T')[0]);
+    setStartDate('2017-01-01');
   }, []);
 
   useEffect(() => {

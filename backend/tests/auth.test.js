@@ -20,7 +20,10 @@ require.cache[pgModulePath] = {
   id: pgModulePath,
   filename: pgModulePath,
   loaded: true,
-  exports: { Pool: class FakePool { query() { return fakePool.query(); } on() {} } },
+  exports: {
+    Pool: class FakePool { query() { return fakePool.query(); } on() {} },
+    types: { setTypeParser() {} },
+  },
 };
 
 // Now it's safe to load the app — database.js will get our fake Pool.

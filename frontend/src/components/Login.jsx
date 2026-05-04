@@ -78,7 +78,7 @@ const Login = () => {
 
         {import.meta.env.DEV && (
           <p className="mt-4 text-xs text-tertiary text-center">
-            Default credentials: zachery / changeme123
+            Default credentials: zachery / password
           </p>
         )}
       </div>
