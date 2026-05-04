@@ -293,6 +293,60 @@ async function importStaticAssets() {
   }
 }
 
+async function seedPriceCache() {
+  log('\n=== SEEDING PRICE CACHE FROM CSV VALUES ===');
+
+  const exportsDir = path.join(__dirname, '../data/exports');
+  const accountSheets = [
+    'Crypto Shares.csv',
+    'HSA Shares.csv',
+    'Taxable Shares.csv',
+    '401k Shares.csv',
+    'Roth IRA Shares.csv'
+  ];
+
+  const priceMap = {};
+
+  for (const filename of accountSheets) {
+    const filepath = path.join(exportsDir, filename);
+    if (!fs.existsSync(filepath)) continue;
+
+    const rows = await readCsv(filepath);
+    for (const row of rows) {
+      const ticker = (row['Ticker'] || '').trim().toUpperCase();
+      const quantity = parseFloat(row['Quantity']);
+      const value = parseFloat(row['Value']);
+
+      if (!ticker || isNaN(quantity) || isNaN(value)) continue;
+      if (['ETFS', 'MUTUAL FUNDS', 'STOCKS'].includes(ticker)) continue;
+
+      if (quantity > 0 && value > 0) {
+        const pricePerUnit = value / quantity;
+        if (!priceMap[ticker] || pricePerUnit > 0) {
+          priceMap[ticker] = pricePerUnit;
+        }
+      }
+    }
+  }
+
+  let insertCount = 0;
+  for (const [ticker, priceUsd] of Object.entries(priceMap)) {
+    try {
+      await pool.query(
+        `INSERT INTO price_cache (ticker, price_usd, source, fetched_at)
+         VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+         ON CONFLICT (ticker) DO UPDATE SET price_usd = $2, source = $3, fetched_at = CURRENT_TIMESTAMP`,
+        [ticker, priceUsd, 'csv-import']
+      );
+      insertCount++;
+    } catch (err) {
+      log(`  Error seeding price for ${ticker}: ${err.message}`);
+    }
+  }
+
+  log(`  Seeded ${insertCount} prices from CSV data`);
+}
+
 function parseTimestamp(timestamp) {
   const match = timestamp.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (!match) throw new Error(`Invalid timestamp: ${timestamp}`);
@@ -307,6 +361,7 @@ async function main() {
   try {
     await importAccountSheets();
     await importStaticAssets();
+    await seedPriceCache();
     await importTickerHistory();
     await importAccountHistory();
 
