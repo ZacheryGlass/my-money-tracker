@@ -39,8 +39,9 @@ const AccountHistory = () => {
     const fetchAccounts = async () => {
       try {
         const data = await accountsApi.getAll();
-        setAccounts(data);
-        setSelectedAccounts(data.map(acc => acc.id));
+        const list = data.accounts || [];
+        setAccounts(list);
+        setSelectedAccounts(list.map(acc => acc.id));
       } catch (err) {
         console.error('Error fetching accounts:', err);
         setError('Failed to load accounts');
