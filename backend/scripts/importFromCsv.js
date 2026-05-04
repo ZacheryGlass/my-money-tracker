@@ -120,20 +120,22 @@ async function importAccountSheet(filepath, accountName) {
 
   for (const row of rows) {
     const ticker = (row['Ticker'] || '').trim().toUpperCase();
-    const name = (row['Name'] || '').trim();
+    const name = (row['Name'] || '').trim() || ticker;
     const quantity = row['Quantity'] ? parseFloat(row['Quantity']) : null;
+    const csvValue = row['Value'] ? parseFloat(row['Value']) : null;
 
-    if (!ticker || !name) continue;
+    if (!ticker) continue;
     if (['ETFS', 'MUTUAL FUNDS', 'STOCKS'].includes(ticker)) continue;
 
     const category = accountName === 'Crypto' ? 'Crypto' : 'Securities';
+    const manualValue = (!quantity || quantity === 0) && csvValue ? csvValue : null;
 
     try {
       await pool.query(
-        `INSERT INTO holdings (account_id, ticker, name, quantity, category)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (account_id, ticker, name) DO UPDATE SET quantity = $4`,
-        [accountId, ticker, name, quantity, category]
+        `INSERT INTO holdings (account_id, ticker, name, quantity, manual_value, category)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (account_id, ticker, name) DO UPDATE SET quantity = $4, manual_value = COALESCE($5, holdings.manual_value)`,
+        [accountId, ticker, name, quantity, manualValue, category]
       );
       insertCount++;
     } catch (err) {

@@ -5,7 +5,7 @@ class Holding {
     const result = await pool.query(
       `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.updated_at, a.name as account_name,
         CASE
-          WHEN h.ticker IS NOT NULL AND pc.price_usd IS NOT NULL THEN h.quantity * pc.price_usd
+          WHEN h.ticker IS NOT NULL AND pc.price_usd IS NOT NULL AND h.quantity > 0 THEN h.quantity * pc.price_usd
           ELSE h.manual_value
         END as current_value
       FROM holdings h

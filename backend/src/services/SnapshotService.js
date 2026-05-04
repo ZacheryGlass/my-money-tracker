@@ -28,12 +28,11 @@ class SnapshotService {
     for (const holding of holdings) {
       let value = 0;
 
-      if (holding.ticker && priceMap[holding.ticker.toUpperCase()]) {
-        // Crypto/Securities with ticker: quantity × price
-        value = parseFloat(holding.quantity || 0) * priceMap[holding.ticker.toUpperCase()];
+      const qty = parseFloat(holding.quantity || 0);
+      if (holding.ticker && qty > 0 && priceMap[holding.ticker.toUpperCase()]) {
+        value = qty * priceMap[holding.ticker.toUpperCase()];
         succeeded++;
       } else if (holding.manual_value !== null) {
-        // Real Estate/Debt: use manual_value directly
         value = parseFloat(holding.manual_value);
         succeeded++;
       } else {
