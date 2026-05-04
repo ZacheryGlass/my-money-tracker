@@ -195,10 +195,11 @@ const StaticAssets = () => {
     let liabilitiesTotal = 0;
 
     assets.forEach((asset) => {
-      if (asset.manual_value < 0) {
-        liabilitiesTotal += Math.abs(asset.manual_value);
+      const value = parseFloat(asset.manual_value) || 0;
+      if (value < 0) {
+        liabilitiesTotal += Math.abs(value);
       } else {
-        assetsTotal += asset.manual_value;
+        assetsTotal += value;
       }
     });
 

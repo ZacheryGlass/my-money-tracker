@@ -1,38 +1,37 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.js";
 
 @layer base {
   :root {
-    /* Background hierarchy */
-    --bg-base: #0B0E11;
-    --bg-surface: #141820;
-    --bg-surface-2: #1C2230;
-    --bg-surface-3: #242B3A;
-    --bg-overlay: rgba(0, 0, 0, 0.6);
+    /* Background hierarchy - Deeper, more sophisticated palette */
+    --bg-base: #06080A;
+    --bg-surface: #0F1216;
+    --bg-surface-2: #161B22;
+    --bg-surface-3: #1F242C;
+    --bg-overlay: rgba(0, 0, 0, 0.75);
 
-    /* Text hierarchy */
-    --text-primary: #E8ECF1;
-    --text-secondary: #8B95A5;
-    --text-tertiary: #525D6E;
-    --text-inverse: #0B0E11;
+    /* Text hierarchy - Improved contrast and readability */
+    --text-primary: #F0F2F5;
+    --text-secondary: #94A3B8;
+    --text-tertiary: #64748B;
+    --text-inverse: #06080A;
 
-    /* Brand accent: electric teal */
-    --accent: #00D4AA;
-    --accent-hover: #00F0C0;
-    --accent-muted: rgba(0, 212, 170, 0.15);
-    --accent-subtle: rgba(0, 212, 170, 0.08);
+    /* Brand accent: electric teal - more vibrant */
+    --accent: #00FFCC;
+    --accent-hover: #33FFD6;
+    --accent-muted: rgba(0, 255, 204, 0.1);
+    --accent-subtle: rgba(0, 255, 204, 0.05);
 
     /* Semantic: gain/loss */
-    --gain: #00C48C;
-    --gain-bg: rgba(0, 196, 140, 0.12);
-    --loss: #E04F5F;
-    --loss-bg: rgba(224, 79, 95, 0.12);
+    --gain: #10B981;
+    --gain-bg: rgba(16, 185, 129, 0.1);
+    --loss: #F43F5E;
+    --loss-bg: rgba(244, 63, 94, 0.1);
 
     /* Chart palette */
-    --chart-1: #00D4AA;
+    --chart-1: #00FFCC;
     --chart-2: #3B82F6;
-    --chart-3: #A78BFA;
+    --chart-3: #8B5CF6;
     --chart-4: #F59E0B;
     --chart-5: #EC4899;
     --chart-6: #06B6D4;
@@ -40,17 +39,21 @@
     --chart-8: #84CC16;
 
     /* Borders */
-    --border: #1E2636;
-    --border-hover: #2A3347;
-    --border-focus: #00D4AA;
+    --border: #1E293B;
+    --border-hover: #334155;
+    --border-focus: #00FFCC;
 
     /* Inputs */
-    --input-bg: #0F131A;
-    --input-border: #1E2636;
+    --input-bg: #0D1117;
+    --input-border: #1E293B;
 
     /* Scrollbar */
-    --scrollbar-track: #141820;
-    --scrollbar-thumb: #2A3347;
+    --scrollbar-track: #0F1216;
+    --scrollbar-thumb: #1E293B;
+    
+    /* Effects */
+    --glass-bg: rgba(15, 18, 22, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.05);
   }
 
   html {
@@ -58,22 +61,24 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     color-scheme: dark;
+    scroll-behavior: smooth;
   }
 
   body {
     background-color: var(--bg-base);
     color: var(--text-primary);
+    overflow-x: hidden;
   }
 
   ::selection {
-    background-color: rgba(0, 212, 170, 0.3);
+    background-color: rgba(0, 255, 204, 0.3);
     color: var(--text-primary);
   }
 
   /* Dark scrollbars */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
@@ -82,64 +87,67 @@
 
   ::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
-    border-radius: 4px;
+    border-radius: 10px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #3A4557;
+    background: #334155;
   }
 
-  /* Dark form inputs */
+  /* Form elements */
   input, select, textarea {
     background-color: var(--input-bg);
     border-color: var(--input-border);
     color: var(--text-primary);
-  }
-
-  input::placeholder, textarea::placeholder {
-    color: var(--text-tertiary);
+    border-radius: 8px;
+    transition: all 0.2s ease;
   }
 
   input:focus, select:focus, textarea:focus {
     border-color: var(--border-focus);
     outline: none;
-    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.2);
+    box-shadow: 0 0 0 2px rgba(0, 255, 204, 0.15);
   }
 }
 
 @layer components {
   .font-money {
-    font-family: 'IBM Plex Mono', 'Fira Code', monospace;
+    font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: -0.02em;
   }
 
-  .text-gain {
-    color: var(--gain);
-  }
-
-  .text-loss {
-    color: var(--loss);
-  }
-
-  .bg-gain {
-    background-color: var(--gain-bg);
-  }
-
-  .bg-loss {
-    background-color: var(--loss-bg);
+  .glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
   }
 
   .card {
     background-color: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 16px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  .card-hover {
-    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  .card-interactive {
+    cursor: pointer;
+  }
+  .card-interactive:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 20px rgba(0, 255, 204, 0.12);
   }
 
-  .card-hover:hover {
-    border-color: var(--border-hover);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  .text-gradient {
+    background: linear-gradient(135deg, #FFF 0%, #94A3B8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .accent-gradient {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
 }
