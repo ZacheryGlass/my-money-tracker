@@ -323,10 +323,7 @@ async function seedPriceCache() {
       if (['ETFS', 'MUTUAL FUNDS', 'STOCKS'].includes(ticker)) continue;
 
       if (quantity > 0 && value > 0) {
-        const pricePerUnit = value / quantity;
-        if (!priceMap[ticker] || pricePerUnit > 0) {
-          priceMap[ticker] = pricePerUnit;
-        }
+        priceMap[ticker] = value / quantity;
       }
     }
   }
