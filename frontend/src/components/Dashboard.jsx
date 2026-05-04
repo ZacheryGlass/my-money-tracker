@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { motion } from 'framer-motion';
+import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity } from 'lucide-react';
 import { dashboard as dashboardAPI, history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatCompactCurrency } from '../utils/format';
 import DashboardTable from './DashboardTable';
@@ -42,6 +44,11 @@ const Dashboard = () => {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    try {
+      await dashboardAPI.refreshPrices();
+    } catch (err) {
+      console.error('Price refresh failed:', err);
+    }
     await fetchData();
     setRefreshing(false);
   };
@@ -103,7 +110,7 @@ const Dashboard = () => {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
       </div>
     );
   }
@@ -111,98 +118,143 @@ const Dashboard = () => {
   if (error) {
     return (
       <div className="p-6">
-        <div className="bg-loss-bg text-loss border border-loss/20 rounded-lg p-4">
-          {error}
+        <div className="bg-loss-bg text-loss border border-loss/20 rounded-2xl p-6 backdrop-blur-md">
+          <div className="flex items-center gap-3 mb-2">
+            <Activity className="text-loss" size={24} />
+            <h2 className="text-lg font-bold">Something went wrong</h2>
+          </div>
+          <p className="text-sm opacity-80">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1400px] mx-auto space-y-6">
-      {/* Hero: Net Worth */}
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 animate-fade-in">
-        <div>
-          <p className="text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1">
-            Net Worth
-          </p>
-          <h1 className="font-mono font-bold text-primary leading-none" style={{ fontSize: 'clamp(2rem, 5vw, 3rem)' }}>
+    <div className="p-4 md:p-8 lg:p-12 max-w-[1600px] mx-auto space-y-10">
+      {/* Hero Section */}
+      <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 pt-4">
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="space-y-4"
+        >
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-wider">
+            <Wallet size={12} />
+            Portfolio Overview
+          </div>
+          <h1 className="font-money text-hero text-primary tracking-tighter">
             {formatCurrency(netWorth)}
           </h1>
-          {dailyChange.amount !== 0 && (
-            <p className={`font-mono text-sm mt-1 ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
-              {dailyChange.amount >= 0 ? '+' : ''}{formatCurrency(dailyChange.amount)} ({formatPercent(dailyChange.percent)}) today
-            </p>
-          )}
-          {data?.lastUpdated && (
-            <p className="text-xs text-tertiary mt-2">
-              Updated {new Date(data.lastUpdated).toLocaleString()}
-            </p>
-          )}
-        </div>
-        <button
+          <div className="flex items-center gap-4">
+            {dailyChange.amount !== 0 && (
+              <div className={`flex items-center gap-1.5 font-money text-sm font-semibold ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
+                {dailyChange.amount >= 0 ? '+' : ''}{formatCurrency(dailyChange.amount)} ({formatPercent(dailyChange.percent)})
+                <span className="text-tertiary font-normal lowercase tracking-normal">today</span>
+              </div>
+            )}
+            {data?.lastUpdated && (
+              <div className="text-xs text-tertiary flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-gain animate-pulse" />
+                Updated {new Date(data.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        <motion.button
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
           onClick={handleRefresh}
           disabled={refreshing}
-          className="px-4 py-2 bg-surface-3 text-secondary border border-border hover:border-border-hover rounded-md text-sm disabled:opacity-50 min-h-[44px] touch-manipulation self-start sm:self-auto"
+          className="flex items-center justify-center gap-2 px-6 py-3 bg-surface-3 text-primary border border-border hover:border-accent hover:text-accent rounded-xl text-sm font-bold transition-all disabled:opacity-50 min-h-[48px] shadow-lg"
         >
-          {refreshing ? 'Refreshing...' : 'Refresh'}
-        </button>
-      </div>
+          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+          {refreshing ? 'Syncing...' : 'Sync Portfolio'}
+        </motion.button>
+      </section>
 
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+      {/* Metric Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
         <MetricCard
           label="Total Assets"
           value={formatCurrency(totalAssets)}
           valueColor="gain"
+          icon={ArrowUpCircle}
         />
         <MetricCard
           label="Total Liabilities"
           value={formatCurrency(totalLiabilities)}
           valueColor="loss"
+          icon={ArrowDownCircle}
         />
         <MetricCard
-          label="30-Day Change"
+          label="30-Day Performance"
           value={formatCurrency(Math.abs(monthlyChange.amount))}
           change={formatPercent(monthlyChange.percent)}
           trend={monthlyChange.amount >= 0 ? 'up' : 'down'}
           valueColor={monthlyChange.amount >= 0 ? 'gain' : 'loss'}
+          icon={Activity}
         />
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <AllocationDonut items={data?.items || []} />
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 lg:gap-8">
+        {/* Allocation */}
+        <div className="xl:col-span-3">
+          <AllocationDonut items={data?.items || []} className="h-full" />
+        </div>
 
-        {/* Account Summary Cards */}
-        <div className="card p-5 flex flex-col gap-4">
-          <span className="text-[10px] font-semibold tracking-widest uppercase text-secondary">
-            Accounts
-          </span>
-          <div className="space-y-3 overflow-y-auto max-h-[300px]">
-            {accountSummaries.map((account) => (
-              <div
+        {/* Accounts Sidebar */}
+        <div className="xl:col-span-2 card p-6 lg:p-8 flex flex-col gap-6 bg-surface-2/50 backdrop-blur-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[11px] font-bold tracking-widest uppercase text-tertiary">
+              Active Accounts
+            </h2>
+            <div className="text-[10px] text-accent font-bold px-2 py-0.5 rounded bg-accent/10 border border-accent/20">
+              {accountSummaries.length} Total
+            </div>
+          </div>
+          
+          <div className="space-y-4 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
+            {accountSummaries.map((account, idx) => (
+              <motion.div
                 key={account.name}
-                className="flex items-center justify-between gap-3 p-3 bg-surface-2 rounded-lg"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: idx * 0.05 }}
+                className="flex items-center justify-between gap-4 p-4 bg-surface rounded-2xl border border-transparent hover:border-border transition-all group cursor-pointer"
               >
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-primary truncate">{account.name}</div>
-                  <div className="font-mono text-sm text-secondary">
+                  <div className="text-sm font-bold text-primary truncate group-hover:text-accent transition-colors">
+                    {account.name}
+                  </div>
+                  <div className="font-money text-xs text-secondary mt-0.5">
                     {formatCompactCurrency(account.value)}
                   </div>
                 </div>
-                <SparkLine data={account.sparkData} width={80} height={30} />
-              </div>
+                <div className="flex flex-col items-end gap-1">
+                  <SparkLine data={account.sparkData} width={100} height={32} />
+                </div>
+              </motion.div>
             ))}
             {accountSummaries.length === 0 && (
-              <p className="text-tertiary text-sm">No account data</p>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-12 h-12 rounded-full bg-surface-3 flex items-center justify-center text-tertiary mb-3">
+                  <Wallet size={24} />
+                </div>
+                <p className="text-tertiary text-sm">No accounts found</p>
+              </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Holdings Table */}
-      {data?.items && <DashboardTable items={data.items} />}
+      {/* Detailed Holdings */}
+      <div className="pt-4">
+        <DashboardTable items={data.items} />
+      </div>
     </div>
   );
 };

@@ -3,6 +3,7 @@
 const Holding = require('../models/Holding');
 const JobLog = require('../models/JobLog');
 const PriceService = require('../services/PriceService');
+const { classifyTicker } = require('../utils/assetClassifier');
 const logger = require('../config/logger');
 
 const JOB_NAME = 'price-update';
@@ -10,44 +11,43 @@ const JOB_NAME = 'price-update';
 async function run() {
   logger.info({ job: JOB_NAME }, 'Starting price update job');
 
-  // Check for concurrent execution
   const isAlreadyRunning = await JobLog.isRunning(JOB_NAME);
   if (isAlreadyRunning) {
     logger.info({ job: JOB_NAME }, 'Job already running, skipping');
     return { skipped: true, reason: 'concurrent_execution' };
   }
 
-  // Create job log entry
   const jobLog = await JobLog.create(JOB_NAME);
   logger.info({ job: JOB_NAME, logId: jobLog.id }, 'Created job log entry');
 
   try {
-    // Get all holdings and filter for crypto
     const holdings = await Holding.findAll();
-    const cryptoHoldings = holdings.filter(h => h.category === 'Crypto');
+    const holdingsWithTickers = holdings.filter(h => h.ticker && parseFloat(h.quantity || 0) > 0);
 
-    // Extract unique tickers
-    const tickers = [...new Set(
-      cryptoHoldings
-        .map(h => h.ticker)
-        .filter(t => t) // Remove null/undefined
-    )];
+    const assetTypeMap = {};
+    const tickerSet = new Set();
+    for (const h of holdingsWithTickers) {
+      const t = h.ticker;
+      if (!tickerSet.has(t)) {
+        tickerSet.add(t);
+        assetTypeMap[t] = classifyTicker(t, h.category);
+      }
+    }
 
-    logger.info({ job: JOB_NAME, tickers }, `Found ${tickers.length} unique crypto tickers`);
+    const tickers = [...tickerSet];
+    logger.info({ job: JOB_NAME, tickers, assetTypeMap }, `Found ${tickers.length} unique tickers`);
 
     if (tickers.length === 0) {
-      await JobLog.complete(jobLog.id, 0, 0, 0, { message: 'No crypto tickers found' });
-      logger.info({ job: JOB_NAME }, 'No crypto tickers to update');
+      await JobLog.complete(jobLog.id, 0, 0, 0, { message: 'No tickers found' });
+      logger.info({ job: JOB_NAME }, 'No tickers to update');
       return { processed: 0, succeeded: 0, failed: 0 };
     }
 
-    // Fetch prices for all tickers
-    const results = await PriceService.fetchPricesForTickers(tickers);
+    const results = await PriceService.fetchPricesForTickers(tickers, assetTypeMap);
 
     const succeeded = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
 
-    // Log results
     await JobLog.complete(jobLog.id, tickers.length, succeeded, failed, { results });
 
     logger.info({ job: JOB_NAME, succeeded, failed }, 'Price update job completed');

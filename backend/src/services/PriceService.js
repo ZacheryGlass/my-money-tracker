@@ -1,6 +1,8 @@
 'use strict';
 
 const axios = require('axios');
+const YahooFinance = require('yahoo-finance2').default;
+const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const PriceCache = require('../models/PriceCache');
 const logger = require('../config/logger');
 
@@ -140,45 +142,66 @@ class PriceService {
     }
   }
 
-  // Main price fetching with waterfall strategy
-  static async fetchPrice(ticker) {
-    logger.info({ ticker }, 'Fetching price');
-
-    // Try Coinbase first
-    let price = await this.getCoinbasePrice(ticker);
-    if (price !== null) {
-      return { price, source: 'coinbase' };
-    }
-
-    // Try CoinGecko second
+  static async getYahooFinancePrice(ticker, isCrypto = false) {
+    const symbol = isCrypto ? `${ticker.toUpperCase()}-USD` : ticker.toUpperCase();
     try {
-      const idMap = await this.buildCoinGeckoIdMap([ticker]);
-      if (idMap[ticker.toUpperCase()]) {
-        price = await this.getCoinGeckoPrice(ticker, idMap);
-        if (price !== null) {
-          return { price, source: 'coingecko' };
-        }
+      const result = await yahooFinance.quote(symbol);
+      const price = result && result.regularMarketPrice;
+      if (price == null || !isFinite(price)) {
+        logger.warn({ ticker, symbol }, 'Yahoo Finance: no price in response');
+        return null;
       }
+      logger.debug({ ticker, symbol, price, source: 'yahoo' }, 'Price fetched');
+      return price;
     } catch (error) {
-      logger.warn({ ticker, err: error }, 'CoinGecko fallback failed');
+      logger.warn({ ticker, symbol, err: error }, 'Yahoo Finance error');
+      return null;
+    }
+  }
+
+  static async fetchPrice(ticker, assetType) {
+    logger.info({ ticker, assetType }, 'Fetching price');
+    const isCrypto = assetType === 'Crypto' || assetType === 'Cash';
+
+    // Yahoo Finance first -- works for both stocks and crypto (TICKER-USD)
+    let price = await this.getYahooFinancePrice(ticker, isCrypto);
+    if (price !== null) return { price, source: 'yahoo' };
+
+    // Crypto fallbacks: Coinbase -> CoinGecko -> CMC
+    if (isCrypto) {
+      price = await this.getCoinbasePrice(ticker);
+      if (price !== null) return { price, source: 'coinbase' };
+
+      try {
+        const idMap = await this.buildCoinGeckoIdMap([ticker]);
+        if (idMap[ticker.toUpperCase()]) {
+          price = await this.getCoinGeckoPrice(ticker, idMap);
+          if (price !== null) return { price, source: 'coingecko' };
+        }
+      } catch (error) {
+        logger.warn({ ticker, err: error }, 'CoinGecko fallback failed');
+      }
+
+      price = await this.getCoinMarketCapPrice(ticker);
+      if (price !== null) return { price, source: 'coinmarketcap' };
     }
 
-    // Try CoinMarketCap third
-    price = await this.getCoinMarketCapPrice(ticker);
-    if (price !== null) {
-      return { price, source: 'coinmarketcap' };
+    // Last resort: try Yahoo without crypto suffix
+    if (isCrypto) {
+      price = await this.getYahooFinancePrice(ticker, false);
+      if (price !== null) return { price, source: 'yahoo' };
     }
 
     logger.warn({ ticker }, 'All price providers failed');
     return null;
   }
 
-  // Fetch prices for multiple tickers and cache them
-  static async fetchPricesForTickers(tickers) {
+  static async fetchPricesForTickers(tickers, assetTypeMap) {
     const results = [];
 
     for (const ticker of tickers) {
-      const result = await this.fetchPrice(ticker);
+      const assetType = assetTypeMap ? assetTypeMap[ticker] : undefined;
+      const result = await this.fetchPrice(ticker, assetType);
 
       if (result) {
         try {

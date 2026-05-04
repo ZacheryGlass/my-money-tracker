@@ -108,6 +108,10 @@ export const dashboard = {
     const response = await api.get('/api/dashboard');
     return response.data;
   },
+  refreshPrices: async () => {
+    const response = await api.post('/api/jobs/trigger/price-update');
+    return response.data;
+  },
 };
 
 // History API
@@ -193,6 +197,51 @@ export const exportData = {
       console.error('Export error:', error);
       throw error;
     }
+  },
+};
+
+// Salary History API
+export const salary = {
+  getAll: async () => {
+    const response = await api.get('/api/salary');
+    return response.data;
+  },
+  create: async (data) => {
+    const response = await api.post('/api/salary', data);
+    return response.data;
+  },
+  update: async (id, data) => {
+    const response = await api.put(`/api/salary/${id}`, data);
+    return response.data;
+  },
+  delete: async (id) => {
+    const response = await api.delete(`/api/salary/${id}`);
+    return response.data;
+  },
+};
+
+// Recurring Expenses API
+export const expenses = {
+  getAll: async (type) => {
+    const url = type ? `/api/expenses?type=${type}` : '/api/expenses';
+    const response = await api.get(url);
+    return response.data;
+  },
+  getSummary: async () => {
+    const response = await api.get('/api/expenses/summary');
+    return response.data;
+  },
+  create: async (data) => {
+    const response = await api.post('/api/expenses', data);
+    return response.data;
+  },
+  update: async (id, data) => {
+    const response = await api.put(`/api/expenses/${id}`, data);
+    return response.data;
+  },
+  delete: async (id) => {
+    const response = await api.delete(`/api/expenses/${id}`);
+    return response.data;
   },
 };
 
