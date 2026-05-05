@@ -245,4 +245,28 @@ export const expenses = {
   },
 };
 
+// Plaid API
+export const plaid = {
+  createLinkToken: async () => {
+    const response = await api.post('/api/plaid/link-token');
+    return response.data;
+  },
+  exchangeToken: async (publicToken, metadata) => {
+    const response = await api.post('/api/plaid/exchange-token', { public_token: publicToken, metadata });
+    return response.data;
+  },
+  getItems: async () => {
+    const response = await api.get('/api/plaid/items');
+    return response.data;
+  },
+  syncItem: async (id) => {
+    const response = await api.post(`/api/plaid/items/${id}/sync`);
+    return response.data;
+  },
+  removeItem: async (id) => {
+    const response = await api.delete(`/api/plaid/items/${id}`);
+    return response.data;
+  },
+};
+
 export default api;

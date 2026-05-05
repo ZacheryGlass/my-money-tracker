@@ -74,10 +74,12 @@ router.put('/:id', validateHolding, async (req, res) => {
     const { account_id, ticker, name, quantity, manual_value, category, notes, location } = req.body;
     const id = parseInt(req.params.id);
 
-    // Check if holding exists
     const existing = await Holding.findById(id);
     if (!existing) {
       return res.status(404).json({ error: 'Holding not found' });
+    }
+    if (existing.is_plaid_managed) {
+      return res.status(403).json({ error: 'This holding is managed by Plaid and cannot be manually edited' });
     }
 
     const holding = await Holding.update(
@@ -110,10 +112,12 @@ router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
-    // Check if holding exists
     const existing = await Holding.findById(id);
     if (!existing) {
       return res.status(404).json({ error: 'Holding not found' });
+    }
+    if (existing.is_plaid_managed) {
+      return res.status(403).json({ error: 'This holding is managed by Plaid and cannot be manually deleted' });
     }
 
     const result = await Holding.delete(id);

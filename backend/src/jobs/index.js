@@ -3,16 +3,30 @@
 const cron = require('node-cron');
 const PriceUpdateJob = require('./priceUpdateJob');
 const SnapshotJob = require('./snapshotJob');
+const PlaidSyncJob = require('./plaidSyncJob');
 const JobLog = require('../models/JobLog');
 const logger = require('../config/logger');
 
 const TIMEZONE = 'America/Mexico_City';
 
 // Store scheduled task references
+let plaidSyncTask = null;
 let priceUpdateTask = null;
 let snapshotTask = null;
 
 function initializeJobs() {
+  // Schedule Plaid sync at 7:30 AM daily (before price update)
+  plaidSyncTask = cron.schedule('30 7 * * *', async () => {
+    logger.info('[scheduler] Running scheduled Plaid sync...');
+    try {
+      await PlaidSyncJob.run();
+    } catch (error) {
+      logger.error({ err: error }, '[scheduler] Plaid sync failed');
+    }
+  }, {
+    timezone: TIMEZONE
+  });
+
   // Schedule price update at 8 AM daily
   priceUpdateTask = cron.schedule('0 8 * * *', async () => {
     logger.info('[scheduler] Running scheduled price update...');
@@ -41,6 +55,10 @@ function initializeJobs() {
 }
 
 function stopJobs() {
+  if (plaidSyncTask) {
+    plaidSyncTask.stop();
+    plaidSyncTask.destroy();
+  }
   if (priceUpdateTask) {
     priceUpdateTask.stop();
     priceUpdateTask.destroy();
@@ -53,13 +71,20 @@ function stopJobs() {
 }
 
 async function getJobStatus() {
-  const [latestPriceUpdate, latestSnapshot] = await Promise.all([
+  const [latestPlaidSync, latestPriceUpdate, latestSnapshot] = await Promise.all([
+    JobLog.getLatest(PlaidSyncJob.JOB_NAME),
     JobLog.getLatest(PriceUpdateJob.JOB_NAME),
     JobLog.getLatest(SnapshotJob.JOB_NAME)
   ]);
 
   return {
     jobs: {
+      'plaid-sync': {
+        schedule: '30 7 * * *',
+        timezone: TIMEZONE,
+        description: 'Syncs balances and holdings from connected Plaid accounts',
+        lastRun: latestPlaidSync || null
+      },
       'price-update': {
         schedule: '0 8 * * *',
         timezone: TIMEZONE,
@@ -80,6 +105,7 @@ module.exports = {
   initializeJobs,
   stopJobs,
   getJobStatus,
+  PlaidSyncJob,
   PriceUpdateJob,
   SnapshotJob
 };

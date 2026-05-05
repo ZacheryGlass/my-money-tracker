@@ -15,6 +15,7 @@ const PortfolioTimeline = lazy(() => import('./pages/PortfolioTimeline'));
 const StaticAssets = lazy(() => import('./pages/StaticAssets'));
 const SalaryHistory = lazy(() => import('./pages/SalaryHistory'));
 const MonthlyExpenses = lazy(() => import('./pages/MonthlyExpenses'));
+const Settings = lazy(() => import('./pages/Settings'));
 
 const PageSpinner = () => (
   <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
@@ -23,7 +24,7 @@ const PageSpinner = () => (
   </div>
 );
 
-const VALID_PAGES = ['dashboard', 'holdings', 'static-assets', 'ticker-history', 'account-history', 'portfolio-timeline', 'salary-history', 'monthly-expenses'];
+const VALID_PAGES = ['dashboard', 'holdings', 'static-assets', 'ticker-history', 'account-history', 'portfolio-timeline', 'salary-history', 'monthly-expenses', 'settings'];
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -76,6 +77,7 @@ function App() {
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
         {currentPage === 'salary-history' && <SalaryHistory />}
         {currentPage === 'monthly-expenses' && <MonthlyExpenses />}
+        {currentPage === 'settings' && <Settings />}
       </motion.div>
     );
   };

@@ -14,7 +14,8 @@ import {
   ChevronRight,
   Menu,
   X,
-  User as UserIcon
+  User as UserIcon,
+  Settings
 } from 'lucide-react';
 import { useIsMobile, useIsDesktop } from '../hooks/useMediaQuery';
 
@@ -150,18 +151,30 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
 
       {/* Footer / User Profile */}
       <div className="p-3 border-t border-border bg-surface-2/30">
-        <div className={`flex items-center gap-3 px-3 py-3 rounded-xl ${(!showExpanded && !isMobile) ? 'justify-center' : ''}`}>
-          <div className="w-9 h-9 rounded-full bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 text-secondary">
+        <button
+          onClick={() => handleNavClick('settings')}
+          className={`flex items-center gap-3 px-3 py-3 rounded-xl w-full text-left transition-all duration-200
+            ${currentPage === 'settings' ? 'bg-accent/10 ring-1 ring-accent/30' : 'hover:bg-surface-2'}
+            ${(!showExpanded && !isMobile) ? 'justify-center' : ''}`}
+          title={(!showExpanded && !isMobile) ? 'Settings' : undefined}
+        >
+          <div className="w-9 h-9 rounded-full bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 text-secondary relative">
             <UserIcon size={18} />
+            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-surface-2 border border-border flex items-center justify-center">
+              <Settings size={9} className="text-tertiary" />
+            </div>
           </div>
           {(showExpanded || isMobile) && (
             <div className="flex flex-col min-w-0">
               <span className="text-sm font-semibold text-primary truncate leading-tight">
                 {user?.username}
               </span>
+              <span className="text-[10px] text-tertiary uppercase tracking-wider font-bold">
+                Settings
+              </span>
             </div>
           )}
-        </div>
+        </button>
 
         <button
           onClick={onLogout}
