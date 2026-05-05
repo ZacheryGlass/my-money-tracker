@@ -45,10 +45,41 @@ const TICKER_NAMES = {
   'USDT': 'Tether',
   'USDC': 'USD Coin',
   'XNO': 'Nano',
+  'NANO': 'Nano',
   'LINK': 'Chainlink',
   'DOGE': 'Dogecoin',
   'TON': 'Toncoin',
-  'PEPE': 'Pepe'
+  'PEPE': 'Pepe',
+  'LTC': 'Litecoin',
+  'BCH': 'Bitcoin Cash',
+  'XLM': 'Stellar',
+  'ZEC': 'Zcash',
+  'GEEQ': 'Geeq',
+  'QQQ': 'Invesco QQQ Trust',
+  'IGM': 'iShares Expanded Tech',
+  'O': 'Realty Income',
+  'AAPL': 'Apple',
+  'DIS': 'Disney',
+  'GOOG': 'Alphabet',
+  'ARKG': 'ARK Genomic Revolution',
+  'NFLX': 'Netflix',
+  'SPOT': 'Spotify',
+  'VTI': 'Vanguard Total Stock Market',
+  'BABA': 'Alibaba',
+  'SWPPX': 'Schwab S&P 500 Index',
+  'VEXAX': 'Vanguard Extended Market',
+  'FB': 'Meta Platforms',
+  'META': 'Meta Platforms',
+  'AMZN': 'Amazon',
+  'MSFT': 'Microsoft',
+  'ASML': 'ASML',
+  'TSLA': 'Tesla',
+  'AGG': 'iShares Core US Aggregate Bond',
+  'BAR': 'GraniteShares Gold Trust',
+  'SIVR': 'abrdn Physical Silver Shares',
+  'DWCPF': 'Wilshire US Small-Cap Fund',
+  'VTSAX': 'Vanguard Total Stock Market Index',
+  'CMDVM': 'CMDVM',
 };
 
 const STATIC_ASSETS = [
@@ -184,18 +215,20 @@ async function importTickerHistory() {
     for (const [ticker, value] of Object.entries(row)) {
       if (ticker === 'Timestamp' || !ticker.trim()) continue;
 
-      const amount = parseFloat(value);
-      if (isNaN(amount)) continue;
-
       const tickerUpper = ticker.toUpperCase();
+      if (['ETFS', 'USD'].includes(tickerUpper)) continue;
+
+      const amount = parseFloat(value);
+      if (isNaN(amount) || amount === 0) continue;
+
       const name = TICKER_NAMES[tickerUpper] || tickerUpper;
       const accountId = tickerAccountMap[tickerUpper] || ACCOUNT_MAPPING['Crypto'];
 
       try {
         await pool.query(
           `INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (snapshot_date, account_id, ticker) DO NOTHING`,
+           VALUES ($1::date, $2, $3, $4, $5)
+           ON CONFLICT (snapshot_date, account_id, ticker) DO UPDATE SET value = $5`,
           [snapshotDate, accountId, tickerUpper, name, amount]
         );
         insertCount++;
@@ -250,8 +283,8 @@ async function importAccountHistory() {
       try {
         await pool.query(
           `INSERT INTO account_snapshots (snapshot_date, account_id, total_value)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (snapshot_date, account_id) DO NOTHING`,
+           VALUES ($1::date, $2, $3)
+           ON CONFLICT (snapshot_date, account_id) DO UPDATE SET total_value = $3`,
           [snapshotDate, accountId, amount]
         );
         insertCount++;
