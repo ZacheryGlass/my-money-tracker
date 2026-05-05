@@ -27,6 +27,7 @@ class TickerSnapshot {
     const query = `
       INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value)
       VALUES ${placeholders.join(', ')}
+      ON CONFLICT (snapshot_date, account_id, ticker) DO UPDATE SET value = EXCLUDED.value, name = EXCLUDED.name
       RETURNING *
     `;
 

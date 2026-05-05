@@ -161,7 +161,7 @@ const DashboardTable = ({ items }) => {
                 table.getRowModel().rows.map((row) => (
                   <tr key={row.id} className="hover:bg-accent/5 transition-colors group">
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-2 whitespace-nowrap text-sm text-primary">
+                      <td key={cell.id} className="px-4 py-1.5 whitespace-nowrap text-sm text-primary">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}

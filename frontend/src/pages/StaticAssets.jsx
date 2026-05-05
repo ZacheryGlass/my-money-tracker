@@ -294,7 +294,7 @@ const StaticAssets = () => {
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
-                      className="px-6 py-3 text-left text-xs font-medium text-secondary uppercase tracking-wider cursor-pointer hover:bg-surface-3"
+                      className="px-4 py-2 text-left text-xs font-medium text-secondary uppercase tracking-wider cursor-pointer hover:bg-surface-3"
                       onClick={header.column.getToggleSortingHandler()}
                     >
                       <div className="flex items-center gap-2">
@@ -311,7 +311,7 @@ const StaticAssets = () => {
             <tbody className="divide-y divide-border">
               {table.getRowModel().rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="px-6 py-8 text-center text-secondary">
+                  <td colSpan={columns.length} className="px-4 py-6 text-center text-secondary">
                     No static assets or liabilities found. Click "Add New Asset/Liability" to get started.
                   </td>
                 </tr>
@@ -321,7 +321,7 @@ const StaticAssets = () => {
                     {row.getVisibleCells().map((cell) => (
                       <td
                         key={cell.id}
-                        className="px-6 py-4 whitespace-nowrap text-sm text-primary"
+                        className="px-4 py-1.5 whitespace-nowrap text-sm text-primary"
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>

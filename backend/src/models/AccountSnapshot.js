@@ -27,6 +27,7 @@ class AccountSnapshot {
     const query = `
       INSERT INTO account_snapshots (snapshot_date, account_id, total_value)
       VALUES ${placeholders.join(', ')}
+      ON CONFLICT (snapshot_date, account_id) DO UPDATE SET total_value = EXCLUDED.total_value
       RETURNING *
     `;
 

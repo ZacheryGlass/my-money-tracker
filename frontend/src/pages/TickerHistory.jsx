@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { holdings as holdingsAPI, history as historyAPI } from '../utils/api';
 import TickerHistoryChart from '../components/TickerHistoryChart';
 
-const DEFAULT_HISTORY_LIMIT = 10000;
+const DEFAULT_HISTORY_LIMIT = 1000;
 
 const TickerHistory = () => {
   const [historyData, setHistoryData] = useState([]);
@@ -36,8 +36,10 @@ const TickerHistory = () => {
 
   useEffect(() => {
     const end = new Date();
+    const start = new Date();
+    start.setFullYear(start.getFullYear() - 1);
     setEndDate(end.toISOString().split('T')[0]);
-    setStartDate('2017-01-01');
+    setStartDate(start.toISOString().split('T')[0]);
   }, []);
 
   useEffect(() => {
@@ -66,7 +68,15 @@ const TickerHistory = () => {
 
   const displayTickers = useMemo(() => {
     if (selectedTicker) return [selectedTicker];
-    return [...new Set(historyData.map(item => item.ticker))];
+    const maxByTicker = new Map();
+    for (const item of historyData) {
+      const abs = Math.abs(Number(item.value) || 0);
+      const prev = maxByTicker.get(item.ticker) || 0;
+      if (abs > prev) maxByTicker.set(item.ticker, abs);
+    }
+    return [...maxByTicker.entries()]
+      .filter(([, max]) => max > 10)
+      .map(([ticker]) => ticker);
   }, [selectedTicker, historyData]);
 
   if (initialLoading) {

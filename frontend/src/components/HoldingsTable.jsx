@@ -19,10 +19,10 @@ const HoldingsTable = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [sorting, setSorting] = useState([]);
   const [accountFilter, setAccountFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState(null);
-  const [deletingHolding, setDeletingHolding] = useState(null);
 
   useEffect(() => {
     fetchData();
@@ -73,30 +73,29 @@ const HoldingsTable = () => {
     setIsFormOpen(false);
   };
 
-  const handleDeleteClick = (holding) => {
-    setDeletingHolding(holding);
-  };
-
-  const handleDeleteConfirm = async () => {
-    try {
-      await holdingsAPI.delete(deletingHolding.id);
-      showSuccess('Holding deleted successfully');
-      await fetchData();
-      setDeletingHolding(null);
-    } catch (err) {
-      console.error('Error deleting holding:', err);
-      setError(err.response?.data?.error || 'Failed to delete holding');
-      setDeletingHolding(null);
-    }
-  };
-
   const handleExportHoldings = () => {
     exportData.downloadHoldings();
+  };
+
+  const handleCategoryFilterChange = (value) => {
+    setCategoryFilter(value);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+
+  const handleAccountFilterChange = (value) => {
+    setAccountFilter(value);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
   const accountsMap = useMemo(() => {
     return new Map(accounts.map((account) => [account.id, account]));
   }, [accounts]);
+
+  const distinctCategories = useMemo(() => {
+    const cats = new Set();
+    holdings.forEach((h) => { if (h.category) cats.add(h.category); });
+    return Array.from(cats).sort();
+  }, [holdings]);
 
   const columns = useMemo(
     () => [
@@ -120,9 +119,16 @@ const HoldingsTable = () => {
         id: 'value',
         accessorFn: (row) => row.current_value ?? 0,
         header: 'Value',
-        cell: ({ getValue }) => (
-          <span className="font-mono text-base font-semibold">{formatCurrency(getValue())}</span>
-        ),
+        cell: ({ getValue }) => {
+          const v = getValue();
+          const abs = Math.abs(v);
+          const sign = v < 0 ? '-' : '';
+          let display;
+          if (abs >= 1_000_000) display = `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+          else if (abs >= 1_000) display = `${sign}$${(abs / 1_000).toFixed(1)}k`;
+          else display = formatCurrency(v);
+          return <span className="font-mono text-base font-semibold text-primary">{display}</span>;
+        },
       },
       {
         accessorKey: 'category',
@@ -132,27 +138,6 @@ const HoldingsTable = () => {
           return <span className="text-secondary">{value || '-'}</span>;
         },
       },
-      {
-        accessorKey: 'location',
-        header: 'Location',
-        cell: ({ getValue }) => {
-          const value = getValue();
-          return <span className="text-secondary">{value || '-'}</span>;
-        },
-      },
-      {
-        id: 'actions',
-        header: 'Actions',
-        enableSorting: false,
-        cell: ({ row }) => (
-          <button
-            onClick={() => handleDeleteClick(row.original)}
-            className="text-loss hover:bg-loss-bg rounded px-2 py-0.5 text-sm touch-manipulation"
-          >
-            Delete
-          </button>
-        ),
-      },
     ],
     [accounts]
   );
@@ -160,8 +145,9 @@ const HoldingsTable = () => {
   const filteredData = useMemo(() => {
     let data = holdings.filter((h) => Math.abs(h.current_value ?? 0) >= 10);
     if (accountFilter) data = data.filter((h) => h.account_id === parseInt(accountFilter));
+    if (categoryFilter) data = data.filter((h) => h.category === categoryFilter);
     return data;
-  }, [holdings, accountFilter]);
+  }, [holdings, accountFilter, categoryFilter]);
 
   const table = useReactTable({
     data: filteredData,
@@ -217,23 +203,65 @@ const HoldingsTable = () => {
           >
             Export CSV
           </button>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1">
-            <label className="text-sm font-medium text-secondary sm:whitespace-nowrap">Filter by Account:</label>
-            <select
-              value={accountFilter}
-              onChange={(e) => setAccountFilter(e.target.value)}
-              className="flex-1 sm:flex-initial px-3 py-2 rounded-md min-h-[44px] touch-manipulation"
-            >
-              <option value="">All Accounts</option>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
+
+        {distinctCategories.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2 items-center">
+            <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Category:</span>
+            <button
+              onClick={() => handleCategoryFilterChange('')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
+                categoryFilter === ''
+                  ? 'bg-accent text-inverse'
+                  : 'bg-surface-3 text-secondary border border-border hover:text-primary'
+              }`}
+            >
+              All
+            </button>
+            {distinctCategories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => handleCategoryFilterChange(categoryFilter === cat ? '' : cat)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
+                  categoryFilter === cat
+                    ? 'bg-accent text-inverse'
+                    : 'bg-surface-3 text-secondary border border-border hover:text-primary'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {accounts.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2 items-center">
+            <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Account:</span>
+            <button
+              onClick={() => handleAccountFilterChange('')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
+                accountFilter === ''
+                  ? 'bg-accent text-inverse'
+                  : 'bg-surface-3 text-secondary border border-border hover:text-primary'
+              }`}
+            >
+              All
+            </button>
+            {accounts.map((account) => (
+              <button
+                key={account.id}
+                onClick={() => handleAccountFilterChange(accountFilter === String(account.id) ? '' : String(account.id))}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
+                  accountFilter === String(account.id)
+                    ? 'bg-accent text-inverse'
+                    : 'bg-surface-3 text-secondary border border-border hover:text-primary'
+                }`}
+              >
+                {account.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="bg-surface rounded-card border border-border overflow-hidden shadow-card">
@@ -277,11 +305,6 @@ const HoldingsTable = () => {
                       <td
                         key={cell.id}
                         className="px-4 py-1.5 whitespace-nowrap text-sm text-primary"
-                        onClick={(e) => {
-                          if (cell.column.id === 'actions') {
-                            e.stopPropagation();
-                          }
-                        }}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
@@ -336,17 +359,6 @@ const HoldingsTable = () => {
                         </div>
                       )}
                     </div>
-                    <div className="flex justify-end pt-2 border-t border-border">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteClick(row.original);
-                        }}
-                        className="px-4 py-2 text-sm text-loss hover:bg-loss-bg rounded min-h-[44px] touch-manipulation"
-                      >
-                        Delete
-                      </button>
-                    </div>
                   </div>
                 </div>
               );
@@ -398,32 +410,6 @@ const HoldingsTable = () => {
         holding={editingHolding}
         accounts={accounts}
       />
-
-      {deletingHolding && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-surface rounded-card border border-border shadow-xl max-w-md w-full mx-4 p-6">
-            <h2 className="text-xl font-bold mb-4 text-primary">Confirm Delete</h2>
-            <p className="text-secondary mb-6">
-              Are you sure you want to delete "{deletingHolding.name}"? This action cannot be
-              undone.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDeletingHolding(null)}
-                className="px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteConfirm}
-                className="px-4 py-2 bg-loss text-inverse rounded-md hover:opacity-90"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

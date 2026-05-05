@@ -159,9 +159,6 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
               <span className="text-sm font-semibold text-primary truncate leading-tight">
                 {user?.username}
               </span>
-              <span className="text-[10px] text-tertiary uppercase tracking-wider font-bold">
-                Premium Account
-              </span>
             </div>
           )}
         </div>

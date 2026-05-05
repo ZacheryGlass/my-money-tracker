@@ -99,14 +99,7 @@ class SnapshotService {
   }
 
   static async createDailySnapshots(date) {
-    // Check if snapshots already exist for this date
-    const tickerSnapshotsExist = await TickerSnapshot.existsForDate(date);
-    if (tickerSnapshotsExist) {
-      logger.info({ date }, 'Snapshots already exist, skipping');
-      return { skipped: true, reason: 'snapshots_already_exist' };
-    }
-
-    // Create ticker snapshots
+    // Create ticker snapshots (upserts, safe to re-run)
     const tickerResult = await this.createTickerSnapshots(date);
     logger.info({ date, created: tickerResult.created, succeeded: tickerResult.succeeded, failed: tickerResult.failed }, 'Ticker snapshots created');
 
