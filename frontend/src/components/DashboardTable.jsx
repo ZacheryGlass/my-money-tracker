@@ -37,7 +37,7 @@ const DashboardTable = ({ items }) => {
           const value = row.original.value;
           const isLiability = row.original.type === 'liability';
           return (
-            <span className={`font-money font-bold ${isLiability ? 'text-loss' : 'text-gain'}`}>
+            <span className={`font-money text-base font-bold ${isLiability ? 'text-loss' : 'text-gain'}`}>
               {formatCurrency(Math.abs(value))}
             </span>
           );
@@ -113,8 +113,8 @@ const DashboardTable = ({ items }) => {
   }, [items]);
 
   return (
-    <div className="space-y-8">
-      <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="space-y-3">
         <div className="flex items-center justify-between px-2">
           <div className="flex items-center gap-2">
             <ListFilter size={18} className="text-accent" />
@@ -136,7 +136,7 @@ const DashboardTable = ({ items }) => {
                     {headerGroup.headers.map((header) => (
                       <th
                         key={header.id}
-                        className="px-6 py-4 text-left text-[10px] font-bold tracking-widest uppercase text-secondary cursor-pointer hover:bg-surface-3 hover:text-primary transition-all group"
+                        className="px-4 py-2 text-left text-[10px] font-bold tracking-widest uppercase text-secondary cursor-pointer hover:bg-surface-3 hover:text-primary transition-all group"
                         onClick={header.column.getToggleSortingHandler()}
                       >
                       <div className="flex items-center gap-2">
@@ -153,7 +153,7 @@ const DashboardTable = ({ items }) => {
             <tbody className="divide-y divide-border/50">
               {table.getRowModel().rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="px-6 py-12 text-center text-tertiary italic text-sm">
+                  <td colSpan={columns.length} className="px-4 py-6 text-center text-tertiary italic text-sm">
                     No holdings found in this portfolio.
                   </td>
                 </tr>
@@ -161,7 +161,7 @@ const DashboardTable = ({ items }) => {
                 table.getRowModel().rows.map((row) => (
                   <tr key={row.id} className="hover:bg-accent/5 transition-colors group">
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-6 py-4 whitespace-nowrap text-sm text-primary">
+                      <td key={cell.id} className="px-4 py-2 whitespace-nowrap text-sm text-primary">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
@@ -231,7 +231,7 @@ const DashboardTable = ({ items }) => {
             {accountTotals.map(([account, total]) => (
               <div key={account} className="flex justify-between items-center p-3 rounded-xl hover:bg-surface-3 transition-all group">
                 <span className="text-secondary text-sm font-medium group-hover:text-primary transition-colors">{account}</span>
-                <span className={`font-money text-sm font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
+                <span className={`font-money text-base font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
                   {formatCurrency(total)}
                 </span>
               </div>
@@ -253,7 +253,7 @@ const DashboardTable = ({ items }) => {
             {categoryTotals.map(([category, total]) => (
               <div key={category} className="flex justify-between items-center p-3 rounded-xl hover:bg-surface-3 transition-all group">
                 <span className="text-secondary text-sm font-medium group-hover:text-primary transition-colors">{category}</span>
-                <span className={`font-money text-sm font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
+                <span className={`font-money text-base font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
                   {formatCurrency(total)}
                 </span>
               </div>

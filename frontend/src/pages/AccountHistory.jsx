@@ -14,13 +14,13 @@ const DATE_RANGE_OPTIONS = [
 ];
 
 const calculateLimit = (dateRangeOption, customStartDate, customEndDate) => {
+  if (dateRangeOption === 'all') return 10000;
   if (dateRangeOption === 'custom' && customStartDate && customEndDate) {
-    const days = differenceInDays(parseISO(customEndDate), parseISO(customStartDate));
-    return Math.min(Math.max(days + 1, 30), 100);
+    return differenceInDays(parseISO(customEndDate), parseISO(customStartDate)) + 1;
   }
   const option = DATE_RANGE_OPTIONS.find(opt => opt.value === dateRangeOption);
-  if (option?.days) return Math.min(option.days + 1, 100);
-  return 100;
+  if (option?.days) return option.days + 1;
+  return 10000;
 };
 
 const AccountHistory = () => {

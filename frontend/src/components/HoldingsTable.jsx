@@ -10,7 +10,6 @@ import {
 import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
-import BulkImportForm from './BulkImportForm';
 
 const HoldingsTable = () => {
   const [holdings, setHoldings] = useState([]);
@@ -24,7 +23,6 @@ const HoldingsTable = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState(null);
   const [deletingHolding, setDeletingHolding] = useState(null);
-  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -92,11 +90,6 @@ const HoldingsTable = () => {
     }
   };
 
-  const handleBulkImportSuccess = (result) => {
-    showSuccess(`Successfully imported ${result.summary.imported} holdings`);
-    fetchData();
-  };
-
   const handleExportHoldings = () => {
     exportData.downloadHoldings();
   };
@@ -110,10 +103,6 @@ const HoldingsTable = () => {
       {
         accessorKey: 'account_name',
         header: 'Account',
-        cell: ({ row }) => {
-          const account = accountsMap.get(row.original.account_id);
-          return account ? account.name : 'Unknown';
-        },
       },
       {
         accessorKey: 'ticker',
@@ -128,12 +117,12 @@ const HoldingsTable = () => {
         header: 'Name',
       },
       {
-        accessorKey: 'value',
+        id: 'value',
+        accessorFn: (row) => row.current_value ?? 0,
         header: 'Value',
-        cell: ({ row }) => {
-          const value = row.original.current_value ?? 0;
-          return <span className="font-mono">{formatCurrency(value)}</span>;
-        },
+        cell: ({ getValue }) => (
+          <span className="font-mono text-base font-semibold">{formatCurrency(getValue())}</span>
+        ),
       },
       {
         accessorKey: 'category',
@@ -154,10 +143,11 @@ const HoldingsTable = () => {
       {
         id: 'actions',
         header: 'Actions',
+        enableSorting: false,
         cell: ({ row }) => (
           <button
             onClick={() => handleDeleteClick(row.original)}
-            className="text-loss hover:bg-loss-bg rounded p-1 min-h-[44px] touch-manipulation"
+            className="text-loss hover:bg-loss-bg rounded px-2 py-0.5 text-sm touch-manipulation"
           >
             Delete
           </button>
@@ -168,8 +158,9 @@ const HoldingsTable = () => {
   );
 
   const filteredData = useMemo(() => {
-    if (!accountFilter) return holdings;
-    return holdings.filter((h) => h.account_id === parseInt(accountFilter));
+    let data = holdings.filter((h) => Math.abs(h.current_value ?? 0) >= 10);
+    if (accountFilter) data = data.filter((h) => h.account_id === parseInt(accountFilter));
+    return data;
   }, [holdings, accountFilter]);
 
   const table = useReactTable({
@@ -196,9 +187,9 @@ const HoldingsTable = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-4 md:py-8">
-      <div className="mb-4 md:mb-6">
-        <h1 className="text-xl font-bold text-primary mb-4">Holdings Management</h1>
+    <div className="container mx-auto px-4 py-2 md:py-4">
+      <div className="mb-3">
+        <h1 className="text-xl font-bold text-primary mb-3">Holdings Management</h1>
 
         {successMessage && (
           <div className="mb-4 bg-gain-bg text-gain border border-gain/20 rounded-lg p-3">
@@ -212,19 +203,12 @@ const HoldingsTable = () => {
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row flex-wrap gap-3 md:gap-4 items-stretch sm:items-center mb-4">
+        <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-stretch sm:items-center mb-3">
           <button
             onClick={handleAddNew}
             className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md min-h-[44px] touch-manipulation"
           >
             Add New Holding
-          </button>
-
-          <button
-            onClick={() => setIsBulkImportOpen(true)}
-            className="px-4 py-2 bg-surface-3 text-secondary border border-border hover:border-border-hover rounded-md min-h-[44px] touch-manipulation"
-          >
-            Bulk Import
           </button>
 
           <button
@@ -261,7 +245,7 @@ const HoldingsTable = () => {
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
-                      className="px-6 py-3 text-left text-xs font-medium text-secondary uppercase tracking-wider cursor-pointer hover:bg-surface-3"
+                      className={`px-4 py-2 text-left text-xs font-medium text-secondary uppercase tracking-wider ${header.column.getCanSort() ? 'cursor-pointer hover:bg-surface-3' : ''}`}
                       onClick={header.column.getToggleSortingHandler()}
                     >
                       <div className="flex items-center gap-2">
@@ -278,7 +262,7 @@ const HoldingsTable = () => {
             <tbody className="divide-y divide-border">
               {table.getRowModel().rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="px-6 py-8 text-center text-secondary">
+                  <td colSpan={columns.length} className="px-4 py-6 text-center text-secondary">
                     No holdings found. Click "Add New Holding" to get started.
                   </td>
                 </tr>
@@ -292,7 +276,7 @@ const HoldingsTable = () => {
                     {row.getVisibleCells().map((cell) => (
                       <td
                         key={cell.id}
-                        className="px-6 py-4 whitespace-nowrap text-sm text-primary"
+                        className="px-4 py-1.5 whitespace-nowrap text-sm text-primary"
                         onClick={(e) => {
                           if (cell.column.id === 'actions') {
                             e.stopPropagation();
@@ -413,12 +397,6 @@ const HoldingsTable = () => {
         onSave={handleSave}
         holding={editingHolding}
         accounts={accounts}
-      />
-
-      <BulkImportForm
-        isOpen={isBulkImportOpen}
-        onClose={() => setIsBulkImportOpen(false)}
-        onSuccess={handleBulkImportSuccess}
       />
 
       {deletingHolding && (
