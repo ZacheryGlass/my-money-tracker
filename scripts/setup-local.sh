@@ -91,7 +91,6 @@ JWT_SECRET=$JWT_SECRET
 INITIAL_PASSWORD=password
 CMC_PRO_API_KEY=
 CG_API_KEY=
-TZ=America/Mexico_City
 EOF
 else
   echo "==> backend/.env already exists, skipping"

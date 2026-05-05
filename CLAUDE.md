@@ -73,7 +73,7 @@ cd frontend && npm run lint     # eslint
 - **Shared formatters** (`frontend/src/utils/format.js`): `formatCurrency`, `formatPercent`, `formatDateDisplay`, `formatDateAxis`, `formatCompactCurrency` — all components import from here, no local duplicates
 - **Chart theme** (`frontend/src/utils/chartTheme.js`): `CHART_COLORS`, `GRID_STYLE`, `AXIS_STYLE`, `TOOLTIP_STYLE`, `areaGradient` — all charts use these
 - **Design tokens**: CSS variables in `index.css` (bg-base, bg-surface, text-primary, accent, gain, loss, etc.) consumed by Tailwind config. Component classes: `.card`, `.card-hover`, `.font-money`, `.text-gain`, `.text-loss`
-- **Scheduled jobs**: price updates 8 AM, snapshots 9 AM (America/Mexico_City). Controlled by `RUN_SCHEDULED_JOBS` env var
+- **Scheduled jobs**: Plaid sync 7:30, price updates 8:00, snapshots 9:00 (all UTC). Controlled by `RUN_SCHEDULED_JOBS` env var
 
 ## Database
 
@@ -81,7 +81,7 @@ Tables: `accounts`, `holdings`, `price_cache`, `ticker_snapshots`, `account_snap
 
 ## Environment Variables
 
-Backend `.env`: `DATABASE_URL`, `JWT_SECRET`, `INITIAL_PASSWORD`, `CMC_PRO_API_KEY`, `CG_API_KEY`, `PORT`, `NODE_ENV`, `TZ`, `RUN_SCHEDULED_JOBS`
+Backend `.env`: `DATABASE_URL`, `JWT_SECRET`, `INITIAL_PASSWORD`, `CMC_PRO_API_KEY`, `CG_API_KEY`, `PORT`, `NODE_ENV`, `RUN_SCHEDULED_JOBS`
 
 Frontend `.env`: `VITE_API_URL`
 

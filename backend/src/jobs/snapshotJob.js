@@ -21,10 +21,8 @@ async function run() {
   logger.info({ job: JOB_NAME, logId: jobLog.id }, 'Created job log entry');
 
   try {
-    // Snapshot is created for today's date, using prices fetched 1 hour earlier at 8 AM
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const snapshotDate = today.toISOString().split('T')[0];
+    const now = new Date();
+    const snapshotDate = now.toISOString().split('T')[0];
 
     logger.info({ job: JOB_NAME, snapshotDate }, 'Creating snapshots');
 
