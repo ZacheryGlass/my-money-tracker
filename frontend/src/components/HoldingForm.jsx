@@ -9,6 +9,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
     manual_value: '',
     category: '',
     notes: '',
+    location: '',
   });
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -19,10 +20,11 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
         account_id: holding.account_id || '',
         ticker: holding.ticker || '',
         name: holding.name || '',
-        quantity: holding.quantity || '',
-        manual_value: holding.manual_value || '',
+        quantity: holding.quantity ?? '',
+        manual_value: holding.manual_value ?? '',
         category: holding.category || '',
         notes: holding.notes || '',
+        location: holding.location || '',
       });
     } else {
       setFormData({
@@ -33,6 +35,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
         manual_value: '',
         category: '',
         notes: '',
+        location: '',
       });
     }
     setErrors({});
@@ -70,6 +73,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
         manual_value: formData.manual_value ? parseFloat(formData.manual_value) : null,
         category: formData.category ? formData.category.trim() : null,
         notes: formData.notes ? formData.notes.trim() : null,
+        location: formData.location ? formData.location.trim() : null,
       };
 
       await onSave(dataToSubmit);
@@ -209,6 +213,21 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
                   className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
                   disabled={isSubmitting}
                   placeholder="e.g., Crypto, Stocks, Property"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-secondary mb-1">
+                  Location <span className="text-tertiary text-xs">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  name="location"
+                  value={formData.location}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
+                  disabled={isSubmitting}
+                  placeholder="e.g., Coinbase, Schwab, Binance US"
                 />
               </div>
 

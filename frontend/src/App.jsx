@@ -1,9 +1,11 @@
 import React, { useState, lazy, Suspense } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from './context/AuthContext';
 import Login from './components/Login';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
-import Sidebar, { HamburgerIcon } from './components/Sidebar';
+import Sidebar from './components/Sidebar';
+import { Menu } from 'lucide-react';
 
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const HoldingsTable = lazy(() => import('./components/HoldingsTable'));
@@ -11,14 +13,17 @@ const TickerHistory = lazy(() => import('./pages/TickerHistory'));
 const AccountHistory = lazy(() => import('./pages/AccountHistory'));
 const PortfolioTimeline = lazy(() => import('./pages/PortfolioTimeline'));
 const StaticAssets = lazy(() => import('./pages/StaticAssets'));
+const SalaryHistory = lazy(() => import('./pages/SalaryHistory'));
+const MonthlyExpenses = lazy(() => import('./pages/MonthlyExpenses'));
 
 const PageSpinner = () => (
-  <div className="flex items-center justify-center min-h-[400px] bg-base">
-    <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+  <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+    <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
+    <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Loading View</span>
   </div>
 );
 
-const VALID_PAGES = ['dashboard', 'holdings', 'static-assets', 'ticker-history', 'account-history', 'portfolio-timeline'];
+const VALID_PAGES = ['dashboard', 'holdings', 'static-assets', 'ticker-history', 'account-history', 'portfolio-timeline', 'salary-history', 'monthly-expenses'];
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -27,6 +32,8 @@ const navItems = [
   { id: 'ticker-history', label: 'Ticker History' },
   { id: 'account-history', label: 'Account History' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline' },
+  { id: 'salary-history', label: 'Salary History', section: 'PLANNING' },
+  { id: 'monthly-expenses', label: 'Monthly Expenses' },
 ];
 
 function App() {
@@ -37,7 +44,10 @@ function App() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-base">
-        <div className="text-sm text-secondary">Loading...</div>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
+          <div className="text-[10px] font-bold tracking-widest uppercase text-tertiary">Authenticating</div>
+        </div>
       </div>
     );
   }
@@ -51,19 +61,27 @@ function App() {
       return <NotFound />;
     }
     return (
-      <>
+      <motion.div
+        key={currentPage}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="w-full"
+      >
         {currentPage === 'dashboard' && <Dashboard />}
         {currentPage === 'holdings' && <HoldingsTable />}
         {currentPage === 'static-assets' && <StaticAssets />}
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
-      </>
+        {currentPage === 'salary-history' && <SalaryHistory />}
+        {currentPage === 'monthly-expenses' && <MonthlyExpenses />}
+      </motion.div>
     );
   };
 
   return (
-    <div className="flex min-h-screen bg-base">
+    <div className="flex min-h-screen bg-base font-sans selection:bg-accent/30">
       <Sidebar
         currentPage={currentPage}
         onNavigate={setCurrentPage}
@@ -73,22 +91,26 @@ function App() {
         onMobileClose={() => setMobileOpen(false)}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
-        <div className="lg:hidden flex items-center h-12 px-4 bg-surface-2 border-b border-border sticky top-0 z-10">
+        {/* Mobile Header */}
+        <div className="lg:hidden flex items-center h-16 px-6 bg-surface border-b border-border sticky top-0 z-30">
           <button
             onClick={() => setMobileOpen(true)}
-            className="text-secondary hover:text-primary transition-colors"
+            className="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-2 text-secondary hover:text-accent border border-border transition-all"
             aria-label="Open menu"
           >
-            <HamburgerIcon />
+            <Menu size={20} />
           </button>
-          <span className="ml-3 text-sm font-medium text-primary">
+          <span className="ml-4 text-sm font-bold tracking-tight text-primary">
             {navItems.find((n) => n.id === currentPage)?.label}
           </span>
         </div>
-        <main className="flex-1 overflow-y-auto">
+
+        <main className="flex-1 relative">
           <ErrorBoundary>
             <Suspense fallback={<PageSpinner />}>
-              {renderPage()}
+              <AnimatePresence mode="wait">
+                {renderPage()}
+              </AnimatePresence>
             </Suspense>
           </ErrorBoundary>
         </main>

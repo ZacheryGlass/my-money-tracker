@@ -15,6 +15,8 @@ const dashboardRoutes = require('./routes/dashboard');
 const jobsRoutes = require('./routes/jobs');
 const historyRoutes = require('./routes/history');
 const exportRoutes = require('./routes/export');
+const salaryRoutes = require('./routes/salary');
+const expensesRoutes = require('./routes/expenses');
 
 // Jobs
 const { initializeJobs, stopJobs } = require('./jobs');
@@ -89,6 +91,8 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/salary', salaryRoutes);
+app.use('/api/expenses', expensesRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

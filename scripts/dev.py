@@ -1,19 +1,21 @@
 """Start backend and frontend dev servers in parallel.
 
 Ctrl+C or closing the terminal kills both server process trees.
-Works on Windows (job object) and Unix (process group).
+Works on Windows (job object + taskkill fallback) and Unix (process group).
 """
 
 import subprocess
 import signal
 import sys
 import os
+import atexit
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
 procs = []
 job = None
+_shutting_down = False
 
 
 def _create_job_object():
@@ -23,12 +25,21 @@ def _create_job_object():
 
     kernel32 = ctypes.windll.kernel32
 
-    # CreateJobObjectW
-    job = kernel32.CreateJobObjectW(None, None)
-    if not job:
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    job_handle = kernel32.CreateJobObjectW(None, None)
+    if not job_handle:
         return None
 
-    # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
     class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
         _fields_ = [
             ("PerProcessUserTimeLimit", ctypes.c_int64),
@@ -65,14 +76,17 @@ def _create_job_object():
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
     info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
     info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    kernel32.SetInformationJobObject(
-        job, 9, ctypes.byref(info), ctypes.sizeof(info)
+    ok = kernel32.SetInformationJobObject(
+        job_handle, 9, ctypes.byref(info), ctypes.sizeof(info)
     )
-    return job
+    if not ok:
+        return None
+    return job_handle
 
 
 def _assign_to_job(proc, job_handle):
     import ctypes
+    from ctypes import wintypes
     kernel32 = ctypes.windll.kernel32
     handle = kernel32.OpenProcess(0x1F0FFF, False, proc.pid)
     if handle:
@@ -83,7 +97,6 @@ def _assign_to_job(proc, job_handle):
 def spawn(cmd, cwd):
     kwargs = dict(cwd=cwd)
     if sys.platform == "win32":
-        # CREATE_NEW_PROCESS_GROUP so we can kill the tree
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["preexec_fn"] = os.setsid
@@ -95,28 +108,40 @@ def spawn(cmd, cwd):
 
 
 def shutdown(*_):
+    global _shutting_down
+    if _shutting_down:
+        return
+    _shutting_down = True
+
     for p in procs:
+        if p.poll() is not None:
+            continue
         try:
             if sys.platform == "win32":
-                p.send_signal(signal.CTRL_BREAK_EVENT)
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(p.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             else:
                 os.killpg(os.getpgid(p.pid), signal.SIGTERM)
         except (ProcessLookupError, OSError):
             pass
+
     for p in procs:
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
             p.kill()
-    sys.exit(0)
 
 
 if __name__ == "__main__":
     if sys.platform == "win32":
         job = _create_job_object()
 
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, lambda *_: (shutdown(), sys.exit(0)))
+    signal.signal(signal.SIGTERM, lambda *_: (shutdown(), sys.exit(0)))
+    atexit.register(shutdown)
 
     print("Starting backend  (http://localhost:3000)...")
     spawn("npm run dev", cwd=ROOT / "backend")
@@ -131,3 +156,4 @@ if __name__ == "__main__":
             p.wait()
     except KeyboardInterrupt:
         shutdown()
+        sys.exit(0)

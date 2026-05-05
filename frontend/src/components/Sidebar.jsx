@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Menu,
+  X,
   User as UserIcon
 } from 'lucide-react';
 import { useIsMobile, useIsDesktop } from '../hooks/useMediaQuery';
@@ -154,9 +155,14 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
             <UserIcon size={18} />
           </div>
           {(showExpanded || isMobile) && (
-            <span className="text-sm font-semibold text-primary truncate leading-tight">
-              {user?.username}
-            </span>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-semibold text-primary truncate leading-tight">
+                {user?.username}
+              </span>
+              <span className="text-[10px] text-tertiary uppercase tracking-wider font-bold">
+                Premium Account
+              </span>
+            </div>
           )}
         </div>
 

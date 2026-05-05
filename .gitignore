@@ -2,5 +2,8 @@
 *.xlsx
 *.pdf
 
+# Google Sheets export (contains API keys)
+google-sheet-export/
+
 # Claude Code
 .claude/

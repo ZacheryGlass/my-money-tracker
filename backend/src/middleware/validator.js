@@ -20,6 +20,7 @@ function validateHolding(req, res, next) {
   req.body.ticker = req.body.ticker ? req.body.ticker.trim().toUpperCase() : null;
   req.body.category = req.body.category ? req.body.category.trim() : null;
   req.body.notes = req.body.notes ? req.body.notes.trim() : null;
+  req.body.location = req.body.location ? req.body.location.trim() : null;
 
   next();
 }
