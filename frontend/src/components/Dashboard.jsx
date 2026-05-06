@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity } from 'lucide-react';
-import { dashboard as dashboardAPI, history as historyAPI } from '../utils/api';
+import { dashboard as dashboardAPI, history as historyAPI, plaid as plaidAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatCompactCurrency } from '../utils/format';
 import DashboardTable from './DashboardTable';
 import MetricCard from './MetricCard';
@@ -44,10 +44,13 @@ const Dashboard = () => {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    try {
-      await dashboardAPI.refreshPrices();
-    } catch (err) {
-      console.error('Price refresh failed:', err);
+    const plaidSync = plaidAPI.getItems()
+      .then(({ items }) => Promise.all((items || []).map((item) => plaidAPI.syncItem(item.id))));
+    const results = await Promise.allSettled([dashboardAPI.refreshPrices(), plaidSync]);
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length > 0) {
+      console.error('Sync failures:', failed.map((r) => r.reason));
+      setError('Some updates failed. Please try again.');
     }
     await fetchData();
     setRefreshing(false);

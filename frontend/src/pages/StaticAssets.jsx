@@ -7,6 +7,7 @@ import {
   getPaginationRowModel,
   flexRender,
 } from '@tanstack/react-table';
+import { Link2 } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import StaticAssetsForm from '../components/StaticAssetsForm';
@@ -62,6 +63,7 @@ const StaticAssets = () => {
   };
 
   const handleEdit = (asset) => {
+    if (asset.is_plaid_managed) return;
     setEditingAsset(asset);
     setIsFormOpen(true);
   };
@@ -104,6 +106,17 @@ const StaticAssets = () => {
       {
         accessorKey: 'name',
         header: 'Name',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            <span>{row.original.name}</span>
+            {row.original.is_plaid_managed && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
+                <Link2 size={10} />
+                Plaid
+              </span>
+            )}
+          </div>
+        ),
       },
       {
         accessorKey: 'manual_value',
@@ -144,26 +157,33 @@ const StaticAssets = () => {
         id: 'actions',
         header: 'Actions',
         cell: ({ row }) => (
-          <div className="flex gap-2">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleEdit(row.original);
-              }}
-              className="text-accent hover:bg-accent-muted rounded p-1 min-h-[44px] touch-manipulation"
-            >
-              Edit
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDeleteClick(row.original);
-              }}
-              className="text-loss hover:bg-loss-bg rounded p-1 min-h-[44px] touch-manipulation"
-            >
-              Delete
-            </button>
-          </div>
+          row.original.is_plaid_managed ? (
+            <span className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-secondary">
+              <Link2 size={10} className="text-accent" />
+              Synced via Plaid
+            </span>
+          ) : (
+            <div className="flex gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleEdit(row.original);
+                }}
+                className="text-accent hover:bg-accent-muted rounded p-1 min-h-[44px] touch-manipulation"
+              >
+                Edit
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteClick(row.original);
+                }}
+                className="text-loss hover:bg-loss-bg rounded p-1 min-h-[44px] touch-manipulation"
+              >
+                Delete
+              </button>
+            </div>
+          )
         ),
       },
     ],

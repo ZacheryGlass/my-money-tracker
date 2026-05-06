@@ -58,6 +58,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (holding?.is_plaid_managed) return;
 
     if (!validate()) {
       return;
@@ -104,10 +105,16 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
           <h2 className="text-lg font-bold text-primary">
             {holding ? 'Edit Holding' : 'Add New Holding'}
           </h2>
+          {holding?.is_plaid_managed && (
+            <div className="mt-2 px-3 py-2 rounded-md bg-accent/10 border border-accent/20 text-xs text-accent">
+              This holding is managed by Plaid and cannot be edited manually.
+            </div>
+          )}
         </div>
 
         <div className="p-5">
           <form onSubmit={handleSubmit}>
+            <fieldset disabled={holding?.is_plaid_managed}>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-secondary mb-1">
@@ -253,22 +260,24 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
               )}
             </div>
 
+            </fieldset>
             <div className="p-5 border-t border-border -mx-5 mt-5 flex flex-col sm:flex-row justify-end gap-3">
               <button
                 type="button"
                 onClick={onClose}
-                disabled={isSubmitting}
                 className="w-full sm:w-auto px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
               >
-                Cancel
+                {holding?.is_plaid_managed ? 'Close' : 'Cancel'}
               </button>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full sm:w-auto px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
-              >
-                {isSubmitting ? 'Saving...' : 'Save'}
-              </button>
+              {!holding?.is_plaid_managed && (
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full sm:w-auto px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
+                >
+                  {isSubmitting ? 'Saving...' : 'Save'}
+                </button>
+              )}
             </div>
           </form>
         </div>

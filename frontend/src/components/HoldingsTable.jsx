@@ -7,6 +7,7 @@ import {
   getPaginationRowModel,
   flexRender,
 } from '@tanstack/react-table';
+import { Link2 } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
@@ -114,6 +115,17 @@ const HoldingsTable = () => {
       {
         accessorKey: 'name',
         header: 'Name',
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            <span>{row.original.name}</span>
+            {row.original.is_plaid_managed && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
+                <Link2 size={10} />
+                Plaid
+              </span>
+            )}
+          </div>
+        ),
       },
       {
         id: 'value',
@@ -298,8 +310,12 @@ const HoldingsTable = () => {
                 table.getRowModel().rows.map((row) => (
                   <tr
                     key={row.id}
-                    className="hover:bg-surface-3 border-b border-border cursor-pointer"
-                    onClick={() => handleEdit(row.original)}
+                    className={`border-b border-border ${
+                      row.original.is_plaid_managed
+                        ? 'hover:bg-surface-2'
+                        : 'hover:bg-surface-3 cursor-pointer'
+                    }`}
+                    onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
                   >
                     {row.getVisibleCells().map((cell) => (
                       <td
@@ -328,13 +344,21 @@ const HoldingsTable = () => {
               return (
                 <div
                   key={row.id}
-                  className="card p-3 active:bg-surface-3 touch-manipulation"
-                  onClick={() => handleEdit(row.original)}
+                  className={`card p-3 touch-manipulation ${
+                    row.original.is_plaid_managed ? '' : 'active:bg-surface-3 cursor-pointer'
+                  }`}
+                  onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
                 >
                   <div className="space-y-3">
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-primary truncate">{row.original.name}</div>
+                        {row.original.is_plaid_managed && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20 mt-0.5 w-fit">
+                            <Link2 size={10} />
+                            Plaid
+                          </span>
+                        )}
                         {row.original.ticker && (
                           <div className="text-sm text-secondary">{row.original.ticker}</div>
                         )}
