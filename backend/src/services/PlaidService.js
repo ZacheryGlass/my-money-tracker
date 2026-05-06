@@ -12,7 +12,7 @@ class PlaidService {
     const request = {
       user: { client_user_id: String(userId) },
       client_name: 'My Money Tracker',
-      products: [Products.Investments, Products.Transactions],
+      products: [Products.Transactions],
       country_codes: [CountryCode.Us],
       language: 'en',
     };
@@ -188,8 +188,8 @@ class PlaidService {
 
     if (existing.rows.length > 0) {
       await pool.query(
-        'UPDATE accounts SET name = $1, plaid_item_id = $2 WHERE plaid_account_id = $3',
-        [name, plaidItemId, plaidAccountId]
+        'UPDATE accounts SET plaid_item_id = $1 WHERE plaid_account_id = $2',
+        [plaidItemId, plaidAccountId]
       );
       return existing.rows[0];
     }
