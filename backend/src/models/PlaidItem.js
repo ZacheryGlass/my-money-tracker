@@ -87,6 +87,10 @@ class PlaidItem {
           [id]
         );
         await client.query(
+          'DELETE FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE plaid_item_id = $1)',
+          [id]
+        );
+        await client.query(
           'DELETE FROM accounts WHERE plaid_item_id = $1',
           [id]
         );

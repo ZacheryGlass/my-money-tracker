@@ -162,6 +162,32 @@ class PlaidService {
       results.balances++;
     }
 
+    try {
+      const txnResult = await this._syncTransactions(plaidItemId, access_token);
+      results.transactions = txnResult;
+    } catch (err) {
+      const errorCode = err.response?.data?.error_code;
+      if (errorCode === 'PRODUCTS_NOT_SUPPORTED') {
+        logger.info({ plaidItemId }, 'Institution does not support transactions product');
+      } else {
+        logger.error({ plaidItemId, err }, 'Failed to sync transactions');
+      }
+    }
+
+    if (investmentAccountIds.length > 0) {
+      try {
+        const invTxnResult = await this._syncInvestmentTransactions(plaidItemId, access_token);
+        results.investmentTransactions = invTxnResult;
+      } catch (err) {
+        const errorCode = err.response?.data?.error_code;
+        if (errorCode === 'PRODUCTS_NOT_SUPPORTED') {
+          logger.info({ plaidItemId }, 'Institution does not support investment transactions');
+        } else {
+          logger.error({ plaidItemId, err }, 'Failed to sync investment transactions');
+        }
+      }
+    }
+
     await PlaidItem.updateSyncTime(plaidItemId);
     logger.info({ plaidItemId, results }, 'Plaid sync completed');
     return results;
@@ -306,6 +332,151 @@ class PlaidService {
       [accountId, ...currentIdentifiers.map(id => id.toUpperCase())]
     );
     return result.rowCount;
+  }
+
+  static async _syncTransactions(plaidItemId, accessToken) {
+    const cursorResult = await pool.query(
+      'SELECT transactions_cursor FROM plaid_items WHERE id = $1',
+      [plaidItemId]
+    );
+    let cursor = cursorResult.rows[0]?.transactions_cursor || '';
+    let added = 0;
+    let modified = 0;
+    let removed = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await plaidClient.transactionsSync({
+        access_token: accessToken,
+        cursor: cursor || undefined,
+        count: 500,
+      });
+      const data = response.data;
+
+      for (const txn of data.added) {
+        const accountId = await this._getAccountIdByPlaidAccountId(txn.account_id);
+        if (!accountId) continue;
+        await this._upsertTransaction(accountId, txn);
+        added++;
+      }
+
+      for (const txn of data.modified) {
+        const accountId = await this._getAccountIdByPlaidAccountId(txn.account_id);
+        if (!accountId) continue;
+        await this._upsertTransaction(accountId, txn);
+        modified++;
+      }
+
+      for (const txn of data.removed) {
+        await pool.query(
+          'DELETE FROM transactions WHERE plaid_transaction_id = $1',
+          [txn.transaction_id]
+        );
+        removed++;
+      }
+
+      cursor = data.next_cursor;
+      hasMore = data.has_more;
+
+      await pool.query(
+        'UPDATE plaid_items SET transactions_cursor = $1 WHERE id = $2',
+        [cursor, plaidItemId]
+      );
+    }
+
+    return { added, modified, removed };
+  }
+
+  static async _syncInvestmentTransactions(plaidItemId, accessToken) {
+    const endDate = new Date().toISOString().split('T')[0];
+    const startDate = '2000-01-01';
+    let added = 0;
+    let offset = 0;
+    const count = 500;
+    let total = Infinity;
+
+    while (offset < total) {
+      const response = await plaidClient.investmentsTransactionsGet({
+        access_token: accessToken,
+        start_date: startDate,
+        end_date: endDate,
+        options: { count, offset },
+      });
+      const data = response.data;
+      total = data.total_investment_transactions;
+      const securities = new Map(data.securities.map(s => [s.security_id, s]));
+
+      for (const txn of data.investment_transactions) {
+        const accountId = await this._getAccountIdByPlaidAccountId(txn.account_id);
+        if (!accountId) continue;
+
+        const security = txn.security_id ? securities.get(txn.security_id) : null;
+        const ticker = security?.ticker_symbol || null;
+        const description = ticker ? `${txn.name} (${ticker})` : txn.name;
+        const category = txn.subtype || txn.type || null;
+
+        await this._upsertInvestmentTransaction(accountId, txn, description, category);
+        added++;
+      }
+
+      if (data.investment_transactions.length === 0) break;
+      offset += data.investment_transactions.length;
+    }
+
+    return { added };
+  }
+
+  static async _upsertInvestmentTransaction(accountId, txn, description, category) {
+    const existing = await pool.query(
+      'SELECT id FROM transactions WHERE plaid_transaction_id = $1',
+      [txn.investment_transaction_id]
+    );
+
+    if (existing.rows.length > 0) {
+      await pool.query(
+        `UPDATE transactions SET account_id = $1, date = $2, name = $3,
+         amount = $4, currency_code = $5, category = $6, pending = FALSE
+         WHERE plaid_transaction_id = $7`,
+        [accountId, txn.date, description,
+         txn.amount, txn.iso_currency_code || 'USD', category,
+         txn.investment_transaction_id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO transactions (account_id, plaid_transaction_id, date, name,
+         amount, currency_code, category, pending)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE)`,
+        [accountId, txn.investment_transaction_id, txn.date, description,
+         txn.amount, txn.iso_currency_code || 'USD', category]
+      );
+    }
+  }
+
+  static async _upsertTransaction(accountId, txn) {
+    const category = txn.personal_finance_category?.primary || null;
+    const existing = await pool.query(
+      'SELECT id FROM transactions WHERE plaid_transaction_id = $1',
+      [txn.transaction_id]
+    );
+
+    if (existing.rows.length > 0) {
+      await pool.query(
+        `UPDATE transactions SET account_id = $1, date = $2, name = $3, merchant_name = $4,
+         amount = $5, currency_code = $6, category = $7, pending = $8
+         WHERE plaid_transaction_id = $9`,
+        [accountId, txn.date, txn.name, txn.merchant_name || null,
+         txn.amount, txn.iso_currency_code || 'USD', category, txn.pending,
+         txn.transaction_id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO transactions (account_id, plaid_transaction_id, date, name, merchant_name,
+         amount, currency_code, category, pending)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [accountId, txn.transaction_id, txn.date, txn.name, txn.merchant_name || null,
+         txn.amount, txn.iso_currency_code || 'USD', category, txn.pending]
+      );
+    }
   }
 
   static async _handlePlaidError(plaidItemId, err) {

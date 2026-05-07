@@ -71,6 +71,7 @@ router.delete('/:id', async (req, res) => {
     await client.query('DELETE FROM ticker_snapshots WHERE account_id = $1', [id]);
     await client.query('DELETE FROM account_snapshots WHERE account_id = $1', [id]);
     await client.query('DELETE FROM holdings WHERE account_id = $1', [id]);
+    await client.query('DELETE FROM transactions WHERE account_id = $1', [id]);
     await client.query('DELETE FROM accounts WHERE id = $1', [id]);
     await client.query('COMMIT');
 

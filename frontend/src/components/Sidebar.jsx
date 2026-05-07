@@ -16,7 +16,8 @@ import {
   X,
   User as UserIcon,
   Settings,
-  Landmark
+  Landmark,
+  Building2
 } from 'lucide-react';
 import { useIsMobile, useIsDesktop } from '../hooks/useMediaQuery';
 
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { id: 'assets', label: 'Assets', icon: PieChart },
   { id: 'cash', label: 'Cash', icon: Wallet },
   { id: 'liabilities', label: 'Liabilities', icon: Landmark },
+  { id: 'accounts', label: 'Accounts', icon: Building2 },
   { id: 'ticker-history', label: 'Ticker History', icon: TrendingUp },
   { id: 'account-history', label: 'Account History', icon: History },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', icon: Calendar },

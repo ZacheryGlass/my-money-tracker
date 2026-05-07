@@ -165,6 +165,23 @@ export const history = {
   },
 };
 
+// Transactions API
+export const transactions = {
+  getAll: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    if (params.account_id) queryParams.append('account_id', params.account_id);
+    if (params.startDate) queryParams.append('startDate', params.startDate);
+    if (params.endDate) queryParams.append('endDate', params.endDate);
+    if (params.limit) queryParams.append('limit', params.limit);
+    if (params.offset) queryParams.append('offset', params.offset);
+
+    const queryString = queryParams.toString();
+    const url = `/api/transactions${queryString ? `?${queryString}` : ''}`;
+    const response = await api.get(url);
+    return response.data;
+  },
+};
+
 // Export API
 export const exportData = {
   downloadHoldings: async () => {

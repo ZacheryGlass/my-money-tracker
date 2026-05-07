@@ -18,6 +18,7 @@ const exportRoutes = require('./routes/export');
 const salaryRoutes = require('./routes/salary');
 const expensesRoutes = require('./routes/expenses');
 const plaidRoutes = require('./routes/plaid');
+const transactionsRoutes = require('./routes/transactions');
 
 // Jobs
 const { initializeJobs, stopJobs } = require('./jobs');
@@ -95,6 +96,7 @@ app.use('/api/export', exportRoutes);
 app.use('/api/salary', salaryRoutes);
 app.use('/api/expenses', expensesRoutes);
 app.use('/api/plaid', plaidRoutes);
+app.use('/api/transactions', transactionsRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

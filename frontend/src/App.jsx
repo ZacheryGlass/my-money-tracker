@@ -11,6 +11,7 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const HoldingsTable = lazy(() => import('./components/HoldingsTable'));
 const CashPage = lazy(() => import('./pages/CashPage'));
 const LiabilitiesPage = lazy(() => import('./pages/LiabilitiesPage'));
+const AccountsPage = lazy(() => import('./pages/AccountsPage'));
 const TickerHistory = lazy(() => import('./pages/TickerHistory'));
 const AccountHistory = lazy(() => import('./pages/AccountHistory'));
 const PortfolioTimeline = lazy(() => import('./pages/PortfolioTimeline'));
@@ -25,18 +26,20 @@ const PageSpinner = () => (
   </div>
 );
 
-const VALID_PAGES = ['dashboard', 'assets', 'cash', 'liabilities', 'ticker-history', 'account-history', 'portfolio-timeline', 'salary-history', 'monthly-expenses', 'settings'];
+const VALID_PAGES = ['dashboard', 'assets', 'cash', 'liabilities', 'accounts', 'ticker-history', 'account-history', 'portfolio-timeline', 'salary-history', 'monthly-expenses', 'settings'];
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'assets', label: 'Assets' },
   { id: 'cash', label: 'Cash' },
   { id: 'liabilities', label: 'Liabilities' },
+  { id: 'accounts', label: 'Accounts' },
   { id: 'ticker-history', label: 'Ticker History' },
   { id: 'account-history', label: 'Account History' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline' },
   { id: 'salary-history', label: 'Salary History', section: 'PLANNING' },
   { id: 'monthly-expenses', label: 'Monthly Expenses' },
+  { id: 'settings', label: 'Settings' },
 ];
 
 function App() {
@@ -75,6 +78,7 @@ function App() {
         {currentPage === 'assets' && <HoldingsTable pageFilter="assets" />}
         {currentPage === 'cash' && <CashPage />}
         {currentPage === 'liabilities' && <LiabilitiesPage />}
+        {currentPage === 'accounts' && <AccountsPage />}
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
