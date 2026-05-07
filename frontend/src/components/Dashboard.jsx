@@ -8,7 +8,7 @@ import MetricCard from './MetricCard';
 import AllocationDonut from './AllocationDonut';
 import SparkLine from './SparkLine';
 
-const Dashboard = () => {
+const Dashboard = ({ onNavigate }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -185,12 +185,14 @@ const Dashboard = () => {
           value={formatCurrency(totalAssets)}
           valueColor="gain"
           icon={ArrowUpCircle}
+          onClick={() => onNavigate('assets')}
         />
         <MetricCard
           label="Total Liabilities"
           value={formatCurrency(totalLiabilities)}
           valueColor="loss"
           icon={ArrowDownCircle}
+          onClick={() => onNavigate('liabilities')}
         />
         <MetricCard
           label="30-Day Performance"
@@ -199,6 +201,7 @@ const Dashboard = () => {
           trend={monthlyChange.amount >= 0 ? 'up' : 'down'}
           valueColor={monthlyChange.amount >= 0 ? 'gain' : 'loss'}
           icon={Activity}
+          onClick={() => onNavigate('portfolio-timeline')}
         />
       </div>
 
@@ -228,6 +231,7 @@ const Dashboard = () => {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: idx * 0.05 }}
                 className="flex items-center justify-between gap-4 p-4 bg-surface rounded-2xl border border-transparent hover:border-border transition-all group cursor-pointer"
+                onClick={() => onNavigate('accounts')}
               >
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-bold text-primary truncate group-hover:text-accent transition-colors">
@@ -256,7 +260,7 @@ const Dashboard = () => {
 
       {/* Detailed Holdings */}
       <div className="pt-4">
-        <DashboardTable items={data?.items || []} />
+        <DashboardTable items={data?.items || []} onNavigate={onNavigate} />
       </div>
     </div>
   );

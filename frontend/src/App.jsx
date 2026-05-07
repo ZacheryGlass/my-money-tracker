@@ -74,7 +74,7 @@ function App() {
         transition={{ duration: 0.3 }}
         className="w-full"
       >
-        {currentPage === 'dashboard' && <Dashboard />}
+        {currentPage === 'dashboard' && <Dashboard onNavigate={setCurrentPage} />}
         {currentPage === 'assets' && <HoldingsTable pageFilter="assets" />}
         {currentPage === 'cash' && <CashPage />}
         {currentPage === 'liabilities' && <LiabilitiesPage />}

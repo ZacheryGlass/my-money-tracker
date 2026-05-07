@@ -9,7 +9,7 @@ const ACCENT_MAP = {
   accent: { border: 'var(--accent)', glow: 'rgba(0, 255, 204, 0.05)' },
 };
 
-const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, valueColor = 'primary' }) => {
+const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, valueColor = 'primary', onClick }) => {
   const valueClass =
     valueColor === 'gain' ? 'text-gain' : valueColor === 'loss' ? 'text-loss' : valueColor === 'accent' ? 'text-accent' : 'text-primary';
 
@@ -21,7 +21,8 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       whileHover={{ y: -4, transition: { duration: 0.2 } }}
-      className="card p-5 flex flex-col gap-3 relative overflow-hidden group"
+      onClick={onClick}
+      className={`card p-5 flex flex-col gap-3 relative overflow-hidden group${onClick ? ' cursor-pointer' : ''}`}
       style={{
         borderLeft: `4px solid ${accent.border}`,
         background: `linear-gradient(135deg, ${accent.glow} 0%, var(--bg-surface) 100%)`,

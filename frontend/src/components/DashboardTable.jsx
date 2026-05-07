@@ -9,7 +9,7 @@ import { motion } from 'framer-motion';
 import { ChevronUp, ChevronDown, ListFilter, CreditCard, Tag } from 'lucide-react';
 import { formatCurrency } from '../utils/format';
 
-const DashboardTable = ({ items }) => {
+const DashboardTable = ({ items, onNavigate }) => {
   const [sorting, setSorting] = React.useState([{ id: 'value', desc: true }]);
 
   const columns = useMemo(
@@ -159,7 +159,7 @@ const DashboardTable = ({ items }) => {
                 </tr>
               ) : (
                 table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-accent/5 transition-colors group">
+                  <tr key={row.id} className="hover:bg-accent/5 transition-colors group cursor-pointer" onClick={() => onNavigate('accounts')}>
                     {row.getVisibleCells().map((cell) => (
                       <td key={cell.id} className="px-4 py-1.5 whitespace-nowrap text-sm text-primary">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -178,7 +178,7 @@ const DashboardTable = ({ items }) => {
             <div className="px-4 py-12 text-center text-tertiary italic">No holdings found.</div>
           ) : (
             table.getRowModel().rows.map((row) => (
-              <div key={row.id} className="p-5 hover:bg-surface-3 transition-colors active:bg-surface-3">
+              <div key={row.id} className="p-5 hover:bg-surface-3 transition-colors active:bg-surface-3 cursor-pointer" onClick={() => onNavigate('accounts')}>
                 <div className="space-y-4">
                   <div className="flex justify-between items-start">
                     <div className="space-y-1">
@@ -229,7 +229,7 @@ const DashboardTable = ({ items }) => {
           </div>
           <div className="space-y-2">
             {accountTotals.map(([account, total]) => (
-              <div key={account} className="flex justify-between items-center p-3 rounded-xl hover:bg-surface-3 transition-all group">
+              <div key={account} className="flex justify-between items-center p-3 rounded-xl hover:bg-surface-3 transition-all group cursor-pointer" onClick={() => onNavigate('accounts')}>
                 <span className="text-secondary text-sm font-medium group-hover:text-primary transition-colors">{account}</span>
                 <span className={`font-money text-base font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
                   {formatCurrency(total)}
@@ -251,8 +251,8 @@ const DashboardTable = ({ items }) => {
           </div>
           <div className="space-y-2">
             {categoryTotals.map(([category, total]) => (
-              <div key={category} className="flex justify-between items-center p-3 rounded-xl hover:bg-surface-3 transition-all group">
-                <span className="text-secondary text-sm font-medium group-hover:text-primary transition-colors">{category}</span>
+              <div key={category} className="flex justify-between items-center p-3 rounded-xl">
+                <span className="text-secondary text-sm font-medium">{category}</span>
                 <span className={`font-money text-base font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
                   {formatCurrency(total)}
                 </span>
