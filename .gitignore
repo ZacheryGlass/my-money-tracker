@@ -7,3 +7,7 @@ google-sheet-export/
 
 # Claude Code
 .claude/
+.playwright-mcp/
+node_modules/
+docs/quickstart/
+

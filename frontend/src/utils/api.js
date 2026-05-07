@@ -100,6 +100,10 @@ export const accounts = {
     const response = await api.get('/api/accounts');
     return response.data;
   },
+  create: async (data) => {
+    const response = await api.post('/api/accounts', data);
+    return response.data;
+  },
   delete: async (id) => {
     const response = await api.delete(`/api/accounts/${id}`);
     return response.data;

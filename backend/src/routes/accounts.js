@@ -10,6 +10,32 @@ const router = express.Router();
 // Apply auth middleware to all routes
 router.use(authenticateToken);
 
+const VALID_ACCOUNT_TYPES = ['investment', 'depository', 'credit', 'loan', 'crypto', 'property', 'other'];
+
+// POST /api/accounts - Create a new manual account
+router.post('/', async (req, res) => {
+  try {
+    const { name, type } = req.body;
+    if (!name || !type) {
+      return res.status(400).json({ error: 'name and type are required' });
+    }
+    if (!VALID_ACCOUNT_TYPES.includes(type)) {
+      return res.status(400).json({ error: `type must be one of: ${VALID_ACCOUNT_TYPES.join(', ')}` });
+    }
+    const result = await pool.query(
+      'INSERT INTO accounts (name, type) VALUES ($1, $2) RETURNING *',
+      [name.trim(), type]
+    );
+    res.status(201).json({ account: result.rows[0] });
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'An account with that name already exists' });
+    }
+    logger.error({ err: error }, 'Create account error');
+    res.status(500).json({ error: 'Server error creating account' });
+  }
+});
+
 // GET /api/accounts - List all accounts with holdings count
 router.get('/', async (req, res) => {
   try {

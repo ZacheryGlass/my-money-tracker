@@ -3,7 +3,7 @@ const pool = require('../config/database');
 class Holding {
   static async findAll() {
     const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.is_plaid_managed, h.updated_at, a.name as account_name,
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.is_plaid_managed, h.updated_at, a.name as account_name, a.type as account_type,
         CASE
           WHEN h.ticker IS NOT NULL AND pc.price_usd IS NOT NULL AND h.quantity > 0 THEN h.quantity * pc.price_usd
           ELSE h.manual_value
@@ -18,7 +18,7 @@ class Holding {
 
   static async findById(id) {
     const result = await pool.query(
-      'SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.is_plaid_managed, h.updated_at, a.name as account_name FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.id = $1',
+      'SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.is_plaid_managed, h.updated_at, a.name as account_name, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.id = $1',
       [id]
     );
     return result.rows[0];
@@ -26,7 +26,7 @@ class Holding {
 
   static async findByAccountId(accountId) {
     const result = await pool.query(
-      'SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.is_plaid_managed, h.updated_at, a.name as account_name FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.account_id = $1 ORDER BY h.updated_at DESC',
+      'SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.is_plaid_managed, h.updated_at, a.name as account_name, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.account_id = $1 ORDER BY h.updated_at DESC',
       [accountId]
     );
     return result.rows;

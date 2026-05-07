@@ -8,13 +8,13 @@ import {
   flexRender,
 } from '@tanstack/react-table';
 import { Link2 } from 'lucide-react';
-import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
+import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
-import HoldingForm from './HoldingForm';
+import HoldingForm from '../components/HoldingForm';
 
-const ASSET_TYPES = new Set(['investment', 'crypto', 'property', 'other']);
+const CASH_TYPES = new Set(['depository']);
 
-const HoldingsTable = ({ pageFilter }) => {
+const CashPage = () => {
   const [holdings, setHoldings] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -22,7 +22,6 @@ const HoldingsTable = ({ pageFilter }) => {
   const [successMessage, setSuccessMessage] = useState('');
   const [sorting, setSorting] = useState([]);
   const [accountFilter, setAccountFilter] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('');
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState(null);
@@ -60,6 +59,7 @@ const HoldingsTable = ({ pageFilter }) => {
   };
 
   const handleEdit = (holding) => {
+    if (holding.is_plaid_managed) return;
     setEditingHolding(holding);
     setIsFormOpen(true);
   };
@@ -67,10 +67,10 @@ const HoldingsTable = ({ pageFilter }) => {
   const handleSave = async (data) => {
     if (editingHolding) {
       await holdingsAPI.update(editingHolding.id, data);
-      showSuccess('Holding updated successfully');
+      showSuccess('Cash account updated');
     } else {
       await holdingsAPI.create(data);
-      showSuccess('Holding created successfully');
+      showSuccess('Cash account added');
     }
     await fetchData();
     setIsFormOpen(false);
@@ -79,61 +79,38 @@ const HoldingsTable = ({ pageFilter }) => {
   const handleDelete = async (id) => {
     try {
       await holdingsAPI.delete(id);
-      showSuccess('Holding deleted');
+      showSuccess('Entry deleted');
       setIsFormOpen(false);
       setEditingHolding(null);
       await fetchData();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete holding');
+      setError(err.response?.data?.error || 'Failed to delete');
     }
   };
 
-  const handleExportHoldings = () => {
-    exportData.downloadHoldings();
-  };
-
-  const handleCategoryFilterChange = (value) => {
-    setCategoryFilter(value);
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  };
-
-  const handleAccountFilterChange = (value) => {
-    setAccountFilter(value);
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  };
-
-  const accountsMap = useMemo(() => {
-    return new Map(accounts.map((account) => [account.id, account]));
+  const cashAccounts = useMemo(() => {
+    return accounts.filter((a) => CASH_TYPES.has(a.type));
   }, [accounts]);
 
-  const accountsWithHoldings = useMemo(() => {
-    const ids = new Set(holdings.map((h) => h.account_id));
-    let filtered = accounts.filter((a) => ids.has(a.id));
-    if (pageFilter === 'assets') {
-      filtered = filtered.filter((a) => ASSET_TYPES.has(a.type));
-    }
-    return filtered;
-  }, [accounts, holdings, pageFilter]);
+  const cashAccountIds = useMemo(() => {
+    return new Set(cashAccounts.map((a) => a.id));
+  }, [cashAccounts]);
 
-  const distinctCategories = useMemo(() => {
-    const cats = new Set();
-    holdings.forEach((h) => { if (h.category) cats.add(h.category); });
-    return Array.from(cats).sort();
-  }, [holdings]);
+  const filteredData = useMemo(() => {
+    let data = holdings.filter((h) => cashAccountIds.has(h.account_id));
+    if (accountFilter) data = data.filter((h) => h.account_id === parseInt(accountFilter));
+    return data;
+  }, [holdings, cashAccountIds, accountFilter]);
+
+  const totalCash = useMemo(() => {
+    return filteredData.reduce((sum, h) => sum + (parseFloat(h.current_value) || 0), 0);
+  }, [filteredData]);
 
   const columns = useMemo(
     () => [
       {
         accessorKey: 'account_name',
         header: 'Account',
-      },
-      {
-        accessorKey: 'ticker',
-        header: 'Ticker',
-        cell: ({ getValue }) => {
-          const value = getValue();
-          return value || '-';
-        },
       },
       {
         accessorKey: 'name',
@@ -152,17 +129,11 @@ const HoldingsTable = ({ pageFilter }) => {
       },
       {
         id: 'value',
-        accessorFn: (row) => row.current_value ?? 0,
-        header: 'Value',
+        accessorFn: (row) => row.current_value ?? row.manual_value ?? 0,
+        header: 'Balance',
         cell: ({ getValue }) => {
-          const v = getValue();
-          const abs = Math.abs(v);
-          const sign = v < 0 ? '-' : '';
-          let display;
-          if (abs >= 1_000_000) display = `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
-          else if (abs >= 1_000) display = `${sign}$${(abs / 1_000).toFixed(1)}k`;
-          else display = formatCurrency(v);
-          return <span className="font-mono text-base font-semibold text-primary">{display}</span>;
+          const v = parseFloat(getValue()) || 0;
+          return <span className="font-mono text-base font-semibold text-primary">{formatCurrency(v)}</span>;
         },
       },
       {
@@ -174,29 +145,13 @@ const HoldingsTable = ({ pageFilter }) => {
         },
       },
     ],
-    [accounts]
+    []
   );
-
-  const filteredData = useMemo(() => {
-    let data = holdings.filter((h) => Math.abs(h.current_value ?? 0) >= 10);
-    if (pageFilter === 'assets') {
-      const assetAccountIds = new Set(
-        accounts.filter((a) => ASSET_TYPES.has(a.type)).map((a) => a.id)
-      );
-      data = data.filter((h) => assetAccountIds.has(h.account_id));
-    }
-    if (accountFilter) data = data.filter((h) => h.account_id === parseInt(accountFilter));
-    if (categoryFilter) data = data.filter((h) => h.category === categoryFilter);
-    return data;
-  }, [holdings, accounts, pageFilter, accountFilter, categoryFilter]);
 
   const table = useReactTable({
     data: filteredData,
     columns,
-    state: {
-      sorting,
-      pagination,
-    },
+    state: { sorting, pagination },
     onSortingChange: setSorting,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
@@ -216,7 +171,22 @@ const HoldingsTable = ({ pageFilter }) => {
   return (
     <div className="container mx-auto px-4 py-2 md:py-4">
       <div className="mb-3">
-        <h1 className="text-xl font-bold text-primary mb-3">{pageFilter === 'assets' ? 'Assets' : 'Holdings'}</h1>
+        <h1 className="text-xl font-bold text-primary mb-3">Cash</h1>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="card p-4 md:p-5">
+            <h3 className="text-xs uppercase tracking-wider text-secondary">Total Cash</h3>
+            <p className="mt-2 text-xl font-mono font-bold text-gain">
+              {formatCurrency(totalCash)}
+            </p>
+          </div>
+          <div className="card p-4 md:p-5">
+            <h3 className="text-xs uppercase tracking-wider text-secondary">Accounts</h3>
+            <p className="mt-2 text-xl font-mono font-bold text-primary">
+              {cashAccounts.length}
+            </p>
+          </div>
+        </div>
 
         {successMessage && (
           <div className="mb-4 bg-gain-bg text-gain border border-gain/20 rounded-lg p-3">
@@ -235,51 +205,15 @@ const HoldingsTable = ({ pageFilter }) => {
             onClick={handleAddNew}
             className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md min-h-[44px] touch-manipulation"
           >
-            Add New Holding
-          </button>
-
-          <button
-            onClick={handleExportHoldings}
-            className="px-4 py-2 bg-surface-3 text-secondary border border-border hover:border-border-hover rounded-md min-h-[44px] touch-manipulation"
-          >
-            Export CSV
+            Add Cash Entry
           </button>
         </div>
 
-        {distinctCategories.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-2 items-center">
-            <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Category:</span>
-            <button
-              onClick={() => handleCategoryFilterChange('')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
-                categoryFilter === ''
-                  ? 'bg-accent text-inverse'
-                  : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-              }`}
-            >
-              All
-            </button>
-            {distinctCategories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => handleCategoryFilterChange(categoryFilter === cat ? '' : cat)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
-                  categoryFilter === cat
-                    ? 'bg-accent text-inverse'
-                    : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {accountsWithHoldings.length > 0 && (
+        {cashAccounts.length > 1 && (
           <div className="flex flex-wrap gap-2 mb-2 items-center">
             <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Account:</span>
             <button
-              onClick={() => handleAccountFilterChange('')}
+              onClick={() => setAccountFilter('')}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
                 accountFilter === ''
                   ? 'bg-accent text-inverse'
@@ -288,10 +222,10 @@ const HoldingsTable = ({ pageFilter }) => {
             >
               All
             </button>
-            {accountsWithHoldings.map((account) => (
+            {cashAccounts.map((account) => (
               <button
                 key={account.id}
-                onClick={() => handleAccountFilterChange(accountFilter === String(account.id) ? '' : String(account.id))}
+                onClick={() => setAccountFilter(accountFilter === String(account.id) ? '' : String(account.id))}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
                   accountFilter === String(account.id)
                     ? 'bg-accent text-inverse'
@@ -314,7 +248,7 @@ const HoldingsTable = ({ pageFilter }) => {
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
-                      className={`px-4 py-2 text-left text-xs font-medium text-secondary uppercase tracking-wider ${header.column.getCanSort() ? 'cursor-pointer hover:bg-surface-3' : ''}`}
+                      className="px-4 py-2 text-left text-xs font-medium text-secondary uppercase tracking-wider cursor-pointer hover:bg-surface-3"
                       onClick={header.column.getToggleSortingHandler()}
                     >
                       <div className="flex items-center gap-2">
@@ -332,7 +266,7 @@ const HoldingsTable = ({ pageFilter }) => {
               {table.getRowModel().rows.length === 0 ? (
                 <tr>
                   <td colSpan={columns.length} className="px-4 py-6 text-center text-secondary">
-                    No holdings found. Click "Add New Holding" to get started.
+                    No cash accounts found. Add a depository account to get started.
                   </td>
                 </tr>
               ) : (
@@ -347,10 +281,7 @@ const HoldingsTable = ({ pageFilter }) => {
                     onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <td
-                        key={cell.id}
-                        className="px-4 py-1.5 whitespace-nowrap text-sm text-primary"
-                      >
+                      <td key={cell.id} className="px-4 py-1.5 whitespace-nowrap text-sm text-primary">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
@@ -364,12 +295,11 @@ const HoldingsTable = ({ pageFilter }) => {
         <div className="md:hidden divide-y divide-border">
           {table.getRowModel().rows.length === 0 ? (
             <div className="px-4 py-8 text-center text-secondary">
-              No holdings found. Click "Add New Holding" to get started.
+              No cash accounts found.
             </div>
           ) : (
             table.getRowModel().rows.map((row) => {
-              const account = accountsMap.get(row.original.account_id);
-              const value = row.original.current_value ?? 0;
+              const value = parseFloat(row.original.current_value ?? row.original.manual_value ?? 0);
               return (
                 <div
                   key={row.id}
@@ -378,39 +308,15 @@ const HoldingsTable = ({ pageFilter }) => {
                   }`}
                   onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
                 >
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-start gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-primary truncate">{row.original.name}</div>
-                        {row.original.is_plaid_managed && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20 mt-0.5 w-fit">
-                            <Link2 size={10} />
-                            Plaid
-                          </span>
-                        )}
-                        {row.original.ticker && (
-                          <div className="text-sm text-secondary">{row.original.ticker}</div>
-                        )}
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <div className="text-lg font-bold font-mono text-primary">
-                          {formatCurrency(value)}
-                        </div>
-                      </div>
+                  <div className="flex justify-between items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-primary truncate">{row.original.name}</div>
+                      <div className="text-sm text-secondary">{row.original.account_name}</div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <span className="text-xs text-secondary block">Account</span>
-                        <div className="font-medium text-primary truncate">
-                          {account ? account.name : 'Unknown'}
-                        </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-lg font-bold font-mono text-primary">
+                        {formatCurrency(value)}
                       </div>
-                      {row.original.category && (
-                        <div>
-                          <span className="text-xs text-secondary block">Category</span>
-                          <div className="font-medium text-primary truncate">{row.original.category}</div>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -420,7 +326,7 @@ const HoldingsTable = ({ pageFilter }) => {
         </div>
       </div>
 
-      {filteredData.length > 0 && (
+      {filteredData.length > 25 && (
         <div className="flex items-center justify-between mt-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-secondary">Rows per page:</span>
@@ -462,10 +368,10 @@ const HoldingsTable = ({ pageFilter }) => {
         onSave={handleSave}
         onDelete={handleDelete}
         holding={editingHolding}
-        accounts={accounts}
+        accounts={cashAccounts}
       />
     </div>
   );
 };
 
-export default HoldingsTable;
+export default CashPage;

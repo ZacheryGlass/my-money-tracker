@@ -201,7 +201,21 @@ class PlaidService {
     logger.info({ plaidItemId, removeData }, 'Plaid item disconnected');
   }
 
+  static _mapPlaidType(accountType) {
+    const TYPE_MAP = {
+      investment: 'investment',
+      brokerage: 'investment',
+      depository: 'depository',
+      credit: 'credit',
+      loan: 'loan',
+      other: 'other',
+    };
+    return TYPE_MAP[accountType] || 'other';
+  }
+
   static async _upsertAccount(name, plaidItemId, plaidAccountId, accountType) {
+    const dbType = this._mapPlaidType(accountType);
+
     const existing = await pool.query(
       'SELECT * FROM accounts WHERE plaid_account_id = $1',
       [plaidAccountId]
@@ -209,8 +223,8 @@ class PlaidService {
 
     if (existing.rows.length > 0) {
       const result = await pool.query(
-        'UPDATE accounts SET plaid_item_id = $1 WHERE plaid_account_id = $2 RETURNING *',
-        [plaidItemId, plaidAccountId]
+        'UPDATE accounts SET plaid_item_id = $1, type = $2 WHERE plaid_account_id = $3 RETURNING *',
+        [plaidItemId, dbType, plaidAccountId]
       );
       return result.rows[0];
     }
@@ -221,8 +235,8 @@ class PlaidService {
     );
     if (reclaimable.rows.length > 0) {
       const result = await pool.query(
-        'UPDATE accounts SET plaid_item_id = $1, plaid_account_id = $2 WHERE id = $3 RETURNING *',
-        [plaidItemId, plaidAccountId, reclaimable.rows[0].id]
+        'UPDATE accounts SET plaid_item_id = $1, plaid_account_id = $2, type = $3 WHERE id = $4 RETURNING *',
+        [plaidItemId, plaidAccountId, dbType, reclaimable.rows[0].id]
       );
       return result.rows[0];
     }
@@ -232,7 +246,6 @@ class PlaidService {
       [name]
     );
     const finalName = nameConflict.rows.length > 0 ? `${name} (Plaid)` : name;
-    const dbType = accountType === 'investment' || accountType === 'brokerage' ? 'investment' : 'static';
 
     const result = await pool.query(
       'INSERT INTO accounts (name, type, plaid_item_id, plaid_account_id) VALUES ($1, $2, $3, $4) RETURNING *',

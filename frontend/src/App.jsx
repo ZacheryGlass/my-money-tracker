@@ -9,10 +9,11 @@ import { Menu } from 'lucide-react';
 
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const HoldingsTable = lazy(() => import('./components/HoldingsTable'));
+const CashPage = lazy(() => import('./pages/CashPage'));
+const LiabilitiesPage = lazy(() => import('./pages/LiabilitiesPage'));
 const TickerHistory = lazy(() => import('./pages/TickerHistory'));
 const AccountHistory = lazy(() => import('./pages/AccountHistory'));
 const PortfolioTimeline = lazy(() => import('./pages/PortfolioTimeline'));
-const StaticAssets = lazy(() => import('./pages/StaticAssets'));
 const SalaryHistory = lazy(() => import('./pages/SalaryHistory'));
 const MonthlyExpenses = lazy(() => import('./pages/MonthlyExpenses'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -24,12 +25,13 @@ const PageSpinner = () => (
   </div>
 );
 
-const VALID_PAGES = ['dashboard', 'holdings', 'static-assets', 'ticker-history', 'account-history', 'portfolio-timeline', 'salary-history', 'monthly-expenses', 'settings'];
+const VALID_PAGES = ['dashboard', 'assets', 'cash', 'liabilities', 'ticker-history', 'account-history', 'portfolio-timeline', 'salary-history', 'monthly-expenses', 'settings'];
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'holdings', label: 'Holdings' },
-  { id: 'static-assets', label: 'Static Assets' },
+  { id: 'assets', label: 'Assets' },
+  { id: 'cash', label: 'Cash' },
+  { id: 'liabilities', label: 'Liabilities' },
   { id: 'ticker-history', label: 'Ticker History' },
   { id: 'account-history', label: 'Account History' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline' },
@@ -70,8 +72,9 @@ function App() {
         className="w-full"
       >
         {currentPage === 'dashboard' && <Dashboard />}
-        {currentPage === 'holdings' && <HoldingsTable />}
-        {currentPage === 'static-assets' && <StaticAssets />}
+        {currentPage === 'assets' && <HoldingsTable pageFilter="assets" />}
+        {currentPage === 'cash' && <CashPage />}
+        {currentPage === 'liabilities' && <LiabilitiesPage />}
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard,
   PieChart,
-  Building2,
+  Wallet,
   TrendingUp,
   History,
   Calendar,
@@ -15,14 +15,16 @@ import {
   Menu,
   X,
   User as UserIcon,
-  Settings
+  Settings,
+  Landmark
 } from 'lucide-react';
 import { useIsMobile, useIsDesktop } from '../hooks/useMediaQuery';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'holdings', label: 'Holdings', icon: PieChart },
-  { id: 'static-assets', label: 'Static Assets', icon: Building2 },
+  { id: 'assets', label: 'Assets', icon: PieChart },
+  { id: 'cash', label: 'Cash', icon: Wallet },
+  { id: 'liabilities', label: 'Liabilities', icon: Landmark },
   { id: 'ticker-history', label: 'Ticker History', icon: TrendingUp },
   { id: 'account-history', label: 'Account History', icon: History },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', icon: Calendar },

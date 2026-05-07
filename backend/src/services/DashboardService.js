@@ -2,7 +2,7 @@ const Holding = require('../models/Holding');
 const PriceCache = require('../models/PriceCache');
 
 const MINIMUM_VALUE_THRESHOLD = 100;
-const LIABILITY_ACCOUNT_NAME = 'Liability';
+const LIABILITY_TYPES = new Set(['credit', 'loan']);
 
 class DashboardService {
   static async getCurrentPortfolio() {
@@ -41,7 +41,7 @@ class DashboardService {
         continue;
       }
 
-      const type = holding.account_name === LIABILITY_ACCOUNT_NAME ? 'liability' : 'asset';
+      const type = LIABILITY_TYPES.has(holding.account_type) ? 'liability' : 'asset';
 
       items.push({
         name: holding.name,
