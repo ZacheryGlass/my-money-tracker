@@ -69,21 +69,50 @@ class PlaidItem {
     return result.rows[0];
   }
 
-  static async delete(id) {
-    await pool.query(
-      `UPDATE holdings SET is_plaid_managed = FALSE
-       WHERE account_id IN (SELECT id FROM accounts WHERE plaid_item_id = $1)`,
-      [id]
-    );
-    await pool.query(
-      'UPDATE accounts SET plaid_item_id = NULL, plaid_account_id = NULL WHERE plaid_item_id = $1',
-      [id]
-    );
-    const result = await pool.query(
-      'DELETE FROM plaid_items WHERE id = $1 RETURNING *',
-      [id]
-    );
-    return result.rows[0];
+  static async delete(id, { removeData = false } = {}) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (removeData) {
+        await client.query(
+          'DELETE FROM ticker_snapshots WHERE account_id IN (SELECT id FROM accounts WHERE plaid_item_id = $1)',
+          [id]
+        );
+        await client.query(
+          'DELETE FROM account_snapshots WHERE account_id IN (SELECT id FROM accounts WHERE plaid_item_id = $1)',
+          [id]
+        );
+        await client.query(
+          'DELETE FROM holdings WHERE account_id IN (SELECT id FROM accounts WHERE plaid_item_id = $1)',
+          [id]
+        );
+        await client.query(
+          'DELETE FROM accounts WHERE plaid_item_id = $1',
+          [id]
+        );
+      } else {
+        await client.query(
+          `UPDATE holdings SET is_plaid_managed = FALSE
+           WHERE account_id IN (SELECT id FROM accounts WHERE plaid_item_id = $1)`,
+          [id]
+        );
+        await client.query(
+          'UPDATE accounts SET plaid_item_id = NULL, plaid_account_id = NULL WHERE plaid_item_id = $1',
+          [id]
+        );
+      }
+      const result = await client.query(
+        'DELETE FROM plaid_items WHERE id = $1 RETURNING *',
+        [id]
+      );
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   static async getAccountsForItem(id) {

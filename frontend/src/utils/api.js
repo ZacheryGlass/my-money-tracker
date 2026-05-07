@@ -94,10 +94,14 @@ export const holdings = {
   },
 };
 
-// Accounts API (for dropdowns)
+// Accounts API
 export const accounts = {
   getAll: async () => {
     const response = await api.get('/api/accounts');
+    return response.data;
+  },
+  delete: async (id) => {
+    const response = await api.delete(`/api/accounts/${id}`);
     return response.data;
   },
 };
@@ -263,8 +267,12 @@ export const plaid = {
     const response = await api.post(`/api/plaid/items/${id}/sync`);
     return response.data;
   },
-  removeItem: async (id) => {
-    const response = await api.delete(`/api/plaid/items/${id}`);
+  createUpdateLinkToken: async (id) => {
+    const response = await api.post(`/api/plaid/items/${id}/update-link-token`);
+    return response.data;
+  },
+  removeItem: async (id, { removeData = false } = {}) => {
+    const response = await api.delete(`/api/plaid/items/${id}${removeData ? '?removeData=true' : ''}`);
     return response.data;
   },
 };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
+const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) => {
   const [formData, setFormData] = useState({
     account_id: '',
     ticker: '',
@@ -261,11 +261,21 @@ const HoldingForm = ({ isOpen, onClose, onSave, holding, accounts }) => {
             </div>
 
             </fieldset>
-            <div className="p-5 border-t border-border -mx-5 mt-5 flex flex-col sm:flex-row justify-end gap-3">
+            <div className="p-5 border-t border-border -mx-5 mt-5 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              {holding && !holding.is_plaid_managed && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(holding.id)}
+                  disabled={isSubmitting}
+                  className="w-full sm:w-auto px-4 py-2 text-loss hover:bg-loss/10 rounded-md disabled:opacity-50 min-h-[44px] touch-manipulation sm:mr-auto"
+                >
+                  Delete
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}
-                className="w-full sm:w-auto px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
+                className="w-full sm:w-auto px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation sm:ml-auto"
               >
                 {holding?.is_plaid_managed ? 'Close' : 'Cancel'}
               </button>

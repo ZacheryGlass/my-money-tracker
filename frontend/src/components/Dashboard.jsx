@@ -48,11 +48,11 @@ const Dashboard = () => {
       .then(({ items }) => Promise.all((items || []).map((item) => plaidAPI.syncItem(item.id))));
     const results = await Promise.allSettled([dashboardAPI.refreshPrices(), plaidSync]);
     const failed = results.filter((r) => r.status === 'rejected');
+    await fetchData();
     if (failed.length > 0) {
       console.error('Sync failures:', failed.map((r) => r.reason));
       setError('Some updates failed. Please try again.');
     }
-    await fetchData();
     setRefreshing(false);
   };
 
@@ -256,7 +256,7 @@ const Dashboard = () => {
 
       {/* Detailed Holdings */}
       <div className="pt-4">
-        <DashboardTable items={data.items} />
+        <DashboardTable items={data?.items || []} />
       </div>
     </div>
   );

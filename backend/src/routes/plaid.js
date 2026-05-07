@@ -78,6 +78,21 @@ router.post('/items/:id/sync', async (req, res) => {
   }
 });
 
+router.post('/items/:id/update-link-token', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const item = await PlaidItem.findById(id);
+    if (!item) {
+      return res.status(404).json({ error: 'Plaid item not found' });
+    }
+    const linkToken = await PlaidService.createUpdateLinkToken(req.user.id, id);
+    res.status(200).json({ link_token: linkToken });
+  } catch (error) {
+    logger.error({ err: error, itemId: req.params.id }, 'Create update link token error');
+    res.status(500).json({ error: 'Failed to create update link token' });
+  }
+});
+
 router.delete('/items/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -86,7 +101,8 @@ router.delete('/items/:id', async (req, res) => {
       return res.status(404).json({ error: 'Plaid item not found' });
     }
 
-    await PlaidService.removeItem(id);
+    const removeData = req.query.removeData === 'true';
+    await PlaidService.removeItem(id, { removeData });
     res.status(200).json({ message: 'Account disconnected successfully' });
   } catch (error) {
     logger.error({ err: error, itemId: req.params.id }, 'Remove Plaid item error');

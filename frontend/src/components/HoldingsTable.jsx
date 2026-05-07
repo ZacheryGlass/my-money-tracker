@@ -74,6 +74,18 @@ const HoldingsTable = () => {
     setIsFormOpen(false);
   };
 
+  const handleDelete = async (id) => {
+    try {
+      await holdingsAPI.delete(id);
+      showSuccess('Holding deleted');
+      setIsFormOpen(false);
+      setEditingHolding(null);
+      await fetchData();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete holding');
+    }
+  };
+
   const handleExportHoldings = () => {
     exportData.downloadHoldings();
   };
@@ -91,6 +103,11 @@ const HoldingsTable = () => {
   const accountsMap = useMemo(() => {
     return new Map(accounts.map((account) => [account.id, account]));
   }, [accounts]);
+
+  const accountsWithHoldings = useMemo(() => {
+    const ids = new Set(holdings.map((h) => h.account_id));
+    return accounts.filter((a) => ids.has(a.id));
+  }, [accounts, holdings]);
 
   const distinctCategories = useMemo(() => {
     const cats = new Set();
@@ -246,7 +263,7 @@ const HoldingsTable = () => {
           </div>
         )}
 
-        {accounts.length > 0 && (
+        {accountsWithHoldings.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2 items-center">
             <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Account:</span>
             <button
@@ -259,7 +276,7 @@ const HoldingsTable = () => {
             >
               All
             </button>
-            {accounts.map((account) => (
+            {accountsWithHoldings.map((account) => (
               <button
                 key={account.id}
                 onClick={() => handleAccountFilterChange(accountFilter === String(account.id) ? '' : String(account.id))}
@@ -431,6 +448,7 @@ const HoldingsTable = () => {
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         onSave={handleSave}
+        onDelete={handleDelete}
         holding={editingHolding}
         accounts={accounts}
       />

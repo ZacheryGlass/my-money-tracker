@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
-import { plaid as plaidAPI } from '../utils/api';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock } from 'lucide-react';
+import { plaid as plaidAPI, accounts as accountsAPI } from '../utils/api';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2 } from 'lucide-react';
 
 function PlaidLinkButton({ onSuccess, disabled }) {
   const [linkToken, setLinkToken] = useState(null);
@@ -52,6 +52,47 @@ function PlaidLinkButton({ onSuccess, disabled }) {
   );
 }
 
+function UpdateLinkButton({ itemId, onSuccess }) {
+  const [linkToken, setLinkToken] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchUpdateToken = async () => {
+    setLoading(true);
+    try {
+      const data = await plaidAPI.createUpdateLinkToken(itemId);
+      setLinkToken(data.link_token);
+    } catch {
+      setLinkToken(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const { open, ready } = usePlaidLink({
+    token: linkToken,
+    onSuccess: () => {
+      setLinkToken(null);
+      onSuccess(itemId);
+    },
+    onExit: () => setLinkToken(null),
+  });
+
+  useEffect(() => {
+    if (linkToken && ready) open();
+  }, [linkToken, ready, open]);
+
+  return (
+    <button
+      onClick={fetchUpdateToken}
+      disabled={loading}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-inverse bg-accent hover:bg-accent-hover transition-colors duration-200 min-h-[44px] touch-manipulation disabled:opacity-50"
+    >
+      {loading ? <RefreshCw size={14} className="animate-spin" /> : <Link2 size={14} />}
+      Re-link
+    </button>
+  );
+}
+
 function formatSyncTime(timestamp) {
   if (!timestamp) return 'Never';
   const date = new Date(timestamp);
@@ -73,13 +114,30 @@ const Settings = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [syncingId, setSyncingId] = useState(null);
   const [disconnectingItem, setDisconnectingItem] = useState(null);
+  const [removeDataOnDisconnect, setRemoveDataOnDisconnect] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [expandedItem, setExpandedItem] = useState(null);
+  const [consentItems, setConsentItems] = useState(new Set());
+  const [orphanedAccounts, setOrphanedAccounts] = useState([]);
+  const [deletingAccountId, setDeletingAccountId] = useState(null);
 
   const fetchItems = useCallback(async () => {
     try {
-      const data = await plaidAPI.getItems();
-      setItems(data.items || []);
+      const [plaidData, accountsData] = await Promise.all([
+        plaidAPI.getItems(),
+        accountsAPI.getAll(),
+      ]);
+      const loadedItems = plaidData.items || [];
+      setItems(loadedItems);
+      setConsentItems(new Set(
+        loadedItems
+          .filter(item => item.error_code === 'ADDITIONAL_CONSENT_REQUIRED')
+          .map(item => item.id)
+      ));
+      const allAccounts = accountsData.accounts || [];
+      setOrphanedAccounts(
+        allAccounts.filter(a => !a.plaid_item_id && a.type === 'investment' && a.name.includes(' - '))
+      );
       setError(null);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load connected accounts');
@@ -95,11 +153,11 @@ const Settings = () => {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  const handlePlaidSuccess = async (publicToken) => {
+  const handlePlaidSuccess = async (publicToken, metadata) => {
     setConnecting(true);
     setError(null);
     try {
-      await plaidAPI.exchangeToken(publicToken);
+      await plaidAPI.exchangeToken(publicToken, metadata);
       showSuccess('Account connected successfully');
       await fetchItems();
     } catch (err) {
@@ -113,8 +171,14 @@ const Settings = () => {
     setSyncingId(id);
     setError(null);
     try {
-      await plaidAPI.syncItem(id);
-      showSuccess('Account synced successfully');
+      const result = await plaidAPI.syncItem(id);
+      if (result.sync?.consentRequired) {
+        setConsentItems((prev) => new Set(prev).add(id));
+        setError('Additional consent required for investment data. Click "Re-link" to authorize.');
+      } else {
+        setConsentItems((prev) => { const next = new Set(prev); next.delete(id); return next; });
+        showSuccess('Account synced successfully');
+      }
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to sync account');
@@ -123,12 +187,27 @@ const Settings = () => {
     }
   };
 
+  const handleRelink = async (itemId) => {
+    setError(null);
+    try {
+      await plaidAPI.syncItem(itemId);
+      setConsentItems((prev) => { const next = new Set(prev); next.delete(itemId); return next; });
+      showSuccess('Account re-linked and synced successfully');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to sync after re-link');
+    }
+  };
+
   const handleDisconnectConfirm = async () => {
     const id = disconnectingItem.id;
+    const removeData = removeDataOnDisconnect;
     setDisconnectingItem(null);
     try {
-      await plaidAPI.removeItem(id);
-      showSuccess('Account disconnected. Holdings kept as manual entries.');
+      await plaidAPI.removeItem(id, { removeData });
+      showSuccess(removeData
+        ? 'Account disconnected and data removed.'
+        : 'Account disconnected. Holdings kept as manual entries.');
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to disconnect account');
@@ -218,12 +297,14 @@ const Settings = () => {
                   </div>
 
                   <div className="flex items-center gap-1.5 flex-shrink-0">
-                    {item.error_code && (
+                    {consentItems.has(item.id) ? (
+                      <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} />
+                    ) : item.error_code ? (
                       <span className="flex items-center gap-1 px-2 py-1 rounded-md bg-loss/10 text-loss text-xs font-medium">
                         <AlertTriangle size={12} />
                         Error
                       </span>
-                    )}
+                    ) : null}
                     <button
                       onClick={() => handleSync(item.id)}
                       disabled={syncingId === item.id}
@@ -234,7 +315,7 @@ const Settings = () => {
                       Sync
                     </button>
                     <button
-                      onClick={() => setDisconnectingItem(item)}
+                      onClick={() => { setRemoveDataOnDisconnect(true); setDisconnectingItem(item); }}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-secondary hover:text-loss hover:bg-loss/10 transition-colors duration-200 min-h-[44px] touch-manipulation"
                       title="Disconnect"
                     >
@@ -243,9 +324,14 @@ const Settings = () => {
                   </div>
                 </div>
 
-                {item.error_code && (
+                {item.error_code && !consentItems.has(item.id) && (
                   <div className="mt-3 px-3 py-2 rounded-md bg-loss/5 border border-loss/10 text-xs text-loss">
                     {item.error_message || `Error: ${item.error_code}`}
+                  </div>
+                )}
+                {consentItems.has(item.id) && (
+                  <div className="mt-3 px-3 py-2 rounded-md bg-[var(--color-accent)]/5 border border-[var(--color-accent)]/10 text-xs text-accent">
+                    Investment data requires additional authorization. Click "Re-link" to grant access.
                   </div>
                 )}
 
@@ -277,15 +363,85 @@ const Settings = () => {
         </div>
       )}
 
+      {/* Orphaned Accounts */}
+      {orphanedAccounts.length > 0 && (
+        <div className="animate-slide-up">
+          <h2 className="text-lg font-bold text-primary mb-3">Empty Accounts</h2>
+          <p className="text-xs text-secondary mb-3">
+            These accounts are not linked to Plaid. Deleting removes the account and all its holdings.
+          </p>
+          <div className="card overflow-hidden">
+            <div className="divide-y divide-border">
+              {orphanedAccounts.map((acct) => (
+                <div key={acct.id} className="flex items-center justify-between px-4 py-3">
+                  <div className="min-w-0">
+                    <span className="text-sm text-primary truncate block">{acct.name}</span>
+                    {acct.holdings_count > 0 && (
+                      <span className="text-xs text-secondary">{acct.holdings_count} holding{acct.holdings_count !== 1 ? 's' : ''}</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setDeletingAccountId(acct.id);
+                      try {
+                        await accountsAPI.delete(acct.id);
+                        showSuccess(`"${acct.name}" deleted`);
+                        await fetchItems();
+                      } catch (err) {
+                        setError(err.response?.data?.error || 'Failed to delete account');
+                      } finally {
+                        setDeletingAccountId(null);
+                      }
+                    }}
+                    disabled={deletingAccountId === acct.id}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-secondary hover:text-loss hover:bg-loss/10 transition-colors duration-200 min-h-[36px] touch-manipulation disabled:opacity-50 flex-shrink-0"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Disconnect Confirm Modal */}
       {disconnectingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
           <div className="bg-surface rounded-card border border-border shadow-xl max-w-md w-full mx-4 p-6 animate-slide-up">
             <h2 className="text-lg font-bold mb-2 text-primary">Disconnect Account</h2>
-            <p className="text-sm text-secondary mb-6">
+            <p className="text-sm text-secondary mb-4">
               Disconnect {disconnectingItem.institution_name || 'this account'}?
-              Existing holdings will be kept as manual entries.
             </p>
+            <div className="space-y-2 mb-6">
+              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors duration-150 ${removeDataOnDisconnect ? 'border-accent/40 bg-accent/5' : 'border-border hover:border-border/80'}`}>
+                <input
+                  type="radio"
+                  name="disconnect-mode"
+                  checked={removeDataOnDisconnect}
+                  onChange={() => setRemoveDataOnDisconnect(true)}
+                  className="mt-0.5 accent-[var(--color-accent)]"
+                />
+                <div>
+                  <span className="text-sm font-medium text-primary">Remove all data</span>
+                  <p className="text-xs text-secondary mt-0.5">Delete linked accounts, holdings, and history.</p>
+                </div>
+              </label>
+              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors duration-150 ${!removeDataOnDisconnect ? 'border-accent/40 bg-accent/5' : 'border-border hover:border-border/80'}`}>
+                <input
+                  type="radio"
+                  name="disconnect-mode"
+                  checked={!removeDataOnDisconnect}
+                  onChange={() => setRemoveDataOnDisconnect(false)}
+                  className="mt-0.5 accent-[var(--color-accent)]"
+                />
+                <div>
+                  <span className="text-sm font-medium text-primary">Keep data</span>
+                  <p className="text-xs text-secondary mt-0.5">Holdings become manual entries you can manage yourself.</p>
+                </div>
+              </label>
+            </div>
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setDisconnectingItem(null)}

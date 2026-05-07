@@ -13,6 +13,21 @@ class PlaidService {
       user: { client_user_id: String(userId) },
       client_name: 'My Money Tracker',
       products: [Products.Transactions],
+      optional_products: [Products.Investments, Products.Liabilities],
+      country_codes: [CountryCode.Us],
+      language: 'en',
+    };
+    const response = await plaidClient.linkTokenCreate(request);
+    return response.data.link_token;
+  }
+
+  static async createUpdateLinkToken(userId, plaidItemId) {
+    const item = await PlaidItem.findById(plaidItemId);
+    if (!item) throw new Error(`PlaidItem ${plaidItemId} not found`);
+    const request = {
+      user: { client_user_id: String(userId) },
+      client_name: 'My Money Tracker',
+      access_token: item.access_token,
       country_codes: [CountryCode.Us],
       language: 'en',
     };
@@ -68,7 +83,7 @@ class PlaidService {
 
     for (const pa of plaidAccounts) {
       const accountName = `${prefix} - ${pa.official_name || pa.name}`;
-      const dbAccount = await this._upsertAccount(accountName, plaidItemId, pa.account_id);
+      const dbAccount = await this._upsertAccount(accountName, plaidItemId, pa.account_id, pa.type);
       syncedAccountIds.push(dbAccount.id);
       results.accounts++;
     }
@@ -93,8 +108,9 @@ class PlaidService {
           const ticker = security.ticker_symbol || null;
           const name = security.name || 'Unknown Security';
           const quantity = holding.quantity;
+          const manualValue = holding.institution_value ?? null;
 
-          await this._upsertHolding(accountId, ticker, name, quantity, null);
+          await this._upsertHolding(accountId, ticker, name, quantity, manualValue);
 
           if (ticker && security.close_price != null) {
             await PriceCache.upsert(ticker, security.close_price, 'plaid');
@@ -118,8 +134,13 @@ class PlaidService {
           results.removed += removed;
         }
       } catch (err) {
-        if (err.response?.data?.error_code === 'PRODUCTS_NOT_SUPPORTED') {
+        const errorCode = err.response?.data?.error_code;
+        if (errorCode === 'PRODUCTS_NOT_SUPPORTED') {
           logger.info({ plaidItemId }, 'Institution does not support investments product');
+        } else if (errorCode === 'ADDITIONAL_CONSENT_REQUIRED') {
+          logger.info({ plaidItemId }, 'Additional consent required for investments — user must re-link');
+          await PlaidItem.setError(plaidItemId, 'ADDITIONAL_CONSENT_REQUIRED', 'Additional consent required for investment data. Please re-link this account.');
+          results.consentRequired = true;
         } else {
           logger.error({ plaidItemId, err }, 'Failed to sync investment holdings');
         }
@@ -166,7 +187,7 @@ class PlaidService {
     return summary;
   }
 
-  static async removeItem(plaidItemId) {
+  static async removeItem(plaidItemId, { removeData = false } = {}) {
     const item = await PlaidItem.findById(plaidItemId);
     if (!item) throw new Error(`PlaidItem ${plaidItemId} not found`);
 
@@ -176,22 +197,34 @@ class PlaidService {
       logger.warn({ plaidItemId, err }, 'Failed to revoke access token at Plaid');
     }
 
-    await PlaidItem.delete(plaidItemId);
-    logger.info({ plaidItemId }, 'Plaid item disconnected');
+    await PlaidItem.delete(plaidItemId, { removeData });
+    logger.info({ plaidItemId, removeData }, 'Plaid item disconnected');
   }
 
-  static async _upsertAccount(name, plaidItemId, plaidAccountId) {
+  static async _upsertAccount(name, plaidItemId, plaidAccountId, accountType) {
     const existing = await pool.query(
       'SELECT * FROM accounts WHERE plaid_account_id = $1',
       [plaidAccountId]
     );
 
     if (existing.rows.length > 0) {
-      await pool.query(
-        'UPDATE accounts SET plaid_item_id = $1 WHERE plaid_account_id = $2',
+      const result = await pool.query(
+        'UPDATE accounts SET plaid_item_id = $1 WHERE plaid_account_id = $2 RETURNING *',
         [plaidItemId, plaidAccountId]
       );
-      return existing.rows[0];
+      return result.rows[0];
+    }
+
+    const reclaimable = await pool.query(
+      'SELECT * FROM accounts WHERE name = $1 AND plaid_account_id IS NULL',
+      [name]
+    );
+    if (reclaimable.rows.length > 0) {
+      const result = await pool.query(
+        'UPDATE accounts SET plaid_item_id = $1, plaid_account_id = $2 WHERE id = $3 RETURNING *',
+        [plaidItemId, plaidAccountId, reclaimable.rows[0].id]
+      );
+      return result.rows[0];
     }
 
     const nameConflict = await pool.query(
@@ -199,10 +232,11 @@ class PlaidService {
       [name]
     );
     const finalName = nameConflict.rows.length > 0 ? `${name} (Plaid)` : name;
+    const dbType = accountType === 'investment' || accountType === 'brokerage' ? 'investment' : 'static';
 
     const result = await pool.query(
       'INSERT INTO accounts (name, type, plaid_item_id, plaid_account_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [finalName, 'investment', plaidItemId, plaidAccountId]
+      [finalName, dbType, plaidItemId, plaidAccountId]
     );
     return result.rows[0];
   }
@@ -255,7 +289,7 @@ class PlaidService {
     const result = await pool.query(
       `DELETE FROM holdings
        WHERE account_id = $1 AND is_plaid_managed = TRUE
-       AND COALESCE(UPPER(ticker), name) NOT IN (${placeholders})`,
+       AND COALESCE(UPPER(ticker), UPPER(name)) NOT IN (${placeholders})`,
       [accountId, ...currentIdentifiers.map(id => id.toUpperCase())]
     );
     return result.rowCount;

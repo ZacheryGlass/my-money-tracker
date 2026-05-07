@@ -14,25 +14,51 @@ class TickerSnapshot {
       return [];
     }
 
-    const values = [];
-    const placeholders = [];
-    let paramIndex = 1;
+    const withTicker = snapshots.filter(s => s.ticker != null);
+    const withoutTicker = snapshots.filter(s => s.ticker == null);
+    const results = [];
 
-    for (const snapshot of snapshots) {
-      placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4})`);
-      values.push(snapshot.snapshotDate, snapshot.accountId, snapshot.ticker, snapshot.name, snapshot.value);
-      paramIndex += 5;
+    if (withTicker.length > 0) {
+      const values = [];
+      const placeholders = [];
+      let paramIndex = 1;
+      for (const snapshot of withTicker) {
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4})`);
+        values.push(snapshot.snapshotDate, snapshot.accountId, snapshot.ticker, snapshot.name, snapshot.value);
+        paramIndex += 5;
+      }
+      const result = await pool.query(
+        `INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (snapshot_date, account_id, ticker) WHERE ticker IS NOT NULL
+         DO UPDATE SET value = EXCLUDED.value, name = EXCLUDED.name
+         RETURNING *`,
+        values
+      );
+      results.push(...result.rows);
     }
 
-    const query = `
-      INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value)
-      VALUES ${placeholders.join(', ')}
-      ON CONFLICT (snapshot_date, account_id, ticker) DO UPDATE SET value = EXCLUDED.value, name = EXCLUDED.name
-      RETURNING *
-    `;
+    if (withoutTicker.length > 0) {
+      const values = [];
+      const placeholders = [];
+      let paramIndex = 1;
+      for (const snapshot of withoutTicker) {
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, NULL, $${paramIndex + 2}, $${paramIndex + 3})`);
+        values.push(snapshot.snapshotDate, snapshot.accountId, snapshot.name, snapshot.value);
+        paramIndex += 4;
+      }
+      const result = await pool.query(
+        `INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (snapshot_date, account_id, name) WHERE ticker IS NULL
+         DO UPDATE SET value = EXCLUDED.value
+         RETURNING *`,
+        values
+      );
+      results.push(...result.rows);
+    }
 
-    const result = await pool.query(query, values);
-    return result.rows;
+    return results;
   }
 
   static async findByDate(snapshotDate) {
