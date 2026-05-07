@@ -239,10 +239,7 @@ const DashboardTable = ({ items, onNavigate }) => {
           </div>
         </motion.div>
 
-        <motion.div 
-          whileHover={{ y: -4 }}
-          className="card p-6 lg:p-8 space-y-6 bg-surface-2/30 backdrop-blur-sm"
-        >
+        <div className="card p-6 lg:p-8 space-y-6 bg-surface-2/30 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <Tag size={18} className="text-purple-400" />
             <h3 className="text-[11px] font-bold tracking-widest uppercase text-tertiary">
@@ -259,7 +256,7 @@ const DashboardTable = ({ items, onNavigate }) => {
               </div>
             ))}
           </div>
-        </motion.div>
+        </div>
       </div>
     </div>
   );

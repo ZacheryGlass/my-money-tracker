@@ -126,6 +126,9 @@ const HoldingsTable = ({ pageFilter }) => {
       {
         accessorKey: 'account_name',
         header: 'Account',
+        cell: ({ getValue }) => (
+          <span className="block truncate max-w-[200px]" title={getValue()}>{getValue()}</span>
+        ),
       },
       {
         accessorKey: 'ticker',
@@ -139,10 +142,10 @@ const HoldingsTable = ({ pageFilter }) => {
         accessorKey: 'name',
         header: 'Name',
         cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <span>{row.original.name}</span>
+          <div className="flex items-center gap-2 max-w-[250px]">
+            <span className="truncate" title={row.original.name}>{row.original.name}</span>
             {row.original.is_plaid_managed && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20 flex-shrink-0">
                 <Link2 size={10} />
                 Plaid
               </span>
@@ -349,7 +352,7 @@ const HoldingsTable = ({ pageFilter }) => {
                     {row.getVisibleCells().map((cell) => (
                       <td
                         key={cell.id}
-                        className="px-4 py-1.5 whitespace-nowrap text-sm text-primary"
+                        className="px-4 py-1.5 text-sm text-primary"
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>

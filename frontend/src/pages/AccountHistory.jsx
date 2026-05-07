@@ -136,7 +136,7 @@ const AccountHistory = () => {
         <div className="grid grid-cols-1 gap-4 md:gap-6">
           <div>
             <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-2">Accounts</p>
-            <div className="border border-border rounded-md p-3 max-h-48 overflow-y-auto bg-surface">
+            <div className="border border-border rounded-md p-3 max-h-64 overflow-y-auto bg-surface">
               <div className="mb-2 pb-2 border-b border-border">
                 <label className="flex items-center cursor-pointer min-h-[44px]">
                   <input
