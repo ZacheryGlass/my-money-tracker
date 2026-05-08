@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity, ChevronRight, TrendingUp, Clock, Zap } from 'lucide-react';
+import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity, ChevronRight, TrendingUp, Clock, Zap, Landmark } from 'lucide-react';
 import { dashboard as dashboardAPI, history as historyAPI, plaid as plaidAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatCompactCurrency } from '../utils/format';
 import DashboardTable from './DashboardTable';
