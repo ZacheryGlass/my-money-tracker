@@ -366,9 +366,9 @@ const Settings = () => {
                 )}
               </div>
             </motion.div>
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
 
       {/* Orphaned Accounts */}
       {orphanedAccounts.length > 0 && (

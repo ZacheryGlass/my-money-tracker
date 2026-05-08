@@ -27,8 +27,6 @@ const MonthlyExpenses = () => {
     pay_account: '', company: '', who_uses: '', notes: '',
   });
 
-  useEffect(() => { fetchData(); }, []);
-
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -41,6 +39,8 @@ const MonthlyExpenses = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => { fetchData(); }, []);
 
   const showSuccess = (msg) => {
     setSuccessMessage(msg);

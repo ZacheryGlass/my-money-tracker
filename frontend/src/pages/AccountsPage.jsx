@@ -9,7 +9,7 @@ import {
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, Link2, Building2, Wallet, Landmark, CreditCard, ChevronDown, ChevronUp, Filter, Info, Receipt } from 'lucide-react';
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
-import { formatCurrency, formatDateDisplay, formatCompactCurrency } from '../utils/format';
+import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 
 const TYPE_COLORS = {

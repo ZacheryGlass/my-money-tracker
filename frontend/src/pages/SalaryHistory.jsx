@@ -22,8 +22,6 @@ const SalaryHistory = () => {
     total_comp: '', change_amount: '', change_percent: '',
   });
 
-  useEffect(() => { fetchData(); }, []);
-
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -41,6 +39,8 @@ const SalaryHistory = () => {
     setSuccessMessage(msg);
     setTimeout(() => setSuccessMessage(''), 3000);
   };
+
+  useEffect(() => { fetchData(); }, []);
 
   const handleAddNew = () => {
     setEditingRecord(null);

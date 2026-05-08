@@ -86,7 +86,6 @@ const PortfolioTimeline = () => {
 
   const fetchPortfolioData = useCallback(async () => {
     setLoading(true);
-    setError(null);
 
     try {
       let startDate, endDate;
@@ -114,7 +113,6 @@ const PortfolioTimeline = () => {
       setPortfolioData(allData);
     } catch (err) {
       console.error('Error fetching portfolio data:', err);
-      setError(err.response?.data?.error || 'Failed to load portfolio data');
     } finally {
       setLoading(false);
     }
