@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { format, subDays, subMonths, subYears, differenceInDays, parseISO } from 'date-fns';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Calendar, Filter, ChevronDown, ChevronUp, Check, X, Layers } from 'lucide-react';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import { accounts as accountsApi, history as historyApi } from '../utils/api';
 
 const DATE_RANGE_OPTIONS = [
-  { label: '7 Days', value: '7d', days: 7, getDates: () => ({ start: subDays(new Date(), 7), end: new Date() }) },
-  { label: '30 Days', value: '30d', days: 30, getDates: () => ({ start: subDays(new Date(), 30), end: new Date() }) },
-  { label: '3 Months', value: '3m', days: 90, getDates: () => ({ start: subMonths(new Date(), 3), end: new Date() }) },
-  { label: '6 Months', value: '6m', days: 180, getDates: () => ({ start: subMonths(new Date(), 6), end: new Date() }) },
-  { label: '1 Year', value: '1y', days: 365, getDates: () => ({ start: subYears(new Date(), 1), end: new Date() }) },
-  { label: 'All Time', value: 'all', days: null, getDates: () => ({ start: null, end: null }) },
-  { label: 'Custom', value: 'custom', days: null, getDates: () => null },
+  { label: '7D', fullLabel: '7 Days', value: '7d', days: 7, getDates: () => ({ start: subDays(new Date(), 7), end: new Date() }) },
+  { label: '30D', fullLabel: '30 Days', value: '30d', days: 30, getDates: () => ({ start: subDays(new Date(), 30), end: new Date() }) },
+  { label: '3M', fullLabel: '3 Months', value: '3m', days: 90, getDates: () => ({ start: subMonths(new Date(), 3), end: new Date() }) },
+  { label: '6M', fullLabel: '6 Months', value: '6m', days: 180, getDates: () => ({ start: subMonths(new Date(), 6), end: new Date() }) },
+  { label: '1Y', fullLabel: '1 Year', value: '1y', days: 365, getDates: () => ({ start: subYears(new Date(), 1), end: new Date() }) },
+  { label: 'ALL', fullLabel: 'All Time', value: 'all', days: null, getDates: () => ({ start: null, end: null }) },
+  { label: 'CUSTOM', fullLabel: 'Custom', value: 'custom', days: null, getDates: () => null },
 ];
 
 const calculateLimit = (dateRangeOption, customStartDate, customEndDate) => {
@@ -34,6 +36,7 @@ const AccountHistory = () => {
   const [portfolioData, setPortfolioData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   useEffect(() => {
     const fetchAccounts = async () => {
@@ -125,126 +128,181 @@ const AccountHistory = () => {
     );
   };
 
+  const allSelected = selectedAccounts.length === accounts.length && accounts.length > 0;
+
   return (
-    <div className="container mx-auto px-4 py-4 md:py-6 animate-fade-in">
-      <div className="mb-4 md:mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold text-primary mb-1">Account History</h1>
-        <p className="text-sm text-secondary">View your account value history over time</p>
-      </div>
-
-      <div className="card p-3 md:p-4 mb-4 md:mb-6">
-        <div className="grid grid-cols-1 gap-4 md:gap-6">
-          <div>
-            <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-2">Accounts</p>
-            <div className="border border-border rounded-md p-3 max-h-64 overflow-y-auto bg-surface">
-              <div className="mb-2 pb-2 border-b border-border">
-                <label className="flex items-center cursor-pointer min-h-[44px]">
-                  <input
-                    type="checkbox"
-                    checked={selectedAccounts.length === accounts.length && accounts.length > 0}
-                    onChange={handleSelectAll}
-                    className="h-5 w-5 touch-manipulation"
-                    style={{ accentColor: 'var(--accent)' }}
-                  />
-                  <span className="ml-2 text-sm font-medium" style={{ color: 'var(--accent)' }}>
-                    Select All
-                  </span>
-                </label>
-              </div>
-              {accounts.map((account) => (
-                <label key={account.id} className="flex items-center cursor-pointer py-2 min-h-[44px]">
-                  <input
-                    type="checkbox"
-                    checked={selectedAccounts.includes(account.id)}
-                    onChange={() => handleAccountToggle(account.id)}
-                    className="h-5 w-5 touch-manipulation"
-                    style={{ accentColor: 'var(--accent)' }}
-                  />
-                  <span className="ml-2 text-sm text-primary">{account.name}</span>
-                </label>
-              ))}
-              {accounts.length === 0 && (
-                <p className="text-sm text-secondary">No accounts found</p>
-              )}
-            </div>
+    <div className="container mx-auto px-4 py-6 md:py-8">
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Layers className="text-accent w-5 h-5" />
+            <h1 className="text-2xl md:text-3xl font-bold text-primary tracking-tight">Account History</h1>
           </div>
+          <p className="text-sm text-secondary">Analyze your net worth progression and account performance</p>
+        </div>
 
-          <div>
-            <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-2">Date Range</p>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {DATE_RANGE_OPTIONS.filter(o => o.value !== 'custom').map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => setDateRangeOption(option.value)}
-                  className={`px-3 py-2 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[44px] ${
-                    dateRangeOption === option.value
-                      ? 'bg-accent text-inverse'
-                      : 'bg-surface-3 text-secondary hover:text-primary'
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
+        <div className="flex items-center gap-2">
+          <div className="flex bg-surface-2 p-1 rounded-xl border border-border shadow-inner">
+            {DATE_RANGE_OPTIONS.map((option) => (
               <button
-                onClick={() => setDateRangeOption('custom')}
-                className={`px-3 py-2 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[44px] ${
-                  dateRangeOption === 'custom'
-                    ? 'bg-accent text-inverse'
-                    : 'bg-surface-3 text-secondary hover:text-primary'
+                key={option.value}
+                onClick={() => setDateRangeOption(option.value)}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider transition-all duration-200 ${
+                  dateRangeOption === option.value
+                    ? 'bg-accent text-inverse shadow-glow scale-105'
+                    : 'text-tertiary hover:text-secondary'
                 }`}
               >
-                Custom
+                {option.label}
               </button>
-            </div>
-            {dateRangeOption === 'custom' && (
-              <div className="mt-3 space-y-2">
-                <div>
-                  <label className="block text-xs text-tertiary mb-1">Start Date</label>
-                  <input
-                    type="date"
-                    value={customStartDate}
-                    onChange={(e) => setCustomStartDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-input-border rounded-md text-sm min-h-[44px] touch-manipulation"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-tertiary mb-1">End Date</label>
-                  <input
-                    type="date"
-                    value={customEndDate}
-                    onChange={(e) => setCustomEndDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-input-border rounded-md text-sm min-h-[44px] touch-manipulation"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div>
-            <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-2">Display Options</p>
-            <label className="flex items-center cursor-pointer min-h-[44px]">
-              <input
-                type="checkbox"
-                checked={showPortfolio}
-                onChange={(e) => setShowPortfolio(e.target.checked)}
-                className="h-5 w-5 touch-manipulation"
-                style={{ accentColor: 'var(--accent)' }}
-              />
-              <span className="ml-2 text-sm text-primary">Show Total Portfolio</span>
-            </label>
+            ))}
           </div>
         </div>
       </div>
 
-      <AccountHistoryChart
-        accountData={accountData}
-        portfolioData={portfolioData}
-        accounts={accounts}
-        selectedAccounts={selectedAccounts}
-        showPortfolio={showPortfolio}
-        loading={loading}
-        error={error}
-      />
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Sidebar Filters */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="card overflow-hidden">
+            <button 
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              className="w-full flex items-center justify-between p-4 border-b border-border bg-surface-2/50"
+            >
+              <div className="flex items-center gap-2">
+                <Filter size={16} className="text-accent" />
+                <span className="text-sm font-bold uppercase tracking-widest text-primary">Filters</span>
+              </div>
+              {filtersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+
+            <AnimatePresence initial={false}>
+              {filtersExpanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <div className="p-4 space-y-6">
+                    {/* Select All / Portfolio Toggle */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={handleSelectAll}
+                        className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-xs font-bold uppercase tracking-wider ${
+                          allSelected 
+                            ? 'bg-accent/10 border-accent/50 text-accent' 
+                            : 'bg-surface-3 border-border text-secondary hover:border-border-hover'
+                        }`}
+                      >
+                        {allSelected ? <Check size={14} /> : <div className="w-3.5 h-3.5" />}
+                        All Accounts
+                      </button>
+                      <button
+                        onClick={() => setShowPortfolio(!showPortfolio)}
+                        className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-xs font-bold uppercase tracking-wider ${
+                          showPortfolio 
+                            ? 'bg-accent/10 border-accent/50 text-accent' 
+                            : 'bg-surface-3 border-border text-secondary hover:border-border-hover'
+                        }`}
+                      >
+                        {showPortfolio ? <Check size={14} /> : <div className="w-3.5 h-3.5" />}
+                        Net Worth
+                      </button>
+                    </div>
+
+                    {/* Account Grid */}
+                    <div>
+                      <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3">Select Accounts</p>
+                      <div className="grid grid-cols-1 gap-2 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                        {accounts.map((account) => {
+                          const isSelected = selectedAccounts.includes(account.id);
+                          return (
+                            <button
+                              key={account.id}
+                              onClick={() => handleAccountToggle(account.id)}
+                              className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all text-left ${
+                                isSelected
+                                  ? 'bg-surface-3 border-accent/30 ring-1 ring-accent/10'
+                                  : 'bg-surface-2 border-transparent hover:border-border opacity-60'
+                              }`}
+                            >
+                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isSelected ? 'bg-accent shadow-glow' : 'bg-tertiary'}`} />
+                              <span className={`text-xs font-medium truncate ${isSelected ? 'text-primary' : 'text-tertiary'}`}>
+                                {account.name}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Custom Date Inputs */}
+                    {dateRangeOption === 'custom' && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="space-y-3 pt-4 border-t border-border"
+                      >
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Start Date</label>
+                          <div className="relative">
+                            <input
+                              type="date"
+                              value={customStartDate}
+                              onChange={(e) => setCustomStartDate(e.target.value)}
+                              className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                            />
+                            <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest">End Date</label>
+                          <div className="relative">
+                            <input
+                              type="date"
+                              value={customEndDate}
+                              onChange={(e) => setCustomEndDate(e.target.value)}
+                              className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                            />
+                            <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          
+          <div className="hidden lg:block card p-4 bg-accent-muted/20 border-accent/20">
+            <h4 className="text-xs font-bold text-accent mb-2 uppercase tracking-wider">Insight</h4>
+            <p className="text-xs text-secondary leading-relaxed">
+              Toggle accounts to compare performance across different asset classes. Enable "Net Worth" to see your total aggregated value.
+            </p>
+          </div>
+        </div>
+
+        {/* Main Chart Area */}
+        <div className="lg:col-span-3">
+          <AccountHistoryChart
+            accountData={accountData}
+            portfolioData={portfolioData}
+            accounts={accounts}
+            selectedAccounts={selectedAccounts}
+            showPortfolio={showPortfolio}
+            loading={loading}
+            error={error}
+          />
+          
+          {/* Legend helper text */}
+          <div className="flex items-center justify-center gap-4 text-[10px] text-tertiary uppercase tracking-widest">
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-accent" /> Click legend to toggle lines</span>
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Scroll to zoom</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
