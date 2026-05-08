@@ -10,6 +10,8 @@ import {
   ReferenceLine,
   ReferenceDot,
 } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Calendar, Download, TrendingUp, Filter, ChevronDown, ChevronUp, Clock, Award, Target } from 'lucide-react';
 import { history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
@@ -26,7 +28,7 @@ const DATE_RANGES = {
   'ALL': { label: 'All Time', days: null },
 };
 
-const ACCENT = '#00D4AA';
+const ACCENT = '#00FFCC';
 
 const calculateDateRange = (range) => {
   const now = new Date();
@@ -80,6 +82,7 @@ const PortfolioTimeline = () => {
   const [customEndDate, setCustomEndDate] = useState('');
   const [useCustomRange, setUseCustomRange] = useState(false);
   const [showTrendLine, setShowTrendLine] = useState(true);
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   const fetchPortfolioData = useCallback(async () => {
     setLoading(true);
@@ -182,236 +185,304 @@ const PortfolioTimeline = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-xl text-secondary">Loading portfolio data...</div>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
+        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Rendering Timeline</span>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-4 md:py-8 animate-fade-in">
-      <div className="mb-4 md:mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold text-primary mb-1">Portfolio Timeline</h1>
-        <p className="text-sm text-secondary">Track your portfolio value over time</p>
-      </div>
-
-      {error && (
-        <div className="mb-4 p-4 bg-loss-bg border border-loss rounded text-loss text-sm">
-          {error}
-          <button onClick={fetchPortfolioData} className="ml-4 underline hover:no-underline">
-            Retry
-          </button>
+    <div className="container mx-auto px-4 py-6 md:py-8">
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Clock className="text-accent w-5 h-5" />
+            <h1 className="text-2xl md:text-3xl font-bold text-primary tracking-tight">Portfolio Timeline</h1>
+          </div>
+          <p className="text-sm text-secondary">Historical analysis of your aggregated portfolio value</p>
         </div>
-      )}
 
-      <div className="card p-3 md:p-4 mb-4 md:mb-6">
-        <div className="flex flex-col gap-3 md:gap-4">
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(DATE_RANGES).map(([key, { label }]) => (
+        <div className="flex items-center gap-2">
+          <div className="flex bg-surface-2 p-1 rounded-xl border border-border shadow-inner">
+            {Object.keys(DATE_RANGES).map((range) => (
               <button
-                key={key}
-                onClick={() => handleRangeChange(key)}
-                className={`px-3 md:px-4 py-2 rounded-md text-xs md:text-sm font-medium transition-colors touch-manipulation min-h-[44px] ${
-                  selectedRange === key && !useCustomRange
-                    ? 'bg-accent text-inverse'
-                    : 'bg-surface-3 text-secondary hover:text-primary'
+                key={range}
+                onClick={() => handleRangeChange(range)}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider transition-all duration-200 ${
+                  selectedRange === range && !useCustomRange
+                    ? 'bg-accent text-inverse shadow-glow scale-105'
+                    : 'text-tertiary hover:text-secondary'
                 }`}
               >
-                {label}
+                {range}
               </button>
             ))}
           </div>
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-3 border-t border-border">
-            <input
-              type="date"
-              value={customStartDate}
-              onChange={(e) => setCustomStartDate(e.target.value)}
-              className="flex-1 px-3 py-2 border border-input-border rounded-md text-sm min-h-[44px] touch-manipulation"
-            />
-            <span className="text-secondary text-center sm:px-2">to</span>
-            <input
-              type="date"
-              value={customEndDate}
-              onChange={(e) => setCustomEndDate(e.target.value)}
-              className="flex-1 px-3 py-2 border border-input-border rounded-md text-sm min-h-[44px] touch-manipulation"
-            />
-            <button
-              onClick={handleCustomRangeApply}
-              disabled={!customStartDate || !customEndDate}
-              className="px-4 py-2 bg-surface-3 text-secondary rounded-md text-sm hover:bg-accent hover:text-inverse disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] touch-manipulation transition-colors"
+          <button
+            onClick={exportToCSV}
+            disabled={portfolioData.length === 0}
+            className="p-2.5 bg-surface-2 text-secondary hover:text-accent border border-border rounded-xl transition-all shadow-sm"
+            title="Export CSV"
+          >
+            <Download size={18} />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Sidebar Filters */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="card overflow-hidden">
+            <button 
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              className="w-full flex items-center justify-between p-4 border-b border-border bg-surface-2/50"
             >
-              Apply
+              <div className="flex items-center gap-2">
+                <Filter size={16} className="text-accent" />
+                <span className="text-sm font-bold uppercase tracking-widest text-primary">Controls</span>
+              </div>
+              {filtersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
+
+            <AnimatePresence initial={false}>
+              {filtersExpanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <div className="p-4 space-y-6">
+                    {/* Metrics Overview in Sidebar */}
+                    <div className="space-y-4">
+                      <div className="p-3 bg-surface-3 rounded-xl border border-border">
+                        <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Current Value</p>
+                        <p className="text-lg font-mono font-bold text-primary">{formatCurrency(metrics.currentValue)}</p>
+                      </div>
+                      <div className="p-3 bg-surface-3 rounded-xl border border-border">
+                        <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period Growth</p>
+                        <div className="flex items-end gap-2">
+                          <p className={`text-lg font-mono font-bold ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
+                            {formatCurrency(metrics.totalGrowth)}
+                          </p>
+                          <p className={`text-xs font-mono font-bold mb-1 ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>
+                            {formatPercent(metrics.percentChange)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Options */}
+                    <div>
+                      <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3">Display Options</p>
+                      <button
+                        onClick={() => setShowTrendLine(!showTrendLine)}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                          showTrendLine
+                            ? 'bg-accent/10 border-accent/30 text-accent'
+                            : 'bg-surface-2 border-transparent text-secondary hover:border-border'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <TrendingUp size={14} />
+                          <span className="text-xs font-bold uppercase tracking-wider">Trend Line</span>
+                        </div>
+                        {showTrendLine && <Check size={14} />}
+                      </button>
+                    </div>
+
+                    {/* Custom Range */}
+                    <div className="pt-4 border-t border-border">
+                      <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3">Custom Range</p>
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest px-1">Start</label>
+                          <div className="relative">
+                            <input
+                              type="date"
+                              value={customStartDate}
+                              onChange={(e) => setCustomStartDate(e.target.value)}
+                              className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                            />
+                            <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest px-1">End</label>
+                          <div className="relative">
+                            <input
+                              type="date"
+                              value={customEndDate}
+                              onChange={(e) => setCustomEndDate(e.target.value)}
+                              className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                            />
+                            <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleCustomRangeApply}
+                          disabled={!customStartDate || !customEndDate}
+                          className="w-full py-2 bg-surface-3 border border-border text-tertiary rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-accent hover:text-inverse hover:border-accent disabled:opacity-30 transition-all"
+                        >
+                          Apply Custom
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          
+          <div className="card p-4 bg-accent-muted/10 border-accent/10">
+            <h4 className="text-[10px] font-bold text-accent mb-2 uppercase tracking-widest">Milestones</h4>
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <Award size={14} className="text-gain mt-0.5" />
+                <div>
+                  <p className="text-[10px] font-bold text-primary uppercase">All-Time High</p>
+                  <p className="text-xs font-mono font-bold text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
+                  <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <Target size={14} className="text-loss mt-0.5" />
+                <div>
+                  <p className="text-[10px] font-bold text-primary uppercase">All-Time Low</p>
+                  <p className="text-xs font-mono font-bold text-loss">{formatCurrency(metrics.allTimeLow)}</p>
+                  <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 mb-4 md:mb-6">
-        <div className="card p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">Current Value</h3>
-          <p className="text-xl md:text-2xl font-bold font-mono text-primary break-words">{formatCurrency(metrics.currentValue)}</p>
-        </div>
-        <div className="card p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">Total Gain/Loss</h3>
-          <p className={`text-xl md:text-2xl font-bold font-mono break-words ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
-            {formatCurrency(metrics.totalGrowth)}
-          </p>
-          <p className={`text-xs md:text-sm font-mono ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>
-            {formatPercent(metrics.percentChange)}
-          </p>
-        </div>
-        <div className="card p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">Avg Monthly Change</h3>
-          <p className={`text-xl md:text-2xl font-bold font-mono break-words ${metrics.avgMonthlyChange >= 0 ? 'text-gain' : 'text-loss'}`}>
-            {formatCurrency(metrics.avgMonthlyChange)}
-          </p>
-        </div>
-        <div className="card p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">All-Time High</h3>
-          <p className="text-xl md:text-2xl font-bold font-mono text-gain break-words">{formatCurrency(metrics.allTimeHigh)}</p>
-          {metrics.peakDate && (
-            <p className="text-xs text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
+        {/* Main Chart Area */}
+        <div className="lg:col-span-3 space-y-6">
+          <div className="bg-surface rounded-card border border-border p-4 md:p-6">
+            <div className="h-64 md:h-[450px] w-full">
+              {portfolioData.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-tertiary text-xs uppercase tracking-widest font-bold opacity-60">
+                  No data for this range
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <filter id="area-glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                      </filter>
+                      {areaGradient('colorValue', ACCENT)}
+                    </defs>
+                    <CartesianGrid {...GRID_STYLE} vertical={false} strokeOpacity={0.5} />
+                    <XAxis
+                      dataKey="snapshot_date"
+                      tickFormatter={formatDateAxis}
+                      {...AXIS_STYLE}
+                      interval="preserveStartEnd"
+                      padding={{ left: 10, right: 10 }}
+                      minTickGap={40}
+                    />
+                    <YAxis
+                      tickFormatter={formatCurrency}
+                      {...AXIS_STYLE}
+                      width={80}
+                      axisLine={false}
+                    />
+                    <Tooltip
+                      content={<ChartTooltip formatValue={formatCurrency} formatLabel={formatDateAxis} />}
+                      cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="total_value"
+                      stroke={ACCENT}
+                      strokeWidth={3}
+                      fill="url(#colorValue)"
+                      name="Portfolio Value"
+                      animationDuration={1500}
+                      filter="url(#area-glow)"
+                    />
+                    {showTrendLine && (
+                      <Area
+                        type="monotone"
+                        dataKey="trend_value"
+                        stroke="var(--text-tertiary)"
+                        strokeWidth={1.5}
+                        strokeDasharray="6 4"
+                        fill="none"
+                        name="Trend Line"
+                        animationDuration={1500}
+                      />
+                    )}
+                    {metrics.peakDate && (
+                      <ReferenceDot
+                        x={metrics.peakDate}
+                        y={metrics.allTimeHigh}
+                        r={6}
+                        fill="var(--gain)"
+                        stroke="var(--bg-surface)"
+                        strokeWidth={3}
+                      />
+                    )}
+                    {metrics.troughDate && metrics.troughDate !== metrics.peakDate && (
+                      <ReferenceDot
+                        x={metrics.troughDate}
+                        y={metrics.allTimeLow}
+                        r={6}
+                        fill="var(--loss)"
+                        stroke="var(--bg-surface)"
+                        strokeWidth={3}
+                      />
+                    )}
+                    {portfolioData.length > 0 && (
+                      <ReferenceLine
+                        y={metrics.startValue}
+                        stroke="var(--text-tertiary)"
+                        strokeDasharray="4 4"
+                        strokeOpacity={0.5}
+                      />
+                    )}
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* Period Summary Grid */}
+          {portfolioData.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="card p-4 bg-surface-2/30 border-border/50">
+                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period Start</p>
+                <p className="text-sm font-bold text-primary">{formatDateDisplay(portfolioData[0].snapshot_date)}</p>
+                <p className="text-xs font-mono text-tertiary mt-1">{formatCurrency(metrics.startValue)}</p>
+              </div>
+              <div className="card p-4 bg-surface-2/30 border-border/50">
+                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period End</p>
+                <p className="text-sm font-bold text-primary">{formatDateDisplay(portfolioData[portfolioData.length - 1].snapshot_date)}</p>
+                <p className="text-xs font-mono text-tertiary mt-1">{formatCurrency(metrics.currentValue)}</p>
+              </div>
+              <div className="card p-4 bg-surface-2/30 border-border/50">
+                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Avg Monthly Delta</p>
+                <p className={`text-sm font-bold font-mono ${metrics.avgMonthlyChange >= 0 ? 'text-gain' : 'text-loss'}`}>
+                  {formatCurrency(metrics.avgMonthlyChange)}
+                </p>
+                <p className="text-[10px] text-tertiary uppercase mt-1">Growth Velocity</p>
+              </div>
+            </div>
           )}
-        </div>
-        <div className="card p-3 md:p-4">
-          <h3 className="text-xs md:text-sm font-medium text-secondary mb-1">All-Time Low</h3>
-          <p className="text-xl md:text-2xl font-bold font-mono text-loss break-words">{formatCurrency(metrics.allTimeLow)}</p>
-          {metrics.troughDate && (
-            <p className="text-xs text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-4">
-        <label className="flex items-center gap-2 cursor-pointer min-h-[44px]">
-          <input
-            type="checkbox"
-            checked={showTrendLine}
-            onChange={(e) => setShowTrendLine(e.target.checked)}
-            className="w-5 h-5 touch-manipulation"
-            style={{ accentColor: 'var(--accent)' }}
-          />
-          <span className="text-sm text-secondary">Show Trend Line</span>
-        </label>
-        <button
-          onClick={exportToCSV}
-          disabled={portfolioData.length === 0}
-          className="px-4 py-2 bg-surface-3 text-secondary rounded-md text-sm hover:bg-accent hover:text-inverse disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] touch-manipulation transition-colors"
-        >
-          Export CSV
-        </button>
-      </div>
-
-      <div className="card p-3 md:p-4">
-        {portfolioData.length === 0 ? (
-          <div className="flex items-center justify-center h-[300px] md:h-[400px] text-secondary text-sm md:text-base">
-            No data available for the selected date range
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={300} className="md:!h-[400px]">
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                {areaGradient('colorValue', ACCENT)}
-              </defs>
-              <CartesianGrid {...GRID_STYLE} />
-              <XAxis
-                dataKey="snapshot_date"
-                tickFormatter={formatDateAxis}
-                {...AXIS_STYLE}
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                tickFormatter={formatCurrency}
-                {...AXIS_STYLE}
-                width={75}
-              />
-              <Tooltip
-                content={<ChartTooltip formatValue={formatCurrency} formatLabel={formatDateAxis} />}
-              />
-              <Area
-                type="monotone"
-                dataKey="total_value"
-                stroke={ACCENT}
-                strokeWidth={2}
-                fill="url(#colorValue)"
-                name="Portfolio Value"
-              />
-              {showTrendLine && (
-                <Area
-                  type="monotone"
-                  dataKey="trend_value"
-                  stroke="#525D6E"
-                  strokeWidth={1}
-                  strokeDasharray="5 5"
-                  fill="none"
-                  name="Trend"
-                />
-              )}
-              {metrics.peakDate && (
-                <ReferenceDot
-                  x={metrics.peakDate}
-                  y={metrics.allTimeHigh}
-                  r={4}
-                  fill="var(--gain)"
-                  stroke="var(--bg-surface)"
-                  strokeWidth={2}
-                />
-              )}
-              {metrics.troughDate && metrics.troughDate !== metrics.peakDate && (
-                <ReferenceDot
-                  x={metrics.troughDate}
-                  y={metrics.allTimeLow}
-                  r={4}
-                  fill="var(--loss)"
-                  stroke="var(--bg-surface)"
-                  strokeWidth={2}
-                />
-              )}
-              {portfolioData.length > 0 && (
-                <ReferenceLine
-                  y={metrics.startValue}
-                  stroke="#525D6E"
-                  strokeDasharray="5 5"
-                  label={{
-                    value: 'Start',
-                    position: 'insideTopRight',
-                    fill: '#525D6E',
-                    fontSize: 10,
-                  }}
-                />
-              )}
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {portfolioData.length > 0 && (
-        <div className="mt-6 card p-4">
-          <h3 className="text-lg font-semibold text-primary mb-4">Period Summary</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <p className="text-sm text-secondary">Start Date</p>
-              <p className="text-lg font-medium text-primary">
-                {formatDateDisplay(portfolioData[0].snapshot_date)}
-              </p>
-              <p className="text-sm font-mono text-secondary">{formatCurrency(metrics.startValue)}</p>
-            </div>
-            <div>
-              <p className="text-sm text-secondary">End Date</p>
-              <p className="text-lg font-medium text-primary">
-                {formatDateDisplay(portfolioData[portfolioData.length - 1].snapshot_date)}
-              </p>
-              <p className="text-sm font-mono text-secondary">{formatCurrency(metrics.currentValue)}</p>
-            </div>
-            <div>
-              <p className="text-sm text-secondary">Period Change</p>
-              <p className={`text-lg font-medium font-mono ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
-                {formatCurrency(metrics.totalGrowth)} ({formatPercent(metrics.percentChange)})
-              </p>
-            </div>
+          
+          {/* Helper text */}
+          <div className="flex items-center justify-center gap-6 text-[10px] text-tertiary uppercase tracking-widest font-bold">
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" /> Area visualization</span>
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> High/Low tracking</span>
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Linear regression trend</span>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };

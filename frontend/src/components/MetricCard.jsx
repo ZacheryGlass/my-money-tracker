@@ -1,12 +1,12 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
 const ACCENT_MAP = {
-  gain: { border: 'var(--gain)', glow: 'rgba(16, 185, 129, 0.05)' },
-  loss: { border: 'var(--loss)', glow: 'rgba(244, 63, 94, 0.05)' },
-  primary: { border: 'var(--border)', glow: 'transparent' },
-  accent: { border: 'var(--accent)', glow: 'rgba(0, 255, 204, 0.05)' },
+  gain: { border: '#10B981', glow: 'rgba(16, 185, 129, 0.08)' },
+  loss: { border: '#F43F5E', glow: 'rgba(244, 63, 94, 0.08)' },
+  primary: { border: '#1E2636', glow: 'transparent' },
+  accent: { border: '#00FFCC', glow: 'rgba(0, 255, 204, 0.08)' },
 };
 
 const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, valueColor = 'primary', onClick }) => {
@@ -18,53 +18,52 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
-      whileHover={{ y: -4, transition: { duration: 0.2 } }}
+      whileHover={{ y: -5, transition: { duration: 0.2 } }}
+      whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      className={`card p-5 flex flex-col gap-3 relative overflow-hidden group${onClick ? ' cursor-pointer' : ''}`}
+      className={`card p-6 flex flex-col gap-4 relative overflow-hidden group${onClick ? ' cursor-pointer' : ''}`}
       style={{
         borderLeft: `4px solid ${accent.border}`,
-        background: `linear-gradient(135deg, ${accent.glow} 0%, var(--bg-surface) 100%)`,
+        background: `linear-gradient(135deg, ${accent.glow} 0%, rgba(15, 18, 22, 0) 60%, var(--bg-surface) 100%)`,
       }}
     >
-      <div className="flex items-start justify-between">
-        <span className="text-[11px] font-bold tracking-widest uppercase text-tertiary">
-          {label}
-        </span>
+      <div className="flex items-start justify-between relative z-10">
+        <div className="space-y-1">
+          <span className="text-[10px] font-bold tracking-[0.15em] uppercase text-tertiary">
+            {label}
+          </span>
+          {change && (
+            <div className={`flex items-center gap-1 ${changeClass}`}>
+              <span className="text-[10px] font-bold uppercase tracking-wider">{change}</span>
+              {trend === 'up' ? <ArrowUpRight size={12} /> : trend === 'down' ? <ArrowDownRight size={12} /> : null}
+            </div>
+          )}
+        </div>
         {Icon && (
-          <div className="p-2 rounded-lg bg-surface-2 text-secondary group-hover:text-accent transition-colors">
-            <Icon size={18} strokeWidth={2} />
+          <div className="p-3 rounded-2xl bg-surface-2 border border-border/50 text-secondary group-hover:text-accent group-hover:border-accent/30 group-hover:shadow-glow-sm transition-all duration-300">
+            <Icon size={20} strokeWidth={2.5} />
           </div>
         )}
       </div>
 
-      <div className="flex flex-col gap-1">
+      <div className="relative z-10">
         <span
-          className={`font-money font-bold ${valueClass} tracking-tight`}
-          style={{ fontSize: 'clamp(1.25rem, 2.5vw, 1.75rem)', lineHeight: 1.1 }}
+          className={`font-money font-bold ${valueClass} tracking-tighter leading-none`}
+          style={{ fontSize: 'clamp(1.5rem, 3vw, 2.25rem)' }}
         >
           {value}
         </span>
-        
-        {change && (
-          <div className={`flex items-center gap-1.5 ${changeClass}`}>
-            <div className={`p-0.5 rounded-full ${trend === 'up' ? 'bg-gain/10' : trend === 'down' ? 'bg-loss/10' : 'bg-surface-3'}`}>
-              {trend === 'up' && <TrendingUp size={12} />}
-              {trend === 'down' && <TrendingDown size={12} />}
-              {trend === 'neutral' && <Minus size={12} />}
-            </div>
-            <span className="font-money text-xs font-semibold">
-              {change}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Decorative background element */}
-      <div className="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity pointer-events-none">
-        {Icon && <Icon size={80} strokeWidth={1} />}
+      <div className="absolute -right-6 -bottom-6 opacity-[0.04] group-hover:opacity-[0.08] transition-all duration-500 group-hover:scale-110 group-hover:-rotate-12 pointer-events-none">
+        {Icon && <Icon size={120} strokeWidth={1} />}
       </div>
+      
+      {/* Gloss overlay */}
+      <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
     </motion.div>
   );
 };

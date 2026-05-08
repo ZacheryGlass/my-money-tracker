@@ -7,9 +7,9 @@ import {
   flexRender,
 } from '@tanstack/react-table';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Link2 } from 'lucide-react';
+import { ArrowLeft, Link2, Building2, Wallet, Landmark, CreditCard, ChevronDown, ChevronUp, Filter, Info, Receipt } from 'lucide-react';
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
-import { formatCurrency, formatDateDisplay } from '../utils/format';
+import { formatCurrency, formatDateDisplay, formatCompactCurrency } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 
 const TYPE_COLORS = {
@@ -44,6 +44,7 @@ const AccountsPage = () => {
   const setTypeFilter = (v) => { setTypeFilterRaw(v); setPagination(prev => ({ ...prev, pageIndex: 0 })); };
   const [sorting, setSorting] = useState([]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [accountHistory, setAccountHistory] = useState([]);
@@ -164,7 +165,7 @@ const AccountsPage = () => {
         header: 'Name',
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
-            <span className="font-medium">{row.original.name}</span>
+            <span className="font-bold text-primary">{row.original.name}</span>
             {row.original.plaid_item_id && <PlaidBadge />}
           </div>
         ),
@@ -177,8 +178,8 @@ const AccountsPage = () => {
       {
         id: 'holdings_count',
         accessorFn: (row) => row.holdings_count || 0,
-        header: 'Holdings',
-        cell: ({ getValue }) => <span className="font-mono">{getValue()}</span>,
+        header: 'Assets',
+        cell: ({ getValue }) => <span className="font-mono text-secondary">{getValue()}</span>,
       },
       {
         id: 'total_value',
@@ -187,7 +188,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`font-mono text-base font-semibold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`font-mono text-sm font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
@@ -215,15 +216,15 @@ const AccountsPage = () => {
         accessorKey: 'ticker',
         header: 'Ticker',
         cell: ({ getValue }) => (
-          <span className="font-mono text-secondary">{getValue() || '-'}</span>
+          <span className="font-mono text-xs font-bold text-accent">{getValue() || '—'}</span>
         ),
       },
       {
         accessorKey: 'name',
-        header: 'Name',
+        header: 'Asset Name',
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
-            <span>{row.original.name}</span>
+            <span className="font-medium">{row.original.name}</span>
             {row.original.is_plaid_managed && <PlaidBadge />}
           </div>
         ),
@@ -235,7 +236,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`font-mono text-base font-semibold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`font-mono text-sm font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
@@ -244,7 +245,7 @@ const AccountsPage = () => {
       {
         accessorKey: 'category',
         header: 'Category',
-        cell: ({ getValue }) => <span className="text-secondary">{getValue() || '-'}</span>,
+        cell: ({ getValue }) => <span className="text-[10px] font-bold uppercase text-tertiary tracking-wider">{getValue() || 'Other'}</span>,
       },
     ],
     []
@@ -267,7 +268,7 @@ const AccountsPage = () => {
         accessorKey: 'date',
         header: 'Date',
         cell: ({ getValue }) => (
-          <span className="font-mono text-sm">{formatDateDisplay(getValue())}</span>
+          <span className="font-mono text-xs text-secondary">{formatDateDisplay(getValue())}</span>
         ),
       },
       {
@@ -275,10 +276,10 @@ const AccountsPage = () => {
         accessorFn: (row) => row.merchant_name || row.name,
         header: 'Description',
         cell: ({ row }) => (
-          <div className="min-w-0">
-            <div className="truncate">{row.original.merchant_name || row.original.name}</div>
+          <div className="min-w-0 py-1">
+            <div className="text-sm font-bold text-primary truncate">{row.original.merchant_name || row.original.name}</div>
             {row.original.merchant_name && row.original.merchant_name !== row.original.name && (
-              <div className="text-xs text-tertiary truncate">{row.original.name}</div>
+              <div className="text-[10px] text-tertiary truncate leading-tight uppercase font-medium">{row.original.name}</div>
             )}
           </div>
         ),
@@ -288,9 +289,9 @@ const AccountsPage = () => {
         header: 'Category',
         cell: ({ getValue }) => {
           const val = getValue();
-          if (!val) return <span className="text-secondary">-</span>;
+          if (!val) return <span className="text-tertiary">—</span>;
           const display = val.replace(/_/g, ' ').toLowerCase();
-          return <span className="text-secondary capitalize">{display}</span>;
+          return <span className="text-[10px] font-bold uppercase text-secondary tracking-tight">{display}</span>;
         },
       },
       {
@@ -299,8 +300,8 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = parseFloat(getValue());
           return (
-            <span className={`font-mono text-base font-semibold ${v > 0 ? 'text-loss' : 'text-gain'}`}>
-              {v > 0 ? '-' : '+'}{formatCurrency(Math.abs(v))}
+            <span className={`font-mono text-sm font-bold ${v > 0 ? 'text-loss' : 'text-gain'}`}>
+              {v > 0 ? '—' : '+'}{formatCurrency(Math.abs(v))}
             </span>
           );
         },
@@ -314,7 +315,7 @@ const AccountsPage = () => {
               Pending
             </span>
           ) : (
-            <span className="text-xs text-secondary">Posted</span>
+            <span className="text-[10px] font-bold uppercase text-tertiary tracking-widest opacity-60">Posted</span>
           )
         ),
       },
@@ -335,55 +336,56 @@ const AccountsPage = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-xl text-secondary">Loading...</div>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
+        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Loading Accounts</span>
       </div>
     );
   }
 
   const renderPagination = (table, data) => {
-    if (data.length <= 25) return null;
+    if (data.length <= table.getState().pagination.pageSize) return null;
     return (
-      <div className="flex items-center justify-between mt-4">
+      <div className="flex items-center justify-between mt-4 px-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-secondary">Rows per page:</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">Show</span>
           <select
             value={table.getState().pagination.pageSize}
-            onChange={(e) =>
-              table.setPageSize(Number(e.target.value))
-            }
-            className="px-2 py-1 rounded-md text-sm"
+            onChange={(e) => table.setPageSize(Number(e.target.value))}
+            className="bg-surface-3 border-border rounded-lg px-2 py-1 text-xs font-bold focus:ring-1 focus:ring-accent"
           >
             {[10, 25, 50, 100].map((size) => (
               <option key={size} value={size}>{size}</option>
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-secondary">
+        <div className="flex items-center gap-4">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">
             Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
           </span>
-          <button
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-            className="px-3 py-1 text-sm bg-surface-3 text-secondary hover:bg-accent hover:text-inverse rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            Prev
-          </button>
-          <button
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-            className="px-3 py-1 text-sm bg-surface-3 text-secondary hover:bg-accent hover:text-inverse rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            Next
-          </button>
+          <div className="flex gap-1">
+            <button
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+              className="px-3 py-1.5 bg-surface-3 text-secondary border border-border rounded-lg text-xs font-bold hover:bg-accent hover:text-inverse hover:border-accent disabled:opacity-30 transition-all"
+            >
+              Prev
+            </button>
+            <button
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+              className="px-3 py-1.5 bg-surface-3 text-secondary border border-border rounded-lg text-xs font-bold hover:bg-accent hover:text-inverse hover:border-accent disabled:opacity-30 transition-all"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     );
   };
 
   const renderTable = (table, columns, emptyMessage, onRowClick) => (
-    <div className="bg-surface rounded-card border border-border overflow-hidden shadow-card">
+    <div className="card overflow-hidden">
       <div className="hidden md:block overflow-x-auto">
         <table className="min-w-full divide-y divide-border">
           <thead className="bg-surface-2">
@@ -392,13 +394,13 @@ const AccountsPage = () => {
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className="px-4 py-2 text-left text-xs font-medium text-secondary uppercase tracking-wider cursor-pointer hover:bg-surface-3"
+                    className="px-5 py-4 text-left text-[10px] font-bold text-tertiary uppercase tracking-widest cursor-pointer hover:bg-surface-3 transition-colors"
                     onClick={header.column.getToggleSortingHandler()}
                   >
                     <div className="flex items-center gap-2">
                       {flexRender(header.column.columnDef.header, header.getContext())}
                       {header.column.getIsSorted() && (
-                        <span className="text-secondary">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
+                        <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
                       )}
                     </div>
                   </th>
@@ -406,10 +408,10 @@ const AccountsPage = () => {
               </tr>
             ))}
           </thead>
-          <tbody className="divide-y divide-border">
+          <tbody className="divide-y divide-border bg-surface">
             {table.getRowModel().rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-6 text-center text-secondary">
+                <td colSpan={columns.length} className="px-5 py-12 text-center text-tertiary text-sm font-medium">
                   {emptyMessage}
                 </td>
               </tr>
@@ -417,11 +419,11 @@ const AccountsPage = () => {
               table.getRowModel().rows.map((row) => (
                 <tr
                   key={row.id}
-                  className="border-b border-border hover:bg-surface-3 cursor-pointer"
+                  className={`hover:bg-surface-2 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
                   onClick={() => onRowClick?.(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-4 py-1.5 whitespace-nowrap text-sm text-primary">
+                    <td key={cell.id} className="px-5 py-3 whitespace-nowrap text-sm text-primary">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}
@@ -436,102 +438,151 @@ const AccountsPage = () => {
 
   const renderListView = () => (
     <motion.div key="list" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="mb-3">
-        <h1 className="text-xl font-bold text-primary mb-3">Accounts</h1>
+      {/* Hero Section */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-6 pt-4">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <Building2 className="text-accent w-5 h-5" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Asset Management</span>
+          </div>
+          <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
+            {formatCurrency(grandTotal)}
+          </h1>
+          <p className="text-sm text-secondary">Aggregate balance across {accounts.length} linked accounts</p>
+        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div className="card p-4 md:p-5">
-            <h3 className="text-xs uppercase tracking-wider text-secondary">Total Accounts</h3>
-            <p className="mt-2 text-xl font-mono font-bold text-primary">{accounts.length}</p>
+        <div className="flex items-center gap-4">
+          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Accounts</p>
+            <p className="text-lg font-mono font-bold text-primary">{accounts.length}</p>
           </div>
-          <div className="card p-4 md:p-5">
-            <h3 className="text-xs uppercase tracking-wider text-secondary">Net Value</h3>
-            <p className={`mt-2 text-xl font-mono font-bold ${grandTotal >= 0 ? 'text-gain' : 'text-loss'}`}>
-              {formatCurrency(grandTotal)}
+          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Plaid Items</p>
+            <p className="text-lg font-mono font-bold text-accent">{plaidCount}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        {/* Sidebar Filters */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="card overflow-hidden">
+            <button 
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              className="w-full flex items-center justify-between p-4 border-b border-border bg-surface-2/50"
+            >
+              <div className="flex items-center gap-2">
+                <Filter size={16} className="text-accent" />
+                <span className="text-sm font-bold uppercase tracking-widest text-primary">Filters</span>
+              </div>
+              {filtersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+
+            <AnimatePresence initial={false}>
+              {filtersExpanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <div className="p-4 space-y-2">
+                    <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3 px-1">Account Type</p>
+                    <button
+                      onClick={() => setTypeFilter('')}
+                      className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                        typeFilter === ''
+                          ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                          : 'bg-surface-2 border-transparent text-secondary hover:border-border'
+                      }`}
+                    >
+                      <span className="text-xs font-bold uppercase tracking-wider">All Types</span>
+                      <span className="text-[10px] font-mono font-bold opacity-60">{accounts.length}</span>
+                    </button>
+                    {distinctTypes.map((type) => {
+                      const count = accounts.filter(a => a.type === type).length;
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => setTypeFilter(type)}
+                          className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all capitalize ${
+                            typeFilter === type
+                              ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                              : 'bg-surface-2 border-transparent text-secondary hover:border-border'
+                          }`}
+                        >
+                          <span className="text-xs font-bold uppercase tracking-wider">{type}</span>
+                          <span className="text-[10px] font-mono font-bold opacity-60">{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <div className="card p-4 bg-accent-muted/10 border-accent/10">
+            <h4 className="text-[10px] font-bold text-accent mb-2 uppercase tracking-widest flex items-center gap-2">
+              <Info size={12} />
+              Account Insight
+            </h4>
+            <p className="text-[11px] text-secondary leading-relaxed">
+              Drill down into individual accounts to see balance history, asset allocation, and recent transaction activity.
             </p>
-          </div>
-          <div className="card p-4 md:p-5">
-            <h3 className="text-xs uppercase tracking-wider text-secondary">Plaid Linked</h3>
-            <p className="mt-2 text-xl font-mono font-bold text-accent">{plaidCount}</p>
           </div>
         </div>
 
-        {error && (
-          <div className="mb-4 bg-loss-bg text-loss border border-loss/20 rounded-lg p-3">{error}</div>
-        )}
+        {/* Main Table Area */}
+        <div className="lg:col-span-3">
+          {error && (
+            <div className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+              <X size={16} />
+              {error}
+            </div>
+          )}
 
-        {distinctTypes.length > 1 && (
-          <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Type:</span>
-            <button
-              onClick={() => setTypeFilter('')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
-                typeFilter === ''
-                  ? 'bg-accent text-inverse'
-                  : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-              }`}
-            >
-              All
-            </button>
-            {distinctTypes.map((type) => (
-              <button
-                key={type}
-                onClick={() => setTypeFilter(typeFilter === type ? '' : type)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] capitalize ${
-                  typeFilter === type
-                    ? 'bg-accent text-inverse'
-                    : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-                }`}
-              >
-                {type}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+          {renderTable(listTable, listColumns, 'No accounts match the selected filters.', (account) =>
+            setSelectedAccountId(account.id)
+          )}
 
-      {renderTable(listTable, listColumns, 'No accounts found.', (account) =>
-        setSelectedAccountId(account.id)
-      )}
-
-      {/* Mobile cards */}
-      <div className="md:hidden divide-y divide-border bg-surface rounded-card border border-border overflow-hidden shadow-card">
-        {filteredAccounts.length === 0 ? (
-          <div className="px-4 py-8 text-center text-secondary">No accounts found.</div>
-        ) : (
-          listTable.getRowModel().rows.map((row) => {
-            const account = row.original;
-            const total = accountTotals.get(account.id) || 0;
-            return (
-              <div
-                key={account.id}
-                className="p-3 touch-manipulation active:bg-surface-3 cursor-pointer"
-                onClick={() => setSelectedAccountId(account.id)}
-              >
-                <div className="flex justify-between items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="font-semibold text-primary truncate">{account.name}</span>
-                      {account.plaid_item_id && <PlaidBadge />}
-                    </div>
-                    <div className="flex items-center gap-2">
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-3">
+            {filteredAccounts.map((account) => {
+              const total = accountTotals.get(account.id) || 0;
+              return (
+                <div
+                  key={account.id}
+                  className="card p-4 active:bg-surface-3 cursor-pointer transition-all border border-border/50"
+                  onClick={() => setSelectedAccountId(account.id)}
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-bold text-primary truncate text-base">{account.name}</span>
+                        {account.plaid_item_id && <PlaidBadge />}
+                      </div>
                       <TypeBadge type={account.type} />
-                      <span className="text-xs text-secondary">{account.holdings_count || 0} holdings</span>
                     </div>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <div className={`text-lg font-bold font-mono ${total < 0 ? 'text-loss' : 'text-primary'}`}>
+                    <div className={`text-lg font-mono font-bold ${total < 0 ? 'text-loss' : 'text-primary'}`}>
                       {formatCurrency(total)}
                     </div>
                   </div>
+                  <div className="flex items-center gap-4 pt-3 border-t border-border/50 text-tertiary">
+                    <span className="text-[10px] font-bold uppercase tracking-widest">{account.holdings_count || 0} Assets</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest">{account.type}</span>
+                  </div>
                 </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+              );
+            })}
+            {filteredAccounts.length === 0 && (
+              <div className="p-8 text-center text-secondary text-sm">No accounts found</div>
+            )}
+          </div>
 
-      {renderPagination(listTable, filteredAccounts)}
+          {renderPagination(listTable, filteredAccounts)}
+        </div>
+      </div>
     </motion.div>
   );
 
@@ -541,151 +592,184 @@ const AccountsPage = () => {
     return (
       <motion.div
         key="detail"
-        initial={{ opacity: 0, x: 20 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: -20 }}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -10 }}
+        className="max-w-[1400px] mx-auto"
       >
         <button
           onClick={() => setSelectedAccountId(null)}
-          className="flex items-center gap-2 text-sm text-secondary hover:text-primary mb-4 transition-colors"
+          className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-tertiary hover:text-accent mb-8 transition-colors group"
         >
-          <ArrowLeft size={16} />
-          <span>Back to Accounts</span>
+          <ArrowLeft size={14} className="group-hover:-translate-x-1 transition-transform" />
+          <span>Back to Portfolio</span>
         </button>
 
-        <div className="mb-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-xl font-bold text-primary">{selectedAccount.name}</h1>
-            <TypeBadge type={selectedAccount.type} />
-            {selectedAccount.plaid_item_id && <PlaidBadge />}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div className="card p-4 md:p-5">
-            <h3 className="text-xs uppercase tracking-wider text-secondary">Total Value</h3>
-            <p className={`mt-2 text-xl font-mono font-bold ${accountTotal < 0 ? 'text-loss' : 'text-gain'}`}>
-              {formatCurrency(accountTotal)}
+        <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <TypeBadge type={selectedAccount.type} />
+              {selectedAccount.plaid_item_id && <PlaidBadge />}
+            </div>
+            <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
+              {selectedAccount.name}
+            </h1>
+            <p className="text-sm text-secondary font-mono tracking-tight opacity-70">
+              Account ID: {selectedAccount.id} • {selectedAccount.type}
             </p>
           </div>
-          <div className="card p-4 md:p-5">
-            <h3 className="text-xs uppercase tracking-wider text-secondary">Holdings</h3>
-            <p className="mt-2 text-xl font-mono font-bold text-primary">{accountHoldings.length}</p>
+
+          <div className="flex items-center gap-4">
+            <div className="p-5 bg-surface-2 border border-border rounded-2xl shadow-glow-sm min-w-[180px]">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Account Value</p>
+              <p className={`text-2xl font-mono font-bold ${accountTotal < 0 ? 'text-loss' : 'text-gain'}`}>
+                {formatCurrency(accountTotal)}
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="mb-6">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-secondary mb-3">Balance History</h2>
-          <AccountHistoryChart
-            accountData={accountHistory}
-            portfolioData={null}
-            accounts={[selectedAccount]}
-            selectedAccounts={[selectedAccountId]}
-            showPortfolio={false}
-            loading={historyLoading}
-            error={historyError}
-          />
-        </div>
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-8">
+          <div className="xl:col-span-3 space-y-10">
+            {/* Chart Section */}
+            <section>
+              <div className="flex items-center gap-2 mb-4">
+                <Activity className="text-accent w-4 h-4" />
+                <h2 className="text-xs font-bold uppercase tracking-widest text-secondary">Performance History</h2>
+              </div>
+              <AccountHistoryChart
+                accountData={accountHistory}
+                portfolioData={null}
+                accounts={[selectedAccount]}
+                selectedAccounts={[selectedAccountId]}
+                showPortfolio={false}
+                loading={historyLoading}
+                error={historyError}
+              />
+            </section>
 
-        {accountHoldings.length > 0 && (
-          <div>
-            <h2 className="text-sm font-bold uppercase tracking-wider text-secondary mb-3">Holdings</h2>
-
-            {renderTable(detailTable, detailColumns, 'No holdings found.')}
-
-            {/* Mobile cards */}
-            <div className="md:hidden divide-y divide-border bg-surface rounded-card border border-border overflow-hidden shadow-card">
-              {detailTable.getRowModel().rows.map((row) => {
-                const holding = row.original;
-                const value = parseFloat(holding.current_value) || parseFloat(holding.manual_value) || 0;
-                return (
-                  <div key={holding.id} className="p-3">
-                    <div className="flex justify-between items-center gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="font-semibold text-primary truncate">{holding.name}</span>
+            {/* Assets Table */}
+            {accountHoldings.length > 0 && (
+              <section>
+                <div className="flex items-center gap-2 mb-4">
+                  <Wallet className="text-accent w-4 h-4" />
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-secondary">Underlying Assets ({accountHoldings.length})</h2>
+                </div>
+                {renderTable(detailTable, detailColumns, 'No holdings found.')}
+                
+                {/* Mobile Asset Cards */}
+                <div className="md:hidden space-y-3">
+                  {accountHoldings.map((holding) => {
+                    const value = parseFloat(holding.current_value) || parseFloat(holding.manual_value) || 0;
+                    return (
+                      <div key={holding.id} className="card p-4 border border-border/50">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-bold text-primary truncate">{holding.name}</div>
+                            <div className="text-[10px] font-mono text-accent uppercase">{holding.ticker || 'N/A'}</div>
+                          </div>
+                          <div className={`text-base font-mono font-bold ${value < 0 ? 'text-loss' : 'text-primary'}`}>
+                            {formatCurrency(value)}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 pt-2 border-t border-border/50">
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-tertiary">{holding.category || 'Other'}</span>
                           {holding.is_plaid_managed && <PlaidBadge />}
                         </div>
-                        <div className="flex items-center gap-2">
-                          {holding.ticker && (
-                            <span className="text-xs font-mono text-secondary">{holding.ticker}</span>
-                          )}
-                          {holding.category && (
-                            <span className="text-xs text-secondary">{holding.category}</span>
-                          )}
-                        </div>
                       </div>
-                      <div className="text-right flex-shrink-0">
-                        <div className={`text-lg font-bold font-mono ${value < 0 ? 'text-loss' : 'text-primary'}`}>
-                          {formatCurrency(value)}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {renderPagination(detailTable, accountHoldings)}
+                    );
+                  })}
+                </div>
+                {renderPagination(detailTable, accountHoldings)}
+              </section>
+            )}
           </div>
-        )}
 
-        {txnLoading ? (
-          <div className="mt-6 text-sm text-secondary">Loading transactions...</div>
-        ) : accountTransactions.length > 0 && (
-          <div className="mt-6">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-secondary mb-3">
-              Transactions ({accountTransactions.length})
-            </h2>
-
-            {renderTable(txnTable, txnColumns, 'No transactions found.')}
-
-            {/* Mobile cards */}
-            <div className="md:hidden divide-y divide-border bg-surface rounded-card border border-border overflow-hidden shadow-card">
-              {txnTable.getRowModel().rows.map((row) => {
-                const txn = row.original;
-                const amount = parseFloat(txn.amount);
-                return (
-                  <div key={txn.id} className="p-3">
-                    <div className="flex justify-between items-start gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-primary truncate">
-                          {txn.merchant_name || txn.name}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-xs font-mono text-secondary">
-                            {formatDateDisplay(txn.date)}
-                          </span>
-                          {txn.category && (
-                            <span className="text-xs text-secondary capitalize">
-                              {txn.category.replace(/_/g, ' ').toLowerCase()}
-                            </span>
-                          )}
-                          {txn.pending && (
-                            <span className="text-[10px] font-bold uppercase text-amber-400">Pending</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <div className={`text-base font-bold font-mono ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
-                          {amount > 0 ? '-' : '+'}{formatCurrency(Math.abs(amount))}
-                        </div>
-                      </div>
-                    </div>
+          <div className="xl:col-span-2 space-y-10">
+            {/* Transactions Section */}
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Receipt className="text-accent w-4 h-4" />
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-secondary">Recent Activity</h2>
+                </div>
+                {accountTransactions.length > 0 && (
+                  <span className="text-[10px] font-bold text-accent px-2 py-0.5 rounded bg-accent/10 border border-accent/20">
+                    {accountTransactions.length} Total
+                  </span>
+                )}
+              </div>
+              
+              <div className="space-y-3">
+                {txnLoading ? (
+                  <div className="flex flex-col items-center justify-center py-12 gap-3 card">
+                    <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                    <span className="text-[10px] font-bold uppercase text-tertiary">Fetching transactions</span>
                   </div>
-                );
-              })}
-            </div>
-
-            {renderPagination(txnTable, accountTransactions)}
+                ) : accountTransactions.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 gap-2 card opacity-50">
+                    <Receipt size={32} className="text-tertiary" />
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-tertiary">No recent transactions</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="hidden md:block">
+                      {renderTable(txnTable, txnColumns, 'No transactions found.')}
+                    </div>
+                    
+                    {/* Compact Transaction Cards for Sidebar/Mobile */}
+                    <div className="md:grid grid-cols-1 gap-2 hidden xl:block">
+                      {accountTransactions.slice(0, 10).map((txn) => {
+                        const amount = parseFloat(txn.amount);
+                        return (
+                          <div key={txn.id} className="p-3 bg-surface-2 border border-border/50 rounded-xl flex items-center justify-between gap-4 hover:bg-surface-3 transition-colors">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-bold text-primary truncate leading-tight">{txn.merchant_name || txn.name}</p>
+                              <p className="text-[9px] text-tertiary uppercase font-medium mt-0.5">{formatDateDisplay(txn.date)} • {txn.category?.replace(/_/g, ' ') || 'General'}</p>
+                            </div>
+                            <div className={`text-xs font-mono font-bold whitespace-nowrap ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
+                              {amount > 0 ? '—' : '+'}{formatCurrency(Math.abs(amount))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {accountTransactions.length > 10 && (
+                        <p className="text-center text-[9px] font-bold text-tertiary uppercase tracking-widest pt-2">Showing latest 10 of {accountTransactions.length}</p>
+                      )}
+                    </div>
+                    
+                    {/* Mobile Only Cards */}
+                    <div className="md:hidden space-y-2">
+                       {accountTransactions.map((txn) => {
+                        const amount = parseFloat(txn.amount);
+                        return (
+                          <div key={txn.id} className="p-4 bg-surface-2 border border-border/50 rounded-2xl flex items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-bold text-primary truncate">{txn.merchant_name || txn.name}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[10px] text-tertiary font-mono">{formatDateDisplay(txn.date)}</span>
+                                {txn.pending && <span className="text-[9px] font-bold uppercase text-amber-500">Pending</span>}
+                              </div>
+                            </div>
+                            <div className={`text-base font-mono font-bold ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
+                              {amount > 0 ? '—' : '+'}{formatCurrency(Math.abs(amount))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
           </div>
-        )}
+        </div>
       </motion.div>
     );
   };
 
   return (
-    <div className="container mx-auto px-4 py-2 md:py-4">
+    <div className="container mx-auto px-4 py-6 md:py-8">
       <AnimatePresence mode="wait">
         {selectedAccountId === null ? renderListView() : renderDetailView()}
       </AnimatePresence>

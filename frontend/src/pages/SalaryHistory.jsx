@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceDot,
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceDot,
 } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Briefcase, TrendingUp, Plus, Edit2, Trash2, Check, X, Award, Target, Info, Calendar } from 'lucide-react';
 import { salary as salaryAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateDisplay } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
-import MetricCard from '../components/MetricCard';
 import ChartTooltip from '../components/ChartTooltip';
 
 const SalaryHistory = () => {
@@ -129,219 +130,292 @@ const SalaryHistory = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
+        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Analyzing Earnings</span>
       </div>
     );
   }
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1400px] mx-auto space-y-6">
-      {/* Hero */}
-      <div className="animate-fade-in">
-        <p className="text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1">
-          Current Total Compensation
-        </p>
-        <h1 className="font-mono font-bold text-accent leading-none" style={{ fontSize: 'clamp(2rem, 5vw, 3rem)' }}>
-          {current ? formatCurrency(current.total_comp) : '-'}
-        </h1>
-        {current && (
-          <p className="text-sm text-secondary mt-1">{current.title}</p>
-        )}
-      </div>
-
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-        <MetricCard
-          label="Base Salary"
-          value={current ? formatCurrency(current.salary_amount) : '-'}
-          valueColor="primary"
-        />
-        <MetricCard
-          label="Last Raise"
-          value={lastRaise ? formatCurrency(lastRaise.amount) : '-'}
-          change={lastRaise ? formatPercent(lastRaise.percent, 1) : undefined}
-          trend={lastRaise && lastRaise.amount >= 0 ? 'up' : 'neutral'}
-          valueColor="gain"
-        />
-        <MetricCard
-          label="Career Growth"
-          value={careerGrowth > 0 ? formatPercent(careerGrowth, 0) : '-'}
-          change={current && records.length > 1 ? `${records.length} raises` : undefined}
-          trend="up"
-          valueColor="gain"
-        />
-      </div>
-
-      {successMessage && (
-        <div className="bg-gain-bg text-gain border border-gain/20 rounded-lg p-3 animate-fade-in">{successMessage}</div>
-      )}
-      {error && (
-        <div className="bg-loss-bg text-loss border border-loss/20 rounded-lg p-3 animate-fade-in">{error}</div>
-      )}
-
-      {/* Chart */}
-      {chartData.length > 1 && (
-        <div className="card p-4 md:p-6 animate-slide-up">
-          <span className="text-[10px] font-semibold tracking-widest uppercase text-secondary">
-            Compensation Over Time
-          </span>
-          <div className="mt-4">
-            <ResponsiveContainer width="100%" height={350}>
-              <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
-                <defs>
-                  {areaGradient('salaryGrad', CHART_COLORS[1])}
-                  {areaGradient('compGrad', CHART_COLORS[0])}
-                </defs>
-                <CartesianGrid {...GRID_STYLE} />
-                <XAxis dataKey="label" {...AXIS_STYLE} />
-                <YAxis {...AXIS_STYLE} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
-                <Tooltip content={<ChartTooltip formatValue={(v) => formatCurrency(v, { maximumFractionDigits: 0 })} />} />
-                <Legend />
-                <Area type="monotone" dataKey="totalComp" name="Total Comp" stroke={CHART_COLORS[0]} fill="url(#compGrad)" strokeWidth={2} />
-                <Area type="monotone" dataKey="salary" name="Base Salary" stroke={CHART_COLORS[1]} fill="url(#salaryGrad)" strokeWidth={2} />
-                {peakComp && (
-                  <ReferenceDot
-                    x={peakComp.label}
-                    y={peakComp.totalComp}
-                    r={4}
-                    fill="var(--accent)"
-                    stroke="var(--bg-surface)"
-                    strokeWidth={2}
-                  />
-                )}
-              </AreaChart>
-            </ResponsiveContainer>
+    <div className="container mx-auto px-4 py-6 md:py-8">
+      {/* Hero Section */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <Briefcase className="text-accent w-5 h-5" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Career Compensation</span>
           </div>
+          <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
+            {current ? formatCurrency(current.total_comp) : '—'}
+          </h1>
+          <p className="text-sm text-secondary">Current Total Compensation — <span className="font-bold text-primary">{current?.title || 'Unknown Role'}</span></p>
         </div>
-      )}
 
-      {/* Table */}
-      <div className="animate-slide-up">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-[10px] font-semibold tracking-widest uppercase text-secondary">
-            History
-          </span>
+        <div className="flex items-center gap-4">
+          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[140px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Career Growth</p>
+            <p className="text-lg font-mono font-bold text-gain">+{careerGrowth.toFixed(1)}%</p>
+          </div>
           <button
             onClick={handleAddNew}
-            className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md text-sm transition-colors duration-200 min-h-[44px] touch-manipulation"
+            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
           >
-            Add Record
+            <Plus size={18} />
+            <span>Add Record</span>
           </button>
         </div>
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-border">
-              <thead className="bg-surface-2">
-                <tr>
-                  {['Date', 'Title', 'Salary', 'PSU', 'RSU', 'Total Comp', 'Change', '%', ''].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold tracking-widest uppercase text-secondary">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {records.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-secondary">
-                      No salary records found.
-                    </td>
-                  </tr>
-                ) : (
-                  records.map((r) => (
-                    <tr key={r.id} className="hover:bg-surface-3 transition-colors duration-150">
-                      <td className="px-4 py-3 text-sm text-primary whitespace-nowrap">{formatDateDisplay(r.effective_date)}</td>
-                      <td className="px-4 py-3 text-sm text-primary">{r.title}</td>
-                      <td className="px-4 py-3 text-sm font-mono text-primary">{formatCurrency(r.salary_amount)}</td>
-                      <td className="px-4 py-3 text-sm font-mono text-secondary">{r.psu > 0 ? formatCurrency(r.psu) : <span className="text-tertiary">-</span>}</td>
-                      <td className="px-4 py-3 text-sm font-mono text-secondary">{r.rsu > 0 ? formatCurrency(r.rsu) : <span className="text-tertiary">-</span>}</td>
-                      <td className="px-4 py-3 text-sm font-mono font-bold text-accent">{formatCurrency(r.total_comp)}</td>
-                      <td className="px-4 py-3 text-sm font-mono text-gain">{r.change_amount ? `+${formatCurrency(r.change_amount)}` : <span className="text-tertiary">-</span>}</td>
-                      <td className="px-4 py-3 text-sm font-mono text-gain">
-                        {r.change_percent ? formatPercent(parseFloat(r.change_percent) * 100, 1) : <span className="text-tertiary">-</span>}
-                      </td>
-                      <td className="px-4 py-3 text-sm whitespace-nowrap">
-                        <div className="flex gap-1">
-                          <button onClick={() => handleEdit(r)} className="text-xs text-accent hover:bg-accent-muted rounded px-2 py-1.5 transition-colors duration-150 min-h-[44px]">Edit</button>
-                          <button onClick={() => setDeletingRecord(r)} className="text-xs text-loss hover:bg-loss-bg rounded px-2 py-1.5 transition-colors duration-150 min-h-[44px]">Delete</button>
-                        </div>
-                      </td>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        {/* Sidebar Filters */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="card p-5 space-y-6">
+            <div className="space-y-1">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Base Salary</p>
+              <p className="text-xl font-mono font-bold text-primary">{current ? formatCurrency(current.salary_amount) : '—'}</p>
+            </div>
+            
+            <div className="space-y-1 pt-4 border-t border-border">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Last Increase</p>
+              {lastRaise ? (
+                <div className="flex items-end gap-2">
+                  <p className="text-xl font-mono font-bold text-gain">+{formatCurrency(lastRaise.amount)}</p>
+                  <p className="text-xs font-mono font-bold text-gain mb-1">({lastRaise.percent.toFixed(1)}%)</p>
+                </div>
+              ) : (
+                <p className="text-xl font-mono font-bold text-tertiary">—</p>
+              )}
+            </div>
+
+            <div className="space-y-1 pt-4 border-t border-border">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Comp Mix</p>
+              <div className="space-y-2 mt-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-secondary font-medium">Base</span>
+                  <span className="text-primary font-bold">{current ? ((current.salary_amount / current.total_comp) * 100).toFixed(0) : 0}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-surface-3 rounded-full overflow-hidden flex">
+                  <div className="h-full bg-accent" style={{ width: `${current ? (current.salary_amount / current.total_comp) * 100 : 0}%` }} />
+                  <div className="h-full bg-blue-500" style={{ width: `${current ? ((current.total_comp - current.salary_amount) / current.total_comp) * 100 : 0}%` }} />
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-secondary font-medium">Variable/Equity</span>
+                  <span className="text-blue-400 font-bold">{current ? (((current.total_comp - current.salary_amount) / current.total_comp) * 100).toFixed(0) : 0}%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-4 bg-accent-muted/10 border-accent/10">
+            <h4 className="text-[10px] font-bold text-accent mb-3 uppercase tracking-widest flex items-center gap-2">
+              <Award size={12} />
+              Peak Compensation
+            </h4>
+            <div className="space-y-1">
+              <p className="text-lg font-mono font-bold text-primary">{peakComp ? formatCurrency(peakComp.totalComp) : '—'}</p>
+              <p className="text-[10px] text-tertiary font-bold uppercase tracking-tight">{peakComp ? formatDateDisplay(peakComp.date) : 'No data'}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Content Area */}
+        <div className="lg:col-span-3 space-y-8">
+          {/* Chart Section */}
+          {chartData.length > 1 && (
+            <div className="card p-6">
+              <div className="flex items-center gap-2 mb-6">
+                <TrendingUp className="text-accent w-4 h-4" />
+                <h2 className="text-xs font-bold uppercase tracking-widest text-secondary">Compensation Trajectory</h2>
+              </div>
+              <div className="h-64 md:h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <filter id="area-glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                      </filter>
+                      {areaGradient('salaryGrad', CHART_COLORS[1])}
+                      {areaGradient('compGrad', CHART_COLORS[0])}
+                    </defs>
+                    <CartesianGrid {...GRID_STYLE} vertical={false} strokeOpacity={0.5} />
+                    <XAxis dataKey="label" {...AXIS_STYLE} minTickGap={30} padding={{ left: 10, right: 10 }} />
+                    <YAxis {...AXIS_STYLE} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} axisLine={false} width={60} />
+                    <Tooltip content={<ChartTooltip formatValue={(v) => formatCurrency(v, { maximumFractionDigits: 0 })} />} cursor={{ stroke: 'var(--border)', strokeWidth: 1 }} />
+                    <Area type="monotone" dataKey="totalComp" name="Total Comp" stroke={CHART_COLORS[0]} fill="url(#compGrad)" strokeWidth={3} filter="url(#area-glow)" animationDuration={1500} />
+                    <Area type="monotone" dataKey="salary" name="Base Salary" stroke={CHART_COLORS[1]} fill="url(#salaryGrad)" strokeWidth={2} animationDuration={1500} />
+                    {peakComp && (
+                      <ReferenceDot
+                        x={peakComp.label}
+                        y={peakComp.totalComp}
+                        r={6}
+                        fill="var(--accent)"
+                        stroke="var(--bg-surface)"
+                        strokeWidth={3}
+                      />
+                    )}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* History Table */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-2">
+              <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-tertiary">Career History</h2>
+            </div>
+            
+            <div className="card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-border">
+                  <thead className="bg-surface-2">
+                    <tr>
+                      {['Date', 'Title', 'Base Salary', 'Equity/Bonus', 'Total Comp', 'Change', ''].map((h) => (
+                        <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-widest text-tertiary">{h}</th>
+                      ))}
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody className="divide-y divide-border bg-surface">
+                    {records.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-5 py-12 text-center text-tertiary text-sm font-medium">No records found. Add your first salary record to start tracking.</td>
+                      </tr>
+                    ) : (
+                      [...records].sort((a, b) => new Date(b.effective_date) - new Date(a.effective_date)).map((r) => (
+                        <tr key={r.id} className="hover:bg-surface-2 transition-colors group">
+                          <td className="px-5 py-4 whitespace-nowrap text-xs font-mono text-secondary">{formatDateDisplay(r.effective_date)}</td>
+                          <td className="px-5 py-4">
+                            <div className="text-sm font-bold text-primary">{r.title}</div>
+                          </td>
+                          <td className="px-5 py-4 text-sm font-mono text-primary">{formatCurrency(r.salary_amount)}</td>
+                          <td className="px-5 py-4 text-xs font-mono text-secondary">
+                            {r.psu > 0 || r.rsu > 0 ? formatCurrency((parseFloat(r.psu) || 0) + (parseFloat(r.rsu) || 0)) : <span className="opacity-30">—</span>}
+                          </td>
+                          <td className="px-5 py-4 text-sm font-mono font-bold text-accent">{formatCurrency(r.total_comp)}</td>
+                          <td className="px-5 py-4">
+                            {r.change_amount ? (
+                              <div className="flex flex-col">
+                                <span className="text-xs font-bold text-gain">+{formatCurrency(r.change_amount)}</span>
+                                <span className="text-[10px] font-bold text-gain opacity-70">({(parseFloat(r.change_percent) * 100).toFixed(1)}%)</span>
+                              </div>
+                            ) : <span className="text-tertiary opacity-30">—</span>}
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => handleEdit(r)} className="p-2 text-accent hover:bg-accent/10 rounded-lg transition-colors"><Edit2 size={14} /></button>
+                              <button onClick={() => setDeletingRecord(r)} className="p-2 text-loss hover:bg-loss/10 rounded-lg transition-colors"><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex items-center justify-center gap-8 text-[10px] text-tertiary uppercase tracking-widest font-bold opacity-60">
+            <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" /> Total Comp</span>
+            <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Base Salary</span>
+            <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Career progression</span>
           </div>
         </div>
       </div>
 
       {/* Form Modal */}
-      {isFormOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
-          <div className="bg-surface rounded-card border border-border shadow-xl max-w-lg w-full mx-4 p-6 max-h-[90vh] overflow-y-auto animate-slide-up">
-            <h2 className="text-lg font-bold mb-4 text-primary">{editingRecord ? 'Edit Record' : 'Add Record'}</h2>
-            <form onSubmit={handleSave} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1.5">Effective Date</label>
-                <input type="date" value={formData.effective_date} onChange={(e) => setFormData({ ...formData, effective_date: e.target.value })} className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px]" required />
+      <AnimatePresence>
+        {isFormOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsFormOpen(false)} />
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
+              <div className="p-6 border-b border-border bg-surface-2/50 flex items-center justify-between">
+                <h2 className="text-lg font-bold text-primary">{editingRecord ? 'Modify' : 'New'} Salary Record</h2>
+                <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
               </div>
-              <div>
-                <label className="block text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1.5">Title</label>
-                <input type="text" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px]" required />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1.5">Base Salary</label>
-                  <input type="number" step="0.01" value={formData.salary_amount} onChange={(e) => setFormData({ ...formData, salary_amount: e.target.value })} className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px]" required />
+              <form onSubmit={handleSave} className="p-6 space-y-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Effective Date</label>
+                    <div className="relative">
+                      <input type="date" value={formData.effective_date} onChange={(e) => setFormData({ ...formData, effective_date: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" required />
+                      <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Job Title</label>
+                    <input type="text" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Senior Engineer" required />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1.5">Total Comp</label>
-                  <input type="number" step="0.01" value={formData.total_comp} onChange={(e) => setFormData({ ...formData, total_comp: e.target.value })} className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px]" required />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Base Salary</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary font-mono">$</span>
+                      <input type="number" step="0.01" value={formData.salary_amount} onChange={(e) => setFormData({ ...formData, salary_amount: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Total Comp</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary font-mono">$</span>
+                      <input type="number" step="0.01" value={formData.total_comp} onChange={(e) => setFormData({ ...formData, total_comp: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1.5">PSU</label>
-                  <input type="number" step="0.01" value={formData.psu} onChange={(e) => setFormData({ ...formData, psu: e.target.value })} className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px]" />
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">PSU Value</label>
+                      <input type="number" step="0.01" value={formData.psu} onChange={(e) => setFormData({ ...formData, psu: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">RSU Value</label>
+                      <input type="number" step="0.01" value={formData.rsu} onChange={(e) => setFormData({ ...formData, rsu: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" />
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Change Amount</label>
+                      <input type="number" step="0.01" value={formData.change_amount} onChange={(e) => setFormData({ ...formData, change_amount: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" placeholder="+15000" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Change %</label>
+                      <input type="number" step="0.01" value={formData.change_percent} onChange={(e) => setFormData({ ...formData, change_percent: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" placeholder="8.5" />
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1.5">RSU</label>
-                  <input type="number" step="0.01" value={formData.rsu} onChange={(e) => setFormData({ ...formData, rsu: e.target.value })} className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px]" />
+                <div className="flex justify-end gap-3 pt-4">
+                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-3 bg-surface-2 text-secondary hover:text-primary rounded-xl text-xs font-bold uppercase tracking-wider transition-all">Cancel</button>
+                  <button type="submit" className="px-8 py-3 bg-accent text-inverse hover:bg-accent-hover rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-glow">Save Record</button>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1.5">Change Amount</label>
-                  <input type="number" step="0.01" value={formData.change_amount} onChange={(e) => setFormData({ ...formData, change_amount: e.target.value })} className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px]" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1.5">Change %</label>
-                  <input type="number" step="0.01" value={formData.change_percent} onChange={(e) => setFormData({ ...formData, change_percent: e.target.value })} className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px]" placeholder="e.g. 8.3" />
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setIsFormOpen(false)} className="px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md transition-colors duration-200 min-h-[44px]">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md transition-colors duration-200 min-h-[44px]">Save</button>
-              </div>
-            </form>
+              </form>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
 
       {/* Delete Confirm Modal */}
-      {deletingRecord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
-          <div className="bg-surface rounded-card border border-border shadow-xl max-w-md w-full mx-4 p-6 animate-slide-up">
-            <h2 className="text-lg font-bold mb-4 text-primary">Confirm Delete</h2>
-            <p className="text-secondary mb-6">
-              Delete the record for {formatDateDisplay(deletingRecord.effective_date)}?
-            </p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setDeletingRecord(null)} className="px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md transition-colors duration-200 min-h-[44px]">Cancel</button>
-              <button onClick={handleDeleteConfirm} className="px-4 py-2 bg-loss text-inverse rounded-md hover:opacity-90 transition-opacity duration-200 min-h-[44px]">Delete</button>
-            </div>
+      <AnimatePresence>
+        {deletingRecord && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeletingRecord(null)} />
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-sm w-full p-6 text-center">
+              <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 size={24} />
+              </div>
+              <h2 className="text-xl font-bold text-primary mb-2">Confirm Delete</h2>
+              <p className="text-sm text-secondary mb-8">Delete the salary record for <span className="text-primary font-bold">{formatDateDisplay(deletingRecord.effective_date)}</span>?</p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeletingRecord(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
+                <button onClick={handleDeleteConfirm} className="flex-1 py-3 bg-loss text-inverse rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Delete</button>
+              </div>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   );
 };

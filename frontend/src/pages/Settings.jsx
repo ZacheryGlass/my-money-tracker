@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X } from 'lucide-react';
 import { plaid as plaidAPI, accounts as accountsAPI } from '../utils/api';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2 } from 'lucide-react';
 
 function PlaidLinkButton({ onSuccess, disabled }) {
   const [linkToken, setLinkToken] = useState(null);
@@ -40,14 +41,14 @@ function PlaidLinkButton({ onSuccess, disabled }) {
     <button
       onClick={fetchLinkToken}
       disabled={disabled || loading}
-      className="flex items-center gap-2 px-4 py-2.5 bg-accent text-inverse hover:bg-accent-hover rounded-lg text-sm font-medium transition-colors duration-200 min-h-[44px] touch-manipulation disabled:opacity-50"
+      className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow disabled:opacity-50"
     >
       {loading ? (
-        <RefreshCw size={16} className="animate-spin" />
+        <RefreshCw size={18} className="animate-spin" />
       ) : (
-        <Plus size={16} />
+        <Plus size={18} />
       )}
-      Connect Account
+      Connect New Institution
     </button>
   );
 }
@@ -85,7 +86,7 @@ function UpdateLinkButton({ itemId, onSuccess }) {
     <button
       onClick={fetchUpdateToken}
       disabled={loading}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-inverse bg-accent hover:bg-accent-hover transition-colors duration-200 min-h-[44px] touch-manipulation disabled:opacity-50"
+      className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-inverse bg-accent hover:bg-accent-hover transition-all shadow-sm"
     >
       {loading ? <RefreshCw size={14} className="animate-spin" /> : <Link2 size={14} />}
       Re-link
@@ -216,249 +217,262 @@ const Settings = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
+        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Initializing Settings</span>
       </div>
     );
   }
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1000px] mx-auto space-y-6">
-      {/* Hero */}
-      <div className="animate-fade-in">
-        <p className="text-[10px] font-semibold tracking-widest uppercase text-secondary mb-1">
-          Account Settings
-        </p>
-        <h1 className="text-3xl font-bold text-primary leading-none">
-          Connected Accounts
-        </h1>
-        <p className="text-sm text-secondary mt-2">
-          Link your financial accounts to automatically sync balances and holdings.
-        </p>
+    <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1000px]">
+      {/* Hero Section */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <ShieldCheck className="text-accent w-5 h-5" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Data Integrity</span>
+          </div>
+          <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
+            Linked Accounts
+          </h1>
+          <p className="text-sm text-secondary">Manage institution connections and data synchronization</p>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <PlaidLinkButton onSuccess={handlePlaidSuccess} disabled={connecting} />
+        </div>
       </div>
 
       {successMessage && (
-        <div className="bg-gain-bg text-gain border border-gain/20 rounded-lg p-3 animate-fade-in">
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
+          <Check size={16} />
           {successMessage}
-        </div>
+        </motion.div>
       )}
       {error && (
-        <div className="bg-loss-bg text-loss border border-loss/20 rounded-lg p-3 animate-fade-in">
-          {error}
-          <button onClick={() => setError(null)} className="ml-2 underline text-xs">Dismiss</button>
-        </div>
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+          <AlertTriangle size={16} />
+          <span className="flex-1">{error}</span>
+          <button onClick={() => setError(null)}><X size={14} /></button>
+        </motion.div>
       )}
-
-      {/* Connect button */}
-      <div className="flex justify-end">
-        <PlaidLinkButton onSuccess={handlePlaidSuccess} disabled={connecting} />
-      </div>
 
       {connecting && (
-        <div className="card p-6 flex items-center justify-center gap-3 animate-fade-in">
-          <RefreshCw size={20} className="animate-spin text-accent" />
-          <span className="text-sm text-secondary">Connecting and syncing account data...</span>
+        <div className="card p-8 flex flex-col items-center justify-center gap-4 animate-fade-in border-accent/20 bg-accent/5">
+          <RefreshCw size={32} className="animate-spin text-accent" />
+          <p className="text-sm font-bold uppercase tracking-widest text-accent">Exchanging tokens and syncing data...</p>
         </div>
       )}
 
-      {/* Items list */}
-      {items.length === 0 && !connecting ? (
-        <div className="card p-12 text-center animate-slide-up">
-          <Building2 size={40} className="mx-auto text-tertiary mb-4" />
-          <h3 className="text-lg font-semibold text-primary mb-2">No accounts connected</h3>
-          <p className="text-sm text-secondary max-w-md mx-auto">
-            Connect your bank, brokerage, or retirement accounts to automatically sync your portfolio.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-3 animate-slide-up">
-          {items.map((item) => (
-            <div key={item.id} className="card overflow-hidden">
-              <div className="p-4 md:p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center flex-shrink-0">
-                      <Building2 size={20} className="text-accent" />
+      <div className="space-y-4">
+        {items.length === 0 && !connecting ? (
+          <div className="card p-12 text-center border-dashed border-2 border-border/50 bg-transparent">
+            <Building2 size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
+            <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Institutions Linked</h3>
+            <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed">
+              Link your brokerage or depository accounts to automatically pull balance and performance history.
+            </p>
+          </div>
+        ) : (
+          items.map((item) => (
+            <motion.div layout key={item.id} className="card overflow-hidden border-border/50">
+              <div className="p-5 md:p-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-12 h-12 rounded-2xl bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <Building2 size={24} className="text-accent" />
                     </div>
                     <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-primary truncate">
-                        {item.institution_name || 'Connected Account'}
+                      <h3 className="text-base font-bold text-primary truncate leading-tight">
+                        {item.institution_name || 'Financial Institution'}
                       </h3>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-xs text-secondary">
-                          {item.accounts?.length || 0} account{(item.accounts?.length || 0) !== 1 ? 's' : ''}
+                      <div className="flex items-center gap-4 mt-1">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">
+                          {item.accounts?.length || 0} Account{(item.accounts?.length || 0) !== 1 ? 's' : ''}
                         </span>
-                        <span className="flex items-center gap-1 text-xs text-tertiary">
-                          <Clock size={10} />
+                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-tertiary">
+                          <Clock size={12} />
                           {formatSyncTime(item.last_synced_at)}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    {consentItems.has(item.id) ? (
+                  <div className="flex items-center gap-2">
+                    {consentItems.has(item.id) && (
                       <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} />
-                    ) : item.error_code ? (
-                      <span className="flex items-center gap-1 px-2 py-1 rounded-md bg-loss/10 text-loss text-xs font-medium">
-                        <AlertTriangle size={12} />
-                        Error
-                      </span>
-                    ) : null}
+                    )}
                     <button
                       onClick={() => handleSync(item.id)}
                       disabled={syncingId === item.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-secondary hover:text-accent hover:bg-accent/10 transition-colors duration-200 min-h-[44px] touch-manipulation disabled:opacity-50"
-                      title="Sync now"
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all disabled:opacity-50"
                     >
                       <RefreshCw size={14} className={syncingId === item.id ? 'animate-spin' : ''} />
                       Sync
                     </button>
                     <button
                       onClick={() => { setRemoveDataOnDisconnect(true); setDisconnectingItem(item); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-secondary hover:text-loss hover:bg-loss/10 transition-colors duration-200 min-h-[44px] touch-manipulation"
-                      title="Disconnect"
+                      className="p-2.5 rounded-xl text-tertiary hover:text-loss hover:bg-loss/10 border border-transparent transition-all"
+                      title="Disconnect Institution"
                     >
-                      <Unlink size={14} />
+                      <Unlink size={18} />
                     </button>
                   </div>
                 </div>
 
-                {item.error_code && !consentItems.has(item.id) && (
-                  <div className="mt-3 px-3 py-2 rounded-md bg-loss/5 border border-loss/10 text-xs text-loss">
-                    {item.error_message || `Error: ${item.error_code}`}
-                  </div>
-                )}
-                {consentItems.has(item.id) && (
-                  <div className="mt-3 px-3 py-2 rounded-md bg-[var(--color-accent)]/5 border border-[var(--color-accent)]/10 text-xs text-accent">
-                    Investment data requires additional authorization. Click "Re-link" to grant access.
+                {(item.error_code || consentItems.has(item.id)) && (
+                  <div className={`mt-5 p-4 rounded-xl border text-xs leading-relaxed ${consentItems.has(item.id) ? 'bg-accent/5 border-accent/20 text-accent' : 'bg-loss/5 border-loss/20 text-loss'}`}>
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                      <p>
+                        {consentItems.has(item.id) 
+                          ? 'This institution requires additional authorization to provide investment and holdings data. Please click "Re-link" to grant permission.'
+                          : (item.error_message || `Institution reported an error: ${item.error_code}`)}
+                      </p>
+                    </div>
                   </div>
                 )}
 
-                {/* Expandable accounts list */}
+                {/* Sub-accounts Grid */}
                 {item.accounts?.length > 0 && (
-                  <div className="mt-3">
+                  <div className="mt-6 pt-5 border-t border-border/50">
                     <button
                       onClick={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
-                      className="text-xs text-secondary hover:text-accent transition-colors duration-150"
+                      className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-tertiary hover:text-primary transition-colors group"
                     >
-                      {expandedItem === item.id ? 'Hide' : 'Show'} accounts
+                      <span>{expandedItem === item.id ? 'Collapse' : 'View'} Internal Accounts</span>
+                      <ChevronRight size={12} className={`transition-transform duration-200 ${expandedItem === item.id ? 'rotate-90' : ''}`} />
                     </button>
-                    {expandedItem === item.id && (
-                      <div className="mt-2 space-y-1.5 animate-fade-in">
-                        {item.accounts.map((acct) => (
-                          <div key={acct.id} className="flex items-center gap-2 px-3 py-2 rounded-md bg-surface-2/50">
-                            <Link2 size={12} className="text-tertiary flex-shrink-0" />
-                            <span className="text-xs text-primary truncate">{acct.name}</span>
-                            <span className="text-[10px] text-tertiary uppercase tracking-wider ml-auto flex-shrink-0">{acct.type}</span>
+                    
+                    <AnimatePresence>
+                      {expandedItem === item.id && (
+                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+                            {item.accounts.map((acct) => (
+                              <div key={acct.id} className="flex items-center justify-between gap-4 px-4 py-3 rounded-xl bg-surface-2/50 border border-transparent hover:border-border transition-colors">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <Link2 size={12} className="text-accent opacity-60 flex-shrink-0" />
+                                  <span className="text-xs font-bold text-primary truncate">{acct.name}</span>
+                                </div>
+                                <span className="text-[9px] font-bold text-tertiary uppercase tracking-widest px-2 py-0.5 rounded-full bg-surface-3">{acct.type}</span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 )}
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
       )}
 
       {/* Orphaned Accounts */}
       {orphanedAccounts.length > 0 && (
-        <div className="animate-slide-up">
-          <h2 className="text-lg font-bold text-primary mb-3">Empty Accounts</h2>
-          <p className="text-xs text-secondary mb-3">
-            These accounts are not linked to Plaid. Deleting removes the account and all its holdings.
-          </p>
-          <div className="card overflow-hidden">
-            <div className="divide-y divide-border">
-              {orphanedAccounts.map((acct) => (
-                <div key={acct.id} className="flex items-center justify-between px-4 py-3">
-                  <div className="min-w-0">
-                    <span className="text-sm text-primary truncate block">{acct.name}</span>
-                    {acct.holdings_count > 0 && (
-                      <span className="text-xs text-secondary">{acct.holdings_count} holding{acct.holdings_count !== 1 ? 's' : ''}</span>
-                    )}
-                  </div>
-                  <button
-                    onClick={async () => {
-                      setDeletingAccountId(acct.id);
-                      try {
-                        await accountsAPI.delete(acct.id);
-                        showSuccess(`"${acct.name}" deleted`);
-                        await fetchItems();
-                      } catch (err) {
-                        setError(err.response?.data?.error || 'Failed to delete account');
-                      } finally {
-                        setDeletingAccountId(null);
-                      }
-                    }}
-                    disabled={deletingAccountId === acct.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-secondary hover:text-loss hover:bg-loss/10 transition-colors duration-200 min-h-[36px] touch-manipulation disabled:opacity-50 flex-shrink-0"
-                  >
-                    <Trash2 size={14} />
-                    Delete
-                  </button>
-                </div>
-              ))}
-            </div>
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-12 space-y-6">
+          <div className="px-2">
+            <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Manual / Orphaned Entries</h2>
+            <p className="text-xs text-secondary mt-1">These accounts are not linked to Plaid. Deleting removes the account and all its historical value points.</p>
           </div>
-        </div>
+          
+          <div className="card overflow-hidden divide-y divide-border border-border/50">
+            {orphanedAccounts.map((acct) => (
+              <div key={acct.id} className="flex items-center justify-between p-5 hover:bg-surface-2 transition-colors group">
+                <div className="min-w-0">
+                  <span className="text-sm font-bold text-primary truncate block">{acct.name}</span>
+                  <span className="text-[10px] font-bold text-tertiary uppercase tracking-widest mt-1 block">
+                    {acct.holdings_count || 0} Assets • Manual Tracking
+                  </span>
+                </div>
+                <button
+                  onClick={async () => {
+                    setDeletingAccountId(acct.id);
+                    try {
+                      await accountsAPI.delete(acct.id);
+                      showSuccess(`"${acct.name}" deleted`);
+                      await fetchItems();
+                    } catch (err) {
+                      setError(err.response?.data?.error || 'Failed to delete account');
+                    } finally {
+                      setDeletingAccountId(null);
+                    }
+                  }}
+                  disabled={deletingAccountId === acct.id}
+                  className="p-2.5 rounded-xl text-tertiary hover:text-loss hover:bg-loss/10 transition-all opacity-0 group-hover:opacity-100"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </motion.div>
       )}
 
       {/* Disconnect Confirm Modal */}
-      {disconnectingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in">
-          <div className="bg-surface rounded-card border border-border shadow-xl max-w-md w-full mx-4 p-6 animate-slide-up">
-            <h2 className="text-lg font-bold mb-2 text-primary">Disconnect Account</h2>
-            <p className="text-sm text-secondary mb-4">
-              Disconnect {disconnectingItem.institution_name || 'this account'}?
-            </p>
-            <div className="space-y-2 mb-6">
-              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors duration-150 ${removeDataOnDisconnect ? 'border-accent/40 bg-accent/5' : 'border-border hover:border-border/80'}`}>
-                <input
-                  type="radio"
-                  name="disconnect-mode"
-                  checked={removeDataOnDisconnect}
-                  onChange={() => setRemoveDataOnDisconnect(true)}
-                  className="mt-0.5 accent-[var(--color-accent)]"
-                />
-                <div>
-                  <span className="text-sm font-medium text-primary">Remove all data</span>
-                  <p className="text-xs text-secondary mt-0.5">Delete linked accounts, holdings, and history.</p>
+      <AnimatePresence>
+        {disconnectingItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={() => setDisconnectingItem(null)} />
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
+              <div className="p-8 pb-4 text-center">
+                <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-6 shadow-glow-sm">
+                  <Unlink size={28} />
                 </div>
-              </label>
-              <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors duration-150 ${!removeDataOnDisconnect ? 'border-accent/40 bg-accent/5' : 'border-border hover:border-border/80'}`}>
-                <input
-                  type="radio"
-                  name="disconnect-mode"
-                  checked={!removeDataOnDisconnect}
-                  onChange={() => setRemoveDataOnDisconnect(false)}
-                  className="mt-0.5 accent-[var(--color-accent)]"
-                />
-                <div>
-                  <span className="text-sm font-medium text-primary">Keep data</span>
-                  <p className="text-xs text-secondary mt-0.5">Holdings become manual entries you can manage yourself.</p>
-                </div>
-              </label>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDisconnectingItem(null)}
-                className="px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md transition-colors duration-200 min-h-[44px]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDisconnectConfirm}
-                className="px-4 py-2 bg-loss text-inverse rounded-md hover:opacity-90 transition-opacity duration-200 min-h-[44px]"
-              >
-                Disconnect
-              </button>
-            </div>
+                <h2 className="text-2xl font-bold text-primary mb-2 tracking-tight">Disconnect Institution</h2>
+                <p className="text-sm text-secondary leading-relaxed">
+                  You are about to disconnect <span className="text-primary font-bold">{disconnectingItem.institution_name}</span>. How should we handle existing data?
+                </p>
+              </div>
+
+              <div className="p-8 space-y-3">
+                <button 
+                  onClick={() => setRemoveDataOnDisconnect(true)}
+                  className={`w-full flex items-start gap-4 p-4 rounded-2xl border text-left transition-all ${removeDataOnDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
+                >
+                  <div className={`mt-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${removeDataOnDisconnect ? 'border-accent' : 'border-tertiary'}`}>
+                    {removeDataOnDisconnect && <div className="w-2 h-2 rounded-full bg-accent" />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-primary">Full Purge (Recommended)</p>
+                    <p className="text-[11px] text-secondary mt-0.5">Delete all accounts, current holdings, and historical data associated with this link.</p>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={() => setRemoveDataOnDisconnect(false)}
+                  className={`w-full flex items-start gap-4 p-4 rounded-2xl border text-left transition-all ${!removeDataOnDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
+                >
+                  <div className={`mt-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${!removeDataOnDisconnect ? 'border-accent' : 'border-tertiary'}`}>
+                    {!removeDataOnDisconnect && <div className="w-2 h-2 rounded-full bg-accent" />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-primary">Unlink & Keep Data</p>
+                    <p className="text-[11px] text-secondary mt-0.5">Stop automatic syncing. Current holdings will be converted to manual entries you can update yourself.</p>
+                  </div>
+                </button>
+              </div>
+
+              <div className="p-8 pt-0 flex gap-3">
+                <button
+                  onClick={() => setDisconnectingItem(null)}
+                  className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded-2xl text-xs font-bold uppercase tracking-wider transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDisconnectConfirm}
+                  className="flex-1 py-4 bg-loss text-inverse rounded-2xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all shadow-glow-sm"
+                >
+                  Confirm Disconnect
+                </button>
+              </div>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   );
 };

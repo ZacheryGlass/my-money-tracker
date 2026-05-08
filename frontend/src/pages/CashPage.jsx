@@ -7,7 +7,8 @@ import {
   getPaginationRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import { Link2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Wallet, Landmark, Plus, Link2, Filter, ChevronDown, ChevronUp, Info, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
@@ -25,6 +26,7 @@ const CashPage = () => {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState(null);
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   useEffect(() => {
     fetchData();
@@ -110,18 +112,19 @@ const CashPage = () => {
     () => [
       {
         accessorKey: 'account_name',
-        header: 'Account',
+        header: 'Institution',
+        cell: ({ getValue }) => <span className="text-xs font-bold text-secondary uppercase tracking-tight">{getValue()}</span>,
       },
       {
         accessorKey: 'name',
-        header: 'Name',
+        header: 'Account Name',
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
-            <span>{row.original.name}</span>
+            <span className="font-bold text-primary">{row.original.name}</span>
             {row.original.is_plaid_managed && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
                 <Link2 size={10} />
-                Plaid
+                Linked
               </span>
             )}
           </div>
@@ -133,15 +136,15 @@ const CashPage = () => {
         header: 'Balance',
         cell: ({ getValue }) => {
           const v = parseFloat(getValue()) || 0;
-          return <span className="font-mono text-base font-semibold text-primary">{formatCurrency(v)}</span>;
+          return <span className="font-mono text-sm font-bold text-gain">{formatCurrency(v)}</span>;
         },
       },
       {
         accessorKey: 'category',
-        header: 'Category',
+        header: 'Type',
         cell: ({ getValue }) => {
           const value = getValue();
-          return <span className="text-secondary">{value || '-'}</span>;
+          return <span className="text-[10px] font-bold uppercase text-tertiary tracking-widest">{value || 'Depository'}</span>;
         },
       },
     ],
@@ -162,205 +165,209 @@ const CashPage = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-xl text-secondary">Loading...</div>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
+        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Auditing Cash</span>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-2 md:py-4">
-      <div className="mb-3">
-        <h1 className="text-xl font-bold text-primary mb-3">Cash</h1>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div className="card p-4 md:p-5">
-            <h3 className="text-xs uppercase tracking-wider text-secondary">Total Cash</h3>
-            <p className="mt-2 text-xl font-mono font-bold text-gain">
-              {formatCurrency(totalCash)}
-            </p>
+    <div className="container mx-auto px-4 py-6 md:py-8">
+      {/* Hero Section */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <Wallet className="text-accent w-5 h-5" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Liquidity Overview</span>
           </div>
-          <div className="card p-4 md:p-5">
-            <h3 className="text-xs uppercase tracking-wider text-secondary">Accounts</h3>
-            <p className="mt-2 text-xl font-mono font-bold text-primary">
-              {cashAccounts.length}
-            </p>
-          </div>
+          <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
+            {formatCurrency(totalCash)}
+          </h1>
+          <p className="text-sm text-secondary">Total liquid capital across {cashAccounts.length} depository accounts</p>
         </div>
 
-        {successMessage && (
-          <div className="mb-4 bg-gain-bg text-gain border border-gain/20 rounded-lg p-3">
-            {successMessage}
+        <div className="flex items-center gap-4">
+          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Accounts</p>
+            <p className="text-lg font-mono font-bold text-primary">{cashAccounts.length}</p>
           </div>
-        )}
-
-        {error && (
-          <div className="mb-4 bg-loss-bg text-loss border border-loss/20 rounded-lg p-3">
-            {error}
-          </div>
-        )}
-
-        <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-stretch sm:items-center mb-3">
           <button
             onClick={handleAddNew}
-            className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md min-h-[44px] touch-manipulation"
+            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
           >
-            Add Cash Entry
+            <Plus size={18} />
+            <span>Add Entry</span>
           </button>
         </div>
-
-        {cashAccounts.length > 1 && (
-          <div className="flex flex-wrap gap-2 mb-2 items-center">
-            <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Account:</span>
-            <button
-              onClick={() => setAccountFilter('')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
-                accountFilter === ''
-                  ? 'bg-accent text-inverse'
-                  : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-              }`}
-            >
-              All
-            </button>
-            {cashAccounts.map((account) => (
-              <button
-                key={account.id}
-                onClick={() => setAccountFilter(accountFilter === String(account.id) ? '' : String(account.id))}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
-                  accountFilter === String(account.id)
-                    ? 'bg-accent text-inverse'
-                    : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-                }`}
-              >
-                {account.name}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
-      <div className="bg-surface rounded-card border border-border overflow-hidden shadow-card">
-        <div className="hidden md:block overflow-x-auto">
-          <table className="min-w-full divide-y divide-border">
-            <thead className="bg-surface-2">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <tr key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <th
-                      key={header.id}
-                      className="px-4 py-2 text-left text-xs font-medium text-secondary uppercase tracking-wider cursor-pointer hover:bg-surface-3"
-                      onClick={header.column.getToggleSortingHandler()}
-                    >
-                      <div className="flex items-center gap-2">
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {header.column.getIsSorted() && (
-                          <span className="text-secondary">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
-                        )}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              ))}
-            </thead>
-            <tbody className="divide-y divide-border">
-              {table.getRowModel().rows.length === 0 ? (
-                <tr>
-                  <td colSpan={columns.length} className="px-4 py-6 text-center text-secondary">
-                    No cash accounts found. Add a depository account to get started.
-                  </td>
-                </tr>
-              ) : (
-                table.getRowModel().rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    className={`border-b border-border ${
-                      row.original.is_plaid_managed
-                        ? 'hover:bg-surface-2'
-                        : 'hover:bg-surface-3 cursor-pointer'
-                    }`}
-                    onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-1.5 whitespace-nowrap text-sm text-primary">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        {/* Sidebar Filters */}
+        <div className="lg:col-span-1 space-y-6">
+          <div className="card overflow-hidden">
+            <button 
+              onClick={() => setFiltersExpanded(!filtersExpanded)}
+              className="w-full flex items-center justify-between p-4 border-b border-border bg-surface-2/50"
+            >
+              <div className="flex items-center gap-2">
+                <Filter size={16} className="text-accent" />
+                <span className="text-sm font-bold uppercase tracking-widest text-primary">Accounts</span>
+              </div>
+              {filtersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
 
-        <div className="md:hidden divide-y divide-border">
-          {table.getRowModel().rows.length === 0 ? (
-            <div className="px-4 py-8 text-center text-secondary">
-              No cash accounts found.
-            </div>
-          ) : (
-            table.getRowModel().rows.map((row) => {
-              const value = parseFloat(row.original.current_value ?? row.original.manual_value ?? 0);
-              return (
-                <div
-                  key={row.id}
-                  className={`card p-3 touch-manipulation ${
-                    row.original.is_plaid_managed ? '' : 'active:bg-surface-3 cursor-pointer'
-                  }`}
-                  onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
+            <AnimatePresence initial={false}>
+              {filtersExpanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.3 }}
                 >
-                  <div className="flex justify-between items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-primary truncate">{row.original.name}</div>
-                      <div className="text-sm text-secondary">{row.original.account_name}</div>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <div className="text-lg font-bold font-mono text-primary">
-                        {formatCurrency(value)}
+                  <div className="p-4 space-y-2">
+                    <button
+                      onClick={() => setAccountFilter('')}
+                      className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                        accountFilter === ''
+                          ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                          : 'bg-surface-2 border-transparent text-secondary hover:border-border'
+                      }`}
+                    >
+                      <span className="text-xs font-bold uppercase tracking-wider">All Accounts</span>
+                      {accountFilter === '' && <Check size={14} />}
+                    </button>
+                    {cashAccounts.map((account) => (
+                      <button
+                        key={account.id}
+                        onClick={() => setAccountFilter(String(account.id))}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                          accountFilter === String(account.id)
+                            ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                            : 'bg-surface-2 border-transparent text-secondary hover:border-border'
+                        }`}
+                      >
+                        <span className="text-xs font-bold uppercase tracking-wider truncate mr-2">{account.name}</span>
+                        {accountFilter === String(account.id) && <Check size={14} />}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <div className="card p-4 bg-accent-muted/10 border-accent/10">
+            <h4 className="text-[10px] font-bold text-accent mb-2 uppercase tracking-widest flex items-center gap-2">
+              <Info size={12} />
+              Cash Strategy
+            </h4>
+            <p className="text-[11px] text-secondary leading-relaxed">
+              Depository accounts represent your most liquid assets. Aim for 3-6 months of expenses in highly liquid accounts as an emergency fund.
+            </p>
+          </div>
+        </div>
+
+        {/* Main Table Area */}
+        <div className="lg:col-span-3 space-y-6">
+          {successMessage && (
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
+              <Check size={16} />
+              {successMessage}
+            </motion.div>
+          )}
+
+          <div className="card overflow-hidden">
+            <div className="hidden md:block overflow-x-auto">
+              <table className="min-w-full divide-y divide-border">
+                <thead className="bg-surface-2">
+                  {table.getHeaderGroups().map((headerGroup) => (
+                    <tr key={headerGroup.id}>
+                      {headerGroup.headers.map((header) => (
+                        <th
+                          key={header.id}
+                          className="px-5 py-4 text-left text-[10px] font-bold text-tertiary uppercase tracking-widest cursor-pointer hover:bg-surface-3 transition-colors"
+                          onClick={header.column.getToggleSortingHandler()}
+                        >
+                          <div className="flex items-center gap-2">
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            {header.column.getIsSorted() && (
+                              <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
+                            )}
+                          </div>
+                        </th>
+                      ))}
+                    </tr>
+                  ))}
+                </thead>
+                <tbody className="divide-y divide-border bg-surface">
+                  {table.getRowModel().rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={columns.length} className="px-5 py-12 text-center text-tertiary text-sm font-medium">
+                        No cash accounts found. Add a depository account to get started.
+                      </td>
+                    </tr>
+                  ) : (
+                    table.getRowModel().rows.map((row) => (
+                      <tr
+                        key={row.id}
+                        className={`hover:bg-surface-2 transition-colors ${
+                          row.original.is_plaid_managed ? '' : 'cursor-pointer'
+                        }`}
+                        onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <td key={cell.id} className="px-5 py-3 whitespace-nowrap text-sm text-primary">
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile View */}
+            <div className="md:hidden space-y-3 p-4">
+              {table.getRowModel().rows.length === 0 ? (
+                <div className="py-8 text-center text-tertiary text-xs uppercase tracking-widest font-bold">No entries found</div>
+              ) : (
+                table.getRowModel().rows.map((row) => {
+                  const value = parseFloat(row.original.current_value ?? row.original.manual_value ?? 0);
+                  return (
+                    <div
+                      key={row.id}
+                      className={`card p-4 border border-border/50 active:bg-surface-3 transition-all ${
+                        row.original.is_plaid_managed ? '' : 'cursor-pointer'
+                      }`}
+                      onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-primary truncate">{row.original.name}</p>
+                          <p className="text-[10px] font-bold text-tertiary uppercase tracking-tight">{row.original.account_name}</p>
+                        </div>
+                        <p className="text-base font-mono font-bold text-gain">{formatCurrency(value)}</p>
+                      </div>
+                      <div className="flex items-center gap-3 pt-2 border-t border-border/50">
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-tertiary">{row.original.category || 'Depository'}</span>
+                        {row.original.is_plaid_managed && <Link2 size={10} className="text-accent" />}
                       </div>
                     </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-center gap-6 text-[10px] text-tertiary uppercase tracking-widest font-bold">
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-gain shadow-glow" /> Liquid Assets</span>
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Immediate Access</span>
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Depository Tracking</span>
+          </div>
         </div>
       </div>
-
-      {filteredData.length > 25 && (
-        <div className="flex items-center justify-between mt-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-secondary">Rows per page:</span>
-            <select
-              value={pagination.pageSize}
-              onChange={(e) => setPagination((p) => ({ ...p, pageIndex: 0, pageSize: Number(e.target.value) }))}
-              className="px-2 py-1 rounded-md text-sm"
-            >
-              {[10, 25, 50, 100].map((size) => (
-                <option key={size} value={size}>{size}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-secondary">
-              Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
-            </span>
-            <button
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-              className="px-3 py-1 text-sm bg-surface-3 text-secondary hover:bg-accent hover:text-inverse rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              Prev
-            </button>
-            <button
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-              className="px-3 py-1 text-sm bg-surface-3 text-secondary hover:bg-accent hover:text-inverse rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
 
       <HoldingForm
         isOpen={isFormOpen}

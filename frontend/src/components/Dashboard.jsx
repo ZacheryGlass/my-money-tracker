@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { motion } from 'framer-motion';
-import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity, ChevronRight, TrendingUp, Clock, Zap } from 'lucide-react';
 import { dashboard as dashboardAPI, history as historyAPI, plaid as plaidAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatCompactCurrency } from '../utils/format';
 import DashboardTable from './DashboardTable';
@@ -44,13 +44,13 @@ const Dashboard = ({ onNavigate }) => {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    const plaidSync = plaidAPI.getItems()
-      .then(({ items }) => Promise.all((items || []).map((item) => plaidAPI.syncItem(item.id))));
-    const results = await Promise.allSettled([dashboardAPI.refreshPrices(), plaidSync]);
-    const failed = results.filter((r) => r.status === 'rejected');
-    await fetchData();
-    if (failed.length > 0) {
-      console.error('Sync failures:', failed.map((r) => r.reason));
+    try {
+      const { items } = await plaidAPI.getItems();
+      const plaidSync = (items || []).map((item) => plaidAPI.syncItem(item.id));
+      await Promise.allSettled([...plaidSync, dashboardAPI.refreshPrices()]);
+      await fetchData();
+    } catch (err) {
+      console.error('Sync failures:', err);
       setError('Some updates failed. Please try again.');
     }
     setRefreshing(false);
@@ -112,74 +112,69 @@ const Dashboard = ({ onNavigate }) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6">
-        <div className="bg-loss-bg text-loss border border-loss/20 rounded-2xl p-6 backdrop-blur-md">
-          <div className="flex items-center gap-3 mb-2">
-            <Activity className="text-loss" size={24} />
-            <h2 className="text-lg font-bold">Something went wrong</h2>
-          </div>
-          <p className="text-sm opacity-80">{error}</p>
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-[500px] gap-4">
+        <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
+        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Aggregating Portfolio</span>
       </div>
     );
   }
 
   return (
-    <div className="p-4 md:p-8 lg:p-12 max-w-[1600px] mx-auto space-y-10">
+    <div className="container mx-auto px-4 py-8 md:py-12 max-w-[1600px] space-y-12">
       {/* Hero Section */}
-      <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 pt-4">
+      <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-8 pt-4 relative">
         <motion.div 
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-wider">
-            <Wallet size={12} />
-            Portfolio Overview
-          </div>
-          <h1 className="font-money text-hero text-primary tracking-tighter">
-            {formatCurrency(netWorth)}
-          </h1>
-          <div className="flex items-center gap-4">
-            {dailyChange.amount !== 0 && (
-              <div className={`flex items-center gap-1.5 font-money text-sm font-semibold ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
-                {dailyChange.amount >= 0 ? '+' : ''}{formatCurrency(dailyChange.amount)} ({formatPercent(dailyChange.percent)})
-                <span className="text-tertiary font-normal lowercase tracking-normal">today</span>
-              </div>
-            )}
+          <div className="flex items-center gap-3">
+            <div className="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
+              <Zap size={12} className="fill-accent" />
+              Live Net Worth
+            </div>
             {data?.lastUpdated && (
-              <div className="text-xs text-tertiary flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-gain animate-pulse" />
-                Updated {new Date(data.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              <div className="text-[10px] font-bold uppercase tracking-widest text-tertiary flex items-center gap-1.5 opacity-60">
+                <Clock size={12} />
+                Synced {new Date(data.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             )}
+          </div>
+          
+          <div className="space-y-1">
+            <h1 className="text-5xl md:text-7xl font-bold text-primary tracking-tighter leading-none">
+              {formatCurrency(netWorth)}
+            </h1>
+            <div className="flex items-center gap-4">
+              {dailyChange.amount !== 0 && (
+                <div className={`flex items-center gap-1.5 text-sm font-bold ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
+                  {dailyChange.amount >= 0 ? <TrendingUp size={16} /> : <TrendingUp size={16} className="rotate-180" />}
+                  {formatCurrency(Math.abs(dailyChange.amount))} ({formatPercent(dailyChange.percent)})
+                  <span className="text-tertiary font-medium uppercase text-[10px] tracking-widest ml-1">Today</span>
+                </div>
+              )}
+            </div>
           </div>
         </motion.div>
 
-        <motion.button
+        <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="flex items-center justify-center gap-2 px-6 py-3 bg-surface-3 text-primary border border-border hover:border-accent hover:text-accent rounded-xl text-sm font-bold transition-all disabled:opacity-50 min-h-[48px] shadow-lg"
+          className="flex flex-wrap items-center gap-3"
         >
-          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
-          {refreshing ? 'Syncing...' : 'Sync Portfolio'}
-        </motion.button>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center justify-center gap-2 px-6 py-4 bg-surface-2 text-primary border border-border hover:border-accent hover:text-accent rounded-2xl text-sm font-bold transition-all disabled:opacity-50 min-h-[56px] shadow-sm group"
+          >
+            <RefreshCw size={18} className={`${refreshing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
+            {refreshing ? 'Syncing...' : 'Refresh Data'}
+          </button>
+        </motion.div>
       </section>
 
-      {/* Metric Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
+      {/* Primary Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <MetricCard
           label="Total Assets"
           value={formatCurrency(totalAssets)}
@@ -195,7 +190,7 @@ const Dashboard = ({ onNavigate }) => {
           onClick={() => onNavigate('liabilities')}
         />
         <MetricCard
-          label="30-Day Performance"
+          label="Performance"
           value={formatCurrency(Math.abs(monthlyChange.amount))}
           change={formatPercent(monthlyChange.percent)}
           trend={monthlyChange.amount >= 0 ? 'up' : 'down'}
@@ -205,62 +200,86 @@ const Dashboard = ({ onNavigate }) => {
         />
       </div>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 lg:gap-8">
-        {/* Allocation */}
-        <div className="xl:col-span-3">
-          <AllocationDonut items={data?.items || []} className="h-full" />
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-8">
+        {/* Left: Allocation Breakdown */}
+        <div className="xl:col-span-3 space-y-6">
+          <div className="flex items-center justify-between px-2">
+            <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-tertiary">Asset Allocation</h2>
+            <button onClick={() => onNavigate('assets')} className="text-[10px] font-bold uppercase tracking-widest text-accent flex items-center gap-1 hover:underline">
+              Full Breakdown <ChevronRight size={12} />
+            </button>
+          </div>
+          <div className="card bg-surface-2/50 backdrop-blur-md border-border/50">
+            <AllocationDonut items={data?.items || []} className="min-h-[450px]" />
+          </div>
         </div>
 
-        {/* Accounts Sidebar */}
-        <div className="xl:col-span-2 card p-6 lg:p-8 flex flex-col gap-6 bg-surface-2/50 backdrop-blur-sm">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[11px] font-bold tracking-widest uppercase text-tertiary">
-              Active Accounts
-            </h2>
-            <div className="text-[10px] text-accent font-bold px-2 py-0.5 rounded bg-accent/10 border border-accent/20">
-              {accountSummaries.length} Total
-            </div>
+        {/* Right: Account Feed */}
+        <div className="xl:col-span-2 space-y-6">
+          <div className="flex items-center justify-between px-2">
+            <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-tertiary">Live Account Feed</h2>
+            <button onClick={() => onNavigate('accounts')} className="text-[10px] font-bold uppercase tracking-widest text-accent flex items-center gap-1 hover:underline">
+              All Accounts <ChevronRight size={12} />
+            </button>
           </div>
           
-          <div className="space-y-4 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
-            {accountSummaries.map((account, idx) => (
-              <motion.div
-                key={account.name}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: idx * 0.05 }}
-                className="flex items-center justify-between gap-4 p-4 bg-surface rounded-2xl border border-transparent hover:border-border transition-all group cursor-pointer"
-                onClick={() => onNavigate('accounts')}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-bold text-primary truncate group-hover:text-accent transition-colors">
-                    {account.name}
+          <div className="card p-2 bg-surface-2/30 border-border/50 flex flex-col gap-2 max-h-[520px] overflow-y-auto custom-scrollbar">
+            <AnimatePresence mode="popLayout">
+              {accountSummaries.map((account, idx) => (
+                <motion.div
+                  key={account.name}
+                  layout
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: idx * 0.05 }}
+                  className="flex items-center justify-between gap-4 p-4 bg-surface rounded-2xl border border-transparent hover:border-border/50 hover:bg-surface-2 transition-all group cursor-pointer"
+                  onClick={() => onNavigate('accounts')}
+                >
+                  <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-surface-3 border border-border/50 flex items-center justify-center text-accent group-hover:scale-110 transition-transform">
+                      <Landmark size={18} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold text-primary truncate">
+                        {account.name}
+                      </div>
+                      <div className="text-xs font-mono font-bold text-secondary mt-0.5">
+                        {formatCompactCurrency(account.value)}
+                      </div>
+                    </div>
                   </div>
-                  <div className="font-money text-xs text-secondary mt-0.5">
-                    {formatCompactCurrency(account.value)}
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <SparkLine data={account.sparkData} width={100} height={32} />
                   </div>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <SparkLine data={account.sparkData} width={100} height={32} />
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              ))}
+            </AnimatePresence>
+            
             {accountSummaries.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <div className="w-12 h-12 rounded-full bg-surface-3 flex items-center justify-center text-tertiary mb-3">
-                  <Wallet size={24} />
-                </div>
-                <p className="text-tertiary text-sm">No accounts found</p>
+              <div className="flex flex-col items-center justify-center py-24 text-center opacity-40">
+                <Wallet size={40} className="text-tertiary mb-4" />
+                <p className="text-[10px] font-bold uppercase tracking-widest text-tertiary">No Active Accounts</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Detailed Holdings */}
-      <div className="pt-4">
-        <DashboardTable items={data?.items || []} onNavigate={onNavigate} />
+      {/* Global Asset Table */}
+      <div className="space-y-6">
+        <div className="flex items-center justify-between px-2">
+          <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-tertiary">Portfolio Details</h2>
+        </div>
+        <div className="card overflow-hidden bg-surface-2/20 border-border/50">
+          <DashboardTable items={data?.items || []} onNavigate={onNavigate} />
+        </div>
+      </div>
+      
+      {/* Helper text */}
+      <div className="flex items-center justify-center gap-12 text-[10px] text-tertiary uppercase tracking-widest font-bold opacity-60 pb-8">
+        <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" /> Dynamic Net Worth</span>
+        <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-gain shadow-glow" /> Real-time pricing</span>
+        <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Aggregated Institutions</span>
       </div>
     </div>
   );
