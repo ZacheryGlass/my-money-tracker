@@ -135,9 +135,33 @@ def shutdown(*_):
             p.kill()
 
 
+def cleanup_ports(ports):
+    """Kill processes listening on the specified ports."""
+    import psutil
+    print(f"Checking for lingering processes on ports: {', '.join(map(str, ports))}...")
+    for port in ports:
+        for conn in psutil.net_connections(kind='inet'):
+            if conn.laddr.port == port and conn.status == 'LISTEN':
+                try:
+                    p = psutil.Process(conn.pid)
+                    print(f"Killing process {p.name()} (PID: {conn.pid}) on port {port}...")
+                    p.terminate()
+                    p.wait(timeout=3)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+                    try:
+                        p.kill()
+                    except:
+                        pass
+
 if __name__ == "__main__":
     if sys.platform == "win32":
         job = _create_job_object()
+
+    # Pre-start cleanup
+    try:
+        cleanup_ports([3000, 5173])
+    except Exception as e:
+        print(f"Warning: Port cleanup failed: {e}")
 
     signal.signal(signal.SIGINT, lambda *_: (shutdown(), sys.exit(0)))
     signal.signal(signal.SIGTERM, lambda *_: (shutdown(), sys.exit(0)))
