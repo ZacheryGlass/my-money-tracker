@@ -11,7 +11,7 @@ import {
   ReferenceDot,
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, Download, TrendingUp, Filter, ChevronDown, ChevronUp, Clock, Award, Target } from 'lucide-react';
+import { Calendar, Download, TrendingUp, Filter, ChevronDown, ChevronUp, Clock, Award, Target, Check } from 'lucide-react';
 import { history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';

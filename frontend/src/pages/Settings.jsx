@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X } from 'lucide-react';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check } from 'lucide-react';
 import { plaid as plaidAPI, accounts as accountsAPI } from '../utils/api';
 
 function PlaidLinkButton({ onSuccess, disabled }) {
