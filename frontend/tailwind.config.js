@@ -40,6 +40,7 @@ export default {
         secondary: 'var(--text-secondary)',
         tertiary: 'var(--text-tertiary)',
         inverse: 'var(--text-inverse)',
+        accent: 'var(--accent)',
       },
       fontFamily: {
         sans: ['"DM Sans"', 'system-ui', '-apple-system', 'sans-serif'],

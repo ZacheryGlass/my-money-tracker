@@ -25,7 +25,7 @@ const DashboardTable = ({ items, onNavigate }) => {
         accessorKey: 'ticker',
         header: 'Ticker',
         cell: ({ getValue }) => (
-          <span className="font-money text-[11px] px-1.5 py-0.5 rounded bg-surface-3 text-secondary border border-border/50">
+          <span className="font-money text-xs px-2 py-0.5 rounded bg-surface-3 text-secondary border border-border/50">
             {getValue() || '-'}
           </span>
         ),
@@ -37,7 +37,7 @@ const DashboardTable = ({ items, onNavigate }) => {
           const value = row.original.value;
           const isLiability = row.original.type === 'liability';
           return (
-            <span className={`font-money text-base font-bold ${isLiability ? 'text-loss' : 'text-gain'}`}>
+            <span className={`font-money text-lg font-bold ${isLiability ? 'text-loss' : 'text-gain'}`}>
               {formatCurrency(Math.abs(value))}
             </span>
           );
@@ -47,9 +47,9 @@ const DashboardTable = ({ items, onNavigate }) => {
         accessorKey: 'account', 
         header: 'Account',
         cell: ({ getValue }) => (
-          <div className="flex items-center gap-2 text-secondary">
-            <CreditCard size={14} className="opacity-50" />
-            <span className="text-sm">{getValue()}</span>
+          <div className="flex items-center gap-2.5 text-secondary">
+            <CreditCard size={16} className="opacity-50" />
+            <span className="text-base">{getValue()}</span>
           </div>
         )
       },
@@ -57,9 +57,9 @@ const DashboardTable = ({ items, onNavigate }) => {
         accessorKey: 'category',
         header: 'Category',
         cell: ({ getValue }) => (
-          <div className="flex items-center gap-2 text-tertiary">
-            <Tag size={14} className="opacity-50" />
-            <span className="text-xs font-medium">{getValue() || '-'}</span>
+          <div className="flex items-center gap-2.5 text-tertiary">
+            <Tag size={16} className="opacity-50" />
+            <span className="text-sm font-semibold">{getValue() || '-'}</span>
           </div>
         )
       },
@@ -70,7 +70,7 @@ const DashboardTable = ({ items, onNavigate }) => {
           const type = getValue();
           return (
             <span
-              className={`px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full ${
+              className={`px-3 py-1 text-xs font-bold uppercase tracking-wider rounded-full ${
                 type === 'liability' 
                   ? 'bg-loss/10 text-loss border border-loss/20' 
                   : 'bg-gain/10 text-gain border border-gain/20'
@@ -114,15 +114,15 @@ const DashboardTable = ({ items, onNavigate }) => {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
+      <div className="space-y-4">
         <div className="flex items-center justify-between px-2">
-          <div className="flex items-center gap-2">
-            <ListFilter size={18} className="text-accent" />
-            <h3 className="text-[11px] font-bold tracking-widest uppercase text-tertiary">
+          <div className="flex items-center gap-2.5">
+            <ListFilter size={20} className="text-accent" />
+            <h3 className="text-xs font-bold tracking-[0.15em] uppercase text-secondary">
               Portfolio Holdings
             </h3>
           </div>
-          <span className="text-[10px] text-tertiary font-medium">
+          <span className="text-xs text-secondary font-semibold">
             {items.length} positions
           </span>
         </div>
@@ -136,13 +136,13 @@ const DashboardTable = ({ items, onNavigate }) => {
                     {headerGroup.headers.map((header) => (
                       <th
                         key={header.id}
-                        className="px-4 py-2 text-left text-[10px] font-bold tracking-widest uppercase text-secondary cursor-pointer hover:bg-surface-3 hover:text-primary transition-all group"
+                        className="px-4 py-3 text-left text-xs font-bold tracking-widest uppercase text-secondary cursor-pointer hover:bg-surface-3 hover:text-primary transition-all group"
                         onClick={header.column.getToggleSortingHandler()}
                       >
                       <div className="flex items-center gap-2">
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                          {header.column.getIsSorted() === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          {header.column.getIsSorted() === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </div>
                       </div>
                     </th>
@@ -153,7 +153,7 @@ const DashboardTable = ({ items, onNavigate }) => {
             <tbody className="divide-y divide-border/50">
               {table.getRowModel().rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="px-4 py-6 text-center text-tertiary italic text-sm">
+                  <td colSpan={columns.length} className="px-4 py-10 text-center text-tertiary italic text-base">
                     No holdings found in this portfolio.
                   </td>
                 </tr>
@@ -161,7 +161,7 @@ const DashboardTable = ({ items, onNavigate }) => {
                 table.getRowModel().rows.map((row) => (
                   <tr key={row.id} className="hover:bg-accent/5 transition-colors group cursor-pointer" onClick={() => onNavigate('accounts')}>
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-1.5 whitespace-nowrap text-sm text-primary">
+                      <td key={cell.id} className="px-4 py-3 whitespace-nowrap text-base text-primary">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
@@ -179,19 +179,19 @@ const DashboardTable = ({ items, onNavigate }) => {
           ) : (
             table.getRowModel().rows.map((row) => (
               <div key={row.id} className="p-5 hover:bg-surface-3 transition-colors active:bg-surface-3 cursor-pointer" onClick={() => onNavigate('accounts')}>
-                <div className="space-y-4">
+                <div className="space-y-5">
                   <div className="flex justify-between items-start">
-                    <div className="space-y-1">
-                      <div className="font-bold text-primary leading-tight">{row.original.name}</div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-money text-[10px] px-1.5 py-0.5 rounded bg-surface-3 text-secondary border border-border/50 tracking-wider">
+                    <div className="space-y-1.5">
+                      <div className="text-base font-bold text-primary leading-tight">{row.original.name}</div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-money text-xs px-2 py-0.5 rounded bg-surface-3 text-secondary border border-border/50 tracking-wider">
                           {row.original.ticker || '-'}
                         </span>
-                        <span className="text-[10px] text-tertiary font-medium uppercase tracking-wider">{row.original.account}</span>
+                        <span className="text-xs text-tertiary font-semibold uppercase tracking-wider">{row.original.account}</span>
                       </div>
                     </div>
                     <span
-                      className={`px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider rounded-full ${
+                      className={`px-3 py-1 text-xs font-bold uppercase tracking-wider rounded-full ${
                         row.original.type === 'liability' 
                           ? 'bg-loss/10 text-loss border border-loss/20' 
                           : 'bg-gain/10 text-gain border border-gain/20'
@@ -201,9 +201,9 @@ const DashboardTable = ({ items, onNavigate }) => {
                     </span>
                   </div>
                   
-                  <div className="flex items-center justify-between pt-2 border-t border-border/30">
-                    <div className="text-[10px] text-tertiary font-bold uppercase tracking-widest">Value</div>
-                    <span className={`text-lg font-bold font-money ${row.original.type === 'liability' ? 'text-loss' : 'text-gain'}`}>
+                  <div className="flex items-center justify-between pt-3 border-t border-border/30">
+                    <div className="text-xs text-tertiary font-bold uppercase tracking-widest">Value</div>
+                    <span className={`text-xl font-bold font-money ${row.original.type === 'liability' ? 'text-loss' : 'text-gain'}`}>
                       {formatCurrency(Math.abs(row.original.value))}
                     </span>
                   </div>
@@ -221,17 +221,17 @@ const DashboardTable = ({ items, onNavigate }) => {
           whileHover={{ y: -4 }}
           className="card p-6 lg:p-8 space-y-6 bg-surface-2/30 backdrop-blur-sm"
         >
-          <div className="flex items-center gap-2">
-            <CreditCard size={18} className="text-blue-400" />
-            <h3 className="text-[11px] font-bold tracking-widest uppercase text-tertiary">
+          <div className="flex items-center gap-3">
+            <CreditCard size={20} className="text-blue-400" />
+            <h3 className="text-xs font-bold tracking-[0.15em] uppercase text-tertiary">
               Account Subtotals
             </h3>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {accountTotals.map(([account, total]) => (
-              <div key={account} className="flex justify-between items-center p-3 rounded-xl hover:bg-surface-3 transition-all group cursor-pointer" onClick={() => onNavigate('accounts')}>
-                <span className="text-secondary text-sm font-medium group-hover:text-primary transition-colors">{account}</span>
-                <span className={`font-money text-base font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
+              <div key={account} className="flex justify-between items-center p-4 rounded-xl hover:bg-surface-3 transition-all group cursor-pointer" onClick={() => onNavigate('accounts')}>
+                <span className="text-secondary text-base font-semibold group-hover:text-primary transition-colors">{account}</span>
+                <span className={`font-money text-lg font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
                   {formatCurrency(total)}
                 </span>
               </div>
@@ -240,17 +240,17 @@ const DashboardTable = ({ items, onNavigate }) => {
         </motion.div>
 
         <div className="card p-6 lg:p-8 space-y-6 bg-surface-2/30 backdrop-blur-sm">
-          <div className="flex items-center gap-2">
-            <Tag size={18} className="text-purple-400" />
-            <h3 className="text-[11px] font-bold tracking-widest uppercase text-tertiary">
+          <div className="flex items-center gap-3">
+            <Tag size={20} className="text-purple-400" />
+            <h3 className="text-xs font-bold tracking-[0.15em] uppercase text-tertiary">
               Category Breakdown
             </h3>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {categoryTotals.map(([category, total]) => (
-              <div key={category} className="flex justify-between items-center p-3 rounded-xl">
-                <span className="text-secondary text-sm font-medium">{category}</span>
-                <span className={`font-money text-base font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
+              <div key={category} className="flex justify-between items-center p-4 rounded-xl">
+                <span className="text-secondary text-base font-semibold">{category}</span>
+                <span className={`font-money text-lg font-bold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
                   {formatCurrency(total)}
                 </span>
               </div>

@@ -114,7 +114,7 @@ const Dashboard = ({ onNavigate }) => {
     return (
       <div className="flex flex-col items-center justify-center min-h-[500px] gap-4">
         <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Aggregating Portfolio</span>
+        <span className="text-sm font-bold tracking-widest uppercase text-tertiary animate-pulse">Aggregating Portfolio</span>
       </div>
     );
   }
@@ -129,28 +129,28 @@ const Dashboard = ({ onNavigate }) => {
           className="space-y-4"
         >
           <div className="flex items-center gap-3">
-            <div className="px-3 py-1 rounded-full bg-accent/10 border border-accent/20 text-accent text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
-              <Zap size={12} className="fill-accent" />
+            <div className="px-3 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+              <Zap size={14} className="fill-accent" />
               Live Net Worth
             </div>
             {data?.lastUpdated && (
-              <div className="text-[10px] font-bold uppercase tracking-widest text-tertiary flex items-center gap-1.5 opacity-60">
-                <Clock size={12} />
+              <div className="text-xs font-bold uppercase tracking-widest text-secondary flex items-center gap-1.5">
+                <Clock size={14} />
                 Synced {new Date(data.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             )}
           </div>
           
           <div className="space-y-1">
-            <h1 className="text-5xl md:text-7xl font-bold text-primary tracking-tighter leading-none">
+            <h1 className="text-6xl md:text-8xl font-bold text-primary tracking-tighter leading-none">
               {formatCurrency(netWorth)}
             </h1>
             <div className="flex items-center gap-4">
               {dailyChange.amount !== 0 && (
-                <div className={`flex items-center gap-1.5 text-sm font-bold ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
-                  {dailyChange.amount >= 0 ? <TrendingUp size={16} /> : <TrendingUp size={16} className="rotate-180" />}
+                <div className={`flex items-center gap-1.5 text-base font-bold ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
+                  {dailyChange.amount >= 0 ? <TrendingUp size={18} /> : <TrendingUp size={18} className="rotate-180" />}
                   {formatCurrency(Math.abs(dailyChange.amount))} ({formatPercent(dailyChange.percent)})
-                  <span className="text-tertiary font-medium uppercase text-[10px] tracking-widest ml-1">Today</span>
+                  <span className="text-secondary font-semibold uppercase text-xs tracking-widest ml-1">Today</span>
                 </div>
               )}
             </div>
@@ -165,9 +165,9 @@ const Dashboard = ({ onNavigate }) => {
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="flex items-center justify-center gap-2 px-6 py-4 bg-surface-2 text-primary border border-border hover:border-accent hover:text-accent rounded-2xl text-sm font-bold transition-all disabled:opacity-50 min-h-[56px] shadow-sm group"
+            className="flex items-center justify-center gap-3 px-8 py-5 bg-surface-2 text-primary border border-border hover:border-accent hover:text-accent rounded-2xl text-base font-bold transition-all disabled:opacity-50 min-h-[64px] shadow-sm group"
           >
-            <RefreshCw size={18} className={`${refreshing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
+            <RefreshCw size={20} className={`${refreshing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
             {refreshing ? 'Syncing...' : 'Refresh Data'}
           </button>
         </motion.div>
@@ -204,9 +204,9 @@ const Dashboard = ({ onNavigate }) => {
         {/* Left: Allocation Breakdown */}
         <div className="xl:col-span-3 space-y-6">
           <div className="flex items-center justify-between px-2">
-            <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-tertiary">Asset Allocation</h2>
-            <button onClick={() => onNavigate('assets')} className="text-[10px] font-bold uppercase tracking-widest text-accent flex items-center gap-1 hover:underline">
-              Full Breakdown <ChevronRight size={12} />
+            <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-tertiary">Asset Allocation</h2>
+            <button onClick={() => onNavigate('assets')} className="text-xs font-bold uppercase tracking-widest text-accent flex items-center gap-1.5 hover:underline">
+              Full Breakdown <ChevronRight size={14} />
             </button>
           </div>
           <div className="card bg-surface-2/50 backdrop-blur-md border-border/50">
@@ -217,9 +217,9 @@ const Dashboard = ({ onNavigate }) => {
         {/* Right: Account Feed */}
         <div className="xl:col-span-2 space-y-6">
           <div className="flex items-center justify-between px-2">
-            <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-tertiary">Live Account Feed</h2>
-            <button onClick={() => onNavigate('accounts')} className="text-[10px] font-bold uppercase tracking-widest text-accent flex items-center gap-1 hover:underline">
-              All Accounts <ChevronRight size={12} />
+            <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-tertiary">Live Account Feed</h2>
+            <button onClick={() => onNavigate('accounts')} className="text-xs font-bold uppercase tracking-widest text-accent flex items-center gap-1.5 hover:underline">
+              All Accounts <ChevronRight size={14} />
             </button>
           </div>
           
@@ -232,24 +232,24 @@ const Dashboard = ({ onNavigate }) => {
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: idx * 0.05 }}
-                  className="flex items-center justify-between gap-4 p-4 bg-surface rounded-2xl border border-transparent hover:border-border/50 hover:bg-surface-2 transition-all group cursor-pointer"
+                  className="flex items-center justify-between gap-4 p-5 bg-surface rounded-2xl border border-transparent hover:border-border/50 hover:bg-surface-2 transition-all group cursor-pointer"
                   onClick={() => onNavigate('accounts')}
                 >
                   <div className="flex items-center gap-4 flex-1 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-surface-3 border border-border/50 flex items-center justify-center text-accent group-hover:scale-110 transition-transform">
-                      <Landmark size={18} />
+                    <div className="w-12 h-12 rounded-xl bg-surface-3 border border-border/50 flex items-center justify-center text-accent group-hover:scale-110 transition-transform">
+                      <Landmark size={20} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-bold text-primary truncate">
+                      <div className="text-base font-bold text-primary truncate">
                         {account.name}
                       </div>
-                      <div className="text-xs font-mono font-bold text-secondary mt-0.5">
+                      <div className="text-sm font-mono font-bold text-secondary mt-0.5">
                         {formatCompactCurrency(account.value)}
                       </div>
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    <SparkLine data={account.sparkData} width={100} height={32} />
+                    <SparkLine data={account.sparkData} width={120} height={40} />
                   </div>
                 </motion.div>
               ))}
@@ -257,8 +257,8 @@ const Dashboard = ({ onNavigate }) => {
             
             {accountSummaries.length === 0 && (
               <div className="flex flex-col items-center justify-center py-24 text-center opacity-40">
-                <Wallet size={40} className="text-tertiary mb-4" />
-                <p className="text-[10px] font-bold uppercase tracking-widest text-tertiary">No Active Accounts</p>
+                <Wallet size={48} className="text-tertiary mb-4" />
+                <p className="text-xs font-bold uppercase tracking-widest text-tertiary">No Active Accounts</p>
               </div>
             )}
           </div>
@@ -268,7 +268,7 @@ const Dashboard = ({ onNavigate }) => {
       {/* Global Asset Table */}
       <div className="space-y-6">
         <div className="flex items-center justify-between px-2">
-          <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-tertiary">Portfolio Details</h2>
+          <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-tertiary">Portfolio Details</h2>
         </div>
         <div className="card overflow-hidden bg-surface-2/20 border-border/50">
           <DashboardTable items={data?.items || []} onNavigate={onNavigate} />
@@ -276,10 +276,10 @@ const Dashboard = ({ onNavigate }) => {
       </div>
       
       {/* Helper text */}
-      <div className="flex items-center justify-center gap-12 text-[10px] text-tertiary uppercase tracking-widest font-bold opacity-60 pb-8">
-        <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" /> Dynamic Net Worth</span>
-        <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-gain shadow-glow" /> Real-time pricing</span>
-        <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Aggregated Institutions</span>
+      <div className="flex items-center justify-center flex-wrap gap-x-12 gap-y-4 text-xs text-tertiary uppercase tracking-widest font-bold opacity-60 pb-8">
+        <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-accent shadow-glow" /> Dynamic Net Worth</span>
+        <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-gain shadow-glow" /> Real-time pricing</span>
+        <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-surface-3 border border-border" /> Aggregated Institutions</span>
       </div>
     </div>
   );

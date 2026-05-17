@@ -145,8 +145,8 @@ const HoldingsTable = ({ pageFilter }) => {
           <div className="flex items-center gap-2 max-w-[250px]">
             <span className="truncate" title={row.original.name}>{row.original.name}</span>
             {row.original.is_plaid_managed && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20 flex-shrink-0">
-                <Link2 size={10} />
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20 flex-shrink-0">
+                <Link2 size={12} />
                 Plaid
               </span>
             )}
@@ -165,7 +165,7 @@ const HoldingsTable = ({ pageFilter }) => {
           if (abs >= 1_000_000) display = `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
           else if (abs >= 1_000) display = `${sign}$${(abs / 1_000).toFixed(1)}k`;
           else display = formatCurrency(v);
-          return <span className="font-mono text-base font-semibold text-primary">{display}</span>;
+          return <span className="font-mono text-lg font-semibold text-primary">{display}</span>;
         },
       },
       {
@@ -251,10 +251,10 @@ const HoldingsTable = ({ pageFilter }) => {
 
         {distinctCategories.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2 items-center">
-            <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Category:</span>
+            <span className="text-sm font-semibold text-secondary uppercase tracking-wider mr-1">Category:</span>
             <button
               onClick={() => handleCategoryFilterChange('')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors touch-manipulation min-h-[40px] ${
                 categoryFilter === ''
                   ? 'bg-accent text-inverse'
                   : 'bg-surface-3 text-secondary border border-border hover:text-primary'
@@ -266,7 +266,7 @@ const HoldingsTable = ({ pageFilter }) => {
               <button
                 key={cat}
                 onClick={() => handleCategoryFilterChange(categoryFilter === cat ? '' : cat)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors touch-manipulation min-h-[40px] ${
                   categoryFilter === cat
                     ? 'bg-accent text-inverse'
                     : 'bg-surface-3 text-secondary border border-border hover:text-primary'
@@ -280,10 +280,10 @@ const HoldingsTable = ({ pageFilter }) => {
 
         {accountsWithHoldings.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2 items-center">
-            <span className="text-xs font-medium text-secondary uppercase tracking-wider mr-1">Account:</span>
+            <span className="text-sm font-semibold text-secondary uppercase tracking-wider mr-1">Account:</span>
             <button
               onClick={() => handleAccountFilterChange('')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors touch-manipulation min-h-[40px] ${
                 accountFilter === ''
                   ? 'bg-accent text-inverse'
                   : 'bg-surface-3 text-secondary border border-border hover:text-primary'
@@ -295,7 +295,7 @@ const HoldingsTable = ({ pageFilter }) => {
               <button
                 key={account.id}
                 onClick={() => handleAccountFilterChange(accountFilter === String(account.id) ? '' : String(account.id))}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors touch-manipulation min-h-[36px] ${
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors touch-manipulation min-h-[40px] ${
                   accountFilter === String(account.id)
                     ? 'bg-accent text-inverse'
                     : 'bg-surface-3 text-secondary border border-border hover:text-primary'
@@ -317,7 +317,7 @@ const HoldingsTable = ({ pageFilter }) => {
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
-                      className={`px-4 py-2 text-left text-xs font-medium text-secondary uppercase tracking-wider ${header.column.getCanSort() ? 'cursor-pointer hover:bg-surface-3' : ''}`}
+                      className={`px-4 py-3 text-left text-sm font-bold text-secondary uppercase tracking-wider ${header.column.getCanSort() ? 'cursor-pointer hover:bg-surface-3' : ''}`}
                       onClick={header.column.getToggleSortingHandler()}
                     >
                       <div className="flex items-center gap-2">
@@ -334,7 +334,7 @@ const HoldingsTable = ({ pageFilter }) => {
             <tbody className="divide-y divide-border">
               {table.getRowModel().rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="px-4 py-6 text-center text-secondary">
+                  <td colSpan={columns.length} className="px-4 py-8 text-center text-secondary">
                     No holdings found. Click "Add New Holding" to get started.
                   </td>
                 </tr>
@@ -352,7 +352,7 @@ const HoldingsTable = ({ pageFilter }) => {
                     {row.getVisibleCells().map((cell) => (
                       <td
                         key={cell.id}
-                        className="px-4 py-1.5 text-sm text-primary"
+                        className="px-4 py-3 text-base text-primary"
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
@@ -376,41 +376,41 @@ const HoldingsTable = ({ pageFilter }) => {
               return (
                 <div
                   key={row.id}
-                  className={`card p-3 touch-manipulation ${
+                  className={`card p-4 touch-manipulation ${
                     row.original.is_plaid_managed ? '' : 'active:bg-surface-3 cursor-pointer'
                   }`}
                   onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
                 >
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-primary truncate">{row.original.name}</div>
+                        <div className="text-lg font-bold text-primary truncate">{row.original.name}</div>
                         {row.original.is_plaid_managed && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20 mt-0.5 w-fit">
-                            <Link2 size={10} />
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20 mt-1 w-fit">
+                            <Link2 size={12} />
                             Plaid
                           </span>
                         )}
                         {row.original.ticker && (
-                          <div className="text-sm text-secondary">{row.original.ticker}</div>
+                          <div className="text-base text-secondary mt-0.5">{row.original.ticker}</div>
                         )}
                       </div>
                       <div className="text-right flex-shrink-0">
-                        <div className="text-lg font-bold font-mono text-primary">
+                        <div className="text-xl font-bold font-mono text-primary">
                           {formatCurrency(value)}
                         </div>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="grid grid-cols-2 gap-3 text-base">
                       <div>
-                        <span className="text-xs text-secondary block">Account</span>
+                        <span className="text-sm font-semibold text-secondary block mb-0.5">Account</span>
                         <div className="font-medium text-primary truncate">
                           {account ? account.name : 'Unknown'}
                         </div>
                       </div>
                       {row.original.category && (
                         <div>
-                          <span className="text-xs text-secondary block">Category</span>
+                          <span className="text-sm font-semibold text-secondary block mb-0.5">Category</span>
                           <div className="font-medium text-primary truncate">{row.original.category}</div>
                         </div>
                       )}
@@ -424,34 +424,34 @@ const HoldingsTable = ({ pageFilter }) => {
       </div>
 
       {filteredData.length > 0 && (
-        <div className="flex items-center justify-between mt-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-secondary">Rows per page:</span>
+        <div className="flex items-center justify-between mt-6">
+          <div className="flex items-center gap-3">
+            <span className="text-base text-secondary">Rows per page:</span>
             <select
               value={pagination.pageSize}
               onChange={(e) => setPagination((p) => ({ ...p, pageIndex: 0, pageSize: Number(e.target.value) }))}
-              className="px-2 py-1 rounded-md text-sm"
+              className="px-3 py-1.5 rounded-md text-base"
             >
               {[10, 25, 50, 100].map((size) => (
                 <option key={size} value={size}>{size}</option>
               ))}
             </select>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-secondary">
+          <div className="flex items-center gap-3">
+            <span className="text-base text-secondary">
               Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
             </span>
             <button
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
-              className="px-3 py-1 text-sm bg-surface-3 text-secondary hover:bg-accent hover:text-inverse rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-base bg-surface-3 text-secondary hover:bg-surface-2 hover:text-primary rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
             >
               Prev
             </button>
             <button
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
-              className="px-3 py-1 text-sm bg-surface-3 text-secondary hover:bg-accent hover:text-inverse rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-base bg-surface-3 text-secondary hover:bg-surface-2 hover:text-primary rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
             >
               Next
             </button>

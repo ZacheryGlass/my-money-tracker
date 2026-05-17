@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, Info, TrendingDown, Calendar } from 'lucide-react';
-import { expenses as expensesAPI } from '../utils/api';
-import { formatCurrency } from '../utils/format';
+import { CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, Info, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
+import { expenses as expensesAPI, analytics } from '../utils/api';
+import { formatCurrency, formatDateDisplay } from '../utils/format';
 import MetricCard from '../components/MetricCard';
 
 const Badge = ({ active, children }) => (
@@ -19,6 +19,8 @@ const MonthlyExpenses = () => {
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
   const [activeTab, setActiveTab] = useState('bill');
+  const [detectedSubs, setDetectedSubs] = useState([]);
+  const [detectedLoading, setDetectedLoading] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [deletingExpense, setDeletingExpense] = useState(null);
@@ -41,6 +43,16 @@ const MonthlyExpenses = () => {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  useEffect(() => {
+    if (activeTab === 'detected') {
+      setDetectedLoading(true);
+      analytics.getDetectedSubscriptions()
+        .then((res) => setDetectedSubs(res.data || []))
+        .catch(() => setDetectedSubs([]))
+        .finally(() => setDetectedLoading(false));
+    }
+  }, [activeTab]);
 
   const showSuccess = (msg) => {
     setSuccessMessage(msg);
@@ -109,6 +121,33 @@ const MonthlyExpenses = () => {
       setDeletingExpense(null);
     }
   };
+
+  const handleTrackDetected = async (sub) => {
+    try {
+      await expensesAPI.create({
+        type: 'subscription',
+        name: sub.merchant,
+        cost: parseFloat(sub.avg_amount) || 0,
+        is_fixed_rate: true,
+        is_autopay: true,
+        company: sub.merchant,
+        notes: `Auto-detected from ${sub.occurrence_count} charges`,
+      });
+      showSuccess(`Now tracking "${sub.merchant}"`);
+      await fetchData();
+      setDetectedSubs((prev) => prev.filter((d) => d.merchant !== sub.merchant));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to track subscription');
+    }
+  };
+
+  const trackedNames = useMemo(() =>
+    new Set(allExpenses.map((e) => e.name.toLowerCase())),
+  [allExpenses]);
+
+  const filteredDetected = useMemo(() =>
+    detectedSubs.filter((d) => !trackedNames.has(d.merchant.toLowerCase())),
+  [detectedSubs, trackedNames]);
 
   const { totalBills, totalSubs, totalAll, billCount, subCount, filtered } = useMemo(() => {
     let bills = 0, subs = 0, bc = 0, sc = 0;
@@ -181,6 +220,7 @@ const MonthlyExpenses = () => {
               {[
                 { key: 'bill', label: 'Fixed Bills', icon: Receipt, count: billCount, total: totalBills },
                 { key: 'subscription', label: 'Subscriptions', icon: CreditCard, count: subCount, total: totalSubs },
+                { key: 'detected', label: 'Detected', icon: Search, count: filteredDetected.length, total: null },
               ].map((tab) => (
                 <button
                   key={tab.key}
@@ -199,7 +239,7 @@ const MonthlyExpenses = () => {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs font-mono font-bold">{formatCurrency(tab.total)}</p>
+                    <p className="text-xs font-mono font-bold">{tab.total !== null ? formatCurrency(tab.total) : ''}</p>
                   </div>
                 </button>
               ))}
@@ -226,70 +266,122 @@ const MonthlyExpenses = () => {
             </motion.div>
           )}
           
-          <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-border">
-                <thead className="bg-surface-2">
-                  <tr>
-                    {['Name', 'Monthly Cost', 'Fixed', 'Auto-pay', 'Account', activeTab === 'bill' ? 'Company' : 'Who Uses', ''].map((h) => (
-                      <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-widest text-tertiary">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  <AnimatePresence mode="popLayout">
-                    {filtered.length === 0 ? (
-                      <tr key="empty">
-                        <td colSpan={7} className="px-5 py-12 text-center">
-                          <div className="flex flex-col items-center gap-3 opacity-40">
-                            <Calendar size={32} className="text-tertiary" />
-                            <p className="text-sm font-medium text-tertiary">No {activeTab}s tracked yet</p>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : (
-                      filtered.map((exp) => (
-                        <motion.tr 
-                          layout
-                          key={exp.id} 
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="hover:bg-surface-3 transition-colors group"
-                        >
-                          <td className="px-5 py-4">
-                            <div className="text-sm font-bold text-primary">{exp.name}</div>
-                            {exp.notes && <div className="text-[10px] text-tertiary truncate max-w-[150px]">{exp.notes}</div>}
-                          </td>
-                          <td className="px-5 py-4">
-                            <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
-                          </td>
-                          <td className="px-5 py-4"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
-                          <td className="px-5 py-4"><Badge active={exp.is_autopay}>{exp.is_autopay ? 'Auto' : 'Manual'}</Badge></td>
-                          <td className="px-5 py-4">
-                            <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
-                          </td>
-                          <td className="px-5 py-4">
-                            <span className="text-xs font-medium text-secondary">{(activeTab === 'bill' ? exp.company : exp.who_uses) || <span className="text-tertiary">—</span>}</span>
-                          </td>
-                          <td className="px-5 py-4 text-right">
-                            <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => handleEdit(exp)} className="p-2 text-accent hover:bg-accent/10 rounded-lg transition-colors" title="Edit">
-                                <Edit2 size={14} />
-                              </button>
-                              <button onClick={() => setDeletingExpense(exp)} className="p-2 text-loss hover:bg-loss/10 rounded-lg transition-colors" title="Delete">
-                                <Trash2 size={14} />
-                              </button>
+          {activeTab !== 'detected' ? (
+            <div className="card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-border">
+                  <thead className="bg-surface-2">
+                    <tr>
+                      {['Name', 'Monthly Cost', 'Fixed', 'Auto-pay', 'Account', activeTab === 'bill' ? 'Company' : 'Who Uses', ''].map((h) => (
+                        <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-widest text-tertiary">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    <AnimatePresence mode="popLayout">
+                      {filtered.length === 0 ? (
+                        <tr key="empty">
+                          <td colSpan={7} className="px-5 py-12 text-center">
+                            <div className="flex flex-col items-center gap-3 opacity-40">
+                              <Calendar size={32} className="text-tertiary" />
+                              <p className="text-sm font-medium text-tertiary">No {activeTab}s tracked yet</p>
                             </div>
                           </td>
-                        </motion.tr>
-                      ))
-                    )}
-                  </AnimatePresence>
-                </tbody>
-              </table>
+                        </tr>
+                      ) : (
+                        filtered.map((exp) => (
+                          <motion.tr
+                            layout
+                            key={exp.id}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="hover:bg-surface-3 transition-colors group"
+                          >
+                            <td className="px-5 py-4">
+                              <div className="text-sm font-bold text-primary">{exp.name}</div>
+                              {exp.notes && <div className="text-[10px] text-tertiary truncate max-w-[150px]">{exp.notes}</div>}
+                            </td>
+                            <td className="px-5 py-4">
+                              <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
+                            </td>
+                            <td className="px-5 py-4"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
+                            <td className="px-5 py-4"><Badge active={exp.is_autopay}>{exp.is_autopay ? 'Auto' : 'Manual'}</Badge></td>
+                            <td className="px-5 py-4">
+                              <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
+                            </td>
+                            <td className="px-5 py-4">
+                              <span className="text-xs font-medium text-secondary">{(activeTab === 'bill' ? exp.company : exp.who_uses) || <span className="text-tertiary">—</span>}</span>
+                            </td>
+                            <td className="px-5 py-4 text-right">
+                              <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={() => handleEdit(exp)} className="p-2 text-accent hover:bg-accent/10 rounded-lg transition-colors" title="Edit">
+                                  <Edit2 size={14} />
+                                </button>
+                                <button onClick={() => setDeletingExpense(exp)} className="p-2 text-loss hover:bg-loss/10 rounded-lg transition-colors" title="Delete">
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          </motion.tr>
+                        ))
+                      )}
+                    </AnimatePresence>
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="card overflow-hidden">
+              <div className="p-4 border-b border-border bg-surface-2/50 flex items-center gap-2">
+                <Zap size={16} className="text-accent" />
+                <span className="text-sm font-bold text-primary">Auto-Detected Recurring Charges</span>
+                <span className="text-[10px] text-tertiary ml-auto">from Plaid transactions</span>
+              </div>
+              {detectedLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : filteredDetected.length === 0 ? (
+                <div className="px-5 py-12 text-center">
+                  <div className="flex flex-col items-center gap-3 opacity-40">
+                    <Search size={32} className="text-tertiary" />
+                    <p className="text-sm font-medium text-tertiary">No untracked recurring charges detected</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {filteredDetected.map((sub) => (
+                    <motion.div
+                      key={sub.merchant}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="flex items-center justify-between px-5 py-4 hover:bg-surface-3 transition-colors group"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-bold text-primary truncate">{sub.merchant}</div>
+                        <div className="flex items-center gap-3 mt-1 text-[10px] text-tertiary">
+                          <span>{sub.occurrence_count} charges</span>
+                          <span>Last: {formatDateDisplay(sub.last_charge)}</span>
+                          {sub.category && <span className="text-secondary">{sub.category}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="text-sm font-mono font-bold text-loss">{formatCurrency(sub.avg_amount)}/mo</span>
+                        <button
+                          onClick={() => handleTrackDetected(sub)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent/10 text-accent border border-accent/30 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-accent hover:text-inverse transition-all opacity-0 group-hover:opacity-100"
+                        >
+                          <Plus size={12} />
+                          Track
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           
           <div className="flex items-center justify-center gap-6 text-[10px] text-tertiary uppercase tracking-widest font-bold">
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-loss shadow-glow" /> Expenditure tracking</span>

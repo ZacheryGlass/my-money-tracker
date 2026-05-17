@@ -11,7 +11,7 @@ import {
   ReferenceDot,
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, Download, TrendingUp, Filter, ChevronDown, ChevronUp, Clock, Award, Target, Check } from 'lucide-react';
+import { Calendar, Download, TrendingUp, TrendingDown, Filter, ChevronDown, ChevronUp, Clock, Award, Target, Check } from 'lucide-react';
 import { history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
@@ -82,6 +82,7 @@ const PortfolioTimeline = () => {
   const [customEndDate, setCustomEndDate] = useState('');
   const [useCustomRange, setUseCustomRange] = useState(false);
   const [showTrendLine, setShowTrendLine] = useState(true);
+  const [showDrawdown, setShowDrawdown] = useState(false);
   const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   const fetchPortfolioData = useCallback(async () => {
@@ -154,6 +155,24 @@ const PortfolioTimeline = () => {
     if (!portfolioData || portfolioData.length === 0) return [];
     return showTrendLine ? calculateTrendLine(portfolioData) : portfolioData;
   }, [portfolioData, showTrendLine]);
+
+  const drawdownData = useMemo(() => {
+    if (!portfolioData || portfolioData.length === 0) return [];
+    let runningMax = 0;
+    let maxDrawdown = 0;
+    return portfolioData.map((d) => {
+      const val = parseFloat(d.total_value) || 0;
+      runningMax = Math.max(runningMax, val);
+      const drawdown = runningMax > 0 ? ((val - runningMax) / runningMax) * 100 : 0;
+      if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+      return { snapshot_date: d.snapshot_date, drawdown };
+    });
+  }, [portfolioData]);
+
+  const maxDrawdownValue = useMemo(() => {
+    if (drawdownData.length === 0) return 0;
+    return Math.min(...drawdownData.map((d) => d.drawdown));
+  }, [drawdownData]);
 
   const exportToCSV = useCallback(() => {
     if (!portfolioData || portfolioData.length === 0) return;
@@ -289,6 +308,20 @@ const PortfolioTimeline = () => {
                         </div>
                         {showTrendLine && <Check size={14} />}
                       </button>
+                      <button
+                        onClick={() => setShowDrawdown(!showDrawdown)}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all mt-2 ${
+                          showDrawdown
+                            ? 'bg-loss/10 border-loss/30 text-loss'
+                            : 'bg-surface-2 border-transparent text-secondary hover:border-border'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <TrendingDown size={14} />
+                          <span className="text-xs font-bold uppercase tracking-wider">Drawdown</span>
+                        </div>
+                        {showDrawdown && <Check size={14} />}
+                      </button>
                     </div>
 
                     {/* Custom Range */}
@@ -353,6 +386,15 @@ const PortfolioTimeline = () => {
                   <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>
                 </div>
               </div>
+              {showDrawdown && (
+                <div className="flex items-start gap-3">
+                  <TrendingDown size={14} className="text-loss mt-0.5" />
+                  <div>
+                    <p className="text-[10px] font-bold text-primary uppercase">Max Drawdown</p>
+                    <p className="text-xs font-mono font-bold text-loss">{formatPercent(maxDrawdownValue, 1)}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -449,6 +491,42 @@ const PortfolioTimeline = () => {
               )}
             </div>
           </div>
+
+          {/* Drawdown Chart */}
+          {showDrawdown && drawdownData.length > 0 && (
+            <div className="bg-surface rounded-card border border-border p-4 md:p-6">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3">Drawdown from Peak</p>
+              <div className="h-32 md:h-40 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={drawdownData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="drawdownFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="var(--loss)" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="var(--loss)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...GRID_STYLE} vertical={false} strokeOpacity={0.3} />
+                    <XAxis dataKey="snapshot_date" tickFormatter={formatDateAxis} {...AXIS_STYLE} hide />
+                    <YAxis {...AXIS_STYLE} tickFormatter={(v) => `${v.toFixed(0)}%`} width={50} axisLine={false} />
+                    <Tooltip
+                      content={<ChartTooltip formatValue={(v) => formatPercent(v, 2)} formatLabel={formatDateAxis} />}
+                      cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
+                    />
+                    <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
+                    <Area
+                      type="monotone"
+                      dataKey="drawdown"
+                      stroke="var(--loss)"
+                      strokeWidth={1.5}
+                      fill="url(#drawdownFill)"
+                      name="Drawdown"
+                      animationDuration={1000}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
 
           {/* Period Summary Grid */}
           {portfolioData.length > 0 && (

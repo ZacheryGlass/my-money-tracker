@@ -1,5 +1,5 @@
 import React, { useState, lazy, Suspense } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from './context/AuthContext';
 import Login from './components/Login';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -18,6 +18,10 @@ const PortfolioTimeline = lazy(() => import('./pages/PortfolioTimeline'));
 const SalaryHistory = lazy(() => import('./pages/SalaryHistory'));
 const MonthlyExpenses = lazy(() => import('./pages/MonthlyExpenses'));
 const Settings = lazy(() => import('./pages/Settings'));
+const HoldingsAnalysis = lazy(() => import('./pages/HoldingsAnalysis'));
+const SpendingAnalytics = lazy(() => import('./pages/SpendingAnalytics'));
+const SpendingExplorer = lazy(() => import('./pages/SpendingExplorer'));
+const YearInReview = lazy(() => import('./pages/YearInReview'));
 
 const PageSpinner = () => (
   <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
@@ -26,7 +30,7 @@ const PageSpinner = () => (
   </div>
 );
 
-const VALID_PAGES = ['dashboard', 'assets', 'cash', 'liabilities', 'accounts', 'ticker-history', 'account-history', 'portfolio-timeline', 'salary-history', 'monthly-expenses', 'settings'];
+const VALID_PAGES = ['dashboard', 'assets', 'cash', 'liabilities', 'accounts', 'ticker-history', 'account-history', 'portfolio-timeline', 'holdings-analysis', 'spending-analytics', 'spending-explorer', 'year-in-review', 'salary-history', 'monthly-expenses', 'settings'];
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -37,6 +41,10 @@ const navItems = [
   { id: 'ticker-history', label: 'Ticker History' },
   { id: 'account-history', label: 'Account History' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline' },
+  { id: 'holdings-analysis', label: 'Holdings Analysis', section: 'ANALYTICS' },
+  { id: 'spending-analytics', label: 'Spending' },
+  { id: 'spending-explorer', label: 'Spending Explorer' },
+  { id: 'year-in-review', label: 'Year in Review' },
   { id: 'salary-history', label: 'Salary History', section: 'PLANNING' },
   { id: 'monthly-expenses', label: 'Monthly Expenses' },
   { id: 'settings', label: 'Settings' },
@@ -67,7 +75,7 @@ function App() {
       return <NotFound />;
     }
     return (
-      <motion.div
+      <Motion.div
         key={currentPage}
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -82,10 +90,14 @@ function App() {
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
+        {currentPage === 'holdings-analysis' && <HoldingsAnalysis />}
+        {currentPage === 'spending-analytics' && <SpendingAnalytics />}
+        {currentPage === 'spending-explorer' && <SpendingExplorer />}
+        {currentPage === 'year-in-review' && <YearInReview />}
         {currentPage === 'salary-history' && <SalaryHistory />}
         {currentPage === 'monthly-expenses' && <MonthlyExpenses />}
         {currentPage === 'settings' && <Settings />}
-      </motion.div>
+      </Motion.div>
     );
   };
 

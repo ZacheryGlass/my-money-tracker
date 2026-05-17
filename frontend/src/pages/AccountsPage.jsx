@@ -23,14 +23,14 @@ const TYPE_COLORS = {
 };
 
 const TypeBadge = ({ type }) => (
-  <span className={`inline-flex items-center px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full border ${TYPE_COLORS[type] || TYPE_COLORS.other}`}>
+  <span className={`inline-flex items-center px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-full border ${TYPE_COLORS[type] || TYPE_COLORS.other}`}>
     {type}
   </span>
 );
 
 const PlaidBadge = () => (
-  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
-    <Link2 size={10} />
+  <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
+    <Link2 size={12} />
     Plaid
   </span>
 );
@@ -164,8 +164,8 @@ const AccountsPage = () => {
         accessorKey: 'name',
         header: 'Name',
         cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-primary">{row.original.name}</span>
+          <div className="flex items-center gap-3">
+            <span className="font-bold text-primary text-base">{row.original.name}</span>
             {row.original.plaid_item_id && <PlaidBadge />}
           </div>
         ),
@@ -179,7 +179,7 @@ const AccountsPage = () => {
         id: 'holdings_count',
         accessorFn: (row) => row.holdings_count || 0,
         header: 'Assets',
-        cell: ({ getValue }) => <span className="font-mono text-secondary">{getValue()}</span>,
+        cell: ({ getValue }) => <span className="font-mono text-base text-secondary">{getValue()}</span>,
       },
       {
         id: 'total_value',
@@ -188,7 +188,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`font-mono text-sm font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`font-mono text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
@@ -216,15 +216,15 @@ const AccountsPage = () => {
         accessorKey: 'ticker',
         header: 'Ticker',
         cell: ({ getValue }) => (
-          <span className="font-mono text-xs font-bold text-accent">{getValue() || '—'}</span>
+          <span className="font-mono text-sm font-bold text-accent">{getValue() || '—'}</span>
         ),
       },
       {
         accessorKey: 'name',
         header: 'Asset Name',
         cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{row.original.name}</span>
+          <div className="flex items-center gap-3">
+            <span className="font-medium text-base">{row.original.name}</span>
             {row.original.is_plaid_managed && <PlaidBadge />}
           </div>
         ),
@@ -236,7 +236,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`font-mono text-sm font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`font-mono text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
@@ -245,7 +245,7 @@ const AccountsPage = () => {
       {
         accessorKey: 'category',
         header: 'Category',
-        cell: ({ getValue }) => <span className="text-[10px] font-bold uppercase text-tertiary tracking-wider">{getValue() || 'Other'}</span>,
+        cell: ({ getValue }) => <span className="text-xs font-bold uppercase text-tertiary tracking-wider">{getValue() || 'Other'}</span>,
       },
     ],
     []
@@ -268,7 +268,7 @@ const AccountsPage = () => {
         accessorKey: 'date',
         header: 'Date',
         cell: ({ getValue }) => (
-          <span className="font-mono text-xs text-secondary">{formatDateDisplay(getValue())}</span>
+          <span className="font-mono text-sm text-secondary">{formatDateDisplay(getValue())}</span>
         ),
       },
       {
@@ -276,10 +276,10 @@ const AccountsPage = () => {
         accessorFn: (row) => row.merchant_name || row.name,
         header: 'Description',
         cell: ({ row }) => (
-          <div className="min-w-0 py-1">
-            <div className="text-sm font-bold text-primary truncate">{row.original.merchant_name || row.original.name}</div>
+          <div className="min-w-0 py-2">
+            <div className="text-base font-bold text-primary truncate">{row.original.merchant_name || row.original.name}</div>
             {row.original.merchant_name && row.original.merchant_name !== row.original.name && (
-              <div className="text-[10px] text-tertiary truncate leading-tight uppercase font-medium">{row.original.name}</div>
+              <div className="text-xs text-tertiary truncate leading-tight uppercase font-semibold mt-0.5">{row.original.name}</div>
             )}
           </div>
         ),
@@ -291,7 +291,7 @@ const AccountsPage = () => {
           const val = getValue();
           if (!val) return <span className="text-tertiary">—</span>;
           const display = val.replace(/_/g, ' ').toLowerCase();
-          return <span className="text-[10px] font-bold uppercase text-secondary tracking-tight">{display}</span>;
+          return <span className="text-xs font-bold uppercase text-secondary tracking-tight">{display}</span>;
         },
       },
       {
@@ -300,7 +300,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = parseFloat(getValue());
           return (
-            <span className={`font-mono text-sm font-bold ${v > 0 ? 'text-loss' : 'text-gain'}`}>
+            <span className={`font-mono text-base font-bold ${v > 0 ? 'text-loss' : 'text-gain'}`}>
               {v > 0 ? '—' : '+'}{formatCurrency(Math.abs(v))}
             </span>
           );
@@ -311,11 +311,11 @@ const AccountsPage = () => {
         header: 'Status',
         cell: ({ getValue }) => (
           getValue() ? (
-            <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            <span className="inline-flex items-center px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
               Pending
             </span>
           ) : (
-            <span className="text-[10px] font-bold uppercase text-tertiary tracking-widest opacity-60">Posted</span>
+            <span className="text-xs font-bold uppercase text-tertiary tracking-widest opacity-60">Posted</span>
           )
         ),
       },
@@ -346,35 +346,35 @@ const AccountsPage = () => {
   const renderPagination = (table, data) => {
     if (data.length <= table.getState().pagination.pageSize) return null;
     return (
-      <div className="flex items-center justify-between mt-4 px-4">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">Show</span>
+      <div className="flex items-center justify-between mt-6 px-4">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-bold uppercase tracking-widest text-tertiary">Show</span>
           <select
             value={table.getState().pagination.pageSize}
             onChange={(e) => table.setPageSize(Number(e.target.value))}
-            className="bg-surface-3 border-border rounded-lg px-2 py-1 text-xs font-bold focus:ring-1 focus:ring-accent"
+            className="bg-surface-3 border-border rounded-lg px-3 py-1.5 text-sm font-bold focus:ring-1 focus:ring-accent"
           >
             {[10, 25, 50, 100].map((size) => (
               <option key={size} value={size}>{size}</option>
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">
+        <div className="flex items-center gap-6">
+          <span className="text-xs font-bold uppercase tracking-widest text-tertiary">
             Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
           </span>
-          <div className="flex gap-1">
+          <div className="flex gap-2">
             <button
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
-              className="px-3 py-1.5 bg-surface-3 text-secondary border border-border rounded-lg text-xs font-bold hover:bg-accent hover:text-inverse hover:border-accent disabled:opacity-30 transition-all"
+              className="px-4 py-2 bg-surface-3 text-secondary border border-border rounded-lg text-sm font-bold hover:bg-surface-2 hover:text-primary hover:border-accent disabled:opacity-30 transition-all"
             >
               Prev
             </button>
             <button
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
-              className="px-3 py-1.5 bg-surface-3 text-secondary border border-border rounded-lg text-xs font-bold hover:bg-accent hover:text-inverse hover:border-accent disabled:opacity-30 transition-all"
+              className="px-4 py-2 bg-surface-3 text-secondary border border-border rounded-lg text-sm font-bold hover:bg-surface-2 hover:text-primary hover:border-accent disabled:opacity-30 transition-all"
             >
               Next
             </button>
@@ -394,7 +394,7 @@ const AccountsPage = () => {
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className="px-5 py-4 text-left text-[10px] font-bold text-tertiary uppercase tracking-widest cursor-pointer hover:bg-surface-3 transition-colors"
+                    className="px-5 py-5 text-left text-xs font-bold text-tertiary uppercase tracking-widest cursor-pointer hover:bg-surface-3 transition-colors"
                     onClick={header.column.getToggleSortingHandler()}
                   >
                     <div className="flex items-center gap-2">
@@ -411,7 +411,7 @@ const AccountsPage = () => {
           <tbody className="divide-y divide-border bg-surface">
             {table.getRowModel().rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-5 py-12 text-center text-tertiary text-sm font-medium">
+                <td colSpan={columns.length} className="px-5 py-12 text-center text-tertiary text-base font-medium">
                   {emptyMessage}
                 </td>
               </tr>
@@ -423,7 +423,7 @@ const AccountsPage = () => {
                   onClick={() => onRowClick?.(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-5 py-3 whitespace-nowrap text-sm text-primary">
+                    <td key={cell.id} className="px-5 py-4 whitespace-nowrap text-base text-primary">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}

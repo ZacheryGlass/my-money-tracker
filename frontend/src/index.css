@@ -11,9 +11,9 @@
     --bg-overlay: rgba(0, 0, 0, 0.75);
 
     /* Text hierarchy - Improved contrast and readability */
-    --text-primary: #F0F2F5;
-    --text-secondary: #94A3B8;
-    --text-tertiary: #64748B;
+    --text-primary: #FFFFFF;
+    --text-secondary: #E2E8F0;
+    --text-tertiary: #94A3B8;
     --text-inverse: #06080A;
 
     /* Brand accent: electric teal - more vibrant */
@@ -57,7 +57,9 @@
   }
 
   html {
+    font-size: 110%; /* Increase base font size slightly */
     font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    line-height: 1.6; /* Improved line height for readability */
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     color-scheme: dark;
@@ -68,6 +70,8 @@
     background-color: var(--bg-base);
     color: var(--text-primary);
     overflow-x: hidden;
+    font-size: 1rem;
+    letter-spacing: 0.01em;
   }
 
   ::selection {

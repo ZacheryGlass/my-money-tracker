@@ -31,19 +31,19 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
     >
       <div className="flex items-start justify-between relative z-10">
         <div className="space-y-1">
-          <span className="text-[10px] font-bold tracking-[0.15em] uppercase text-tertiary">
+          <span className="text-xs font-bold tracking-[0.1em] uppercase text-tertiary">
             {label}
           </span>
           {change && (
             <div className={`flex items-center gap-1 ${changeClass}`}>
-              <span className="text-[10px] font-bold uppercase tracking-wider">{change}</span>
-              {trend === 'up' ? <ArrowUpRight size={12} /> : trend === 'down' ? <ArrowDownRight size={12} /> : null}
+              <span className="text-xs font-bold uppercase tracking-wide">{change}</span>
+              {trend === 'up' ? <ArrowUpRight size={14} /> : trend === 'down' ? <ArrowDownRight size={14} /> : null}
             </div>
           )}
         </div>
         {Icon && (
           <div className="p-3 rounded-2xl bg-surface-2 border border-border/50 text-secondary group-hover:text-accent group-hover:border-accent/30 group-hover:shadow-glow-sm transition-all duration-300">
-            <Icon size={20} strokeWidth={2.5} />
+            <Icon size={24} strokeWidth={2.5} />
           </div>
         )}
       </div>
@@ -51,7 +51,7 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
       <div className="relative z-10">
         <span
           className={`font-money font-bold ${valueClass} tracking-tighter leading-none`}
-          style={{ fontSize: 'clamp(1.5rem, 3vw, 2.25rem)' }}
+          style={{ fontSize: 'clamp(1.75rem, 4vw, 2.5rem)' }}
         >
           {value}
         </span>
