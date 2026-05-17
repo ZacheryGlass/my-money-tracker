@@ -72,6 +72,6 @@ INSERT INTO accounts (name, type) VALUES
   ('Taxable', 'investment'),
   ('401k', 'investment'),
   ('Roth IRA', 'investment'),
-  ('Real Estate', 'static'),
-  ('Liability', 'static')
+  ('Real Estate', 'property'),
+  ('Liability', 'loan')
 ON CONFLICT (name) DO NOTHING;

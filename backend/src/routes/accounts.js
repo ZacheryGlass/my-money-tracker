@@ -11,6 +11,11 @@ const router = express.Router();
 router.use(authenticateToken);
 
 const VALID_ACCOUNT_TYPES = ['investment', 'depository', 'credit', 'loan', 'crypto', 'property', 'other'];
+const EFFECTIVE_ACCOUNT_NAME_SQL = "COALESCE(NULLIF(TRIM(a.display_name), ''), a.name)";
+const ACCOUNT_RETURN_SELECT = `a.id, a.name, a.display_name,
+                 ${EFFECTIVE_ACCOUNT_NAME_SQL} AS effective_name,
+                 a.is_hidden,
+                 a.type, a.plaid_item_id`;
 
 // POST /api/accounts - Create a new manual account
 router.post('/', async (req, res) => {
@@ -39,18 +44,93 @@ router.post('/', async (req, res) => {
 // GET /api/accounts - List all accounts with holdings count
 router.get('/', async (req, res) => {
   try {
+    const includeHidden = req.query.include_hidden === 'true';
+    const hiddenFilter = includeHidden ? '' : 'WHERE a.is_hidden = FALSE';
     const result = await pool.query(
-      `SELECT a.id, a.name, a.type, a.plaid_item_id,
+      `SELECT ${ACCOUNT_RETURN_SELECT},
               COUNT(h.id)::int AS holdings_count
        FROM accounts a
        LEFT JOIN holdings h ON h.account_id = a.id
+       ${hiddenFilter}
        GROUP BY a.id
-       ORDER BY a.type DESC, a.name ASC`
+       ORDER BY a.type DESC, effective_name ASC`
     );
     res.status(200).json({ accounts: result.rows });
   } catch (error) {
     logger.error({ err: error }, 'Get accounts error');
     res.status(500).json({ error: 'Server error retrieving accounts' });
+  }
+});
+
+// PATCH /api/accounts/:id/display-name - Set or clear an account display name
+router.patch('/:id/display-name', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid account id' });
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(req.body, 'display_name')) {
+      return res.status(400).json({ error: 'display_name is required' });
+    }
+
+    const { display_name: displayName } = req.body;
+    if (displayName !== null && typeof displayName !== 'string') {
+      return res.status(400).json({ error: 'display_name must be a string or null' });
+    }
+
+    const normalizedName = displayName === null ? null : displayName.trim() || null;
+    if (normalizedName && normalizedName.length > 100) {
+      return res.status(400).json({ error: 'display_name must be 100 characters or fewer' });
+    }
+
+    const result = await pool.query(
+      `UPDATE accounts a
+       SET display_name = $1
+       WHERE a.id = $2
+       RETURNING ${ACCOUNT_RETURN_SELECT}`,
+      [normalizedName, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    res.status(200).json({ account: result.rows[0] });
+  } catch (error) {
+    logger.error({ err: error }, 'Update account display name error');
+    res.status(500).json({ error: 'Server error updating account display name' });
+  }
+});
+
+// PATCH /api/accounts/:id/visibility - Hide or show an account in UI data
+router.patch('/:id/visibility', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid account id' });
+    }
+
+    if (typeof req.body.is_hidden !== 'boolean') {
+      return res.status(400).json({ error: 'is_hidden must be a boolean' });
+    }
+
+    const result = await pool.query(
+      `UPDATE accounts a
+       SET is_hidden = $1
+       WHERE a.id = $2
+       RETURNING ${ACCOUNT_RETURN_SELECT}`,
+      [req.body.is_hidden, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    res.status(200).json({ account: result.rows[0] });
+  } catch (error) {
+    logger.error({ err: error }, 'Update account visibility error');
+    res.status(500).json({ error: 'Server error updating account visibility' });
   }
 });
 

@@ -8,7 +8,7 @@ class DashboardService {
   static async getCurrentPortfolio() {
     // Fetch all holdings and prices
     const [holdings, prices] = await Promise.all([
-      Holding.findAll(),
+      Holding.findAll({ includeHidden: false }),
       PriceCache.getLatestPrices()
     ]);
 

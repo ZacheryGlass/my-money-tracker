@@ -38,7 +38,7 @@ router.get('/', async (req, res) => {
       return res.status(400).json({ error: 'Invalid offset parameter. Must be a non-negative number.' });
     }
 
-    const conditions = [];
+    const conditions = ['a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
 
@@ -70,10 +70,13 @@ router.get('/', async (req, res) => {
       paramIndex++;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     const countResult = await pool.query(
-      `SELECT COUNT(*) as total FROM transactions t ${whereClause}`,
+      `SELECT COUNT(*) as total
+       FROM transactions t
+       JOIN accounts a ON t.account_id = a.id
+       ${whereClause}`,
       params
     );
     const total = parseInt(countResult.rows[0].total);
@@ -81,7 +84,9 @@ router.get('/', async (req, res) => {
     const dataResult = await pool.query(
       `SELECT t.id, t.account_id, t.plaid_transaction_id, t.date, t.name,
               t.merchant_name, t.amount, t.currency_code, t.category, t.pending,
-              a.name as account_name
+              COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) as account_name,
+              a.name as account_source_name,
+              a.display_name as account_display_name
        FROM transactions t
        JOIN accounts a ON t.account_id = a.id
        ${whereClause}

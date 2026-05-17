@@ -44,12 +44,12 @@ router.get('/tickers', async (req, res) => {
     }
 
     // Build the WHERE clause dynamically based on filters
-    const conditions = [];
+    const conditions = ['a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
 
     if (ticker) {
-      conditions.push(`ticker = $${paramIndex}`);
+      conditions.push(`ts.ticker = $${paramIndex}`);
       params.push(ticker);
       paramIndex++;
     }
@@ -59,7 +59,7 @@ router.get('/tickers', async (req, res) => {
       if (isNaN(parsedAccountId)) {
         return res.status(400).json({ error: 'Invalid account_id parameter. Must be a number.' });
       }
-      conditions.push(`account_id = $${paramIndex}`);
+      conditions.push(`ts.account_id = $${paramIndex}`);
       params.push(parsedAccountId);
       paramIndex++;
     }
@@ -68,7 +68,7 @@ router.get('/tickers', async (req, res) => {
       if (!isValidDate(startDate)) {
         return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`snapshot_date >= $${paramIndex}`);
+      conditions.push(`ts.snapshot_date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
@@ -77,29 +77,35 @@ router.get('/tickers', async (req, res) => {
       if (!isValidDate(endDate)) {
         return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`snapshot_date <= $${paramIndex}`);
+      conditions.push(`ts.snapshot_date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     // Get total count for pagination
-    const countQuery = `SELECT COUNT(*) as total FROM ticker_snapshots ${whereClause}`;
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM ticker_snapshots ts
+      JOIN accounts a ON ts.account_id = a.id
+      ${whereClause}
+    `;
     const countResult = await pool.query(countQuery, params);
     const total = parseInt(countResult.rows[0].total);
 
     // Get paginated data
     const dataQuery = `
       SELECT
-        snapshot_date,
-        account_id,
-        ticker,
-        name,
-        value
-      FROM ticker_snapshots
+        ts.snapshot_date,
+        ts.account_id,
+        ts.ticker,
+        ts.name,
+        ts.value
+      FROM ticker_snapshots ts
+      JOIN accounts a ON ts.account_id = a.id
       ${whereClause}
-      ORDER BY snapshot_date ASC
+      ORDER BY ts.snapshot_date ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 
@@ -144,7 +150,7 @@ router.get('/accounts', async (req, res) => {
     }
 
     // Build the WHERE clause dynamically based on filters
-    const conditions = [];
+    const conditions = ['a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
 
@@ -153,7 +159,7 @@ router.get('/accounts', async (req, res) => {
       if (isNaN(parsedAccountId)) {
         return res.status(400).json({ error: 'Invalid account_id parameter. Must be a number.' });
       }
-      conditions.push(`account_id = $${paramIndex}`);
+      conditions.push(`acs.account_id = $${paramIndex}`);
       params.push(parsedAccountId);
       paramIndex++;
     }
@@ -162,7 +168,7 @@ router.get('/accounts', async (req, res) => {
       if (!isValidDate(startDate)) {
         return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`snapshot_date >= $${paramIndex}`);
+      conditions.push(`acs.snapshot_date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
@@ -171,27 +177,33 @@ router.get('/accounts', async (req, res) => {
       if (!isValidDate(endDate)) {
         return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`snapshot_date <= $${paramIndex}`);
+      conditions.push(`acs.snapshot_date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     // Get total count for pagination
-    const countQuery = `SELECT COUNT(*) as total FROM account_snapshots ${whereClause}`;
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM account_snapshots acs
+      JOIN accounts a ON acs.account_id = a.id
+      ${whereClause}
+    `;
     const countResult = await pool.query(countQuery, params);
     const total = parseInt(countResult.rows[0].total);
 
     // Get paginated data
     const dataQuery = `
       SELECT
-        snapshot_date,
-        account_id,
-        total_value
-      FROM account_snapshots
+        acs.snapshot_date,
+        acs.account_id,
+        acs.total_value
+      FROM account_snapshots acs
+      JOIN accounts a ON acs.account_id = a.id
       ${whereClause}
-      ORDER BY snapshot_date ASC
+      ORDER BY acs.snapshot_date ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 
@@ -235,7 +247,7 @@ router.get('/portfolio', async (req, res) => {
     }
 
     // Build the WHERE clause dynamically based on filters
-    const conditions = [];
+    const conditions = ['a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
 
@@ -243,7 +255,7 @@ router.get('/portfolio', async (req, res) => {
       if (!isValidDate(startDate)) {
         return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`snapshot_date >= $${paramIndex}`);
+      conditions.push(`acs.snapshot_date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
@@ -252,17 +264,18 @@ router.get('/portfolio', async (req, res) => {
       if (!isValidDate(endDate)) {
         return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`snapshot_date <= $${paramIndex}`);
+      conditions.push(`acs.snapshot_date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     // Get total count for pagination
     const countQuery = `
-      SELECT COUNT(DISTINCT snapshot_date) as total
-      FROM account_snapshots
+      SELECT COUNT(DISTINCT acs.snapshot_date) as total
+      FROM account_snapshots acs
+      JOIN accounts a ON acs.account_id = a.id
       ${whereClause}
     `;
     const countResult = await pool.query(countQuery, params);
@@ -271,12 +284,13 @@ router.get('/portfolio', async (req, res) => {
     // Get aggregated portfolio data
     const dataQuery = `
       SELECT
-        snapshot_date,
-        SUM(total_value) as total_value
-      FROM account_snapshots
+        acs.snapshot_date,
+        SUM(acs.total_value) as total_value
+      FROM account_snapshots acs
+      JOIN accounts a ON acs.account_id = a.id
       ${whereClause}
-      GROUP BY snapshot_date
-      ORDER BY snapshot_date ASC
+      GROUP BY acs.snapshot_date
+      ORDER BY acs.snapshot_date ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 

@@ -19,5 +19,15 @@ WHERE type = 'static' AND plaid_account_id IS NOT NULL;
 UPDATE accounts SET type = 'other' WHERE type = 'static';
 
 -- Add CHECK constraint for valid account types
-ALTER TABLE accounts ADD CONSTRAINT accounts_type_check
-  CHECK (type IN ('investment', 'depository', 'credit', 'loan', 'crypto', 'property', 'other'));
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'accounts_type_check'
+      AND conrelid = 'accounts'::regclass
+  ) THEN
+    ALTER TABLE accounts ADD CONSTRAINT accounts_type_check
+      CHECK (type IN ('investment', 'depository', 'credit', 'loan', 'crypto', 'property', 'other'));
+  END IF;
+END $$;

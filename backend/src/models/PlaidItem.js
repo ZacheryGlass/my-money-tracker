@@ -121,7 +121,11 @@ class PlaidItem {
 
   static async getAccountsForItem(id) {
     const result = await pool.query(
-      'SELECT * FROM accounts WHERE plaid_item_id = $1 ORDER BY name',
+      `SELECT *,
+              COALESCE(NULLIF(TRIM(display_name), ''), name) AS effective_name
+       FROM accounts
+       WHERE plaid_item_id = $1
+       ORDER BY is_hidden ASC, effective_name`,
       [id]
     );
     return result.rows;

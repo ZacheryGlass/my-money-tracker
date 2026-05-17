@@ -49,6 +49,7 @@ router.get('/holdings', async (req, res) => {
         h.notes
       FROM holdings h
       JOIN accounts a ON h.account_id = a.id
+      WHERE a.is_hidden = FALSE
       ORDER BY a.name, h.name
     `);
 
@@ -76,11 +77,12 @@ router.get('/history', async (req, res) => {
     if (type === 'accounts') {
       query = `
         SELECT
-          snapshot_date,
+          acs.snapshot_date,
           a.name as account_name,
-          total_value
+          acs.total_value
         FROM account_snapshots acs
         JOIN accounts a ON acs.account_id = a.id
+        WHERE a.is_hidden = FALSE
         ORDER BY snapshot_date DESC, a.name
       `;
       headers = ['snapshot_date', 'account_name', 'total_value'];
@@ -88,11 +90,13 @@ router.get('/history', async (req, res) => {
     } else if (type === 'portfolio') {
       query = `
         SELECT
-          snapshot_date,
-          SUM(total_value) as total_value
-        FROM account_snapshots
-        GROUP BY snapshot_date
-        ORDER BY snapshot_date DESC
+          acs.snapshot_date,
+          SUM(acs.total_value) as total_value
+        FROM account_snapshots acs
+        JOIN accounts a ON acs.account_id = a.id
+        WHERE a.is_hidden = FALSE
+        GROUP BY acs.snapshot_date
+        ORDER BY acs.snapshot_date DESC
       `;
       headers = ['snapshot_date', 'total_value'];
       filename = 'portfolio_history';
@@ -100,13 +104,14 @@ router.get('/history', async (req, res) => {
       // Default to tickers
       query = `
         SELECT
-          snapshot_date,
+          ts.snapshot_date,
           a.name as account_name,
-          ticker,
-          name,
-          value
+          ts.ticker,
+          ts.name,
+          ts.value
         FROM ticker_snapshots ts
         JOIN accounts a ON ts.account_id = a.id
+        WHERE a.is_hidden = FALSE
         ORDER BY snapshot_date DESC, a.name, ticker
       `;
       headers = ['snapshot_date', 'account_name', 'ticker', 'name', 'value'];

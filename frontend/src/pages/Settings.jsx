@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check } from 'lucide-react';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff } from 'lucide-react';
 import { plaid as plaidAPI, accounts as accountsAPI } from '../utils/api';
+import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 
 function PlaidLinkButton({ onSuccess, disabled }) {
   const [linkToken, setLinkToken] = useState(null);
@@ -119,6 +120,10 @@ const Settings = () => {
   const [connecting, setConnecting] = useState(false);
   const [expandedItem, setExpandedItem] = useState(null);
   const [consentItems, setConsentItems] = useState(new Set());
+  const [allAccounts, setAllAccounts] = useState([]);
+  const [displayNameDrafts, setDisplayNameDrafts] = useState({});
+  const [savingDisplayNameId, setSavingDisplayNameId] = useState(null);
+  const [savingVisibilityId, setSavingVisibilityId] = useState(null);
   const [orphanedAccounts, setOrphanedAccounts] = useState([]);
   const [deletingAccountId, setDeletingAccountId] = useState(null);
 
@@ -126,7 +131,7 @@ const Settings = () => {
     try {
       const [plaidData, accountsData] = await Promise.all([
         plaidAPI.getItems(),
-        accountsAPI.getAll(),
+        accountsAPI.getAll({ includeHidden: true }),
       ]);
       const loadedItems = plaidData.items || [];
       setItems(loadedItems);
@@ -136,6 +141,10 @@ const Settings = () => {
           .map(item => item.id)
       ));
       const allAccounts = accountsData.accounts || [];
+      setAllAccounts(allAccounts);
+      setDisplayNameDrafts(
+        Object.fromEntries(allAccounts.map((account) => [account.id, account.display_name || '']))
+      );
       setOrphanedAccounts(
         allAccounts.filter(a => !a.plaid_item_id && a.type === 'investment' && a.name.includes(' - '))
       );
@@ -215,6 +224,54 @@ const Settings = () => {
     }
   };
 
+  const handleDisplayNameChange = (accountId, value) => {
+    setDisplayNameDrafts((prev) => ({ ...prev, [accountId]: value }));
+  };
+
+  const handleSaveDisplayName = async (account) => {
+    const draft = displayNameDrafts[account.id] ?? '';
+    const normalizedName = draft.trim() || null;
+    setSavingDisplayNameId(account.id);
+    setError(null);
+    try {
+      await accountsAPI.updateDisplayName(account.id, normalizedName);
+      showSuccess(normalizedName ? `"${normalizedName}" saved` : `"${account.name}" restored`);
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update display name');
+    } finally {
+      setSavingDisplayNameId(null);
+    }
+  };
+
+  const handleClearDisplayName = async (account) => {
+    setSavingDisplayNameId(account.id);
+    setError(null);
+    try {
+      await accountsAPI.updateDisplayName(account.id, null);
+      showSuccess(`"${account.name}" restored`);
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to clear display name');
+    } finally {
+      setSavingDisplayNameId(null);
+    }
+  };
+
+  const handleVisibilityChange = async (account, isHidden) => {
+    setSavingVisibilityId(account.id);
+    setError(null);
+    try {
+      await accountsAPI.updateVisibility(account.id, isHidden);
+      showSuccess(isHidden ? `"${getAccountDisplayName(account)}" hidden from UI` : `"${getAccountDisplayName(account)}" visible in UI`);
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update account visibility');
+    } finally {
+      setSavingVisibilityId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
@@ -264,6 +321,112 @@ const Settings = () => {
           <p className="text-sm font-bold uppercase tracking-widest text-accent">Exchanging tokens and syncing data...</p>
         </div>
       )}
+
+      <section className="mb-12">
+        <div className="px-2 mb-4">
+          <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Account Display</h2>
+        </div>
+
+        <div className="card overflow-hidden divide-y divide-border border-border/50">
+          {allAccounts.length === 0 ? (
+            <div className="p-8 text-center text-sm text-secondary">No accounts available.</div>
+          ) : (
+            allAccounts.map((account) => {
+              const draft = displayNameDrafts[account.id] ?? '';
+              const savedDisplayName = account.display_name || '';
+              const isDirty = draft.trim() !== savedDisplayName.trim();
+              const isSaving = savingDisplayNameId === account.id;
+              const isSavingVisibility = savingVisibilityId === account.id;
+
+              return (
+                <div
+                  key={account.id}
+                  className={`p-4 md:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)_minmax(150px,0.45fr)_auto] gap-4 items-center ${account.is_hidden ? 'bg-surface-2/25' : ''}`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-bold text-primary truncate">{getAccountDisplayName(account)}</span>
+                      {account.is_hidden && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-loss/10 text-loss border border-loss/20">
+                          <EyeOff size={10} />
+                          Hidden
+                        </span>
+                      )}
+                      {account.plaid_item_id && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
+                          <Link2 size={10} />
+                          Plaid
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-tertiary">
+                      <span>{account.type}</span>
+                      {hasAccountDisplayName(account) && <span className="truncate normal-case tracking-normal font-medium">Source: {account.name}</span>}
+                    </div>
+                  </div>
+
+                  <input
+                    type="text"
+                    value={draft}
+                    onChange={(e) => handleDisplayNameChange(account.id, e.target.value)}
+                    maxLength={100}
+                    placeholder={account.name}
+                    className="w-full h-11 px-3 bg-surface-2 border border-border rounded-xl text-sm text-primary placeholder:text-tertiary focus:ring-1 focus:ring-accent outline-none"
+                    disabled={isSaving}
+                  />
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={Boolean(account.is_hidden)}
+                    aria-label={`Hide ${getAccountDisplayName(account)} from UI`}
+                    onClick={() => handleVisibilityChange(account, !account.is_hidden)}
+                    disabled={isSavingVisibility}
+                    className={`flex h-11 items-center justify-between gap-3 rounded-xl border px-3 text-left transition-all disabled:opacity-50 ${
+                      account.is_hidden
+                        ? 'border-loss/30 bg-loss/10 text-loss'
+                        : 'border-border bg-surface-2 text-secondary hover:text-primary'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+                      {isSavingVisibility ? (
+                        <RefreshCw size={14} className="animate-spin" />
+                      ) : account.is_hidden ? (
+                        <EyeOff size={14} />
+                      ) : (
+                        <Eye size={14} />
+                      )}
+                      {account.is_hidden ? 'Hidden' : 'Visible'}
+                    </span>
+                    <span className={`h-5 w-9 rounded-full p-0.5 transition-colors ${account.is_hidden ? 'bg-loss/70' : 'bg-surface-3'}`}>
+                      <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${account.is_hidden ? 'translate-x-4' : ''}`} />
+                    </span>
+                  </button>
+
+                  <div className="flex items-center gap-2 lg:justify-end">
+                    <button
+                      onClick={() => handleSaveDisplayName(account)}
+                      disabled={isSaving || !isDirty}
+                      className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-accent text-inverse text-xs font-bold uppercase tracking-wider hover:bg-accent-hover transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                      Save
+                    </button>
+                    <button
+                      onClick={() => handleClearDisplayName(account)}
+                      disabled={isSaving || (!hasAccountDisplayName(account) && !draft.trim())}
+                      className="inline-flex items-center justify-center gap-2 h-10 px-3 rounded-xl bg-surface-3 text-secondary border border-border text-xs font-bold uppercase tracking-wider hover:text-primary transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Undo2 size={14} />
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
 
       <div className="space-y-4">
         {items.length === 0 && !connecting ? (
@@ -353,7 +516,8 @@ const Settings = () => {
                               <div key={acct.id} className="flex items-center justify-between gap-4 px-4 py-3 rounded-xl bg-surface-2/50 border border-transparent hover:border-border transition-colors">
                                 <div className="flex items-center gap-3 min-w-0">
                                   <Link2 size={12} className="text-accent opacity-60 flex-shrink-0" />
-                                  <span className="text-xs font-bold text-primary truncate">{acct.name}</span>
+                                  <span className="text-xs font-bold text-primary truncate">{getAccountDisplayName(acct)}</span>
+                                  {acct.is_hidden && <EyeOff size={12} className="text-loss flex-shrink-0" />}
                                 </div>
                                 <span className="text-[9px] font-bold text-tertiary uppercase tracking-widest px-2 py-0.5 rounded-full bg-surface-3">{acct.type}</span>
                               </div>
@@ -382,7 +546,10 @@ const Settings = () => {
             {orphanedAccounts.map((acct) => (
               <div key={acct.id} className="flex items-center justify-between p-5 hover:bg-surface-2 transition-colors group">
                 <div className="min-w-0">
-                  <span className="text-sm font-bold text-primary truncate block">{acct.name}</span>
+                  <span className="text-sm font-bold text-primary truncate block">{getAccountDisplayName(acct)}</span>
+                  {hasAccountDisplayName(acct) && (
+                    <span className="text-[10px] text-tertiary uppercase tracking-tight truncate block mt-1">{acct.name}</span>
+                  )}
                   <span className="text-[10px] font-bold text-tertiary uppercase tracking-widest mt-1 block">
                     {acct.holdings_count || 0} Assets • Manual Tracking
                   </span>
@@ -392,7 +559,7 @@ const Settings = () => {
                     setDeletingAccountId(acct.id);
                     try {
                       await accountsAPI.delete(acct.id);
-                      showSuccess(`"${acct.name}" deleted`);
+                      showSuccess(`"${getAccountDisplayName(acct)}" deleted`);
                       await fetchItems();
                     } catch (err) {
                       setError(err.response?.data?.error || 'Failed to delete account');

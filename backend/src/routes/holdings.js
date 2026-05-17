@@ -17,7 +17,7 @@ router.use(authenticateToken);
 // GET /api/holdings - List all holdings
 router.get('/', async (req, res) => {
   try {
-    const holdings = await Holding.findAll();
+    const holdings = await Holding.findAll({ includeHidden: false });
     res.status(200).json({ holdings });
   } catch (error) {
     logger.error({ err: error }, 'Get holdings error');

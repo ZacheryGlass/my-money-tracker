@@ -22,7 +22,7 @@ router.get('/net-worth-monthly', async (req, res) => {
   try {
     const { year, startDate, endDate } = req.query;
 
-    const conditions = [];
+    const conditions = ['a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
 
@@ -31,10 +31,10 @@ router.get('/net-worth-monthly', async (req, res) => {
       if (isNaN(parsedYear) || parsedYear < 2000 || parsedYear > 2100) {
         return res.status(400).json({ error: 'Invalid year parameter.' });
       }
-      conditions.push(`snapshot_date >= $${paramIndex}`);
+      conditions.push(`acs.snapshot_date >= $${paramIndex}`);
       params.push(`${parsedYear}-01-01`);
       paramIndex++;
-      conditions.push(`snapshot_date <= $${paramIndex}`);
+      conditions.push(`acs.snapshot_date <= $${paramIndex}`);
       params.push(`${parsedYear}-12-31`);
       paramIndex++;
     }
@@ -43,7 +43,7 @@ router.get('/net-worth-monthly', async (req, res) => {
       if (!isValidDate(startDate)) {
         return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`snapshot_date >= $${paramIndex}`);
+      conditions.push(`acs.snapshot_date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
@@ -52,19 +52,20 @@ router.get('/net-worth-monthly', async (req, res) => {
       if (!isValidDate(endDate)) {
         return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`snapshot_date <= $${paramIndex}`);
+      conditions.push(`acs.snapshot_date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     const result = await pool.query(`
       WITH daily_totals AS (
-        SELECT snapshot_date, SUM(total_value) as total_value
-        FROM account_snapshots
+        SELECT acs.snapshot_date, SUM(acs.total_value) as total_value
+        FROM account_snapshots acs
+        JOIN accounts a ON acs.account_id = a.id
         ${whereClause}
-        GROUP BY snapshot_date
+        GROUP BY acs.snapshot_date
       ),
       monthly AS (
         SELECT
@@ -102,7 +103,7 @@ router.get('/spending-by-category', async (req, res) => {
       return res.status(400).json({ error: 'Invalid groupBy parameter. Must be month or week.' });
     }
 
-    const conditions = ['amount > 0', 'pending = false'];
+    const conditions = ['t.amount > 0', 't.pending = false', 'a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
 
@@ -110,7 +111,7 @@ router.get('/spending-by-category', async (req, res) => {
       if (!isValidDate(startDate)) {
         return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`date >= $${paramIndex}`);
+      conditions.push(`t.date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
@@ -119,23 +120,24 @@ router.get('/spending-by-category', async (req, res) => {
       if (!isValidDate(endDate)) {
         return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`date <= $${paramIndex}`);
+      conditions.push(`t.date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
     }
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
-    const truncExpr = groupBy === 'month' ? "DATE_TRUNC('month', date)" : "DATE_TRUNC('week', date)";
+    const truncExpr = groupBy === 'month' ? "DATE_TRUNC('month', t.date)" : "DATE_TRUNC('week', t.date)";
 
     const result = await pool.query(`
       SELECT
         ${truncExpr} as period,
-        COALESCE(category, 'Uncategorized') as category,
-        SUM(amount)::numeric(15,2) as total,
+        COALESCE(t.category, 'Uncategorized') as category,
+        SUM(t.amount)::numeric(15,2) as total,
         COUNT(*)::int as tx_count
-      FROM transactions
+      FROM transactions t
+      JOIN accounts a ON t.account_id = a.id
       ${whereClause}
-      GROUP BY ${truncExpr}, COALESCE(category, 'Uncategorized')
+      GROUP BY ${truncExpr}, COALESCE(t.category, 'Uncategorized')
       ORDER BY period DESC, total DESC
     `, params);
 
@@ -151,7 +153,7 @@ router.get('/income-vs-spending', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
-    const conditions = ['pending = false'];
+    const conditions = ['t.pending = false', 'a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
 
@@ -159,7 +161,7 @@ router.get('/income-vs-spending', async (req, res) => {
       if (!isValidDate(startDate)) {
         return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`date >= $${paramIndex}`);
+      conditions.push(`t.date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
@@ -168,7 +170,7 @@ router.get('/income-vs-spending', async (req, res) => {
       if (!isValidDate(endDate)) {
         return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`date <= $${paramIndex}`);
+      conditions.push(`t.date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
     }
@@ -177,20 +179,21 @@ router.get('/income-vs-spending', async (req, res) => {
 
     const result = await pool.query(`
       SELECT
-        DATE_TRUNC('month', date) as month,
-        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)::numeric(15,2) as spending,
-        SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END)::numeric(15,2) as income,
+        DATE_TRUNC('month', t.date) as month,
+        SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END)::numeric(15,2) as spending,
+        SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE 0 END)::numeric(15,2) as income,
         CASE
-          WHEN SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) > 0
+          WHEN SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE 0 END) > 0
           THEN ROUND(
-            (SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) - SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END))
-            / SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) * 100, 1
+            (SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE 0 END) - SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END))
+            / SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE 0 END) * 100, 1
           )
           ELSE 0
         END as savings_rate
-      FROM transactions
+      FROM transactions t
+      JOIN accounts a ON t.account_id = a.id
       ${whereClause}
-      GROUP BY DATE_TRUNC('month', date)
+      GROUP BY DATE_TRUNC('month', t.date)
       ORDER BY month ASC
     `, params);
 
@@ -206,7 +209,7 @@ router.get('/spending-heatmap', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
-    const conditions = ['amount > 0', 'pending = false'];
+    const conditions = ['t.amount > 0', 't.pending = false', 'a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
 
@@ -214,7 +217,7 @@ router.get('/spending-heatmap', async (req, res) => {
       if (!isValidDate(startDate)) {
         return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`date >= $${paramIndex}`);
+      conditions.push(`t.date >= $${paramIndex}`);
       params.push(startDate);
       paramIndex++;
     }
@@ -223,7 +226,7 @@ router.get('/spending-heatmap', async (req, res) => {
       if (!isValidDate(endDate)) {
         return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
       }
-      conditions.push(`date <= $${paramIndex}`);
+      conditions.push(`t.date <= $${paramIndex}`);
       params.push(endDate);
       paramIndex++;
     }
@@ -232,13 +235,14 @@ router.get('/spending-heatmap', async (req, res) => {
 
     const result = await pool.query(`
       SELECT
-        date,
-        SUM(amount)::numeric(15,2) as total,
+        t.date,
+        SUM(t.amount)::numeric(15,2) as total,
         COUNT(*)::int as tx_count
-      FROM transactions
+      FROM transactions t
+      JOIN accounts a ON t.account_id = a.id
       ${whereClause}
-      GROUP BY date
-      ORDER BY date ASC
+      GROUP BY t.date
+      ORDER BY t.date ASC
     `, params);
 
     res.json({ data: result.rows });
@@ -253,19 +257,20 @@ router.get('/detected-subscriptions', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        COALESCE(merchant_name, name) as merchant,
-        ROUND(AVG(amount)::numeric, 2) as avg_amount,
+        COALESCE(t.merchant_name, t.name) as merchant,
+        ROUND(AVG(t.amount)::numeric, 2) as avg_amount,
         COUNT(*)::int as occurrence_count,
-        MAX(date) as last_charge,
-        MIN(date) as first_charge,
-        (ARRAY_AGG(category ORDER BY date DESC))[1] as category
-      FROM transactions
-      WHERE amount > 0 AND pending = false
-      GROUP BY COALESCE(merchant_name, name)
+        MAX(t.date) as last_charge,
+        MIN(t.date) as first_charge,
+        (ARRAY_AGG(t.category ORDER BY t.date DESC))[1] as category
+      FROM transactions t
+      JOIN accounts a ON t.account_id = a.id
+      WHERE t.amount > 0 AND t.pending = false AND a.is_hidden = FALSE
+      GROUP BY COALESCE(t.merchant_name, t.name)
       HAVING COUNT(*) >= 3
-         AND STDDEV(amount) < 5
-         AND (MAX(date) - MIN(date)) > 60
-      ORDER BY ROUND(AVG(amount)::numeric, 2) DESC
+         AND STDDEV(t.amount) < 5
+         AND (MAX(t.date) - MIN(t.date)) > 60
+      ORDER BY ROUND(AVG(t.amount)::numeric, 2) DESC
     `);
 
     res.json({ data: result.rows });

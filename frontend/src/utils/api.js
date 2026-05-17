@@ -96,12 +96,20 @@ export const holdings = {
 
 // Accounts API
 export const accounts = {
-  getAll: async () => {
-    const response = await api.get('/api/accounts');
+  getAll: async ({ includeHidden = false } = {}) => {
+    const response = await api.get(`/api/accounts${includeHidden ? '?include_hidden=true' : ''}`);
     return response.data;
   },
   create: async (data) => {
     const response = await api.post('/api/accounts', data);
+    return response.data;
+  },
+  updateDisplayName: async (id, displayName) => {
+    const response = await api.patch(`/api/accounts/${id}/display-name`, { display_name: displayName });
+    return response.data;
+  },
+  updateVisibility: async (id, isHidden) => {
+    const response = await api.patch(`/api/accounts/${id}/visibility`, { is_hidden: isHidden });
     return response.data;
   },
   delete: async (id) => {

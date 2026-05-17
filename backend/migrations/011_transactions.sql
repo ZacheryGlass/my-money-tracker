@@ -13,9 +13,9 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_transactions_account_id ON transactions(account_id);
-CREATE INDEX idx_transactions_date ON transactions(date);
-CREATE INDEX idx_transactions_account_date ON transactions(account_id, date);
+CREATE INDEX IF NOT EXISTS idx_transactions_account_id ON transactions(account_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
+CREATE INDEX IF NOT EXISTS idx_transactions_account_date ON transactions(account_id, date);
 
 -- Cursor for incremental Plaid transaction sync
 ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS transactions_cursor TEXT DEFAULT '';
