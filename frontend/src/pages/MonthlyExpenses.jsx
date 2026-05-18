@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, Info, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
 import { expenses as expensesAPI, analytics } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
-import MetricCard from '../components/MetricCard';
 
 const Badge = ({ active, children }) => (
   <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase ${
@@ -205,65 +204,54 @@ const MonthlyExpenses = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Filters */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="card overflow-hidden">
-            <div className="p-4 border-b border-border bg-surface-2/50">
-              <div className="flex items-center gap-2">
-                <Receipt size={16} className="text-accent" />
-                <span className="text-sm font-bold uppercase tracking-widest text-primary">Categories</span>
-              </div>
-            </div>
-
-            <div className="p-4 space-y-2">
-              {[
-                { key: 'bill', label: 'Fixed Bills', icon: Receipt, count: billCount, total: totalBills },
-                { key: 'subscription', label: 'Subscriptions', icon: CreditCard, count: subCount, total: totalSubs },
-                { key: 'detected', label: 'Detected', icon: Search, count: filteredDetected.length, total: null },
-              ].map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
-                    activeTab === tab.key
-                      ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                      : 'bg-surface-2 border-transparent text-secondary hover:border-border'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <tab.icon size={16} />
-                    <div className="text-left">
-                      <p className="text-xs font-bold uppercase tracking-wider">{tab.label}</p>
-                      <p className="text-[10px] opacity-70 font-medium">{tab.count} items</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs font-mono font-bold">{tab.total !== null ? formatCurrency(tab.total) : ''}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
+      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
+        <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2 shrink-0">
+            <Receipt size={16} className="text-accent" />
+            <span className="text-sm font-bold uppercase tracking-widest text-primary">Categories</span>
           </div>
-
-          <div className="card p-4 bg-accent-muted/10 border-accent/10">
-            <h4 className="text-[10px] font-bold text-accent mb-2 uppercase tracking-widest flex items-center gap-2">
-              <Info size={12} />
-              Expense Insight
-            </h4>
-            <p className="text-[11px] text-secondary leading-relaxed">
-              Tracking monthly recurring costs helps identify "leakage" in your budget. Subscriptions often go unnoticed but add up to significant annual burn.
-            </p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { key: 'bill', label: 'Fixed Bills', icon: Receipt, count: billCount, total: totalBills },
+              { key: 'subscription', label: 'Subscriptions', icon: CreditCard, count: subCount, total: totalSubs },
+              { key: 'detected', label: 'Detected', icon: Search, count: filteredDetected.length, total: null },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex min-w-[180px] items-center justify-between gap-4 rounded-xl border px-3 py-2 transition-all ${
+                  activeTab === tab.key
+                    ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <tab.icon size={16} />
+                  <div className="text-left">
+                    <p className="text-xs font-bold uppercase tracking-wider">{tab.label}</p>
+                    <p className="text-[10px] opacity-70 font-medium">{tab.count} items</p>
+                  </div>
+                </div>
+                <p className="text-xs font-mono font-bold">{tab.total !== null ? formatCurrency(tab.total) : ''}</p>
+              </button>
+            ))}
           </div>
         </div>
+      </div>
 
-        {/* Main Content Area */}
-        <div className="lg:col-span-3 space-y-6">
+      <div className="space-y-6">
+          {error && (
+            <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+              <X size={16} />
+              {error}
+            </div>
+          )}
+
           {successMessage && (
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
+            <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
               <Check size={16} />
               {successMessage}
-            </motion.div>
+            </Motion.div>
           )}
           
           {activeTab !== 'detected' ? (
@@ -290,7 +278,7 @@ const MonthlyExpenses = () => {
                         </tr>
                       ) : (
                         filtered.map((exp) => (
-                          <motion.tr
+                          <Motion.tr
                             layout
                             key={exp.id}
                             initial={{ opacity: 0 }}
@@ -323,7 +311,7 @@ const MonthlyExpenses = () => {
                                 </button>
                               </div>
                             </td>
-                          </motion.tr>
+                          </Motion.tr>
                         ))
                       )}
                     </AnimatePresence>
@@ -352,7 +340,7 @@ const MonthlyExpenses = () => {
               ) : (
                 <div className="divide-y divide-border">
                   {filteredDetected.map((sub) => (
-                    <motion.div
+                    <Motion.div
                       key={sub.merchant}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
@@ -376,7 +364,7 @@ const MonthlyExpenses = () => {
                           Track
                         </button>
                       </div>
-                    </motion.div>
+                    </Motion.div>
                   ))}
                 </div>
               )}
@@ -388,15 +376,14 @@ const MonthlyExpenses = () => {
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Recurring liability</span>
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Fixed vs Variable</span>
           </div>
-        </div>
       </div>
 
       {/* Form Modal */}
       <AnimatePresence>
         {isFormOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsFormOpen(false)} />
-            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsFormOpen(false)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
               <div className="p-6 border-b border-border bg-surface-2/50 flex items-center justify-between">
                 <h2 className="text-lg font-bold text-primary">{editingExpense ? 'Modify' : 'Track New'} {formData.type === 'bill' ? 'Bill' : 'Subscription'}</h2>
                 <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
@@ -449,7 +436,7 @@ const MonthlyExpenses = () => {
                   <button type="submit" className="px-8 py-3 bg-accent text-inverse hover:bg-accent-hover rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-glow">Save Entry</button>
                 </div>
               </form>
-            </motion.div>
+            </Motion.div>
           </div>
         )}
       </AnimatePresence>
@@ -458,8 +445,8 @@ const MonthlyExpenses = () => {
       <AnimatePresence>
         {deletingExpense && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeletingExpense(null)} />
-            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-sm w-full p-6 text-center">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeletingExpense(null)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-sm w-full p-6 text-center">
               <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-4">
                 <Trash2 size={24} />
               </div>
@@ -469,7 +456,7 @@ const MonthlyExpenses = () => {
                 <button onClick={() => setDeletingExpense(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
                 <button onClick={handleDeleteConfirm} className="flex-1 py-3 bg-loss text-inverse rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Delete</button>
               </div>
-            </motion.div>
+            </Motion.div>
           </div>
         )}
       </AnimatePresence>

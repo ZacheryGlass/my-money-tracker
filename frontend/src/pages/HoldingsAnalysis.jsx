@@ -11,6 +11,7 @@ import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/cha
 import { formatCurrency, formatCompactCurrency, formatDateAxis, formatPercent } from '../utils/format';
 import { dashboard, history, accounts as accountsApi } from '../utils/api';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import { getAccountDisplayName } from '../utils/accountDisplay';
 
 const VIEWS = [
   { id: 'treemap', label: 'Treemap', icon: Grid3X3 },
@@ -165,7 +166,7 @@ export default function HoldingsAnalysis() {
     if (accountSnaps.length === 0 || accountList.length === 0) return [];
 
     const accountMap = {};
-    for (const a of accountList) accountMap[a.id] = a.name;
+    for (const a of accountList) accountMap[a.id] = getAccountDisplayName(a);
 
     const dateMap = {};
     for (const snap of accountSnaps) {

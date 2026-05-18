@@ -6,11 +6,12 @@ import {
   getPaginationRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Link2, Building2, Wallet, Landmark, CreditCard, ChevronDown, ChevronUp, Filter, Info, Receipt } from 'lucide-react';
+import { AnimatePresence, motion as Motion } from 'framer-motion';
+import { ArrowLeft, Link2, Building2, Wallet, Filter, Receipt, X, Activity } from 'lucide-react';
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
+import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 
 const TYPE_COLORS = {
   investment: 'bg-accent/10 text-accent border-accent/20',
@@ -29,9 +30,12 @@ const TypeBadge = ({ type }) => (
 );
 
 const PlaidBadge = () => (
-  <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
+  <span
+    className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-accent border border-accent/20 shrink-0"
+    title="Plaid-linked account"
+    aria-label="Plaid-linked account"
+  >
     <Link2 size={12} />
-    Plaid
   </span>
 );
 
@@ -42,9 +46,8 @@ const AccountsPage = () => {
   const [error, setError] = useState(null);
   const [typeFilter, setTypeFilterRaw] = useState('');
   const setTypeFilter = (v) => { setTypeFilterRaw(v); setPagination(prev => ({ ...prev, pageIndex: 0 })); };
-  const [sorting, setSorting] = useState([]);
+  const [sorting, setSorting] = useState([{ id: 'total_value', desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [accountHistory, setAccountHistory] = useState([]);
@@ -131,9 +134,9 @@ const AccountsPage = () => {
   }, [accounts]);
 
   const filteredAccounts = useMemo(() => {
-    if (!typeFilter) return accounts;
-    return accounts.filter((a) => a.type === typeFilter);
-  }, [accounts, typeFilter]);
+    const filtered = typeFilter ? accounts.filter((a) => a.type === typeFilter) : accounts;
+    return [...filtered].sort((a, b) => (accountTotals.get(b.id) || 0) - (accountTotals.get(a.id) || 0));
+  }, [accounts, accountTotals, typeFilter]);
 
   const grandTotal = useMemo(() => {
     return holdings.reduce((sum, h) => sum + (parseFloat(h.current_value) || 0), 0);
@@ -161,11 +164,17 @@ const AccountsPage = () => {
   const listColumns = useMemo(
     () => [
       {
-        accessorKey: 'name',
+        id: 'name',
+        accessorFn: (row) => getAccountDisplayName(row),
         header: 'Name',
         cell: ({ row }) => (
-          <div className="flex items-center gap-3">
-            <span className="font-bold text-primary text-base">{row.original.name}</span>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="min-w-0">
+              <span className="font-bold text-primary text-base truncate block">{getAccountDisplayName(row.original)}</span>
+              {hasAccountDisplayName(row.original) && (
+                <span className="text-[10px] text-tertiary truncate block uppercase tracking-tight">{row.original.name}</span>
+              )}
+            </div>
             {row.original.plaid_item_id && <PlaidBadge />}
           </div>
         ),
@@ -394,7 +403,7 @@ const AccountsPage = () => {
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className="px-5 py-5 text-left text-xs font-bold text-tertiary uppercase tracking-widest cursor-pointer hover:bg-surface-3 transition-colors"
+                    className="px-5 py-5 text-left text-sm font-bold text-tertiary uppercase tracking-widest cursor-pointer hover:bg-surface-3 transition-colors"
                     onClick={header.column.getToggleSortingHandler()}
                   >
                     <div className="flex items-center gap-2">
@@ -437,7 +446,7 @@ const AccountsPage = () => {
   );
 
   const renderListView = () => (
-    <motion.div key="list" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <Motion.div key="list" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       {/* Hero Section */}
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-6 pt-4">
         <div>
@@ -463,134 +472,102 @@ const AccountsPage = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Filters */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="card overflow-hidden">
-            <button 
-              onClick={() => setFiltersExpanded(!filtersExpanded)}
-              className="w-full flex items-center justify-between p-4 border-b border-border bg-surface-2/50"
-            >
-              <div className="flex items-center gap-2">
-                <Filter size={16} className="text-accent" />
-                <span className="text-sm font-bold uppercase tracking-widest text-primary">Filters</span>
-              </div>
-              {filtersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-
-            <AnimatePresence initial={false}>
-              {filtersExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <div className="p-4 space-y-2">
-                    <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3 px-1">Account Type</p>
-                    <button
-                      onClick={() => setTypeFilter('')}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
-                        typeFilter === ''
-                          ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                          : 'bg-surface-2 border-transparent text-secondary hover:border-border'
-                      }`}
-                    >
-                      <span className="text-xs font-bold uppercase tracking-wider">All Types</span>
-                      <span className="text-[10px] font-mono font-bold opacity-60">{accounts.length}</span>
-                    </button>
-                    {distinctTypes.map((type) => {
-                      const count = accounts.filter(a => a.type === type).length;
-                      return (
-                        <button
-                          key={type}
-                          onClick={() => setTypeFilter(type)}
-                          className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all capitalize ${
-                            typeFilter === type
-                              ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                              : 'bg-surface-2 border-transparent text-secondary hover:border-border'
-                          }`}
-                        >
-                          <span className="text-xs font-bold uppercase tracking-wider">{type}</span>
-                          <span className="text-[10px] font-mono font-bold opacity-60">{count}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <div className="card p-4 bg-accent-muted/10 border-accent/10">
-            <h4 className="text-[10px] font-bold text-accent mb-2 uppercase tracking-widest flex items-center gap-2">
-              <Info size={12} />
-              Account Insight
-            </h4>
-            <p className="text-[11px] text-secondary leading-relaxed">
-              Drill down into individual accounts to see balance history, asset allocation, and recent transaction activity.
-            </p>
-          </div>
+      {error && (
+        <div className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+          <X size={16} />
+          {error}
         </div>
+      )}
 
-        {/* Main Table Area */}
-        <div className="lg:col-span-3">
-          {error && (
-            <div className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
-              <X size={16} />
-              {error}
-            </div>
-          )}
-
-          {renderTable(listTable, listColumns, 'No accounts match the selected filters.', (account) =>
-            setSelectedAccountId(account.id)
-          )}
-
-          {/* Mobile cards */}
-          <div className="md:hidden space-y-3">
-            {filteredAccounts.map((account) => {
-              const total = accountTotals.get(account.id) || 0;
+      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
+        <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2 shrink-0">
+            <Filter size={16} className="text-accent" />
+            <span className="text-sm font-bold uppercase tracking-widest text-primary">Filters</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setTypeFilter('')}
+              className={`flex items-center gap-3 rounded-xl border px-3 py-2 transition-all ${
+                typeFilter === ''
+                  ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                  : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+              }`}
+            >
+              <span className="text-xs font-bold uppercase tracking-wider">All Types</span>
+              <span className="text-[10px] font-mono font-bold opacity-60">{accounts.length}</span>
+            </button>
+            {distinctTypes.map((type) => {
+              const count = accounts.filter(a => a.type === type).length;
               return (
-                <div
-                  key={account.id}
-                  className="card p-4 active:bg-surface-3 cursor-pointer transition-all border border-border/50"
-                  onClick={() => setSelectedAccountId(account.id)}
+                <button
+                  key={type}
+                  onClick={() => setTypeFilter(type)}
+                  className={`flex items-center gap-3 rounded-xl border px-3 py-2 transition-all ${
+                    typeFilter === type
+                      ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                      : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+                  }`}
                 >
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-primary truncate text-base">{account.name}</span>
-                        {account.plaid_item_id && <PlaidBadge />}
-                      </div>
-                      <TypeBadge type={account.type} />
-                    </div>
-                    <div className={`text-lg font-mono font-bold ${total < 0 ? 'text-loss' : 'text-primary'}`}>
-                      {formatCurrency(total)}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 pt-3 border-t border-border/50 text-tertiary">
-                    <span className="text-[10px] font-bold uppercase tracking-widest">{account.holdings_count || 0} Assets</span>
-                    <span className="text-[10px] font-bold uppercase tracking-widest">{account.type}</span>
-                  </div>
-                </div>
+                  <span className="text-xs font-bold uppercase tracking-wider">{type}</span>
+                  <span className="text-[10px] font-mono font-bold opacity-60">{count}</span>
+                </button>
               );
             })}
-            {filteredAccounts.length === 0 && (
-              <div className="p-8 text-center text-secondary text-sm">No accounts found</div>
-            )}
           </div>
-
-          {renderPagination(listTable, filteredAccounts)}
         </div>
       </div>
-    </motion.div>
+
+      {renderTable(listTable, listColumns, 'No accounts match the selected filters.', (account) =>
+        setSelectedAccountId(account.id)
+      )}
+
+      {/* Mobile cards */}
+      <div className="md:hidden space-y-3">
+        {filteredAccounts.map((account) => {
+          const total = accountTotals.get(account.id) || 0;
+          return (
+            <div
+              key={account.id}
+              className="card p-4 active:bg-surface-3 cursor-pointer transition-all border border-border/50"
+              onClick={() => setSelectedAccountId(account.id)}
+            >
+              <div className="flex justify-between items-start mb-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-bold text-primary truncate text-base">{getAccountDisplayName(account)}</span>
+                    {account.plaid_item_id && <PlaidBadge />}
+                  </div>
+                  {hasAccountDisplayName(account) && (
+                    <div className="text-[10px] text-tertiary truncate uppercase tracking-tight mb-1">{account.name}</div>
+                  )}
+                  <TypeBadge type={account.type} />
+                </div>
+                <div className={`text-lg font-mono font-bold ${total < 0 ? 'text-loss' : 'text-primary'}`}>
+                  {formatCurrency(total)}
+                </div>
+              </div>
+              <div className="flex items-center gap-4 pt-3 border-t border-border/50 text-tertiary">
+                <span className="text-[10px] font-bold uppercase tracking-widest">{account.holdings_count || 0} Assets</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest">{account.type}</span>
+              </div>
+            </div>
+          );
+        })}
+        {filteredAccounts.length === 0 && (
+          <div className="p-8 text-center text-secondary text-sm">No accounts found</div>
+        )}
+      </div>
+
+      {renderPagination(listTable, filteredAccounts)}
+    </Motion.div>
   );
 
   const renderDetailView = () => {
     if (!selectedAccount) return null;
 
     return (
-      <motion.div
+      <Motion.div
         key="detail"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -612,8 +589,13 @@ const AccountsPage = () => {
               {selectedAccount.plaid_item_id && <PlaidBadge />}
             </div>
             <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
-              {selectedAccount.name}
+              {getAccountDisplayName(selectedAccount)}
             </h1>
+            {hasAccountDisplayName(selectedAccount) && (
+              <p className="text-xs text-tertiary font-medium uppercase tracking-wider mb-2">
+                Source: {selectedAccount.name}
+              </p>
+            )}
             <p className="text-sm text-secondary font-mono tracking-tight opacity-70">
               Account ID: {selectedAccount.id} • {selectedAccount.type}
             </p>
@@ -764,7 +746,7 @@ const AccountsPage = () => {
             </section>
           </div>
         </div>
-      </motion.div>
+      </Motion.div>
     );
   };
 

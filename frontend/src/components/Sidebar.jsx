@@ -194,15 +194,15 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
         <button
           onClick={onLogout}
           className={`
-            flex items-center gap-4 w-full rounded-xl px-3 py-3 mt-2 text-left text-secondary
-            hover:bg-loss/10 hover:text-loss transition-all duration-200 group
+            flex items-center gap-4 w-full rounded-xl px-3 py-3 mt-2 text-left
+            hover:bg-loss/10 transition-all duration-200 group
             ${(!showExpanded && !isMobile) ? 'justify-center' : ''}
           `}
           title={(!showExpanded && !isMobile) ? 'Logout' : undefined}
         >
-          <LogOut size={22} className="group-hover:translate-x-0.5 transition-transform" />
+          <LogOut size={22} className="text-secondary group-hover:text-loss group-hover:translate-x-0.5 transition-all" />
           {(showExpanded || isMobile) && (
-            <span className="text-base font-medium">Logout</span>
+            <span className="text-base font-medium text-secondary group-hover:text-loss transition-colors">Logout</span>
           )}
         </button>
       </div>

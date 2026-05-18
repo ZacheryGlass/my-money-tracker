@@ -7,11 +7,12 @@ import {
   getPaginationRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Wallet, Landmark, Plus, Link2, Filter, ChevronDown, ChevronUp, Info, Check, X } from 'lucide-react';
+import { motion as Motion } from 'framer-motion';
+import { Wallet, Plus, Link2, Filter, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
+import { getAccountDisplayName } from '../utils/accountDisplay';
 
 const CASH_TYPES = new Set(['depository']);
 
@@ -26,7 +27,6 @@ const CashPage = () => {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState(null);
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   useEffect(() => {
     fetchData();
@@ -202,79 +202,55 @@ const CashPage = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Filters */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="card overflow-hidden">
-            <button 
-              onClick={() => setFiltersExpanded(!filtersExpanded)}
-              className="w-full flex items-center justify-between p-4 border-b border-border bg-surface-2/50"
-            >
-              <div className="flex items-center gap-2">
-                <Filter size={16} className="text-accent" />
-                <span className="text-sm font-bold uppercase tracking-widest text-primary">Accounts</span>
-              </div>
-              {filtersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-
-            <AnimatePresence initial={false}>
-              {filtersExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <div className="p-4 space-y-2">
-                    <button
-                      onClick={() => setAccountFilter('')}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
-                        accountFilter === ''
-                          ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                          : 'bg-surface-2 border-transparent text-secondary hover:border-border'
-                      }`}
-                    >
-                      <span className="text-xs font-bold uppercase tracking-wider">All Accounts</span>
-                      {accountFilter === '' && <Check size={14} />}
-                    </button>
-                    {cashAccounts.map((account) => (
-                      <button
-                        key={account.id}
-                        onClick={() => setAccountFilter(String(account.id))}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
-                          accountFilter === String(account.id)
-                            ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                            : 'bg-surface-2 border-transparent text-secondary hover:border-border'
-                        }`}
-                      >
-                        <span className="text-xs font-bold uppercase tracking-wider truncate mr-2">{account.name}</span>
-                        {accountFilter === String(account.id) && <Check size={14} />}
-                      </button>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
+        <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-2 shrink-0">
+            <Filter size={16} className="text-accent" />
+            <span className="text-sm font-bold uppercase tracking-widest text-primary">Accounts</span>
           </div>
-
-          <div className="card p-4 bg-accent-muted/10 border-accent/10">
-            <h4 className="text-[10px] font-bold text-accent mb-2 uppercase tracking-widest flex items-center gap-2">
-              <Info size={12} />
-              Cash Strategy
-            </h4>
-            <p className="text-[11px] text-secondary leading-relaxed">
-              Depository accounts represent your most liquid assets. Aim for 3-6 months of expenses in highly liquid accounts as an emergency fund.
-            </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setAccountFilter('')}
+              className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all ${
+                accountFilter === ''
+                  ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                  : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+              }`}
+            >
+              <span className="text-xs font-bold uppercase tracking-wider">All Accounts</span>
+              {accountFilter === '' && <Check size={14} />}
+            </button>
+            {cashAccounts.map((account) => (
+              <button
+                key={account.id}
+                onClick={() => setAccountFilter(String(account.id))}
+                className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all ${
+                  accountFilter === String(account.id)
+                    ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+                }`}
+              >
+                <span className="max-w-[220px] truncate text-xs font-bold uppercase tracking-wider">{getAccountDisplayName(account)}</span>
+                {accountFilter === String(account.id) && <Check size={14} />}
+              </button>
+            ))}
           </div>
         </div>
+      </div>
 
-        {/* Main Table Area */}
-        <div className="lg:col-span-3 space-y-6">
+      <div className="space-y-6">
+          {error && (
+            <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+              <X size={16} />
+              {error}
+            </div>
+          )}
+
           {successMessage && (
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
+            <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
               <Check size={16} />
               {successMessage}
-            </motion.div>
+            </Motion.div>
           )}
 
           <div className="card overflow-hidden">
@@ -366,7 +342,6 @@ const CashPage = () => {
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Immediate Access</span>
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Depository Tracking</span>
           </div>
-        </div>
       </div>
 
       <HoldingForm

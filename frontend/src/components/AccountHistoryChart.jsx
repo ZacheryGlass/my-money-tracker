@@ -12,12 +12,11 @@ import { useIsMobile } from '../hooks/useMediaQuery';
 import { formatCurrency, formatDateAxis } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import ChartTooltip from './ChartTooltip';
+import { getAccountDisplayName } from '../utils/accountDisplay';
 
 const PORTFOLIO_COLOR = '#00FFCC'; // Using accent color for portfolio
 
 const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
-  const isMobile = useIsMobile();
-  
   return (
     <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-4 px-4">
       {payload.map((entry, index) => {
@@ -71,7 +70,7 @@ const AccountHistoryChart = ({
 
     const nameMap = {};
     accounts.forEach((acc) => {
-      nameMap[acc.id] = acc.name;
+      nameMap[acc.id] = getAccountDisplayName(acc);
     });
 
     const dateMap = {};

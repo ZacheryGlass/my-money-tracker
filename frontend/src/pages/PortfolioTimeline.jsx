@@ -10,8 +10,7 @@ import {
   ReferenceLine,
   ReferenceDot,
 } from 'recharts';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, Download, TrendingUp, TrendingDown, Filter, ChevronDown, ChevronUp, Clock, Award, Target, Check } from 'lucide-react';
+import { Calendar, Download, TrendingUp, TrendingDown, Filter, Clock, Award, Target, Check } from 'lucide-react';
 import { history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
@@ -76,14 +75,12 @@ const calculateTrendLine = (data) => {
 const PortfolioTimeline = () => {
   const [portfolioData, setPortfolioData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [selectedRange, setSelectedRange] = useState('1Y');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [useCustomRange, setUseCustomRange] = useState(false);
   const [showTrendLine, setShowTrendLine] = useState(true);
   const [showDrawdown, setShowDrawdown] = useState(false);
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   const fetchPortfolioData = useCallback(async () => {
     setLoading(true);
@@ -248,159 +245,114 @@ const PortfolioTimeline = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Sidebar Filters */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="card overflow-hidden">
-            <button 
-              onClick={() => setFiltersExpanded(!filtersExpanded)}
-              className="w-full flex items-center justify-between p-4 border-b border-border bg-surface-2/50"
-            >
-              <div className="flex items-center gap-2">
-                <Filter size={16} className="text-accent" />
-                <span className="text-sm font-bold uppercase tracking-widest text-primary">Controls</span>
-              </div>
-              {filtersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-
-            <AnimatePresence initial={false}>
-              {filtersExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <div className="p-4 space-y-6">
-                    {/* Metrics Overview in Sidebar */}
-                    <div className="space-y-4">
-                      <div className="p-3 bg-surface-3 rounded-xl border border-border">
-                        <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Current Value</p>
-                        <p className="text-lg font-mono font-bold text-primary">{formatCurrency(metrics.currentValue)}</p>
-                      </div>
-                      <div className="p-3 bg-surface-3 rounded-xl border border-border">
-                        <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period Growth</p>
-                        <div className="flex items-end gap-2">
-                          <p className={`text-lg font-mono font-bold ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
-                            {formatCurrency(metrics.totalGrowth)}
-                          </p>
-                          <p className={`text-xs font-mono font-bold mb-1 ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>
-                            {formatPercent(metrics.percentChange)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Options */}
-                    <div>
-                      <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3">Display Options</p>
-                      <button
-                        onClick={() => setShowTrendLine(!showTrendLine)}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
-                          showTrendLine
-                            ? 'bg-accent/10 border-accent/30 text-accent'
-                            : 'bg-surface-2 border-transparent text-secondary hover:border-border'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <TrendingUp size={14} />
-                          <span className="text-xs font-bold uppercase tracking-wider">Trend Line</span>
-                        </div>
-                        {showTrendLine && <Check size={14} />}
-                      </button>
-                      <button
-                        onClick={() => setShowDrawdown(!showDrawdown)}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all mt-2 ${
-                          showDrawdown
-                            ? 'bg-loss/10 border-loss/30 text-loss'
-                            : 'bg-surface-2 border-transparent text-secondary hover:border-border'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <TrendingDown size={14} />
-                          <span className="text-xs font-bold uppercase tracking-wider">Drawdown</span>
-                        </div>
-                        {showDrawdown && <Check size={14} />}
-                      </button>
-                    </div>
-
-                    {/* Custom Range */}
-                    <div className="pt-4 border-t border-border">
-                      <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3">Custom Range</p>
-                      <div className="space-y-3">
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest px-1">Start</label>
-                          <div className="relative">
-                            <input
-                              type="date"
-                              value={customStartDate}
-                              onChange={(e) => setCustomStartDate(e.target.value)}
-                              className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
-                            />
-                            <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
-                          </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest px-1">End</label>
-                          <div className="relative">
-                            <input
-                              type="date"
-                              value={customEndDate}
-                              onChange={(e) => setCustomEndDate(e.target.value)}
-                              className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
-                            />
-                            <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
-                          </div>
-                        </div>
-                        <button
-                          onClick={handleCustomRangeApply}
-                          disabled={!customStartDate || !customEndDate}
-                          className="w-full py-2 bg-surface-3 border border-border text-tertiary rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-accent hover:text-inverse hover:border-accent disabled:opacity-30 transition-all"
-                        >
-                          Apply Custom
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          
-          <div className="card p-4 bg-accent-muted/10 border-accent/10">
-            <h4 className="text-[10px] font-bold text-accent mb-2 uppercase tracking-widest">Milestones</h4>
-            <div className="space-y-3">
-              <div className="flex items-start gap-3">
-                <Award size={14} className="text-gain mt-0.5" />
-                <div>
-                  <p className="text-[10px] font-bold text-primary uppercase">All-Time High</p>
-                  <p className="text-xs font-mono font-bold text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
-                  <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <Target size={14} className="text-loss mt-0.5" />
-                <div>
-                  <p className="text-[10px] font-bold text-primary uppercase">All-Time Low</p>
-                  <p className="text-xs font-mono font-bold text-loss">{formatCurrency(metrics.allTimeLow)}</p>
-                  <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>
-                </div>
-              </div>
-              {showDrawdown && (
-                <div className="flex items-start gap-3">
-                  <TrendingDown size={14} className="text-loss mt-0.5" />
-                  <div>
-                    <p className="text-[10px] font-bold text-primary uppercase">Max Drawdown</p>
-                    <p className="text-xs font-mono font-bold text-loss">{formatPercent(maxDrawdownValue, 1)}</p>
-                  </div>
-                </div>
-              )}
+      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
+        <div className="space-y-4 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2 shrink-0">
+              <Filter size={16} className="text-accent" />
+              <span className="text-sm font-bold uppercase tracking-widest text-primary">Controls</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setShowTrendLine(!showTrendLine)}
+                className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all ${
+                  showTrendLine
+                    ? 'bg-accent/10 border-accent/30 text-accent'
+                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+                }`}
+              >
+                <TrendingUp size={14} />
+                <span className="text-xs font-bold uppercase tracking-wider">Trend Line</span>
+                {showTrendLine && <Check size={14} />}
+              </button>
+              <button
+                onClick={() => setShowDrawdown(!showDrawdown)}
+                className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all ${
+                  showDrawdown
+                    ? 'bg-loss/10 border-loss/30 text-loss'
+                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+                }`}
+              >
+                <TrendingDown size={14} />
+                <span className="text-xs font-bold uppercase tracking-wider">Drawdown</span>
+                {showDrawdown && <Check size={14} />}
+              </button>
             </div>
           </div>
-        </div>
 
-        {/* Main Chart Area */}
-        <div className="lg:col-span-3 space-y-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border border-border bg-surface-3 p-3">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Current Value</p>
+              <p className="text-lg font-mono font-bold text-primary">{formatCurrency(metrics.currentValue)}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-surface-3 p-3">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period Growth</p>
+              <div className="flex items-end gap-2">
+                <p className={`text-lg font-mono font-bold ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
+                  {formatCurrency(metrics.totalGrowth)}
+                </p>
+                <p className={`text-xs font-mono font-bold mb-1 ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>
+                  {formatPercent(metrics.percentChange)}
+                </p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-surface-3 p-3">
+              <div className="mb-1 flex items-center gap-2">
+                <Award size={14} className="text-gain" />
+                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">All-Time High</p>
+              </div>
+              <p className="text-sm font-mono font-bold text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
+              <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-surface-3 p-3">
+              <div className="mb-1 flex items-center gap-2">
+                <Target size={14} className="text-loss" />
+                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">{showDrawdown ? 'Max Drawdown' : 'All-Time Low'}</p>
+              </div>
+              <p className="text-sm font-mono font-bold text-loss">
+                {showDrawdown ? formatPercent(maxDrawdownValue, 1) : formatCurrency(metrics.allTimeLow)}
+              </p>
+              {!showDrawdown && <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 border-t border-border pt-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest px-1">Custom Start</label>
+              <div className="relative">
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                />
+                <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest px-1">Custom End</label>
+              <div className="relative">
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                />
+                <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+              </div>
+            </div>
+            <button
+              onClick={handleCustomRangeApply}
+              disabled={!customStartDate || !customEndDate}
+              className="rounded-xl border border-border bg-surface-3 px-4 py-2 text-xs font-bold uppercase tracking-wider text-tertiary transition-all hover:bg-accent hover:text-inverse hover:border-accent disabled:opacity-30"
+            >
+              Apply Custom
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-6">
           <div className="bg-surface rounded-card border border-border p-4 md:p-6">
             <div className="h-64 md:h-[450px] w-full">
               {portfolioData.length === 0 ? (
@@ -557,7 +509,6 @@ const PortfolioTimeline = () => {
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> High/Low tracking</span>
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Linear regression trend</span>
           </div>
-        </div>
       </div>
     </div>
   );

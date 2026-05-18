@@ -13,6 +13,7 @@ import { formatCurrency, formatCompactCurrency, formatDateDisplay, formatPercent
 import { accounts as accountsApi, transactions as transactionsApi } from '../utils/api';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import useDebouncedValue from '../hooks/useDebouncedValue';
+import { getAccountDisplayName } from '../utils/accountDisplay';
 
 const DATE_RANGES = [
   { id: '30d', label: '30D', days: 30 },
@@ -306,7 +307,7 @@ export default function SpendingExplorer() {
   const accountOptions = useMemo(() => {
     const map = new Map();
     accountList.forEach((account) => {
-      map.set(String(account.id), account.name);
+      map.set(String(account.id), getAccountDisplayName(account));
     });
     rawTransactions.forEach((txn) => {
       if (txn.account_id) {

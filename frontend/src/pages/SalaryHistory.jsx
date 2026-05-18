@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceDot,
 } from 'recharts';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Briefcase, TrendingUp, Plus, Edit2, Trash2, Check, X, Award, Target, Info, Calendar } from 'lucide-react';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { Briefcase, TrendingUp, Plus, Edit2, Trash2, Check, X, Award, Target, Calendar } from 'lucide-react';
 import { salary as salaryAPI } from '../utils/api';
-import { formatCurrency, formatPercent, formatDateDisplay } from '../utils/format';
+import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import ChartTooltip from '../components/ChartTooltip';
 
@@ -167,16 +167,16 @@ const SalaryHistory = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar Filters */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="card p-5 space-y-6">
-            <div className="space-y-1">
+      <div className="space-y-8">
+        {/* Summary Controls */}
+        <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="space-y-1 rounded-xl border border-border bg-surface-3 p-3">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Base Salary</p>
               <p className="text-xl font-mono font-bold text-primary">{current ? formatCurrency(current.salary_amount) : '—'}</p>
             </div>
             
-            <div className="space-y-1 pt-4 border-t border-border">
+            <div className="space-y-1 rounded-xl border border-border bg-surface-3 p-3">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Last Increase</p>
               {lastRaise ? (
                 <div className="flex items-end gap-2">
@@ -188,7 +188,7 @@ const SalaryHistory = () => {
               )}
             </div>
 
-            <div className="space-y-1 pt-4 border-t border-border">
+            <div className="space-y-1 rounded-xl border border-border bg-surface-3 p-3">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Comp Mix</p>
               <div className="space-y-2 mt-2">
                 <div className="flex justify-between items-center text-xs">
@@ -207,7 +207,7 @@ const SalaryHistory = () => {
             </div>
           </div>
 
-          <div className="card p-4 bg-accent-muted/10 border-accent/10">
+          <div className="mt-3 rounded-xl border border-accent/10 bg-accent-muted/10 p-4">
             <h4 className="text-[10px] font-bold text-accent mb-3 uppercase tracking-widest flex items-center gap-2">
               <Award size={12} />
               Peak Compensation
@@ -220,7 +220,21 @@ const SalaryHistory = () => {
         </div>
 
         {/* Main Content Area */}
-        <div className="lg:col-span-3 space-y-8">
+        <div className="space-y-8">
+          {error && (
+            <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+              <X size={16} />
+              {error}
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
+              <Check size={16} />
+              {successMessage}
+            </div>
+          )}
+
           {/* Chart Section */}
           {chartData.length > 1 && (
             <div className="card p-6">
@@ -329,8 +343,8 @@ const SalaryHistory = () => {
       <AnimatePresence>
         {isFormOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsFormOpen(false)} />
-            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsFormOpen(false)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
               <div className="p-6 border-b border-border bg-surface-2/50 flex items-center justify-between">
                 <h2 className="text-lg font-bold text-primary">{editingRecord ? 'Modify' : 'New'} Salary Record</h2>
                 <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
@@ -392,7 +406,7 @@ const SalaryHistory = () => {
                   <button type="submit" className="px-8 py-3 bg-accent text-inverse hover:bg-accent-hover rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-glow">Save Record</button>
                 </div>
               </form>
-            </motion.div>
+            </Motion.div>
           </div>
         )}
       </AnimatePresence>
@@ -401,8 +415,8 @@ const SalaryHistory = () => {
       <AnimatePresence>
         {deletingRecord && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeletingRecord(null)} />
-            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-sm w-full p-6 text-center">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeletingRecord(null)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-sm w-full p-6 text-center">
               <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-4">
                 <Trash2 size={24} />
               </div>
@@ -412,7 +426,7 @@ const SalaryHistory = () => {
                 <button onClick={() => setDeletingRecord(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
                 <button onClick={handleDeleteConfirm} className="flex-1 py-3 bg-loss text-inverse rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Delete</button>
               </div>
-            </motion.div>
+            </Motion.div>
           </div>
         )}
       </AnimatePresence>

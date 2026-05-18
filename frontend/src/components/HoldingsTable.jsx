@@ -11,6 +11,7 @@ import { Link2 } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
+import { getAccountDisplayName } from '../utils/accountDisplay';
 
 const ASSET_TYPES = new Set(['investment', 'crypto', 'property', 'other']);
 
@@ -177,7 +178,7 @@ const HoldingsTable = ({ pageFilter }) => {
         },
       },
     ],
-    [accounts]
+    []
   );
 
   const filteredData = useMemo(() => {
@@ -301,7 +302,7 @@ const HoldingsTable = ({ pageFilter }) => {
                     : 'bg-surface-3 text-secondary border border-border hover:text-primary'
                 }`}
               >
-                {account.name}
+                {getAccountDisplayName(account)}
               </button>
             ))}
           </div>
@@ -405,7 +406,7 @@ const HoldingsTable = ({ pageFilter }) => {
                       <div>
                         <span className="text-sm font-semibold text-secondary block mb-0.5">Account</span>
                         <div className="font-medium text-primary truncate">
-                          {account ? account.name : 'Unknown'}
+                          {account ? getAccountDisplayName(account) : 'Unknown'}
                         </div>
                       </div>
                       {row.original.category && (

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect, useMemo } from 'react';
+import { motion as Motion } from 'framer-motion';
 import { subDays, subMonths, subYears, format } from 'date-fns';
-import { TrendingUp, Filter, ChevronDown, ChevronUp, Check, X, Calendar, Search } from 'lucide-react';
+import { TrendingUp, Filter, Check, X, Calendar, Search } from 'lucide-react';
 import { holdings as holdingsAPI, history as historyAPI } from '../utils/api';
 import TickerHistoryChart from '../components/TickerHistoryChart';
 
@@ -26,7 +26,6 @@ const TickerHistory = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
   const availableTickers = useMemo(() => {
@@ -164,150 +163,113 @@ const TickerHistory = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Sidebar Filters */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="card overflow-hidden">
-            <button 
-              onClick={() => setFiltersExpanded(!filtersExpanded)}
-              className="w-full flex items-center justify-between p-4 border-b border-border bg-surface-2/50"
-            >
-              <div className="flex items-center gap-2">
-                <Filter size={16} className="text-accent" />
-                <span className="text-sm font-bold uppercase tracking-widest text-primary">Tickers</span>
-              </div>
-              {filtersExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-
-            <AnimatePresence initial={false}>
-              {filtersExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <div className="p-4 space-y-4">
-                    {/* Search & Select All */}
-                    <div className="flex flex-col gap-3">
-                      <div className="relative">
-                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary" />
-                        <input
-                          type="text"
-                          placeholder="Search tickers..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="w-full bg-surface-3 border-border rounded-lg pl-9 pr-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
-                        />
-                      </div>
-                      
-                      <button
-                        onClick={handleSelectAll}
-                        className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg border transition-all text-[10px] font-bold uppercase tracking-wider ${
-                          selectedTickers.length === availableTickers.length && availableTickers.length > 0
-                            ? 'bg-accent/10 border-accent/50 text-accent' 
-                            : 'bg-surface-3 border-border text-secondary hover:border-border-hover'
-                        }`}
-                      >
-                        {selectedTickers.length === availableTickers.length ? <Check size={12} /> : null}
-                        {selectedTickers.length === availableTickers.length ? 'Deselect All' : 'Select All'}
-                      </button>
-                    </div>
-
-                    {/* Ticker Grid */}
-                    <div className="grid grid-cols-1 gap-1.5 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                      {filteredTickers.map((ticker) => {
-                        const isSelected = selectedTickers.includes(ticker);
-                        return (
-                          <button
-                            key={ticker}
-                            onClick={() => handleTickerToggle(ticker)}
-                            className={`flex items-center justify-between p-2.5 rounded-xl border transition-all text-left ${
-                              isSelected
-                                ? 'bg-surface-3 border-accent/30 ring-1 ring-accent/10'
-                                : 'bg-surface-2 border-transparent hover:border-border opacity-60'
-                            }`}
-                          >
-                            <span className={`text-xs font-bold ${isSelected ? 'text-primary' : 'text-tertiary'}`}>
-                              {ticker}
-                            </span>
-                            {isSelected && <Check size={12} className="text-accent" />}
-                          </button>
-                        );
-                      })}
-                      {filteredTickers.length === 0 && (
-                        <p className="text-[10px] text-tertiary text-center py-4">No tickers found</p>
-                      )}
-                    </div>
-
-                    {/* Custom Date Inputs */}
-                    {dateRangeOption === 'custom' && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="space-y-3 pt-4 border-t border-border"
-                      >
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Start Date</label>
-                          <div className="relative">
-                            <input
-                              type="date"
-                              value={startDate}
-                              onChange={(e) => setStartDate(e.target.value)}
-                              className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
-                            />
-                            <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
-                          </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest">End Date</label>
-                          <div className="relative">
-                            <input
-                              type="date"
-                              value={endDate}
-                              onChange={(e) => setEndDate(e.target.value)}
-                              className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
-                            />
-                            <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          
-          <div className="hidden lg:block card p-4 bg-accent-muted/10 border-accent/10">
-            <h4 className="text-[10px] font-bold text-accent mb-2 uppercase tracking-widest">Performance Comparison</h4>
-            <p className="text-[11px] text-secondary leading-relaxed">
-              Select multiple tickers to compare their price trajectories. Use the interactive legend on the chart to temporarily focus on specific assets.
-            </p>
-          </div>
-        </div>
-
-        {/* Main Chart Area */}
-        <div className="lg:col-span-3">
-          {error && (
-            <div className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
-              <X size={16} />
-              {error}
+      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
+        <div className="space-y-4 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2 shrink-0">
+              <Filter size={16} className="text-accent" />
+              <span className="text-sm font-bold uppercase tracking-widest text-primary">Tickers</span>
             </div>
-          )}
-
-          <TickerHistoryChart
-            data={historyData}
-            tickers={selectedTickers}
-            loading={loading}
-          />
-          
-          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-2 text-[10px] text-tertiary uppercase tracking-widest">
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" /> Interactive Toggles</span>
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Multi-series Support</span>
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Time-series Analysis</span>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative min-w-[220px]">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary" />
+                <input
+                  type="text"
+                  placeholder="Search tickers..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-surface-3 border-border rounded-lg pl-9 pr-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                />
+              </div>
+              <button
+                onClick={handleSelectAll}
+                className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2 transition-all text-[10px] font-bold uppercase tracking-wider ${
+                  selectedTickers.length === availableTickers.length && availableTickers.length > 0
+                    ? 'bg-accent/10 border-accent/50 text-accent'
+                    : 'bg-surface-2 border-transparent text-secondary hover:border-border-hover hover:text-primary'
+                }`}
+              >
+                {selectedTickers.length === availableTickers.length && <Check size={12} />}
+                {selectedTickers.length === availableTickers.length ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
           </div>
+
+          <div className="flex max-h-48 flex-wrap gap-2 overflow-y-auto pr-2 custom-scrollbar">
+            {filteredTickers.map((ticker) => {
+              const isSelected = selectedTickers.includes(ticker);
+              return (
+                <button
+                  key={ticker}
+                  onClick={() => handleTickerToggle(ticker)}
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all text-left ${
+                    isSelected
+                      ? 'bg-surface-3 border-accent/30 text-primary ring-1 ring-accent/10'
+                      : 'bg-surface-2 border-transparent text-tertiary hover:border-border hover:text-secondary'
+                  }`}
+                >
+                  <span className="text-xs font-bold">{ticker}</span>
+                  {isSelected && <Check size={12} className="text-accent" />}
+                </button>
+              );
+            })}
+            {filteredTickers.length === 0 && (
+              <p className="text-[10px] text-tertiary py-2">No tickers found</p>
+            )}
+          </div>
+
+          {dateRangeOption === 'custom' && (
+            <Motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-2"
+            >
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Start Date</label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                  />
+                  <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest">End Date</label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
+                  />
+                  <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
+                </div>
+              </div>
+            </Motion.div>
+          )}
         </div>
+      </div>
+
+      {error && (
+        <div className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+          <X size={16} />
+          {error}
+        </div>
+      )}
+
+      <TickerHistoryChart
+        data={historyData}
+        tickers={selectedTickers}
+        loading={loading}
+      />
+
+      <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-2 text-[10px] text-tertiary uppercase tracking-widest">
+        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" /> Interactive Toggles</span>
+        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Multi-series Support</span>
+        <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Time-series Analysis</span>
       </div>
     </div>
   );

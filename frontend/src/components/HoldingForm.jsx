@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getAccountDisplayName } from '../utils/accountDisplay';
 
 const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) => {
   const [formData, setFormData] = useState({
@@ -132,7 +133,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
                   <option value="">Select an account</option>
                   {accounts.map((account) => (
                     <option key={account.id} value={account.id}>
-                      {account.name}
+                      {getAccountDisplayName(account)}
                     </option>
                   ))}
                 </select>
