@@ -42,7 +42,7 @@ function PlaidLinkButton({ onSuccess, disabled }) {
     <button
       onClick={fetchLinkToken}
       disabled={disabled || loading}
-      className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow disabled:opacity-50"
+      className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-lg text-sm font-bold transition-all shadow-glow disabled:opacity-50"
     >
       {loading ? (
         <RefreshCw size={18} className="animate-spin" />
@@ -625,13 +625,13 @@ const Settings = () => {
               <div className="p-8 pt-0 flex gap-3">
                 <button
                   onClick={() => setDisconnectingItem(null)}
-                  className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded-2xl text-xs font-bold uppercase tracking-wider transition-all"
+                  className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded-lg text-xs font-bold uppercase tracking-wider transition-all"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleDisconnectConfirm}
-                  className="flex-1 py-4 bg-loss text-inverse rounded-2xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all shadow-glow-sm"
+                  className="flex-1 py-4 bg-loss text-inverse rounded-lg text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all shadow-glow-sm"
                 >
                   Confirm Disconnect
                 </button>

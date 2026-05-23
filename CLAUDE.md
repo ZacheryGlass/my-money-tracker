@@ -20,7 +20,7 @@ python scripts/dev.py       # backend :3000, frontend :5173
 
 - **Backend**: Express 5, CommonJS, pino logging, pino-http request IDs, express-rate-limit, node-cron scheduled jobs
 - **Frontend**: React 19, Vite 7, Tailwind CSS 4, Recharts (all charts), TanStack Table, React.lazy code splitting
-- **Design**: "Dark Terminal Luxe" — CSS custom properties in `index.css`, mapped to Tailwind via `tailwind.config.js`. DM Sans (UI) + IBM Plex Mono (financial numbers). Accent: #00D4AA
+- **Design**: "Dark Terminal Luxe" — CSS custom properties in `index.css`, mapped to Tailwind via `tailwind.config.js`. DM Sans (UI) + IBM Plex Mono (financial numbers). Accent: #00FFCC. See `DESIGN.md` for full design spec.
 - **Layout**: Sidebar navigation (not top nav), state-based routing (no React Router in production)
 
 ## Project Structure

@@ -136,7 +136,7 @@ const CashPage = () => {
         header: 'Balance',
         cell: ({ getValue }) => {
           const v = parseFloat(getValue()) || 0;
-          return <span className="font-mono text-sm font-bold text-gain">{formatCurrency(v)}</span>;
+          return <span className="font-money text-sm font-bold text-gain">{formatCurrency(v)}</span>;
         },
       },
       {
@@ -194,7 +194,7 @@ const CashPage = () => {
           </div>
           <button
             onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
+            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-lg text-sm font-bold transition-all shadow-glow"
           >
             <Plus size={18} />
             <span>Add Entry</span>
@@ -324,7 +324,7 @@ const CashPage = () => {
                           <p className="text-sm font-bold text-primary truncate">{row.original.name}</p>
                           <p className="text-[10px] font-bold text-tertiary uppercase tracking-tight">{row.original.account_name}</p>
                         </div>
-                        <p className="text-base font-mono font-bold text-gain">{formatCurrency(value)}</p>
+                        <p className="text-base font-money font-bold text-gain">{formatCurrency(value)}</p>
                       </div>
                       <div className="flex items-center gap-3 pt-2 border-t border-border/50">
                         <span className="text-[9px] font-bold uppercase tracking-widest text-tertiary">{row.original.category || 'Depository'}</span>

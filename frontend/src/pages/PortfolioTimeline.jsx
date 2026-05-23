@@ -283,15 +283,15 @@ const PortfolioTimeline = () => {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-border bg-surface-3 p-3">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Current Value</p>
-              <p className="text-lg font-mono font-bold text-primary">{formatCurrency(metrics.currentValue)}</p>
+              <p className="text-lg font-money font-bold text-primary">{formatCurrency(metrics.currentValue)}</p>
             </div>
             <div className="rounded-xl border border-border bg-surface-3 p-3">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period Growth</p>
               <div className="flex items-end gap-2">
-                <p className={`text-lg font-mono font-bold ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
+                <p className={`text-lg font-money font-bold ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
                   {formatCurrency(metrics.totalGrowth)}
                 </p>
-                <p className={`text-xs font-mono font-bold mb-1 ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>
+                <p className={`text-xs font-money font-bold mb-1 ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>
                   {formatPercent(metrics.percentChange)}
                 </p>
               </div>
@@ -301,7 +301,7 @@ const PortfolioTimeline = () => {
                 <Award size={14} className="text-gain" />
                 <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">All-Time High</p>
               </div>
-              <p className="text-sm font-mono font-bold text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
+              <p className="text-sm font-money font-bold text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
               <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
             </div>
             <div className="rounded-xl border border-border bg-surface-3 p-3">
@@ -309,7 +309,7 @@ const PortfolioTimeline = () => {
                 <Target size={14} className="text-loss" />
                 <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">{showDrawdown ? 'Max Drawdown' : 'All-Time Low'}</p>
               </div>
-              <p className="text-sm font-mono font-bold text-loss">
+              <p className="text-sm font-money font-bold text-loss">
                 {showDrawdown ? formatPercent(maxDrawdownValue, 1) : formatCurrency(metrics.allTimeLow)}
               </p>
               {!showDrawdown && <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>}
@@ -486,16 +486,16 @@ const PortfolioTimeline = () => {
               <div className="card p-4 bg-surface-2/30 border-border/50">
                 <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period Start</p>
                 <p className="text-sm font-bold text-primary">{formatDateDisplay(portfolioData[0].snapshot_date)}</p>
-                <p className="text-xs font-mono text-tertiary mt-1">{formatCurrency(metrics.startValue)}</p>
+                <p className="text-xs font-money text-tertiary mt-1">{formatCurrency(metrics.startValue)}</p>
               </div>
               <div className="card p-4 bg-surface-2/30 border-border/50">
                 <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period End</p>
                 <p className="text-sm font-bold text-primary">{formatDateDisplay(portfolioData[portfolioData.length - 1].snapshot_date)}</p>
-                <p className="text-xs font-mono text-tertiary mt-1">{formatCurrency(metrics.currentValue)}</p>
+                <p className="text-xs font-money text-tertiary mt-1">{formatCurrency(metrics.currentValue)}</p>
               </div>
               <div className="card p-4 bg-surface-2/30 border-border/50">
                 <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Avg Monthly Delta</p>
-                <p className={`text-sm font-bold font-mono ${metrics.avgMonthlyChange >= 0 ? 'text-gain' : 'text-loss'}`}>
+                <p className={`text-sm font-bold font-money ${metrics.avgMonthlyChange >= 0 ? 'text-gain' : 'text-loss'}`}>
                   {formatCurrency(metrics.avgMonthlyChange)}
                 </p>
                 <p className="text-[10px] text-tertiary uppercase mt-1">Growth Velocity</p>

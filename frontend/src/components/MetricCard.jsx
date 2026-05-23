@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown, Minus, ArrowUpRight, ArrowDownRight } from 'l
 const ACCENT_MAP = {
   gain: { border: '#10B981', glow: 'rgba(16, 185, 129, 0.08)' },
   loss: { border: '#F43F5E', glow: 'rgba(244, 63, 94, 0.08)' },
-  primary: { border: '#1E2636', glow: 'transparent' },
+  primary: { border: '#1E293B', glow: 'transparent' },
   accent: { border: '#00FFCC', glow: 'rgba(0, 255, 204, 0.08)' },
 };
 

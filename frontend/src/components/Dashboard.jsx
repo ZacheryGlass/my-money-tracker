@@ -165,7 +165,7 @@ const Dashboard = ({ onNavigate }) => {
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="flex items-center justify-center gap-3 px-8 py-5 bg-surface-2 text-primary border border-border hover:border-accent hover:text-accent rounded-2xl text-base font-bold transition-all disabled:opacity-50 min-h-[64px] shadow-sm group"
+            className="flex items-center justify-center gap-3 px-8 py-5 bg-surface-2 text-primary border border-border hover:border-accent hover:text-accent rounded-lg text-base font-bold transition-all disabled:opacity-50 min-h-[64px] shadow-sm group"
           >
             <RefreshCw size={20} className={`${refreshing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
             {refreshing ? 'Syncing...' : 'Refresh Data'}
@@ -243,7 +243,7 @@ const Dashboard = ({ onNavigate }) => {
                       <div className="text-base font-bold text-primary truncate">
                         {account.name}
                       </div>
-                      <div className="text-sm font-mono font-bold text-secondary mt-0.5">
+                      <div className="text-sm font-money font-bold text-secondary mt-0.5">
                         {formatCompactCurrency(account.value)}
                       </div>
                     </div>
