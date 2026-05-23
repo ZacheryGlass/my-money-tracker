@@ -155,11 +155,11 @@ const SalaryHistory = () => {
         <div className="flex items-center gap-4">
           <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Career Growth</p>
-            <p className="text-lg font-money font-bold text-gain">+{careerGrowth.toFixed(1)}%</p>
+            <p className="text-lg font-mono font-bold text-gain">+{careerGrowth.toFixed(1)}%</p>
           </div>
           <button
             onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-lg text-sm font-bold transition-all shadow-glow"
+            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
           >
             <Plus size={18} />
             <span>Add Record</span>
@@ -173,18 +173,18 @@ const SalaryHistory = () => {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <div className="space-y-1 rounded-xl border border-border bg-surface-3 p-3">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Base Salary</p>
-              <p className="text-xl font-money font-bold text-primary">{current ? formatCurrency(current.salary_amount) : '—'}</p>
+              <p className="text-xl font-mono font-bold text-primary">{current ? formatCurrency(current.salary_amount) : '—'}</p>
             </div>
             
             <div className="space-y-1 rounded-xl border border-border bg-surface-3 p-3">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Last Increase</p>
               {lastRaise ? (
                 <div className="flex items-end gap-2">
-                  <p className="text-xl font-money font-bold text-gain">+{formatCurrency(lastRaise.amount)}</p>
-                  <p className="text-xs font-money font-bold text-gain mb-1">({lastRaise.percent.toFixed(1)}%)</p>
+                  <p className="text-xl font-mono font-bold text-gain">+{formatCurrency(lastRaise.amount)}</p>
+                  <p className="text-xs font-mono font-bold text-gain mb-1">({lastRaise.percent.toFixed(1)}%)</p>
                 </div>
               ) : (
-                <p className="text-xl font-money font-bold text-tertiary">—</p>
+                <p className="text-xl font-mono font-bold text-tertiary">—</p>
               )}
             </div>
 
@@ -213,7 +213,7 @@ const SalaryHistory = () => {
               Peak Compensation
             </h4>
             <div className="space-y-1">
-              <p className="text-lg font-money font-bold text-primary">{peakComp ? formatCurrency(peakComp.totalComp) : '—'}</p>
+              <p className="text-lg font-mono font-bold text-primary">{peakComp ? formatCurrency(peakComp.totalComp) : '—'}</p>
               <p className="text-[10px] text-tertiary font-bold uppercase tracking-tight">{peakComp ? formatDateDisplay(peakComp.date) : 'No data'}</p>
             </div>
           </div>
@@ -303,11 +303,11 @@ const SalaryHistory = () => {
                           <td className="px-5 py-4">
                             <div className="text-sm font-bold text-primary">{r.title}</div>
                           </td>
-                          <td className="px-5 py-4 text-sm font-money text-primary">{formatCurrency(r.salary_amount)}</td>
-                          <td className="px-5 py-4 text-xs font-money text-secondary">
+                          <td className="px-5 py-4 text-sm font-mono text-primary">{formatCurrency(r.salary_amount)}</td>
+                          <td className="px-5 py-4 text-xs font-mono text-secondary">
                             {r.psu > 0 || r.rsu > 0 ? formatCurrency((parseFloat(r.psu) || 0) + (parseFloat(r.rsu) || 0)) : <span className="opacity-30">—</span>}
                           </td>
-                          <td className="px-5 py-4 text-sm font-money font-bold text-accent">{formatCurrency(r.total_comp)}</td>
+                          <td className="px-5 py-4 text-sm font-mono font-bold text-accent">{formatCurrency(r.total_comp)}</td>
                           <td className="px-5 py-4">
                             {r.change_amount ? (
                               <div className="flex flex-col">

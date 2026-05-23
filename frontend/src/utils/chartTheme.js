@@ -1,12 +1,12 @@
 import { createElement } from 'react';
 
 export const CHART_COLORS = [
-  '#00FFCC', '#3B82F6', '#A78BFA', '#F59E0B',
+  '#00D4AA', '#3B82F6', '#A78BFA', '#F59E0B',
   '#EC4899', '#06B6D4', '#F97316', '#84CC16',
 ];
 
 export const GRID_STYLE = {
-  stroke: '#1E293B',
+  stroke: '#1E2636',
   strokeDasharray: '3 3',
 };
 
@@ -14,7 +14,7 @@ export const AXIS_STYLE = {
   stroke: '#525D6E',
   fontSize: 11,
   tickLine: false,
-  axisLine: { stroke: '#1E293B' },
+  axisLine: { stroke: '#1E2636' },
 };
 
 export const TOOLTIP_STYLE = {

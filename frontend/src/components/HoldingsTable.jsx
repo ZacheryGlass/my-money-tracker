@@ -166,7 +166,7 @@ const HoldingsTable = ({ pageFilter }) => {
           if (abs >= 1_000_000) display = `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
           else if (abs >= 1_000) display = `${sign}$${(abs / 1_000).toFixed(1)}k`;
           else display = formatCurrency(v);
-          return <span className="font-money text-lg font-bold text-primary">{display}</span>;
+          return <span className="font-mono text-lg font-semibold text-primary">{display}</span>;
         },
       },
       {
@@ -397,7 +397,7 @@ const HoldingsTable = ({ pageFilter }) => {
                         )}
                       </div>
                       <div className="text-right flex-shrink-0">
-                        <div className="text-xl font-bold font-money text-primary">
+                        <div className="text-xl font-bold font-mono text-primary">
                           {formatCurrency(value)}
                         </div>
                       </div>

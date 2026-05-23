@@ -147,7 +147,7 @@ const LiabilitiesPage = () => {
         header: 'Owed',
         cell: ({ getValue }) => {
           const v = getValue();
-          return <span className="font-money text-sm font-bold text-loss">{formatCurrency(v)}</span>;
+          return <span className="font-mono text-sm font-bold text-loss">{formatCurrency(v)}</span>;
         },
       },
       {
@@ -202,15 +202,15 @@ const LiabilitiesPage = () => {
         <div className="flex items-center gap-4">
           <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Credit Cards</p>
-            <p className="text-lg font-money font-bold text-loss">{formatCurrency(totalCredit)}</p>
+            <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalCredit)}</p>
           </div>
           <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Loans</p>
-            <p className="text-lg font-money font-bold text-loss">{formatCurrency(totalLoans)}</p>
+            <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalLoans)}</p>
           </div>
           <button
             onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-lg text-sm font-bold transition-all shadow-glow"
+            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
           >
             <Plus size={18} />
             <span>Add Entry</span>
@@ -341,7 +341,7 @@ const LiabilitiesPage = () => {
                           <p className="text-sm font-bold text-primary truncate">{row.original.name}</p>
                           <p className="text-[10px] font-bold text-tertiary uppercase tracking-tight">{row.original.account_name}</p>
                         </div>
-                        <p className="text-base font-money font-bold text-loss">{formatCurrency(value)}</p>
+                        <p className="text-base font-mono font-bold text-loss">{formatCurrency(value)}</p>
                       </div>
                       <div className="flex items-center gap-3 pt-2 border-t border-border/50">
                         <span className="text-[9px] font-bold uppercase tracking-widest text-tertiary">{acct?.type === 'credit' ? 'Credit' : 'Loan'}</span>

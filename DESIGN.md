@@ -1,350 +1,431 @@
 ---
 version: alpha
-name: MMT-design
-description: A dark, financially-tuned single-page web application for personal portfolio tracking. The design uses a near-black base surface at `#06080A`, layered card surfaces rising through `#0F1216` and `#161B22`, crisp white primary text (`#FFFFFF`), softened secondary text (`#E2E8F0`), and an electric teal accent system (`#00FFCC`). The UI pairs DM Sans for interface chrome with IBM Plex Mono for financial figures. Cards use generous 16px radii, subtle glow shadows, and gradient overlays. The design language is luxurious and data-dense, optimized for at-a-glance portfolio comprehension rather than utilitarian tooling.
+name: AVE-design
+description: A compact, theme-driven Electron workbench designed for dense, keyboard-first software development. The default dark workbench uses near-black chrome surfaces around `#191A1B`, a darker editor canvas at `#121314`, muted primary foreground text around `#bfbfbf`, secondary descriptive text around `#8C8C8C`, and a restrained blue action/focus system (`#297AA0` / `#3994BC`). The UI uses platform-native system fonts for application chrome and platform-specific monospace fonts for the code editor. Panels are mostly square, divided by 1px borders, with subtle tokenized shadows on title bars, activity bars, tabs, floating widgets, and overlays. The design language is utilitarian, extensible, and optimized for multi-pane developer workflows rather than brand-forward visual expression.
 
 colors:
-  accent: "#00FFCC"
-  accent-hover: "#33FFD6"
-  accent-muted: "rgba(0, 255, 204, 0.1)"
-  accent-subtle: "rgba(0, 255, 204, 0.05)"
-  ink: "#FFFFFF"
-  body: "#E2E8F0"
-  body-muted: "#94A3B8"
-  canvas: "#06080A"
-  surface: "#0F1216"
-  surface-2: "#161B22"
-  surface-3: "#1F242C"
-  overlay: "rgba(0, 0, 0, 0.75)"
-  on-accent: "#06080A"
-  gain: "#10B981"
-  gain-bg: "rgba(16, 185, 129, 0.1)"
-  loss: "#F43F5E"
-  loss-bg: "rgba(244, 63, 94, 0.1)"
-  hairline: "#1E293B"
-  hairline-hover: "#334155"
-  hairline-focus: "#00FFCC"
-  input-bg: "#0D1117"
-  input-border: "#1E293B"
-  glass-bg: "rgba(15, 18, 22, 0.7)"
-  glass-border: "rgba(255, 255, 255, 0.05)"
-  chart-1: "#00FFCC"
-  chart-2: "#3B82F6"
-  chart-3: "#8B5CF6"
-  chart-4: "#F59E0B"
-  chart-5: "#EC4899"
-  chart-6: "#06B6D4"
-  chart-7: "#F97316"
-  chart-8: "#84CC16"
-  tooltip-bg: "#1C2230"
-  tooltip-border: "#2A3347"
-  tooltip-text: "#E8ECF1"
-  tooltip-label: "#8B95A5"
+  primary: "#297AA0"
+  primary-active: "#2B7DA3"
+  ink: "#bfbfbf"
+  body: "#8C8C8C"
+  body-strong: "#ededed"
+  muted: "#8C8C8C"
+  muted-soft: "#555555"
+  hairline: "#2A2B2CFF"
+  hairline-soft: "#2A2B2C"
+  hairline-strong: "#333536"
+  canvas: "#191A1B"
+  canvas-soft: "#121314"
+  surface-card: "#202122"
+  surface-strong: "#242526"
+  on-primary: "#ffffff"
+  accent-focus: "#3994BC"
+  accent-added: "#73c991"
+  accent-syntax-blue: "#79c0ff"
+  accent-modified: "#e5ba7d"
+  accent-success: "#72C892"
+  semantic-error: "#f48771"
+  semantic-success: "#72C892"
 
 typography:
-  display-hero:
-    fontFamily: "'DM Sans', system-ui, -apple-system, sans-serif"
-    fontSize: 3.5rem
-    fontWeight: 800
-    lineHeight: 1
-    letterSpacing: -0.02em
-  display-lg:
-    fontFamily: "'DM Sans', system-ui, -apple-system, sans-serif"
-    fontSize: 1.875rem
-    fontWeight: 700
-    lineHeight: 1.2
-    letterSpacing: -0.01em
-  display-md:
-    fontFamily: "'DM Sans', system-ui, -apple-system, sans-serif"
-    fontSize: 1.25rem
-    fontWeight: 700
+  display-mega:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 26px
+    fontWeight: 600
     lineHeight: 1.3
     letterSpacing: 0
+  display-lg:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 20px
+    fontWeight: 600
+    lineHeight: 1.35
+    letterSpacing: 0
+  display-md:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 16px
+    fontWeight: 600
+    lineHeight: 1.4
+    letterSpacing: 0
+  display-sm:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 14px
+    fontWeight: 600
+    lineHeight: 1.4
+    letterSpacing: 0
   title-md:
-    fontFamily: "'DM Sans', system-ui, -apple-system, sans-serif"
-    fontSize: 1rem
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 13px
+    fontWeight: 600
+    lineHeight: 1.4
+    letterSpacing: 0
+  title-sm:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 12px
     fontWeight: 600
     lineHeight: 1.4
     letterSpacing: 0
   body-md:
-    fontFamily: "'DM Sans', system-ui, -apple-system, sans-serif"
-    fontSize: 0.875rem
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 13px
     fontWeight: 400
-    lineHeight: 1.6
-    letterSpacing: 0.01em
+    lineHeight: 1.4
+    letterSpacing: 0
+  body-tracked:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 13px
+    fontWeight: 400
+    lineHeight: 1.4
+    letterSpacing: 0
   body-sm:
-    fontFamily: "'DM Sans', system-ui, -apple-system, sans-serif"
-    fontSize: 0.75rem
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 12px
     fontWeight: 400
     lineHeight: 1.4
     letterSpacing: 0
-  label:
-    fontFamily: "'DM Sans', system-ui, -apple-system, sans-serif"
-    fontSize: 0.75rem
-    fontWeight: 700
-    lineHeight: 1.4
-    letterSpacing: 0.1em
-    textTransform: uppercase
-  money:
-    fontFamily: "'IBM Plex Mono', monospace"
-    fontSize: clamp(1.75rem, 4vw, 2.5rem)
-    fontWeight: 700
-    lineHeight: 1
-    letterSpacing: -0.02em
-  money-sm:
-    fontFamily: "'IBM Plex Mono', monospace"
-    fontSize: 0.75rem
+  caption:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 11px
     fontWeight: 400
     lineHeight: 1.4
     letterSpacing: 0
-  nav-link:
-    fontFamily: "'DM Sans', system-ui, -apple-system, sans-serif"
-    fontSize: 1rem
+  caption-uppercase:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 11px
     fontWeight: 600
     lineHeight: 1.4
+    letterSpacing: 0.4px
+    textTransform: uppercase
+  code:
+    fontFamily: "Consolas, 'Courier New', monospace"
+    fontSize: 14px
+    fontWeight: 400
+    lineHeight: 1.35
+    letterSpacing: 0
+  button:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 12px
+    fontWeight: 400
+    lineHeight: 16px
+    letterSpacing: 0
+  nav-link:
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif"
+    fontSize: 12px
+    fontWeight: 400
+    lineHeight: 22px
     letterSpacing: 0
 
 rounded:
   none: 0px
-  sm: 4px
-  md: 8px
-  lg: 12px
-  xl: 16px
-  2xl: 24px
+  xs: 2px
+  sm: 3px
+  md: 4px
+  lg: 6px
+  xl: 8px
   pill: 9999px
   full: 9999px
 
 spacing:
+  xxs: 2px
   xs: 4px
-  sm: 8px
+  sm: 6px
+  base: 8px
   md: 12px
-  base: 16px
-  lg: 24px
-  xl: 32px
-  2xl: 48px
-  section: 64px
+  lg: 16px
+  xl: 24px
+  xxl: 32px
+  section: 48px
 
 components:
-  sidebar:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.body}"
+  title-bar:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.muted}"
     typography: "{typography.nav-link}"
-    width: 260px
-    widthCollapsed: 80px
-    borderColor: "{colors.hairline}"
-  sidebar-item:
-    backgroundColor: transparent
-    textColor: "{colors.body}"
+    height: 35px
+  command-bar:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
     typography: "{typography.nav-link}"
-    rounded: "{rounded.lg}"
-    padding: 12px
-  sidebar-item-active:
-    backgroundColor: "{colors.accent-muted}"
-    textColor: "{colors.accent}"
-    accentBorder: "4px solid {colors.accent}"
-  metric-card:
-    backgroundColor: "{colors.surface}"
+    rounded: "{rounded.md}"
+    height: 22px
+    borderColor: "{colors.hairline-strong}"
+  activity-bar:
+    backgroundColor: "{colors.canvas}"
     textColor: "{colors.ink}"
-    typography: "{typography.money}"
-    rounded: "{rounded.xl}"
-    borderColor: "{colors.hairline}"
-    padding: 24px
-  card:
-    backgroundColor: "{colors.surface}"
+    typography: "{typography.caption}"
+    width: 48px
+  side-bar:
+    backgroundColor: "{colors.canvas}"
     textColor: "{colors.ink}"
     typography: "{typography.body-md}"
-    rounded: "{rounded.xl}"
     borderColor: "{colors.hairline}"
-    padding: 24px
-  glass-card:
-    backgroundColor: "{colors.glass-bg}"
-    borderColor: "{colors.glass-border}"
-    rounded: "{rounded.xl}"
-    backdropFilter: "blur(12px)"
-  chart-tooltip:
-    backgroundColor: "{colors.tooltip-bg}"
-    textColor: "{colors.tooltip-text}"
-    labelColor: "{colors.tooltip-label}"
-    borderColor: "{colors.tooltip-border}"
-    rounded: "{rounded.md}"
-    padding: 12px
-  button-primary:
-    backgroundColor: "{colors.accent}"
-    textColor: "{colors.on-accent}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.md}"
-    padding: 8px 16px
-    fontWeight: 500
-  button-primary-hover:
-    backgroundColor: "{colors.accent-hover}"
-    shadow: "0 0 20px rgba(0, 255, 204, 0.15)"
-  button-secondary:
-    backgroundColor: "{colors.surface-2}"
-    textColor: "{colors.body}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.md}"
-    borderColor: "{colors.hairline}"
-  text-input:
-    backgroundColor: "{colors.input-bg}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.md}"
-    borderColor: "{colors.input-border}"
-    padding: 8px 12px
-  table:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.body}"
+  editor-tabs:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.muted}"
     typography: "{typography.body-sm}"
-    headerColor: "{colors.body-muted}"
-    rounded: "{rounded.xl}"
     borderColor: "{colors.hairline}"
-  login-card:
-    backgroundColor: "{colors.surface}"
+  editor-tab-active:
+    backgroundColor: "{colors.canvas-soft}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.xl}"
+    typography: "{typography.body-sm}"
+    borderTopColor: "{colors.primary-active}"
+  editor-pane:
+    backgroundColor: "{colors.canvas-soft}"
+    textColor: "{colors.body-strong}"
+    typography: "{typography.code}"
+    rounded: "{rounded.none}"
+    padding: 0
+  panel:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
     borderColor: "{colors.hairline}"
-    maxWidth: 448px
-  mobile-overlay:
-    backgroundColor: "rgba(0, 0, 0, 0.6)"
-    backdropFilter: "blur(4px)"
+  status-bar:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.muted}"
+    typography: "{typography.body-sm}"
+    height: 22px
+  button-primary:
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.on-primary}"
+    typography: "{typography.button}"
+    rounded: "{rounded.md}"
+    padding: 4px 8px
+    height: auto
+  button-primary-active:
+    backgroundColor: "{colors.primary-active}"
+    textColor: "{colors.on-primary}"
+    rounded: "{rounded.md}"
+  button-secondary:
+    backgroundColor: "transparent"
+    textColor: "{colors.ink}"
+    typography: "{typography.button}"
+    rounded: "{rounded.md}"
+    padding: 4px 8px
+    height: auto
+  button-tertiary-text:
+    backgroundColor: transparent
+    textColor: "{colors.ink}"
+    typography: "{typography.button}"
+  quick-input:
+    backgroundColor: "{colors.surface-card}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.md}"
+    borderColor: "{colors.hairline-strong}"
+  list-row:
+    backgroundColor: transparent
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.none}"
+    padding: 0 8px
+  list-row-active:
+    backgroundColor: "#3994BC26"
+    textColor: "{colors.body-strong}"
+    typography: "{typography.body-md}"
+  context-menu:
+    backgroundColor: "{colors.surface-card}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.none}"
+    borderColor: "{colors.hairline}"
+  notification-toast:
+    backgroundColor: "{colors.surface-card}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.none}"
+    borderColor: "{colors.hairline}"
+  hover-widget:
+    backgroundColor: "{colors.surface-card}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.none}"
+    borderColor: "{colors.hairline}"
+  terminal:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.code}"
+    rounded: "{rounded.none}"
+    padding: 0
+  code-block:
+    backgroundColor: "{colors.surface-strong}"
+    textColor: "{colors.ink}"
+    typography: "{typography.code}"
+    rounded: "{rounded.md}"
+    padding: 8px
+  text-input:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.md}"
+    padding: 4px 6px
+    height: auto
+  badge-pill:
+    backgroundColor: "{colors.primary-active}"
+    textColor: "{colors.on-primary}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.pill}"
+    padding: 2px 6px
+  scm-added:
+    backgroundColor: transparent
+    textColor: "{colors.semantic-success}"
+    typography: "{typography.body-md}"
+  scm-modified:
+    backgroundColor: transparent
+    textColor: "{colors.accent-modified}"
+    typography: "{typography.body-md}"
+  scm-deleted:
+    backgroundColor: transparent
+    textColor: "{colors.semantic-error}"
+    typography: "{typography.body-md}"
+  chat-input:
+    backgroundColor: "{colors.surface-card}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
+    rounded: "{rounded.md}"
+    borderColor: "{colors.hairline-strong}"
+  agents-panel:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-md}"
+    borderColor: "{colors.hairline}"
 ---
 
 ## Overview
 
-My Money Tracker is a personal portfolio dashboard built as a single-page web application. The design is organized around a collapsible sidebar, metric cards, data tables, and interactive charts, all rendered in a dark, financially-tuned aesthetic called **Dark Terminal Luxe**.
+AVE is a compact, theme-driven Electron desktop workbench for automated verification engineering. The design is organized around resizable panes, keyboard-first command access, dense lists, an extensible editor area, and a customizable theme system.
 
-The default palette uses a **near-black base** (`{colors.canvas}` -- #06080A) with layered card surfaces stepping up through `{colors.surface}` (#0F1216), `{colors.surface-2}` (#161B22), and `{colors.surface-3}` (#1F242C). Primary text is crisp white (`{colors.ink}` -- #FFFFFF), secondary text is a warm slate (`{colors.body}` -- #E2E8F0), and tertiary labels use `{colors.body-muted}` (#94A3B8). The accent is an electric teal (`{colors.accent}` -- #00FFCC) used sparingly for active states, focus rings, primary buttons, and chart highlights.
+The default dark workbench uses **near-black application chrome** (`{colors.canvas}` — #191A1B) around a darker editor canvas (`{colors.canvas-soft}` — #121314). Foreground text is intentionally muted, with primary UI text at `{colors.ink}` (#bfbfbf), secondary text at `{colors.body}` / `{colors.muted}` (#8C8C8C), and disabled or placeholder text at `{colors.muted-soft}` (#555555). The primary action color is a restrained blue (`{colors.primary}` — #297AA0), supported by a focus and selection blue around `#3994BC`.
 
-The interface uses two typefaces: **DM Sans** for all UI chrome (navigation, labels, headings, body text) and **IBM Plex Mono** for financial figures (portfolio values, currency amounts, percentages). This pairing creates a clear visual distinction between navigational context and numerical data.
+The application shell uses platform-native system fonts. The editor uses platform-specific monospace defaults. On Windows, the default editor stack is `Consolas, "Courier New", monospace` at 14px. The workbench chrome is significantly smaller and denser than typical web application UI, with 13px default interface text, 12px compact labels, 1px separators, 4px-radius controls, and mostly square panels.
 
-Cards use generous **16px border radii**, subtle 1px borders, and glow shadows on hover. Animations are handled through Framer Motion with spring-based transitions. The overall feel is luxurious and data-dense -- closer to a Bloomberg terminal reimagined with modern web aesthetics than a typical fintech app.
+The strongest visual signature is the **multi-pane workbench architecture**: title bar, command bar, activity bar, side bar, editor tabs, editor groups, bottom panel, auxiliary/chat/agents panels, status bar, quick input, context menus, hover widgets, and integrated terminal. The design language is utilitarian rather than decorative. Visual hierarchy comes from density, layout, borders, tokenized color, compact utility icons, and keyboard interaction.
 
 **Key Characteristics:**
-- Dark-mode-only financial dashboard, single color theme.
-- Near-black base: `{colors.canvas}` (#06080A); card surfaces: `{colors.surface}` (#0F1216).
-- DM Sans for UI text; IBM Plex Mono for monetary values.
-- Electric teal accent (#00FFCC) used for interactive elements and data highlights.
-- 16px card radii, 8px input/button radii, generous padding.
-- Sidebar navigation with collapsible/expanded states and mobile drawer.
-- Semantic gain (#10B981) / loss (#F43F5E) color pair throughout.
-- Framer Motion spring animations for page transitions and card interactions.
-- Recharts-based data visualization with an 8-color chart palette.
+- Theme-driven desktop workbench, not a fixed single-palette application.
+- Dark chrome: `{colors.canvas}` (#191A1B); editor: `{colors.canvas-soft}` (#121314).
+- Compact 13px workbench UI type; 12px title/status/button details.
+- Platform-native shell font; platform-specific monospace editor font.
+- 48px activity bar; 35px custom title bar; 22px status bar.
+- Mostly square panels with 1px borders.
+- Buttons and inputs use 4px radius.
+- Subtle shadows exist on title bars, activity bars, tabs, floating widgets, and overlays.
+- Active states are expressed through borders, underlines, low-alpha fills, and compact accents.
 
 ## Colors
 
-### Accent
-- **Accent Teal** (`{colors.accent}` -- #00FFCC): Primary buttons, active nav items, focus rings, chart primary color, and interactive highlights.
-- **Accent Hover** (`{colors.accent-hover}` -- #33FFD6): Hover state for primary buttons and interactive accents.
-- **Accent Muted** (`{colors.accent-muted}` -- rgba(0, 255, 204, 0.1)): Active nav item backgrounds, subtle tinted fills.
-- **Accent Subtle** (`{colors.accent-subtle}` -- rgba(0, 255, 204, 0.05)): Faint background washes and hover tints.
+### Brand & Accent
+- **Primary Action Blue** (`{colors.primary}` — #297AA0): Primary workbench buttons and prominent plugin/chat/agent actions.
+- **Primary Active / Hover Blue** (`{colors.primary-active}` — #2B7DA3): Hover/active state for primary buttons.
+- **Focus / Selection Blue** (`{colors.accent-focus}` — #3994BC): Focus borders, badges, active panel accents, and selection-tinted surfaces.
 
 ### Surface
-- **Canvas** (`{colors.canvas}` -- #06080A): Page background, login background.
-- **Surface** (`{colors.surface}` -- #0F1216): Cards, sidebar, tables, primary content containers.
-- **Surface 2** (`{colors.surface-2}` -- #161B22): Hover states, icon containers, secondary elevated elements.
-- **Surface 3** (`{colors.surface-3}` -- #1F242C): Tertiary elevation, user avatar backgrounds, collapse toggles.
-- **Overlay** (`{colors.overlay}` -- rgba(0, 0, 0, 0.75)): Modal backdrops, mobile sidebar overlay.
+- **Canvas** (`{colors.canvas}` — #191A1B): Main workbench chrome: title bar, activity bar, side bar, status bar, panel, and terminal background.
+- **Canvas Soft** (`{colors.canvas-soft}` — #121314): Main editor background and active editor tab background.
+- **Surface Card** (`{colors.surface-card}` — #202122): Floating widgets, quick input, notifications, menus, editor widgets, and hover surfaces.
+- **Surface Strong** (`{colors.surface-strong}` — #242526): Line highlights, text block quotes, hover fills, and subtle elevated bands.
+
+### Hairlines
+- **Hairline** (`{colors.hairline}` — #2A2B2CFF): Standard 1px border between workbench parts.
+- **Hairline Soft** (`{colors.hairline-soft}` — #2A2B2C): Subtle separators and menu dividers.
+- **Hairline Strong** (`{colors.hairline-strong}` — #333536): Stronger input, button, command-bar, checkbox, and dropdown borders.
 
 ### Text
-- **Ink** (`{colors.ink}` -- #FFFFFF): Primary text, headings, monetary values.
-- **Body** (`{colors.body}` -- #E2E8F0): Secondary text, nav labels, descriptions.
-- **Body Muted** (`{colors.body-muted}` -- #94A3B8): Tertiary text, timestamps, table headers, placeholder content.
-- **On Accent** (`{colors.on-accent}` -- #06080A): Text on accent-colored buttons and badges.
+- **Ink** (`{colors.ink}` — #bfbfbf): Primary workbench foreground.
+- **Body** (`{colors.body}` — #8C8C8C): Descriptive text, inactive labels, secondary UI copy.
+- **Body Strong** (`{colors.body-strong}` — #ededed): Active list foreground and high-emphasis UI text.
+- **Muted** (`{colors.muted}` — #8C8C8C): Inactive title/status/sidebar/tab text.
+- **Muted Soft** (`{colors.muted-soft}` — #555555): Disabled text and placeholders.
+- **On Primary** (`{colors.on-primary}` — #ffffff): Text on primary blue buttons and badges.
+
+### Accent Slots
+- **Focus Blue** (`{colors.accent-focus}` — #3994BC): Focus rings, badges, active panel accents, and selection states.
+- **Added Green** (`{colors.accent-added}` — #73c991): Added/new-item decorations.
+- **Syntax Blue** (`{colors.accent-syntax-blue}` — #79c0ff): Syntax/support/property accent.
+- **Modified Gold** (`{colors.accent-modified}` — #e5ba7d): Modified and warning decorations.
+- **Success Green** (`{colors.accent-success}` — #72C892): Editor gutter added/success accent.
 
 ### Semantic
-- **Gain** (`{colors.gain}` -- #10B981): Positive returns, upward trends, success states.
-- **Gain Background** (`{colors.gain-bg}` -- rgba(16, 185, 129, 0.1)): Subtle fill behind gain indicators.
-- **Loss** (`{colors.loss}` -- #F43F5E): Negative returns, downward trends, error states, destructive actions.
-- **Loss Background** (`{colors.loss-bg}` -- rgba(244, 63, 94, 0.1)): Subtle fill behind loss indicators, error message backgrounds.
-
-### Borders
-- **Hairline** (`{colors.hairline}` -- #1E293B): Standard card and sidebar borders, grid lines.
-- **Hairline Hover** (`{colors.hairline-hover}` -- #334155): Hover-state borders, scrollbar thumb hover.
-- **Hairline Focus** (`{colors.hairline-focus}` -- #00FFCC): Focus ring color for inputs and interactive elements.
-
-### Glass
-- **Glass Background** (`{colors.glass-bg}` -- rgba(15, 18, 22, 0.7)): Frosted glass card background.
-- **Glass Border** (`{colors.glass-border}` -- rgba(255, 255, 255, 0.05)): Subtle white border for glass surfaces.
-
-### Chart Palette
-An 8-color sequence for multi-series charts and allocation donuts:
-1. `{colors.chart-1}` (#00FFCC) -- Teal (primary)
-2. `{colors.chart-2}` (#3B82F6) -- Blue
-3. `{colors.chart-3}` (#8B5CF6) -- Purple
-4. `{colors.chart-4}` (#F59E0B) -- Amber
-5. `{colors.chart-5}` (#EC4899) -- Pink
-6. `{colors.chart-6}` (#06B6D4) -- Cyan
-7. `{colors.chart-7}` (#F97316) -- Orange
-8. `{colors.chart-8}` (#84CC16) -- Lime
+- **Success** (`{colors.semantic-success}` — #72C892): Added/success indicators.
+- **Error** (`{colors.semantic-error}` — #f48771): Error text, deleted decorations, notification error icons, validation errors.
 
 ## Typography
 
-### Font Families
-- **UI Chrome:** `'DM Sans', system-ui, -apple-system, sans-serif` -- All navigation, headings, labels, body text, and buttons.
-- **Financial Figures:** `'IBM Plex Mono', monospace` -- Portfolio values, currency amounts, percentages, and numerical table data. Applied via the `.font-money` utility class.
+### Font Family
+The workbench UI uses platform-specific system fonts, not a custom brand typeface.
+
+- macOS: `-apple-system, BlinkMacSystemFont, sans-serif`
+- Windows: `"Segoe WPC", "Segoe UI", sans-serif`
+- Linux: `system-ui, "Ubuntu", "Droid Sans", sans-serif`
+
+Code editor defaults are platform-specific:
+
+- Windows: `Consolas, "Courier New", monospace`
+- macOS: `Menlo, Monaco, "Courier New", monospace`
+- Linux: `"Droid Sans Mono", monospace`
 
 ### Hierarchy
 
 | Token | Size | Weight | Line Height | Letter Spacing | Use |
 |---|---|---|---|---|---|
-| `{typography.display-hero}` | 3.5rem | 800 | 1 | -0.02em | Hero portfolio value on dashboard; rare |
-| `{typography.display-lg}` | 1.875rem | 700 | 1.2 | -0.01em | Page headings, login title |
-| `{typography.display-md}` | 1.25rem | 700 | 1.3 | 0 | Section headings, card group titles |
-| `{typography.title-md}` | 1rem | 600 | 1.4 | 0 | Sidebar nav items, form section titles |
-| `{typography.body-md}` | 0.875rem | 400 | 1.6 | 0.01em | Default body text, descriptions, form labels |
-| `{typography.body-sm}` | 0.75rem | 400 | 1.4 | 0 | Table cells, timestamps, compact metadata |
-| `{typography.label}` | 0.75rem | 700 | 1.4 | 0.1em | Metric card labels, section dividers (uppercase) |
-| `{typography.money}` | clamp(1.75rem, 4vw, 2.5rem) | 700 | 1 | -0.02em | Primary financial figures in metric cards |
-| `{typography.money-sm}` | 0.75rem | 400 | 1.4 | 0 | Inline monetary values, chart tooltips, table figures |
-| `{typography.nav-link}` | 1rem | 600 | 1.4 | 0 | Sidebar navigation items |
+| `{typography.display-mega}` | 26px | 600 | 1.3 | 0 | Empty-state or welcome headline; rare |
+| `{typography.display-lg}` | 20px | 600 | 1.35 | 0 | Settings/editor page heading; rare |
+| `{typography.display-md}` | 16px | 600 | 1.4 | 0 | Section heading |
+| `{typography.display-sm}` | 14px | 600 | 1.4 | 0 | Panel group title |
+| `{typography.title-md}` | 13px | 600 | 1.4 | 0 | Sidebar titles, view headers |
+| `{typography.title-sm}` | 12px | 600 | 1.4 | 0 | Compact labels, tab/sidebar emphasis |
+| `{typography.body-md}` | 13px | 400 | 1.4 | 0 | Default workbench UI |
+| `{typography.body-tracked}` | 13px | 400 | 1.4 | 0 | Same as body; no special tracking |
+| `{typography.body-sm}` | 12px | 400 | 1.4 | 0 | Status bar, title bar, compact metadata |
+| `{typography.caption}` | 11px | 400 | 1.4 | 0 | Small captions, compact helper text |
+| `{typography.caption-uppercase}` | 11px | 600 | 1.4 | 0.4px | Section labels only when explicitly styled |
+| `{typography.code}` | 14px | 400 | 1.35 | 0 | Code editor on Windows/Linux; 12px on macOS |
+| `{typography.button}` | 12px | 400 | 16px | 0 | Text buttons |
+| `{typography.nav-link}` | 12px | 400 | 22px | 0 | Title bar, command bar, menu items |
 
 ### Principles
-- **Two-typeface system.** DM Sans for reading; IBM Plex Mono for scanning numbers. Never mix.
-- **Financial figures use the `.font-money` class.** This applies IBM Plex Mono with tight negative letter-spacing.
-- **Labels are uppercase.** Metric card labels, section dividers, and sidebar section headers use `{typography.label}` -- 12px, bold, 0.1em tracking, uppercase.
-- **Base font size is 110%.** Set on `<html>` to improve readability at standard viewing distances.
-- **Body line-height is 1.6.** More generous than typical dense UIs, optimized for the dashboard's card-based layout.
+- **Workbench UI is dense.** Default shell text is 13px, not 16px.
+- **Large display type is rare.** It appears mainly in welcome, onboarding, empty-state, or settings-style surfaces.
+- **No negative tracking.** The typography is utilitarian and system-native.
+- **Editor typography is separate from workbench typography.**
+- **Compact utility icons are central.** Workbench icons are generally 16px glyphs.
+
+### Note on Font Substitutes
+For accuracy, use OS-native UI fonts for chrome and a familiar monospace stack for editor surfaces. A custom sans-serif can be used in a derivative product, but it will reduce the native desktop feel.
 
 ## Layout
 
 ### Spacing System
-- **Base unit:** 4px increments, with 8px as the most common internal padding unit.
-- **Tokens:** `{spacing.xs}` 4px, `{spacing.sm}` 8px, `{spacing.md}` 12px, `{spacing.base}` 16px, `{spacing.lg}` 24px, `{spacing.xl}` 32px, `{spacing.2xl}` 48px, `{spacing.section}` 64px.
-- **Card padding:** 24px (`{spacing.lg}`) is standard for metric cards and content cards.
-- **Component gaps:** 6px between nav items; 16-24px between card grid items.
+- **Base unit:** 4px in controls; many workbench layouts use 2px, 4px, 6px, and 8px increments.
+- **Tokens:** `{spacing.xxs}` 2px · `{spacing.xs}` 4px · `{spacing.sm}` 6px · `{spacing.base}` 8px · `{spacing.md}` 12px · `{spacing.lg}` 16px · `{spacing.xl}` 24px · `{spacing.xxl}` 32px · `{spacing.section}` 48px.
+- **Section padding:** Not a primary desktop-workbench concept. Use 8–16px inside panels, 24–48px only for welcome/settings pages.
 
 ### Grid & Container
-- The shell is a horizontal flex layout: sticky sidebar + scrollable main content area.
-- Sidebar default width is 260px expanded, 80px collapsed (icon-only mode).
-- Mobile sidebar is a 280px overlay drawer with backdrop blur.
-- Main content uses responsive CSS grid: 1 column on mobile, 2-4 columns for metric cards on desktop.
-- Dashboard metric cards use `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`.
-- Tables span full width within their containing card.
-- Maximum content width is unconstrained -- content fills available space.
+- The shell is divided into resizable workbench parts: title bar, activity bar, side bar, editor area, panel, auxiliary bar, and status bar.
+- Activity bar default width is 48px.
+- Custom title bar height is 35px when the command bar is visible.
+- Status bar height is 22px.
+- Editor groups and panels are split with draggable sashes.
+- Side bar, panel, and auxiliary bar widths/heights are user-resizable and persisted.
 
 ### Whitespace Philosophy
-Whitespace is generous compared to dense tooling UIs. Cards have 24px internal padding, metric cards use vertical stacking with 16px gaps between label and value. The design prioritizes visual breathing room and scannable hierarchy over raw information density. Each card is a self-contained data unit with clear internal structure.
+Whitespace is functional and compressed. The interface prioritizes visible information density over spacious presentation. Panels often use 0–8px internal spacing, with larger padding reserved for welcome pages, settings views, plugin details, and empty states.
 
 ## Elevation & Depth
 
-The design uses **borders plus glow shadows** rather than traditional drop shadows. Surfaces are distinguished primarily by background color stepping, with borders providing edge definition.
+The workbench uses **borders plus subtle tokenized shadows**. Most primary parts are separated by 1px borders. Floating widgets and some parts use soft shadows.
 
 | Level | Treatment | Use |
 |---|---|---|
-| Page canvas | `{colors.canvas}` (#06080A) | Page background, login backdrop |
-| Primary surface | `{colors.surface}` (#0F1216) + 1px border | Cards, sidebar, tables |
-| Elevated surface | `{colors.surface-2}` (#161B22) | Hover fills, icon containers, sidebar footer |
-| Tertiary surface | `{colors.surface-3}` (#1F242C) | Avatar backgrounds, collapse controls |
-| Glass surface | `{colors.glass-bg}` + blur(12px) + glass border | Special overlay cards |
-| Hover glow | `0 0 20px rgba(0, 255, 204, 0.12)` | Interactive card hover state |
-| Focus ring | `0 0 0 2px rgba(0, 255, 204, 0.15)` | Input focus state |
+| Workbench chrome | `{colors.canvas}` (#191A1B) | Title bar, side bar, activity bar, panel, status bar |
+| Editor canvas | `{colors.canvas-soft}` (#121314) | Code editor background and active tab |
+| Floating surface | `{colors.surface-card}` (#202122) + border/shadow | Quick input, notifications, hover widgets, suggest widgets |
+| Hairline border | 1px `{colors.hairline}` | Panel boundaries, tab borders, side bar border |
+| Active accent | Top/bottom/side border in `{colors.primary-active}` or `{colors.accent-focus}` | Active tab, active panel title, focus ring |
 
 ### Decorative Depth
-- **Metric cards** use a left accent border (4px, color-coded by value sentiment) and a subtle directional gradient from the accent glow color.
-- **Interactive cards** gain a teal border and glow shadow on hover (`shadow-glow`).
-- **Glass cards** use `backdrop-filter: blur(12px)` with a faint white border for frosted-glass effect.
-- **Login page** uses a radial gradient emanating from center-top to create a subtle teal ambient glow on the base canvas.
-- **No heavy box shadows.** Depth is expressed through surface color, border accents, and soft glow rather than elevated shadow layers.
+- **Title bar, activity bar, tabs, and floating widgets** may use subtle shadows.
+- **Panel depth** is mostly expressed through borders and separate surface colors.
+- **No heavy card shadows.** Shadows are functional, not decorative.
 
 ## Shapes
 
@@ -352,112 +433,132 @@ The design uses **borders plus glow shadows** rather than traditional drop shado
 
 | Token | Value | Use |
 |---|---|---|
-| `{rounded.none}` | 0px | Not used in standard components |
-| `{rounded.sm}` | 4px | Compact inline elements |
-| `{rounded.md}` | 8px | Buttons, inputs, form controls, scrollbar thumbs |
-| `{rounded.lg}` | 12px | Nav items, sidebar buttons, icon containers |
-| `{rounded.xl}` | 16px | Cards, tables, metric cards, modals |
-| `{rounded.2xl}` | 24px | Large decorative containers |
-| `{rounded.pill}` | 9999px | Active nav indicator pill, badges, sparkline dots |
-| `{rounded.full}` | 9999px | User avatar, chart legend dots |
+| `{rounded.none}` | 0px | Panels, tabs, editor, menus, status bar |
+| `{rounded.xs}` | 2px | Tiny affordances, compact inline UI |
+| `{rounded.sm}` | 3px | Rare compact controls |
+| `{rounded.md}` | 4px | Buttons, inputs, command bar |
+| `{rounded.lg}` | 6px | Softer custom overlays if needed |
+| `{rounded.xl}` | 8px | Optional custom app surfaces |
+| `{rounded.pill}` | 9999px | Badges only |
+| `{rounded.full}` | 9999px | Avatars/accounts only |
 
 ## Components
 
-### Sidebar
+### Title Bar
 
-**`sidebar`** -- Vertical navigation rail. Background `{colors.surface}`, right border `{colors.hairline}`, text `{colors.body}`. Contains app logo/title header (h-16), scrollable nav section, user profile footer, and collapse toggle. Expanded width 260px; collapsed width 80px (icon-only with tooltips). Lucide React icons at 22px.
+**`title-bar`** — Background `{colors.canvas}`, text `{colors.muted}`, height 35px for the custom title bar. Contains window controls, menu/title actions, navigation controls, layout controls, and usually the command bar.
 
-**`sidebar-item`** -- Nav row. Transparent background, text `{colors.body}`, rounded `{rounded.lg}`, padding 12px. Hover: background `{colors.surface-2}`, text `{colors.ink}`. Icon scales to 110% on hover.
+### Command Bar
 
-**`sidebar-item-active`** -- Active nav row. Background `{colors.accent-muted}`, text `{colors.accent}`, with a 4px-wide × 28px-tall accent pill on the left edge (animated via Framer Motion `layoutId`). Icon uses `strokeWidth: 2.5` (vs 2 for inactive).
+**`command-bar`** — Compact search/navigation affordance inside the title bar. Background `{colors.canvas}`, border `{colors.hairline-strong}`, text `{colors.ink}`, height 22px, rounded `{rounded.md}`. It is centered and can shrink or compact depending on available width.
 
-### Section Dividers
-In expanded sidebar, sections (ANALYTICS, PLANNING) use uppercase `{typography.label}` in `{colors.body}`. In collapsed mode, sections render as a horizontal hairline rule.
+### Activity Bar
 
-### Metric Cards
+**`activity-bar`** — Vertical icon rail. Background `{colors.canvas}`, width 48px, icon color `{colors.ink}` when active and `{colors.muted}` when inactive. Active item is indicated through border/accent state, not a large filled pill.
 
-**`metric-card`** -- Primary financial KPI display. Background `{colors.surface}` with a left accent border (4px, color-coded: gain green, loss red, accent teal, or default hairline). Contains an uppercase label (`{typography.label}`), optional change indicator with trend arrow, an icon in a rounded container (`{colors.surface-2}`), and the primary value in `{typography.money}` using `.font-money`.
+### Side Bar
 
-Card includes a decorative oversized icon watermark (120px, 4% opacity) in the bottom-right corner that scales and rotates on hover. A gloss gradient overlay fades in on hover. Entire card lifts 5px on hover (Framer Motion `whileHover`).
+**`side-bar`** — Project/search/plugin/agent view container. Background `{colors.canvas}`, border `{colors.hairline}`, text `{colors.ink}`. Headers are compact and may use uppercase or title-styled labels depending on the view.
 
-### Cards
+### Editor Tabs
 
-**`card`** -- Standard content container. Background `{colors.surface}`, 1px border `{colors.hairline}`, rounded `{rounded.xl}` (16px). Transition: `all 0.3s cubic-bezier(0.4, 0, 0.2, 1)`.
+**`editor-tabs`** — Background `{colors.canvas}` with inactive tab text `{colors.muted}`. Active tabs use `{colors.canvas-soft}`, text `{colors.ink}`, and a top active border in `{colors.primary-active}` / `{colors.accent-focus}`.
 
-**`card-interactive`** -- Clickable card variant. On hover: border transitions to `{colors.accent}`, gains glow shadow `0 0 20px rgba(0, 255, 204, 0.12)`.
+**`editor-tab-active`** — Active editor tab. Background `{colors.canvas-soft}`, foreground `{colors.ink}`, top border accent, no large radius.
 
-**`glass-card`** -- Frosted glass variant. Background `{colors.glass-bg}`, `backdrop-filter: blur(12px)`, 1px border `{colors.glass-border}`, rounded `{rounded.xl}`.
+### Editor Pane
 
-### Charts
+**`editor-pane`** — Code editor surface. Background `{colors.canvas-soft}`, text `{colors.body-strong}`, typography `{typography.code}`. No card padding; editor gutters, line numbers, minimap, selections, scroll affordances, and widgets are theme-token-driven.
 
-All charts use Recharts with a shared theme from `chartTheme.js`.
+### Panel
 
-- **Grid lines:** `{colors.hairline}` (#1E293B), dashed (3px dash, 3px gap).
-- **Axis text:** `{colors.body-muted}` area (#525D6E), 11px, no tick lines.
-- **Axis lines:** `{colors.hairline}` (#1E293B).
-- **Area fills:** Linear gradient from color at 25% opacity to transparent, defined via `areaGradient()` helper.
-- **Chart palette:** 8-color sequence starting with accent teal, applied in order to chart series.
+**`panel`** — Bottom or side panel for terminal, output, logs, validation results, background tasks, etc. Background `{colors.canvas}`, border `{colors.hairline}`, title text `{colors.ink}` when active and `{colors.muted}` when inactive. Active panel title uses a blue underline/accent.
 
-**`chart-tooltip`** -- Custom tooltip surface. Background `{colors.tooltip-bg}` (#1C2230), 1px border `{colors.tooltip-border}` (#2A3347), rounded `{rounded.md}`, padding 12px, shadow-xl. Date/label in `{colors.tooltip-label}` (#8B95A5) at 12px. Values in `{colors.tooltip-text}` (#E8ECF1) using `font-mono`. Each series gets a colored 8px dot indicator.
+### Status Bar
 
-### Tables
-
-Tables use TanStack Table for sorting and interaction. Header text in `{colors.body-muted}`, row text in `{colors.body}`, contained within a `card` wrapper. Monetary values in table cells use `.font-money`. Rows may have hover highlights at `{colors.surface-2}`.
+**`status-bar`** — Background `{colors.canvas}`, height 22px, text `{colors.muted}`, font size 12px. Items are compact, horizontally grouped left and right, with hover backgrounds.
 
 ### Buttons
 
-**`button-primary`** -- Background `{colors.accent}`, text `{colors.on-accent}`, font-weight 500, rounded `{rounded.md}` (8px), padding 8px x 16px. Hover: background `{colors.accent-hover}`, glow shadow. Disabled: 50% opacity, `cursor-not-allowed`. Minimum touch target: 44px height on mobile.
+**`button-primary`** — Primary text button. Background `{colors.primary}`, text `{colors.on-primary}`, type `{typography.button}` (12px / 400 / 16px), padding 4px × 8px, rounded `{rounded.md}` (4px), border from theme token.
 
-**`button-secondary`** -- Background `{colors.surface-2}`, text `{colors.body}`, 1px border `{colors.hairline}`, rounded `{rounded.md}`. Hover: border `{colors.hairline-hover}`.
+**`button-primary-active`** — Hover/active state. Background `{colors.primary-active}`.
 
-### Forms & Inputs
+**`button-secondary`** — Secondary button. Text uses `{colors.ink}`, hover background uses a low-alpha white/gray fill.
 
-**`text-input`** -- Background `{colors.input-bg}` (#0D1117), 1px border `{colors.input-border}`, text `{colors.ink}`, rounded `{rounded.md}` (8px), padding 8px x 12px. Focus: border `{colors.hairline-focus}` (#00FFCC), `box-shadow: 0 0 0 2px rgba(0, 255, 204, 0.15)`, no outline. Transition: `all 0.2s ease`. Minimum height 44px on mobile for touch targets.
+**`button-tertiary-text`** — Plain text or toolbar action. Background transparent, text `{colors.ink}`, hover background from toolbar/list hover token.
 
-**Labels** use `{typography.body-md}` at font-weight 500 in `{colors.body}`.
+### Quick Input
 
-### Login
+**`quick-input`** — Quick action/search picker surface. Background `{colors.surface-card}`, text `{colors.ink}`, border `{colors.hairline-strong}`, compact rows, keyboard-focused selection. It is a floating overlay, not a page card.
 
-**`login-card`** -- Centered card (`max-width: 448px`) on the base canvas with a radial teal gradient wash behind it (`rgba(0, 212, 170, 0.06)` ellipse at 50% 30%). Card uses standard `.card` styles. Title in `{typography.display-lg}`, subtitle in `{typography.body-md}` / `{colors.body}`. Primary submit button spans full width with glow shadow.
+### Lists and Trees
 
-Error messages use `{colors.loss}` text on `{colors.loss-bg}` background with a `{colors.loss}/20` border, rounded `{rounded.lg}`.
+**`list-row`** — Project/search/settings/list row. Transparent by default, text `{colors.ink}` or `{colors.muted}`. Hover uses a low-alpha white background. Active/focused selection uses blue-tinted selection background.
 
-### Allocation Donut
+**`list-row-active`** — Active/focused list row. Background `#3994BC26`, foreground `{colors.body-strong}`.
 
-Donut chart using the 8-color chart palette. Center label shows total or selected segment value in `.font-money`. Legend uses colored dots (8px, full-rounded) with labels in `{typography.body-sm}`.
+### Menus and Context Views
 
-### SparkLine
+**`context-menu`** — Background `{colors.surface-card}`, text `{colors.ink}`, border `{colors.hairline}`. Menu selection uses blue-tinted background, not a filled brand color.
 
-Compact inline area chart for trend visualization within cards. Uses `areaGradient()` with the primary accent color. No axes or labels -- pure shape communication.
+### Notifications and Hover Widgets
 
-### Mobile Drawer
+**`notification-toast`** — Floating notification surface. Background `{colors.surface-card}`, border `{colors.hairline}`, text `{colors.ink}`. Error/warning/info icons use semantic colors.
 
-On mobile (< 768px), the sidebar becomes a slide-in drawer from the left edge (280px wide). Backdrop is `{colors.overlay}` with `backdrop-filter: blur(4px)`. Drawer animates with spring physics (`damping: 25, stiffness: 200`). Hamburger menu icon in the top bar triggers open/close.
+**`hover-widget`** — Editor hover/suggest/detail widget surface. Background `{colors.surface-card}`, border `{colors.hairline}`, text `{colors.ink}`. These surfaces sit above the editor but remain visually subdued.
+
+### Terminal
+
+**`terminal`** — Integrated terminal panel. Background `{colors.canvas}`, foreground `{colors.ink}`, typography `{typography.code}`. Terminal selection, cursor, and tab border are theme-token-driven.
+
+### Code
+
+**`code-block`** — Non-editor code block in markdown/settings/welcome surfaces. Background `{colors.surface-strong}`, text `{colors.ink}` in `{typography.code}`, rounded `{rounded.md}`, padding 8px.
+
+### Forms & Tags
+
+**`text-input`** — Input box. Background `{colors.canvas}`, text `{colors.ink}`, rounded `{rounded.md}` (4px), padding 4px × 6px, border `{colors.hairline-strong}`.
+
+**`badge-pill`** — Small count/status badge. Background `{colors.primary-active}` or `{colors.accent-focus}`, text `{colors.on-primary}`, rounded `{rounded.pill}`, compact padding.
+
+### Status Decorations
+
+**`scm-added`** — Added/new-item decoration. Text `{colors.semantic-success}`.
+
+**`scm-modified`** — Modified-item decoration. Text `{colors.accent-modified}`.
+
+**`scm-deleted`** — Removed/conflict decoration. Text `{colors.semantic-error}`.
+
+### Chat / Agents
+
+**`chat-input`** — Chat or agent input surface. Background `{colors.surface-card}`, text `{colors.ink}`, border `{colors.hairline-strong}`, focused border blue.
+
+**`agents-panel`** — Agents/chat panel surface. Background `{colors.canvas}`, text `{colors.ink}`, border `{colors.hairline}`. Accent tint uses `{colors.primary}`.
 
 ## Do's and Don'ts
 
 ### Do
-- Use `{colors.canvas}` for page background and `{colors.surface}` for all content cards.
-- Use DM Sans for all UI text and IBM Plex Mono (`.font-money`) exclusively for financial figures.
-- Use the gain/loss color pair consistently: green (#10B981) for positive, red (#F43F5E) for negative.
-- Use 16px border radius for cards and containers; 8px for buttons and inputs.
-- Use subtle glow shadows (`rgba(0, 255, 204, 0.12)`) rather than heavy box shadows.
-- Keep the accent teal restrained: active states, focus rings, primary buttons, chart highlights. Not everywhere.
-- Use uppercase tracking-wide labels for metric card titles and section dividers.
-- Use Framer Motion spring animations for layout transitions and interactive feedback.
-- Use the 8-color chart palette in order; start with accent teal for the primary series.
-- Apply left accent borders on metric cards to encode value sentiment at a glance.
+- Treat the design as a **theme-driven workbench**, not a fixed single-palette application.
+- Use `{colors.canvas}` for workbench chrome and `{colors.canvas-soft}` for the editor.
+- Use compact 13px UI text and 12px detail text.
+- Use platform-native fonts for shell UI.
+- Use monospace editor fonts that match the platform.
+- Use 1px borders heavily.
+- Keep panels dense and mostly square.
+- Use `{colors.primary}` sparingly for primary actions, badges, focus/accent states, and selected controls.
+- Keep active states subtle: border, underline, tinted row, or low-alpha blue fill.
+- Use compact 16px utility glyphs for workbench icons.
 
 ### Don't
-- Don't use IBM Plex Mono for non-financial text (labels, descriptions, navigation).
-- Don't use the accent teal as a large background fill. It is a highlight color, not a surface color.
-- Don't flatten the surface hierarchy. The 4-step background scale (canvas > surface > surface-2 > surface-3) creates depth.
-- Don't use heavy drop shadows. Depth comes from surface color stepping and glow effects.
-- Don't make cards square. The 16px radius is core to the visual identity.
-- Don't use bright white (#FFFFFF) for secondary or tertiary text. Reserve it for `{colors.ink}` (primary) only.
-- Don't mix the gain and loss colors outside their semantic meaning (positive/negative financial values and trends).
-- Don't skip the `.font-money` class on financial figures. The typeface distinction is a key design signal.
-- Don't use light mode or provide a light theme toggle. The design is dark-mode-only.
+- Don't design the shell like a marketing website.
+- Don't use large decorative display type for core workbench UI.
+- Don't make every panel a rounded card.
+- Don't replace dense workbench parts with spacious content cards.
+- Don't use drop shadows as the main separation mechanism.
+- Don't make the primary blue behave like a marketing CTA color everywhere.
+- Don't assume one hard-coded color palette across the whole product; users can change themes.
+- Don't use decorative accent palettes for core system state unless those colors are theme-tokenized.
 
 ## Responsive Behavior
 
@@ -465,62 +566,48 @@ On mobile (< 768px), the sidebar becomes a slide-in drawer from the left edge (2
 
 | Name | Width | Key Changes |
 |---|---|---|
-| Mobile | < 640px | Sidebar hidden, hamburger menu, single-column metric cards, stacked layout, 44px touch targets |
-| Small tablet | 640-767px | 2-column metric card grid, sidebar still drawer-based |
-| Tablet | 768-1023px | Sidebar visible (collapsed icon-only mode), 2-column cards |
-| Desktop | 1024-1279px | Sidebar expanded, 3-column metric cards, full table layouts |
-| Wide desktop | >= 1280px | 4-column metric cards, spacious chart displays |
+| Minimum desktop | 400px window width / 270px height | Minimum viable window size. Many panes become impractical; prioritize editor, quick action palette, and essential navigation. |
+| Narrow | < 700px | Collapse secondary/auxiliary panels, keep activity bar compact, hide nonessential title actions, allow tabs/panel headers to overflow or scroll. |
+| Standard desktop | 700–1280px | Normal workbench shell: activity bar + side bar + editor + panel/status bar. |
+| Wide desktop | > 1280px | Support side bar + editor groups + auxiliary/chat panel together. |
+| Multi-monitor / large | > 1600px | Multiple editor groups, auxiliary bar, persistent chat/agents panel, larger terminal/output area. |
 
 ### Touch Targets
-- All interactive elements enforce a 44px minimum touch target on mobile.
-- Inputs use `min-h-[44px]` and `touch-manipulation` to prevent iOS zoom.
-- Nav items have 12px vertical padding for comfortable mobile tapping.
-- Buttons match the 44px minimum on mobile viewports.
+- The desktop workbench is optimized for keyboard/mouse, not mobile touch.
+- Buttons are visually compact: default text button padding is 4px × 8px with 12px text.
+- Status bar is 22px high.
+- Activity bar icons sit in a 48px-wide rail.
+- Increase touch targets only if touch use is a product requirement.
 
 ### Collapsing Strategy
-- Sidebar collapses from 260px expanded to 80px icon-only on desktop; becomes a drawer overlay on mobile.
-- Metric card grid reduces columns: 4 > 3 > 2 > 1 as viewport narrows.
-- Tables remain full-width and gain horizontal scroll on narrow viewports.
-- Charts resize fluidly within their card containers using Recharts' `ResponsiveContainer`.
-- Page transitions and card hover animations are preserved across all breakpoints.
-
-## Animation
-
-The application uses **Framer Motion** for all meaningful UI animation.
-
-| Element | Animation | Timing |
-|---|---|---|
-| Page content | Fade in + slide up 20px | 0.4-0.5s, cubic-bezier(0.4, 0, 0.2, 1) |
-| Metric cards | Fade in + slide up 15px | 0.4s per card, staggered |
-| Card hover | Lift 5px (translateY) | 0.2s |
-| Card tap | Scale to 0.98 | Instant |
-| Active nav pill | Spring layout animation | stiffness: 300, damping: 30 |
-| Sidebar expand/collapse | Width animation | Framer Motion `animate` |
-| Mobile drawer | Slide from left, spring | damping: 25, stiffness: 200 |
-| Mobile backdrop | Opacity fade | Standard exit transition |
-| Subtle pulse | Opacity 1 > 0.8 > 1 | 3s infinite ease-in-out |
-| Float | translateY 0 > -10px > 0 | 6s infinite ease-in-out |
+- Workbench parts are resizable and hideable rather than responsive in the website sense.
+- Side bar, panel, auxiliary bar, and status bar can be hidden.
+- Command bar compacts inside the title bar.
+- Tabs scroll/overflow rather than becoming large mobile tabs.
+- Fullscreen or focused layouts may remove or hide chrome to prioritize editor focus.
+- Narrow layouts should keep the editor central and treat all other panels as temporary drawers.
 
 ## Iteration Guide
 
-1. Start with the sidebar + main content shell. Get the collapsed/expanded/mobile drawer states working first.
-2. Build the metric card grid with the left accent border and `.font-money` value display.
-3. Establish the card component with proper border radius, border color, and hover glow.
-4. Wire up the chart theme (grid, axes, tooltip, gradient fills) before building individual charts.
-5. Apply the gain/loss color pair to all financial change indicators consistently.
-6. Use the `{typography.label}` style (uppercase, tracked, bold) for all metric labels and section headers.
-7. Implement focus rings (`{colors.hairline-focus}` + glow box-shadow) on all interactive elements.
-8. Add Framer Motion animations last -- cards should look correct without animation before adding motion.
-9. Test the 4-step surface hierarchy (canvas > surface > surface-2 > surface-3) to ensure each level is visually distinct.
-10. Verify `.font-money` is applied to every financial figure and nowhere else.
+1. Start with the workbench shell: title bar, activity bar, side bar, editor area, panel, status bar.
+2. Keep the editor canvas distinct from the surrounding chrome.
+3. Use 13px UI text and 12px compact detail text.
+4. Use 4px radius for buttons and inputs; panels and tabs mostly stay square.
+5. Use 1px borders before shadows.
+6. Add shadows only for overlays, tabs, title/activity depth, or floating widgets.
+7. Keep primary blue restrained.
+8. Implement keyboard focus rings early; focus borders are core to the interaction model.
+9. Design resize/sash behavior as a first-class layout feature.
+10. Treat themes as data. Do not bake colors directly into components if tokenization is possible.
+11. Keep iconography simple, monochrome, and utility-like.
+12. Make menus, quick input, and the quick action palette highly functional before styling them heavily.
 
 ## Known Gaps
 
-- The application is dark-mode-only; no light theme is defined or planned.
-- Chart colors are hardcoded in `chartTheme.js`, not driven by CSS custom properties.
-- Tooltip styles (`TOOLTIP_STYLE`) are JS constants, not CSS variables.
-- The 8-color chart palette may need extension for views with more than 8 data series.
-- Exact Framer Motion spring constants may vary by component; the values above are representative defaults.
-- Icon sizing and stroke weights are not fully tokenized; Lucide icons default to 22px/2 stroke in nav, 24px/2.5 in cards.
-- Scrollbar styling uses WebKit-specific pseudo-elements; Firefox scrollbar theming is not implemented.
-- Font loading strategy (DM Sans, IBM Plex Mono) is not specified here; assumed via Google Fonts or local hosting.
+- The application is themeable; this spec pins a representative dark default rather than every possible theme.
+- Exact colors change when the user changes the active color theme.
+- Exact font family depends on platform and locale.
+- Editor font size is 14px on Windows/Linux and 12px on macOS by default.
+- Product icons, file icons, and utility glyph details are not fully enumerated here.
+- Animation timings, sash drag behavior, panel persistence, and accessibility edge cases are out of scope.
+- Brand marks, plugin ecosystem identity, and distribution-specific product branding are out of scope.

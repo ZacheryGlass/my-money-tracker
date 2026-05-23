@@ -35,7 +35,7 @@ const ChartTooltip = ({ active, payload, label, formatValue = formatCurrency, fo
             </span>
           </div>
           <span
-            className="text-xs font-money ml-2"
+            className="text-xs font-mono ml-2"
             style={{ color: TOOLTIP_STYLE.text }}
           >
             {entry.value != null ? formatValue(entry.value) : '-'}

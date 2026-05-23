@@ -192,11 +192,11 @@ const MonthlyExpenses = () => {
         <div className="flex items-center gap-4">
           <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Annual Cost</p>
-            <p className="text-lg font-money font-bold text-loss">{formatCurrency(totalAll * 12)}</p>
+            <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalAll * 12)}</p>
           </div>
           <button
             onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-lg text-sm font-bold transition-all shadow-glow"
+            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
           >
             <Plus size={18} />
             <span>Add {activeTab === 'bill' ? 'Bill' : 'Sub'}</span>
@@ -232,7 +232,7 @@ const MonthlyExpenses = () => {
                     <p className="text-[10px] opacity-70 font-medium">{tab.count} items</p>
                   </div>
                 </div>
-                <p className="text-xs font-money font-bold">{tab.total !== null ? formatCurrency(tab.total) : ''}</p>
+                <p className="text-xs font-mono font-bold">{tab.total !== null ? formatCurrency(tab.total) : ''}</p>
               </button>
             ))}
           </div>
@@ -291,7 +291,7 @@ const MonthlyExpenses = () => {
                               {exp.notes && <div className="text-[10px] text-tertiary truncate max-w-[150px]">{exp.notes}</div>}
                             </td>
                             <td className="px-5 py-4">
-                              <span className="text-sm font-money font-bold text-loss">{formatCurrency(exp.cost)}</span>
+                              <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
                             </td>
                             <td className="px-5 py-4"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
                             <td className="px-5 py-4"><Badge active={exp.is_autopay}>{exp.is_autopay ? 'Auto' : 'Manual'}</Badge></td>
@@ -355,7 +355,7 @@ const MonthlyExpenses = () => {
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
-                        <span className="text-sm font-money font-bold text-loss">{formatCurrency(sub.avg_amount)}/mo</span>
+                        <span className="text-sm font-mono font-bold text-loss">{formatCurrency(sub.avg_amount)}/mo</span>
                         <button
                           onClick={() => handleTrackDetected(sub)}
                           className="flex items-center gap-1.5 px-3 py-1.5 bg-accent/10 text-accent border border-accent/30 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-accent hover:text-inverse transition-all opacity-0 group-hover:opacity-100"

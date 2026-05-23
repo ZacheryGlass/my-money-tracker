@@ -197,7 +197,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`font-money text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`font-mono text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
@@ -245,7 +245,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`font-money text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`font-mono text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
@@ -309,7 +309,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = parseFloat(getValue());
           return (
-            <span className={`font-money text-base font-bold ${v > 0 ? 'text-loss' : 'text-gain'}`}>
+            <span className={`font-mono text-base font-bold ${v > 0 ? 'text-loss' : 'text-gain'}`}>
               {v > 0 ? '—' : '+'}{formatCurrency(Math.abs(v))}
             </span>
           );
@@ -543,7 +543,7 @@ const AccountsPage = () => {
                   )}
                   <TypeBadge type={account.type} />
                 </div>
-                <div className={`text-lg font-money font-bold ${total < 0 ? 'text-loss' : 'text-primary'}`}>
+                <div className={`text-lg font-mono font-bold ${total < 0 ? 'text-loss' : 'text-primary'}`}>
                   {formatCurrency(total)}
                 </div>
               </div>
@@ -604,7 +604,7 @@ const AccountsPage = () => {
           <div className="flex items-center gap-4">
             <div className="p-5 bg-surface-2 border border-border rounded-2xl shadow-glow-sm min-w-[180px]">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Account Value</p>
-              <p className={`text-2xl font-money font-bold ${accountTotal < 0 ? 'text-loss' : 'text-gain'}`}>
+              <p className={`text-2xl font-mono font-bold ${accountTotal < 0 ? 'text-loss' : 'text-gain'}`}>
                 {formatCurrency(accountTotal)}
               </p>
             </div>
@@ -650,7 +650,7 @@ const AccountsPage = () => {
                             <div className="text-sm font-bold text-primary truncate">{holding.name}</div>
                             <div className="text-[10px] font-mono text-accent uppercase">{holding.ticker || 'N/A'}</div>
                           </div>
-                          <div className={`text-base font-money font-bold ${value < 0 ? 'text-loss' : 'text-primary'}`}>
+                          <div className={`text-base font-mono font-bold ${value < 0 ? 'text-loss' : 'text-primary'}`}>
                             {formatCurrency(value)}
                           </div>
                         </div>
@@ -709,7 +709,7 @@ const AccountsPage = () => {
                               <p className="text-xs font-bold text-primary truncate leading-tight">{txn.merchant_name || txn.name}</p>
                               <p className="text-[9px] text-tertiary uppercase font-medium mt-0.5">{formatDateDisplay(txn.date)} • {txn.category?.replace(/_/g, ' ') || 'General'}</p>
                             </div>
-                            <div className={`text-xs font-money font-bold whitespace-nowrap ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
+                            <div className={`text-xs font-mono font-bold whitespace-nowrap ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
                               {amount > 0 ? '—' : '+'}{formatCurrency(Math.abs(amount))}
                             </div>
                           </div>
@@ -733,7 +733,7 @@ const AccountsPage = () => {
                                 {txn.pending && <span className="text-[9px] font-bold uppercase text-amber-500">Pending</span>}
                               </div>
                             </div>
-                            <div className={`text-base font-money font-bold ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
+                            <div className={`text-base font-mono font-bold ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
                               {amount > 0 ? '—' : '+'}{formatCurrency(Math.abs(amount))}
                             </div>
                           </div>
