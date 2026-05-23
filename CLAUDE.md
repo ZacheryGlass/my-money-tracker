@@ -20,7 +20,7 @@ python scripts/dev.py       # backend :3000, frontend :5173
 
 - **Backend**: Express 5, CommonJS, pino logging, pino-http request IDs, express-rate-limit, node-cron scheduled jobs
 - **Frontend**: React 19, Vite 7, Tailwind CSS 4, Recharts (all charts), TanStack Table, React.lazy code splitting
-- **Design**: "Dark Terminal Luxe" — CSS custom properties in `index.css`, mapped to Tailwind via `tailwind.config.js`. DM Sans (UI) + IBM Plex Mono (financial numbers). Accent: #00D4AA
+- **Design**: "AVE Workbench" — VSCode-inspired dark workbench. CSS custom properties in `index.css`, mapped to Tailwind via `tailwind.config.js`. System fonts (UI) + Consolas (financial numbers). Primary: #297AA0, canvas: #191A1B, editor: #121314. Dense 13px UI, 1px borders, square panels. See `DESIGN.md` for full spec.
 - **Layout**: Sidebar navigation (not top nav), state-based routing (no React Router in production)
 
 ## Project Structure
@@ -72,7 +72,7 @@ cd frontend && npm run lint     # eslint
 - **API interceptor** (`frontend/src/utils/api.js`): auto-attaches JWT, retries on 5xx (once, 500ms), clears token on 401 (skips redirect for login endpoint itself)
 - **Shared formatters** (`frontend/src/utils/format.js`): `formatCurrency`, `formatPercent`, `formatDateDisplay`, `formatDateAxis`, `formatCompactCurrency` — all components import from here, no local duplicates
 - **Chart theme** (`frontend/src/utils/chartTheme.js`): `CHART_COLORS`, `GRID_STYLE`, `AXIS_STYLE`, `TOOLTIP_STYLE`, `areaGradient` — all charts use these
-- **Design tokens**: CSS variables in `index.css` (bg-base, bg-surface, text-primary, accent, gain, loss, etc.) consumed by Tailwind config. Component classes: `.card`, `.card-hover`, `.font-money`, `.text-gain`, `.text-loss`
+- **Design tokens**: CSS variables in `index.css` (canvas/surface hierarchy, ink/body/muted text, primary action blue, gain/loss semantics, hairline borders) consumed by Tailwind config. Component classes: `.card`, `.font-money`. Square panels with 1px borders, 4px radius on buttons/inputs only.
 - **Scheduled jobs**: Plaid sync 7:30, price updates 8:00, snapshots 9:00 (all UTC). Controlled by `RUN_SCHEDULED_JOBS` env var
 
 ## Database

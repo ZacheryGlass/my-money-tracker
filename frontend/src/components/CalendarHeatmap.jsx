@@ -133,7 +133,7 @@ export default function CalendarHeatmap({ data = [], startDate, endDate }) {
 
       {tooltip && (
         <div
-          className="fixed z-50 px-3 py-2 rounded-lg border pointer-events-none"
+          className="fixed z-50 px-3 py-2 rounded border pointer-events-none"
           style={{
             left: tooltip.x,
             top: tooltip.y - 48,

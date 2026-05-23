@@ -200,8 +200,8 @@ export default function HoldingsAnalysis() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Analyzing Holdings</span>
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Analyzing Holdings</span>
       </div>
     );
   }
@@ -234,14 +234,14 @@ export default function HoldingsAnalysis() {
 
       {/* Controls */}
       <div className="flex flex-wrap gap-3 items-center">
-        <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+        <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
           {VIEWS.map((v) => {
             const Icon = v.icon;
             return (
               <button
                 key={v.id}
                 onClick={() => setView(v.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                   view === v.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
                 }`}
               >
@@ -253,12 +253,12 @@ export default function HoldingsAnalysis() {
         </div>
 
         {view === 'treemap' && (
-          <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+          <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
             {GROUP_BY_OPTIONS.map((opt) => (
               <button
                 key={opt}
                 onClick={() => setGroupBy(opt)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                   groupBy === opt ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
                 }`}
               >
@@ -269,12 +269,12 @@ export default function HoldingsAnalysis() {
         )}
 
         {view !== 'treemap' && (
-          <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+          <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
             {DATE_RANGES.map((r) => (
               <button
                 key={r.id}
                 onClick={() => setDateRange(r.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                   dateRange === r.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
                 }`}
               >
@@ -285,10 +285,10 @@ export default function HoldingsAnalysis() {
         )}
 
         {view === 'allocation' && (
-          <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+          <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
             <button
               onClick={() => setAllocationMode('percent')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+              className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                 allocationMode === 'percent' ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
               }`}
             >
@@ -296,7 +296,7 @@ export default function HoldingsAnalysis() {
             </button>
             <button
               onClick={() => setAllocationMode('absolute')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+              className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                 allocationMode === 'absolute' ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
               }`}
             >
@@ -325,7 +325,7 @@ export default function HoldingsAnalysis() {
                       const item = payload[0]?.payload;
                       if (!item) return null;
                       return (
-                        <div className="px-3 py-2 rounded-lg border" style={{ backgroundColor: 'var(--bg-surface-2)', borderColor: 'var(--border)' }}>
+                        <div className="px-3 py-2 rounded border" style={{ backgroundColor: 'var(--bg-surface-2)', borderColor: 'var(--border)' }}>
                           <div className="text-xs text-secondary">{item.group}</div>
                           <div className="text-sm font-semibold text-primary">{item.name}</div>
                           <div className="text-sm font-money text-accent">{formatCurrency(item.size)}</div>

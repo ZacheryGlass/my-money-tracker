@@ -42,7 +42,7 @@ function PlaidLinkButton({ onSuccess, disabled }) {
     <button
       onClick={fetchLinkToken}
       disabled={disabled || loading}
-      className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow disabled:opacity-50"
+      className="flex items-center gap-2 px-6 py-4 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all disabled:opacity-50"
     >
       {loading ? (
         <RefreshCw size={18} className="animate-spin" />
@@ -87,7 +87,7 @@ function UpdateLinkButton({ itemId, onSuccess }) {
     <button
       onClick={fetchUpdateToken}
       disabled={loading}
-      className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-inverse bg-accent hover:bg-accent-hover transition-all shadow-sm"
+      className="flex items-center gap-1.5 px-4 py-2 rounded text-xs font-bold text-white bg-accent hover:bg-accent-hover transition-all shadow-sm"
     >
       {loading ? <RefreshCw size={14} className="animate-spin" /> : <Link2 size={14} />}
       Re-link
@@ -275,8 +275,8 @@ const Settings = () => {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Initializing Settings</span>
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Initializing Settings</span>
       </div>
     );
   }
@@ -288,7 +288,7 @@ const Settings = () => {
         <div>
           <div className="flex items-center gap-2 mb-2">
             <ShieldCheck className="text-accent w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Data Integrity</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Data Integrity</span>
           </div>
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
             Linked Accounts
@@ -302,13 +302,13 @@ const Settings = () => {
       </div>
 
       {successMessage && (
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-gain-bg border border-gain/20 text-gain rounded text-xs flex items-center gap-3">
           <Check size={16} />
           {successMessage}
         </motion.div>
       )}
       {error && (
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
           <AlertTriangle size={16} />
           <span className="flex-1">{error}</span>
           <button onClick={() => setError(null)}><X size={14} /></button>
@@ -318,7 +318,7 @@ const Settings = () => {
       {connecting && (
         <div className="card p-8 flex flex-col items-center justify-center gap-4 animate-fade-in border-accent/20 bg-accent/5">
           <RefreshCw size={32} className="animate-spin text-accent" />
-          <p className="text-sm font-bold uppercase tracking-widest text-accent">Exchanging tokens and syncing data...</p>
+          <p className="text-sm font-bold uppercase tracking-wide text-accent">Exchanging tokens and syncing data...</p>
         </div>
       )}
 
@@ -327,7 +327,7 @@ const Settings = () => {
           <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Account Display</h2>
         </div>
 
-        <div className="card overflow-hidden divide-y divide-border border-border/50">
+        <div className="card overflow-hidden divide-y divide-border border-border">
           {allAccounts.length === 0 ? (
             <div className="p-8 text-center text-sm text-secondary">No accounts available.</div>
           ) : (
@@ -341,7 +341,7 @@ const Settings = () => {
               return (
                 <div
                   key={account.id}
-                  className={`p-4 md:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)_minmax(150px,0.45fr)_auto] gap-4 items-center ${account.is_hidden ? 'bg-surface-2/25' : ''}`}
+                  className={`p-4 md:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)_minmax(150px,0.45fr)_auto] gap-4 items-center ${account.is_hidden ? 'bg-surface-2' : ''}`}
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-1">
@@ -359,7 +359,7 @@ const Settings = () => {
                         </span>
                       )}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-tertiary">
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-tertiary">
                       <span>{account.type}</span>
                       {hasAccountDisplayName(account) && <span className="truncate normal-case tracking-normal font-medium">Source: {account.name}</span>}
                     </div>
@@ -371,7 +371,7 @@ const Settings = () => {
                     onChange={(e) => handleDisplayNameChange(account.id, e.target.value)}
                     maxLength={100}
                     placeholder={account.name}
-                    className="w-full h-11 px-3 bg-surface-2 border border-border rounded-xl text-sm text-primary placeholder:text-tertiary focus:ring-1 focus:ring-accent outline-none"
+                    className="w-full h-11 px-3 bg-surface-2 border border-border rounded text-sm text-primary placeholder:text-tertiary focus:ring-1 focus:ring-accent outline-none"
                     disabled={isSaving}
                   />
 
@@ -382,7 +382,7 @@ const Settings = () => {
                     aria-label={`Hide ${getAccountDisplayName(account)} from UI`}
                     onClick={() => handleVisibilityChange(account, !account.is_hidden)}
                     disabled={isSavingVisibility}
-                    className={`flex h-11 items-center justify-between gap-3 rounded-xl border px-3 text-left transition-all disabled:opacity-50 ${
+                    className={`flex h-11 items-center justify-between gap-3 rounded border px-3 text-left transition-all disabled:opacity-50 ${
                       account.is_hidden
                         ? 'border-loss/30 bg-loss/10 text-loss'
                         : 'border-border bg-surface-2 text-secondary hover:text-primary'
@@ -407,7 +407,7 @@ const Settings = () => {
                     <button
                       onClick={() => handleSaveDisplayName(account)}
                       disabled={isSaving || !isDirty}
-                      className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-accent text-inverse text-xs font-bold uppercase tracking-wider hover:bg-accent-hover transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded bg-accent text-white text-xs font-bold uppercase tracking-wider hover:bg-accent-hover transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
                       Save
@@ -415,7 +415,7 @@ const Settings = () => {
                     <button
                       onClick={() => handleClearDisplayName(account)}
                       disabled={isSaving || (!hasAccountDisplayName(account) && !draft.trim())}
-                      className="inline-flex items-center justify-center gap-2 h-10 px-3 rounded-xl bg-surface-3 text-secondary border border-border text-xs font-bold uppercase tracking-wider hover:text-primary transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="inline-flex items-center justify-center gap-2 h-10 px-3 rounded bg-surface-3 text-secondary border border-border text-xs font-bold uppercase tracking-wider hover:text-primary transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Undo2 size={14} />
                       Clear
@@ -430,7 +430,7 @@ const Settings = () => {
 
       <div className="space-y-4">
         {items.length === 0 && !connecting ? (
-          <div className="card p-12 text-center border-dashed border-2 border-border/50 bg-transparent">
+          <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
             <Building2 size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
             <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Institutions Linked</h3>
             <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed">
@@ -439,11 +439,11 @@ const Settings = () => {
           </div>
         ) : (
           items.map((item) => (
-            <motion.div layout key={item.id} className="card overflow-hidden border-border/50">
+            <motion.div layout key={item.id} className="card overflow-hidden border-border">
               <div className="p-5 md:p-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="flex items-center gap-4 min-w-0">
-                    <div className="w-12 h-12 rounded-2xl bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 shadow-sm">
+                    <div className="w-12 h-12 rounded bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 shadow-sm">
                       <Building2 size={24} className="text-accent" />
                     </div>
                     <div className="min-w-0">
@@ -451,10 +451,10 @@ const Settings = () => {
                         {item.institution_name || 'Financial Institution'}
                       </h3>
                       <div className="flex items-center gap-4 mt-1">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
                           {item.accounts?.length || 0} Account{(item.accounts?.length || 0) !== 1 ? 's' : ''}
                         </span>
-                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-tertiary">
+                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
                           <Clock size={12} />
                           {formatSyncTime(item.last_synced_at)}
                         </span>
@@ -469,14 +469,14 @@ const Settings = () => {
                     <button
                       onClick={() => handleSync(item.id)}
                       disabled={syncingId === item.id}
-                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all disabled:opacity-50"
                     >
                       <RefreshCw size={14} className={syncingId === item.id ? 'animate-spin' : ''} />
                       Sync
                     </button>
                     <button
                       onClick={() => { setRemoveDataOnDisconnect(true); setDisconnectingItem(item); }}
-                      className="p-2.5 rounded-xl text-tertiary hover:text-loss hover:bg-loss/10 border border-transparent transition-all"
+                      className="p-2.5 rounded text-tertiary hover:text-loss hover:bg-loss/10 border border-transparent transition-all"
                       title="Disconnect Institution"
                     >
                       <Unlink size={18} />
@@ -485,7 +485,7 @@ const Settings = () => {
                 </div>
 
                 {(item.error_code || consentItems.has(item.id)) && (
-                  <div className={`mt-5 p-4 rounded-xl border text-xs leading-relaxed ${consentItems.has(item.id) ? 'bg-accent/5 border-accent/20 text-accent' : 'bg-loss/5 border-loss/20 text-loss'}`}>
+                  <div className={`mt-5 p-4 rounded border text-xs leading-relaxed ${consentItems.has(item.id) ? 'bg-accent/5 border-accent/20 text-accent' : 'bg-loss/5 border-loss/20 text-loss'}`}>
                     <div className="flex items-start gap-3">
                       <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
                       <p>
@@ -499,10 +499,10 @@ const Settings = () => {
 
                 {/* Sub-accounts Grid */}
                 {item.accounts?.length > 0 && (
-                  <div className="mt-6 pt-5 border-t border-border/50">
+                  <div className="mt-6 pt-5 border-t border-border">
                     <button
                       onClick={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
-                      className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-tertiary hover:text-primary transition-colors group"
+                      className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-tertiary hover:text-primary transition-colors group"
                     >
                       <span>{expandedItem === item.id ? 'Collapse' : 'View'} Internal Accounts</span>
                       <ChevronRight size={12} className={`transition-transform duration-200 ${expandedItem === item.id ? 'rotate-90' : ''}`} />
@@ -513,13 +513,13 @@ const Settings = () => {
                         <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
                             {item.accounts.map((acct) => (
-                              <div key={acct.id} className="flex items-center justify-between gap-4 px-4 py-3 rounded-xl bg-surface-2/50 border border-transparent hover:border-border transition-colors">
+                              <div key={acct.id} className="flex items-center justify-between gap-4 px-4 py-3 rounded  border border-transparent hover:border-border transition-colors">
                                 <div className="flex items-center gap-3 min-w-0">
                                   <Link2 size={12} className="text-accent opacity-60 flex-shrink-0" />
                                   <span className="text-xs font-bold text-primary truncate">{getAccountDisplayName(acct)}</span>
                                   {acct.is_hidden && <EyeOff size={12} className="text-loss flex-shrink-0" />}
                                 </div>
-                                <span className="text-[9px] font-bold text-tertiary uppercase tracking-widest px-2 py-0.5 rounded-full bg-surface-3">{acct.type}</span>
+                                <span className="text-[9px] font-bold text-tertiary uppercase tracking-wide px-2 py-0.5 rounded-full bg-surface-3">{acct.type}</span>
                               </div>
                             ))}
                           </div>
@@ -542,7 +542,7 @@ const Settings = () => {
             <p className="text-xs text-secondary mt-1">These accounts are not linked to Plaid. Deleting removes the account and all its historical value points.</p>
           </div>
           
-          <div className="card overflow-hidden divide-y divide-border border-border/50">
+          <div className="card overflow-hidden divide-y divide-border border-border">
             {orphanedAccounts.map((acct) => (
               <div key={acct.id} className="flex items-center justify-between p-5 hover:bg-surface-2 transition-colors group">
                 <div className="min-w-0">
@@ -550,7 +550,7 @@ const Settings = () => {
                   {hasAccountDisplayName(acct) && (
                     <span className="text-[10px] text-tertiary uppercase tracking-tight truncate block mt-1">{acct.name}</span>
                   )}
-                  <span className="text-[10px] font-bold text-tertiary uppercase tracking-widest mt-1 block">
+                  <span className="text-[10px] font-bold text-tertiary uppercase tracking-wide mt-1 block">
                     {acct.holdings_count || 0} Assets • Manual Tracking
                   </span>
                 </div>
@@ -568,7 +568,7 @@ const Settings = () => {
                     }
                   }}
                   disabled={deletingAccountId === acct.id}
-                  className="p-2.5 rounded-xl text-tertiary hover:text-loss hover:bg-loss/10 transition-all opacity-0 group-hover:opacity-100"
+                  className="p-2.5 rounded text-tertiary hover:text-loss hover:bg-loss/10 transition-all opacity-0 group-hover:opacity-100"
                 >
                   <Trash2 size={18} />
                 </button>
@@ -582,10 +582,10 @@ const Settings = () => {
       <AnimatePresence>
         {disconnectingItem && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={() => setDisconnectingItem(null)} />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 " onClick={() => setDisconnectingItem(null)} />
             <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
               <div className="p-8 pb-4 text-center">
-                <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-6 shadow-glow-sm">
+                <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-6">
                   <Unlink size={28} />
                 </div>
                 <h2 className="text-2xl font-bold text-primary mb-2 tracking-tight">Disconnect Institution</h2>
@@ -597,7 +597,7 @@ const Settings = () => {
               <div className="p-8 space-y-3">
                 <button 
                   onClick={() => setRemoveDataOnDisconnect(true)}
-                  className={`w-full flex items-start gap-4 p-4 rounded-2xl border text-left transition-all ${removeDataOnDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
+                  className={`w-full flex items-start gap-4 p-4 rounded border text-left transition-all ${removeDataOnDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
                 >
                   <div className={`mt-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${removeDataOnDisconnect ? 'border-accent' : 'border-tertiary'}`}>
                     {removeDataOnDisconnect && <div className="w-2 h-2 rounded-full bg-accent" />}
@@ -610,7 +610,7 @@ const Settings = () => {
 
                 <button 
                   onClick={() => setRemoveDataOnDisconnect(false)}
-                  className={`w-full flex items-start gap-4 p-4 rounded-2xl border text-left transition-all ${!removeDataOnDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
+                  className={`w-full flex items-start gap-4 p-4 rounded border text-left transition-all ${!removeDataOnDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
                 >
                   <div className={`mt-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${!removeDataOnDisconnect ? 'border-accent' : 'border-tertiary'}`}>
                     {!removeDataOnDisconnect && <div className="w-2 h-2 rounded-full bg-accent" />}
@@ -625,13 +625,13 @@ const Settings = () => {
               <div className="p-8 pt-0 flex gap-3">
                 <button
                   onClick={() => setDisconnectingItem(null)}
-                  className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded-2xl text-xs font-bold uppercase tracking-wider transition-all"
+                  className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleDisconnectConfirm}
-                  className="flex-1 py-4 bg-loss text-inverse rounded-2xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all shadow-glow-sm"
+                  className="flex-1 py-4 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all"
                 >
                   Confirm Disconnect
                 </button>

@@ -136,8 +136,8 @@ export default function YearInReview() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Compiling Year in Review</span>
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Compiling Year in Review</span>
       </div>
     );
   }
@@ -150,12 +150,12 @@ export default function YearInReview() {
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Year in Review</h1>
           <p className="text-sm text-secondary mt-1">Annual financial performance summary</p>
         </div>
-        <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+        <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
           {availableYears.map((y) => (
             <button
               key={y}
               onClick={() => setSelectedYear(y)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold tracking-wider transition-all ${
+              className={`px-3 py-1.5 rounded text-xs font-bold tracking-wider transition-all ${
                 selectedYear === y ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
               }`}
             >
@@ -196,7 +196,7 @@ export default function YearInReview() {
 
       {/* Monthly Net Worth Change Bar Chart */}
       <div className="card p-4 md:p-6">
-        <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Monthly Net Worth Change</h2>
+        <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Monthly Net Worth Change</h2>
         <div style={{ height: isMobile ? 280 : 380 }}>
           {chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
@@ -226,7 +226,7 @@ export default function YearInReview() {
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Net Worth Trajectory */}
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Net Worth Trajectory</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Net Worth Trajectory</h2>
           <div style={{ height: isMobile ? 180 : 220 }}>
             {sparklineData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -247,7 +247,7 @@ export default function YearInReview() {
 
         {/* Year-End Allocation */}
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Portfolio Allocation</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Portfolio Allocation</h2>
           <div style={{ height: isMobile ? 180 : 220 }}>
             {portfolioItems.length > 0 ? (
               <AllocationDonut items={portfolioItems} />
@@ -261,10 +261,10 @@ export default function YearInReview() {
       {/* Best/Worst Months */}
       <div className="grid lg:grid-cols-2 gap-6">
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-3">Best Month</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-3">Best Month</h2>
           {yearMetrics.bestMonth ? (
             <div className="flex items-center gap-3">
-              <div className="p-3 rounded-2xl bg-gain/10 text-gain"><TrendingUp size={20} /></div>
+              <div className="p-3 rounded bg-gain/10 text-gain"><TrendingUp size={20} /></div>
               <div>
                 <p className="text-lg font-money font-bold text-gain">{formatCurrency(yearMetrics.bestMonth.change)}</p>
                 <p className="text-xs text-secondary">{yearMetrics.bestMonth.month} {selectedYear}</p>
@@ -275,10 +275,10 @@ export default function YearInReview() {
           )}
         </div>
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-3">Worst Month</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-3">Worst Month</h2>
           {yearMetrics.worstMonth ? (
             <div className="flex items-center gap-3">
-              <div className="p-3 rounded-2xl bg-loss/10 text-loss"><TrendingDown size={20} /></div>
+              <div className="p-3 rounded bg-loss/10 text-loss"><TrendingDown size={20} /></div>
               <div>
                 <p className="text-lg font-money font-bold text-loss">{formatCurrency(yearMetrics.worstMonth.change)}</p>
                 <p className="text-xs text-secondary">{yearMetrics.worstMonth.month} {selectedYear}</p>
@@ -295,8 +295,8 @@ export default function YearInReview() {
         <div className="grid lg:grid-cols-2 gap-6">
           {performers.gainers.length > 0 && (
             <div className="card overflow-hidden">
-              <div className="p-4 border-b border-border bg-surface-2/50">
-                <span className="text-[10px] font-bold tracking-widest uppercase text-gain">Top Gainers</span>
+              <div className="p-4 border-b border-border ">
+                <span className="text-[10px] font-bold tracking-wide uppercase text-gain">Top Gainers</span>
               </div>
               <div className="divide-y divide-border">
                 {performers.gainers.map((p, i) => (
@@ -313,8 +313,8 @@ export default function YearInReview() {
           )}
           {performers.losers.length > 0 && (
             <div className="card overflow-hidden">
-              <div className="p-4 border-b border-border bg-surface-2/50">
-                <span className="text-[10px] font-bold tracking-widest uppercase text-loss">Biggest Losers</span>
+              <div className="p-4 border-b border-border ">
+                <span className="text-[10px] font-bold tracking-wide uppercase text-loss">Biggest Losers</span>
               </div>
               <div className="divide-y divide-border">
                 {performers.losers.map((p, i) => (
@@ -335,18 +335,18 @@ export default function YearInReview() {
       {/* Annual Income vs Spending Summary */}
       {spendingMetrics.totalIncome > 0 && (
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Annual Cash Flow</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Annual Cash Flow</h2>
           <div className="grid grid-cols-3 gap-6">
             <div>
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Total Income</p>
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Total Income</p>
               <p className="text-lg font-money font-bold text-gain">{formatCurrency(spendingMetrics.totalIncome)}</p>
             </div>
             <div>
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Total Spending</p>
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Total Spending</p>
               <p className="text-lg font-money font-bold text-loss">{formatCurrency(spendingMetrics.totalSpending)}</p>
             </div>
             <div>
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Net Saved</p>
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Net Saved</p>
               <p className={`text-lg font-money font-bold ${spendingMetrics.totalIncome - spendingMetrics.totalSpending >= 0 ? 'text-gain' : 'text-loss'}`}>
                 {formatCurrency(spendingMetrics.totalIncome - spendingMetrics.totalSpending)}
               </p>

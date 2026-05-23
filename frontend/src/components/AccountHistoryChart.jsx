@@ -14,28 +14,28 @@ import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import ChartTooltip from './ChartTooltip';
 import { getAccountDisplayName } from '../utils/accountDisplay';
 
-const PORTFOLIO_COLOR = '#00FFCC'; // Using accent color for portfolio
+const PORTFOLIO_COLOR = '#3994BC';
 
 const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
   return (
-    <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-4 px-4">
+    <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 mt-3 px-3">
       {payload.map((entry, index) => {
         const isHidden = hiddenSeries.includes(entry.value);
         return (
           <button
             key={`item-${index}`}
             onClick={() => onToggle(entry.value)}
-            className={`flex items-center gap-2 px-2 py-1 rounded-md transition-all border ${
-              isHidden 
-                ? 'opacity-40 grayscale border-transparent hover:opacity-60' 
-                : 'opacity-100 border-border hover:border-accent/30 bg-surface-2/50'
+            className={`flex items-center gap-1.5 px-2 py-1 transition-colors border ${
+              isHidden
+                ? 'opacity-40 border-transparent hover:opacity-60'
+                : 'border-border hover:border-border-hover bg-surface-2'
             }`}
           >
-            <div 
-              className="w-2.5 h-2.5 rounded-full" 
+            <div
+              className="w-2 h-2 rounded-full"
               style={{ backgroundColor: entry.color }}
             />
-            <span className={`text-[10px] md:text-xs font-medium ${isHidden ? 'text-tertiary' : 'text-secondary'}`}>
+            <span className={`text-caption ${isHidden ? 'text-tertiary' : 'text-secondary'}`}>
               {entry.value}
             </span>
           </button>
@@ -124,15 +124,15 @@ const AccountHistoryChart = ({
   }, [selectedAccountNames, showPortfolio]);
 
   const emptyContainer = (children) => (
-    <div className="flex items-center justify-center h-64 md:h-96 bg-surface rounded-card border border-border">
-      <div className="text-sm md:text-base text-secondary text-center px-4">{children}</div>
+    <div className="flex items-center justify-center h-64 md:h-80 card">
+      <div className="text-body-sm text-tertiary text-center px-4">{children}</div>
     </div>
   );
 
   if (loading) return emptyContainer('Loading chart data...');
   if (error) return (
-    <div className="flex items-center justify-center h-64 md:h-96 bg-surface rounded-card border border-border">
-      <div className="text-sm md:text-base text-center px-4 text-loss">{error}</div>
+    <div className="flex items-center justify-center h-64 md:h-80 card">
+      <div className="text-body-sm text-center px-4 text-loss">{error}</div>
     </div>
   );
   if (selectedAccounts.length === 0 && !showPortfolio) {
@@ -143,19 +143,13 @@ const AccountHistoryChart = ({
   }
 
   return (
-    <div className="bg-surface rounded-card border border-border p-4 md:p-6 mb-6">
-      <div className="h-64 md:h-[450px] w-full">
+    <div className="card p-4 mb-4">
+      <div className="h-64 md:h-[400px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={chartData}
             margin={{ top: 10, right: isMobile ? 10 : 30, left: isMobile ? 0 : 20, bottom: 10 }}
           >
-            <defs>
-              <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                <feGaussianBlur stdDeviation="2" result="blur" />
-                <feComposite in="SourceGraphic" in2="blur" operator="over" />
-              </filter>
-            </defs>
             <CartesianGrid {...GRID_STYLE} vertical={false} strokeOpacity={0.5} />
             <XAxis
               dataKey="date"
@@ -181,9 +175,9 @@ const AccountHistoryChart = ({
                 dataKey={name}
                 name={name}
                 stroke={CHART_COLORS[index % CHART_COLORS.length]}
-                strokeWidth={isMobile ? 1.5 : 2.5}
+                strokeWidth={isMobile ? 1 : 1.5}
                 dot={false}
-                activeDot={{ r: isMobile ? 4 : 6, strokeWidth: 0 }}
+                activeDot={{ r: isMobile ? 3 : 4, strokeWidth: 0 }}
                 connectNulls
                 hide={hiddenSeries.includes(name)}
                 animationDuration={1000}
@@ -195,13 +189,12 @@ const AccountHistoryChart = ({
                 dataKey="Total Portfolio"
                 name="Total Portfolio"
                 stroke={PORTFOLIO_COLOR}
-                strokeWidth={isMobile ? 2 : 3.5}
+                strokeWidth={isMobile ? 1.5 : 2}
                 dot={false}
-                activeDot={{ r: isMobile ? 5 : 7, strokeWidth: 0, fill: PORTFOLIO_COLOR }}
+                activeDot={{ r: isMobile ? 3 : 5, strokeWidth: 0, fill: PORTFOLIO_COLOR }}
                 connectNulls
                 hide={hiddenSeries.includes('Total Portfolio')}
-                animationDuration={1000}
-                filter="url(#glow)"
+                animationDuration={800}
               />
             )}
           </LineChart>

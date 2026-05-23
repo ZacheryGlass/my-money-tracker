@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion as Motion } from 'framer-motion';
 import {
   LayoutDashboard,
   PieChart,
@@ -84,38 +84,34 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
   const sidebarContent = (
     <Motion.aside
       initial={false}
-      animate={{ width: isMobile ? '280px' : (showExpanded ? '260px' : '80px') }}
-      className="flex flex-col h-full bg-surface border-r border-border transition-colors duration-300 ease-in-out overflow-hidden z-50"
+      animate={{ width: isMobile ? '240px' : (showExpanded ? '220px' : '48px') }}
+      className="flex flex-col h-full bg-surface border-r border-border overflow-hidden z-50"
     >
       {/* Header */}
-      <div className="flex items-center h-16 px-5 border-b border-border flex-shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center flex-shrink-0 shadow-glow">
-          <Banknote className="text-inverse w-5 h-5" />
+      <div className="flex items-center h-[35px] px-3 border-b border-border flex-shrink-0">
+        <div className="w-5 h-5 rounded-sm bg-accent flex items-center justify-center flex-shrink-0">
+          <Banknote className="text-white w-3 h-3" />
         </div>
         {(showExpanded || isMobile) && (
-          <Motion.span
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="ml-3 text-sm font-bold tracking-tight text-primary whitespace-nowrap"
-          >
+          <span className="ml-2 text-body-sm font-semibold text-secondary whitespace-nowrap">
             My Money Tracker
-          </Motion.span>
+          </span>
         )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-6 px-3 custom-scrollbar">
-        <div className="flex flex-col gap-1.5">
+      <nav className="flex-1 overflow-y-auto py-1 px-1">
+        <div className="flex flex-col">
           {NAV_ITEMS.map((item) => {
             if (item.section) {
               return (showExpanded || isMobile) ? (
-                <div key={item.id} className="mt-6 mb-2 px-4">
-                  <span className="text-xs font-bold uppercase tracking-widest text-secondary">
+                <div key={item.id} className="mt-4 mb-1 px-2">
+                  <span className="text-caption-upper uppercase text-tertiary">
                     {item.section}
                   </span>
                 </div>
               ) : (
-                <div key={item.id} className="my-4 border-t border-border/50 mx-2" />
+                <div key={item.id} className="my-2 border-t border-border mx-1" />
               );
             }
 
@@ -127,36 +123,23 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
                 className={`
-                  flex items-center gap-4 w-full rounded-xl px-3 py-3 text-left transition-all duration-200 group relative
+                  flex items-center gap-2 w-full px-2 py-[5px] text-left transition-colors relative
                   ${isActive
-                    ? 'bg-accent/10 text-accent'
+                    ? 'bg-[#3994BC26] text-primary'
                     : 'text-secondary hover:bg-surface-2 hover:text-primary'}
                 `}
                 title={(!showExpanded && !isMobile) ? item.label : undefined}
               >
-                <div className={`
-                  flex items-center justify-center transition-transform duration-200
-                  ${isActive ? 'scale-110' : 'group-hover:scale-110'}
-                `}>
-                  <Icon size={22} strokeWidth={isActive ? 2.5 : 2} />
-                </div>
+                <Icon size={16} strokeWidth={isActive ? 2 : 1.5} className="flex-shrink-0" />
 
                 {(showExpanded || isMobile) && (
-                  <Motion.span
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className={`text-base font-semibold whitespace-nowrap transition-colors duration-200 ${isActive ? 'text-primary' : 'text-secondary group-hover:text-primary'}`}
-                  >
+                  <span className="text-body-sm whitespace-nowrap truncate">
                     {item.label}
-                  </Motion.span>
+                  </span>
                 )}
 
                 {isActive && (
-                  <Motion.div
-                    layoutId="active-pill"
-                    className="absolute left-0 w-1 h-7 bg-accent rounded-full"
-                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                  />
+                  <div className="absolute left-0 top-0 w-[2px] h-full bg-accent-focus" />
                 )}
               </button>
             );
@@ -164,27 +147,24 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
         </div>
       </nav>
 
-      {/* Footer / User Profile */}
-      <div className="p-3 border-t border-border bg-surface-2/30">
+      {/* Footer */}
+      <div className="border-t border-border">
         <button
           onClick={() => handleNavClick('settings')}
-          className={`flex items-center gap-4 px-3 py-4 rounded-xl w-full text-left transition-all duration-200
-            ${currentPage === 'settings' ? 'bg-accent/10 ring-1 ring-accent/30' : 'hover:bg-surface-2'}
+          className={`flex items-center gap-2 w-full px-2 py-2 text-left transition-colors
+            ${currentPage === 'settings' ? 'bg-[#3994BC26] text-primary' : 'text-secondary hover:bg-surface-2 hover:text-primary'}
             ${(!showExpanded && !isMobile) ? 'justify-center' : ''}`}
           title={(!showExpanded && !isMobile) ? 'Settings' : undefined}
         >
-          <div className="w-10 h-10 rounded-full bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 text-secondary relative">
-            <UserIcon size={20} />
-            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-surface-2 border border-border flex items-center justify-center">
-              <Settings size={10} className="text-tertiary" />
-            </div>
+          <div className="w-5 h-5 rounded-full bg-surface-3 border border-border flex items-center justify-center flex-shrink-0">
+            <UserIcon size={12} />
           </div>
           {(showExpanded || isMobile) && (
             <div className="flex flex-col min-w-0">
-              <span className="text-base font-semibold text-primary truncate leading-tight">
+              <span className="text-body-sm font-semibold text-primary truncate">
                 {user?.username}
               </span>
-              <span className="text-xs text-tertiary uppercase tracking-wider font-bold">
+              <span className="text-caption text-tertiary">
                 Settings
               </span>
             </div>
@@ -194,15 +174,15 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
         <button
           onClick={onLogout}
           className={`
-            flex items-center gap-4 w-full rounded-xl px-3 py-3 mt-2 text-left
-            hover:bg-loss/10 transition-all duration-200 group
+            flex items-center gap-2 w-full px-2 py-2 text-left
+            text-secondary hover:bg-loss-bg hover:text-loss transition-colors
             ${(!showExpanded && !isMobile) ? 'justify-center' : ''}
           `}
           title={(!showExpanded && !isMobile) ? 'Logout' : undefined}
         >
-          <LogOut size={22} className="text-secondary group-hover:text-loss group-hover:translate-x-0.5 transition-all" />
+          <LogOut size={16} />
           {(showExpanded || isMobile) && (
-            <span className="text-base font-medium text-secondary group-hover:text-loss transition-colors">Logout</span>
+            <span className="text-body-sm">Logout</span>
           )}
         </button>
       </div>
@@ -211,9 +191,9 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
       {isDesktop && (
         <button
           onClick={handleToggleExpand}
-          className="flex items-center justify-center h-12 border-t border-border text-tertiary hover:text-primary hover:bg-surface-3 transition-all duration-200"
+          className="flex items-center justify-center h-[22px] border-t border-border text-tertiary hover:text-primary hover:bg-surface-2 transition-colors"
         >
-          {expanded ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+          {expanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
         </button>
       )}
     </Motion.aside>
@@ -229,7 +209,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+                className="fixed inset-0 z-40 bg-black/60"
                 onClick={onMobileClose}
               />
               <Motion.div
@@ -237,7 +217,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
                 animate={{ x: 0 }}
                 exit={{ x: '-100%' }}
                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="fixed left-0 top-0 h-full z-50 shadow-2xl"
+                className="fixed left-0 top-0 h-full z-50"
               >
                 {sidebarContent}
               </Motion.div>

@@ -168,8 +168,8 @@ const MonthlyExpenses = () => {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Calculating Expenses</span>
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Calculating Expenses</span>
       </div>
     );
   }
@@ -181,7 +181,7 @@ const MonthlyExpenses = () => {
         <div>
           <div className="flex items-center gap-2 mb-2">
             <TrendingDown className="text-loss w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Monthly Burn Rate</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Monthly Burn Rate</span>
           </div>
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
             {formatCurrency(totalAll)}
@@ -190,13 +190,13 @@ const MonthlyExpenses = () => {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[140px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Annual Cost</p>
+          <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Annual Cost</p>
             <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalAll * 12)}</p>
           </div>
           <button
             onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
+            className="flex items-center gap-2 px-6 py-4 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all"
           >
             <Plus size={18} />
             <span>Add {activeTab === 'bill' ? 'Bill' : 'Sub'}</span>
@@ -204,11 +204,11 @@ const MonthlyExpenses = () => {
         </div>
       </div>
 
-      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
+      <div className="mb-5 rounded border border-border bg-surface overflow-hidden">
         <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2 shrink-0">
             <Receipt size={16} className="text-accent" />
-            <span className="text-sm font-bold uppercase tracking-widest text-primary">Categories</span>
+            <span className="text-sm font-bold uppercase tracking-wide text-primary">Categories</span>
           </div>
           <div className="flex flex-wrap gap-2">
             {[
@@ -219,7 +219,7 @@ const MonthlyExpenses = () => {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex min-w-[180px] items-center justify-between gap-4 rounded-xl border px-3 py-2 transition-all ${
+                className={`flex min-w-[180px] items-center justify-between gap-4 rounded border px-3 py-2 transition-all ${
                   activeTab === tab.key
                     ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
                     : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
@@ -241,14 +241,14 @@ const MonthlyExpenses = () => {
 
       <div className="space-y-6">
           {error && (
-            <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+            <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
               <X size={16} />
               {error}
             </div>
           )}
 
           {successMessage && (
-            <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
+            <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-gain-bg border border-gain/20 text-gain rounded text-xs flex items-center gap-3">
               <Check size={16} />
               {successMessage}
             </Motion.div>
@@ -261,7 +261,7 @@ const MonthlyExpenses = () => {
                   <thead className="bg-surface-2">
                     <tr>
                       {['Name', 'Monthly Cost', 'Fixed', 'Auto-pay', 'Account', activeTab === 'bill' ? 'Company' : 'Who Uses', ''].map((h) => (
-                        <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-widest text-tertiary">{h}</th>
+                        <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -303,10 +303,10 @@ const MonthlyExpenses = () => {
                             </td>
                             <td className="px-5 py-4 text-right">
                               <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => handleEdit(exp)} className="p-2 text-accent hover:bg-accent/10 rounded-lg transition-colors" title="Edit">
+                                <button onClick={() => handleEdit(exp)} className="p-2 text-accent hover:bg-accent/10 rounded transition-colors" title="Edit">
                                   <Edit2 size={14} />
                                 </button>
-                                <button onClick={() => setDeletingExpense(exp)} className="p-2 text-loss hover:bg-loss/10 rounded-lg transition-colors" title="Delete">
+                                <button onClick={() => setDeletingExpense(exp)} className="p-2 text-loss hover:bg-loss/10 rounded transition-colors" title="Delete">
                                   <Trash2 size={14} />
                                 </button>
                               </div>
@@ -321,14 +321,14 @@ const MonthlyExpenses = () => {
             </div>
           ) : (
             <div className="card overflow-hidden">
-              <div className="p-4 border-b border-border bg-surface-2/50 flex items-center gap-2">
+              <div className="p-4 border-b border-border  flex items-center gap-2">
                 <Zap size={16} className="text-accent" />
                 <span className="text-sm font-bold text-primary">Auto-Detected Recurring Charges</span>
                 <span className="text-[10px] text-tertiary ml-auto">from Plaid transactions</span>
               </div>
               {detectedLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+                  <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : filteredDetected.length === 0 ? (
                 <div className="px-5 py-12 text-center">
@@ -358,7 +358,7 @@ const MonthlyExpenses = () => {
                         <span className="text-sm font-mono font-bold text-loss">{formatCurrency(sub.avg_amount)}/mo</span>
                         <button
                           onClick={() => handleTrackDetected(sub)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent/10 text-accent border border-accent/30 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-accent hover:text-inverse transition-all opacity-0 group-hover:opacity-100"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent/10 text-accent border border-accent/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-accent hover:text-white transition-all opacity-0 group-hover:opacity-100"
                         >
                           <Plus size={12} />
                           Track
@@ -371,8 +371,8 @@ const MonthlyExpenses = () => {
             </div>
           )}
           
-          <div className="flex items-center justify-center gap-6 text-[10px] text-tertiary uppercase tracking-widest font-bold">
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-loss shadow-glow" /> Expenditure tracking</span>
+          <div className="flex items-center justify-center gap-6 text-[10px] text-tertiary uppercase tracking-wide font-bold">
+            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-loss" /> Expenditure tracking</span>
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Recurring liability</span>
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Fixed vs Variable</span>
           </div>
@@ -382,58 +382,58 @@ const MonthlyExpenses = () => {
       <AnimatePresence>
         {isFormOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsFormOpen(false)} />
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setIsFormOpen(false)} />
             <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
-              <div className="p-6 border-b border-border bg-surface-2/50 flex items-center justify-between">
+              <div className="p-6 border-b border-border  flex items-center justify-between">
                 <h2 className="text-lg font-bold text-primary">{editingExpense ? 'Modify' : 'Track New'} {formData.type === 'bill' ? 'Bill' : 'Subscription'}</h2>
                 <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
               </div>
               <form onSubmit={handleSave} className="p-6 space-y-5">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Type</label>
-                    <select value={formData.type} onChange={(e) => setFormData({ ...formData, type: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none">
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Type</label>
+                    <select value={formData.type} onChange={(e) => setFormData({ ...formData, type: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none">
                       <option value="bill">Fixed Bill</option>
                       <option value="subscription">Subscription</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Monthly Cost</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Monthly Cost</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary font-mono">$</span>
-                      <input type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
+                      <input type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} className="w-full bg-surface-3 border-border rounded pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
                     </div>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Name / Descriptor</label>
-                  <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Fiber Internet, Netflix" required />
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Name / Descriptor</label>
+                  <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Fiber Internet, Netflix" required />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <button type="button" onClick={() => setFormData({ ...formData, is_fixed_rate: !formData.is_fixed_rate })} className={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-wider ${formData.is_fixed_rate ? 'bg-accent/10 border-accent/30 text-accent' : 'bg-surface-3 border-border text-tertiary'}`}>
+                  <button type="button" onClick={() => setFormData({ ...formData, is_fixed_rate: !formData.is_fixed_rate })} className={`flex items-center justify-center gap-2 p-3 rounded border transition-all text-[10px] font-bold uppercase tracking-wider ${formData.is_fixed_rate ? 'bg-accent/10 border-accent/30 text-accent' : 'bg-surface-3 border-border text-tertiary'}`}>
                     {formData.is_fixed_rate ? <Check size={12} /> : null} Fixed Rate
                   </button>
-                  <button type="button" onClick={() => setFormData({ ...formData, is_autopay: !formData.is_autopay })} className={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-wider ${formData.is_autopay ? 'bg-accent/10 border-accent/30 text-accent' : 'bg-surface-3 border-border text-tertiary'}`}>
+                  <button type="button" onClick={() => setFormData({ ...formData, is_autopay: !formData.is_autopay })} className={`flex items-center justify-center gap-2 p-3 rounded border transition-all text-[10px] font-bold uppercase tracking-wider ${formData.is_autopay ? 'bg-accent/10 border-accent/30 text-accent' : 'bg-surface-3 border-border text-tertiary'}`}>
                     {formData.is_autopay ? <Check size={12} /> : null} Auto-pay
                   </button>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Payment Account</label>
-                    <input type="text" value={formData.pay_account} onChange={(e) => setFormData({ ...formData, pay_account: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Chase" />
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Payment Account</label>
+                    <input type="text" value={formData.pay_account} onChange={(e) => setFormData({ ...formData, pay_account: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Chase" />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">{formData.type === 'bill' ? 'Company' : 'Who Uses'}</label>
-                    <input type="text" value={formData.type === 'bill' ? formData.company : formData.who_uses} onChange={(e) => setFormData({ ...formData, [formData.type === 'bill' ? 'company' : 'who_uses']: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" />
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">{formData.type === 'bill' ? 'Company' : 'Who Uses'}</label>
+                    <input type="text" value={formData.type === 'bill' ? formData.company : formData.who_uses} onChange={(e) => setFormData({ ...formData, [formData.type === 'bill' ? 'company' : 'who_uses']: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Notes</label>
-                  <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none min-h-[80px]" />
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Notes</label>
+                  <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none min-h-[80px]" />
                 </div>
                 <div className="flex justify-end gap-3 pt-4">
-                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-3 bg-surface-2 text-secondary hover:text-primary rounded-xl text-xs font-bold uppercase tracking-wider transition-all">Cancel</button>
-                  <button type="submit" className="px-8 py-3 bg-accent text-inverse hover:bg-accent-hover rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-glow">Save Entry</button>
+                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-3 bg-surface-2 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all">Cancel</button>
+                  <button type="submit" className="px-8 py-3 bg-accent text-white hover:bg-accent-hover rounded text-xs font-bold uppercase tracking-wider transition-all">Save Entry</button>
                 </div>
               </form>
             </Motion.div>
@@ -445,7 +445,7 @@ const MonthlyExpenses = () => {
       <AnimatePresence>
         {deletingExpense && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeletingExpense(null)} />
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setDeletingExpense(null)} />
             <Motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-sm w-full p-6 text-center">
               <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-4">
                 <Trash2 size={24} />
@@ -453,8 +453,8 @@ const MonthlyExpenses = () => {
               <h2 className="text-xl font-bold text-primary mb-2">Confirm Delete</h2>
               <p className="text-sm text-secondary mb-8">Are you sure you want to delete <span className="text-primary font-bold">"{deletingExpense.name}"</span>? This action cannot be undone.</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeletingExpense(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
-                <button onClick={handleDeleteConfirm} className="flex-1 py-3 bg-loss text-inverse rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Delete</button>
+                <button onClick={() => setDeletingExpense(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
+                <button onClick={handleDeleteConfirm} className="flex-1 py-3 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Delete</button>
               </div>
             </Motion.div>
           </div>

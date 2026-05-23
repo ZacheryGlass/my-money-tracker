@@ -80,7 +80,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-surface rounded-card border border-border shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-surface rounded-none border border-border shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b border-border">
           <h2 className="text-lg font-bold text-primary">Bulk Import Holdings</h2>
         </div>
@@ -90,7 +90,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
             <label className="block text-sm font-medium text-secondary mb-2">
               CSV File
             </label>
-            <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-border-hover">
+            <div className="border-2 border-dashed border-border rounded p-6 text-center hover:border-border-hover">
               <div className="flex flex-col items-center gap-3">
                 <p className="text-secondary text-sm">Select a CSV file to import</p>
                 <div className="flex items-center gap-2 w-full justify-center">
@@ -104,7 +104,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
                   <button
                     onClick={handlePreview}
                     disabled={!file || importing}
-                    className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
+                    className="px-4 py-2 bg-accent text-white hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
                   >
                     {importing && !preview ? 'Loading...' : 'Preview'}
                   </button>
@@ -120,7 +120,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
           </div>
 
           {error && (
-            <div className="mb-4 bg-loss-bg text-loss border border-loss/20 rounded-lg p-3">
+            <div className="mb-4 bg-loss-bg text-loss border border-loss/20 rounded p-3">
               {error}
             </div>
           )}
@@ -130,19 +130,19 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
               <h3 className="text-lg font-semibold mb-3 text-primary">Import Preview</h3>
 
               <div className="grid grid-cols-4 gap-4 mb-4">
-                <div className="bg-surface-3 rounded-lg p-3">
+                <div className="bg-surface-3 rounded p-3">
                   <div className="text-xl font-mono font-bold text-primary">{preview.preview.total}</div>
                   <div className="text-xs text-secondary">Total Rows</div>
                 </div>
-                <div className="bg-gain-bg rounded-lg p-3">
+                <div className="bg-gain-bg rounded p-3">
                   <div className="text-xl font-mono font-bold text-gain">{preview.preview.valid}</div>
                   <div className="text-xs text-secondary">Valid</div>
                 </div>
-                <div className="bg-amber-500/10 rounded-lg p-3">
+                <div className="bg-amber-500/10 rounded p-3">
                   <div className="text-xl font-mono font-bold text-amber-400">{preview.preview.duplicates}</div>
                   <div className="text-xs text-secondary">Duplicates</div>
                 </div>
-                <div className="bg-loss-bg rounded-lg p-3">
+                <div className="bg-loss-bg rounded p-3">
                   <div className="text-xl font-mono font-bold text-loss">{preview.preview.errors}</div>
                   <div className="text-xs text-secondary">Errors</div>
                 </div>
@@ -151,7 +151,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
               {preview.validRows && preview.validRows.length > 0 && (
                 <div className="mb-4">
                   <h4 className="font-medium text-gain mb-2">Valid Holdings ({preview.validRows.length})</h4>
-                  <div className="max-h-40 overflow-y-auto bg-surface rounded-card border border-border">
+                  <div className="max-h-40 overflow-y-auto bg-surface rounded-none border border-border">
                     <table className="min-w-full text-xs">
                       <thead className="bg-surface-2 sticky top-0">
                         <tr>
@@ -181,7 +181,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
               {preview.duplicates && preview.duplicates.length > 0 && (
                 <div className="mb-4">
                   <h4 className="font-medium text-amber-400 mb-2">Duplicate Holdings ({preview.duplicates.length})</h4>
-                  <div className="max-h-40 overflow-y-auto bg-surface rounded-card border border-border">
+                  <div className="max-h-40 overflow-y-auto bg-surface rounded-none border border-border">
                     <table className="min-w-full text-xs">
                       <thead className="bg-surface-2 sticky top-0">
                         <tr>
@@ -220,7 +220,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
               {preview.errors && preview.errors.length > 0 && (
                 <div className="mb-4">
                   <h4 className="font-medium text-loss mb-2">Errors ({preview.errors.length})</h4>
-                  <div className="max-h-40 overflow-y-auto bg-surface rounded-card border border-border">
+                  <div className="max-h-40 overflow-y-auto bg-surface rounded-none border border-border">
                     <table className="min-w-full text-xs">
                       <thead className="bg-surface-2 sticky top-0">
                         <tr>
@@ -258,7 +258,7 @@ const BulkImportForm = ({ isOpen, onClose, onSuccess }) => {
               <button
                 onClick={handleConfirmImport}
                 disabled={importing}
-                className="px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
+                className="px-4 py-2 bg-accent text-white hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
               >
                 {importing ? 'Importing...' : `Import ${preview.validRows.length} Holdings`}
               </button>

@@ -9,33 +9,33 @@ const ChartTooltip = ({ active, payload, label, formatValue = formatCurrency, fo
 
   return (
     <div
-      className="rounded-lg p-3 shadow-xl"
+      className="p-2 shadow-float"
       style={{
         backgroundColor: TOOLTIP_STYLE.bg,
         border: `1px solid ${TOOLTIP_STYLE.border}`,
-        minWidth: '160px',
+        minWidth: '140px',
       }}
     >
-      <p className="text-xs mb-2" style={{ color: TOOLTIP_STYLE.label }}>
+      <p className="text-caption mb-1" style={{ color: TOOLTIP_STYLE.label }}>
         {displayLabel}
       </p>
       {payload.map((entry, index) => (
-        <div key={index} className="flex items-center justify-between gap-3 py-0.5">
+        <div key={index} className="flex items-center justify-between gap-3 py-px">
           <div className="flex items-center gap-1.5">
             <span
               className="inline-block rounded-full flex-shrink-0"
               style={{
-                width: 8,
-                height: 8,
+                width: 6,
+                height: 6,
                 backgroundColor: entry.color,
               }}
             />
-            <span className="text-xs" style={{ color: TOOLTIP_STYLE.label }}>
+            <span className="text-caption" style={{ color: TOOLTIP_STYLE.label }}>
               {entry.name}
             </span>
           </div>
           <span
-            className="text-xs font-mono ml-2"
+            className="text-caption font-mono ml-2"
             style={{ color: TOOLTIP_STYLE.text }}
           >
             {entry.value != null ? formatValue(entry.value) : '-'}

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity, ChevronRight, TrendingUp, Clock, Zap, Landmark } from 'lucide-react';
+import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity, ChevronRight, TrendingUp, Clock, Landmark } from 'lucide-react';
 import { dashboard as dashboardAPI, history as historyAPI, plaid as plaidAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatCompactCurrency } from '../utils/format';
 import DashboardTable from './DashboardTable';
@@ -112,69 +111,54 @@ const Dashboard = ({ onNavigate }) => {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[500px] gap-4">
-        <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-sm font-bold tracking-widest uppercase text-tertiary animate-pulse">Aggregating Portfolio</span>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-caption text-tertiary">Aggregating Portfolio</span>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 md:py-12 max-w-[1600px] space-y-12">
-      {/* Hero Section */}
-      <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-8 pt-4 relative">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-4"
-        >
-          <div className="flex items-center gap-3">
-            <div className="px-3 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-bold uppercase tracking-widest flex items-center gap-2">
-              <Zap size={14} className="fill-accent" />
-              Live Net Worth
-            </div>
+    <div className="px-4 py-4 max-w-[1600px] space-y-4">
+      {/* Header */}
+      <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-caption text-tertiary uppercase tracking-wide">Net Worth</span>
             {data?.lastUpdated && (
-              <div className="text-xs font-bold uppercase tracking-widest text-secondary flex items-center gap-1.5">
-                <Clock size={14} />
-                Synced {new Date(data.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              <span className="text-caption text-tertiary flex items-center gap-1">
+                <Clock size={11} />
+                {new Date(data.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </div>
+
+          <div>
+            <h1 className="text-display-mega font-money text-primary">
+              {formatCurrency(netWorth)}
+            </h1>
+            {dailyChange.amount !== 0 && (
+              <div className={`flex items-center gap-1 text-body-sm ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
+                {dailyChange.amount >= 0 ? <TrendingUp size={14} /> : <TrendingUp size={14} className="rotate-180" />}
+                {formatCurrency(Math.abs(dailyChange.amount))} ({formatPercent(dailyChange.percent)})
+                <span className="text-tertiary ml-1">today</span>
               </div>
             )}
           </div>
-          
-          <div className="space-y-1">
-            <h1 className="text-6xl md:text-8xl font-bold text-primary tracking-tighter leading-none">
-              {formatCurrency(netWorth)}
-            </h1>
-            <div className="flex items-center gap-4">
-              {dailyChange.amount !== 0 && (
-                <div className={`flex items-center gap-1.5 text-base font-bold ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
-                  {dailyChange.amount >= 0 ? <TrendingUp size={18} /> : <TrendingUp size={18} className="rotate-180" />}
-                  {formatCurrency(Math.abs(dailyChange.amount))} ({formatPercent(dailyChange.percent)})
-                  <span className="text-secondary font-semibold uppercase text-xs tracking-widest ml-1">Today</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </motion.div>
+        </div>
 
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="flex flex-wrap items-center gap-3"
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded text-button font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
         >
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center justify-center gap-3 px-8 py-5 bg-surface-2 text-primary border border-border hover:border-accent hover:text-accent rounded-2xl text-base font-bold transition-all disabled:opacity-50 min-h-[64px] shadow-sm group"
-          >
-            <RefreshCw size={20} className={`${refreshing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
-            {refreshing ? 'Syncing...' : 'Refresh Data'}
-          </button>
-        </motion.div>
+          <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+          {refreshing ? 'Syncing...' : 'Refresh'}
+        </button>
       </section>
 
       {/* Primary Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-border">
         <MetricCard
           label="Total Assets"
           value={formatCurrency(totalAssets)}
@@ -200,65 +184,55 @@ const Dashboard = ({ onNavigate }) => {
         />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-5 gap-8">
-        {/* Left: Allocation Breakdown */}
-        <div className="xl:col-span-3 space-y-6">
-          <div className="flex items-center justify-between px-2">
-            <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-tertiary">Asset Allocation</h2>
-            <button onClick={() => onNavigate('assets')} className="text-xs font-bold uppercase tracking-widest text-accent flex items-center gap-1.5 hover:underline">
-              Full Breakdown <ChevronRight size={14} />
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+        {/* Left: Allocation */}
+        <div className="xl:col-span-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-title-sm text-tertiary uppercase tracking-wide">Asset Allocation</h2>
+            <button onClick={() => onNavigate('assets')} className="text-caption text-accent flex items-center gap-1 hover:underline">
+              Full Breakdown <ChevronRight size={12} />
             </button>
           </div>
-          <div className="card bg-surface-2/50 backdrop-blur-md border-border/50">
-            <AllocationDonut items={data?.items || []} className="min-h-[450px]" />
+          <div className="card">
+            <AllocationDonut items={data?.items || []} className="min-h-[350px]" />
           </div>
         </div>
 
         {/* Right: Account Feed */}
-        <div className="xl:col-span-2 space-y-6">
-          <div className="flex items-center justify-between px-2">
-            <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-tertiary">Live Account Feed</h2>
-            <button onClick={() => onNavigate('accounts')} className="text-xs font-bold uppercase tracking-widest text-accent flex items-center gap-1.5 hover:underline">
-              All Accounts <ChevronRight size={14} />
+        <div className="xl:col-span-2 space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-title-sm text-tertiary uppercase tracking-wide">Account Feed</h2>
+            <button onClick={() => onNavigate('accounts')} className="text-caption text-accent flex items-center gap-1 hover:underline">
+              All Accounts <ChevronRight size={12} />
             </button>
           </div>
-          
-          <div className="card p-2 bg-surface-2/30 border-border/50 flex flex-col gap-2 max-h-[520px] overflow-y-auto custom-scrollbar">
-            <AnimatePresence mode="popLayout">
-              {accountSummaries.map((account, idx) => (
-                <motion.div
-                  key={account.name}
-                  layout
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.05 }}
-                  className="flex items-center justify-between gap-4 p-5 bg-surface rounded-2xl border border-transparent hover:border-border/50 hover:bg-surface-2 transition-all group cursor-pointer"
-                  onClick={() => onNavigate('accounts')}
-                >
-                  <div className="flex items-center gap-4 flex-1 min-w-0">
-                    <div className="w-12 h-12 rounded-xl bg-surface-3 border border-border/50 flex items-center justify-center text-accent group-hover:scale-110 transition-transform">
-                      <Landmark size={20} />
+
+          <div className="card flex flex-col max-h-[420px] overflow-y-auto">
+            {accountSummaries.map((account) => (
+              <div
+                key={account.name}
+                className="flex items-center justify-between gap-3 px-3 py-2 border-b border-border last:border-b-0 hover:bg-surface-2 transition-colors cursor-pointer"
+                onClick={() => onNavigate('accounts')}
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <Landmark size={14} className="text-tertiary flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-body-sm font-semibold text-primary truncate">
+                      {account.name}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-base font-bold text-primary truncate">
-                        {account.name}
-                      </div>
-                      <div className="text-sm font-mono font-bold text-secondary mt-0.5">
-                        {formatCompactCurrency(account.value)}
-                      </div>
+                    <div className="text-caption font-mono text-tertiary">
+                      {formatCompactCurrency(account.value)}
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    <SparkLine data={account.sparkData} width={120} height={40} />
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-            
+                </div>
+                <SparkLine data={account.sparkData} width={80} height={28} />
+              </div>
+            ))}
+
             {accountSummaries.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-24 text-center opacity-40">
-                <Wallet size={48} className="text-tertiary mb-4" />
-                <p className="text-xs font-bold uppercase tracking-widest text-tertiary">No Active Accounts</p>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Wallet size={24} className="text-tertiary mb-2" />
+                <p className="text-caption text-tertiary">No Active Accounts</p>
               </div>
             )}
           </div>
@@ -266,20 +240,11 @@ const Dashboard = ({ onNavigate }) => {
       </div>
 
       {/* Global Asset Table */}
-      <div className="space-y-6">
-        <div className="flex items-center justify-between px-2">
-          <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-tertiary">Portfolio Details</h2>
-        </div>
-        <div className="card overflow-hidden bg-surface-2/20 border-border/50">
+      <div className="space-y-2">
+        <h2 className="text-title-sm text-tertiary uppercase tracking-wide">Portfolio Details</h2>
+        <div className="card overflow-hidden">
           <DashboardTable items={data?.items || []} onNavigate={onNavigate} />
         </div>
-      </div>
-      
-      {/* Helper text */}
-      <div className="flex items-center justify-center flex-wrap gap-x-12 gap-y-4 text-xs text-tertiary uppercase tracking-widest font-bold opacity-60 pb-8">
-        <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-accent shadow-glow" /> Dynamic Net Worth</span>
-        <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-gain shadow-glow" /> Real-time pricing</span>
-        <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-surface-3 border border-border" /> Aggregated Institutions</span>
       </div>
     </div>
   );

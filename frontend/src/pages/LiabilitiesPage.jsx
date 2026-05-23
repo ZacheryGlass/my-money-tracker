@@ -1,14 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  flexRender,
+  useReactTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel, getPaginationRowModel, flexRender,
 } from '@tanstack/react-table';
-import { motion as Motion } from 'framer-motion';
-import { Plus, Link2, Filter, Check, X, ArrowDownCircle } from 'lucide-react';
+import { Plus, Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
@@ -28,75 +22,34 @@ const LiabilitiesPage = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState(null);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [holdingsData, accountsData] = await Promise.all([
-        holdingsAPI.getAll(),
-        accountsAPI.getAll(),
-      ]);
-      setHoldings(holdingsData.holdings || []);
-      setAccounts(accountsData.accounts || []);
-      setError(null);
-    } catch (err) {
-      console.error('Error fetching data:', err);
-      setError(err.response?.data?.error || 'Failed to load data');
-    } finally {
-      setLoading(false);
-    }
+      const [holdingsData, accountsData] = await Promise.all([holdingsAPI.getAll(), accountsAPI.getAll()]);
+      setHoldings(holdingsData.holdings || []); setAccounts(accountsData.accounts || []); setError(null);
+    } catch (err) { setError(err.response?.data?.error || 'Failed to load data'); }
+    finally { setLoading(false); }
   };
 
-  const showSuccess = (message) => {
-    setSuccessMessage(message);
-    setTimeout(() => setSuccessMessage(''), 3000);
-  };
-
-  const handleAddNew = () => {
-    setEditingHolding(null);
-    setIsFormOpen(true);
-  };
-
-  const handleEdit = (holding) => {
-    if (holding.is_plaid_managed) return;
-    setEditingHolding(holding);
-    setIsFormOpen(true);
-  };
+  const showSuccess = (message) => { setSuccessMessage(message); setTimeout(() => setSuccessMessage(''), 3000); };
+  const handleAddNew = () => { setEditingHolding(null); setIsFormOpen(true); };
+  const handleEdit = (holding) => { if (holding.is_plaid_managed) return; setEditingHolding(holding); setIsFormOpen(true); };
 
   const handleSave = async (data) => {
-    if (editingHolding) {
-      await holdingsAPI.update(editingHolding.id, data);
-      showSuccess('Liability updated');
-    } else {
-      await holdingsAPI.create(data);
-      showSuccess('Liability added');
-    }
-    await fetchData();
-    setIsFormOpen(false);
+    if (editingHolding) { await holdingsAPI.update(editingHolding.id, data); showSuccess('Liability updated'); }
+    else { await holdingsAPI.create(data); showSuccess('Liability added'); }
+    await fetchData(); setIsFormOpen(false);
   };
 
   const handleDelete = async (id) => {
-    try {
-      await holdingsAPI.delete(id);
-      showSuccess('Entry deleted');
-      setIsFormOpen(false);
-      setEditingHolding(null);
-      await fetchData();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete');
-    }
+    try { await holdingsAPI.delete(id); showSuccess('Entry deleted'); setIsFormOpen(false); setEditingHolding(null); await fetchData(); }
+    catch (err) { setError(err.response?.data?.error || 'Failed to delete'); }
   };
 
-  const liabilityAccounts = useMemo(() => {
-    return accounts.filter((a) => LIABILITY_TYPES.has(a.type));
-  }, [accounts]);
-
-  const liabilityAccountIds = useMemo(() => {
-    return new Set(liabilityAccounts.map((a) => a.id));
-  }, [liabilityAccounts]);
+  const liabilityAccounts = useMemo(() => accounts.filter((a) => LIABILITY_TYPES.has(a.type)), [accounts]);
+  const liabilityAccountIds = useMemo(() => new Set(liabilityAccounts.map((a) => a.id)), [liabilityAccounts]);
 
   const filteredData = useMemo(() => {
     let data = holdings.filter((h) => liabilityAccountIds.has(h.account_id));
@@ -105,270 +58,125 @@ const LiabilitiesPage = () => {
   }, [holdings, liabilityAccountIds, accountFilter]);
 
   const { totalCredit, totalLoans, totalLiabilities } = useMemo(() => {
-    let credit = 0;
-    let loans = 0;
+    let credit = 0, loans = 0;
     const accountTypeMap = new Map(accounts.map((a) => [a.id, a.type]));
-
     filteredData.forEach((h) => {
       const value = Math.abs(parseFloat(h.current_value ?? h.manual_value) || 0);
       const type = accountTypeMap.get(h.account_id);
-      if (type === 'credit') credit += value;
-      else loans += value;
+      if (type === 'credit') credit += value; else loans += value;
     });
-
     return { totalCredit: credit, totalLoans: loans, totalLiabilities: credit + loans };
   }, [filteredData, accounts]);
 
-  const columns = useMemo(
-    () => [
-      {
-        accessorKey: 'account_name',
-        header: 'Institution',
-        cell: ({ getValue }) => <span className="text-xs font-bold text-secondary uppercase tracking-tight">{getValue()}</span>,
-      },
-      {
-        accessorKey: 'name',
-        header: 'Account Name',
-        cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-primary">{row.original.name}</span>
-            {row.original.is_plaid_managed && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
-                <Link2 size={10} />
-                Linked
-              </span>
-            )}
-          </div>
-        ),
-      },
-      {
-        id: 'value',
-        accessorFn: (row) => Math.abs(parseFloat(row.current_value ?? row.manual_value) || 0),
-        header: 'Owed',
-        cell: ({ getValue }) => {
-          const v = getValue();
-          return <span className="font-mono text-sm font-bold text-loss">{formatCurrency(v)}</span>;
-        },
-      },
-      {
-        id: 'type',
-        accessorFn: (row) => {
-          const acct = accounts.find((a) => a.id === row.account_id);
-          return acct?.type === 'credit' ? 'Credit' : 'Loan';
-        },
-        header: 'Type',
-        cell: ({ getValue }) => <span className="text-[10px] font-bold uppercase text-tertiary tracking-widest">{getValue()}</span>,
-      },
-    ],
-    [accounts]
-  );
+  const columns = useMemo(() => [
+    { accessorKey: 'account_name', header: 'Institution', cell: ({ getValue }) => <span className="text-caption text-tertiary uppercase">{getValue()}</span> },
+    { accessorKey: 'name', header: 'Account Name', cell: ({ row }) => (
+      <div className="flex items-center gap-2">
+        <span className="font-semibold text-primary">{row.original.name}</span>
+        {row.original.is_plaid_managed && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-caption bg-accent-muted text-accent border border-accent/20"><Link2 size={10} />Linked</span>}
+      </div>
+    )},
+    { id: 'value', accessorFn: (row) => Math.abs(parseFloat(row.current_value ?? row.manual_value) || 0), header: 'Owed',
+      cell: ({ getValue }) => <span className="font-mono font-semibold text-loss">{formatCurrency(getValue())}</span> },
+    { id: 'type', accessorFn: (row) => { const acct = accounts.find((a) => a.id === row.account_id); return acct?.type === 'credit' ? 'Credit' : 'Loan'; },
+      header: 'Type', cell: ({ getValue }) => <span className="text-caption text-tertiary uppercase">{getValue()}</span> },
+  ], [accounts]);
 
-  const table = useReactTable({
-    data: filteredData,
-    columns,
-    state: { sorting, pagination },
-    onSortingChange: setSorting,
-    onPaginationChange: setPagination,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-  });
+  const table = useReactTable({ data: filteredData, columns, state: { sorting, pagination }, onSortingChange: setSorting, onPaginationChange: setPagination, getCoreRowModel: getCoreRowModel(), getSortedRowModel: getSortedRowModel(), getFilteredRowModel: getFilteredRowModel(), getPaginationRowModel: getPaginationRowModel() });
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Calculating Debt</span>
-      </div>
-    );
+    return <div className="flex flex-col items-center justify-center min-h-[400px] gap-3"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /><span className="text-caption text-tertiary">Loading...</span></div>;
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8">
-      {/* Hero Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+    <div className="px-4 py-4">
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-4 gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-2">
-            <ArrowDownCircle className="text-loss w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Liability Overview</span>
-          </div>
-          <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
-            {formatCurrency(totalLiabilities)}
-          </h1>
-          <p className="text-sm text-secondary">Total outstanding balance across {liabilityAccounts.length} accounts</p>
+          <p className="text-caption text-tertiary uppercase tracking-wide mb-0.5">Liabilities</p>
+          <h1 className="text-display-lg font-money text-primary">{formatCurrency(totalLiabilities)}</h1>
+          <p className="text-body-sm text-tertiary">{liabilityAccounts.length} accounts</p>
         </div>
-
-        <div className="flex items-center gap-4">
-          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Credit Cards</p>
-            <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalCredit)}</p>
+        <div className="flex items-center gap-2">
+          <div className="border border-border bg-surface-3 p-2">
+            <p className="text-caption text-tertiary uppercase mb-0.5">Credit Cards</p>
+            <p className="font-mono font-semibold text-loss">{formatCurrency(totalCredit)}</p>
           </div>
-          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Loans</p>
-            <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalLoans)}</p>
+          <div className="border border-border bg-surface-3 p-2">
+            <p className="text-caption text-tertiary uppercase mb-0.5">Loans</p>
+            <p className="font-mono font-semibold text-loss">{formatCurrency(totalLoans)}</p>
           </div>
-          <button
-            onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
-          >
-            <Plus size={18} />
-            <span>Add Entry</span>
+          <button onClick={handleAddNew} className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded text-button font-semibold hover:bg-accent-hover">
+            <Plus size={14} /> Add Entry
           </button>
         </div>
       </div>
 
-      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
-        <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-2 shrink-0">
-            <Filter size={16} className="text-accent" />
-            <span className="text-sm font-bold uppercase tracking-widest text-primary">Accounts</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setAccountFilter('')}
-              className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all ${
-                accountFilter === ''
-                  ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                  : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
-              }`}
-            >
-              <span className="text-xs font-bold uppercase tracking-wider">All Accounts</span>
-              {accountFilter === '' && <Check size={14} />}
+      <div className="card mb-4">
+        <div className="flex flex-wrap gap-1 p-3">
+          <button onClick={() => setAccountFilter('')} className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${accountFilter === '' ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'}`}>
+            All Accounts {accountFilter === '' && <Check size={12} />}
+          </button>
+          {liabilityAccounts.map((account) => (
+            <button key={account.id} onClick={() => setAccountFilter(String(account.id))} className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${accountFilter === String(account.id) ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'}`}>
+              <span className="max-w-[200px] truncate">{getAccountDisplayName(account)}</span>
+              {accountFilter === String(account.id) && <Check size={12} />}
             </button>
-            {liabilityAccounts.map((account) => (
-              <button
-                key={account.id}
-                onClick={() => setAccountFilter(String(account.id))}
-                className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all ${
-                  accountFilter === String(account.id)
-                    ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
-                }`}
-              >
-                <span className="max-w-[220px] truncate text-xs font-bold uppercase tracking-wider">{getAccountDisplayName(account)}</span>
-                {accountFilter === String(account.id) && <Check size={14} />}
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
       </div>
 
-      <div className="space-y-6">
-          {error && (
-            <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
-              <X size={16} />
-              {error}
-            </div>
-          )}
+      {error && <div className="p-2 bg-loss-bg border border-loss/20 text-loss text-body-sm flex items-center gap-2 mb-3"><X size={14} />{error}</div>}
+      {successMessage && <div className="p-2 bg-gain-bg border border-gain/20 text-gain text-body-sm flex items-center gap-2 mb-3"><Check size={14} />{successMessage}</div>}
 
-          {successMessage && (
-            <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
-              <Check size={16} />
-              {successMessage}
-            </Motion.div>
-          )}
-
-          <div className="card overflow-hidden">
-            <div className="hidden md:block overflow-x-auto">
-              <table className="min-w-full divide-y divide-border">
-                <thead className="bg-surface-2">
-                  {table.getHeaderGroups().map((headerGroup) => (
-                    <tr key={headerGroup.id}>
-                      {headerGroup.headers.map((header) => (
-                        <th
-                          key={header.id}
-                          className="px-5 py-4 text-left text-[10px] font-bold text-tertiary uppercase tracking-widest cursor-pointer hover:bg-surface-3 transition-colors"
-                          onClick={header.column.getToggleSortingHandler()}
-                        >
-                          <div className="flex items-center gap-2">
-                            {flexRender(header.column.columnDef.header, header.getContext())}
-                            {header.column.getIsSorted() && (
-                              <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
-                            )}
-                          </div>
-                        </th>
-                      ))}
-                    </tr>
+      <div className="card overflow-hidden">
+        <div className="hidden md:block overflow-x-auto">
+          <table className="min-w-full divide-y divide-border">
+            <thead className="bg-surface-2">
+              {table.getHeaderGroups().map((hg) => (
+                <tr key={hg.id}>
+                  {hg.headers.map((header) => (
+                    <th key={header.id} className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide cursor-pointer hover:bg-surface-3" onClick={header.column.getToggleSortingHandler()}>
+                      <div className="flex items-center gap-1">
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {header.column.getIsSorted() && <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>}
+                      </div>
+                    </th>
                   ))}
-                </thead>
-                <tbody className="divide-y divide-border bg-surface">
-                  {table.getRowModel().rows.length === 0 ? (
-                    <tr>
-                      <td colSpan={columns.length} className="px-5 py-12 text-center text-tertiary text-sm font-medium">
-                        No liabilities found. Add a credit or loan account to get started.
-                      </td>
-                    </tr>
-                  ) : (
-                    table.getRowModel().rows.map((row) => (
-                      <tr
-                        key={row.id}
-                        className={`hover:bg-surface-2 transition-colors ${
-                          row.original.is_plaid_managed ? '' : 'cursor-pointer'
-                        }`}
-                        onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
-                      >
-                        {row.getVisibleCells().map((cell) => (
-                          <td key={cell.id} className="px-5 py-3 whitespace-nowrap text-sm text-primary">
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
-                        ))}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile View */}
-            <div className="md:hidden space-y-3 p-4">
+                </tr>
+              ))}
+            </thead>
+            <tbody className="divide-y divide-border">
               {table.getRowModel().rows.length === 0 ? (
-                <div className="py-8 text-center text-tertiary text-xs uppercase tracking-widest font-bold">No entries found</div>
-              ) : (
-                table.getRowModel().rows.map((row) => {
-                  const value = Math.abs(parseFloat(row.original.current_value ?? row.original.manual_value ?? 0));
-                  const acct = accounts.find((a) => a.id === row.original.account_id);
-                  return (
-                    <div
-                      key={row.id}
-                      className={`card p-4 border border-border/50 active:bg-surface-3 transition-all ${
-                        row.original.is_plaid_managed ? '' : 'cursor-pointer'
-                      }`}
-                      onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-primary truncate">{row.original.name}</p>
-                          <p className="text-[10px] font-bold text-tertiary uppercase tracking-tight">{row.original.account_name}</p>
-                        </div>
-                        <p className="text-base font-mono font-bold text-loss">{formatCurrency(value)}</p>
-                      </div>
-                      <div className="flex items-center gap-3 pt-2 border-t border-border/50">
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-tertiary">{acct?.type === 'credit' ? 'Credit' : 'Loan'}</span>
-                        {row.original.is_plaid_managed && <Link2 size={10} className="text-accent" />}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-center gap-6 text-[10px] text-tertiary uppercase tracking-widest font-bold">
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-loss shadow-glow" /> Owed balance</span>
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Recurring interest</span>
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Institutional debt</span>
-          </div>
+                <tr><td colSpan={columns.length} className="px-3 py-8 text-center text-tertiary text-body-sm">No liabilities found.</td></tr>
+              ) : table.getRowModel().rows.map((row) => (
+                <tr key={row.id} className={`hover:bg-surface-2 transition-colors ${row.original.is_plaid_managed ? '' : 'cursor-pointer'}`} onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}>
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id} className="px-3 py-2 whitespace-nowrap text-body-sm">{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="md:hidden divide-y divide-border">
+          {table.getRowModel().rows.map((row) => {
+            const value = Math.abs(parseFloat(row.original.current_value ?? row.original.manual_value ?? 0));
+            return (
+              <div key={row.id} className={`p-3 ${row.original.is_plaid_managed ? '' : 'cursor-pointer hover:bg-surface-2'}`} onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}>
+                <div className="flex justify-between items-start">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-body-sm font-semibold text-primary truncate">{row.original.name}</p>
+                    <p className="text-caption text-tertiary">{row.original.account_name}</p>
+                  </div>
+                  <p className="font-mono font-semibold text-loss">{formatCurrency(value)}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      <HoldingForm
-        isOpen={isFormOpen}
-        onClose={() => setIsFormOpen(false)}
-        onSave={handleSave}
-        onDelete={handleDelete}
-        holding={editingHolding}
-        accounts={liabilityAccounts}
-      />
+      <HoldingForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSave} onDelete={handleDelete} holding={editingHolding} accounts={liabilityAccounts} />
     </div>
   );
 };

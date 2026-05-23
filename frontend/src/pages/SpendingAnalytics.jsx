@@ -116,8 +116,8 @@ export default function SpendingAnalytics() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Analyzing Spending</span>
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Analyzing Spending</span>
       </div>
     );
   }
@@ -140,12 +140,12 @@ export default function SpendingAnalytics() {
 
       {/* Date Range Controls */}
       <div className="flex gap-3 items-center">
-        <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+        <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
           {DATE_RANGES.map((r) => (
             <button
               key={r.id}
               onClick={() => setDateRange(r.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+              className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                 dateRange === r.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
               }`}
             >
@@ -157,7 +157,7 @@ export default function SpendingAnalytics() {
 
       {/* Income vs Expenses Chart */}
       <div className="card p-4 md:p-6">
-        <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Income vs Expenses</h2>
+        <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Income vs Expenses</h2>
         <div style={{ height: isMobile ? 280 : 380 }}>
           {ivsChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
@@ -188,7 +188,7 @@ export default function SpendingAnalytics() {
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Donut */}
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Spending by Category</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Spending by Category</h2>
           <div style={{ height: isMobile ? 250 : 320 }}>
             {categoryTotals.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -231,7 +231,7 @@ export default function SpendingAnalytics() {
 
         {/* Horizontal Bar */}
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Top Categories</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Top Categories</h2>
           <div style={{ height: isMobile ? 250 : 320 }}>
             {categoryTotals.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -256,7 +256,7 @@ export default function SpendingAnalytics() {
 
       {/* Spending Heatmap */}
       <div className="card p-4 md:p-6">
-        <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Spending Heatmap</h2>
+        <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Spending Heatmap</h2>
         {heatmapData.length > 0 ? (
           <div className="overflow-x-auto">
             <CalendarHeatmap
@@ -273,7 +273,7 @@ export default function SpendingAnalytics() {
       {/* Day of Week Summary */}
       {heatmapData.length > 0 && (
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary mb-4">Average Spending by Day of Week</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Average Spending by Day of Week</h2>
           <DayOfWeekChart data={heatmapData} isMobile={isMobile} />
         </div>
       )}

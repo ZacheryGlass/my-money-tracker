@@ -24,44 +24,44 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-base px-4" style={{ background: 'radial-gradient(ellipse at 50% 30%, rgba(0, 212, 170, 0.06) 0%, var(--bg-base) 70%)' }}>
-      <div className="card p-6 md:p-8 w-full max-w-md animate-fade-in">
-        <h1 className="text-2xl md:text-3xl font-bold mb-1 text-center text-primary">
+    <div className="min-h-screen flex items-center justify-center bg-base px-4">
+      <div className="card p-6 w-full max-w-sm">
+        <h1 className="text-display-md mb-1 text-center text-primary">
           My Money Tracker
         </h1>
-        <p className="text-sm text-secondary text-center mb-6">Sign in to your portfolio</p>
+        <p className="text-body-sm text-tertiary text-center mb-6">Sign in to your portfolio</p>
 
         <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-secondary mb-1">
+          <div className="mb-3">
+            <label className="block text-body-sm font-semibold text-secondary mb-1">
               Username
             </label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
+              className="w-full px-2 py-1.5 border border-input-border"
               required
               disabled={isLoading}
             />
           </div>
 
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-secondary mb-1">
+          <div className="mb-4">
+            <label className="block text-body-sm font-semibold text-secondary mb-1">
               Password
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
+              className="w-full px-2 py-1.5 border border-input-border"
               required
               disabled={isLoading}
             />
           </div>
 
           {error && (
-            <div className="mb-4 bg-loss-bg text-loss border border-loss/20 rounded-lg p-3 text-sm">
+            <div className="mb-3 bg-loss-bg text-loss border border-loss/20 p-2 text-body-sm">
               {error}
             </div>
           )}
@@ -69,15 +69,14 @@ const Login = () => {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full px-4 py-2 bg-accent text-inverse font-medium rounded-md hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation transition-colors"
-            style={{ boxShadow: '0 0 20px rgba(0,212,170,0.15)' }}
+            className="w-full px-3 py-1.5 bg-accent text-white font-semibold rounded hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-button"
           >
             {isLoading ? 'Logging in...' : 'Login'}
           </button>
         </form>
 
         {import.meta.env.DEV && (
-          <p className="mt-4 text-xs text-tertiary text-center">
+          <p className="mt-3 text-caption text-tertiary text-center">
             Default credentials: zachery / password
           </p>
         )}

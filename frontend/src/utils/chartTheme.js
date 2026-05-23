@@ -1,30 +1,29 @@
 import { createElement } from 'react';
 
 export const CHART_COLORS = [
-  '#00D4AA', '#3B82F6', '#A78BFA', '#F59E0B',
-  '#EC4899', '#06B6D4', '#F97316', '#84CC16',
+  '#3994BC', '#72C892', '#e5ba7d', '#79c0ff',
+  '#f48771', '#73c991', '#c9a0ff', '#7ee0c0',
 ];
 
 export const GRID_STYLE = {
-  stroke: '#1E2636',
+  stroke: '#2A2B2C',
   strokeDasharray: '3 3',
 };
 
 export const AXIS_STYLE = {
-  stroke: '#525D6E',
+  stroke: '#8C8C8C',
   fontSize: 11,
   tickLine: false,
-  axisLine: { stroke: '#1E2636' },
+  axisLine: { stroke: '#2A2B2C' },
 };
 
 export const TOOLTIP_STYLE = {
-  bg: '#1C2230',
-  border: '#2A3347',
-  text: '#E8ECF1',
-  label: '#8B95A5',
+  bg: '#202122',
+  border: '#333536',
+  text: '#ededed',
+  label: '#8C8C8C',
 };
 
-// Usage: <defs>{areaGradient('myId', '#00D4AA')}</defs>
 export const areaGradient = (id, color, topOpacity = 0.25) =>
   createElement(
     'linearGradient',

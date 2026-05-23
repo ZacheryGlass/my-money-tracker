@@ -24,18 +24,18 @@ const TYPE_COLORS = {
 };
 
 const TypeBadge = ({ type }) => (
-  <span className={`inline-flex items-center px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-full border ${TYPE_COLORS[type] || TYPE_COLORS.other}`}>
+  <span className={`inline-flex items-center px-1.5 py-0.5 text-caption font-semibold uppercase border ${TYPE_COLORS[type] || TYPE_COLORS.other}`}>
     {type}
   </span>
 );
 
 const PlaidBadge = () => (
   <span
-    className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent/10 text-accent border border-accent/20 shrink-0"
+    className="inline-flex h-5 w-5 items-center justify-center bg-accent-muted text-accent border border-accent/20 shrink-0"
     title="Plaid-linked account"
     aria-label="Plaid-linked account"
   >
-    <Link2 size={12} />
+    <Link2 size={10} />
   </span>
 );
 
@@ -324,7 +324,7 @@ const AccountsPage = () => {
               Pending
             </span>
           ) : (
-            <span className="text-xs font-bold uppercase text-tertiary tracking-widest opacity-60">Posted</span>
+            <span className="text-xs font-bold uppercase text-tertiary tracking-wide opacity-60">Posted</span>
           )
         ),
       },
@@ -346,8 +346,8 @@ const AccountsPage = () => {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Loading Accounts</span>
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Loading Accounts</span>
       </div>
     );
   }
@@ -357,11 +357,11 @@ const AccountsPage = () => {
     return (
       <div className="flex items-center justify-between mt-6 px-4">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-bold uppercase tracking-widest text-tertiary">Show</span>
+          <span className="text-xs font-bold uppercase tracking-wide text-tertiary">Show</span>
           <select
             value={table.getState().pagination.pageSize}
             onChange={(e) => table.setPageSize(Number(e.target.value))}
-            className="bg-surface-3 border-border rounded-lg px-3 py-1.5 text-sm font-bold focus:ring-1 focus:ring-accent"
+            className="bg-surface-3 border-border rounded px-3 py-1.5 text-sm font-bold focus:ring-1 focus:ring-accent"
           >
             {[10, 25, 50, 100].map((size) => (
               <option key={size} value={size}>{size}</option>
@@ -369,21 +369,21 @@ const AccountsPage = () => {
           </select>
         </div>
         <div className="flex items-center gap-6">
-          <span className="text-xs font-bold uppercase tracking-widest text-tertiary">
+          <span className="text-xs font-bold uppercase tracking-wide text-tertiary">
             Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
           </span>
           <div className="flex gap-2">
             <button
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
-              className="px-4 py-2 bg-surface-3 text-secondary border border-border rounded-lg text-sm font-bold hover:bg-surface-2 hover:text-primary hover:border-accent disabled:opacity-30 transition-all"
+              className="px-4 py-2 bg-surface-3 text-secondary border border-border rounded text-sm font-bold hover:bg-surface-2 hover:text-primary hover:border-accent disabled:opacity-30 transition-all"
             >
               Prev
             </button>
             <button
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
-              className="px-4 py-2 bg-surface-3 text-secondary border border-border rounded-lg text-sm font-bold hover:bg-surface-2 hover:text-primary hover:border-accent disabled:opacity-30 transition-all"
+              className="px-4 py-2 bg-surface-3 text-secondary border border-border rounded text-sm font-bold hover:bg-surface-2 hover:text-primary hover:border-accent disabled:opacity-30 transition-all"
             >
               Next
             </button>
@@ -403,7 +403,7 @@ const AccountsPage = () => {
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className="px-5 py-5 text-left text-sm font-bold text-tertiary uppercase tracking-widest cursor-pointer hover:bg-surface-3 transition-colors"
+                    className="px-5 py-5 text-left text-sm font-bold text-tertiary uppercase tracking-wide cursor-pointer hover:bg-surface-3 transition-colors"
                     onClick={header.column.getToggleSortingHandler()}
                   >
                     <div className="flex items-center gap-2">
@@ -452,7 +452,7 @@ const AccountsPage = () => {
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Building2 className="text-accent w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Asset Management</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Asset Management</span>
           </div>
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
             {formatCurrency(grandTotal)}
@@ -461,34 +461,34 @@ const AccountsPage = () => {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Accounts</p>
+          <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[120px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Accounts</p>
             <p className="text-lg font-mono font-bold text-primary">{accounts.length}</p>
           </div>
-          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[120px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Plaid Items</p>
+          <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[120px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Plaid Items</p>
             <p className="text-lg font-mono font-bold text-accent">{plaidCount}</p>
           </div>
         </div>
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+        <div className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
           <X size={16} />
           {error}
         </div>
       )}
 
-      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
+      <div className="mb-5 rounded border border-border bg-surface overflow-hidden">
         <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2 shrink-0">
             <Filter size={16} className="text-accent" />
-            <span className="text-sm font-bold uppercase tracking-widest text-primary">Filters</span>
+            <span className="text-sm font-bold uppercase tracking-wide text-primary">Filters</span>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setTypeFilter('')}
-              className={`flex items-center gap-3 rounded-xl border px-3 py-2 transition-all ${
+              className={`flex items-center gap-3 rounded border px-3 py-2 transition-all ${
                 typeFilter === ''
                   ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
                   : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
@@ -503,7 +503,7 @@ const AccountsPage = () => {
                 <button
                   key={type}
                   onClick={() => setTypeFilter(type)}
-                  className={`flex items-center gap-3 rounded-xl border px-3 py-2 transition-all ${
+                  className={`flex items-center gap-3 rounded border px-3 py-2 transition-all ${
                     typeFilter === type
                       ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
                       : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
@@ -529,7 +529,7 @@ const AccountsPage = () => {
           return (
             <div
               key={account.id}
-              className="card p-4 active:bg-surface-3 cursor-pointer transition-all border border-border/50"
+              className="card p-4 active:bg-surface-3 cursor-pointer transition-all border border-border"
               onClick={() => setSelectedAccountId(account.id)}
             >
               <div className="flex justify-between items-start mb-3">
@@ -547,9 +547,9 @@ const AccountsPage = () => {
                   {formatCurrency(total)}
                 </div>
               </div>
-              <div className="flex items-center gap-4 pt-3 border-t border-border/50 text-tertiary">
-                <span className="text-[10px] font-bold uppercase tracking-widest">{account.holdings_count || 0} Assets</span>
-                <span className="text-[10px] font-bold uppercase tracking-widest">{account.type}</span>
+              <div className="flex items-center gap-4 pt-3 border-t border-border text-tertiary">
+                <span className="text-[10px] font-bold uppercase tracking-wide">{account.holdings_count || 0} Assets</span>
+                <span className="text-[10px] font-bold uppercase tracking-wide">{account.type}</span>
               </div>
             </div>
           );
@@ -576,7 +576,7 @@ const AccountsPage = () => {
       >
         <button
           onClick={() => setSelectedAccountId(null)}
-          className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-tertiary hover:text-accent mb-8 transition-colors group"
+          className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-tertiary hover:text-accent mb-8 transition-colors group"
         >
           <ArrowLeft size={14} className="group-hover:-translate-x-1 transition-transform" />
           <span>Back to Portfolio</span>
@@ -602,8 +602,8 @@ const AccountsPage = () => {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="p-5 bg-surface-2 border border-border rounded-2xl shadow-glow-sm min-w-[180px]">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Account Value</p>
+            <div className="p-5 bg-surface-2 border border-border rounded min-w-[180px]">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Account Value</p>
               <p className={`text-2xl font-mono font-bold ${accountTotal < 0 ? 'text-loss' : 'text-gain'}`}>
                 {formatCurrency(accountTotal)}
               </p>
@@ -617,7 +617,7 @@ const AccountsPage = () => {
             <section>
               <div className="flex items-center gap-2 mb-4">
                 <Activity className="text-accent w-4 h-4" />
-                <h2 className="text-xs font-bold uppercase tracking-widest text-secondary">Performance History</h2>
+                <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Performance History</h2>
               </div>
               <AccountHistoryChart
                 accountData={accountHistory}
@@ -635,7 +635,7 @@ const AccountsPage = () => {
               <section>
                 <div className="flex items-center gap-2 mb-4">
                   <Wallet className="text-accent w-4 h-4" />
-                  <h2 className="text-xs font-bold uppercase tracking-widest text-secondary">Underlying Assets ({accountHoldings.length})</h2>
+                  <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Underlying Assets ({accountHoldings.length})</h2>
                 </div>
                 {renderTable(detailTable, detailColumns, 'No holdings found.')}
                 
@@ -644,7 +644,7 @@ const AccountsPage = () => {
                   {accountHoldings.map((holding) => {
                     const value = parseFloat(holding.current_value) || parseFloat(holding.manual_value) || 0;
                     return (
-                      <div key={holding.id} className="card p-4 border border-border/50">
+                      <div key={holding.id} className="card p-4 border border-border">
                         <div className="flex justify-between items-start mb-2">
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-bold text-primary truncate">{holding.name}</div>
@@ -654,8 +654,8 @@ const AccountsPage = () => {
                             {formatCurrency(value)}
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 pt-2 border-t border-border/50">
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-tertiary">{holding.category || 'Other'}</span>
+                        <div className="flex items-center gap-3 pt-2 border-t border-border">
+                          <span className="text-[9px] font-bold uppercase tracking-wide text-tertiary">{holding.category || 'Other'}</span>
                           {holding.is_plaid_managed && <PlaidBadge />}
                         </div>
                       </div>
@@ -673,7 +673,7 @@ const AccountsPage = () => {
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <Receipt className="text-accent w-4 h-4" />
-                  <h2 className="text-xs font-bold uppercase tracking-widest text-secondary">Recent Activity</h2>
+                  <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Recent Activity</h2>
                 </div>
                 {accountTransactions.length > 0 && (
                   <span className="text-[10px] font-bold text-accent px-2 py-0.5 rounded bg-accent/10 border border-accent/20">
@@ -691,7 +691,7 @@ const AccountsPage = () => {
                 ) : accountTransactions.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-2 card opacity-50">
                     <Receipt size={32} className="text-tertiary" />
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-tertiary">No recent transactions</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">No recent transactions</p>
                   </div>
                 ) : (
                   <>
@@ -704,7 +704,7 @@ const AccountsPage = () => {
                       {accountTransactions.slice(0, 10).map((txn) => {
                         const amount = parseFloat(txn.amount);
                         return (
-                          <div key={txn.id} className="p-3 bg-surface-2 border border-border/50 rounded-xl flex items-center justify-between gap-4 hover:bg-surface-3 transition-colors">
+                          <div key={txn.id} className="p-3 bg-surface-2 border border-border rounded flex items-center justify-between gap-4 hover:bg-surface-3 transition-colors">
                             <div className="flex-1 min-w-0">
                               <p className="text-xs font-bold text-primary truncate leading-tight">{txn.merchant_name || txn.name}</p>
                               <p className="text-[9px] text-tertiary uppercase font-medium mt-0.5">{formatDateDisplay(txn.date)} • {txn.category?.replace(/_/g, ' ') || 'General'}</p>
@@ -716,7 +716,7 @@ const AccountsPage = () => {
                         );
                       })}
                       {accountTransactions.length > 10 && (
-                        <p className="text-center text-[9px] font-bold text-tertiary uppercase tracking-widest pt-2">Showing latest 10 of {accountTransactions.length}</p>
+                        <p className="text-center text-[9px] font-bold text-tertiary uppercase tracking-wide pt-2">Showing latest 10 of {accountTransactions.length}</p>
                       )}
                     </div>
                     
@@ -725,7 +725,7 @@ const AccountsPage = () => {
                        {accountTransactions.map((txn) => {
                         const amount = parseFloat(txn.amount);
                         return (
-                          <div key={txn.id} className="p-4 bg-surface-2 border border-border/50 rounded-2xl flex items-center justify-between gap-4">
+                          <div key={txn.id} className="p-4 bg-surface-2 border border-border rounded flex items-center justify-between gap-4">
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-bold text-primary truncate">{txn.merchant_name || txn.name}</p>
                               <div className="flex items-center gap-2 mt-1">

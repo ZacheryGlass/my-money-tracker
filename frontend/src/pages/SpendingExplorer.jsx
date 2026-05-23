@@ -446,8 +446,8 @@ export default function SpendingExplorer() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Sorting Transactions</span>
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Sorting Transactions</span>
       </div>
     );
   }
@@ -458,19 +458,19 @@ export default function SpendingExplorer() {
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Store className="w-5 h-5 text-accent" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Transaction Intelligence</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Transaction Intelligence</span>
           </div>
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Spending Explorer</h1>
           <p className="text-sm text-secondary mt-1">Stores, categories, and transaction-level spend</p>
         </div>
 
         <div className="flex flex-wrap gap-3">
-          <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+          <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
             {SCOPE_OPTIONS.map((scope) => (
               <button
                 key={scope.id}
                 onClick={() => handleScopeChange(scope.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                   spendScope === scope.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
                 }`}
               >
@@ -479,12 +479,12 @@ export default function SpendingExplorer() {
             ))}
           </div>
 
-          <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+          <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
             {DATE_RANGES.map((range) => (
               <button
                 key={range.id}
                 onClick={() => handleDateRangeChange(range.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                className={`px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                   dateRange === range.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
                 }`}
               >
@@ -493,14 +493,14 @@ export default function SpendingExplorer() {
             ))}
           </div>
 
-          <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1">
+          <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
             {GROUP_MODES.map((mode) => {
               const Icon = mode.icon;
               return (
                 <button
                   key={mode.id}
                   onClick={() => setGroupMode(mode.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                     groupMode === mode.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
                   }`}
                 >
@@ -535,7 +535,7 @@ export default function SpendingExplorer() {
       <div className="card p-4 md:p-5">
         <div className="grid lg:grid-cols-[1.2fr_0.8fr_auto] gap-4 items-end">
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 flex items-center gap-2">
+            <label className="text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 flex items-center gap-2">
               <Search size={13} />
               Search
             </label>
@@ -545,7 +545,7 @@ export default function SpendingExplorer() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Merchant, category, account"
-                className="w-full h-11 pl-10 pr-10 bg-surface-2 border border-border rounded-xl text-sm"
+                className="w-full h-11 pl-10 pr-10 bg-surface-2 border border-border rounded text-sm"
               />
               {search && (
                 <button
@@ -560,14 +560,14 @@ export default function SpendingExplorer() {
           </div>
 
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 flex items-center gap-2">
+            <label className="text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 flex items-center gap-2">
               <Calendar size={13} />
               Account
             </label>
             <select
               value={selectedAccountId}
               onChange={(e) => handleAccountChange(e.target.value)}
-              className="w-full h-11 px-3 bg-surface-2 border border-border rounded-xl text-sm"
+              className="w-full h-11 px-3 bg-surface-2 border border-border rounded text-sm"
             >
               <option value="">All accounts</option>
               {accountOptions.map((account) => (
@@ -577,16 +577,16 @@ export default function SpendingExplorer() {
           </div>
 
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 flex items-center gap-2">
+            <label className="text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 flex items-center gap-2">
               <ArrowDownWideNarrow size={13} />
               Sort
             </label>
-            <div className="flex bg-surface-2 rounded-xl border border-border p-1 gap-1 h-11">
+            <div className="flex bg-surface-2 rounded border border-border p-1 gap-1 h-11">
               {SORT_OPTIONS.map((option) => (
                 <button
                   key={option.id}
                   onClick={() => setSortBy(option.id)}
-                  className={`px-3 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                  className={`px-3 rounded text-xs font-bold uppercase tracking-wider transition-all ${
                     sortBy === option.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
                   }`}
                 >
@@ -600,7 +600,7 @@ export default function SpendingExplorer() {
         <div className="mt-5 flex flex-wrap gap-2">
           <button
             onClick={() => setSelectedKind('')}
-            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest border transition-all ${
+            className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
               selectedKind === '' ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
             }`}
           >
@@ -610,7 +610,7 @@ export default function SpendingExplorer() {
             <button
               key={kind.name}
               onClick={() => setSelectedKind(kind.name)}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest border transition-all ${
+              className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
                 selectedKind === kind.name ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
               }`}
             >
@@ -622,7 +622,7 @@ export default function SpendingExplorer() {
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => setSelectedCategory('')}
-            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest border transition-all ${
+            className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
               selectedCategory === '' ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
             }`}
           >
@@ -632,7 +632,7 @@ export default function SpendingExplorer() {
             <button
               key={category.name}
               onClick={() => setSelectedCategory(category.name)}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest border transition-all ${
+              className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
                 selectedCategory === category.name ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
               }`}
             >
@@ -643,8 +643,8 @@ export default function SpendingExplorer() {
 
         {spendScope === 'everyday' && summary.excludedCount > 0 && (
           <div className="mt-4 grid sm:grid-cols-2 gap-3">
-            <div className="rounded-xl border border-border bg-surface-2/60 px-4 py-3">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-tertiary">Hidden Non-Purchase Outflows</div>
+            <div className="rounded border border-border bg-surface-2/60 px-4 py-3">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Hidden Non-Purchase Outflows</div>
               <div className="mt-1 flex items-baseline gap-2">
                 <span className="font-money font-bold text-primary">{formatCurrency(summary.excludedTotal)}</span>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-secondary">{summary.excludedCount.toLocaleString()} txns</span>
@@ -656,26 +656,26 @@ export default function SpendingExplorer() {
         {(selectedCategory || selectedKind || selectedMerchant) && (
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {selectedMerchant && (
-              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
                 <Store size={13} />
                 {selectedMerchant}
               </span>
             )}
             {selectedKind && (
-              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
                 <SlidersHorizontal size={13} />
                 {selectedKind}
               </span>
             )}
             {selectedCategory && (
-              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
                 <Tags size={13} />
                 {selectedCategory}
               </span>
             )}
             <button
               onClick={clearGroupFilters}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-2 text-tertiary border border-border text-xs font-bold hover:text-primary transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-2 text-tertiary border border-border text-xs font-bold hover:text-primary transition-colors"
             >
               <X size={13} />
               Clear
@@ -687,10 +687,10 @@ export default function SpendingExplorer() {
       <div className="grid xl:grid-cols-[1.35fr_0.65fr] gap-6">
         <div className="card p-4 md:p-6">
           <div className="flex items-center justify-between gap-4 mb-4">
-            <h2 className="text-[10px] font-bold tracking-widest uppercase text-tertiary">
+            <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">
               {groupMode === 'merchant' ? 'Top Stores' : groupMode === 'kind' ? 'Top Kinds' : 'Top Categories'}
             </h2>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
               {activeGroups.length} Groups
             </span>
           </div>
@@ -727,10 +727,10 @@ export default function SpendingExplorer() {
         </div>
 
         <div className="card overflow-hidden">
-          <div className="p-4 border-b border-border bg-surface-2/50 flex items-center justify-between">
+          <div className="p-4 border-b border-border  flex items-center justify-between">
             <div className="flex items-center gap-2">
               <SlidersHorizontal size={15} className="text-accent" />
-              <span className="text-[10px] font-bold tracking-widest uppercase text-tertiary">
+              <span className="text-[10px] font-bold tracking-wide uppercase text-tertiary">
                 Ranked
               </span>
             </div>
@@ -779,12 +779,12 @@ export default function SpendingExplorer() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="p-4 border-b border-border bg-surface-2/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="p-4 border-b border-border  flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <ReceiptText size={15} className="text-accent" />
-            <span className="text-[10px] font-bold tracking-widest uppercase text-tertiary">Filtered Transactions</span>
+            <span className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Filtered Transactions</span>
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest text-tertiary">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
             Showing {visibleTransactions.length.toLocaleString()} of {filteredRows.length.toLocaleString()}
           </span>
         </div>
@@ -794,7 +794,7 @@ export default function SpendingExplorer() {
             <thead className="bg-surface-2">
               <tr>
                 {['Date', 'Store', 'Kind / Category', 'Account', 'Amount'].map((header) => (
-                  <th key={header} className="px-5 py-4 text-left text-[10px] font-bold text-tertiary uppercase tracking-widest">
+                  <th key={header} className="px-5 py-4 text-left text-[10px] font-bold text-tertiary uppercase tracking-wide">
                     {header}
                   </th>
                 ))}
@@ -869,28 +869,28 @@ export default function SpendingExplorer() {
           <div className="card p-4">
             <div className="flex items-center gap-2 mb-2 text-accent">
               <Hash size={15} />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Store Count</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide">Store Count</span>
             </div>
             <div className="text-2xl font-money font-bold text-primary">{merchantGroups.length.toLocaleString()}</div>
           </div>
           <div className="card p-4">
             <div className="flex items-center gap-2 mb-2 text-accent">
               <SlidersHorizontal size={15} />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Kind Count</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide">Kind Count</span>
             </div>
             <div className="text-2xl font-money font-bold text-primary">{kindGroups.length.toLocaleString()}</div>
           </div>
           <div className="card p-4">
             <div className="flex items-center gap-2 mb-2 text-accent">
               <Tags size={15} />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Category Count</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide">Category Count</span>
             </div>
             <div className="text-2xl font-money font-bold text-primary">{categoryGroups.length.toLocaleString()}</div>
           </div>
           <div className="card p-4">
             <div className="flex items-center gap-2 mb-2 text-accent">
               <Store size={15} />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Top Share</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide">Top Share</span>
             </div>
             <div className="text-2xl font-money font-bold text-primary">
               {formatPercent(summary.total > 0 && activeGroups[0] ? (activeGroups[0].total / summary.total) * 100 : 0, 1, { sign: false })}

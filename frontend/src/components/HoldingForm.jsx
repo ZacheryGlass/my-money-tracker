@@ -44,15 +44,8 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
 
   const validate = () => {
     const newErrors = {};
-
-    if (!formData.account_id) {
-      newErrors.account_id = 'Account is required';
-    }
-
-    if (!formData.name || formData.name.trim() === '') {
-      newErrors.name = 'Name is required';
-    }
-
+    if (!formData.account_id) newErrors.account_id = 'Account is required';
+    if (!formData.name || formData.name.trim() === '') newErrors.name = 'Name is required';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -60,10 +53,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (holding?.is_plaid_managed) return;
-
-    if (!validate()) {
-      return;
-    }
+    if (!validate()) return;
 
     setIsSubmitting(true);
     try {
@@ -77,13 +67,11 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
         notes: formData.notes ? formData.notes.trim() : null,
         location: formData.location ? formData.location.trim() : null,
       };
-
       await onSave(dataToSubmit);
       onClose();
     } catch (error) {
       console.error('Error saving holding:', error);
-      const errorMessage = error.response?.data?.error || 'Failed to save holding';
-      setErrors({ submit: errorMessage });
+      setErrors({ submit: error.response?.data?.error || 'Failed to save holding' });
     } finally {
       setIsSubmitting(false);
     }
@@ -92,183 +80,173 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-    if (errors[name]) {
-      setErrors((prev) => ({ ...prev, [name]: '' }));
-    }
+    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }));
   };
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-surface rounded-card border border-border shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-5 border-b border-border">
-          <h2 className="text-lg font-bold text-primary">
+      <div className="bg-surface-2 border border-border shadow-float w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="px-4 py-3 border-b border-border">
+          <h2 className="text-display-sm text-primary">
             {holding ? 'Edit Holding' : 'Add New Holding'}
           </h2>
           {holding?.is_plaid_managed && (
-            <div className="mt-2 px-3 py-2 rounded-md bg-accent/10 border border-accent/20 text-xs text-accent">
+            <div className="mt-2 px-2 py-1.5 bg-accent-muted border border-accent/20 text-caption text-accent">
               This holding is managed by Plaid and cannot be edited manually.
             </div>
           )}
         </div>
 
-        <div className="p-5">
+        <div className="p-4">
           <form onSubmit={handleSubmit}>
             <fieldset disabled={holding?.is_plaid_managed}>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-secondary mb-1">
-                  Account <span className="text-loss">*</span>
-                </label>
-                <select
-                  name="account_id"
-                  value={formData.account_id}
-                  onChange={handleChange}
-                  className={`w-full px-3 py-2 rounded-md border min-h-[44px] touch-manipulation ${
-                    errors.account_id ? 'border-loss' : 'border-input-border'
-                  }`}
-                  disabled={isSubmitting}
-                >
-                  <option value="">Select an account</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {getAccountDisplayName(account)}
-                    </option>
-                  ))}
-                </select>
-                {errors.account_id && (
-                  <p className="text-sm text-loss mt-1">{errors.account_id}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary mb-1">
-                  Name <span className="text-loss">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  className={`w-full px-3 py-2 rounded-md border min-h-[44px] touch-manipulation ${
-                    errors.name ? 'border-loss' : 'border-input-border'
-                  }`}
-                  disabled={isSubmitting}
-                  placeholder="e.g., Bitcoin, Real Estate Property"
-                />
-                {errors.name && (
-                  <p className="text-sm text-loss mt-1">{errors.name}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary mb-1">
-                  Ticker <span className="text-tertiary text-xs">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  name="ticker"
-                  value={formData.ticker}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
-                  disabled={isSubmitting}
-                  placeholder="e.g., BTC, AAPL"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary mb-1">
-                  Quantity <span className="text-tertiary text-xs">(optional)</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.00000001"
-                  name="quantity"
-                  value={formData.quantity}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
-                  disabled={isSubmitting}
-                  placeholder="e.g., 1.5"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary mb-1">
-                  Manual Value <span className="text-tertiary text-xs">(optional)</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  name="manual_value"
-                  value={formData.manual_value}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
-                  disabled={isSubmitting}
-                  placeholder="e.g., 50000.00"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary mb-1">
-                  Category <span className="text-tertiary text-xs">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  name="category"
-                  value={formData.category}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
-                  disabled={isSubmitting}
-                  placeholder="e.g., Crypto, Stocks, Property"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary mb-1">
-                  Location <span className="text-tertiary text-xs">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  name="location"
-                  value={formData.location}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 rounded-md border border-input-border min-h-[44px] touch-manipulation"
-                  disabled={isSubmitting}
-                  placeholder="e.g., Coinbase, Schwab, Binance US"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary mb-1">
-                  Notes <span className="text-tertiary text-xs">(optional)</span>
-                </label>
-                <textarea
-                  name="notes"
-                  value={formData.notes}
-                  onChange={handleChange}
-                  rows="3"
-                  className="w-full px-3 py-2 rounded-md border border-input-border"
-                  disabled={isSubmitting}
-                  placeholder="Additional notes or description"
-                />
-              </div>
-
-              {errors.submit && (
-                <div className="bg-loss-bg text-loss border border-loss/20 rounded-lg p-3">
-                  {errors.submit}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-body-sm font-semibold text-secondary mb-1">
+                    Account <span className="text-loss">*</span>
+                  </label>
+                  <select
+                    name="account_id"
+                    value={formData.account_id}
+                    onChange={handleChange}
+                    className={`w-full px-2 py-1.5 border ${errors.account_id ? 'border-loss' : 'border-input-border'}`}
+                    disabled={isSubmitting}
+                  >
+                    <option value="">Select an account</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {getAccountDisplayName(account)}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.account_id && <p className="text-caption text-loss mt-0.5">{errors.account_id}</p>}
                 </div>
-              )}
-            </div>
 
+                <div>
+                  <label className="block text-body-sm font-semibold text-secondary mb-1">
+                    Name <span className="text-loss">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="name"
+                    value={formData.name}
+                    onChange={handleChange}
+                    className={`w-full px-2 py-1.5 border ${errors.name ? 'border-loss' : 'border-input-border'}`}
+                    disabled={isSubmitting}
+                    placeholder="e.g., Bitcoin, Real Estate Property"
+                  />
+                  {errors.name && <p className="text-caption text-loss mt-0.5">{errors.name}</p>}
+                </div>
+
+                <div>
+                  <label className="block text-body-sm font-semibold text-secondary mb-1">
+                    Ticker <span className="text-caption text-tertiary">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="ticker"
+                    value={formData.ticker}
+                    onChange={handleChange}
+                    className="w-full px-2 py-1.5 border border-input-border"
+                    disabled={isSubmitting}
+                    placeholder="e.g., BTC, AAPL"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-body-sm font-semibold text-secondary mb-1">
+                    Quantity <span className="text-caption text-tertiary">(optional)</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.00000001"
+                    name="quantity"
+                    value={formData.quantity}
+                    onChange={handleChange}
+                    className="w-full px-2 py-1.5 border border-input-border"
+                    disabled={isSubmitting}
+                    placeholder="e.g., 1.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-body-sm font-semibold text-secondary mb-1">
+                    Manual Value <span className="text-caption text-tertiary">(optional)</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    name="manual_value"
+                    value={formData.manual_value}
+                    onChange={handleChange}
+                    className="w-full px-2 py-1.5 border border-input-border"
+                    disabled={isSubmitting}
+                    placeholder="e.g., 50000.00"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-body-sm font-semibold text-secondary mb-1">
+                    Category <span className="text-caption text-tertiary">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="category"
+                    value={formData.category}
+                    onChange={handleChange}
+                    className="w-full px-2 py-1.5 border border-input-border"
+                    disabled={isSubmitting}
+                    placeholder="e.g., Crypto, Stocks, Property"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-body-sm font-semibold text-secondary mb-1">
+                    Location <span className="text-caption text-tertiary">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="location"
+                    value={formData.location}
+                    onChange={handleChange}
+                    className="w-full px-2 py-1.5 border border-input-border"
+                    disabled={isSubmitting}
+                    placeholder="e.g., Coinbase, Schwab, Binance US"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-body-sm font-semibold text-secondary mb-1">
+                    Notes <span className="text-caption text-tertiary">(optional)</span>
+                  </label>
+                  <textarea
+                    name="notes"
+                    value={formData.notes}
+                    onChange={handleChange}
+                    rows="2"
+                    className="w-full px-2 py-1.5 border border-input-border"
+                    disabled={isSubmitting}
+                    placeholder="Additional notes"
+                  />
+                </div>
+
+                {errors.submit && (
+                  <div className="bg-loss-bg text-loss border border-loss/20 p-2 text-body-sm">
+                    {errors.submit}
+                  </div>
+                )}
+              </div>
             </fieldset>
-            <div className="p-5 border-t border-border -mx-5 mt-5 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+
+            <div className="pt-4 mt-4 border-t border-border flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               {holding && !holding.is_plaid_managed && onDelete && (
                 <button
                   type="button"
                   onClick={() => onDelete(holding.id)}
                   disabled={isSubmitting}
-                  className="w-full sm:w-auto px-4 py-2 text-loss hover:bg-loss/10 rounded-md disabled:opacity-50 min-h-[44px] touch-manipulation sm:mr-auto"
+                  className="px-3 py-1.5 text-loss hover:bg-loss-bg rounded text-button disabled:opacity-50 sm:mr-auto"
                 >
                   Delete
                 </button>
@@ -276,7 +254,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
               <button
                 type="button"
                 onClick={onClose}
-                className="w-full sm:w-auto px-4 py-2 bg-surface-3 text-secondary hover:bg-surface-3/80 rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation sm:ml-auto"
+                className="px-3 py-1.5 bg-surface-3 text-secondary hover:text-primary rounded text-button sm:ml-auto"
               >
                 {holding?.is_plaid_managed ? 'Close' : 'Cancel'}
               </button>
@@ -284,7 +262,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full sm:w-auto px-4 py-2 bg-accent text-inverse hover:bg-accent-hover rounded-md disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] touch-manipulation"
+                  className="px-3 py-1.5 bg-accent text-white hover:bg-accent-hover rounded text-button font-semibold disabled:opacity-50"
                 >
                   {isSubmitting ? 'Saving...' : 'Save'}
                 </button>

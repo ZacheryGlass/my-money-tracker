@@ -1,7 +1,7 @@
 ---
 version: alpha
-name: AVE-design
-description: A compact, theme-driven Electron workbench designed for dense, keyboard-first software development. The default dark workbench uses near-black chrome surfaces around `#191A1B`, a darker editor canvas at `#121314`, muted primary foreground text around `#bfbfbf`, secondary descriptive text around `#8C8C8C`, and a restrained blue action/focus system (`#297AA0` / `#3994BC`). The UI uses platform-native system fonts for application chrome and platform-specific monospace fonts for the code editor. Panels are mostly square, divided by 1px borders, with subtle tokenized shadows on title bars, activity bars, tabs, floating widgets, and overlays. The design language is utilitarian, extensible, and optimized for multi-pane developer workflows rather than brand-forward visual expression.
+name: MMT-design
+description: A compact, theme-driven application designed for dense, data-first personal finance tracking. The default dark workbench uses near-black chrome surfaces around `#191A1B`, a darker content canvas at `#121314`, muted primary foreground text around `#bfbfbf`, secondary descriptive text around `#8C8C8C`, and a restrained blue action/focus system (`#297AA0` / `#3994BC`). The UI uses platform-native system fonts for application chrome and platform-specific monospace fonts for financial data displays. Panels are mostly square, divided by 1px borders, with subtle tokenized shadows on title bars, activity bars, tabs, floating widgets, and overlays. The design language is utilitarian, extensible, and optimized for multi-pane portfolio monitoring workflows rather than brand-forward visual expression.
 
 colors:
   primary: "#297AA0"
@@ -292,13 +292,13 @@ components:
 
 ## Overview
 
-AVE is a compact, theme-driven Electron desktop workbench for automated verification engineering. The design is organized around resizable panes, keyboard-first command access, dense lists, an extensible editor area, and a customizable theme system.
+My Money Tracker is a compact, theme-driven application for personal portfolio and finance tracking. The design is organized around resizable panes, keyboard-first command access, dense lists, an extensible content area, and a customizable theme system.
 
-The default dark workbench uses **near-black application chrome** (`{colors.canvas}` — #191A1B) around a darker editor canvas (`{colors.canvas-soft}` — #121314). Foreground text is intentionally muted, with primary UI text at `{colors.ink}` (#bfbfbf), secondary text at `{colors.body}` / `{colors.muted}` (#8C8C8C), and disabled or placeholder text at `{colors.muted-soft}` (#555555). The primary action color is a restrained blue (`{colors.primary}` — #297AA0), supported by a focus and selection blue around `#3994BC`.
+The default dark workbench uses **near-black application chrome** (`{colors.canvas}` — #191A1B) around a darker content canvas (`{colors.canvas-soft}` — #121314). Foreground text is intentionally muted, with primary UI text at `{colors.ink}` (#bfbfbf), secondary text at `{colors.body}` / `{colors.muted}` (#8C8C8C), and disabled or placeholder text at `{colors.muted-soft}` (#555555). The primary action color is a restrained blue (`{colors.primary}` — #297AA0), supported by a focus and selection blue around `#3994BC`.
 
-The application shell uses platform-native system fonts. The editor uses platform-specific monospace defaults. On Windows, the default editor stack is `Consolas, "Courier New", monospace` at 14px. The workbench chrome is significantly smaller and denser than typical web application UI, with 13px default interface text, 12px compact labels, 1px separators, 4px-radius controls, and mostly square panels.
+The application shell uses platform-native system fonts. Financial data displays use platform-specific monospace defaults. On Windows, the default monospace stack is `Consolas, "Courier New", monospace` at 14px. The workbench chrome is significantly smaller and denser than typical web application UI, with 13px default interface text, 12px compact labels, 1px separators, 4px-radius controls, and mostly square panels.
 
-The strongest visual signature is the **multi-pane workbench architecture**: title bar, command bar, activity bar, side bar, editor tabs, editor groups, bottom panel, auxiliary/chat/agents panels, status bar, quick input, context menus, hover widgets, and integrated terminal. The design language is utilitarian rather than decorative. Visual hierarchy comes from density, layout, borders, tokenized color, compact utility icons, and keyboard interaction.
+The strongest visual signature is the **multi-pane workbench architecture**: title bar, command bar, activity bar, side bar, content tabs, content groups, bottom panel, auxiliary panels, status bar, quick input, context menus, hover widgets, and integrated terminal. The design language is utilitarian rather than decorative. Visual hierarchy comes from density, layout, borders, tokenized color, compact utility icons, and keyboard interaction.
 
 **Key Characteristics:**
 - Theme-driven desktop workbench, not a fixed single-palette application.

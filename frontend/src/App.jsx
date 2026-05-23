@@ -1,5 +1,5 @@
 import React, { useState, lazy, Suspense } from 'react';
-import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { useAuth } from './context/AuthContext';
 import Login from './components/Login';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -24,9 +24,9 @@ const SpendingExplorer = lazy(() => import('./pages/SpendingExplorer'));
 const YearInReview = lazy(() => import('./pages/YearInReview'));
 
 const PageSpinner = () => (
-  <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-    <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-    <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Loading View</span>
+  <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
+    <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+    <span className="text-caption text-tertiary">Loading...</span>
   </div>
 );
 
@@ -58,9 +58,9 @@ function App() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-base">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-          <div className="text-[10px] font-bold tracking-widest uppercase text-tertiary">Authenticating</div>
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <div className="text-caption text-tertiary">Authenticating</div>
         </div>
       </div>
     );
@@ -75,13 +75,7 @@ function App() {
       return <NotFound />;
     }
     return (
-      <Motion.div
-        key={currentPage}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="w-full"
-      >
+      <div key={currentPage} className="w-full">
         {currentPage === 'dashboard' && <Dashboard onNavigate={setCurrentPage} />}
         {currentPage === 'assets' && <HoldingsTable pageFilter="assets" />}
         {currentPage === 'cash' && <CashPage />}
@@ -97,12 +91,12 @@ function App() {
         {currentPage === 'salary-history' && <SalaryHistory />}
         {currentPage === 'monthly-expenses' && <MonthlyExpenses />}
         {currentPage === 'settings' && <Settings />}
-      </Motion.div>
+      </div>
     );
   };
 
   return (
-    <div className="flex min-h-screen bg-base font-sans selection:bg-accent/30">
+    <div className="flex min-h-screen bg-base font-sans">
       <Sidebar
         currentPage={currentPage}
         onNavigate={setCurrentPage}
@@ -113,28 +107,31 @@ function App() {
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
         {/* Mobile Header */}
-        <div className="lg:hidden flex items-center h-16 px-6 bg-surface border-b border-border sticky top-0 z-30">
+        <div className="lg:hidden flex items-center h-[35px] px-3 bg-surface border-b border-border sticky top-0 z-30">
           <button
             onClick={() => setMobileOpen(true)}
-            className="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-2 text-secondary hover:text-accent border border-border transition-all"
+            className="w-7 h-7 flex items-center justify-center text-secondary hover:text-primary transition-colors"
             aria-label="Open menu"
           >
-            <Menu size={20} />
+            <Menu size={16} />
           </button>
-          <span className="ml-4 text-sm font-bold tracking-tight text-primary">
+          <span className="ml-2 text-body-sm font-semibold text-primary">
             {navItems.find((n) => n.id === currentPage)?.label}
           </span>
         </div>
 
-        <main className="flex-1 relative">
+        <main className="flex-1 relative bg-base">
           <ErrorBoundary>
             <Suspense fallback={<PageSpinner />}>
-              <AnimatePresence mode="wait">
-                {renderPage()}
-              </AnimatePresence>
+              {renderPage()}
             </Suspense>
           </ErrorBoundary>
         </main>
+
+        {/* Status Bar */}
+        <div className="h-[22px] bg-surface border-t border-border flex items-center px-3 text-body-sm text-tertiary flex-shrink-0">
+          <span>My Money Tracker</span>
+        </div>
       </div>
     </div>
   );

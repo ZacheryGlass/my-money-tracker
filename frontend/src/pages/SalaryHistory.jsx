@@ -131,8 +131,8 @@ const SalaryHistory = () => {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Analyzing Earnings</span>
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Analyzing Earnings</span>
       </div>
     );
   }
@@ -144,7 +144,7 @@ const SalaryHistory = () => {
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Briefcase className="text-accent w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-secondary">Career Compensation</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Career Compensation</span>
           </div>
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
             {current ? formatCurrency(current.total_comp) : '—'}
@@ -153,13 +153,13 @@ const SalaryHistory = () => {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="p-4 bg-surface-2 border border-border rounded-2xl shadow-sm min-w-[140px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Career Growth</p>
+          <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Career Growth</p>
             <p className="text-lg font-mono font-bold text-gain">+{careerGrowth.toFixed(1)}%</p>
           </div>
           <button
             onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-inverse hover:bg-accent-hover rounded-2xl text-sm font-bold transition-all shadow-glow"
+            className="flex items-center gap-2 px-6 py-4 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all"
           >
             <Plus size={18} />
             <span>Add Record</span>
@@ -169,15 +169,15 @@ const SalaryHistory = () => {
 
       <div className="space-y-8">
         {/* Summary Controls */}
-        <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
+        <div className="mb-5 rounded border border-border bg-surface p-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <div className="space-y-1 rounded-xl border border-border bg-surface-3 p-3">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Base Salary</p>
+            <div className="space-y-1 rounded border border-border bg-surface-3 p-3">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide">Base Salary</p>
               <p className="text-xl font-mono font-bold text-primary">{current ? formatCurrency(current.salary_amount) : '—'}</p>
             </div>
             
-            <div className="space-y-1 rounded-xl border border-border bg-surface-3 p-3">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Last Increase</p>
+            <div className="space-y-1 rounded border border-border bg-surface-3 p-3">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide">Last Increase</p>
               {lastRaise ? (
                 <div className="flex items-end gap-2">
                   <p className="text-xl font-mono font-bold text-gain">+{formatCurrency(lastRaise.amount)}</p>
@@ -188,8 +188,8 @@ const SalaryHistory = () => {
               )}
             </div>
 
-            <div className="space-y-1 rounded-xl border border-border bg-surface-3 p-3">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Comp Mix</p>
+            <div className="space-y-1 rounded border border-border bg-surface-3 p-3">
+              <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide">Comp Mix</p>
               <div className="space-y-2 mt-2">
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-secondary font-medium">Base</span>
@@ -207,8 +207,8 @@ const SalaryHistory = () => {
             </div>
           </div>
 
-          <div className="mt-3 rounded-xl border border-accent/10 bg-accent-muted/10 p-4">
-            <h4 className="text-[10px] font-bold text-accent mb-3 uppercase tracking-widest flex items-center gap-2">
+          <div className="mt-3 rounded border border-accent/10 bg-accent-muted/10 p-4">
+            <h4 className="text-[10px] font-bold text-accent mb-3 uppercase tracking-wide flex items-center gap-2">
               <Award size={12} />
               Peak Compensation
             </h4>
@@ -222,14 +222,14 @@ const SalaryHistory = () => {
         {/* Main Content Area */}
         <div className="space-y-8">
           {error && (
-            <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded-xl text-xs flex items-center gap-3">
+            <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
               <X size={16} />
               {error}
             </div>
           )}
 
           {successMessage && (
-            <div className="p-4 bg-gain-bg border border-gain/20 text-gain rounded-xl text-xs flex items-center gap-3">
+            <div className="p-4 bg-gain-bg border border-gain/20 text-gain rounded text-xs flex items-center gap-3">
               <Check size={16} />
               {successMessage}
             </div>
@@ -240,7 +240,7 @@ const SalaryHistory = () => {
             <div className="card p-6">
               <div className="flex items-center gap-2 mb-6">
                 <TrendingUp className="text-accent w-4 h-4" />
-                <h2 className="text-xs font-bold uppercase tracking-widest text-secondary">Compensation Trajectory</h2>
+                <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Compensation Trajectory</h2>
               </div>
               <div className="h-64 md:h-[400px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
@@ -287,7 +287,7 @@ const SalaryHistory = () => {
                   <thead className="bg-surface-2">
                     <tr>
                       {['Date', 'Title', 'Base Salary', 'Equity/Bonus', 'Total Comp', 'Change', ''].map((h) => (
-                        <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-widest text-tertiary">{h}</th>
+                        <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -318,8 +318,8 @@ const SalaryHistory = () => {
                           </td>
                           <td className="px-5 py-4 text-right">
                             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => handleEdit(r)} className="p-2 text-accent hover:bg-accent/10 rounded-lg transition-colors"><Edit2 size={14} /></button>
-                              <button onClick={() => setDeletingRecord(r)} className="p-2 text-loss hover:bg-loss/10 rounded-lg transition-colors"><Trash2 size={14} /></button>
+                              <button onClick={() => handleEdit(r)} className="p-2 text-accent hover:bg-accent/10 rounded transition-colors"><Edit2 size={14} /></button>
+                              <button onClick={() => setDeletingRecord(r)} className="p-2 text-loss hover:bg-loss/10 rounded transition-colors"><Trash2 size={14} /></button>
                             </div>
                           </td>
                         </tr>
@@ -331,8 +331,8 @@ const SalaryHistory = () => {
             </div>
           </div>
           
-          <div className="flex items-center justify-center gap-8 text-[10px] text-tertiary uppercase tracking-widest font-bold opacity-60">
-            <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" /> Total Comp</span>
+          <div className="flex items-center justify-center gap-8 text-[10px] text-tertiary uppercase tracking-wide font-bold opacity-60">
+            <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-accent" /> Total Comp</span>
             <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Base Salary</span>
             <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Career progression</span>
           </div>
@@ -343,67 +343,67 @@ const SalaryHistory = () => {
       <AnimatePresence>
         {isFormOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsFormOpen(false)} />
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setIsFormOpen(false)} />
             <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
-              <div className="p-6 border-b border-border bg-surface-2/50 flex items-center justify-between">
+              <div className="p-6 border-b border-border  flex items-center justify-between">
                 <h2 className="text-lg font-bold text-primary">{editingRecord ? 'Modify' : 'New'} Salary Record</h2>
                 <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
               </div>
               <form onSubmit={handleSave} className="p-6 space-y-5">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Effective Date</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Effective Date</label>
                     <div className="relative">
-                      <input type="date" value={formData.effective_date} onChange={(e) => setFormData({ ...formData, effective_date: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" required />
+                      <input type="date" value={formData.effective_date} onChange={(e) => setFormData({ ...formData, effective_date: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" required />
                       <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Job Title</label>
-                    <input type="text" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Senior Engineer" required />
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Job Title</label>
+                    <input type="text" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Senior Engineer" required />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Base Salary</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Base Salary</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary font-mono">$</span>
-                      <input type="number" step="0.01" value={formData.salary_amount} onChange={(e) => setFormData({ ...formData, salary_amount: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
+                      <input type="number" step="0.01" value={formData.salary_amount} onChange={(e) => setFormData({ ...formData, salary_amount: e.target.value })} className="w-full bg-surface-3 border-border rounded pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Total Comp</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Total Comp</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary font-mono">$</span>
-                      <input type="number" step="0.01" value={formData.total_comp} onChange={(e) => setFormData({ ...formData, total_comp: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
+                      <input type="number" step="0.01" value={formData.total_comp} onChange={(e) => setFormData({ ...formData, total_comp: e.target.value })} className="w-full bg-surface-3 border-border rounded pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
                     </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-2">
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">PSU Value</label>
-                      <input type="number" step="0.01" value={formData.psu} onChange={(e) => setFormData({ ...formData, psu: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" />
+                      <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">PSU Value</label>
+                      <input type="number" step="0.01" value={formData.psu} onChange={(e) => setFormData({ ...formData, psu: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">RSU Value</label>
-                      <input type="number" step="0.01" value={formData.rsu} onChange={(e) => setFormData({ ...formData, rsu: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" />
+                      <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">RSU Value</label>
+                      <input type="number" step="0.01" value={formData.rsu} onChange={(e) => setFormData({ ...formData, rsu: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" />
                     </div>
                   </div>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Change Amount</label>
-                      <input type="number" step="0.01" value={formData.change_amount} onChange={(e) => setFormData({ ...formData, change_amount: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" placeholder="+15000" />
+                      <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Change Amount</label>
+                      <input type="number" step="0.01" value={formData.change_amount} onChange={(e) => setFormData({ ...formData, change_amount: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" placeholder="+15000" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-widest text-tertiary mb-2 px-1">Change %</label>
-                      <input type="number" step="0.01" value={formData.change_percent} onChange={(e) => setFormData({ ...formData, change_percent: e.target.value })} className="w-full bg-surface-3 border-border rounded-xl px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" placeholder="8.5" />
+                      <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Change %</label>
+                      <input type="number" step="0.01" value={formData.change_percent} onChange={(e) => setFormData({ ...formData, change_percent: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" placeholder="8.5" />
                     </div>
                   </div>
                 </div>
                 <div className="flex justify-end gap-3 pt-4">
-                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-3 bg-surface-2 text-secondary hover:text-primary rounded-xl text-xs font-bold uppercase tracking-wider transition-all">Cancel</button>
-                  <button type="submit" className="px-8 py-3 bg-accent text-inverse hover:bg-accent-hover rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-glow">Save Record</button>
+                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-3 bg-surface-2 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all">Cancel</button>
+                  <button type="submit" className="px-8 py-3 bg-accent text-white hover:bg-accent-hover rounded text-xs font-bold uppercase tracking-wider transition-all">Save Record</button>
                 </div>
               </form>
             </Motion.div>
@@ -415,7 +415,7 @@ const SalaryHistory = () => {
       <AnimatePresence>
         {deletingRecord && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeletingRecord(null)} />
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setDeletingRecord(null)} />
             <Motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-sm w-full p-6 text-center">
               <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-4">
                 <Trash2 size={24} />
@@ -423,8 +423,8 @@ const SalaryHistory = () => {
               <h2 className="text-xl font-bold text-primary mb-2">Confirm Delete</h2>
               <p className="text-sm text-secondary mb-8">Delete the salary record for <span className="text-primary font-bold">{formatDateDisplay(deletingRecord.effective_date)}</span>?</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeletingRecord(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
-                <button onClick={handleDeleteConfirm} className="flex-1 py-3 bg-loss text-inverse rounded-xl text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Delete</button>
+                <button onClick={() => setDeletingRecord(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
+                <button onClick={handleDeleteConfirm} className="flex-1 py-3 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Delete</button>
               </div>
             </Motion.div>
           </div>

@@ -10,13 +10,14 @@ import {
   ReferenceLine,
   ReferenceDot,
 } from 'recharts';
-import { Calendar, Download, TrendingUp, TrendingDown, Filter, Clock, Award, Target, Check } from 'lucide-react';
+import { Download, TrendingUp, TrendingDown, Check, Calendar } from 'lucide-react';
 import { history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import ChartTooltip from '../components/ChartTooltip';
 
 const PAGE_SIZE = 100;
+const ACCENT = '#3994BC';
 
 const DATE_RANGES = {
   '1M': { label: '1 Month', days: 30 },
@@ -27,12 +28,9 @@ const DATE_RANGES = {
   'ALL': { label: 'All Time', days: null },
 };
 
-const ACCENT = '#00FFCC';
-
 const calculateDateRange = (range) => {
   const now = new Date();
   let startDate;
-
   if (range === 'YTD') {
     startDate = new Date(now.getFullYear(), 0, 1);
   } else if (range === 'ALL') {
@@ -42,34 +40,20 @@ const calculateDateRange = (range) => {
     startDate = new Date(now);
     startDate.setDate(startDate.getDate() - days);
   }
-
-  return {
-    startDate: startDate.toISOString().split('T')[0],
-    endDate: now.toISOString().split('T')[0],
-  };
+  return { startDate: startDate.toISOString().split('T')[0], endDate: now.toISOString().split('T')[0] };
 };
 
 const calculateTrendLine = (data) => {
   if (!data || data.length < 2) return [];
-
   const n = data.length;
   let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-
   data.forEach((point, i) => {
     const y = parseFloat(point.total_value) || 0;
-    sumX += i;
-    sumY += y;
-    sumXY += i * y;
-    sumX2 += i * i;
+    sumX += i; sumY += y; sumXY += i * y; sumX2 += i * i;
   });
-
   const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
   const intercept = (sumY - slope * sumX) / n;
-
-  return data.map((point, i) => ({
-    ...point,
-    trend_value: intercept + slope * i,
-  }));
+  return data.map((point, i) => ({ ...point, trend_value: intercept + slope * i }));
 };
 
 const PortfolioTimeline = () => {
@@ -84,30 +68,23 @@ const PortfolioTimeline = () => {
 
   const fetchPortfolioData = useCallback(async () => {
     setLoading(true);
-
     try {
       let startDate, endDate;
-
       if (useCustomRange && customStartDate && customEndDate) {
-        startDate = customStartDate;
-        endDate = customEndDate;
+        startDate = customStartDate; endDate = customEndDate;
       } else {
         const range = calculateDateRange(selectedRange);
-        startDate = range.startDate;
-        endDate = range.endDate;
+        startDate = range.startDate; endDate = range.endDate;
       }
-
       const response = await historyAPI.getPortfolio({ startDate, endDate, limit: PAGE_SIZE });
       let allData = response.data || [];
       let offset = PAGE_SIZE;
       const total = response.pagination?.total || 0;
-
       while (offset < total) {
         const moreResponse = await historyAPI.getPortfolio({ startDate, endDate, limit: PAGE_SIZE, offset });
         allData = [...allData, ...(moreResponse.data || [])];
         offset += PAGE_SIZE;
       }
-
       setPortfolioData(allData);
     } catch (err) {
       console.error('Error fetching portfolio data:', err);
@@ -116,15 +93,12 @@ const PortfolioTimeline = () => {
     }
   }, [selectedRange, customStartDate, customEndDate, useCustomRange]);
 
-  useEffect(() => {
-    fetchPortfolioData();
-  }, [fetchPortfolioData]);
+  useEffect(() => { fetchPortfolioData(); }, [fetchPortfolioData]);
 
   const metrics = useMemo(() => {
     if (!portfolioData || portfolioData.length === 0) {
       return { currentValue: 0, startValue: 0, totalGrowth: 0, percentChange: 0, avgMonthlyChange: 0, allTimeHigh: 0, allTimeLow: 0, peakDate: null, troughDate: null };
     }
-
     const values = portfolioData.map(d => parseFloat(d.total_value) || 0);
     const currentValue = values[values.length - 1];
     const startValue = values[0];
@@ -136,7 +110,6 @@ const PortfolioTimeline = () => {
     const troughIndex = values.indexOf(allTimeLow);
     const peakDate = portfolioData[peakIndex]?.snapshot_date;
     const troughDate = portfolioData[troughIndex]?.snapshot_date;
-
     let avgMonthlyChange = 0;
     if (portfolioData.length >= 2) {
       const firstDate = new Date(portfolioData[0].snapshot_date);
@@ -144,7 +117,6 @@ const PortfolioTimeline = () => {
       const months = (lastDate - firstDate) / (1000 * 60 * 60 * 24 * 30.44);
       if (months > 0) avgMonthlyChange = totalGrowth / months;
     }
-
     return { currentValue, startValue, totalGrowth, percentChange, avgMonthlyChange, allTimeHigh, allTimeLow, peakDate, troughDate };
   }, [portfolioData]);
 
@@ -156,12 +128,10 @@ const PortfolioTimeline = () => {
   const drawdownData = useMemo(() => {
     if (!portfolioData || portfolioData.length === 0) return [];
     let runningMax = 0;
-    let maxDrawdown = 0;
     return portfolioData.map((d) => {
       const val = parseFloat(d.total_value) || 0;
       runningMax = Math.max(runningMax, val);
       const drawdown = runningMax > 0 ? ((val - runningMax) / runningMax) * 100 : 0;
-      if (drawdown < maxDrawdown) maxDrawdown = drawdown;
       return { snapshot_date: d.snapshot_date, drawdown };
     });
   }, [portfolioData]);
@@ -173,7 +143,6 @@ const PortfolioTimeline = () => {
 
   const exportToCSV = useCallback(() => {
     if (!portfolioData || portfolioData.length === 0) return;
-
     const headers = ['Date', 'Total Value'];
     const rows = portfolioData.map(d => [d.snapshot_date, d.total_value]);
     const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
@@ -188,328 +157,186 @@ const PortfolioTimeline = () => {
     URL.revokeObjectURL(url);
   }, [portfolioData]);
 
-  const handleRangeChange = (range) => {
-    setUseCustomRange(false);
-    setSelectedRange(range);
-  };
-
-  const handleCustomRangeApply = () => {
-    if (customStartDate && customEndDate) setUseCustomRange(true);
-  };
+  const handleRangeChange = (range) => { setUseCustomRange(false); setSelectedRange(range); };
+  const handleCustomRangeApply = () => { if (customStartDate && customEndDate) setUseCustomRange(true); };
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin shadow-glow" />
-        <span className="text-xs font-bold tracking-widest uppercase text-tertiary animate-pulse">Rendering Timeline</span>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <span className="text-caption text-tertiary">Loading timeline...</span>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8">
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+    <div className="px-4 py-4">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-3">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Clock className="text-accent w-5 h-5" />
-            <h1 className="text-2xl md:text-3xl font-bold text-primary tracking-tight">Portfolio Timeline</h1>
-          </div>
-          <p className="text-sm text-secondary">Historical analysis of your aggregated portfolio value</p>
+          <h1 className="text-display-md text-primary">Portfolio Timeline</h1>
+          <p className="text-body-sm text-tertiary">Historical portfolio value analysis</p>
         </div>
-
         <div className="flex items-center gap-2">
-          <div className="flex bg-surface-2 p-1 rounded-xl border border-border shadow-inner">
+          <div className="flex bg-surface border border-border">
             {Object.keys(DATE_RANGES).map((range) => (
               <button
                 key={range}
                 onClick={() => handleRangeChange(range)}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider transition-all duration-200 ${
+                className={`px-2 py-1 text-caption transition-colors ${
                   selectedRange === range && !useCustomRange
-                    ? 'bg-accent text-inverse shadow-glow scale-105'
+                    ? 'bg-accent text-white'
                     : 'text-tertiary hover:text-secondary'
                 }`}
-              >
-                {range}
-              </button>
+              >{range}</button>
             ))}
           </div>
-          <button
-            onClick={exportToCSV}
-            disabled={portfolioData.length === 0}
-            className="p-2.5 bg-surface-2 text-secondary hover:text-accent border border-border rounded-xl transition-all shadow-sm"
-            title="Export CSV"
-          >
-            <Download size={18} />
+          <button onClick={exportToCSV} disabled={portfolioData.length === 0} className="p-1.5 bg-surface border border-border text-tertiary hover:text-secondary transition-colors" title="Export CSV">
+            <Download size={14} />
           </button>
         </div>
       </div>
 
-      <div className="mb-5 rounded-2xl border border-border bg-surface overflow-hidden">
-        <div className="space-y-4 p-4">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-2 shrink-0">
-              <Filter size={16} className="text-accent" />
-              <span className="text-sm font-bold uppercase tracking-widest text-primary">Controls</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setShowTrendLine(!showTrendLine)}
-                className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all ${
-                  showTrendLine
-                    ? 'bg-accent/10 border-accent/30 text-accent'
-                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
-                }`}
-              >
-                <TrendingUp size={14} />
-                <span className="text-xs font-bold uppercase tracking-wider">Trend Line</span>
-                {showTrendLine && <Check size={14} />}
-              </button>
-              <button
-                onClick={() => setShowDrawdown(!showDrawdown)}
-                className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-all ${
-                  showDrawdown
-                    ? 'bg-loss/10 border-loss/30 text-loss'
-                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
-                }`}
-              >
-                <TrendingDown size={14} />
-                <span className="text-xs font-bold uppercase tracking-wider">Drawdown</span>
-                {showDrawdown && <Check size={14} />}
-              </button>
-            </div>
+      {/* Controls Panel */}
+      <div className="card mb-4">
+        <div className="p-3 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setShowTrendLine(!showTrendLine)}
+              className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${
+                showTrendLine ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'
+              }`}
+            >
+              <TrendingUp size={12} />
+              Trend Line
+              {showTrendLine && <Check size={12} />}
+            </button>
+            <button
+              onClick={() => setShowDrawdown(!showDrawdown)}
+              className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${
+                showDrawdown ? 'bg-loss-bg border-loss/30 text-loss' : 'bg-surface border-border text-tertiary hover:text-secondary'
+              }`}
+            >
+              <TrendingDown size={12} />
+              Drawdown
+              {showDrawdown && <Check size={12} />}
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl border border-border bg-surface-3 p-3">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Current Value</p>
-              <p className="text-lg font-mono font-bold text-primary">{formatCurrency(metrics.currentValue)}</p>
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+            <div className="border border-border bg-surface-3 p-2">
+              <p className="text-caption text-tertiary uppercase mb-0.5">Current Value</p>
+              <p className="font-mono font-semibold text-primary">{formatCurrency(metrics.currentValue)}</p>
             </div>
-            <div className="rounded-xl border border-border bg-surface-3 p-3">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period Growth</p>
-              <div className="flex items-end gap-2">
-                <p className={`text-lg font-mono font-bold ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>
-                  {formatCurrency(metrics.totalGrowth)}
-                </p>
-                <p className={`text-xs font-mono font-bold mb-1 ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>
-                  {formatPercent(metrics.percentChange)}
-                </p>
+            <div className="border border-border bg-surface-3 p-2">
+              <p className="text-caption text-tertiary uppercase mb-0.5">Period Growth</p>
+              <div className="flex items-end gap-1.5">
+                <p className={`font-mono font-semibold ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>{formatCurrency(metrics.totalGrowth)}</p>
+                <p className={`text-caption font-mono ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>{formatPercent(metrics.percentChange)}</p>
               </div>
             </div>
-            <div className="rounded-xl border border-border bg-surface-3 p-3">
-              <div className="mb-1 flex items-center gap-2">
-                <Award size={14} className="text-gain" />
-                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">All-Time High</p>
-              </div>
-              <p className="text-sm font-mono font-bold text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
-              <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
+            <div className="border border-border bg-surface-3 p-2">
+              <p className="text-caption text-tertiary uppercase mb-0.5">All-Time High</p>
+              <p className="font-mono text-body-sm font-semibold text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
+              <p className="text-caption text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
             </div>
-            <div className="rounded-xl border border-border bg-surface-3 p-3">
-              <div className="mb-1 flex items-center gap-2">
-                <Target size={14} className="text-loss" />
-                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest">{showDrawdown ? 'Max Drawdown' : 'All-Time Low'}</p>
-              </div>
-              <p className="text-sm font-mono font-bold text-loss">
+            <div className="border border-border bg-surface-3 p-2">
+              <p className="text-caption text-tertiary uppercase mb-0.5">{showDrawdown ? 'Max Drawdown' : 'All-Time Low'}</p>
+              <p className="font-mono text-body-sm font-semibold text-loss">
                 {showDrawdown ? formatPercent(maxDrawdownValue, 1) : formatCurrency(metrics.allTimeLow)}
               </p>
-              {!showDrawdown && <p className="text-[9px] text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>}
+              {!showDrawdown && <p className="text-caption text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 border-t border-border pt-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest px-1">Custom Start</label>
-              <div className="relative">
-                <input
-                  type="date"
-                  value={customStartDate}
-                  onChange={(e) => setCustomStartDate(e.target.value)}
-                  className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
-                />
-                <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
-              </div>
+          <div className="grid grid-cols-1 gap-2 border-t border-border pt-3 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+            <div>
+              <label className="text-caption text-tertiary uppercase block mb-1">Custom Start</label>
+              <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="w-full bg-surface-3 border-border px-2 py-1 text-caption" />
             </div>
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-tertiary uppercase tracking-widest px-1">Custom End</label>
-              <div className="relative">
-                <input
-                  type="date"
-                  value={customEndDate}
-                  onChange={(e) => setCustomEndDate(e.target.value)}
-                  className="w-full bg-surface-3 border-border rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-accent outline-none"
-                />
-                <Calendar size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none" />
-              </div>
+            <div>
+              <label className="text-caption text-tertiary uppercase block mb-1">Custom End</label>
+              <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="w-full bg-surface-3 border-border px-2 py-1 text-caption" />
             </div>
-            <button
-              onClick={handleCustomRangeApply}
-              disabled={!customStartDate || !customEndDate}
-              className="rounded-xl border border-border bg-surface-3 px-4 py-2 text-xs font-bold uppercase tracking-wider text-tertiary transition-all hover:bg-accent hover:text-inverse hover:border-accent disabled:opacity-30"
-            >
-              Apply Custom
+            <button onClick={handleCustomRangeApply} disabled={!customStartDate || !customEndDate} className="px-3 py-1 border border-border bg-surface-3 text-caption text-tertiary hover:bg-accent hover:text-white hover:border-accent disabled:opacity-30 transition-colors">
+              Apply
             </button>
           </div>
         </div>
       </div>
 
-      <div className="space-y-6">
-          <div className="bg-surface rounded-card border border-border p-4 md:p-6">
-            <div className="h-64 md:h-[450px] w-full">
-              {portfolioData.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-tertiary text-xs uppercase tracking-widest font-bold opacity-60">
-                  No data for this range
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <filter id="area-glow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feGaussianBlur stdDeviation="3" result="blur" />
-                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                      </filter>
-                      {areaGradient('colorValue', ACCENT)}
-                    </defs>
-                    <CartesianGrid {...GRID_STYLE} vertical={false} strokeOpacity={0.5} />
-                    <XAxis
-                      dataKey="snapshot_date"
-                      tickFormatter={formatDateAxis}
-                      {...AXIS_STYLE}
-                      interval="preserveStartEnd"
-                      padding={{ left: 10, right: 10 }}
-                      minTickGap={40}
-                    />
-                    <YAxis
-                      tickFormatter={formatCurrency}
-                      {...AXIS_STYLE}
-                      width={80}
-                      axisLine={false}
-                    />
-                    <Tooltip
-                      content={<ChartTooltip formatValue={formatCurrency} formatLabel={formatDateAxis} />}
-                      cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="total_value"
-                      stroke={ACCENT}
-                      strokeWidth={3}
-                      fill="url(#colorValue)"
-                      name="Portfolio Value"
-                      animationDuration={1500}
-                      filter="url(#area-glow)"
-                    />
-                    {showTrendLine && (
-                      <Area
-                        type="monotone"
-                        dataKey="trend_value"
-                        stroke="var(--text-tertiary)"
-                        strokeWidth={1.5}
-                        strokeDasharray="6 4"
-                        fill="none"
-                        name="Trend Line"
-                        animationDuration={1500}
-                      />
-                    )}
-                    {metrics.peakDate && (
-                      <ReferenceDot
-                        x={metrics.peakDate}
-                        y={metrics.allTimeHigh}
-                        r={6}
-                        fill="var(--gain)"
-                        stroke="var(--bg-surface)"
-                        strokeWidth={3}
-                      />
-                    )}
-                    {metrics.troughDate && metrics.troughDate !== metrics.peakDate && (
-                      <ReferenceDot
-                        x={metrics.troughDate}
-                        y={metrics.allTimeLow}
-                        r={6}
-                        fill="var(--loss)"
-                        stroke="var(--bg-surface)"
-                        strokeWidth={3}
-                      />
-                    )}
-                    {portfolioData.length > 0 && (
-                      <ReferenceLine
-                        y={metrics.startValue}
-                        stroke="var(--text-tertiary)"
-                        strokeDasharray="4 4"
-                        strokeOpacity={0.5}
-                      />
-                    )}
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </div>
-
-          {/* Drawdown Chart */}
-          {showDrawdown && drawdownData.length > 0 && (
-            <div className="bg-surface rounded-card border border-border p-4 md:p-6">
-              <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-3">Drawdown from Peak</p>
-              <div className="h-32 md:h-40 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={drawdownData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="drawdownFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="var(--loss)" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="var(--loss)" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid {...GRID_STYLE} vertical={false} strokeOpacity={0.3} />
-                    <XAxis dataKey="snapshot_date" tickFormatter={formatDateAxis} {...AXIS_STYLE} hide />
-                    <YAxis {...AXIS_STYLE} tickFormatter={(v) => `${v.toFixed(0)}%`} width={50} axisLine={false} />
-                    <Tooltip
-                      content={<ChartTooltip formatValue={(v) => formatPercent(v, 2)} formatLabel={formatDateAxis} />}
-                      cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
-                    />
-                    <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
-                    <Area
-                      type="monotone"
-                      dataKey="drawdown"
-                      stroke="var(--loss)"
-                      strokeWidth={1.5}
-                      fill="url(#drawdownFill)"
-                      name="Drawdown"
-                      animationDuration={1000}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+      {/* Main Chart */}
+      <div className="card p-4 mb-4">
+        <div className="h-64 md:h-[400px] w-full">
+          {portfolioData.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-caption text-tertiary">No data for this range</div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <defs>{areaGradient('colorValue', ACCENT)}</defs>
+                <CartesianGrid {...GRID_STYLE} vertical={false} strokeOpacity={0.5} />
+                <XAxis dataKey="snapshot_date" tickFormatter={formatDateAxis} {...AXIS_STYLE} interval="preserveStartEnd" padding={{ left: 10, right: 10 }} minTickGap={40} />
+                <YAxis tickFormatter={formatCurrency} {...AXIS_STYLE} width={80} axisLine={false} />
+                <Tooltip content={<ChartTooltip formatValue={formatCurrency} formatLabel={formatDateAxis} />} cursor={{ stroke: 'var(--border)', strokeWidth: 1 }} />
+                <Area type="monotone" dataKey="total_value" stroke={ACCENT} strokeWidth={2} fill="url(#colorValue)" name="Portfolio Value" animationDuration={800} />
+                {showTrendLine && (
+                  <Area type="monotone" dataKey="trend_value" stroke="var(--text-tertiary)" strokeWidth={1} strokeDasharray="6 4" fill="none" name="Trend Line" animationDuration={800} />
+                )}
+                {metrics.peakDate && <ReferenceDot x={metrics.peakDate} y={metrics.allTimeHigh} r={4} fill="var(--gain)" stroke="var(--bg-surface)" strokeWidth={2} />}
+                {metrics.troughDate && metrics.troughDate !== metrics.peakDate && (
+                  <ReferenceDot x={metrics.troughDate} y={metrics.allTimeLow} r={4} fill="var(--loss)" stroke="var(--bg-surface)" strokeWidth={2} />
+                )}
+                {portfolioData.length > 0 && <ReferenceLine y={metrics.startValue} stroke="var(--text-tertiary)" strokeDasharray="4 4" strokeOpacity={0.5} />}
+              </AreaChart>
+            </ResponsiveContainer>
           )}
-
-          {/* Period Summary Grid */}
-          {portfolioData.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="card p-4 bg-surface-2/30 border-border/50">
-                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period Start</p>
-                <p className="text-sm font-bold text-primary">{formatDateDisplay(portfolioData[0].snapshot_date)}</p>
-                <p className="text-xs font-mono text-tertiary mt-1">{formatCurrency(metrics.startValue)}</p>
-              </div>
-              <div className="card p-4 bg-surface-2/30 border-border/50">
-                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Period End</p>
-                <p className="text-sm font-bold text-primary">{formatDateDisplay(portfolioData[portfolioData.length - 1].snapshot_date)}</p>
-                <p className="text-xs font-mono text-tertiary mt-1">{formatCurrency(metrics.currentValue)}</p>
-              </div>
-              <div className="card p-4 bg-surface-2/30 border-border/50">
-                <p className="text-[10px] font-bold text-tertiary uppercase tracking-widest mb-1">Avg Monthly Delta</p>
-                <p className={`text-sm font-bold font-mono ${metrics.avgMonthlyChange >= 0 ? 'text-gain' : 'text-loss'}`}>
-                  {formatCurrency(metrics.avgMonthlyChange)}
-                </p>
-                <p className="text-[10px] text-tertiary uppercase mt-1">Growth Velocity</p>
-              </div>
-            </div>
-          )}
-          
-          {/* Helper text */}
-          <div className="flex items-center justify-center gap-6 text-[10px] text-tertiary uppercase tracking-widest font-bold">
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" /> Area visualization</span>
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> High/Low tracking</span>
-            <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Linear regression trend</span>
-          </div>
+        </div>
       </div>
+
+      {/* Drawdown Chart */}
+      {showDrawdown && drawdownData.length > 0 && (
+        <div className="card p-4 mb-4">
+          <p className="text-caption text-tertiary uppercase mb-2">Drawdown from Peak</p>
+          <div className="h-28 md:h-36 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={drawdownData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="drawdownFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--loss)" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="var(--loss)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid {...GRID_STYLE} vertical={false} strokeOpacity={0.3} />
+                <XAxis dataKey="snapshot_date" tickFormatter={formatDateAxis} {...AXIS_STYLE} hide />
+                <YAxis {...AXIS_STYLE} tickFormatter={(v) => `${v.toFixed(0)}%`} width={50} axisLine={false} />
+                <Tooltip content={<ChartTooltip formatValue={(v) => formatPercent(v, 2)} formatLabel={formatDateAxis} />} cursor={{ stroke: 'var(--border)', strokeWidth: 1 }} />
+                <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
+                <Area type="monotone" dataKey="drawdown" stroke="var(--loss)" strokeWidth={1.5} fill="url(#drawdownFill)" name="Drawdown" animationDuration={800} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Period Summary */}
+      {portfolioData.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-border">
+          <div className="card p-3">
+            <p className="text-caption text-tertiary uppercase mb-0.5">Period Start</p>
+            <p className="text-body-sm font-semibold text-primary">{formatDateDisplay(portfolioData[0].snapshot_date)}</p>
+            <p className="text-caption font-mono text-tertiary">{formatCurrency(metrics.startValue)}</p>
+          </div>
+          <div className="card p-3">
+            <p className="text-caption text-tertiary uppercase mb-0.5">Period End</p>
+            <p className="text-body-sm font-semibold text-primary">{formatDateDisplay(portfolioData[portfolioData.length - 1].snapshot_date)}</p>
+            <p className="text-caption font-mono text-tertiary">{formatCurrency(metrics.currentValue)}</p>
+          </div>
+          <div className="card p-3">
+            <p className="text-caption text-tertiary uppercase mb-0.5">Avg Monthly Delta</p>
+            <p className={`text-body-sm font-semibold font-mono ${metrics.avgMonthlyChange >= 0 ? 'text-gain' : 'text-loss'}`}>{formatCurrency(metrics.avgMonthlyChange)}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
