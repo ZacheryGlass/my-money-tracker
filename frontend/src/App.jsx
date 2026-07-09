@@ -1,4 +1,5 @@
 import React, { useState, lazy, Suspense } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { useAuth } from './context/AuthContext';
 import Login from './components/Login';
@@ -30,30 +31,44 @@ const PageSpinner = () => (
   </div>
 );
 
-const VALID_PAGES = ['dashboard', 'assets', 'cash', 'liabilities', 'accounts', 'ticker-history', 'account-history', 'portfolio-timeline', 'holdings-analysis', 'spending-analytics', 'spending-explorer', 'year-in-review', 'salary-history', 'monthly-expenses', 'settings'];
-
 const navItems = [
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'assets', label: 'Assets' },
-  { id: 'cash', label: 'Cash' },
-  { id: 'liabilities', label: 'Liabilities' },
-  { id: 'accounts', label: 'Accounts' },
-  { id: 'ticker-history', label: 'Ticker History' },
-  { id: 'account-history', label: 'Account History' },
-  { id: 'portfolio-timeline', label: 'Portfolio Timeline' },
-  { id: 'holdings-analysis', label: 'Holdings Analysis', section: 'ANALYTICS' },
-  { id: 'spending-analytics', label: 'Spending' },
-  { id: 'spending-explorer', label: 'Spending Explorer' },
-  { id: 'year-in-review', label: 'Year in Review' },
-  { id: 'salary-history', label: 'Salary History', section: 'PLANNING' },
-  { id: 'monthly-expenses', label: 'Monthly Expenses' },
-  { id: 'settings', label: 'Settings' },
+  { id: 'dashboard', label: 'Dashboard', path: '/' },
+  { id: 'assets', label: 'Assets', path: '/assets' },
+  { id: 'cash', label: 'Cash', path: '/cash' },
+  { id: 'liabilities', label: 'Liabilities', path: '/liabilities' },
+  { id: 'accounts', label: 'Accounts', path: '/accounts' },
+  { id: 'ticker-history', label: 'Ticker History', path: '/ticker-history' },
+  { id: 'account-history', label: 'Account History', path: '/account-history' },
+  { id: 'portfolio-timeline', label: 'Portfolio Timeline', path: '/portfolio-timeline' },
+  { id: 'holdings-analysis', label: 'Holdings Analysis', section: 'ANALYTICS', path: '/holdings-analysis' },
+  { id: 'spending-analytics', label: 'Spending', path: '/spending' },
+  { id: 'spending-explorer', label: 'Spending Explorer', path: '/spending-explorer' },
+  { id: 'year-in-review', label: 'Year in Review', path: '/year-in-review' },
+  { id: 'salary-history', label: 'Salary History', section: 'PLANNING', path: '/salary-history' },
+  { id: 'monthly-expenses', label: 'Monthly Expenses', path: '/monthly-expenses' },
+  { id: 'settings', label: 'Settings', path: '/settings' },
 ];
+
+const pagePaths = Object.fromEntries(navItems.map((item) => [item.id, item.path]));
+const pagesByPath = Object.fromEntries(navItems.map((item) => [item.path, item.id]));
+
+function normalizePath(pathname) {
+  return pathname.replace(/\/+$/, '') || '/';
+}
 
 function App() {
   const { user, loading, logout } = useAuth();
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const location = useLocation();
+  const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const currentPage = pagesByPath[normalizePath(location.pathname)] || null;
+
+  const handleNavigate = (page) => {
+    const path = pagePaths[page];
+    if (path) {
+      navigate(path);
+    }
+  };
 
   if (loading) {
     return (
@@ -71,12 +86,12 @@ function App() {
   }
 
   const renderPage = () => {
-    if (!VALID_PAGES.includes(currentPage)) {
+    if (!currentPage) {
       return <NotFound />;
     }
     return (
       <div key={currentPage} className="w-full">
-        {currentPage === 'dashboard' && <Dashboard onNavigate={setCurrentPage} />}
+        {currentPage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
         {currentPage === 'assets' && <HoldingsTable pageFilter="assets" />}
         {currentPage === 'cash' && <CashPage />}
         {currentPage === 'liabilities' && <LiabilitiesPage />}
@@ -99,7 +114,7 @@ function App() {
     <div className="flex min-h-screen bg-base font-sans">
       <Sidebar
         currentPage={currentPage}
-        onNavigate={setCurrentPage}
+        onNavigate={handleNavigate}
         user={user}
         onLogout={logout}
         mobileOpen={mobileOpen}
@@ -116,7 +131,7 @@ function App() {
             <Menu size={16} />
           </button>
           <span className="ml-2 text-body-sm font-semibold text-primary">
-            {navItems.find((n) => n.id === currentPage)?.label}
+            {navItems.find((n) => n.id === currentPage)?.label || 'Not Found'}
           </span>
         </div>
 
