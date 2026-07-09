@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
+import { AlertTriangle, Copy, CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
 import { expenses as expensesAPI, analytics } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 
@@ -11,6 +11,27 @@ const Badge = ({ active, children }) => (
     {children}
   </span>
 );
+
+const ROUGH_NAMES = new Set(['bullshit', 'misc', 'miscellaneous', 'other', 'unknown', 'stuff']);
+
+function getCleanupFlag(expense) {
+  const name = String(expense.name || '').trim();
+  if (!name) return 'Missing name';
+  if (name.length < 4) return 'Too short';
+  if (ROUGH_NAMES.has(name.toLowerCase())) return 'Review name';
+  if (!expense.company && !expense.who_uses && !expense.notes) return 'Add details';
+  return null;
+}
+
+function getPaymentConfidence(expense) {
+  if (expense.is_autopay && expense.pay_account) {
+    return { label: 'High', detail: 'Autopay + account', tone: 'gain' };
+  }
+  if (expense.is_autopay || expense.pay_account) {
+    return { label: 'Medium', detail: expense.is_autopay ? 'Autopay, no account' : 'Manual, account set', tone: 'accent' };
+  }
+  return { label: 'Low', detail: 'Manual, no account', tone: 'loss' };
+}
 
 const MonthlyExpenses = () => {
   const [allExpenses, setAllExpenses] = useState([]);
@@ -121,6 +142,26 @@ const MonthlyExpenses = () => {
     }
   };
 
+  const handleDuplicate = async (expense) => {
+    try {
+      await expensesAPI.create({
+        type: expense.type,
+        name: `${expense.name} Copy`,
+        cost: parseFloat(expense.cost) || 0,
+        is_fixed_rate: expense.is_fixed_rate,
+        is_autopay: expense.is_autopay,
+        pay_account: expense.pay_account || null,
+        company: expense.company || null,
+        who_uses: expense.who_uses || null,
+        notes: expense.notes || null,
+      });
+      showSuccess(`Duplicated "${expense.name}"`);
+      await fetchData();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to duplicate expense');
+    }
+  };
+
   const handleTrackDetected = async (sub) => {
     try {
       await expensesAPI.create({
@@ -148,12 +189,19 @@ const MonthlyExpenses = () => {
     detectedSubs.filter((d) => !trackedNames.has(d.merchant.toLowerCase())),
   [detectedSubs, trackedNames]);
 
-  const { totalBills, totalSubs, totalAll, billCount, subCount, filtered } = useMemo(() => {
+  const { totalBills, totalSubs, totalAll, billCount, subCount, filtered, stats } = useMemo(() => {
     let bills = 0, subs = 0, bc = 0, sc = 0;
+    let fixedTotal = 0, variableTotal = 0, autopayCount = 0, manualCount = 0, missingAccountCount = 0, cleanupCount = 0;
     allExpenses.forEach((e) => {
       const c = parseFloat(e.cost) || 0;
       if (e.type === 'bill') { bills += c; bc++; }
       else { subs += c; sc++; }
+      if (e.is_fixed_rate) fixedTotal += c;
+      else variableTotal += c;
+      if (e.is_autopay) autopayCount++;
+      else manualCount++;
+      if (!e.pay_account) missingAccountCount++;
+      if (getCleanupFlag(e)) cleanupCount++;
     });
     return {
       totalBills: bills,
@@ -162,6 +210,7 @@ const MonthlyExpenses = () => {
       billCount: bc,
       subCount: sc,
       filtered: allExpenses.filter((e) => e.type === activeTab),
+      stats: { fixedTotal, variableTotal, autopayCount, manualCount, missingAccountCount, cleanupCount },
     };
   }, [allExpenses, activeTab]);
 
@@ -175,9 +224,9 @@ const MonthlyExpenses = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8">
+    <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px]">
       {/* Hero Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-6 gap-4">
         <div>
           <div className="flex items-center gap-2 mb-2">
             <TrendingDown className="text-loss w-5 h-5" />
@@ -189,18 +238,45 @@ const MonthlyExpenses = () => {
           <p className="text-sm text-secondary">Aggregated across {billCount} bills and {subCount} subscriptions</p>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="p-3 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Annual Cost</p>
             <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalAll * 12)}</p>
           </div>
+          <div className="p-3 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Manual Pays</p>
+            <p className="text-lg font-mono font-bold text-primary">{stats.manualCount}</p>
+          </div>
           <button
             onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all"
+            className="flex items-center gap-2 px-4 py-3 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all"
           >
             <Plus size={18} />
             <span>Add {activeTab === 'bill' ? 'Bill' : 'Sub'}</span>
           </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <div className="border border-border bg-surface p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Fixed Monthly</p>
+          <p className="font-mono text-lg font-bold text-primary">{formatCurrency(stats.fixedTotal)}</p>
+          <p className="text-caption text-tertiary">Annual {formatCurrency(stats.fixedTotal * 12)}</p>
+        </div>
+        <div className="border border-border bg-surface p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Variable Monthly</p>
+          <p className="font-mono text-lg font-bold text-loss">{formatCurrency(stats.variableTotal)}</p>
+          <p className="text-caption text-tertiary">Annual {formatCurrency(stats.variableTotal * 12)}</p>
+        </div>
+        <div className="border border-border bg-surface p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Subscriptions</p>
+          <p className="font-mono text-lg font-bold text-primary">{formatCurrency(totalSubs)}</p>
+          <p className="text-caption text-tertiary">{subCount} tracked items</p>
+        </div>
+        <div className="border border-border bg-surface p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Cleanup Flags</p>
+          <p className={`font-mono text-lg font-bold ${stats.cleanupCount > 0 ? 'text-loss' : 'text-gain'}`}>{stats.cleanupCount}</p>
+          <p className="text-caption text-tertiary">Names or details to review</p>
         </div>
       </div>
 
@@ -260,7 +336,7 @@ const MonthlyExpenses = () => {
                 <table className="min-w-full divide-y divide-border">
                   <thead className="bg-surface-2">
                     <tr>
-                      {['Name', 'Monthly Cost', 'Fixed', 'Auto-pay', 'Account', activeTab === 'bill' ? 'Company' : 'Who Uses', ''].map((h) => (
+                      {['Name', 'Monthly Cost', 'Fixed', 'Auto-pay', 'Payment', 'Account', activeTab === 'bill' ? 'Company' : 'Who Uses', 'Actions'].map((h) => (
                         <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">{h}</th>
                       ))}
                     </tr>
@@ -269,7 +345,7 @@ const MonthlyExpenses = () => {
                     <AnimatePresence mode="popLayout">
                       {filtered.length === 0 ? (
                         <tr key="empty">
-                          <td colSpan={7} className="px-5 py-12 text-center">
+                          <td colSpan={8} className="px-5 py-12 text-center">
                             <div className="flex flex-col items-center gap-3 opacity-40">
                               <Calendar size={32} className="text-tertiary" />
                               <p className="text-sm font-medium text-tertiary">No {activeTab}s tracked yet</p>
@@ -277,42 +353,64 @@ const MonthlyExpenses = () => {
                           </td>
                         </tr>
                       ) : (
-                        filtered.map((exp) => (
-                          <Motion.tr
-                            layout
-                            key={exp.id}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            className="hover:bg-surface-3 transition-colors group"
-                          >
-                            <td className="px-5 py-4">
-                              <div className="text-sm font-bold text-primary">{exp.name}</div>
-                              {exp.notes && <div className="text-[10px] text-tertiary truncate max-w-[150px]">{exp.notes}</div>}
-                            </td>
-                            <td className="px-5 py-4">
-                              <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
-                            </td>
-                            <td className="px-5 py-4"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
-                            <td className="px-5 py-4"><Badge active={exp.is_autopay}>{exp.is_autopay ? 'Auto' : 'Manual'}</Badge></td>
-                            <td className="px-5 py-4">
-                              <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
-                            </td>
-                            <td className="px-5 py-4">
-                              <span className="text-xs font-medium text-secondary">{(activeTab === 'bill' ? exp.company : exp.who_uses) || <span className="text-tertiary">—</span>}</span>
-                            </td>
-                            <td className="px-5 py-4 text-right">
-                              <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => handleEdit(exp)} className="p-2 text-accent hover:bg-accent/10 rounded transition-colors" title="Edit">
-                                  <Edit2 size={14} />
-                                </button>
-                                <button onClick={() => setDeletingExpense(exp)} className="p-2 text-loss hover:bg-loss/10 rounded transition-colors" title="Delete">
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </td>
-                          </Motion.tr>
-                        ))
+                        filtered.map((exp) => {
+                          const cleanupFlag = getCleanupFlag(exp);
+                          const payment = getPaymentConfidence(exp);
+                          const toneClass = payment.tone === 'gain' ? 'text-gain' : payment.tone === 'loss' ? 'text-loss' : 'text-accent';
+                          return (
+                            <Motion.tr
+                              layout
+                              key={exp.id}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              className="hover:bg-surface-3 transition-colors group"
+                            >
+                              <td className="px-5 py-4">
+                                <div className="flex items-center gap-2">
+                                  <div className="text-sm font-bold text-primary">{exp.name}</div>
+                                  {cleanupFlag && (
+                                    <span className="inline-flex items-center gap-1 border border-loss/20 bg-loss/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-loss" title={cleanupFlag}>
+                                      <AlertTriangle size={10} />
+                                      Review
+                                    </span>
+                                  )}
+                                </div>
+                                {exp.notes && <div className="text-[10px] text-tertiary truncate max-w-[190px]">{exp.notes}</div>}
+                              </td>
+                              <td className="px-5 py-4">
+                                <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
+                              </td>
+                              <td className="px-5 py-4"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
+                              <td className="px-5 py-4"><Badge active={exp.is_autopay}>{exp.is_autopay ? 'Auto' : 'Manual'}</Badge></td>
+                              <td className="px-5 py-4">
+                                <div className="space-y-0.5">
+                                  <p className={`text-[10px] font-bold uppercase tracking-wide ${toneClass}`}>{payment.label}</p>
+                                  <p className="text-[10px] text-tertiary">{payment.detail}</p>
+                                </div>
+                              </td>
+                              <td className="px-5 py-4">
+                                <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
+                              </td>
+                              <td className="px-5 py-4">
+                                <span className="text-xs font-medium text-secondary">{(activeTab === 'bill' ? exp.company : exp.who_uses) || <span className="text-tertiary">—</span>}</span>
+                              </td>
+                              <td className="px-5 py-4 text-right">
+                                <div className="flex justify-end gap-1">
+                                  <button onClick={() => handleEdit(exp)} className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors" title="Edit" aria-label={`Edit ${exp.name}`}>
+                                    <Edit2 size={14} />
+                                  </button>
+                                  <button onClick={() => handleDuplicate(exp)} className="p-2 border border-border bg-surface-2 text-secondary hover:bg-surface-3 rounded transition-colors" title="Duplicate" aria-label={`Duplicate ${exp.name}`}>
+                                    <Copy size={14} />
+                                  </button>
+                                  <button onClick={() => setDeletingExpense(exp)} className="p-2 border border-border bg-surface-2 text-loss hover:bg-loss/10 rounded transition-colors" title="Delete" aria-label={`Delete ${exp.name}`}>
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </Motion.tr>
+                          );
+                        })
                       )}
                     </AnimatePresence>
                   </tbody>
@@ -358,7 +456,7 @@ const MonthlyExpenses = () => {
                         <span className="text-sm font-mono font-bold text-loss">{formatCurrency(sub.avg_amount)}/mo</span>
                         <button
                           onClick={() => handleTrackDetected(sub)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent/10 text-accent border border-accent/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-accent hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent/10 text-accent border border-accent/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-accent hover:text-white transition-all"
                         >
                           <Plus size={12} />
                           Track
@@ -370,6 +468,42 @@ const MonthlyExpenses = () => {
               )}
             </div>
           )}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="card p-4">
+              <h2 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-tertiary">Annualized Impact</h2>
+              <div className="space-y-3">
+                {[
+                  ['Fixed bills', stats.fixedTotal, 'text-primary'],
+                  ['Variable bills', stats.variableTotal, 'text-loss'],
+                  ['Subscriptions', totalSubs, 'text-primary'],
+                ].map(([label, value, colorClass]) => (
+                  <div key={label} className="flex items-center justify-between border-b border-border pb-2 last:border-0 last:pb-0">
+                    <span className="text-sm text-secondary">{label}</span>
+                    <span className={`font-mono text-sm font-bold ${colorClass}`}>{formatCurrency(value * 12)}/yr</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="card p-4">
+              <h2 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-tertiary">Payment Readiness</h2>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="border border-border bg-surface-2 p-3">
+                  <p className="text-caption uppercase text-tertiary">Autopay</p>
+                  <p className="font-mono text-lg font-bold text-gain">{stats.autopayCount}</p>
+                </div>
+                <div className="border border-border bg-surface-2 p-3">
+                  <p className="text-caption uppercase text-tertiary">Manual</p>
+                  <p className="font-mono text-lg font-bold text-primary">{stats.manualCount}</p>
+                </div>
+                <div className="border border-border bg-surface-2 p-3">
+                  <p className="text-caption uppercase text-tertiary">No Account</p>
+                  <p className={`font-mono text-lg font-bold ${stats.missingAccountCount > 0 ? 'text-loss' : 'text-gain'}`}>{stats.missingAccountCount}</p>
+                </div>
+              </div>
+              <p className="mt-3 text-caption text-tertiary">Due dates are not stored yet, so readiness uses autopay and payment-account coverage.</p>
+            </div>
+          </div>
           
           <div className="flex items-center justify-center gap-6 text-[10px] text-tertiary uppercase tracking-wide font-bold">
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-loss" /> Expenditure tracking</span>
