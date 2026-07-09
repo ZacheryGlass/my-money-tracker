@@ -7,6 +7,7 @@ const LIABILITY_TYPES = new Set(['credit', 'loan']);
 const SNAPSHOT_STALE_AFTER_DAYS = 2;
 const PLAID_SYNC_STALE_AFTER_DAYS = 2;
 const PRICE_STALE_AFTER_HOURS = 30;
+const UNCATEGORIZED_LABEL = 'Uncategorized';
 
 function toIsoString(value) {
   return value ? new Date(value).toISOString() : null;
@@ -62,6 +63,9 @@ class DashboardService {
       }
 
       const type = LIABILITY_TYPES.has(holding.account_type) ? 'liability' : 'asset';
+      const category = typeof holding.category === 'string' && holding.category.trim()
+        ? holding.category.trim()
+        : UNCATEGORIZED_LABEL;
 
       items.push({
         name: holding.name,
@@ -69,7 +73,8 @@ class DashboardService {
         value: value,
         account: holding.account_name,
         account_id: holding.account_id,
-        category: holding.category,
+        account_source_name: holding.account_source_name,
+        category,
         type: type
       });
     }

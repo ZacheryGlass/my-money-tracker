@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { format, subDays, subMonths, subYears, differenceInDays, parseISO } from 'date-fns';
 import { Check, Calendar } from 'lucide-react';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import { accounts as accountsApi, history as historyApi } from '../utils/api';
-import { getAccountDisplayName } from '../utils/accountDisplay';
+import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const DATE_RANGE_OPTIONS = [
   { label: '7D', fullLabel: '7 Days', value: '7d', days: 7, getDates: () => ({ start: subDays(new Date(), 7), end: new Date() }) },
@@ -117,6 +117,15 @@ const AccountHistory = () => {
   };
 
   const allSelected = selectedAccounts.length === accounts.length && accounts.length > 0;
+  const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
+  const displayAccountName = useMemo(
+    () => (account) => accountDisplayNames.get(account.id) || getAccountDisplayName(account),
+    [accountDisplayNames]
+  );
+  const displayAccounts = useMemo(
+    () => accounts.map((account) => ({ ...account, effective_name: displayAccountName(account) })),
+    [accounts, displayAccountName]
+  );
 
   return (
     <div className="px-4 py-4">
@@ -173,7 +182,7 @@ const AccountHistory = () => {
                   }`}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${isSelected ? 'bg-accent' : 'bg-tertiary'}`} />
-                  <span className="max-w-[200px] truncate">{getAccountDisplayName(account)}</span>
+                  <span className="max-w-[200px] truncate">{displayAccountName(account)}</span>
                 </button>
               );
             })}
@@ -197,7 +206,7 @@ const AccountHistory = () => {
       <AccountHistoryChart
         accountData={accountData}
         portfolioData={portfolioData}
-        accounts={accounts}
+        accounts={displayAccounts}
         selectedAccounts={selectedAccounts}
         showPortfolio={showPortfolio}
         loading={loading}

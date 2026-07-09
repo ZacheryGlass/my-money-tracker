@@ -12,6 +12,7 @@ import { formatCurrency, formatCompactCurrency, formatDateAxis, formatPercent } 
 import { dashboard, history, accounts as accountsApi } from '../utils/api';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { getAccountDisplayName } from '../utils/accountDisplay';
+import { formatCategoryLabel } from '../utils/dataLabels';
 
 const VIEWS = [
   { id: 'treemap', label: 'Treemap', icon: Grid3X3 },
@@ -106,7 +107,7 @@ export default function HoldingsAnalysis() {
     const groups = {};
     for (const item of assets) {
       const key = groupBy === 'account' ? item.account
-        : groupBy === 'category' ? (item.category || 'Other')
+        : groupBy === 'category' ? formatCategoryLabel(item.category)
         : item.type;
       if (!groups[key]) groups[key] = { name: key, children: [], total: 0 };
       groups[key].children.push({ name: item.name || item.ticker, size: Math.abs(parseFloat(item.value)) });

@@ -11,7 +11,8 @@ import { ArrowLeft, Link2, Building2, Wallet, Filter, Receipt, X, Activity } fro
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
-import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
+import { buildAccountDisplayNameMap, getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
+import { formatCategoryLabel } from '../utils/dataLabels';
 
 const TYPE_COLORS = {
   investment: 'bg-accent/10 text-accent border-accent/20',
@@ -46,6 +47,7 @@ const AccountsPage = () => {
   const [error, setError] = useState(null);
   const [typeFilter, setTypeFilterRaw] = useState('');
   const setTypeFilter = (v) => { setTypeFilterRaw(v); setPagination(prev => ({ ...prev, pageIndex: 0 })); };
+  const [showInactive, setShowInactive] = useState(false);
   const [sorting, setSorting] = useState([{ id: 'total_value', desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
 
@@ -128,15 +130,32 @@ const AccountsPage = () => {
     return totals;
   }, [holdings]);
 
+  const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
+  const displayAccountName = useMemo(
+    () => (account) => accountDisplayNames.get(account.id) || getAccountDisplayName(account),
+    [accountDisplayNames]
+  );
+
+  const inactiveAccounts = useMemo(() => {
+    return accounts.filter((account) =>
+      (account.holdings_count || 0) === 0 && Math.abs(accountTotals.get(account.id) || 0) < 1
+    );
+  }, [accounts, accountTotals]);
+
+  const inactiveAccountIds = useMemo(() => new Set(inactiveAccounts.map((account) => account.id)), [inactiveAccounts]);
+
+  const activeAccountCount = accounts.length - inactiveAccounts.length;
+
   const distinctTypes = useMemo(() => {
     const types = new Set(accounts.map((a) => a.type));
     return [...types].sort();
   }, [accounts]);
 
   const filteredAccounts = useMemo(() => {
-    const filtered = typeFilter ? accounts.filter((a) => a.type === typeFilter) : accounts;
+    let filtered = typeFilter ? accounts.filter((a) => a.type === typeFilter) : accounts;
+    if (!showInactive) filtered = filtered.filter((a) => !inactiveAccountIds.has(a.id));
     return [...filtered].sort((a, b) => (accountTotals.get(b.id) || 0) - (accountTotals.get(a.id) || 0));
-  }, [accounts, accountTotals, typeFilter]);
+  }, [accounts, accountTotals, inactiveAccountIds, showInactive, typeFilter]);
 
   const grandTotal = useMemo(() => {
     return holdings.reduce((sum, h) => sum + (parseFloat(h.current_value) || 0), 0);
@@ -165,12 +184,12 @@ const AccountsPage = () => {
     () => [
       {
         id: 'name',
-        accessorFn: (row) => getAccountDisplayName(row),
+        accessorFn: (row) => displayAccountName(row),
         header: 'Name',
         cell: ({ row }) => (
           <div className="flex items-center gap-3 min-w-0">
             <div className="min-w-0">
-              <span className="font-bold text-primary text-base truncate block">{getAccountDisplayName(row.original)}</span>
+              <span className="font-bold text-primary text-base truncate block">{displayAccountName(row.original)}</span>
               {hasAccountDisplayName(row.original) && (
                 <span className="text-[10px] text-tertiary truncate block uppercase tracking-tight">{row.original.name}</span>
               )}
@@ -204,7 +223,7 @@ const AccountsPage = () => {
         },
       },
     ],
-    [accountTotals]
+    [accountTotals, displayAccountName]
   );
 
   const listTable = useReactTable({
@@ -254,7 +273,7 @@ const AccountsPage = () => {
       {
         accessorKey: 'category',
         header: 'Category',
-        cell: ({ getValue }) => <span className="text-xs font-bold uppercase text-tertiary tracking-wider">{getValue() || 'Other'}</span>,
+        cell: ({ getValue }) => <span className="text-xs font-bold uppercase text-tertiary tracking-wider">{formatCategoryLabel(getValue())}</span>,
       },
     ],
     []
@@ -297,9 +316,7 @@ const AccountsPage = () => {
         accessorKey: 'category',
         header: 'Category',
         cell: ({ getValue }) => {
-          const val = getValue();
-          if (!val) return <span className="text-tertiary">—</span>;
-          const display = val.replace(/_/g, ' ').toLowerCase();
+          const display = formatCategoryLabel(getValue()).replace(/_/g, ' ').toLowerCase();
           return <span className="text-xs font-bold uppercase text-secondary tracking-tight">{display}</span>;
         },
       },
@@ -457,13 +474,13 @@ const AccountsPage = () => {
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
             {formatCurrency(grandTotal)}
           </h1>
-          <p className="text-sm text-secondary">Aggregate balance across {accounts.length} linked accounts</p>
+          <p className="text-sm text-secondary">Aggregate balance across {activeAccountCount} active accounts</p>
         </div>
 
         <div className="flex items-center gap-4">
           <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[120px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Accounts</p>
-            <p className="text-lg font-mono font-bold text-primary">{accounts.length}</p>
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Active</p>
+            <p className="text-lg font-mono font-bold text-primary">{activeAccountCount}</p>
           </div>
           <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[120px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Plaid Items</p>
@@ -495,10 +512,10 @@ const AccountsPage = () => {
               }`}
             >
               <span className="text-xs font-bold uppercase tracking-wider">All Types</span>
-              <span className="text-[10px] font-mono font-bold opacity-60">{accounts.length}</span>
+              <span className="text-[10px] font-mono font-bold opacity-60">{showInactive ? accounts.length : activeAccountCount}</span>
             </button>
             {distinctTypes.map((type) => {
-              const count = accounts.filter(a => a.type === type).length;
+              const count = accounts.filter((a) => a.type === type && (showInactive || !inactiveAccountIds.has(a.id))).length;
               return (
                 <button
                   key={type}
@@ -514,6 +531,22 @@ const AccountsPage = () => {
                 </button>
               );
             })}
+            {inactiveAccounts.length > 0 && (
+              <button
+                onClick={() => {
+                  setShowInactive((value) => !value);
+                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                }}
+                className={`flex items-center gap-3 rounded border px-3 py-2 transition-all ${
+                  showInactive
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 ring-1 ring-amber-500/10'
+                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+                }`}
+              >
+                <span className="text-xs font-bold uppercase tracking-wider">{showInactive ? 'Hide Inactive' : 'Show Inactive'}</span>
+                <span className="text-[10px] font-mono font-bold opacity-60">{inactiveAccounts.length}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -535,7 +568,7 @@ const AccountsPage = () => {
               <div className="flex justify-between items-start mb-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="font-bold text-primary truncate text-base">{getAccountDisplayName(account)}</span>
+                    <span className="font-bold text-primary truncate text-base">{displayAccountName(account)}</span>
                     {account.plaid_item_id && <PlaidBadge />}
                   </div>
                   {hasAccountDisplayName(account) && (
@@ -589,7 +622,7 @@ const AccountsPage = () => {
               {selectedAccount.plaid_item_id && <PlaidBadge />}
             </div>
             <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
-              {getAccountDisplayName(selectedAccount)}
+              {displayAccountName(selectedAccount)}
             </h1>
             {hasAccountDisplayName(selectedAccount) && (
               <p className="text-xs text-tertiary font-medium uppercase tracking-wider mb-2">
@@ -655,7 +688,7 @@ const AccountsPage = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-3 pt-2 border-t border-border">
-                          <span className="text-[9px] font-bold uppercase tracking-wide text-tertiary">{holding.category || 'Other'}</span>
+                          <span className="text-[9px] font-bold uppercase tracking-wide text-tertiary">{formatCategoryLabel(holding.category)}</span>
                           {holding.is_plaid_managed && <PlaidBadge />}
                         </div>
                       </div>
@@ -707,7 +740,7 @@ const AccountsPage = () => {
                           <div key={txn.id} className="p-3 bg-surface-2 border border-border rounded flex items-center justify-between gap-4 hover:bg-surface-3 transition-colors">
                             <div className="flex-1 min-w-0">
                               <p className="text-xs font-bold text-primary truncate leading-tight">{txn.merchant_name || txn.name}</p>
-                              <p className="text-[9px] text-tertiary uppercase font-medium mt-0.5">{formatDateDisplay(txn.date)} • {txn.category?.replace(/_/g, ' ') || 'General'}</p>
+                              <p className="text-[9px] text-tertiary uppercase font-medium mt-0.5">{formatDateDisplay(txn.date)} • {formatCategoryLabel(txn.category).replace(/_/g, ' ')}</p>
                             </div>
                             <div className={`text-xs font-mono font-bold whitespace-nowrap ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
                               {amount > 0 ? '—' : '+'}{formatCurrency(Math.abs(amount))}

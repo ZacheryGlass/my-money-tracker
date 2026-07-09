@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { getAccountDisplayName } from '../utils/accountDisplay';
+import React, { useState, useEffect, useMemo } from 'react';
+import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) => {
   const [formData, setFormData] = useState({
@@ -14,6 +14,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
   });
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
 
   useEffect(() => {
     if (holding) {
@@ -117,7 +118,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
                     <option value="">Select an account</option>
                     {accounts.map((account) => (
                       <option key={account.id} value={account.id}>
-                        {getAccountDisplayName(account)}
+                        {accountDisplayNames.get(account.id) || getAccountDisplayName(account)}
                       </option>
                     ))}
                   </select>

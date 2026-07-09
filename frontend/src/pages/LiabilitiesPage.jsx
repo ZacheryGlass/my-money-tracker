@@ -6,7 +6,7 @@ import { Plus, Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
-import { getAccountDisplayName } from '../utils/accountDisplay';
+import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const LIABILITY_TYPES = new Set(['credit', 'loan']);
 
@@ -50,6 +50,12 @@ const LiabilitiesPage = () => {
 
   const liabilityAccounts = useMemo(() => accounts.filter((a) => LIABILITY_TYPES.has(a.type)), [accounts]);
   const liabilityAccountIds = useMemo(() => new Set(liabilityAccounts.map((a) => a.id)), [liabilityAccounts]);
+  const accountsMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
+  const displayAccountName = useMemo(
+    () => (account) => account ? accountDisplayNames.get(account.id) || getAccountDisplayName(account) : 'Account',
+    [accountDisplayNames]
+  );
 
   const filteredData = useMemo(() => {
     let data = holdings.filter((h) => liabilityAccountIds.has(h.account_id));
@@ -59,17 +65,21 @@ const LiabilitiesPage = () => {
 
   const { totalCredit, totalLoans, totalLiabilities } = useMemo(() => {
     let credit = 0, loans = 0;
-    const accountTypeMap = new Map(accounts.map((a) => [a.id, a.type]));
     filteredData.forEach((h) => {
       const value = Math.abs(parseFloat(h.current_value ?? h.manual_value) || 0);
-      const type = accountTypeMap.get(h.account_id);
+      const type = accountsMap.get(h.account_id)?.type;
       if (type === 'credit') credit += value; else loans += value;
     });
     return { totalCredit: credit, totalLoans: loans, totalLiabilities: credit + loans };
-  }, [filteredData, accounts]);
+  }, [filteredData, accountsMap]);
 
   const columns = useMemo(() => [
-    { accessorKey: 'account_name', header: 'Institution', cell: ({ getValue }) => <span className="text-caption text-tertiary uppercase">{getValue()}</span> },
+    {
+      id: 'account',
+      accessorFn: (row) => displayAccountName(accountsMap.get(row.account_id)) || row.account_name || 'Account',
+      header: 'Institution',
+      cell: ({ getValue }) => <span className="text-caption text-tertiary uppercase">{getValue()}</span>,
+    },
     { accessorKey: 'name', header: 'Account Name', cell: ({ row }) => (
       <div className="flex items-center gap-2">
         <span className="font-semibold text-primary">{row.original.name}</span>
@@ -78,9 +88,9 @@ const LiabilitiesPage = () => {
     )},
     { id: 'value', accessorFn: (row) => Math.abs(parseFloat(row.current_value ?? row.manual_value) || 0), header: 'Owed',
       cell: ({ getValue }) => <span className="font-mono font-semibold text-loss">{formatCurrency(getValue())}</span> },
-    { id: 'type', accessorFn: (row) => { const acct = accounts.find((a) => a.id === row.account_id); return acct?.type === 'credit' ? 'Credit' : 'Loan'; },
+    { id: 'type', accessorFn: (row) => accountsMap.get(row.account_id)?.type === 'credit' ? 'Credit' : 'Loan',
       header: 'Type', cell: ({ getValue }) => <span className="text-caption text-tertiary uppercase">{getValue()}</span> },
-  ], [accounts]);
+  ], [accountsMap, displayAccountName]);
 
   const table = useReactTable({ data: filteredData, columns, state: { sorting, pagination }, onSortingChange: setSorting, onPaginationChange: setPagination, getCoreRowModel: getCoreRowModel(), getSortedRowModel: getSortedRowModel(), getFilteredRowModel: getFilteredRowModel(), getPaginationRowModel: getPaginationRowModel() });
 
@@ -118,7 +128,7 @@ const LiabilitiesPage = () => {
           </button>
           {liabilityAccounts.map((account) => (
             <button key={account.id} onClick={() => setAccountFilter(String(account.id))} className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${accountFilter === String(account.id) ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'}`}>
-              <span className="max-w-[200px] truncate">{getAccountDisplayName(account)}</span>
+              <span className="max-w-[200px] truncate">{displayAccountName(account)}</span>
               {accountFilter === String(account.id) && <Check size={12} />}
             </button>
           ))}
@@ -166,7 +176,7 @@ const LiabilitiesPage = () => {
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0">
                     <p className="text-body-sm font-semibold text-primary truncate">{row.original.name}</p>
-                    <p className="text-caption text-tertiary">{row.original.account_name}</p>
+                    <p className="text-caption text-tertiary">{displayAccountName(accountsMap.get(row.original.account_id))}</p>
                   </div>
                   <p className="font-mono font-semibold text-loss">{formatCurrency(value)}</p>
                 </div>

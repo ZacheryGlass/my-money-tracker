@@ -4,22 +4,37 @@ import { PieChart as PieIcon } from 'lucide-react';
 import { CHART_COLORS } from '../utils/chartTheme';
 import { formatCompactCurrency, formatPercent } from '../utils/format';
 import ChartTooltip from './ChartTooltip';
+import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
 
 const AllocationDonut = ({ items = [], className = '' }) => {
   const { slices, total } = useMemo(() => {
+    const accountDisplayNames = buildAccountDisplayNameMap(
+      items.map((item) => ({
+        id: item.account_id,
+        effective_name: item.account,
+        account_source_name: item.account_source_name,
+        name: item.account_source_name || item.account,
+      }))
+    );
     const grouped = {};
     items.forEach((item) => {
       if (item.type === 'liability') return;
-      const key = item.account || 'Other';
-      grouped[key] = (grouped[key] || 0) + (item.value || 0);
+      const key = item.account_id ?? item.account ?? 'Other';
+      if (!grouped[key]) {
+        grouped[key] = {
+          name: accountDisplayNames.get(item.account_id) || item.account || 'Other',
+          value: 0,
+        };
+      }
+      grouped[key].value += item.value || 0;
     });
 
-    const slices = Object.entries(grouped)
-      .filter(([, v]) => v > 0)
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, value], i) => ({
-        name,
-        value,
+    const slices = Object.values(grouped)
+      .filter((group) => group.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .map((group, i) => ({
+        name: group.name,
+        value: group.value,
         color: CHART_COLORS[i % CHART_COLORS.length],
       }));
 

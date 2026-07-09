@@ -6,7 +6,7 @@ import { Plus, Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
-import { getAccountDisplayName } from '../utils/accountDisplay';
+import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const CASH_TYPES = new Set(['depository']);
 
@@ -50,6 +50,12 @@ const CashPage = () => {
 
   const cashAccounts = useMemo(() => accounts.filter((a) => CASH_TYPES.has(a.type)), [accounts]);
   const cashAccountIds = useMemo(() => new Set(cashAccounts.map((a) => a.id)), [cashAccounts]);
+  const accountsMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
+  const displayAccountName = useMemo(
+    () => (account) => account ? accountDisplayNames.get(account.id) || getAccountDisplayName(account) : 'Account',
+    [accountDisplayNames]
+  );
 
   const filteredData = useMemo(() => {
     let data = holdings.filter((h) => cashAccountIds.has(h.account_id));
@@ -60,7 +66,15 @@ const CashPage = () => {
   const totalCash = useMemo(() => filteredData.reduce((sum, h) => sum + (parseFloat(h.current_value) || 0), 0), [filteredData]);
 
   const columns = useMemo(() => [
-    { accessorKey: 'account_name', header: 'Institution', cell: ({ getValue }) => <span className="text-caption text-tertiary uppercase">{getValue()}</span> },
+    {
+      id: 'account',
+      accessorFn: (row) => {
+        const account = accountsMap.get(row.account_id);
+        return account ? displayAccountName(account) : row.account_name || 'Account';
+      },
+      header: 'Institution',
+      cell: ({ getValue }) => <span className="text-caption text-tertiary uppercase">{getValue()}</span>,
+    },
     { accessorKey: 'name', header: 'Account Name', cell: ({ row }) => (
       <div className="flex items-center gap-2">
         <span className="font-semibold text-primary">{row.original.name}</span>
@@ -70,7 +84,7 @@ const CashPage = () => {
     { id: 'value', accessorFn: (row) => row.current_value ?? row.manual_value ?? 0, header: 'Balance',
       cell: ({ getValue }) => <span className="font-mono font-semibold text-gain">{formatCurrency(parseFloat(getValue()) || 0)}</span> },
     { accessorKey: 'category', header: 'Type', cell: ({ getValue }) => <span className="text-caption text-tertiary uppercase">{getValue() || 'Depository'}</span> },
-  ], []);
+  ], [accountsMap, displayAccountName]);
 
   const table = useReactTable({ data: filteredData, columns, state: { sorting, pagination }, onSortingChange: setSorting, onPaginationChange: setPagination, getCoreRowModel: getCoreRowModel(), getSortedRowModel: getSortedRowModel(), getFilteredRowModel: getFilteredRowModel(), getPaginationRowModel: getPaginationRowModel() });
 
@@ -104,7 +118,7 @@ const CashPage = () => {
           </button>
           {cashAccounts.map((account) => (
             <button key={account.id} onClick={() => setAccountFilter(String(account.id))} className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${accountFilter === String(account.id) ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'}`}>
-              <span className="max-w-[200px] truncate">{getAccountDisplayName(account)}</span>
+              <span className="max-w-[200px] truncate">{displayAccountName(account)}</span>
               {accountFilter === String(account.id) && <Check size={12} />}
             </button>
           ))}
@@ -152,7 +166,7 @@ const CashPage = () => {
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0">
                     <p className="text-body-sm font-semibold text-primary truncate">{row.original.name}</p>
-                    <p className="text-caption text-tertiary">{row.original.account_name}</p>
+                    <p className="text-caption text-tertiary">{displayAccountName(accountsMap.get(row.original.account_id))}</p>
                   </div>
                   <p className="font-mono font-semibold text-gain">{formatCurrency(value)}</p>
                 </div>

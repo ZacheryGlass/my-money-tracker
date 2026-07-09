@@ -5,11 +5,21 @@ import {
   getSortedRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import { ChevronUp, ChevronDown, CreditCard, Tag } from 'lucide-react';
+import { ChevronUp, ChevronDown } from 'lucide-react';
 import { formatCurrency } from '../utils/format';
+import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
+import { formatCategoryLabel } from '../utils/dataLabels';
 
 const DashboardTable = ({ items, onNavigate }) => {
   const [sorting, setSorting] = React.useState([{ id: 'value', desc: true }]);
+  const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(
+    items.map((item) => ({
+      id: item.account_id,
+      effective_name: item.account,
+      account_source_name: item.account_source_name,
+      name: item.account_source_name || item.account,
+    }))
+  ), [items]);
 
   const columns = useMemo(
     () => [
@@ -45,15 +55,17 @@ const DashboardTable = ({ items, onNavigate }) => {
       {
         accessorKey: 'account',
         header: 'Account',
-        cell: ({ getValue }) => (
-          <span className="text-tertiary">{getValue()}</span>
+        cell: ({ row }) => (
+          <span className="text-tertiary">
+            {accountDisplayNames.get(row.original.account_id) || row.original.account || 'Other'}
+          </span>
         )
       },
       {
         accessorKey: 'category',
         header: 'Category',
         cell: ({ getValue }) => (
-          <span className="text-caption text-tertiary">{getValue() || '-'}</span>
+          <span className="text-caption text-tertiary">{formatCategoryLabel(getValue())}</span>
         )
       },
       {
@@ -75,7 +87,7 @@ const DashboardTable = ({ items, onNavigate }) => {
         },
       },
     ],
-    []
+    [accountDisplayNames]
   );
 
   const table = useReactTable({
@@ -90,17 +102,25 @@ const DashboardTable = ({ items, onNavigate }) => {
   const accountTotals = useMemo(() => {
     const totals = {};
     items.forEach((item) => {
-      if (!totals[item.account]) totals[item.account] = 0;
-      totals[item.account] += item.value;
+      const key = item.account_id ?? item.account ?? 'Other';
+      if (!totals[key]) {
+        totals[key] = {
+          id: key,
+          name: accountDisplayNames.get(item.account_id) || item.account || 'Other',
+          value: 0,
+        };
+      }
+      totals[key].value += item.value;
     });
-    return Object.entries(totals).sort((a, b) => b[1] - a[1]);
-  }, [items]);
+    return Object.values(totals).sort((a, b) => b.value - a.value);
+  }, [items, accountDisplayNames]);
 
   const categoryTotals = useMemo(() => {
     const totals = {};
     items.forEach((item) => {
-      if (!totals[item.category]) totals[item.category] = 0;
-      totals[item.category] += item.value;
+      const category = formatCategoryLabel(item.category);
+      if (!totals[category]) totals[category] = 0;
+      totals[category] += item.value;
     });
     return Object.entries(totals).sort((a, b) => b[1] - a[1]);
   }, [items]);
@@ -201,11 +221,11 @@ const DashboardTable = ({ items, onNavigate }) => {
             Account Subtotals
           </h3>
           <div className="space-y-1">
-            {accountTotals.map(([account, total]) => (
-              <div key={account} className="flex justify-between items-center px-2 py-1.5 hover:bg-surface-2 transition-colors cursor-pointer" onClick={() => onNavigate('accounts')}>
-                <span className="text-body-sm text-secondary">{account}</span>
-                <span className={`font-money text-body-sm font-semibold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
-                  {formatCurrency(total)}
+            {accountTotals.map((account) => (
+              <div key={account.id} className="flex justify-between items-center px-2 py-1.5 hover:bg-surface-2 transition-colors cursor-pointer" onClick={() => onNavigate('accounts')}>
+                <span className="text-body-sm text-secondary">{account.name}</span>
+                <span className={`font-money text-body-sm font-semibold ${account.value < 0 ? 'text-loss' : 'text-gain'}`}>
+                  {formatCurrency(account.value)}
                 </span>
               </div>
             ))}

@@ -11,7 +11,8 @@ import { Link2 } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
-import { getAccountDisplayName } from '../utils/accountDisplay';
+import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
+import { formatCategoryLabel } from '../utils/dataLabels';
 
 const ASSET_TYPES = new Set(['investment', 'crypto', 'property', 'other']);
 
@@ -84,6 +85,11 @@ const HoldingsTable = ({ pageFilter }) => {
   const handleAccountFilterChange = (value) => { setAccountFilter(value); setPagination((p) => ({ ...p, pageIndex: 0 })); };
 
   const accountsMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
+  const displayAccountName = useMemo(
+    () => (account) => accountDisplayNames.get(account.id) || getAccountDisplayName(account),
+    [accountDisplayNames]
+  );
 
   const accountsWithHoldings = useMemo(() => {
     const ids = new Set(holdings.map((h) => h.account_id));
@@ -94,14 +100,18 @@ const HoldingsTable = ({ pageFilter }) => {
 
   const distinctCategories = useMemo(() => {
     const cats = new Set();
-    holdings.forEach((h) => { if (h.category) cats.add(h.category); });
+    holdings.forEach((h) => { cats.add(formatCategoryLabel(h.category)); });
     return Array.from(cats).sort();
   }, [holdings]);
 
   const columns = useMemo(
     () => [
       {
-        accessorKey: 'account_name',
+        id: 'account',
+        accessorFn: (row) => {
+          const account = accountsMap.get(row.account_id);
+          return account ? displayAccountName(account) : row.account_name || 'Unknown';
+        },
         header: 'Account',
         cell: ({ getValue }) => <span className="truncate max-w-[200px] block" title={getValue()}>{getValue()}</span>,
       },
@@ -143,10 +153,10 @@ const HoldingsTable = ({ pageFilter }) => {
       {
         accessorKey: 'category',
         header: 'Category',
-        cell: ({ getValue }) => <span className="text-tertiary">{getValue() || '-'}</span>,
+        cell: ({ getValue }) => <span className="text-tertiary">{formatCategoryLabel(getValue())}</span>,
       },
     ],
-    []
+    [accountsMap, displayAccountName]
   );
 
   const filteredData = useMemo(() => {
@@ -156,7 +166,7 @@ const HoldingsTable = ({ pageFilter }) => {
       data = data.filter((h) => assetAccountIds.has(h.account_id));
     }
     if (accountFilter) data = data.filter((h) => h.account_id === parseInt(accountFilter));
-    if (categoryFilter) data = data.filter((h) => h.category === categoryFilter);
+    if (categoryFilter) data = data.filter((h) => formatCategoryLabel(h.category) === categoryFilter);
     return data;
   }, [holdings, accounts, pageFilter, accountFilter, categoryFilter]);
 
@@ -241,7 +251,7 @@ const HoldingsTable = ({ pageFilter }) => {
                 className={`px-2 py-1 rounded text-caption transition-colors ${
                   accountFilter === String(account.id) ? 'bg-accent text-white' : 'bg-surface-3 text-secondary border border-border hover:text-primary'
                 }`}
-              >{getAccountDisplayName(account)}</button>
+              >{displayAccountName(account)}</button>
             ))}
           </div>
         )}
@@ -302,8 +312,8 @@ const HoldingsTable = ({ pageFilter }) => {
                     <div className="font-mono font-semibold text-primary">{formatCurrency(value)}</div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-caption text-tertiary">
-                    <div>{account ? getAccountDisplayName(account) : 'Unknown'}</div>
-                    {row.original.category && <div>{row.original.category}</div>}
+                    <div>{account ? displayAccountName(account) : 'Unknown'}</div>
+                    <div>{formatCategoryLabel(row.original.category)}</div>
                   </div>
                 </div>
               );

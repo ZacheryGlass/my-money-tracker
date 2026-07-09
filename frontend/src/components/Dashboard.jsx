@@ -6,6 +6,7 @@ import DashboardTable from './DashboardTable';
 import MetricCard from './MetricCard';
 import AllocationDonut from './AllocationDonut';
 import SparkLine from './SparkLine';
+import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
 
 const Dashboard = ({ onNavigate }) => {
   const [data, setData] = useState(null);
@@ -101,6 +102,16 @@ const Dashboard = ({ onNavigate }) => {
     return { amount, percent };
   }, [historyData]);
 
+  const accountDisplayNames = useMemo(() => {
+    const accounts = (data?.items || []).map((item) => ({
+      id: item.account_id,
+      effective_name: item.account,
+      account_source_name: item.account_source_name,
+      name: item.account_source_name || item.account,
+    }));
+    return buildAccountDisplayNameMap(accounts);
+  }, [data]);
+
   const freshnessAlerts = useMemo(() => {
     const freshness = data?.freshness;
     if (!freshness || freshness.status === 'ok') return [];
@@ -133,8 +144,14 @@ const Dashboard = ({ onNavigate }) => {
     const grouped = {};
     data.items.forEach((item) => {
       if (item.type === 'liability') return;
-      const key = item.account || 'Other';
-      if (!grouped[key]) grouped[key] = { name: key, value: 0, accountId: item.account_id };
+      const key = item.account_id ?? item.account ?? 'Other';
+      if (!grouped[key]) {
+        grouped[key] = {
+          name: accountDisplayNames.get(item.account_id) || item.account || 'Other',
+          value: 0,
+          accountId: item.account_id,
+        };
+      }
       grouped[key].value += item.value || 0;
     });
     const summaries = Object.values(grouped).sort((a, b) => b.value - a.value);
@@ -148,7 +165,7 @@ const Dashboard = ({ onNavigate }) => {
     });
 
     return summaries;
-  }, [data, accountHistoryData]);
+  }, [data, accountHistoryData, accountDisplayNames]);
 
   if (loading) {
     return (
@@ -268,7 +285,7 @@ const Dashboard = ({ onNavigate }) => {
           <div className="card flex flex-col max-h-[420px] overflow-y-auto">
             {accountSummaries.map((account) => (
               <div
-                key={account.name}
+                key={account.accountId ?? account.name}
                 className="flex items-center justify-between gap-3 px-3 py-2 border-b border-border last:border-b-0 hover:bg-surface-2 transition-colors cursor-pointer"
                 onClick={() => onNavigate('accounts')}
               >
