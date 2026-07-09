@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine, LabelList,
   AreaChart, Area,
 } from 'recharts';
 import { CalendarDays, TrendingUp, TrendingDown, Award, Target } from 'lucide-react';
@@ -15,13 +15,80 @@ import { useIsMobile } from '../hooks/useMediaQuery';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+function buildMonthlyChartData(monthlyData) {
+  return monthlyData.map((d) => {
+    const monthIdx = new Date(d.month).getUTCMonth();
+    return {
+      month: MONTHS[monthIdx],
+      change: parseFloat(d.change) || 0,
+      end_value: parseFloat(d.end_value) || 0,
+      change_percent: parseFloat(d.change_percent) || 0,
+    };
+  });
+}
+
+function calculateYearMetrics(chartData) {
+  if (chartData.length === 0) return { startNW: 0, endNW: 0, growth: 0, growthPct: 0, bestMonth: null, worstMonth: null };
+  const first = chartData[0];
+  const last = chartData[chartData.length - 1];
+  const startNW = first.end_value - (first.change || 0);
+  const endNW = last.end_value;
+  const growth = endNW - startNW;
+  const growthPct = startNW > 0 ? (growth / startNW) * 100 : 0;
+  const sorted = [...chartData].filter((d) => d.change !== null && d.change !== 0).sort((a, b) => b.change - a.change);
+  const bestMonth = sorted[0] || null;
+  const worstMonth = sorted[sorted.length - 1] || null;
+  return { startNW, endNW, growth, growthPct, bestMonth, worstMonth };
+}
+
+function calculateSpendingMetrics(rows) {
+  let totalIncome = 0, totalSpending = 0;
+  for (const d of rows) {
+    totalIncome += parseFloat(d.income) || 0;
+    totalSpending += parseFloat(d.spending) || 0;
+  }
+  const savingsRate = totalIncome > 0 ? ((totalIncome - totalSpending) / totalIncome) * 100 : 0;
+  return { totalIncome, totalSpending, savingsRate };
+}
+
+function getMonthIndex(row) {
+  if (!row) return -1;
+  if (row.month && MONTHS.includes(row.month)) return MONTHS.indexOf(row.month);
+  return new Date(row.month).getUTCMonth();
+}
+
+function formatMonthSpan(chartData) {
+  if (chartData.length === 0) return 'No months available';
+  const first = chartData[0].month;
+  const last = chartData[chartData.length - 1].month;
+  return first === last ? first : `${first} - ${last}`;
+}
+
+function SwingLabel({ x, y, width, value, payload }) {
+  if (!value) return null;
+  const isPositive = (payload?.change || 0) >= 0;
+  return (
+    <text
+      x={x + width / 2}
+      y={isPositive ? y - 6 : y + 14}
+      textAnchor="middle"
+      fill="var(--text-secondary)"
+      fontSize={10}
+    >
+      {value}
+    </text>
+  );
+}
+
 export default function YearInReview() {
   const isMobile = useIsMobile();
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [loading, setLoading] = useState(true);
   const [monthlyData, setMonthlyData] = useState([]);
+  const [priorMonthlyData, setPriorMonthlyData] = useState([]);
   const [ivsData, setIvsData] = useState([]);
+  const [priorIvsData, setPriorIvsData] = useState([]);
   const [portfolioItems, setPortfolioItems] = useState([]);
   const [portfolioHistory, setPortfolioHistory] = useState([]);
   const [tickerStart, setTickerStart] = useState([]);
@@ -38,10 +105,15 @@ export default function YearInReview() {
     try {
       const startDate = `${selectedYear}-01-01`;
       const endDate = `${selectedYear}-12-31`;
+      const priorYear = selectedYear - 1;
+      const priorStartDate = `${priorYear}-01-01`;
+      const priorEndDate = `${priorYear}-12-31`;
 
-      const [monthly, ivs, dash, portfolio, tStart, tEnd] = await Promise.all([
+      const [monthly, priorMonthly, ivs, priorIvs, dash, portfolio, tStart, tEnd] = await Promise.all([
         analytics.getNetWorthMonthly({ year: selectedYear }),
+        analytics.getNetWorthMonthly({ year: priorYear }).catch(() => ({ data: [] })),
         analytics.getIncomeVsSpending({ startDate, endDate }),
+        analytics.getIncomeVsSpending({ startDate: priorStartDate, endDate: priorEndDate }).catch(() => ({ data: [] })),
         dashboard.getPortfolio(),
         historyAPI.getPortfolio({ startDate, endDate, limit: 10000 }),
         historyAPI.getTickers({ startDate, endDate: `${selectedYear}-01-31`, limit: 10000 }),
@@ -49,7 +121,9 @@ export default function YearInReview() {
       ]);
 
       setMonthlyData(monthly.data || []);
+      setPriorMonthlyData(priorMonthly.data || []);
       setIvsData(ivs.data || []);
+      setPriorIvsData(priorIvs.data || []);
       setPortfolioItems(dash.items || []);
       setPortfolioHistory(portfolio.data || []);
       setTickerStart(tStart.data || []);
@@ -63,41 +137,56 @@ export default function YearInReview() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const chartData = useMemo(() =>
-    monthlyData.map((d) => {
-      const monthIdx = new Date(d.month).getUTCMonth();
+  const chartData = useMemo(() => buildMonthlyChartData(monthlyData), [monthlyData]);
+  const priorChartData = useMemo(() => buildMonthlyChartData(priorMonthlyData), [priorMonthlyData]);
+  const lastVisibleMonthIndex = useMemo(() => getMonthIndex(chartData[chartData.length - 1]), [chartData]);
+  const isPartialYear = selectedYear === currentYear && chartData.length > 0 && chartData.length < 12;
+  const periodLabel = isPartialYear ? `${selectedYear} YTD` : `${selectedYear}`;
+  const monthSpanLabel = formatMonthSpan(chartData);
+  const missingMonths = chartData.length > 0 ? Math.max(12 - chartData.length, 0) : 0;
+
+  const comparablePriorChartData = useMemo(() => {
+    if (lastVisibleMonthIndex < 0) return priorChartData;
+    return priorChartData.filter((row) => getMonthIndex(row) <= lastVisibleMonthIndex);
+  }, [lastVisibleMonthIndex, priorChartData]);
+
+  const comparablePriorIvsData = useMemo(() => {
+    if (lastVisibleMonthIndex < 0) return priorIvsData;
+    return priorIvsData.filter((row) => getMonthIndex(row) <= lastVisibleMonthIndex);
+  }, [lastVisibleMonthIndex, priorIvsData]);
+
+  const yearMetrics = useMemo(() => calculateYearMetrics(chartData), [chartData]);
+  const priorYearMetrics = useMemo(() => calculateYearMetrics(comparablePriorChartData), [comparablePriorChartData]);
+
+  const spendingMetrics = useMemo(() => calculateSpendingMetrics(ivsData), [ivsData]);
+  const priorSpendingMetrics = useMemo(() => calculateSpendingMetrics(comparablePriorIvsData), [comparablePriorIvsData]);
+
+  const comparisonMetrics = useMemo(() => ({
+    growthDelta: yearMetrics.growth - priorYearMetrics.growth,
+    savingsRateDelta: spendingMetrics.savingsRate - priorSpendingMetrics.savingsRate,
+    incomeDelta: spendingMetrics.totalIncome - priorSpendingMetrics.totalIncome,
+    spendingDelta: spendingMetrics.totalSpending - priorSpendingMetrics.totalSpending,
+  }), [yearMetrics, priorYearMetrics, spendingMetrics, priorSpendingMetrics]);
+
+  const narrative = useMemo(() => {
+    if (chartData.length === 0) return `No ${selectedYear} net worth history is available yet.`;
+    const direction = yearMetrics.growth >= 0 ? 'grew' : 'fell';
+    const bestMonth = yearMetrics.bestMonth ? `${yearMetrics.bestMonth.month} added ${formatCurrency(yearMetrics.bestMonth.change)}` : 'No positive month stood out';
+    const worstMonth = yearMetrics.worstMonth ? `${yearMetrics.worstMonth.month} moved ${formatCurrency(yearMetrics.worstMonth.change)}` : 'No negative month stood out';
+    const valuePhrase = isPartialYear ? `latest value is ${formatCurrency(yearMetrics.endNW)}` : `ending at ${formatCurrency(yearMetrics.endNW)}`;
+    return `${periodLabel} ${direction} by ${formatCurrency(Math.abs(yearMetrics.growth))}; ${valuePhrase}. ${bestMonth}; ${worstMonth}. Savings rate is ${formatPercent(spendingMetrics.savingsRate, 1)}.`;
+  }, [chartData, isPartialYear, periodLabel, yearMetrics, spendingMetrics, selectedYear]);
+
+  const annotatedChartData = useMemo(() =>
+    chartData.map((row) => {
+      const isBest = yearMetrics.bestMonth && row.month === yearMetrics.bestMonth.month;
+      const isWorst = yearMetrics.worstMonth && row.month === yearMetrics.worstMonth.month;
       return {
-        month: MONTHS[monthIdx],
-        change: parseFloat(d.change) || 0,
-        end_value: parseFloat(d.end_value) || 0,
-        change_percent: parseFloat(d.change_percent) || 0,
+        ...row,
+        swingLabel: isBest ? 'Largest gain' : isWorst ? 'Largest drop' : '',
       };
     }),
-  [monthlyData]);
-
-  const yearMetrics = useMemo(() => {
-    if (chartData.length === 0) return { startNW: 0, endNW: 0, growth: 0, growthPct: 0, bestMonth: null, worstMonth: null };
-    const first = chartData[0];
-    const last = chartData[chartData.length - 1];
-    const startNW = first.end_value - (first.change || 0);
-    const endNW = last.end_value;
-    const growth = endNW - startNW;
-    const growthPct = startNW > 0 ? (growth / startNW) * 100 : 0;
-    const sorted = [...chartData].filter((d) => d.change !== null && d.change !== 0).sort((a, b) => b.change - a.change);
-    const bestMonth = sorted[0] || null;
-    const worstMonth = sorted[sorted.length - 1] || null;
-    return { startNW, endNW, growth, growthPct, bestMonth, worstMonth };
-  }, [chartData]);
-
-  const spendingMetrics = useMemo(() => {
-    let totalIncome = 0, totalSpending = 0;
-    for (const d of ivsData) {
-      totalIncome += parseFloat(d.income) || 0;
-      totalSpending += parseFloat(d.spending) || 0;
-    }
-    const savingsRate = totalIncome > 0 ? ((totalIncome - totalSpending) / totalIncome) * 100 : 0;
-    return { totalIncome, totalSpending, savingsRate };
-  }, [ivsData]);
+  [chartData, yearMetrics]);
 
   const performers = useMemo(() => {
     if (tickerStart.length === 0 || tickerEnd.length === 0) return { gainers: [], losers: [] };
@@ -146,10 +235,10 @@ export default function YearInReview() {
   return (
     <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px] space-y-8">
       {/* Hero */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+      <div className="sticky top-0 z-20 -mx-4 px-4 py-3 bg-base border-b border-border flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Year in Review</h1>
-          <p className="text-sm text-secondary mt-1">Annual financial performance summary</p>
+          <p className="text-sm text-secondary mt-1">{periodLabel} financial performance summary</p>
         </div>
         <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
           {availableYears.map((y) => (
@@ -166,42 +255,133 @@ export default function YearInReview() {
         </div>
       </div>
 
+      {/* Narrative Summary */}
+      <div className="card p-4 md:p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-caption text-tertiary uppercase tracking-wide mb-1">{periodLabel} Summary</p>
+            <p className="text-body-md text-primary max-w-4xl">{narrative}</p>
+            {isPartialYear && (
+              <p className="text-caption text-accent mt-2">
+                Partial-year view: showing {monthSpanLabel}; {missingMonths} future month{missingMonths === 1 ? '' : 's'} will appear as data arrives.
+              </p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2 min-w-[280px]">
+            <div className="border border-border bg-surface-2 p-2">
+              <p className="text-caption text-tertiary uppercase">Best</p>
+              <p className="text-body-sm font-semibold text-gain">{yearMetrics.bestMonth ? yearMetrics.bestMonth.month : '--'}</p>
+            </div>
+            <div className="border border-border bg-surface-2 p-2">
+              <p className="text-caption text-tertiary uppercase">Worst</p>
+              <p className="text-body-sm font-semibold text-loss">{yearMetrics.worstMonth ? yearMetrics.worstMonth.month : '--'}</p>
+            </div>
+            <div className="border border-border bg-surface-2 p-2">
+              <p className="text-caption text-tertiary uppercase">Income</p>
+              <p className="text-body-sm font-semibold text-gain">{formatCurrency(spendingMetrics.totalIncome)}</p>
+            </div>
+            <div className="border border-border bg-surface-2 p-2">
+              <p className="text-caption text-tertiary uppercase">Spend</p>
+              <p className="text-body-sm font-semibold text-loss">{formatCurrency(spendingMetrics.totalSpending)}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="Starting Net Worth"
           value={formatCurrency(yearMetrics.startNW)}
           icon={Target}
+          caption={`${monthSpanLabel} opening value`}
         />
         <MetricCard
-          label="Ending Net Worth"
+          label={isPartialYear ? 'Latest Net Worth' : 'Ending Net Worth'}
           value={formatCurrency(yearMetrics.endNW)}
           icon={Award}
           valueColor="accent"
+          caption={isPartialYear ? `${periodLabel} latest value` : 'Year-end value'}
         />
         <MetricCard
-          label="Total Growth"
+          label={isPartialYear ? 'YTD Growth' : 'Total Growth'}
           value={formatCurrency(yearMetrics.growth)}
           change={formatPercent(yearMetrics.growthPct, 1)}
           trend={yearMetrics.growth >= 0 ? 'up' : 'down'}
           icon={yearMetrics.growth >= 0 ? TrendingUp : TrendingDown}
           valueColor={yearMetrics.growth >= 0 ? 'gain' : 'loss'}
+          caption={`vs ${selectedYear - 1} same months: ${formatCurrency(comparisonMetrics.growthDelta)}`}
         />
         <MetricCard
           label="Savings Rate"
           value={formatPercent(spendingMetrics.savingsRate, 1)}
           icon={CalendarDays}
           valueColor={spendingMetrics.savingsRate >= 0 ? 'gain' : 'loss'}
+          caption={`vs ${selectedYear - 1} same months: ${formatPercent(comparisonMetrics.savingsRateDelta, 1)}`}
         />
       </div>
 
+      {/* Prior Year Comparison */}
+      <div className="grid md:grid-cols-4 gap-3">
+        <div className="border border-border bg-surface p-3">
+          <p className="text-caption text-tertiary uppercase tracking-wide">Growth vs {selectedYear - 1}</p>
+          <p className={`font-mono text-lg font-semibold ${comparisonMetrics.growthDelta >= 0 ? 'text-gain' : 'text-loss'}`}>{formatCurrency(comparisonMetrics.growthDelta)}</p>
+          <p className="text-caption text-tertiary">Same months prior growth {formatCurrency(priorYearMetrics.growth)}</p>
+        </div>
+        <div className="border border-border bg-surface p-3">
+          <p className="text-caption text-tertiary uppercase tracking-wide">Savings Rate Delta</p>
+          <p className={`font-mono text-lg font-semibold ${comparisonMetrics.savingsRateDelta >= 0 ? 'text-gain' : 'text-loss'}`}>{formatPercent(comparisonMetrics.savingsRateDelta, 1)}</p>
+          <p className="text-caption text-tertiary">Same months prior rate {formatPercent(priorSpendingMetrics.savingsRate, 1)}</p>
+        </div>
+        <div className="border border-border bg-surface p-3">
+          <p className="text-caption text-tertiary uppercase tracking-wide">Income Delta</p>
+          <p className={`font-mono text-lg font-semibold ${comparisonMetrics.incomeDelta >= 0 ? 'text-gain' : 'text-loss'}`}>{formatCurrency(comparisonMetrics.incomeDelta)}</p>
+          <p className="text-caption text-tertiary">Same months prior income {formatCurrency(priorSpendingMetrics.totalIncome)}</p>
+        </div>
+        <div className="border border-border bg-surface p-3">
+          <p className="text-caption text-tertiary uppercase tracking-wide">Spend Delta</p>
+          <p className={`font-mono text-lg font-semibold ${comparisonMetrics.spendingDelta <= 0 ? 'text-gain' : 'text-loss'}`}>{formatCurrency(comparisonMetrics.spendingDelta)}</p>
+          <p className="text-caption text-tertiary">Same months prior spend {formatCurrency(priorSpendingMetrics.totalSpending)}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-4">
+        {[
+          ['Monthly swings', '#monthly-change'],
+          ['Trajectory', '#trajectory'],
+          ['Allocation', '#allocation'],
+          ['Cash flow', '#cash-flow'],
+        ].map(([label, href]) => (
+          <a
+            key={href}
+            href={href}
+            className="border border-border bg-surface px-3 py-2 text-caption font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary"
+          >
+            {label}
+          </a>
+        ))}
+      </div>
+
       {/* Monthly Net Worth Change Bar Chart */}
-      <div className="card p-4 md:p-6">
-        <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Monthly Net Worth Change</h2>
+      <div id="monthly-change" className="card p-4 md:p-6 scroll-mt-24">
+        <div className="flex flex-col gap-2 mb-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Monthly Net Worth Change</h2>
+            <p className="text-caption text-tertiary">
+              {yearMetrics.bestMonth ? `Best: ${yearMetrics.bestMonth.month} ${formatCurrency(yearMetrics.bestMonth.change)}` : 'Best: --'}
+              {' / '}
+              {yearMetrics.worstMonth ? `Worst: ${yearMetrics.worstMonth.month} ${formatCurrency(yearMetrics.worstMonth.change)}` : 'Worst: --'}
+            </p>
+          </div>
+          <p className="text-caption text-secondary">
+            {periodLabel} / {monthSpanLabel}
+            {isPartialYear ? ` / ${missingMonths} months pending` : ''}
+          </p>
+        </div>
         <div style={{ height: isMobile ? 280 : 380 }}>
           {chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 10, right: 10, left: isMobile ? 0 : 10, bottom: 5 }}>
+              <BarChart data={annotatedChartData} margin={{ top: 24, right: 10, left: isMobile ? 0 : 10, bottom: 5 }}>
                 <CartesianGrid {...GRID_STYLE} vertical={false} />
                 <XAxis dataKey="month" {...AXIS_STYLE} />
                 <YAxis {...AXIS_STYLE} tickFormatter={formatCompactCurrency} width={isMobile ? 45 : 60} />
@@ -211,7 +391,8 @@ export default function YearInReview() {
                 />
                 <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
                 <Bar dataKey="change" radius={[4, 4, 0, 0]} animationDuration={800} name="Change">
-                  {chartData.map((entry, i) => (
+                  <LabelList dataKey="swingLabel" content={<SwingLabel />} />
+                  {annotatedChartData.map((entry, i) => (
                     <Cell key={i} fill={entry.change >= 0 ? 'var(--gain)' : 'var(--loss)'} />
                   ))}
                 </Bar>
@@ -226,7 +407,7 @@ export default function YearInReview() {
       {/* Mini Charts Row */}
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Net Worth Trajectory */}
-        <div className="card p-4 md:p-6">
+        <div id="trajectory" className="card p-4 md:p-6 scroll-mt-24">
           <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Net Worth Trajectory</h2>
           <div style={{ height: isMobile ? 180 : 220 }}>
             {sparklineData.length > 0 ? (
@@ -247,8 +428,8 @@ export default function YearInReview() {
         </div>
 
         {/* Year-End Allocation */}
-        <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Portfolio Allocation</h2>
+        <div id="allocation" className="card p-4 md:p-6 scroll-mt-24">
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">{isPartialYear ? 'Latest Allocation' : 'Year-End Allocation'}</h2>
           <div style={{ height: isMobile ? 180 : 220 }}>
             {portfolioItems.length > 0 ? (
               <AllocationDonut items={portfolioItems} />
@@ -335,8 +516,8 @@ export default function YearInReview() {
 
       {/* Annual Income vs Spending Summary */}
       {spendingMetrics.totalIncome > 0 && (
-        <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Annual Cash Flow</h2>
+        <div id="cash-flow" className="card p-4 md:p-6 scroll-mt-24">
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">{isPartialYear ? 'YTD Cash Flow' : 'Annual Cash Flow'}</h2>
           <div className="grid grid-cols-3 gap-6">
             <div>
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Total Income</p>
