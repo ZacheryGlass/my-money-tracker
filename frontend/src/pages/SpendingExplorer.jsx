@@ -118,6 +118,7 @@ export default function SpendingExplorer() {
   const [groupMode, setGroupMode] = useState('merchant');
   const [spendScope, setSpendScope] = useState('everyday');
   const [sortBy, setSortBy] = useState('spend');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedKind, setSelectedKind] = useState('');
@@ -171,6 +172,10 @@ export default function SpendingExplorer() {
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [accountList, rawTransactions]);
+
+  const selectedAccountName = useMemo(() => {
+    return accountOptions.find((account) => account.id === selectedAccountId)?.name || '';
+  }, [accountOptions, selectedAccountId]);
 
   const spendingRows = useMemo(() => {
     return rawTransactions
@@ -255,6 +260,12 @@ export default function SpendingExplorer() {
     setSelectedAccountId(accountId);
   };
 
+  const clearAllFilters = () => {
+    setSearch('');
+    clearGroupFilters();
+    if (selectedAccountId) handleAccountChange('');
+  };
+
   const handleScopeChange = (scope) => {
     if (scope === spendScope) return;
     clearGroupFilters();
@@ -274,6 +285,7 @@ export default function SpendingExplorer() {
   const activeGroupLabel = groupMode === 'merchant' ? 'Store' : groupMode === 'kind' ? 'Kind' : 'Category';
   const topGroup = activeGroups[0];
   const ActiveGroupIcon = groupMode === 'merchant' ? Store : groupMode === 'kind' ? SlidersHorizontal : Tags;
+  const activeFilterCount = [search.trim(), selectedAccountId, selectedCategory, selectedKind, selectedMerchant].filter(Boolean).length;
 
   if (loading) {
     return (
@@ -364,8 +376,8 @@ export default function SpendingExplorer() {
         />
       </div>
 
-      <div className="card p-4 md:p-5">
-        <div className="grid lg:grid-cols-[1.2fr_0.8fr_auto] gap-4 items-end">
+      <div className="card p-4">
+        <div className="grid gap-3 lg:grid-cols-[minmax(260px,1fr)_220px_auto_auto] lg:items-end">
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 flex items-center gap-2">
               <Search size={13} />
@@ -427,91 +439,148 @@ export default function SpendingExplorer() {
               ))}
             </div>
           </div>
-        </div>
 
-        <div className="mt-5 flex flex-wrap gap-2">
           <button
-            onClick={() => setSelectedKind('')}
-            className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
-              selectedKind === '' ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={`flex h-11 items-center justify-center gap-2 rounded border px-4 text-xs font-bold uppercase tracking-wider transition-all ${
+              filtersOpen || activeFilterCount > 0
+                ? 'border-accent/30 bg-accent/10 text-accent'
+                : 'border-border bg-surface-2 text-tertiary hover:text-secondary'
             }`}
           >
-            All Kinds
+            <SlidersHorizontal size={14} />
+            {filtersOpen ? 'Hide Filters' : 'More Filters'}
+            {activeFilterCount > 0 && (
+              <span className="rounded bg-accent/20 px-1.5 py-0.5 font-mono text-[10px]">{activeFilterCount}</span>
+            )}
           </button>
-          {kindOptions.slice(0, 10).map((kind) => (
-            <button
-              key={kind.name}
-              onClick={() => setSelectedKind(kind.name)}
-              className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
-                selectedKind === kind.name ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
-              }`}
-            >
-              {kind.name}
-            </button>
-          ))}
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            onClick={() => setSelectedCategory('')}
-            className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
-              selectedCategory === '' ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
-            }`}
-          >
-            All Categories
-          </button>
-          {categoryOptions.slice(0, 12).map((category) => (
-            <button
-              key={category.name}
-              onClick={() => setSelectedCategory(category.name)}
-              className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
-                selectedCategory === category.name ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
-              }`}
-            >
-              {category.name}
-            </button>
-          ))}
-        </div>
-
-        {spendScope === 'everyday' && summary.excludedCount > 0 && (
-          <div className="mt-4 grid sm:grid-cols-2 gap-3">
-            <div className="rounded border border-border bg-surface-2/60 px-4 py-3">
-              <div className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Hidden Non-Purchase Outflows</div>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="font-money font-bold text-primary">{formatCurrency(summary.excludedTotal)}</span>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-secondary">{summary.excludedCount.toLocaleString()} txns</span>
-              </div>
-            </div>
+        {(activeFilterCount > 0 || (spendScope === 'everyday' && summary.excludedCount > 0)) && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {search.trim() && (
+              <button
+                onClick={() => setSearch('')}
+                className="inline-flex max-w-[260px] items-center gap-2 rounded border border-accent/20 bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent"
+                title={search.trim()}
+              >
+                <Search size={13} />
+                <span className="truncate">Search: {search.trim()}</span>
+                <X size={13} />
+              </button>
+            )}
+            {selectedAccountId && (
+              <button
+                onClick={() => handleAccountChange('')}
+                className="inline-flex max-w-[260px] items-center gap-2 rounded border border-accent/20 bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent"
+                title={selectedAccountName}
+              >
+                <CreditCard size={13} />
+                <span className="truncate">{selectedAccountName}</span>
+                <X size={13} />
+              </button>
+            )}
+            {selectedMerchant && (
+              <button
+                onClick={() => setSelectedMerchant('')}
+                className="inline-flex max-w-[260px] items-center gap-2 rounded border border-accent/20 bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent"
+                title={selectedMerchant}
+              >
+                <Store size={13} />
+                <span className="truncate">{selectedMerchant}</span>
+                <X size={13} />
+              </button>
+            )}
+            {selectedKind && (
+              <button
+                onClick={() => setSelectedKind('')}
+                className="inline-flex max-w-[260px] items-center gap-2 rounded border border-accent/20 bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent"
+                title={selectedKind}
+              >
+                <SlidersHorizontal size={13} />
+                <span className="truncate">{selectedKind}</span>
+                <X size={13} />
+              </button>
+            )}
+            {selectedCategory && (
+              <button
+                onClick={() => setSelectedCategory('')}
+                className="inline-flex max-w-[260px] items-center gap-2 rounded border border-accent/20 bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent"
+                title={selectedCategory}
+              >
+                <Tags size={13} />
+                <span className="truncate">{selectedCategory}</span>
+                <X size={13} />
+              </button>
+            )}
+            {activeFilterCount > 0 && (
+              <button
+                onClick={clearAllFilters}
+                className="inline-flex items-center gap-1.5 rounded border border-border bg-surface-2 px-3 py-1.5 text-xs font-bold text-tertiary transition-colors hover:text-primary"
+              >
+                <X size={13} />
+                Clear all
+              </button>
+            )}
+            {spendScope === 'everyday' && summary.excludedCount > 0 && (
+              <span className="inline-flex items-center gap-2 rounded border border-border bg-surface-2/60 px-3 py-1.5 text-xs text-tertiary">
+                Hidden non-purchase outflows: <span className="font-money text-primary">{formatCurrency(summary.excludedTotal)}</span>
+              </span>
+            )}
           </div>
         )}
 
-        {(selectedCategory || selectedKind || selectedMerchant) && (
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            {selectedMerchant && (
-              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
-                <Store size={13} />
-                {selectedMerchant}
-              </span>
-            )}
-            {selectedKind && (
-              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
-                <SlidersHorizontal size={13} />
-                {selectedKind}
-              </span>
-            )}
-            {selectedCategory && (
-              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-accent/10 text-accent border border-accent/20 text-xs font-bold">
-                <Tags size={13} />
-                {selectedCategory}
-              </span>
-            )}
-            <button
-              onClick={clearGroupFilters}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-2 text-tertiary border border-border text-xs font-bold hover:text-primary transition-colors"
-            >
-              <X size={13} />
-              Clear
-            </button>
+        {filtersOpen && (
+          <div className="mt-4 space-y-4 border-t border-border pt-4">
+            <div>
+              <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-tertiary">Kinds</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setSelectedKind('')}
+                  className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
+                    selectedKind === '' ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
+                  }`}
+                >
+                  All Kinds
+                </button>
+                {kindOptions.slice(0, 10).map((kind) => (
+                  <button
+                    key={kind.name}
+                    onClick={() => setSelectedKind(kind.name)}
+                    className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
+                      selectedKind === kind.name ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
+                    }`}
+                  >
+                    {kind.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-tertiary">Categories</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setSelectedCategory('')}
+                  className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
+                    selectedCategory === '' ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
+                  }`}
+                >
+                  All Categories
+                </button>
+                {categoryOptions.slice(0, 12).map((category) => (
+                  <button
+                    key={category.name}
+                    onClick={() => setSelectedCategory(category.name)}
+                    className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wide border transition-all ${
+                      selectedCategory === category.name ? 'bg-accent/15 text-accent border-accent/30' : 'bg-surface-2 text-tertiary border-border hover:text-secondary'
+                    }`}
+                  >
+                    {category.name}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -583,7 +652,7 @@ export default function SpendingExplorer() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-money text-tertiary w-5">{index + 1}</span>
-                        <span className="text-sm font-bold text-primary truncate">{group.name}</span>
+                        <span className="truncate text-sm font-bold text-primary" title={group.name}>{group.name}</span>
                       </div>
                       <div className="mt-1 text-[10px] uppercase tracking-wider text-tertiary">
                         {group.count} txns - {formatCurrency(group.avg)} avg
