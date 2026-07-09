@@ -9,8 +9,9 @@ import CalendarHeatmap from '../components/CalendarHeatmap';
 import ChartTooltip from '../components/ChartTooltip';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import { formatCurrency, formatCompactCurrency, formatPercent } from '../utils/format';
-import { analytics } from '../utils/api';
+import { transactions } from '../utils/api';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import { classifyTransaction } from '../utils/transactionClassification';
 
 const DATE_RANGES = [
   { id: '3m', label: '3M', days: 90 },
@@ -44,6 +45,79 @@ function formatMonth(dateStr) {
   return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' });
 }
 
+function roundMoney(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function getMonthKey(dateString) {
+  return `${String(dateString).slice(0, 7)}-01`;
+}
+
+function buildIncomeVsSpending(spendingRows, incomeRows) {
+  const months = new Map();
+  const ensureMonth = (month) => {
+    if (!months.has(month)) {
+      months.set(month, { month, income: 0, spending: 0, savings_rate: 0 });
+    }
+    return months.get(month);
+  };
+
+  spendingRows.forEach((txn) => {
+    ensureMonth(getMonthKey(txn.date)).spending += txn.spend;
+  });
+
+  incomeRows.forEach((txn) => {
+    ensureMonth(getMonthKey(txn.date)).income += txn.income;
+  });
+
+  return Array.from(months.values())
+    .sort((a, b) => String(a.month).localeCompare(String(b.month)))
+    .map((row) => ({
+      ...row,
+      income: roundMoney(row.income),
+      spending: roundMoney(row.spending),
+      savings_rate: row.income > 0 ? roundMoney(((row.income - row.spending) / row.income) * 100) : 0,
+    }));
+}
+
+function buildCategoryData(spendingRows) {
+  const totals = new Map();
+
+  spendingRows.forEach((txn) => {
+    const key = `${getMonthKey(txn.date)}|${txn.categoryLabel}`;
+    const row = totals.get(key) || {
+      period: getMonthKey(txn.date),
+      category: txn.categoryLabel,
+      total: 0,
+      tx_count: 0,
+    };
+    row.total += txn.spend;
+    row.tx_count += 1;
+    totals.set(key, row);
+  });
+
+  return Array.from(totals.values()).map((row) => ({
+    ...row,
+    total: roundMoney(row.total),
+  }));
+}
+
+function buildHeatmapData(spendingRows) {
+  const totals = new Map();
+
+  spendingRows.forEach((txn) => {
+    const date = String(txn.date).slice(0, 10);
+    const row = totals.get(date) || { date, total: 0, tx_count: 0 };
+    row.total += txn.spend;
+    row.tx_count += 1;
+    totals.set(date, row);
+  });
+
+  return Array.from(totals.values())
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map((row) => ({ ...row, total: roundMoney(row.total) }));
+}
+
 export default function SpendingAnalytics() {
   const isMobile = useIsMobile();
   const [dateRange, setDateRange] = useState('6m');
@@ -56,14 +130,16 @@ export default function SpendingAnalytics() {
     setLoading(true);
     try {
       const range = getDateRange(dateRange);
-      const [ivs, cats, heatmap] = await Promise.all([
-        analytics.getIncomeVsSpending(range),
-        analytics.getSpendingByCategory(range),
-        analytics.getSpendingHeatmap(range),
-      ]);
-      setIncomeVsSpending(ivs.data || []);
-      setCategoryData(cats.data || []);
-      setHeatmapData(heatmap.data || []);
+      const txnResult = await transactions.getAll({ ...range, limit: 10000 });
+      const classifiedRows = (txnResult.data || [])
+        .filter((txn) => !txn.pending)
+        .map(classifyTransaction);
+      const everydaySpending = classifiedRows.filter((txn) => txn.spend > 0 && txn.isEveryday);
+      const incomeRows = classifiedRows.filter((txn) => txn.income > 0 && txn.isLikelyIncome);
+
+      setIncomeVsSpending(buildIncomeVsSpending(everydaySpending, incomeRows));
+      setCategoryData(buildCategoryData(everydaySpending));
+      setHeatmapData(buildHeatmapData(everydaySpending));
     } catch (err) {
       console.error('Failed to load spending analytics:', err);
     } finally {
@@ -132,7 +208,7 @@ export default function SpendingAnalytics() {
 
       {/* Metrics Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Total Spending" value={formatCurrency(totalSpending)} icon={DollarSign} valueColor="loss" />
+        <MetricCard label="Everyday Spend" value={formatCurrency(totalSpending)} icon={DollarSign} valueColor="loss" />
         <MetricCard label="Total Income" value={formatCurrency(totalIncome)} icon={TrendingDown} valueColor="gain" />
         <MetricCard label="Avg Monthly Spend" value={formatCurrency(avgMonthlySpend)} icon={BarChart3} />
         <MetricCard label="Savings Rate" value={formatPercent(avgSavingsRate, 1)} icon={Percent} valueColor={avgSavingsRate >= 0 ? 'gain' : 'loss'} />
@@ -188,7 +264,7 @@ export default function SpendingAnalytics() {
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Donut */}
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Spending by Category</h2>
+          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Everyday Spending by Category</h2>
           <div style={{ height: isMobile ? 250 : 320 }}>
             {categoryTotals.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
