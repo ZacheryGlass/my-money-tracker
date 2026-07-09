@@ -106,8 +106,19 @@ const SalaryHistory = () => {
     }
   };
 
-  const { current, careerGrowth, lastRaise, chartData, peakComp } = useMemo(() => {
-    if (records.length === 0) return { current: null, careerGrowth: 0, lastRaise: null, chartData: [], peakComp: null };
+  const { current, careerGrowth, lastRaise, chartData, peakComp, milestones, yoyRows, compMix } = useMemo(() => {
+    if (records.length === 0) {
+      return {
+        current: null,
+        careerGrowth: 0,
+        lastRaise: null,
+        chartData: [],
+        peakComp: null,
+        milestones: [],
+        yoyRows: [],
+        compMix: { basePct: 0, variablePct: 0, variableAmount: 0 },
+      };
+    }
     const sorted = [...records].sort((a, b) => new Date(a.effective_date) - new Date(b.effective_date));
     const latest = sorted[sorted.length - 1];
     const earliest = sorted[0];
@@ -119,14 +130,73 @@ const SalaryHistory = () => {
       percent: latest.change_percent ? parseFloat(latest.change_percent) * 100 : 0,
     } : null;
     const cd = sorted.map((r) => ({
+      id: r.id,
       date: r.effective_date,
       label: formatDateDisplay(r.effective_date),
       salary: parseFloat(r.salary_amount),
       totalComp: parseFloat(r.total_comp),
+      equity: (parseFloat(r.psu) || 0) + (parseFloat(r.rsu) || 0),
+      changeAmount: parseFloat(r.change_amount) || 0,
+      changePercent: r.change_percent ? parseFloat(r.change_percent) * 100 : 0,
       title: r.title,
     }));
     const peak = cd.reduce((max, d) => d.totalComp > max.totalComp ? d : max, cd[0]);
-    return { current: latest, careerGrowth: growth, lastRaise: lr, chartData: cd, peakComp: peak };
+
+    const ms = cd
+      .map((item, index) => {
+        const prev = cd[index - 1];
+        if (!prev) return { ...item, milestoneLabel: 'Start' };
+        if (item.title !== prev.title) return { ...item, milestoneLabel: 'Title' };
+        if (Math.abs(item.changeAmount) >= 10000 || Math.abs(item.changePercent) >= 10) return { ...item, milestoneLabel: 'Raise' };
+        if (item.equity > 0 && Math.abs(item.equity - prev.equity) >= 5000) return { ...item, milestoneLabel: 'Equity' };
+        return null;
+      })
+      .filter(Boolean);
+
+    const byYear = new Map();
+    sorted.forEach((record) => {
+      const year = new Date(record.effective_date).getUTCFullYear();
+      byYear.set(year, record);
+    });
+    const annualRows = Array.from(byYear.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([year, record], index, rows) => {
+        const previousRecord = rows[index - 1]?.[1];
+        const totalComp = parseFloat(record.total_comp) || 0;
+        const previousTotalComp = previousRecord ? parseFloat(previousRecord.total_comp) || 0 : null;
+        const change = previousTotalComp == null ? null : totalComp - previousTotalComp;
+        const pct = previousTotalComp > 0 ? (change / previousTotalComp) * 100 : null;
+        return {
+          year,
+          title: record.title,
+          totalComp,
+          baseSalary: parseFloat(record.salary_amount) || 0,
+          equity: (parseFloat(record.psu) || 0) + (parseFloat(record.rsu) || 0),
+          change,
+          pct,
+        };
+      })
+      .reverse()
+      .slice(0, 4);
+
+    const currentBase = parseFloat(latest.salary_amount) || 0;
+    const currentTotal = parseFloat(latest.total_comp) || 0;
+    const variableAmount = Math.max(currentTotal - currentBase, 0);
+
+    return {
+      current: latest,
+      careerGrowth: growth,
+      lastRaise: lr,
+      chartData: cd,
+      peakComp: peak,
+      milestones: ms,
+      yoyRows: annualRows,
+      compMix: {
+        basePct: currentTotal > 0 ? (currentBase / currentTotal) * 100 : 0,
+        variablePct: currentTotal > 0 ? (variableAmount / currentTotal) * 100 : 0,
+        variableAmount,
+      },
+    };
   }, [records]);
 
   if (loading) {
@@ -139,9 +209,9 @@ const SalaryHistory = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8">
+    <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px]">
       {/* Hero Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+      <div className="flex flex-col md:flex-row md:items-end justify-between mb-6 gap-4">
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Briefcase className="text-accent w-5 h-5" />
@@ -153,14 +223,18 @@ const SalaryHistory = () => {
           <p className="text-sm text-secondary">Current Total Compensation — <span className="font-bold text-primary">{current?.title || 'Unknown Role'}</span></p>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="p-3 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Career Growth</p>
             <p className="text-lg font-mono font-bold text-gain">+{careerGrowth.toFixed(1)}%</p>
           </div>
+          <div className="p-3 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Last Increase</p>
+            <p className="text-lg font-mono font-bold text-gain">{lastRaise ? `+${formatCurrency(lastRaise.amount)}` : '—'}</p>
+          </div>
           <button
             onClick={handleAddNew}
-            className="flex items-center gap-2 px-6 py-4 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all"
+            className="flex items-center gap-2 px-4 py-3 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all"
           >
             <Plus size={18} />
             <span>Add Record</span>
@@ -171,7 +245,7 @@ const SalaryHistory = () => {
       <div className="space-y-8">
         {/* Summary Controls */}
         <div className="mb-5 rounded border border-border bg-surface p-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="space-y-1 rounded border border-border bg-surface-3 p-3">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide">Base Salary</p>
               <p className="text-xl font-mono font-bold text-primary">{current ? formatCurrency(current.salary_amount) : '—'}</p>
@@ -189,21 +263,22 @@ const SalaryHistory = () => {
               )}
             </div>
 
-            <div className="space-y-1 rounded border border-border bg-surface-3 p-3">
+            <div className="space-y-1 rounded border border-border bg-surface-3 p-3 xl:col-span-2">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide">Comp Mix</p>
               <div className="space-y-2 mt-2">
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-secondary font-medium">Base</span>
-                  <span className="text-primary font-bold">{current ? ((current.salary_amount / current.total_comp) * 100).toFixed(0) : 0}%</span>
+                  <span className="text-secondary font-medium">Base salary</span>
+                  <span className="text-primary font-bold">{compMix.basePct.toFixed(0)}% / {current ? formatCurrency(current.salary_amount) : '—'}</span>
                 </div>
                 <div className="w-full h-1.5 bg-surface-3 rounded-full overflow-hidden flex">
-                  <div className="h-full bg-accent" style={{ width: `${current ? (current.salary_amount / current.total_comp) * 100 : 0}%` }} />
-                  <div className="h-full bg-blue-500" style={{ width: `${current ? ((current.total_comp - current.salary_amount) / current.total_comp) * 100 : 0}%` }} />
+                  <div className="h-full bg-accent" style={{ width: `${compMix.basePct}%` }} />
+                  <div className="h-full bg-blue-500" style={{ width: `${compMix.variablePct}%` }} />
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-secondary font-medium">Variable/Equity</span>
-                  <span className="text-blue-400 font-bold">{current ? (((current.total_comp - current.salary_amount) / current.total_comp) * 100).toFixed(0) : 0}%</span>
+                  <span className="text-secondary font-medium">Equity/bonus</span>
+                  <span className="text-blue-400 font-bold">{compMix.variablePct.toFixed(0)}% / {formatCurrency(compMix.variableAmount)}</span>
                 </div>
+                <p className="text-[10px] text-tertiary">Base is recurring salary. Equity/bonus is the variable portion included in total comp.</p>
               </div>
             </div>
           </div>
@@ -245,7 +320,7 @@ const SalaryHistory = () => {
               </div>
               <div className="h-64 md:h-[400px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <AreaChart data={chartData} margin={{ top: 24, right: 10, left: 0, bottom: 0 }}>
                     <defs>
                       <filter id="area-glow" x="-20%" y="-20%" width="140%" height="140%">
                         <feGaussianBlur stdDeviation="3" result="blur" />
@@ -260,18 +335,58 @@ const SalaryHistory = () => {
                     <Tooltip content={<ChartTooltip formatValue={(v) => formatCurrency(v, { maximumFractionDigits: 0 })} />} cursor={{ stroke: 'var(--border)', strokeWidth: 1 }} />
                     <Area type="monotone" dataKey="totalComp" name="Total Comp" stroke={CHART_COLORS[0]} fill="url(#compGrad)" strokeWidth={3} filter="url(#area-glow)" animationDuration={1500} />
                     <Area type="monotone" dataKey="salary" name="Base Salary" stroke={CHART_COLORS[1]} fill="url(#salaryGrad)" strokeWidth={2} animationDuration={1500} />
+                    {milestones.map((milestone) => (
+                      <ReferenceDot
+                        key={`${milestone.id}-${milestone.milestoneLabel}`}
+                        x={milestone.label}
+                        y={milestone.totalComp}
+                        r={5}
+                        fill="var(--accent)"
+                        stroke="var(--bg-surface)"
+                        strokeWidth={2}
+                        label={{ value: milestone.milestoneLabel, position: 'top', fill: 'var(--text-secondary)', fontSize: 10 }}
+                      />
+                    ))}
                     {peakComp && (
                       <ReferenceDot
                         x={peakComp.label}
                         y={peakComp.totalComp}
                         r={6}
-                        fill="var(--accent)"
+                        fill="var(--gain)"
                         stroke="var(--bg-surface)"
                         strokeWidth={3}
+                        label={{ value: 'Peak', position: 'top', fill: 'var(--gain)', fontSize: 10 }}
                       />
                     )}
                   </AreaChart>
                 </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {yoyRows.length > 0 && (
+            <div className="card overflow-hidden">
+              <div className="flex items-center gap-2 border-b border-border p-4">
+                <Target className="text-accent w-4 h-4" />
+                <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Year-over-Year Summary</h2>
+              </div>
+              <div className="grid md:grid-cols-4 divide-y md:divide-x md:divide-y-0 divide-border">
+                {yoyRows.map((row) => (
+                  <div key={row.year} className="p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide">{row.year}</p>
+                      <p className={`text-xs font-mono font-bold ${row.change == null || row.change >= 0 ? 'text-gain' : 'text-loss'}`}>
+                        {row.change == null || row.pct == null ? 'Baseline' : `${row.change >= 0 ? '+' : ''}${row.pct.toFixed(1)}%`}
+                      </p>
+                    </div>
+                    <p className="text-lg font-mono font-bold text-primary">{formatCurrency(row.totalComp)}</p>
+                    <p className="text-caption text-tertiary truncate">{row.title}</p>
+                    <div className="flex items-center justify-between text-caption">
+                      <span className="text-secondary">Base {formatCurrency(row.baseSalary)}</span>
+                      <span className="text-secondary">Variable {formatCurrency(row.equity)}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -287,7 +402,7 @@ const SalaryHistory = () => {
                 <table className="min-w-full divide-y divide-border">
                   <thead className="bg-surface-2">
                     <tr>
-                      {['Date', 'Title', 'Base Salary', 'Equity/Bonus', 'Total Comp', 'Change', ''].map((h) => (
+                      {['Date', 'Title', 'Base Salary', 'Equity/Bonus', 'Total Comp', 'Change', 'Actions'].map((h) => (
                         <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">{h}</th>
                       ))}
                     </tr>
@@ -318,9 +433,23 @@ const SalaryHistory = () => {
                             ) : <span className="text-tertiary opacity-30">—</span>}
                           </td>
                           <td className="px-5 py-4 text-right">
-                            <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => handleEdit(r)} className="p-2 text-accent hover:bg-accent/10 rounded transition-colors"><Edit2 size={14} /></button>
-                              <button onClick={() => setDeletingRecord(r)} className="p-2 text-loss hover:bg-loss/10 rounded transition-colors"><Trash2 size={14} /></button>
+                            <div className="flex justify-end gap-1">
+                              <button
+                                onClick={() => handleEdit(r)}
+                                className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors"
+                                aria-label={`Edit salary record from ${formatDateDisplay(r.effective_date)}`}
+                                title="Edit record"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                              <button
+                                onClick={() => setDeletingRecord(r)}
+                                className="p-2 border border-border bg-surface-2 text-loss hover:bg-loss/10 rounded transition-colors"
+                                aria-label={`Delete salary record from ${formatDateDisplay(r.effective_date)}`}
+                                title="Delete record"
+                              >
+                                <Trash2 size={14} />
+                              </button>
                             </div>
                           </td>
                         </tr>
