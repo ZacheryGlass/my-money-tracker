@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff } from 'lucide-react';
@@ -109,6 +109,26 @@ function formatSyncTime(timestamp) {
   return `${diffDays}d ago`;
 }
 
+const buildInstitutionSummary = (items, consentItems) => {
+  const consentRequired = items.filter((item) => consentItems.has(item.id));
+  const errored = items.filter((item) => item.error_code && !consentItems.has(item.id));
+  const neverSynced = items.filter((item) => !item.last_synced_at && !item.error_code && !consentItems.has(item.id));
+  const attentionItems = [...consentRequired, ...errored];
+  const latestSynced = items
+    .filter((item) => item.last_synced_at)
+    .sort((a, b) => new Date(b.last_synced_at) - new Date(a.last_synced_at))[0];
+
+  return {
+    attentionItems,
+    attentionCount: attentionItems.length,
+    consentRequired,
+    errored,
+    healthyCount: Math.max(items.length - attentionItems.length, 0),
+    latestSynced,
+    neverSynced,
+  };
+};
+
 const Settings = () => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -126,6 +146,11 @@ const Settings = () => {
   const [savingVisibilityId, setSavingVisibilityId] = useState(null);
   const [orphanedAccounts, setOrphanedAccounts] = useState([]);
   const [deletingAccountId, setDeletingAccountId] = useState(null);
+
+  const institutionSummary = useMemo(
+    () => buildInstitutionSummary(items, consentItems),
+    [items, consentItems]
+  );
 
   const fetchItems = useCallback(async () => {
     try {
@@ -282,18 +307,18 @@ const Settings = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1000px]">
+    <div className="mx-auto w-full max-w-[1180px] px-4 py-6 md:py-8">
       {/* Hero Section */}
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
         <div>
           <div className="flex items-center gap-2 mb-2">
             <ShieldCheck className="text-accent w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Data Integrity</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Portfolio Settings</span>
           </div>
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
-            Linked Accounts
+            Settings
           </h1>
-          <p className="text-sm text-secondary">Manage institution connections and data synchronization</p>
+          <p className="text-sm text-secondary">Manage institution connections, display names, and visibility</p>
         </div>
 
         <div className="flex items-center gap-4">
@@ -322,9 +347,93 @@ const Settings = () => {
         </div>
       )}
 
-      <section className="mb-12">
+      <nav className="mb-6 grid grid-cols-1 gap-2 md:grid-cols-3" aria-label="Settings sections">
+        <a href="#institution-health" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
+          Institution Health
+        </a>
+        <a href="#institutions" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
+          Institutions
+        </a>
+        <a href="#account-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
+          Display Names
+        </a>
+      </nav>
+
+      <section id="institution-health" className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Institution Health</h2>
+          <p className="mt-1 text-xs text-secondary">Authorization status, sync activity, and connection errors.</p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-px bg-border md:grid-cols-3">
+          <div className="bg-surface p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Needs Attention</p>
+            <p className={`mt-2 font-mono text-2xl font-bold ${institutionSummary.attentionCount > 0 ? 'text-loss' : 'text-gain'}`}>
+              {institutionSummary.attentionCount}
+            </p>
+          </div>
+          <div className="bg-surface p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Healthy Connections</p>
+            <p className="mt-2 font-mono text-2xl font-bold text-primary">{institutionSummary.healthyCount}</p>
+          </div>
+          <div className="bg-surface p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Latest Sync</p>
+            <p className="mt-2 font-mono text-lg font-bold text-primary">
+              {institutionSummary.latestSynced ? formatSyncTime(institutionSummary.latestSynced.last_synced_at) : 'Never'}
+            </p>
+          </div>
+        </div>
+
+        {institutionSummary.attentionItems.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {institutionSummary.attentionItems.map((item) => (
+              <div key={item.id} className="flex flex-col gap-3 border border-loss/20 bg-loss/5 p-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex gap-3">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0 text-loss" />
+                  <div>
+                    <h3 className="text-sm font-bold text-primary">{item.institution_name || 'Financial Institution'}</h3>
+                    <p className="mt-1 text-xs leading-relaxed text-secondary">
+                      {consentItems.has(item.id)
+                        ? 'Additional authorization is required before holdings and investment data can sync.'
+                        : (item.error_message || `Institution reported an error: ${item.error_code}`)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {consentItems.has(item.id) && <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} />}
+                  <button
+                    onClick={() => handleSync(item.id)}
+                    disabled={syncingId === item.id}
+                    className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-50"
+                  >
+                    <RefreshCw size={14} className={syncingId === item.id ? 'animate-spin' : ''} />
+                    Sync
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {institutionSummary.attentionItems.length === 0 && items.length > 0 && (
+          <div className="mt-3 flex items-center gap-3 border border-gain/20 bg-gain-bg p-4 text-gain">
+            <ShieldCheck size={16} />
+            <p className="text-xs font-bold uppercase tracking-wide">All linked institutions are ready.</p>
+          </div>
+        )}
+
+        {institutionSummary.neverSynced.length > 0 && (
+          <p className="mt-3 px-2 text-xs text-tertiary">
+            {institutionSummary.neverSynced.length} institution{institutionSummary.neverSynced.length === 1 ? '' : 's'} have not completed an initial sync yet.
+          </p>
+        )}
+      </section>
+
+      <div className="flex flex-col">
+      <section id="account-display" className="order-2 mb-12">
         <div className="px-2 mb-4">
           <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Account Display</h2>
+          <p className="mt-1 text-xs text-secondary">Rename accounts for readability and hide accounts that should stay out of the main views.</p>
         </div>
 
         <div className="card overflow-hidden divide-y divide-border border-border">
@@ -404,22 +513,31 @@ const Settings = () => {
                   </button>
 
                   <div className="flex items-center gap-2 lg:justify-end">
-                    <button
-                      onClick={() => handleSaveDisplayName(account)}
-                      disabled={isSaving || !isDirty}
-                      className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded bg-accent text-white text-xs font-bold uppercase tracking-wider hover:bg-accent-hover transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                      Save
-                    </button>
-                    <button
-                      onClick={() => handleClearDisplayName(account)}
-                      disabled={isSaving || (!hasAccountDisplayName(account) && !draft.trim())}
-                      className="inline-flex items-center justify-center gap-2 h-10 px-3 rounded bg-surface-3 text-secondary border border-border text-xs font-bold uppercase tracking-wider hover:text-primary transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      <Undo2 size={14} />
-                      Clear
-                    </button>
+                    {(isDirty || isSaving) ? (
+                      <button
+                        onClick={() => handleSaveDisplayName(account)}
+                        disabled={isSaving || !isDirty}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded bg-accent px-4 text-xs font-bold uppercase tracking-wider text-white transition-all hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                        Save
+                      </button>
+                    ) : (
+                      <span className="inline-flex h-10 items-center justify-center gap-2 px-3 text-xs font-bold uppercase tracking-wider text-tertiary">
+                        <Check size={14} />
+                        Saved
+                      </span>
+                    )}
+                    {(hasAccountDisplayName(account) || draft.trim()) && (
+                      <button
+                        onClick={() => handleClearDisplayName(account)}
+                        disabled={isSaving}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Undo2 size={14} />
+                        Clear
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -428,7 +546,12 @@ const Settings = () => {
         </div>
       </section>
 
-      <div className="space-y-4">
+      <section id="institutions" className="order-1 mb-12 space-y-4">
+        <div className="px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Institutions</h2>
+          <p className="mt-1 text-xs text-secondary">Review linked Plaid connections, sync status, and disconnect actions.</p>
+        </div>
+
         {items.length === 0 && !connecting ? (
           <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
             <Building2 size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
@@ -532,6 +655,7 @@ const Settings = () => {
             </Motion.div>
           ))
         )}
+      </section>
       </div>
 
       {/* Orphaned Accounts */}
