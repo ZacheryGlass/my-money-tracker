@@ -80,8 +80,7 @@ export default function CalendarHeatmap({ data = [], startDate, endDate }) {
               x={leftPad - 6}
               y={topPad + i * (CELL_SIZE + CELL_GAP) + CELL_SIZE / 2 + 4}
               textAnchor="end"
-              className="fill-tertiary"
-              style={{ fontSize: 9, fontFamily: 'var(--font-sans)' }}
+              style={{ fill: 'var(--text-tertiary)', fontSize: 9, fontFamily: 'var(--font-sans)' }}
             >
               {label}
             </text>
@@ -94,8 +93,7 @@ export default function CalendarHeatmap({ data = [], startDate, endDate }) {
             x={leftPad + m.weekIndex * (CELL_SIZE + CELL_GAP)}
             y={topPad - 6}
             textAnchor="start"
-            className="fill-tertiary"
-            style={{ fontSize: 9, fontFamily: 'var(--font-sans)' }}
+            style={{ fill: 'var(--text-tertiary)', fontSize: 9, fontFamily: 'var(--font-sans)' }}
           >
             {m.label}
           </text>
@@ -130,6 +128,21 @@ export default function CalendarHeatmap({ data = [], startDate, endDate }) {
           );
         })}
       </svg>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-caption text-tertiary">
+        <div className="flex items-center gap-2">
+          <span>Less</span>
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+            <span
+              key={ratio}
+              className="inline-block h-3 w-3 border border-border"
+              style={{ backgroundColor: interpolateColor(ratio) }}
+            />
+          ))}
+          <span>More</span>
+        </div>
+        <span>Highest day {formatCurrency(maxValue)}</span>
+      </div>
 
       {tooltip && (
         <div

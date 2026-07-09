@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
-const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, valueColor = 'primary', onClick }) => {
+const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, valueColor = 'primary', caption, onClick }) => {
   const valueClass =
     valueColor === 'gain' ? 'text-gain' : valueColor === 'loss' ? 'text-loss' : valueColor === 'accent' ? 'text-accent' : 'text-primary';
 
@@ -35,6 +35,11 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
         <span className={`font-money font-semibold text-display-lg ${valueClass}`}>
           {value}
         </span>
+        {caption && (
+          <p className="mt-1 text-caption text-tertiary">
+            {caption}
+          </p>
+        )}
       </div>
     </div>
   );

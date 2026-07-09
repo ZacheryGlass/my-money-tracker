@@ -9,7 +9,7 @@ import CalendarHeatmap from '../components/CalendarHeatmap';
 import ChartTooltip from '../components/ChartTooltip';
 import ResponsiveContainer from '../components/ResponsiveContainer';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
-import { formatCurrency, formatCompactCurrency, formatPercent } from '../utils/format';
+import { formatCurrency, formatCompactCurrency, formatDateDisplay, formatPercent } from '../utils/format';
 import { transactions } from '../utils/api';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { classifyTransaction } from '../utils/transactionClassification';
@@ -44,6 +44,13 @@ function formatMonth(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
   return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+}
+
+function formatRangeLabel(range, heatmapRows, monthlyRows) {
+  const start = range.startDate || heatmapRows[0]?.date || monthlyRows[0]?.month;
+  const end = range.endDate || heatmapRows[heatmapRows.length - 1]?.date || monthlyRows[monthlyRows.length - 1]?.month;
+  if (!start || !end) return 'No transactions in range';
+  return `${formatDateDisplay(start)} to ${formatDateDisplay(end)}`;
 }
 
 function roundMoney(value) {
@@ -126,6 +133,7 @@ export default function SpendingAnalytics() {
   const [incomeVsSpending, setIncomeVsSpending] = useState([]);
   const [categoryData, setCategoryData] = useState([]);
   const [heatmapData, setHeatmapData] = useState([]);
+  const [activeCategory, setActiveCategory] = useState(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -149,6 +157,7 @@ export default function SpendingAnalytics() {
   }, [dateRange]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { setActiveCategory(null); }, [dateRange]);
 
   const ivsChartData = useMemo(() =>
     incomeVsSpending.map((d) => ({
@@ -170,6 +179,11 @@ export default function SpendingAnalytics() {
       .sort((a, b) => b.value - a.value);
   }, [categoryData]);
 
+  const activeCategoryTotal = useMemo(
+    () => categoryTotals.find((category) => category.name === activeCategory),
+    [categoryTotals, activeCategory]
+  );
+
   const totalSpending = useMemo(() =>
     ivsChartData.reduce((sum, d) => sum + d.spending, 0),
   [ivsChartData]);
@@ -189,6 +203,11 @@ export default function SpendingAnalytics() {
   }, [totalSpending, ivsChartData]);
 
   const range = useMemo(() => getDateRange(dateRange), [dateRange]);
+  const selectedRange = DATE_RANGES.find((item) => item.id === dateRange);
+  const visibleRangeLabel = useMemo(
+    () => formatRangeLabel(range, heatmapData, incomeVsSpending),
+    [range, heatmapData, incomeVsSpending]
+  );
 
   if (loading) {
     return (
@@ -202,21 +221,28 @@ export default function SpendingAnalytics() {
   return (
     <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px] space-y-8">
       {/* Hero */}
-      <div>
-        <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Spending Analytics</h1>
-        <p className="text-sm text-secondary mt-1">Income, expenses, and spending patterns</p>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Spending Analytics</h1>
+          <p className="text-sm text-secondary mt-1">Everyday outflows, likely income, and savings rate</p>
+        </div>
+        <div className="border border-border bg-surface p-3 min-w-[240px]">
+          <p className="text-caption text-tertiary uppercase tracking-wide">Showing</p>
+          <p className="font-semibold text-primary">{selectedRange?.label || 'Custom'} period</p>
+          <p className="text-caption text-tertiary">{visibleRangeLabel}</p>
+        </div>
       </div>
 
       {/* Metrics Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Everyday Spend" value={formatCurrency(totalSpending)} icon={DollarSign} valueColor="loss" />
-        <MetricCard label="Total Income" value={formatCurrency(totalIncome)} icon={TrendingDown} valueColor="gain" />
-        <MetricCard label="Avg Monthly Spend" value={formatCurrency(avgMonthlySpend)} icon={BarChart3} />
-        <MetricCard label="Savings Rate" value={formatPercent(avgSavingsRate, 1)} icon={Percent} valueColor={avgSavingsRate >= 0 ? 'gain' : 'loss'} />
+        <MetricCard label="Everyday Spend" value={formatCurrency(totalSpending)} icon={DollarSign} valueColor="loss" caption="Classified everyday outflows" />
+        <MetricCard label="Total Income" value={formatCurrency(totalIncome)} icon={TrendingDown} valueColor="gain" caption="Likely income deposits" />
+        <MetricCard label="Avg Monthly Spend" value={formatCurrency(avgMonthlySpend)} icon={BarChart3} caption={`Across ${ivsChartData.length} months`} />
+        <MetricCard label="Savings Rate" value={formatPercent(avgSavingsRate, 1)} icon={Percent} valueColor={avgSavingsRate >= 0 ? 'gain' : 'loss'} caption="Income minus everyday spend" />
       </div>
 
       {/* Date Range Controls */}
-      <div className="flex gap-3 items-center">
+      <div className="flex flex-col gap-3 border border-border bg-surface p-3 md:flex-row md:items-center md:justify-between">
         <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
           {DATE_RANGES.map((r) => (
             <button
@@ -230,19 +256,46 @@ export default function SpendingAnalytics() {
             </button>
           ))}
         </div>
+        <div className="text-caption text-tertiary">
+          <span className="uppercase tracking-wide">Period</span>
+          <span className="ml-2 text-secondary">{visibleRangeLabel}</span>
+        </div>
       </div>
 
       {/* Income vs Expenses Chart */}
       <div className="card p-4 md:p-6">
-        <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Income vs Expenses</h2>
+        <div className="flex flex-col gap-3 mb-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Income vs Everyday Spend</h2>
+            <p className="text-caption text-tertiary mt-1">Dollar bars use the left axis. Savings rate uses the right percent axis.</p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-caption">
+            <span className="inline-flex items-center gap-1.5 text-gain"><span className="h-2.5 w-2.5 bg-gain" />Income</span>
+            <span className="inline-flex items-center gap-1.5 text-loss"><span className="h-2.5 w-2.5 bg-loss" />Everyday spend</span>
+            <span className="inline-flex items-center gap-1.5 text-accent"><span className="h-0.5 w-4 bg-accent" />Savings rate</span>
+          </div>
+        </div>
         <div style={{ height: isMobile ? 280 : 380 }}>
           {ivsChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={ivsChartData} margin={{ top: 10, right: 10, left: isMobile ? 0 : 10, bottom: 5 }}>
                 <CartesianGrid {...GRID_STYLE} vertical={false} />
                 <XAxis dataKey="month" {...AXIS_STYLE} />
-                <YAxis yAxisId="left" {...AXIS_STYLE} tickFormatter={formatCompactCurrency} width={isMobile ? 45 : 60} />
-                <YAxis yAxisId="right" orientation="right" {...AXIS_STYLE} tickFormatter={(v) => `${v}%`} width={40} />
+                <YAxis
+                  yAxisId="left"
+                  {...AXIS_STYLE}
+                  tickFormatter={formatCompactCurrency}
+                  width={isMobile ? 45 : 60}
+                  label={isMobile ? undefined : { value: 'USD', angle: -90, position: 'insideLeft', style: { fill: 'var(--text-tertiary)', fontSize: 10 } }}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  {...AXIS_STYLE}
+                  tickFormatter={(v) => `${v}%`}
+                  width={48}
+                  label={isMobile ? undefined : { value: 'Savings %', angle: 90, position: 'insideRight', style: { fill: 'var(--text-tertiary)', fontSize: 10 } }}
+                />
                 <Tooltip
                   content={<ChartTooltip formatValue={(val, name) => {
                     if (name === 'savings_rate') return formatPercent(val, 1);
@@ -251,7 +304,7 @@ export default function SpendingAnalytics() {
                   cursor={{ fill: 'rgba(255,255,255,0.03)' }}
                 />
                 <Bar yAxisId="left" dataKey="income" fill="var(--gain)" radius={[4, 4, 0, 0]} barSize={isMobile ? 12 : 20} name="Income" />
-                <Bar yAxisId="left" dataKey="spending" fill="var(--loss)" radius={[4, 4, 0, 0]} barSize={isMobile ? 12 : 20} name="Spending" />
+                <Bar yAxisId="left" dataKey="spending" fill="var(--loss)" radius={[4, 4, 0, 0]} barSize={isMobile ? 12 : 20} name="Everyday Spend" />
                 <Line yAxisId="right" type="monotone" dataKey="savings_rate" stroke="var(--accent)" strokeWidth={2} dot={false} name="Savings Rate" />
               </ComposedChart>
             </ResponsiveContainer>
@@ -265,7 +318,21 @@ export default function SpendingAnalytics() {
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Donut */}
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Everyday Spending by Category</h2>
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Everyday Spending by Category</h2>
+              <p className="text-caption text-tertiary mt-1">
+                {activeCategoryTotal
+                  ? `${activeCategoryTotal.name}: ${formatCurrency(activeCategoryTotal.value)}`
+                  : 'Category totals use classified everyday outflows.'}
+              </p>
+            </div>
+            {activeCategory && (
+              <button onClick={() => setActiveCategory(null)} className="text-caption text-accent hover:text-accent-hover">
+                Clear
+              </button>
+            )}
+          </div>
           <div style={{ height: isMobile ? 250 : 320 }}>
             {categoryTotals.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -280,9 +347,15 @@ export default function SpendingAnalytics() {
                     strokeWidth={2}
                     stroke="var(--bg-surface)"
                     animationDuration={1000}
+                    onMouseLeave={() => setActiveCategory(null)}
                   >
-                    {categoryTotals.map((_, i) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    {categoryTotals.map((category, i) => (
+                      <Cell
+                        key={category.name}
+                        fill={CHART_COLORS[i % CHART_COLORS.length]}
+                        opacity={!activeCategory || activeCategory === category.name ? 1 : 0.28}
+                        onMouseEnter={() => setActiveCategory(category.name)}
+                      />
                     ))}
                   </Pie>
                   <Tooltip
@@ -297,29 +370,53 @@ export default function SpendingAnalytics() {
           {/* Legend */}
           <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4">
             {categoryTotals.slice(0, 10).map((cat, i) => (
-              <div key={cat.name} className="flex items-center gap-1.5 text-xs">
+              <button
+                key={cat.name}
+                onMouseEnter={() => setActiveCategory(cat.name)}
+                onMouseLeave={() => setActiveCategory(null)}
+                onClick={() => setActiveCategory(activeCategory === cat.name ? null : cat.name)}
+                className={`flex items-center gap-1.5 text-xs border px-1.5 py-1 transition-colors ${activeCategory === cat.name ? 'border-accent/40 bg-accent-muted' : 'border-transparent hover:border-border'}`}
+              >
                 <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }} />
                 <span className="text-secondary">{cat.name}</span>
                 <span className="font-money text-primary">{formatCompactCurrency(cat.value)}</span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
 
         {/* Horizontal Bar */}
         <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Top Categories</h2>
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Top Categories</h2>
+              <p className="text-caption text-tertiary mt-1">Same category colors as the donut chart.</p>
+            </div>
+            {activeCategoryTotal && (
+              <p className="text-caption text-secondary">{formatCurrency(activeCategoryTotal.value)}</p>
+            )}
+          </div>
           <div style={{ height: isMobile ? 250 : 320 }}>
             {categoryTotals.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={categoryTotals.slice(0, 10)} layout="vertical" margin={{ top: 5, right: 30, left: isMobile ? 60 : 100, bottom: 5 }}>
+                <BarChart data={categoryTotals.slice(0, 10)} layout="vertical" margin={{ top: 5, right: 30, left: isMobile ? 60 : 100, bottom: 16 }} onMouseLeave={() => setActiveCategory(null)}>
                   <CartesianGrid {...GRID_STYLE} horizontal={false} />
-                  <XAxis type="number" {...AXIS_STYLE} tickFormatter={formatCompactCurrency} />
+                  <XAxis
+                    type="number"
+                    {...AXIS_STYLE}
+                    tickFormatter={formatCompactCurrency}
+                    label={isMobile ? undefined : { value: 'Everyday spend', position: 'insideBottom', offset: -8, style: { fill: 'var(--text-tertiary)', fontSize: 10 } }}
+                  />
                   <YAxis type="category" dataKey="name" {...AXIS_STYLE} tick={{ ...AXIS_STYLE, fontSize: isMobile ? 9 : 11 }} width={isMobile ? 55 : 95} />
                   <Tooltip content={<ChartTooltip formatValue={(v) => formatCurrency(v)} />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]} animationDuration={800} name="Total">
-                    {categoryTotals.slice(0, 10).map((_, i) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                    {categoryTotals.slice(0, 10).map((category, i) => (
+                      <Cell
+                        key={category.name}
+                        fill={CHART_COLORS[i % CHART_COLORS.length]}
+                        opacity={!activeCategory || activeCategory === category.name ? 1 : 0.28}
+                        onMouseEnter={() => setActiveCategory(category.name)}
+                      />
                     ))}
                   </Bar>
                 </BarChart>
@@ -333,7 +430,13 @@ export default function SpendingAnalytics() {
 
       {/* Spending Heatmap */}
       <div className="card p-4 md:p-6">
-        <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Spending Heatmap</h2>
+        <div className="flex flex-col gap-1 mb-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Spending Heatmap</h2>
+            <p className="text-caption text-tertiary mt-1">Color intensity reflects daily classified everyday spend.</p>
+          </div>
+          <p className="text-caption text-secondary">{visibleRangeLabel}</p>
+        </div>
         {heatmapData.length > 0 ? (
           <div className="overflow-x-auto">
             <CalendarHeatmap
