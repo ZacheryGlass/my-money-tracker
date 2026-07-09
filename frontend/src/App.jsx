@@ -20,8 +20,7 @@ const SalaryHistory = lazy(() => import('./pages/SalaryHistory'));
 const MonthlyExpenses = lazy(() => import('./pages/MonthlyExpenses'));
 const Settings = lazy(() => import('./pages/Settings'));
 const HoldingsAnalysis = lazy(() => import('./pages/HoldingsAnalysis'));
-const SpendingAnalytics = lazy(() => import('./pages/SpendingAnalytics'));
-const SpendingExplorer = lazy(() => import('./pages/SpendingExplorer'));
+const Spending = lazy(() => import('./pages/Spending'));
 const YearInReview = lazy(() => import('./pages/YearInReview'));
 
 const PageSpinner = () => (
@@ -42,7 +41,7 @@ const navItems = [
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', path: '/portfolio-timeline' },
   { id: 'holdings-analysis', label: 'Holdings Analysis', section: 'ANALYTICS', path: '/holdings-analysis' },
   { id: 'spending-analytics', label: 'Spending', path: '/spending' },
-  { id: 'spending-explorer', label: 'Spending Explorer', path: '/spending-explorer' },
+  { id: 'spending-explorer', label: 'Spending', path: '/spending-explorer', hidden: true },
   { id: 'year-in-review', label: 'Year in Review', path: '/year-in-review' },
   { id: 'salary-history', label: 'Salary History', section: 'PLANNING', path: '/salary-history' },
   { id: 'monthly-expenses', label: 'Monthly Expenses', path: '/monthly-expenses' },
@@ -100,8 +99,8 @@ function App() {
         {currentPage === 'account-history' && <AccountHistory />}
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
         {currentPage === 'holdings-analysis' && <HoldingsAnalysis />}
-        {currentPage === 'spending-analytics' && <SpendingAnalytics />}
-        {currentPage === 'spending-explorer' && <SpendingExplorer />}
+        {currentPage === 'spending-analytics' && <Spending initialTab="overview" />}
+        {currentPage === 'spending-explorer' && <Spending initialTab="explorer" />}
         {currentPage === 'year-in-review' && <YearInReview />}
         {currentPage === 'salary-history' && <SalaryHistory />}
         {currentPage === 'monthly-expenses' && <MonthlyExpenses />}

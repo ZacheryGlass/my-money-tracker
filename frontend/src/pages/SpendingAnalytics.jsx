@@ -126,7 +126,7 @@ function buildHeatmapData(spendingRows) {
     .map((row) => ({ ...row, total: roundMoney(row.total) }));
 }
 
-export default function SpendingAnalytics() {
+export default function SpendingAnalytics({ embedded = false }) {
   const isMobile = useIsMobile();
   const [dateRange, setDateRange] = useState('6m');
   const [loading, setLoading] = useState(true);
@@ -211,7 +211,7 @@ export default function SpendingAnalytics() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+      <div className={`flex flex-col items-center justify-center gap-4 ${embedded ? 'min-h-[260px]' : 'min-h-[400px]'}`}>
         <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Analyzing Spending</span>
       </div>
@@ -219,8 +219,9 @@ export default function SpendingAnalytics() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px] space-y-8">
+    <div className={embedded ? 'space-y-6' : 'container mx-auto px-4 py-6 md:py-8 max-w-[1600px] space-y-8'}>
       {/* Hero */}
+      {!embedded && (
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Spending Analytics</h1>
@@ -232,6 +233,7 @@ export default function SpendingAnalytics() {
           <p className="text-caption text-tertiary">{visibleRangeLabel}</p>
         </div>
       </div>
+      )}
 
       {/* Metrics Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

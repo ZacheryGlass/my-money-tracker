@@ -111,7 +111,7 @@ function aggregateGroups(rows, getKey) {
   });
 }
 
-export default function SpendingExplorer() {
+export default function SpendingExplorer({ embedded = false }) {
   const isMobile = useIsMobile();
   const [dateRange, setDateRange] = useState('90d');
   const [selectedAccountId, setSelectedAccountId] = useState('');
@@ -289,7 +289,7 @@ export default function SpendingExplorer() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+      <div className={`flex flex-col items-center justify-center gap-4 ${embedded ? 'min-h-[260px]' : 'min-h-[400px]'}`}>
         <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Sorting Transactions</span>
       </div>
@@ -297,15 +297,21 @@ export default function SpendingExplorer() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px] space-y-8">
-      <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-5">
+    <div className={embedded ? 'space-y-6' : 'container mx-auto px-4 py-6 md:py-8 max-w-[1600px] space-y-8'}>
+      <div className={`${embedded ? 'card p-3 md:p-4 xl:items-center' : 'xl:items-end'} flex flex-col xl:flex-row justify-between gap-5`}>
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Store className="w-5 h-5 text-accent" />
-            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Transaction Intelligence</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">
+              {embedded ? 'Explorer Controls' : 'Transaction Intelligence'}
+            </span>
           </div>
-          <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Spending Explorer</h1>
-          <p className="text-sm text-secondary mt-1">Stores, categories, and transaction-level spend</p>
+          {!embedded && (
+            <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Spending Explorer</h1>
+          )}
+          <p className="text-sm text-secondary mt-1">
+            Stores, categories, and transaction-level spend
+          </p>
         </div>
 
         <div className="flex flex-wrap gap-3">

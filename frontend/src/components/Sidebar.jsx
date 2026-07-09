@@ -21,7 +21,6 @@ import {
   Grid3X3,
   BarChart3,
   CalendarDays,
-  Store,
 } from 'lucide-react';
 import { useIsMobile, useIsDesktop } from '../hooks/useMediaQuery';
 
@@ -37,7 +36,6 @@ const NAV_ITEMS = [
   { id: '_separator_analytics', section: 'ANALYTICS' },
   { id: 'holdings-analysis', label: 'Holdings Analysis', icon: Grid3X3 },
   { id: 'spending-analytics', label: 'Spending', icon: BarChart3 },
-  { id: 'spending-explorer', label: 'Spending Explorer', icon: Store },
   { id: 'year-in-review', label: 'Year in Review', icon: CalendarDays },
   { id: '_separator_planning', section: 'PLANNING' },
   { id: 'salary-history', label: 'Salary History', icon: Banknote },
@@ -116,7 +114,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
             }
 
             const Icon = item.icon;
-            const isActive = currentPage === item.id;
+            const isActive = currentPage === item.id || (item.id === 'spending-analytics' && currentPage === 'spending-explorer');
 
             return (
               <button
