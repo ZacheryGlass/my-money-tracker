@@ -32,7 +32,7 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
       </div>
 
       <div>
-        <span className={`font-money font-semibold text-display-lg ${valueClass}`}>
+        <span className={`font-money font-semibold text-display-mega ${valueClass}`}>
           {value}
         </span>
         {caption && (

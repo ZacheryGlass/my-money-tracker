@@ -11,9 +11,9 @@
     --bg-overlay: rgba(0, 0, 0, 0.70);
 
     /* Text hierarchy */
-    --text-primary: #ededed;
-    --text-secondary: #bfbfbf;
-    --text-tertiary: #8C8C8C;
+    --text-primary: #ffffff;
+    --text-secondary: #f4f7fa;
+    --text-tertiary: #e1e7ec;
     --text-inverse: #121314;
 
     /* Primary action: restrained blue */
@@ -58,8 +58,8 @@
 
   html {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, Ubuntu, 'Droid Sans', sans-serif;
-    font-size: 13px;
-    line-height: 1.4;
+    font-size: 14px;
+    line-height: 1.45;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     color-scheme: dark;
@@ -101,7 +101,7 @@
     border-radius: 4px;
     border-width: 1px;
     transition: border-color 0.15s ease;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   input:focus, select:focus, textarea:focus {
@@ -129,5 +129,19 @@
   }
   .card-interactive:hover {
     border-color: var(--border-hover);
+  }
+}
+
+@layer utilities {
+  .text-\[9px\] {
+    font-size: 11px;
+  }
+
+  .text-\[10px\] {
+    font-size: 12px;
+  }
+
+  .text-\[11px\] {
+    font-size: 12px;
   }
 }
