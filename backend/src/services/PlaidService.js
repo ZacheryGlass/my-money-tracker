@@ -7,8 +7,19 @@ const PlaidItem = require('../models/PlaidItem');
 const PriceCache = require('../models/PriceCache');
 const logger = require('../config/logger');
 
+const ensurePlaidConfigured = () => {
+  if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SECRET) {
+    const error = new Error(
+      'Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to backend/.env, then restart the backend.'
+    );
+    error.code = 'PLAID_NOT_CONFIGURED';
+    throw error;
+  }
+};
+
 class PlaidService {
   static async createLinkToken(userId) {
+    ensurePlaidConfigured();
     const request = {
       user: { client_user_id: String(userId) },
       client_name: 'My Money Tracker',
@@ -22,6 +33,7 @@ class PlaidService {
   }
 
   static async createUpdateLinkToken(userId, plaidItemId) {
+    ensurePlaidConfigured();
     const item = await PlaidItem.findById(plaidItemId);
     if (!item) throw new Error(`PlaidItem ${plaidItemId} not found`);
     const request = {

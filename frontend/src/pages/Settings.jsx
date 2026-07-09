@@ -5,17 +5,19 @@ import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2
 import { plaid as plaidAPI, accounts as accountsAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 
-function PlaidLinkButton({ onSuccess, disabled }) {
+function PlaidLinkButton({ onSuccess, onError, disabled }) {
   const [linkToken, setLinkToken] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const fetchLinkToken = async () => {
     setLoading(true);
+    onError?.(null);
     try {
       const data = await plaidAPI.createLinkToken();
       setLinkToken(data.link_token);
-    } catch {
+    } catch (err) {
       setLinkToken(null);
+      onError?.(err.response?.data?.error || 'Failed to create Plaid Link token');
     } finally {
       setLoading(false);
     }
@@ -54,17 +56,19 @@ function PlaidLinkButton({ onSuccess, disabled }) {
   );
 }
 
-function UpdateLinkButton({ itemId, onSuccess }) {
+function UpdateLinkButton({ itemId, onSuccess, onError }) {
   const [linkToken, setLinkToken] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const fetchUpdateToken = async () => {
     setLoading(true);
+    onError?.(null);
     try {
       const data = await plaidAPI.createUpdateLinkToken(itemId);
       setLinkToken(data.link_token);
-    } catch {
+    } catch (err) {
       setLinkToken(null);
+      onError?.(err.response?.data?.error || 'Failed to create Plaid re-link token');
     } finally {
       setLoading(false);
     }
@@ -322,7 +326,7 @@ const Settings = () => {
         </div>
 
         <div className="flex items-center gap-4">
-          <PlaidLinkButton onSuccess={handlePlaidSuccess} disabled={connecting} />
+          <PlaidLinkButton onSuccess={handlePlaidSuccess} onError={setError} disabled={connecting} />
         </div>
       </div>
 
@@ -400,7 +404,7 @@ const Settings = () => {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {consentItems.has(item.id) && <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} />}
+                  {consentItems.has(item.id) && <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} onError={setError} />}
                   <button
                     onClick={() => handleSync(item.id)}
                     disabled={syncingId === item.id}
@@ -587,7 +591,7 @@ const Settings = () => {
 
                   <div className="flex items-center gap-2">
                     {consentItems.has(item.id) && (
-                      <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} />
+                      <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} onError={setError} />
                     )}
                     <button
                       onClick={() => handleSync(item.id)}

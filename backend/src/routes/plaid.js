@@ -16,6 +16,9 @@ router.post('/link-token', async (req, res) => {
     res.status(200).json({ link_token: linkToken });
   } catch (error) {
     logger.error({ err: error }, 'Create link token error');
+    if (error.code === 'PLAID_NOT_CONFIGURED') {
+      return res.status(503).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Failed to create link token' });
   }
 });
@@ -89,6 +92,9 @@ router.post('/items/:id/update-link-token', async (req, res) => {
     res.status(200).json({ link_token: linkToken });
   } catch (error) {
     logger.error({ err: error, itemId: req.params.id }, 'Create update link token error');
+    if (error.code === 'PLAID_NOT_CONFIGURED') {
+      return res.status(503).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Failed to create update link token' });
   }
 });
