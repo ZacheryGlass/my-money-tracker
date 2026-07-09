@@ -43,7 +43,7 @@ function getDateRange(rangeId) {
   };
 }
 
-function TreemapContent({ x, y, width, height, name, value, color }) {
+function TreemapContent({ x, y, width, height, name, value, color, share }) {
   if (width < 40 || height < 30) return null;
   return (
     <g>
@@ -56,6 +56,11 @@ function TreemapContent({ x, y, width, height, name, value, color }) {
           <text x={x + 8} y={y + 34} fill="var(--text-secondary)" fontSize={10} fontFamily="var(--font-money)">
             {formatCompactCurrency(value)}
           </text>
+          {width > 110 && height > 58 && (
+            <text x={x + 8} y={y + 50} fill="var(--text-secondary)" fontSize={9}>
+              {formatPercent(share || 0, 1, { sign: false })}
+            </text>
+          )}
         </>
       )}
     </g>
@@ -74,6 +79,7 @@ export default function HoldingsAnalysis() {
   const [accountList, setAccountList] = useState([]);
   const [tickerSnaps, setTickerSnaps] = useState([]);
   const [allocationMode, setAllocationMode] = useState('percent');
+  const [selectedGroup, setSelectedGroup] = useState(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -102,17 +108,42 @@ export default function HoldingsAnalysis() {
   }, [dateRange, view]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { setSelectedGroup(null); }, [groupBy, view]);
+
+  const assetItems = useMemo(() => {
+    return portfolioItems
+      .filter((i) => i.type === 'asset')
+      .map((item) => ({
+        ...item,
+        valueNumber: Math.abs(parseFloat(item.value)) || 0,
+        categoryLabel: formatCategoryLabel(item.category),
+      }))
+      .sort((a, b) => b.valueNumber - a.valueNumber);
+  }, [portfolioItems]);
+
+  const concentration = useMemo(() => {
+    const topHolding = assetItems[0] || null;
+    const topHoldingShare = totalAssets > 0 && topHolding ? (topHolding.valueNumber / totalAssets) * 100 : 0;
+    const topFiveValue = assetItems.slice(0, 5).reduce((sum, item) => sum + item.valueNumber, 0);
+    const topFiveShare = totalAssets > 0 ? (topFiveValue / totalAssets) * 100 : 0;
+    return { topHolding, topHoldingShare, topFiveShare };
+  }, [assetItems, totalAssets]);
 
   const treemapData = useMemo(() => {
-    const assets = portfolioItems.filter((i) => i.type === 'asset');
     const groups = {};
-    for (const item of assets) {
+    for (const item of assetItems) {
       const key = groupBy === 'account' ? item.account
-        : groupBy === 'category' ? formatCategoryLabel(item.category)
+        : groupBy === 'category' ? item.categoryLabel
         : item.type;
       if (!groups[key]) groups[key] = { name: key, children: [], total: 0 };
-      groups[key].children.push({ name: item.name || item.ticker, size: Math.abs(parseFloat(item.value)) });
-      groups[key].total += Math.abs(parseFloat(item.value));
+      groups[key].children.push({
+        name: item.name || item.ticker,
+        ticker: item.ticker,
+        size: item.valueNumber,
+        account: item.account,
+        category: item.categoryLabel,
+      });
+      groups[key].total += item.valueNumber;
     }
 
     return Object.values(groups)
@@ -120,15 +151,34 @@ export default function HoldingsAnalysis() {
       .map((g, i) => ({
         ...g,
         color: CHART_COLORS[i % CHART_COLORS.length],
-        children: g.children.map((c) => ({ ...c, color: CHART_COLORS[i % CHART_COLORS.length] })),
+        share: totalAssets > 0 ? (g.total / totalAssets) * 100 : 0,
+        children: g.children.map((c) => ({
+          ...c,
+          color: CHART_COLORS[i % CHART_COLORS.length],
+          group: g.name,
+          share: totalAssets > 0 ? (c.size / totalAssets) * 100 : 0,
+        })),
       }));
-  }, [portfolioItems, groupBy]);
+  }, [assetItems, groupBy, totalAssets]);
 
   const flatTreemapData = useMemo(() => {
     return treemapData.flatMap((g) =>
-      g.children.map((c) => ({ name: c.name, size: c.size, color: g.color, group: g.name }))
+      g.children.map((c) => ({ ...c, color: g.color, group: g.name }))
     );
   }, [treemapData]);
+
+  const selectedGroupRows = useMemo(() => {
+    if (!selectedGroup) return assetItems.slice(0, 6);
+    return flatTreemapData
+      .filter((item) => item.group === selectedGroup)
+      .sort((a, b) => b.size - a.size)
+      .slice(0, 6);
+  }, [assetItems, flatTreemapData, selectedGroup]);
+
+  const selectedGroupTotal = useMemo(() => {
+    if (!selectedGroup) return null;
+    return treemapData.find((group) => group.name === selectedGroup) || null;
+  }, [treemapData, selectedGroup]);
 
   const waterfallData = useMemo(() => {
     if (tickerSnaps.length === 0 || portfolioItems.length === 0) return [];
@@ -218,40 +268,48 @@ export default function HoldingsAnalysis() {
 
       {/* Metrics Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Total Assets" value={formatCurrency(totalAssets)} icon={TrendingUp} valueColor="accent" />
-        <MetricCard label="Holdings" value={portfolioItems.filter((i) => i.type === 'asset').length} icon={Grid3X3} />
+        <MetricCard label="Total Assets" value={formatCurrency(totalAssets)} icon={TrendingUp} valueColor="accent" caption={`${assetItems.length} asset holdings`} />
+        <MetricCard label="Top Holding Share" value={formatPercent(concentration.topHoldingShare, 1, { sign: false })} icon={Grid3X3} caption={concentration.topHolding?.name || '--'} />
         <MetricCard
           label="Largest Holding"
-          value={portfolioItems.length > 0 ? portfolioItems[0]?.name : '--'}
-          change={portfolioItems.length > 0 ? formatCurrency(portfolioItems[0]?.value) : ''}
+          value={concentration.topHolding?.name || '--'}
+          change={concentration.topHolding ? formatCurrency(concentration.topHolding.valueNumber) : ''}
           icon={Layers}
         />
         <MetricCard
-          label="Groups"
-          value={treemapData.length}
-          change={`by ${groupBy}`}
+          label="Top 5 Share"
+          value={formatPercent(concentration.topFiveShare, 1, { sign: false })}
+          change={`${treemapData.length} groups by ${groupBy}`}
           icon={BarChart3}
         />
       </div>
 
       {/* Controls */}
-      <div className="flex flex-wrap gap-3 items-center">
-        <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
-          {VIEWS.map((v) => {
-            const Icon = v.icon;
-            return (
-              <button
-                key={v.id}
-                onClick={() => setView(v.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
-                  view === v.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
-                }`}
-              >
-                <Icon size={14} />
-                {!isMobile && v.label}
-              </button>
-            );
-          })}
+      <div className="card p-3 space-y-3">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-caption text-tertiary uppercase tracking-wide">Analysis View</p>
+            <p className="text-body-sm text-secondary">
+              {VIEWS.find((item) => item.id === view)?.label} view{view === 'treemap' ? ` grouped by ${groupBy}` : ''}
+            </p>
+          </div>
+          <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
+            {VIEWS.map((v) => {
+              const Icon = v.icon;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => setView(v.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all ${
+                    view === v.id ? 'bg-accent/15 text-accent' : 'text-tertiary hover:text-secondary'
+                  }`}
+                >
+                  <Icon size={14} />
+                  {!isMobile && v.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {view === 'treemap' && (
@@ -311,35 +369,109 @@ export default function HoldingsAnalysis() {
       {/* Chart Area */}
       <div className="card p-4 md:p-6">
         {view === 'treemap' && (
-          <div style={{ height: isMobile ? 300 : 500 }}>
-            {flatTreemapData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <Treemap
-                  data={flatTreemapData}
-                  dataKey="size"
-                  nameKey="name"
-                  content={<TreemapContent />}
-                  animationDuration={800}
-                >
-                  <Tooltip
-                    content={({ payload }) => {
-                      if (!payload || !payload.length) return null;
-                      const item = payload[0]?.payload;
-                      if (!item) return null;
-                      return (
-                        <div className="px-3 py-2 rounded border" style={{ backgroundColor: 'var(--bg-surface-2)', borderColor: 'var(--border)' }}>
-                          <div className="text-xs text-secondary">{item.group}</div>
-                          <div className="text-sm font-semibold text-primary">{item.name}</div>
-                          <div className="text-sm font-money text-accent">{formatCurrency(item.size)}</div>
-                        </div>
-                      );
-                    }}
-                  />
-                </Treemap>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex items-center justify-center h-full text-tertiary text-sm">No holdings data</div>
-            )}
+          <div className="space-y-4">
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Treemap by {groupBy}</h2>
+                <p className="text-caption text-secondary">
+                  Portfolio values grouped by {groupBy}; top five holdings are {formatPercent(concentration.topFiveShare, 1, { sign: false })} of assets.
+                </p>
+              </div>
+              <p className="text-caption text-tertiary">{treemapData.length} groups / {flatTreemapData.length} holdings</p>
+            </div>
+
+            <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_280px]">
+              <div style={{ height: isMobile ? 300 : 500 }}>
+                {flatTreemapData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <Treemap
+                      data={flatTreemapData}
+                      dataKey="size"
+                      nameKey="name"
+                      content={<TreemapContent />}
+                      animationDuration={800}
+                    >
+                      <Tooltip
+                        content={({ payload }) => {
+                          if (!payload || !payload.length) return null;
+                          const item = payload[0]?.payload;
+                          if (!item) return null;
+                          return (
+                            <div className="px-3 py-2 rounded border" style={{ backgroundColor: 'var(--bg-surface-2)', borderColor: 'var(--border)' }}>
+                              <div className="text-xs text-secondary">{item.group}</div>
+                              <div className="text-sm font-semibold text-primary">{item.name}</div>
+                              <div className="text-sm font-money text-accent">{formatCurrency(item.size)}</div>
+                              <div className="text-xs text-tertiary">{formatPercent(item.share || 0, 1, { sign: false })} of assets</div>
+                            </div>
+                          );
+                        }}
+                      />
+                    </Treemap>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex items-center justify-center h-full text-tertiary text-sm">No holdings data</div>
+                )}
+              </div>
+
+              <div className="border border-border bg-surface-2 p-3">
+                <p className="text-caption text-tertiary uppercase tracking-wide">
+                  {selectedGroupTotal ? selectedGroupTotal.name : 'Largest Holdings'}
+                </p>
+                <p className="font-mono text-lg font-semibold text-primary">
+                  {selectedGroupTotal ? formatCurrency(selectedGroupTotal.total) : formatCurrency(concentration.topHolding?.valueNumber || 0)}
+                </p>
+                <p className="text-caption text-tertiary mb-3">
+                  {selectedGroupTotal
+                    ? `${formatPercent(selectedGroupTotal.share, 1, { sign: false })} of assets`
+                    : `${formatPercent(concentration.topHoldingShare, 1, { sign: false })} in the largest holding`}
+                </p>
+                <div className="space-y-2">
+                  {selectedGroupRows.map((item) => (
+                    <div key={`${item.group || item.account}-${item.name}-${item.ticker || ''}`} className="border border-border bg-surface p-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-body-sm font-semibold text-primary truncate" title={item.name}>{item.name}</p>
+                        <p className="font-mono text-caption text-primary">{formatCompactCurrency(item.size ?? item.valueNumber)}</p>
+                      </div>
+                      <p className="text-caption text-tertiary truncate">{item.group || item.account || item.categoryLabel}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-border pt-4">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <h3 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Top Holdings by Value</h3>
+                <span className="text-caption text-tertiary">{assetItems.slice(0, 10).length} shown</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-[720px] w-full divide-y divide-border">
+                  <thead className="bg-surface-2">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide">Holding</th>
+                      <th className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide">Account</th>
+                      <th className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide">Category</th>
+                      <th className="px-3 py-2 text-right text-caption font-semibold text-tertiary uppercase tracking-wide">Value</th>
+                      <th className="px-3 py-2 text-right text-caption font-semibold text-tertiary uppercase tracking-wide">Share</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {assetItems.slice(0, 10).map((item) => (
+                      <tr key={`${item.account}-${item.name}-${item.ticker || ''}`} className="hover:bg-surface-2">
+                        <td className="px-3 py-2 text-body-sm text-primary">
+                          <p className="font-semibold truncate max-w-[280px]" title={item.name}>{item.name}</p>
+                          {item.ticker && <p className="text-caption text-tertiary">{item.ticker}</p>}
+                        </td>
+                        <td className="px-3 py-2 text-body-sm text-secondary">{item.account}</td>
+                        <td className="px-3 py-2 text-body-sm text-tertiary">{item.categoryLabel}</td>
+                        <td className="px-3 py-2 text-right font-mono text-body-sm text-primary">{formatCurrency(item.valueNumber)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-body-sm text-secondary">{formatPercent(totalAssets > 0 ? (item.valueNumber / totalAssets) * 100 : 0, 1, { sign: false })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
 
@@ -396,11 +528,15 @@ export default function HoldingsAnalysis() {
       {view === 'treemap' && treemapData.length > 0 && (
         <div className="card p-4 flex flex-wrap gap-3">
           {treemapData.map((group) => (
-            <div key={group.name} className="flex items-center gap-2 text-sm">
+            <button
+              key={group.name}
+              onClick={() => setSelectedGroup(selectedGroup === group.name ? null : group.name)}
+              className={`flex items-center gap-2 border px-2 py-1 text-sm transition-colors ${selectedGroup === group.name ? 'border-accent/40 bg-accent-muted' : 'border-transparent hover:border-border'}`}
+            >
               <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: group.color }} />
               <span className="text-secondary">{group.name}</span>
               <span className="font-money text-primary text-xs">{formatCompactCurrency(group.total)}</span>
-            </div>
+            </button>
           ))}
         </div>
       )}
