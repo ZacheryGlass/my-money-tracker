@@ -94,20 +94,37 @@ router.get('/tickers', async (req, res) => {
     const countResult = await pool.query(countQuery, params);
     const total = parseInt(countResult.rows[0].total);
 
-    // Get paginated data
-    const dataQuery = `
-      SELECT
-        ts.snapshot_date,
-        ts.account_id,
-        ts.ticker,
-        ts.name,
-        ts.value
-      FROM ticker_snapshots ts
-      JOIN accounts a ON ts.account_id = a.id
-      ${whereClause}
-      ORDER BY ts.snapshot_date ASC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `;
+    const dataQuery = (!startDate && !endDate)
+      ? `
+        WITH recent AS (
+          SELECT
+            ts.snapshot_date,
+            ts.account_id,
+            ts.ticker,
+            ts.name,
+            ts.value
+          FROM ticker_snapshots ts
+          JOIN accounts a ON ts.account_id = a.id
+          ${whereClause}
+          ORDER BY ts.snapshot_date DESC, ts.id DESC
+          LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        )
+        SELECT * FROM recent
+        ORDER BY snapshot_date ASC, account_id ASC, ticker ASC
+      `
+      : `
+        SELECT
+          ts.snapshot_date,
+          ts.account_id,
+          ts.ticker,
+          ts.name,
+          ts.value
+        FROM ticker_snapshots ts
+        JOIN accounts a ON ts.account_id = a.id
+        ${whereClause}
+        ORDER BY ts.snapshot_date ASC
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+      `;
 
     const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);
@@ -194,18 +211,33 @@ router.get('/accounts', async (req, res) => {
     const countResult = await pool.query(countQuery, params);
     const total = parseInt(countResult.rows[0].total);
 
-    // Get paginated data
-    const dataQuery = `
-      SELECT
-        acs.snapshot_date,
-        acs.account_id,
-        acs.total_value
-      FROM account_snapshots acs
-      JOIN accounts a ON acs.account_id = a.id
-      ${whereClause}
-      ORDER BY acs.snapshot_date ASC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `;
+    const dataQuery = (!startDate && !endDate)
+      ? `
+        WITH recent AS (
+          SELECT
+            acs.snapshot_date,
+            acs.account_id,
+            acs.total_value
+          FROM account_snapshots acs
+          JOIN accounts a ON acs.account_id = a.id
+          ${whereClause}
+          ORDER BY acs.snapshot_date DESC, acs.account_id ASC
+          LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        )
+        SELECT * FROM recent
+        ORDER BY snapshot_date ASC, account_id ASC
+      `
+      : `
+        SELECT
+          acs.snapshot_date,
+          acs.account_id,
+          acs.total_value
+        FROM account_snapshots acs
+        JOIN accounts a ON acs.account_id = a.id
+        ${whereClause}
+        ORDER BY acs.snapshot_date ASC
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+      `;
 
     const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);
@@ -281,18 +313,33 @@ router.get('/portfolio', async (req, res) => {
     const countResult = await pool.query(countQuery, params);
     const total = parseInt(countResult.rows[0].total);
 
-    // Get aggregated portfolio data
-    const dataQuery = `
-      SELECT
-        acs.snapshot_date,
-        SUM(acs.total_value) as total_value
-      FROM account_snapshots acs
-      JOIN accounts a ON acs.account_id = a.id
-      ${whereClause}
-      GROUP BY acs.snapshot_date
-      ORDER BY acs.snapshot_date ASC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `;
+    const dataQuery = (!startDate && !endDate)
+      ? `
+        WITH daily_totals AS (
+          SELECT
+            acs.snapshot_date,
+            SUM(acs.total_value) as total_value
+          FROM account_snapshots acs
+          JOIN accounts a ON acs.account_id = a.id
+          ${whereClause}
+          GROUP BY acs.snapshot_date
+          ORDER BY acs.snapshot_date DESC
+          LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        )
+        SELECT * FROM daily_totals
+        ORDER BY snapshot_date ASC
+      `
+      : `
+        SELECT
+          acs.snapshot_date,
+          SUM(acs.total_value) as total_value
+        FROM account_snapshots acs
+        JOIN accounts a ON acs.account_id = a.id
+        ${whereClause}
+        GROUP BY acs.snapshot_date
+        ORDER BY acs.snapshot_date ASC
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+      `;
 
     const dataParams = [...params, parsedLimit, parsedOffset];
     const dataResult = await pool.query(dataQuery, dataParams);

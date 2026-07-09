@@ -11,7 +11,7 @@ import {
   ReferenceDot,
 } from 'recharts';
 import { Download, TrendingUp, TrendingDown, Check, Calendar } from 'lucide-react';
-import { history as historyAPI } from '../utils/api';
+import { dashboard as dashboardAPI, history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import ChartTooltip from '../components/ChartTooltip';
@@ -76,6 +76,11 @@ const PortfolioTimeline = () => {
         const range = calculateDateRange(selectedRange);
         startDate = range.startDate; endDate = range.endDate;
       }
+      const today = new Date().toISOString().split('T')[0];
+      const shouldAppendLivePoint = !endDate || endDate >= today;
+      const livePortfolioPromise = shouldAppendLivePoint
+        ? dashboardAPI.getPortfolio().catch(() => null)
+        : Promise.resolve(null);
       const response = await historyAPI.getPortfolio({ startDate, endDate, limit: PAGE_SIZE });
       let allData = response.data || [];
       let offset = PAGE_SIZE;
@@ -84,6 +89,15 @@ const PortfolioTimeline = () => {
         const moreResponse = await historyAPI.getPortfolio({ startDate, endDate, limit: PAGE_SIZE, offset });
         allData = [...allData, ...(moreResponse.data || [])];
         offset += PAGE_SIZE;
+      }
+      const livePortfolio = await livePortfolioPromise;
+      const liveValue = livePortfolio?.summary?.netWorth;
+      const latestDate = allData[allData.length - 1]?.snapshot_date?.slice(0, 10);
+      if (Number.isFinite(liveValue) && latestDate !== today) {
+        allData = [
+          ...allData,
+          { snapshot_date: today, total_value: liveValue, is_live: true },
+        ];
       }
       setPortfolioData(allData);
     } catch (err) {

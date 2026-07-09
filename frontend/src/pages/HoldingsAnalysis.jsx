@@ -84,7 +84,7 @@ export default function HoldingsAnalysis() {
       ]);
 
       setPortfolioItems(dashData.items || []);
-      setTotalAssets(dashData.total || 0);
+      setTotalAssets(dashData.summary?.totalAssets || dashData.total || 0);
       setAccountSnaps(acctData.data || []);
       setAccountList(acctList.accounts || []);
 

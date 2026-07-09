@@ -59,10 +59,21 @@ class DashboardService {
 
     // Calculate portfolio total
     const total = items.reduce((sum, item) => sum + item.value, 0);
+    const totalAssets = items
+      .filter((item) => item.type === 'asset')
+      .reduce((sum, item) => sum + item.value, 0);
+    const totalLiabilities = items
+      .filter((item) => item.type === 'liability')
+      .reduce((sum, item) => sum + Math.abs(item.value), 0);
 
     return {
       items,
       total,
+      summary: {
+        totalAssets,
+        totalLiabilities,
+        netWorth: totalAssets - totalLiabilities
+      },
       lastUpdated: latestFetchedAt ? new Date(latestFetchedAt).toISOString() : null
     };
   }
