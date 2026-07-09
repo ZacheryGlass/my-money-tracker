@@ -45,7 +45,7 @@ const TickerHistory = () => {
         setHoldings(list);
         const topTickers = list.filter(h => h.ticker).sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0)).slice(0, 5).map(h => h.ticker);
         setSelectedTickers(topTickers);
-      } catch (err) {
+      } catch {
         setError('Failed to load holdings');
       } finally {
         setInitialLoading(false);
@@ -76,7 +76,7 @@ const TickerHistory = () => {
         const promises = selectedTickers.map(ticker => historyAPI.getTickers({ ...params, ticker }));
         const results = await Promise.all(promises);
         setHistoryData(results.flatMap(r => r.data || []));
-      } catch (err) {
+      } catch {
         setError('Failed to load history data');
         setHistoryData([]);
       } finally {

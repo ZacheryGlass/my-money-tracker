@@ -44,7 +44,7 @@ const AccountHistory = () => {
         const list = data.accounts || [];
         setAccounts(list);
         setSelectedAccounts(list.map(acc => acc.id));
-      } catch (err) {
+      } catch {
         setError('Failed to load accounts');
       }
     };
@@ -99,7 +99,7 @@ const AccountHistory = () => {
           setPortfolioData([]);
         }
         await Promise.all(fetchPromises);
-      } catch (err) {
+      } catch {
         setError('Failed to load history data');
       } finally {
         setLoading(false);

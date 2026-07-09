@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePlaidLink } from 'react-plaid-link';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff } from 'lucide-react';
 import { plaid as plaidAPI, accounts as accountsAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
@@ -302,17 +302,17 @@ const Settings = () => {
       </div>
 
       {successMessage && (
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-gain-bg border border-gain/20 text-gain rounded text-xs flex items-center gap-3">
+        <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-gain-bg border border-gain/20 text-gain rounded text-xs flex items-center gap-3">
           <Check size={16} />
           {successMessage}
-        </motion.div>
+        </Motion.div>
       )}
       {error && (
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
+        <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
           <AlertTriangle size={16} />
           <span className="flex-1">{error}</span>
           <button onClick={() => setError(null)}><X size={14} /></button>
-        </motion.div>
+        </Motion.div>
       )}
 
       {connecting && (
@@ -439,7 +439,7 @@ const Settings = () => {
           </div>
         ) : (
           items.map((item) => (
-            <motion.div layout key={item.id} className="card overflow-hidden border-border">
+            <Motion.div layout key={item.id} className="card overflow-hidden border-border">
               <div className="p-5 md:p-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="flex items-center gap-4 min-w-0">
@@ -510,7 +510,7 @@ const Settings = () => {
                     
                     <AnimatePresence>
                       {expandedItem === item.id && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <Motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
                             {item.accounts.map((acct) => (
                               <div key={acct.id} className="flex items-center justify-between gap-4 px-4 py-3 rounded  border border-transparent hover:border-border transition-colors">
@@ -523,20 +523,20 @@ const Settings = () => {
                               </div>
                             ))}
                           </div>
-                        </motion.div>
+                        </Motion.div>
                       )}
                     </AnimatePresence>
                   </div>
                 )}
               </div>
-            </motion.div>
+            </Motion.div>
           ))
         )}
       </div>
 
       {/* Orphaned Accounts */}
       {orphanedAccounts.length > 0 && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-12 space-y-6">
+        <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-12 space-y-6">
           <div className="px-2">
             <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Manual / Orphaned Entries</h2>
             <p className="text-xs text-secondary mt-1">These accounts are not linked to Plaid. Deleting removes the account and all its historical value points.</p>
@@ -575,15 +575,15 @@ const Settings = () => {
               </div>
             ))}
           </div>
-        </motion.div>
+        </Motion.div>
       )}
 
       {/* Disconnect Confirm Modal */}
       <AnimatePresence>
         {disconnectingItem && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 " onClick={() => setDisconnectingItem(null)} />
-            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 " onClick={() => setDisconnectingItem(null)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
               <div className="p-8 pb-4 text-center">
                 <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-6">
                   <Unlink size={28} />
@@ -636,7 +636,7 @@ const Settings = () => {
                   Confirm Disconnect
                 </button>
               </div>
-            </motion.div>
+            </Motion.div>
           </div>
         )}
       </AnimatePresence>

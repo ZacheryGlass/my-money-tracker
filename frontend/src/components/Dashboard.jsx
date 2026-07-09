@@ -157,6 +157,12 @@ const Dashboard = ({ onNavigate }) => {
         </button>
       </section>
 
+      {error && (
+        <div className="px-3 py-2 bg-loss-bg border border-loss/20 text-loss text-body-sm">
+          {error}
+        </div>
+      )}
+
       {/* Primary Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-border">
         <MetricCard

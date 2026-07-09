@@ -14,8 +14,6 @@ import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import ChartTooltip from './ChartTooltip';
 
 const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
-  const isMobile = useIsMobile();
-  
   return (
     <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 mt-3 px-3">
       {payload.map((entry, index) => {
