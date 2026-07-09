@@ -2,9 +2,19 @@ import React from 'react';
 import { LineChart, Line } from 'recharts';
 import ResponsiveContainer from './ResponsiveContainer';
 
-const SparkLine = ({ data = [], color, width = 100, height = 32 }) => {
+const SparkLine = ({ data = [], color, width = 100, height = 32, label = 'Trend line' }) => {
   if (!data || data.length < 2) {
-    return <div style={{ width, height }} className="flex items-center justify-center opacity-20">—</div>;
+    return (
+      <div
+        style={{ width, height }}
+        className="flex items-center justify-center opacity-20"
+        role="img"
+        aria-label={label}
+        title={label}
+      >
+        -
+      </div>
+    );
   }
 
   const first = data[0]?.value ?? 0;
@@ -13,7 +23,14 @@ const SparkLine = ({ data = [], color, width = 100, height = 32 }) => {
   const stroke = color || (last >= first ? 'var(--gain)' : 'var(--loss)');
 
   return (
-    <div style={{ width, height }} className="overflow-hidden">
+    <div
+      style={{ width, height }}
+      className="relative overflow-hidden"
+      role="img"
+      aria-label={label}
+      title={label}
+    >
+      <div className="absolute left-0 right-0 top-1/2 border-t border-border opacity-60" />
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data}>
           <Line

@@ -18,6 +18,10 @@ const formatAttentionNames = (items = []) => {
   return `${visible}${extra}`;
 };
 
+const sortPortfolioSnapshots = (snapshots = []) => (
+  [...snapshots].sort((a, b) => new Date(a.snapshot_date) - new Date(b.snapshot_date))
+);
+
 const Dashboard = ({ onNavigate }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -94,23 +98,41 @@ const Dashboard = ({ onNavigate }) => {
     return { totalAssets: assets, totalLiabilities: liabilities, netWorth: assets - liabilities };
   }, [data]);
 
+  const portfolioSnapshots = useMemo(() => sortPortfolioSnapshots(historyData), [historyData]);
+
   const dailyChange = useMemo(() => {
-    if (historyData.length < 2) return { amount: 0, percent: 0 };
-    const current = parseFloat(historyData[historyData.length - 1]?.total_value) || 0;
-    const previous = parseFloat(historyData[historyData.length - 2]?.total_value) || 0;
+    const currentSnapshot = portfolioSnapshots[portfolioSnapshots.length - 1];
+    const previousSnapshot = portfolioSnapshots[portfolioSnapshots.length - 2];
+    if (!currentSnapshot || !previousSnapshot) {
+      return {
+        amount: 0,
+        percent: 0,
+        hasComparison: false,
+        currentDate: currentSnapshot?.snapshot_date || data?.freshness?.snapshot?.latestDate || null,
+        previousDate: null,
+      };
+    }
+    const current = parseFloat(currentSnapshot.total_value) || 0;
+    const previous = parseFloat(previousSnapshot.total_value) || 0;
     const amount = current - previous;
     const percent = previous !== 0 ? (amount / previous) * 100 : 0;
-    return { amount, percent };
-  }, [historyData]);
+    return {
+      amount,
+      percent,
+      hasComparison: true,
+      currentDate: currentSnapshot.snapshot_date,
+      previousDate: previousSnapshot.snapshot_date,
+    };
+  }, [portfolioSnapshots, data?.freshness?.snapshot?.latestDate]);
 
   const monthlyChange = useMemo(() => {
-    if (historyData.length < 2) return { amount: 0, percent: 0 };
-    const current = parseFloat(historyData[historyData.length - 1]?.total_value) || 0;
-    const first = parseFloat(historyData[0]?.total_value) || 0;
+    if (portfolioSnapshots.length < 2) return { amount: 0, percent: 0 };
+    const current = parseFloat(portfolioSnapshots[portfolioSnapshots.length - 1]?.total_value) || 0;
+    const first = parseFloat(portfolioSnapshots[0]?.total_value) || 0;
     const amount = current - first;
     const percent = first !== 0 ? (amount / first) * 100 : 0;
     return { amount, percent };
-  }, [historyData]);
+  }, [portfolioSnapshots]);
 
   const accountDisplayNames = useMemo(() => {
     const accounts = (data?.items || []).map((item) => ({
@@ -190,8 +212,8 @@ const Dashboard = ({ onNavigate }) => {
       const history = accountHistoryData
         .filter((d) => d.account_id === s.accountId)
         .sort((a, b) => (a.snapshot_date < b.snapshot_date ? -1 : 1))
-        .map((d) => ({ value: parseFloat(d.total_value) }));
-      s.sparkData = history;
+        .map((d) => ({ date: d.snapshot_date, value: parseFloat(d.total_value) }));
+      s.sparkData = history.map((point) => ({ value: point.value }));
       if (history.length >= 2) {
         const first = history[0]?.value || 0;
         const last = history[history.length - 1]?.value || 0;
@@ -199,15 +221,29 @@ const Dashboard = ({ onNavigate }) => {
         s.hasTrend = true;
         s.trendAmount = change;
         s.trendLabel = `${change >= 0 ? '+' : '-'}${formatCompactCurrency(Math.abs(change))}`;
+        s.trendRangeLabel = `${formatDateDisplay(history[0].date)} to ${formatDateDisplay(history[history.length - 1].date)}: ${formatCompactCurrency(first)} to ${formatCompactCurrency(last)}`;
       } else {
         s.hasTrend = false;
         s.trendAmount = 0;
         s.trendLabel = 'No trend';
+        s.trendRangeLabel = 'Needs at least two account snapshots.';
       }
     });
 
     return summaries;
   }, [data, accountHistoryData, accountDisplayNames]);
+
+  const snapshotDateLabel = dailyChange.currentDate
+    ? formatDateDisplay(dailyChange.currentDate)
+    : data?.freshness?.snapshot?.latestDate
+      ? formatDateDisplay(data.freshness.snapshot.latestDate)
+      : null;
+  const comparisonLabel = dailyChange.hasComparison && dailyChange.previousDate
+    ? `vs ${formatDateDisplay(dailyChange.previousDate)} snapshot`
+    : 'No prior snapshot yet';
+  const syncLabel = data?.lastUpdated
+    ? new Date(data.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
 
   if (loading) {
     return (
@@ -225,10 +261,10 @@ const Dashboard = ({ onNavigate }) => {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-caption text-tertiary uppercase tracking-wide">Net Worth</span>
-            {data?.lastUpdated && (
+            {syncLabel && (
               <span className="text-caption text-tertiary flex items-center gap-1">
                 <Clock size={11} />
-                {new Date(data.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                Synced {syncLabel}
               </span>
             )}
           </div>
@@ -237,13 +273,18 @@ const Dashboard = ({ onNavigate }) => {
             <h1 className="text-display-mega font-money text-primary">
               {formatCurrency(netWorth)}
             </h1>
-            {dailyChange.amount !== 0 && (
-              <div className={`flex items-center gap-1 text-body-sm ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-body-sm">
+              <div className={`flex items-center gap-1 ${dailyChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>
                 {dailyChange.amount >= 0 ? <TrendingUp size={14} /> : <TrendingUp size={14} className="rotate-180" />}
                 {formatCurrency(Math.abs(dailyChange.amount))} ({formatPercent(dailyChange.percent)})
-                <span className="text-tertiary ml-1">today</span>
+                <span className="text-tertiary ml-1">{comparisonLabel}</span>
               </div>
-            )}
+              {snapshotDateLabel && (
+                <span className="text-caption text-tertiary">
+                  History through {snapshotDateLabel}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -264,50 +305,51 @@ const Dashboard = ({ onNavigate }) => {
       )}
 
       {freshnessIssues.length > 0 && (
-        <div className="border border-amber-500/25 bg-amber-500/10 px-3 py-3 text-body-sm text-amber-300">
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div className="flex gap-3">
-              <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+        <div className="border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-body-sm text-amber-300">
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+            <div className="flex min-w-[220px] items-center gap-2">
+              <AlertTriangle size={15} className="flex-shrink-0" />
               <div>
                 <h2 className="text-caption font-semibold uppercase tracking-wide text-amber-200">
-                  Data health needs attention
+                  Data health
                 </h2>
-                <p className="mt-1 text-tertiary">
-                  {freshnessIssues.length} issue{freshnessIssues.length === 1 ? '' : 's'} may affect the numbers below.
+                <p className="text-caption text-tertiary">
+                  {freshnessIssues.length} issue{freshnessIssues.length === 1 ? '' : 's'} may affect totals
                 </p>
               </div>
             </div>
+
+            <div className="grid flex-1 grid-cols-1 gap-2 lg:grid-cols-2 xl:grid-cols-3">
+              {freshnessIssues.map((issue) => (
+                <button
+                  key={issue.title}
+                  onClick={() => (issue.refresh ? handleRefresh() : onNavigate(issue.page))}
+                  title={issue.detail}
+                  className="flex min-w-0 items-center justify-between gap-3 border border-amber-500/20 bg-base/40 px-2.5 py-1.5 text-left transition-colors hover:border-amber-500/40 hover:bg-base/60"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-caption font-semibold uppercase tracking-wide text-amber-200">{issue.title}</div>
+                    <div className="truncate text-caption text-secondary">{issue.detail}</div>
+                  </div>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-caption font-semibold uppercase tracking-wide text-accent">
+                    {issue.action} <ChevronRight size={11} />
+                  </span>
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={() => onNavigate('settings')}
-              className="inline-flex w-fit items-center gap-1 border border-amber-500/25 bg-surface px-3 py-1.5 text-caption font-semibold uppercase tracking-wide text-amber-200 transition-colors hover:border-amber-500/50 hover:text-amber-100"
+              className="inline-flex w-fit items-center gap-1 border border-amber-500/25 bg-surface px-2.5 py-1.5 text-caption font-semibold uppercase tracking-wide text-amber-200 transition-colors hover:border-amber-500/50 hover:text-amber-100"
             >
               Review settings <ChevronRight size={12} />
             </button>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-3">
-            {freshnessIssues.map((issue) => (
-              <div key={issue.title} className="border border-amber-500/20 bg-base/40 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-caption font-semibold uppercase tracking-wide text-amber-200">{issue.title}</h3>
-                    <p className="mt-1 text-body-sm leading-snug text-secondary">{issue.detail}</p>
-                  </div>
-                  <button
-                    onClick={() => (issue.refresh ? handleRefresh() : onNavigate(issue.page))}
-                    className="shrink-0 text-caption font-semibold uppercase tracking-wide text-accent hover:underline"
-                  >
-                    {issue.action}
-                  </button>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       )}
 
       {/* Primary Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-border">
+      <div className="grid grid-cols-1 gap-px bg-border md:grid-cols-3">
         <MetricCard
           label="Total Assets"
           value={formatCurrency(totalAssets)}
@@ -323,7 +365,7 @@ const Dashboard = ({ onNavigate }) => {
           onClick={() => onNavigate('liabilities')}
         />
         <MetricCard
-          label="Performance"
+          label="Portfolio Range"
           value={formatCurrency(Math.abs(monthlyChange.amount))}
           change={formatPercent(monthlyChange.percent)}
           trend={monthlyChange.amount >= 0 ? 'up' : 'down'}
@@ -333,7 +375,7 @@ const Dashboard = ({ onNavigate }) => {
         />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
         {/* Left: Allocation */}
         <div className="xl:col-span-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -346,7 +388,7 @@ const Dashboard = ({ onNavigate }) => {
             </button>
           </div>
           <div className="card">
-            <AllocationDonut items={data?.items || []} className="min-h-[350px]" />
+            <AllocationDonut items={data?.items || []} className="min-h-[300px]" compact />
           </div>
         </div>
 
@@ -359,12 +401,13 @@ const Dashboard = ({ onNavigate }) => {
             </button>
           </div>
 
-          <div className="card flex flex-col max-h-[420px] overflow-y-auto">
+          <div className="card flex max-h-[360px] flex-col overflow-y-auto">
             {accountSummaries.map((account) => (
               <div
                 key={account.accountId ?? account.name}
                 className="flex items-center justify-between gap-3 px-3 py-2 border-b border-border last:border-b-0 hover:bg-surface-2 transition-colors cursor-pointer"
                 onClick={() => onNavigate('accounts')}
+                title={account.trendRangeLabel}
               >
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <Landmark size={14} className="text-tertiary flex-shrink-0" />
@@ -378,16 +421,16 @@ const Dashboard = ({ onNavigate }) => {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="min-w-[58px] text-right">
+                  <div className="min-w-[74px] text-right">
                     <div className={`font-money text-caption font-semibold ${
                       account.hasTrend ? (account.trendAmount >= 0 ? 'text-gain' : 'text-loss') : 'text-tertiary'
                     }`}
                     >
                       {account.trendLabel}
                     </div>
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-tertiary">30 day</div>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-tertiary">30-day change</div>
                   </div>
-                  <SparkLine data={account.sparkData} width={72} height={28} />
+                  <SparkLine data={account.sparkData} width={72} height={28} label={account.trendRangeLabel} />
                 </div>
               </div>
             ))}

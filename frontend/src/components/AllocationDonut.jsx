@@ -7,7 +7,7 @@ import ChartTooltip from './ChartTooltip';
 import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
 import ResponsiveContainer from './ResponsiveContainer';
 
-const AllocationDonut = ({ items = [], className = '' }) => {
+const AllocationDonut = ({ items = [], className = '', compact = false }) => {
   const { slices, total } = useMemo(() => {
     const accountDisplayNames = buildAccountDisplayNameMap(
       items.map((item) => ({
@@ -52,8 +52,10 @@ const AllocationDonut = ({ items = [], className = '' }) => {
     );
   }
 
+  const chartSize = compact ? 190 : 220;
+
   return (
-    <div className={`p-4 flex flex-col gap-4 ${className}`}>
+    <div className={`${compact ? 'p-3 gap-3' : 'p-4 gap-4'} flex flex-col ${className}`}>
       <div className="flex items-center justify-between">
         <h3 className="text-caption text-tertiary uppercase tracking-wide">
           By Account
@@ -63,8 +65,8 @@ const AllocationDonut = ({ items = [], className = '' }) => {
         </span>
       </div>
 
-      <div className="flex flex-col items-center gap-6 md:flex-row">
-        <div style={{ position: 'relative', width: '100%', height: 220, maxWidth: 220 }} className="flex-shrink-0">
+      <div className={`flex flex-col items-center md:flex-row ${compact ? 'gap-4' : 'gap-6'}`}>
+        <div style={{ position: 'relative', width: '100%', height: chartSize, maxWidth: chartSize }} className="flex-shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -129,9 +131,14 @@ const AllocationDonut = ({ items = [], className = '' }) => {
                     {entry.name}
                   </span>
                 </div>
-                <span className="font-money text-caption text-primary font-semibold">
-                  {formatPercent(pct, 1, { sign: false })}
-                </span>
+                <div className="text-right">
+                  <div className="font-money text-caption text-primary font-semibold">
+                    {formatPercent(pct, 1, { sign: false })}
+                  </div>
+                  <div className="font-money text-[10px] text-tertiary">
+                    {formatCompactCurrency(entry.value)}
+                  </div>
+                </div>
               </div>
             );
           })}
