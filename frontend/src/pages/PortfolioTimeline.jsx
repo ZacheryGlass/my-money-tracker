@@ -6,7 +6,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   ReferenceLine,
   ReferenceDot,
 } from 'recharts';
@@ -15,6 +14,7 @@ import { dashboard as dashboardAPI, history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import ChartTooltip from '../components/ChartTooltip';
+import ResponsiveContainer from '../components/ResponsiveContainer';
 
 const PAGE_SIZE = 100;
 const ACCENT = '#3994BC';

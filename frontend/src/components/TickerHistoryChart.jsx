@@ -6,12 +6,12 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
 } from 'recharts';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { formatCurrency, formatDateAxis } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import ChartTooltip from './ChartTooltip';
+import ResponsiveContainer from './ResponsiveContainer';
 
 const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
   return (

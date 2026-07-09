@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceDot,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceDot,
 } from 'recharts';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Briefcase, TrendingUp, Plus, Edit2, Trash2, Check, X, Award, Target, Calendar } from 'lucide-react';
@@ -8,6 +8,7 @@ import { salary as salaryAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import ChartTooltip from '../components/ChartTooltip';
+import ResponsiveContainer from '../components/ResponsiveContainer';
 
 const SalaryHistory = () => {
   const [records, setRecords] = useState([]);

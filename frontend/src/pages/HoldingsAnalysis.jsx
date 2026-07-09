@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   Treemap,
 } from 'recharts';
 import { Grid3X3, Layers, BarChart3, TrendingUp } from 'lucide-react';
 import MetricCard from '../components/MetricCard';
 import WaterfallChart from '../components/WaterfallChart';
 import ChartTooltip from '../components/ChartTooltip';
+import ResponsiveContainer from '../components/ResponsiveContainer';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import { formatCurrency, formatCompactCurrency, formatDateAxis, formatPercent } from '../utils/format';
 import { dashboard, history, accounts as accountsApi } from '../utils/api';

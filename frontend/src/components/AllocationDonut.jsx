@@ -1,10 +1,11 @@
 import React, { useMemo } from 'react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { PieChart as PieIcon } from 'lucide-react';
 import { CHART_COLORS } from '../utils/chartTheme';
 import { formatCompactCurrency, formatPercent } from '../utils/format';
 import ChartTooltip from './ChartTooltip';
 import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
+import ResponsiveContainer from './ResponsiveContainer';
 
 const AllocationDonut = ({ items = [], className = '' }) => {
   const { slices, total } = useMemo(() => {

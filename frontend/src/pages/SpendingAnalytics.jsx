@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   PieChart, Pie, Cell, BarChart,
 } from 'recharts';
 import { BarChart3, DollarSign, TrendingDown, Percent } from 'lucide-react';
 import MetricCard from '../components/MetricCard';
 import CalendarHeatmap from '../components/CalendarHeatmap';
 import ChartTooltip from '../components/ChartTooltip';
+import ResponsiveContainer from '../components/ResponsiveContainer';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import { formatCurrency, formatCompactCurrency, formatPercent } from '../utils/format';
 import { transactions } from '../utils/api';

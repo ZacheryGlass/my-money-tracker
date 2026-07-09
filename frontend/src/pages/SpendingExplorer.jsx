@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
 } from 'recharts';
 import {
   Store, Tags, ReceiptText, Search, SlidersHorizontal, Calendar,
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import MetricCard from '../components/MetricCard';
 import ChartTooltip from '../components/ChartTooltip';
+import ResponsiveContainer from '../components/ResponsiveContainer';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import { formatCurrency, formatCompactCurrency, formatDateDisplay, formatPercent } from '../utils/format';
 import { accounts as accountsApi, transactions as transactionsApi } from '../utils/api';

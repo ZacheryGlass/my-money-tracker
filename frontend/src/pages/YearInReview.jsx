@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine,
   AreaChart, Area,
 } from 'recharts';
 import { CalendarDays, TrendingUp, TrendingDown, Award, Target } from 'lucide-react';
 import MetricCard from '../components/MetricCard';
 import AllocationDonut from '../components/AllocationDonut';
 import ChartTooltip from '../components/ChartTooltip';
+import ResponsiveContainer from '../components/ResponsiveContainer';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import { formatCurrency, formatCompactCurrency, formatPercent, formatDateAxis } from '../utils/format';
 import { analytics, dashboard, history as historyAPI } from '../utils/api';

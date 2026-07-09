@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ReferenceLine,
 } from 'recharts';
 import { GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import ChartTooltip from './ChartTooltip';
 import { formatCompactCurrency } from '../utils/format';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import ResponsiveContainer from './ResponsiveContainer';
 
 export default function WaterfallChart({ data = [], height = 350 }) {
   const isMobile = useIsMobile();

@@ -1,5 +1,6 @@
 import React from 'react';
-import { LineChart, Line, ResponsiveContainer } from 'recharts';
+import { LineChart, Line } from 'recharts';
+import ResponsiveContainer from './ResponsiveContainer';
 
 const SparkLine = ({ data = [], color, width = 100, height = 32 }) => {
   if (!data || data.length < 2) {
