@@ -3,6 +3,7 @@
 const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-secret';
@@ -97,6 +98,36 @@ test('POST /api/auth/login with bad credentials returns 401', async () => {
   } else {
     delete require.cache[dbPath];
   }
+});
+
+test('POST /api/auth/login rate limit returns JSON error', async () => {
+  let response;
+
+  for (let i = 0; i < 11; i += 1) {
+    response = await request(app)
+      .post('/api/auth/login')
+      .set('X-Forwarded-For', '203.0.113.10')
+      .send({ username: 'bad', password: 'wrong' })
+      .set('Content-Type', 'application/json');
+  }
+
+  assert.equal(response.status, 429);
+  assert.match(response.headers['content-type'], /application\/json/);
+  assert.equal(response.body.error, 'Too many login attempts. Please try again later.');
+});
+
+test('GET /api/auth/me is not blocked by the login rate limit', async () => {
+  const token = jwt.sign({ id: 1, username: 'test' }, process.env.JWT_SECRET);
+  let response;
+
+  for (let i = 0; i < 12; i += 1) {
+    response = await request(app)
+      .get('/api/auth/me')
+      .set('X-Forwarded-For', '203.0.113.11')
+      .set('Authorization', `Bearer ${token}`);
+  }
+
+  assert.notEqual(response.status, 429);
 });
 
 test('POST /api/auth/login route exists (not 404)', async () => {

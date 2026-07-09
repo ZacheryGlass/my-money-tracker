@@ -29,6 +29,11 @@ const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isProduction = process.env.NODE_ENV === 'production';
+
+const rateLimitJsonHandler = (message) => (req, res) => {
+  res.status(429).json({ error: message });
+};
 
 // Trust the Azure App Service / reverse proxy so req.ip and HTTPS detection work.
 app.set('trust proxy', 1);
@@ -44,14 +49,15 @@ app.use(pinoHttp({
 // Global rate limit: 300 req / 15 min per IP
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: isProduction ? 300 : 5000,
   standardHeaders: true,
   legacyHeaders: false,
+  handler: rateLimitJsonHandler('Too many requests. Please try again later.'),
 }));
 
 // CORS: in production, restrict to the configured frontend origin(s).
 const corsOrigin = process.env.CORS_ORIGIN;
-if (process.env.NODE_ENV === 'production' && corsOrigin) {
+if (isProduction && corsOrigin) {
   const allowed = corsOrigin.split(',').map((o) => o.trim()).filter(Boolean);
   app.use(cors({ origin: allowed, credentials: true }));
 } else {
@@ -78,16 +84,19 @@ app.get('/ready', async (req, res) => {
   }
 });
 
-// Auth rate limit: 10 req / 15 min per IP
-const authRateLimit = rateLimit({
+// Login rate limit: 10 attempts / 15 min per IP.
+// Keep this off /api/auth/me so normal page reloads do not lock out login.
+const loginRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  handler: rateLimitJsonHandler('Too many login attempts. Please try again later.'),
 });
 
 // Routes
-app.use('/api/auth', authRateLimit, authRoutes);
+app.post('/api/auth/login', loginRateLimit);
+app.use('/api/auth', authRoutes);
 app.use('/api/accounts', accountsRoutes);
 app.use('/api/holdings', holdingsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
