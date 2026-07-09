@@ -334,7 +334,7 @@ const PortfolioTimeline = () => {
           </div>
           <p className="text-caption text-tertiary">{visiblePeriodLabel}</p>
         </div>
-        <div className="h-64 md:h-[400px] w-full">
+        <div className="h-64 md:h-[500px] w-full">
           {portfolioData.length === 0 ? (
             <div className="flex items-center justify-center h-full text-caption text-tertiary">No data for this range</div>
           ) : (
@@ -357,7 +357,7 @@ const PortfolioTimeline = () => {
                     fill="var(--gain)"
                     stroke="var(--bg-surface)"
                     strokeWidth={2}
-                    label={{ value: 'High', position: 'top', fill: 'var(--gain)', fontSize: 10 }}
+                    label={{ value: 'High', position: 'top', fill: 'var(--gain)', fontSize: 12 }}
                   />
                 )}
                 {metrics.troughDate && metrics.troughDate !== metrics.peakDate && (
@@ -368,7 +368,7 @@ const PortfolioTimeline = () => {
                     fill="var(--loss)"
                     stroke="var(--bg-surface)"
                     strokeWidth={2}
-                    label={{ value: 'Low', position: 'bottom', fill: 'var(--loss)', fontSize: 10 }}
+                    label={{ value: 'Low', position: 'bottom', fill: 'var(--loss)', fontSize: 12 }}
                   />
                 )}
                 {portfolioData.length > 0 && (
@@ -377,7 +377,7 @@ const PortfolioTimeline = () => {
                     stroke="var(--text-tertiary)"
                     strokeDasharray="4 4"
                     strokeOpacity={0.5}
-                    label={{ value: 'Start', position: 'insideTopLeft', fill: 'var(--text-tertiary)', fontSize: 10 }}
+                    label={{ value: 'Start', position: 'insideTopLeft', fill: 'var(--text-tertiary)', fontSize: 12 }}
                   />
                 )}
               </AreaChart>
@@ -416,7 +416,7 @@ const PortfolioTimeline = () => {
                     fill="var(--loss)"
                     stroke="var(--bg-surface)"
                     strokeWidth={2}
-                    label={{ value: 'Max', position: 'bottom', fill: 'var(--loss)', fontSize: 10 }}
+                    label={{ value: 'Max', position: 'bottom', fill: 'var(--loss)', fontSize: 12 }}
                   />
                 )}
               </AreaChart>

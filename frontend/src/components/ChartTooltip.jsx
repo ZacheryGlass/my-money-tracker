@@ -9,11 +9,11 @@ const ChartTooltip = ({ active, payload, label, formatValue = formatCurrency, fo
 
   return (
     <div
-      className="p-2 shadow-float"
+      className="p-3 shadow-float"
       style={{
         backgroundColor: TOOLTIP_STYLE.bg,
         border: `1px solid ${TOOLTIP_STYLE.border}`,
-        minWidth: '140px',
+        minWidth: '160px',
       }}
     >
       <p className="text-caption mb-1" style={{ color: TOOLTIP_STYLE.label }}>
@@ -25,8 +25,8 @@ const ChartTooltip = ({ active, payload, label, formatValue = formatCurrency, fo
             <span
               className="inline-block rounded-full flex-shrink-0"
               style={{
-                width: 6,
-                height: 6,
+                width: 8,
+                height: 8,
                 backgroundColor: entry.color,
               }}
             />

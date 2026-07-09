@@ -92,7 +92,7 @@ const TickerHistoryChart = ({ data, series, tickers, loading }) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 md:h-[400px] card">
+      <div className="flex items-center justify-center h-64 md:h-[520px] card">
         <div className="flex flex-col items-center gap-3">
           <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
           <span className="text-caption text-tertiary">Loading...</span>
@@ -103,7 +103,7 @@ const TickerHistoryChart = ({ data, series, tickers, loading }) => {
 
   if (!data || data.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 md:h-[400px] card">
+      <div className="flex items-center justify-center h-64 md:h-[520px] card">
         <p className="text-body-sm text-tertiary text-center px-4">
           No history data found for the selected tickers or date range.
         </p>
@@ -113,7 +113,7 @@ const TickerHistoryChart = ({ data, series, tickers, loading }) => {
 
   return (
     <div className="card p-4 mb-4">
-      <div className="h-64 md:h-[400px] w-full">
+      <div className="h-64 md:h-[520px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={chartData}

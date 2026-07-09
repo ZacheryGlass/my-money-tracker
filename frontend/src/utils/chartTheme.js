@@ -6,22 +6,22 @@ export const CHART_COLORS = [
 ];
 
 export const GRID_STYLE = {
-  stroke: '#2A2B2C',
+  stroke: 'var(--border-hover)',
   strokeDasharray: '3 3',
 };
 
 export const AXIS_STYLE = {
-  stroke: '#8C8C8C',
-  fontSize: 11,
+  stroke: 'var(--text-secondary)',
+  fontSize: 13,
   tickLine: false,
-  axisLine: { stroke: '#2A2B2C' },
+  axisLine: { stroke: 'var(--border)' },
 };
 
 export const TOOLTIP_STYLE = {
-  bg: '#202122',
-  border: '#333536',
-  text: '#ededed',
-  label: '#8C8C8C',
+  bg: 'var(--bg-surface-2)',
+  border: 'var(--border-hover)',
+  text: 'var(--text-primary)',
+  label: 'var(--text-secondary)',
 };
 
 export const areaGradient = (id, color, topOpacity = 0.25) =>

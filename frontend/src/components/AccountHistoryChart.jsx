@@ -212,7 +212,7 @@ const AccountHistoryChart = ({
     : (value) => formatCompactCurrency(value);
   const axisStyle = {
     stroke: 'var(--text-secondary)',
-    fontSize: 12,
+    fontSize: 13,
     tickLine: false,
     axisLine: { stroke: 'var(--border)' },
   };

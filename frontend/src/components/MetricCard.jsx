@@ -10,17 +10,17 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
   return (
     <div
       onClick={onClick}
-      className={`card p-4 flex flex-col gap-2${onClick ? ' cursor-pointer hover:border-border-hover' : ''}`}
+      className={`card p-3.5 flex flex-col gap-1.5${onClick ? ' cursor-pointer hover:border-border-hover' : ''}`}
     >
       <div className="flex items-start justify-between">
         <div>
-          <span className="text-caption text-tertiary uppercase tracking-wide">
+          <span className="text-caption-upper text-secondary uppercase">
             {label}
           </span>
           {change && (
             <div className={`flex items-center gap-1 mt-0.5 ${changeClass}`}>
               <span className="text-caption font-semibold">{change}</span>
-              {trend === 'up' ? <ArrowUpRight size={12} /> : trend === 'down' ? <ArrowDownRight size={12} /> : null}
+              {trend === 'up' ? <ArrowUpRight size={14} /> : trend === 'down' ? <ArrowDownRight size={14} /> : null}
             </div>
           )}
         </div>
@@ -36,7 +36,7 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
           {value}
         </span>
         {caption && (
-          <p className="mt-1 text-caption text-tertiary">
+          <p className="mt-1 text-body-sm text-secondary">
             {caption}
           </p>
         )}
