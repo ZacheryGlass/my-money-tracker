@@ -26,9 +26,18 @@ const DashboardTable = ({ items, onNavigate }) => {
       {
         accessorKey: 'name',
         header: 'Asset Name',
-        cell: ({ getValue }) => (
-          <span className="font-semibold text-primary">{getValue()}</span>
-        )
+        cell: ({ getValue }) => {
+          const name = getValue();
+          return (
+            <span className="block truncate font-semibold text-primary" title={name}>
+              {name}
+            </span>
+          );
+        },
+        meta: {
+          headerClassName: 'w-[30%] min-w-[220px]',
+          cellClassName: 'w-[30%] min-w-[220px]',
+        },
       },
       {
         accessorKey: 'ticker',
@@ -38,6 +47,10 @@ const DashboardTable = ({ items, onNavigate }) => {
             {getValue() || '-'}
           </span>
         ),
+        meta: {
+          headerClassName: 'w-[95px]',
+          cellClassName: 'w-[95px] whitespace-nowrap',
+        },
       },
       {
         accessorKey: 'value',
@@ -51,22 +64,38 @@ const DashboardTable = ({ items, onNavigate }) => {
             </span>
           );
         },
+        meta: {
+          align: 'right',
+          headerClassName: 'w-[150px]',
+          cellClassName: 'w-[150px] whitespace-nowrap text-right',
+        },
       },
       {
         accessorKey: 'account',
         header: 'Account',
-        cell: ({ row }) => (
-          <span className="text-tertiary">
-            {accountDisplayNames.get(row.original.account_id) || row.original.account || 'Other'}
-          </span>
-        )
+        cell: ({ row }) => {
+          const name = accountDisplayNames.get(row.original.account_id) || row.original.account || 'Other';
+          return (
+            <span className="block truncate text-tertiary" title={name}>
+              {name}
+            </span>
+          );
+        },
+        meta: {
+          headerClassName: 'w-[220px]',
+          cellClassName: 'w-[220px]',
+        },
       },
       {
         accessorKey: 'category',
         header: 'Category',
         cell: ({ getValue }) => (
           <span className="text-caption text-tertiary">{formatCategoryLabel(getValue())}</span>
-        )
+        ),
+        meta: {
+          headerClassName: 'w-[150px]',
+          cellClassName: 'w-[150px] whitespace-nowrap',
+        },
       },
       {
         accessorKey: 'type',
@@ -84,6 +113,10 @@ const DashboardTable = ({ items, onNavigate }) => {
               {type === 'liability' ? 'Liability' : 'Asset'}
             </span>
           );
+        },
+        meta: {
+          headerClassName: 'w-[110px]',
+          cellClassName: 'w-[110px] whitespace-nowrap',
         },
       },
     ],
@@ -128,25 +161,28 @@ const DashboardTable = ({ items, onNavigate }) => {
   return (
     <div className="space-y-4">
       <div>
-        <div className="hidden lg:block overflow-x-auto">
-          <table className="min-w-full divide-y divide-border">
+        <div className="hidden max-w-full overflow-x-auto lg:block">
+          <table className="w-full min-w-[945px] table-fixed divide-y divide-border">
             <thead className="bg-surface-2">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <th
-                      key={header.id}
-                      className="px-3 py-2 text-left text-caption font-semibold uppercase tracking-wide text-tertiary cursor-pointer hover:bg-surface-3 hover:text-secondary transition-colors"
-                      onClick={header.column.getToggleSortingHandler()}
-                    >
-                      <div className="flex items-center gap-1">
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        <span className="opacity-50">
-                          {header.column.getIsSorted() === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                        </span>
-                      </div>
-                    </th>
-                  ))}
+                  {headerGroup.headers.map((header) => {
+                    const meta = header.column.columnDef.meta || {};
+                    return (
+                      <th
+                        key={header.id}
+                        className={`cursor-pointer px-3 py-2 text-left text-caption font-semibold uppercase tracking-wide text-tertiary transition-colors hover:bg-surface-3 hover:text-secondary ${meta.headerClassName || ''}`}
+                        onClick={header.column.getToggleSortingHandler()}
+                      >
+                        <div className={`flex items-center gap-1 ${meta.align === 'right' ? 'justify-end' : ''}`}>
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <span className="opacity-50">
+                            {header.column.getIsSorted() === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          </span>
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
               ))}
             </thead>
@@ -160,11 +196,14 @@ const DashboardTable = ({ items, onNavigate }) => {
               ) : (
                 table.getRowModel().rows.map((row) => (
                   <tr key={row.id} className="hover:bg-surface-2 transition-colors cursor-pointer" onClick={() => onNavigate('accounts')}>
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-3 py-2 whitespace-nowrap text-body-sm">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
+                    {row.getVisibleCells().map((cell) => {
+                      const meta = cell.column.columnDef.meta || {};
+                      return (
+                        <td key={cell.id} className={`px-3 py-2 text-body-sm ${meta.cellClassName || 'whitespace-nowrap'}`}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))
               )}
@@ -181,8 +220,8 @@ const DashboardTable = ({ items, onNavigate }) => {
               <div key={row.id} className="p-3 hover:bg-surface-2 transition-colors cursor-pointer" onClick={() => onNavigate('accounts')}>
                 <div className="space-y-2">
                   <div className="flex justify-between items-start">
-                    <div>
-                      <div className="text-body-sm font-semibold text-primary">{row.original.name}</div>
+                    <div className="min-w-0 pr-3">
+                      <div className="truncate text-body-sm font-semibold text-primary">{row.original.name}</div>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="font-money text-caption px-1.5 py-0.5 bg-surface-3 text-tertiary border border-border">
                           {row.original.ticker || '-'}

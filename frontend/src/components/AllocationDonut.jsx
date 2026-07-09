@@ -56,15 +56,15 @@ const AllocationDonut = ({ items = [], className = '' }) => {
     <div className={`p-4 flex flex-col gap-4 ${className}`}>
       <div className="flex items-center justify-between">
         <h3 className="text-caption text-tertiary uppercase tracking-wide">
-          Asset Allocation
+          By Account
         </h3>
         <span className="text-caption text-accent px-1.5 py-0.5 bg-accent-muted">
-          BY ACCOUNT
+          {slices.length} GROUPS
         </span>
       </div>
 
-      <div className="flex flex-col md:flex-row items-center gap-6">
-        <div style={{ position: 'relative', width: '100%', height: 200, maxWidth: 200 }} className="flex-shrink-0">
+      <div className="flex flex-col items-center gap-6 md:flex-row">
+        <div style={{ position: 'relative', width: '100%', height: 220, maxWidth: 220 }} className="flex-shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -112,13 +112,13 @@ const AllocationDonut = ({ items = [], className = '' }) => {
           </div>
         </div>
 
-        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 w-full">
+        <div className="grid w-full flex-1 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
           {slices.map((entry) => {
             const pct = total > 0 ? (entry.value / total) * 100 : 0;
             return (
               <div
                 key={entry.name}
-                className="flex items-center justify-between py-1 px-2 hover:bg-surface-2 transition-colors"
+                className="flex items-center justify-between gap-3 px-2 py-1 transition-colors hover:bg-surface-2"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span

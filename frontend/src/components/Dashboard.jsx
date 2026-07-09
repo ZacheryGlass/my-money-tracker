@@ -8,6 +8,16 @@ import AllocationDonut from './AllocationDonut';
 import SparkLine from './SparkLine';
 import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
 
+const formatAttentionNames = (items = []) => {
+  const names = items
+    .map((item) => item.institutionName)
+    .filter(Boolean);
+  if (names.length === 0) return 'linked institutions';
+  const visible = names.slice(0, 3).join(', ');
+  const extra = names.length > 3 ? ` and ${names.length - 3} more` : '';
+  return `${visible}${extra}`;
+};
+
 const Dashboard = ({ onNavigate }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -112,31 +122,51 @@ const Dashboard = ({ onNavigate }) => {
     return buildAccountDisplayNameMap(accounts);
   }, [data]);
 
-  const freshnessAlerts = useMemo(() => {
+  const freshnessIssues = useMemo(() => {
     const freshness = data?.freshness;
     if (!freshness || freshness.status === 'ok') return [];
 
-    const alerts = [];
+    const issues = [];
     if (freshness.snapshot?.isStale) {
       const dateText = freshness.snapshot.latestDate
         ? `latest snapshot is ${formatDateDisplay(freshness.snapshot.latestDate)}`
         : 'no portfolio snapshot has been recorded';
-      alerts.push(`Portfolio history may be stale: ${dateText}.`);
+      issues.push({
+        title: 'Portfolio history',
+        detail: `History may be stale because ${dateText}.`,
+        action: 'Open timeline',
+        page: 'portfolio-timeline',
+      });
     }
 
     if (freshness.plaid?.errorCount > 0) {
-      const firstItem = freshness.plaid.attentionItems?.find((item) => item.hasError);
-      const name = firstItem?.institutionName ? ` (${firstItem.institutionName})` : '';
-      alerts.push(`${freshness.plaid.errorCount} linked institution${freshness.plaid.errorCount === 1 ? '' : 's'} need attention${name}.`);
+      const erroredItems = freshness.plaid.attentionItems?.filter((item) => item.hasError) || [];
+      issues.push({
+        title: 'Institution errors',
+        detail: `${freshness.plaid.errorCount} linked institution${freshness.plaid.errorCount === 1 ? '' : 's'} need attention: ${formatAttentionNames(erroredItems)}.`,
+        action: 'Review settings',
+        page: 'settings',
+      });
     } else if (freshness.plaid?.staleCount > 0) {
-      alerts.push(`${freshness.plaid.staleCount} linked institution${freshness.plaid.staleCount === 1 ? '' : 's'} have not synced recently.`);
+      const staleItems = freshness.plaid.attentionItems?.filter((item) => item.isStale) || [];
+      issues.push({
+        title: 'Institution sync',
+        detail: `${freshness.plaid.staleCount} linked institution${freshness.plaid.staleCount === 1 ? '' : 's'} have not synced recently: ${formatAttentionNames(staleItems)}.`,
+        action: 'Review settings',
+        page: 'settings',
+      });
     }
 
     if (freshness.prices?.isStale) {
-      alerts.push(`Market prices are about ${Math.round(freshness.prices.ageHours)} hours old.`);
+      issues.push({
+        title: 'Market prices',
+        detail: `Market prices are about ${Math.round(freshness.prices.ageHours)} hours old.`,
+        action: 'Refresh now',
+        refresh: true,
+      });
     }
 
-    return alerts;
+    return issues;
   }, [data]);
 
   const accountSummaries = useMemo(() => {
@@ -162,6 +192,18 @@ const Dashboard = ({ onNavigate }) => {
         .sort((a, b) => (a.snapshot_date < b.snapshot_date ? -1 : 1))
         .map((d) => ({ value: parseFloat(d.total_value) }));
       s.sparkData = history;
+      if (history.length >= 2) {
+        const first = history[0]?.value || 0;
+        const last = history[history.length - 1]?.value || 0;
+        const change = last - first;
+        s.hasTrend = true;
+        s.trendAmount = change;
+        s.trendLabel = `${change >= 0 ? '+' : '-'}${formatCompactCurrency(Math.abs(change))}`;
+      } else {
+        s.hasTrend = false;
+        s.trendAmount = 0;
+        s.trendLabel = 'No trend';
+      }
     });
 
     return summaries;
@@ -179,7 +221,7 @@ const Dashboard = ({ onNavigate }) => {
   return (
     <div className="px-4 py-4 max-w-[1600px] space-y-4">
       {/* Header */}
-      <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+      <section className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-caption text-tertiary uppercase tracking-wide">Net Worth</span>
@@ -208,7 +250,7 @@ const Dashboard = ({ onNavigate }) => {
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="flex items-center gap-2 px-3 py-1.5 bg-accent text-white rounded text-button font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
+          className="inline-flex w-fit items-center gap-2 rounded bg-accent px-3 py-1.5 text-button font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
         >
           <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
           {refreshing ? 'Syncing...' : 'Refresh'}
@@ -221,12 +263,44 @@ const Dashboard = ({ onNavigate }) => {
         </div>
       )}
 
-      {freshnessAlerts.length > 0 && (
-        <div className="flex gap-3 px-3 py-2 bg-amber-500/10 border border-amber-500/25 text-amber-300 text-body-sm">
-          <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-          <div className="space-y-1">
-            {freshnessAlerts.map((alert) => (
-              <p key={alert}>{alert}</p>
+      {freshnessIssues.length > 0 && (
+        <div className="border border-amber-500/25 bg-amber-500/10 px-3 py-3 text-body-sm text-amber-300">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="flex gap-3">
+              <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+              <div>
+                <h2 className="text-caption font-semibold uppercase tracking-wide text-amber-200">
+                  Data health needs attention
+                </h2>
+                <p className="mt-1 text-tertiary">
+                  {freshnessIssues.length} issue{freshnessIssues.length === 1 ? '' : 's'} may affect the numbers below.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => onNavigate('settings')}
+              className="inline-flex w-fit items-center gap-1 border border-amber-500/25 bg-surface px-3 py-1.5 text-caption font-semibold uppercase tracking-wide text-amber-200 transition-colors hover:border-amber-500/50 hover:text-amber-100"
+            >
+              Review settings <ChevronRight size={12} />
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-3">
+            {freshnessIssues.map((issue) => (
+              <div key={issue.title} className="border border-amber-500/20 bg-base/40 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-caption font-semibold uppercase tracking-wide text-amber-200">{issue.title}</h3>
+                    <p className="mt-1 text-body-sm leading-snug text-secondary">{issue.detail}</p>
+                  </div>
+                  <button
+                    onClick={() => (issue.refresh ? handleRefresh() : onNavigate(issue.page))}
+                    className="shrink-0 text-caption font-semibold uppercase tracking-wide text-accent hover:underline"
+                  >
+                    {issue.action}
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -263,7 +337,10 @@ const Dashboard = ({ onNavigate }) => {
         {/* Left: Allocation */}
         <div className="xl:col-span-3 space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-title-sm text-tertiary uppercase tracking-wide">Asset Allocation</h2>
+            <div>
+              <h2 className="text-title-sm text-tertiary uppercase tracking-wide">Asset Allocation</h2>
+              <p className="text-caption text-tertiary">Positive asset value by account</p>
+            </div>
             <button onClick={() => onNavigate('assets')} className="text-caption text-accent flex items-center gap-1 hover:underline">
               Full Breakdown <ChevronRight size={12} />
             </button>
@@ -300,7 +377,18 @@ const Dashboard = ({ onNavigate }) => {
                     </div>
                   </div>
                 </div>
-                <SparkLine data={account.sparkData} width={80} height={28} />
+                <div className="flex items-center gap-3">
+                  <div className="min-w-[58px] text-right">
+                    <div className={`font-money text-caption font-semibold ${
+                      account.hasTrend ? (account.trendAmount >= 0 ? 'text-gain' : 'text-loss') : 'text-tertiary'
+                    }`}
+                    >
+                      {account.trendLabel}
+                    </div>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-tertiary">30 day</div>
+                  </div>
+                  <SparkLine data={account.sparkData} width={72} height={28} />
+                </div>
               </div>
             ))}
 
