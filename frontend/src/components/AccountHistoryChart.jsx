@@ -18,7 +18,7 @@ const PORTFOLIO_COLOR = '#3994BC';
 
 const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
   return (
-    <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 mt-3 px-3">
+    <div className="mt-3 flex max-h-24 flex-wrap justify-center gap-x-2 gap-y-1 overflow-y-auto px-3">
       {payload.map((entry, index) => {
         const isHidden = hiddenSeries.includes(entry.value);
         return (
@@ -35,7 +35,7 @@ const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
               className="w-2 h-2 rounded-full"
               style={{ backgroundColor: entry.color }}
             />
-            <span className={`text-caption ${isHidden ? 'text-tertiary' : 'text-secondary'}`}>
+            <span className={`max-w-[220px] truncate text-caption ${isHidden ? 'text-tertiary' : 'text-secondary'}`} title={entry.value}>
               {entry.value}
             </span>
           </button>

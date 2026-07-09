@@ -15,7 +15,7 @@ import ResponsiveContainer from './ResponsiveContainer';
 
 const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
   return (
-    <div className="flex flex-wrap justify-center gap-x-2 gap-y-1 mt-3 px-3">
+    <div className="mt-3 flex max-h-24 flex-wrap justify-center gap-x-2 gap-y-1 overflow-y-auto px-3">
       {payload.map((entry, index) => {
         const isHidden = hiddenSeries.includes(entry.value);
         return (
@@ -32,8 +32,8 @@ const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
               className="w-2 h-2 rounded-full"
               style={{ backgroundColor: entry.color }}
             />
-            <span className={`text-caption ${isHidden ? 'text-tertiary' : 'text-secondary'}`}>
-              {entry.value}
+            <span className={`max-w-[220px] truncate text-caption ${isHidden ? 'text-tertiary' : 'text-secondary'}`} title={entry.label || entry.value}>
+              {entry.label || entry.value}
             </span>
           </button>
         );
@@ -42,7 +42,7 @@ const CustomLegend = ({ payload, hiddenSeries, onToggle }) => {
   );
 };
 
-const TickerHistoryChart = ({ data, tickers, loading }) => {
+const TickerHistoryChart = ({ data, series, tickers, loading }) => {
   const isMobile = useIsMobile();
   const [hiddenSeries, setHiddenSeries] = useState([]);
 
@@ -63,25 +63,32 @@ const TickerHistoryChart = ({ data, tickers, loading }) => {
       if (!dateMap.has(dateKey)) {
         dateMap.set(dateKey, { date: dateKey });
       }
-      dateMap.get(dateKey)[item.ticker] = parseFloat(item.value);
+      dateMap.get(dateKey)[item.seriesKey || item.ticker] = parseFloat(item.value);
     });
 
     return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
   }, [data]);
 
-  const uniqueTickers = useMemo(() => {
-    if (tickers && tickers.length > 0) return tickers;
-    return [...new Set(data.map(item => item.ticker))].sort();
-  }, [data, tickers]);
+  const uniqueSeries = useMemo(() => {
+    if (series && series.length > 0) return series.map((item) => ({ key: item.key, label: item.label || item.ticker }));
+    if (tickers && tickers.length > 0) return tickers.map((ticker) => ({ key: ticker, label: ticker }));
+    return [...new Set(data.map(item => item.seriesKey || item.ticker))]
+      .sort()
+      .map((key) => ({
+        key,
+        label: data.find((item) => (item.seriesKey || item.ticker) === key)?.seriesLabel || key,
+      }));
+  }, [data, series, tickers]);
 
   const legendPayload = useMemo(() => {
-    return uniqueTickers.map((ticker, index) => ({
-      value: ticker,
+    return uniqueSeries.map((item, index) => ({
+      value: item.key,
+      label: item.label,
       type: 'line',
-      id: ticker,
+      id: item.key,
       color: CHART_COLORS[index % CHART_COLORS.length]
     }));
-  }, [uniqueTickers]);
+  }, [uniqueSeries]);
 
   if (loading) {
     return (
@@ -130,18 +137,18 @@ const TickerHistoryChart = ({ data, tickers, loading }) => {
               content={<ChartTooltip formatValue={formatCurrency} formatLabel={formatDateAxis} />}
               cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
             />
-            {uniqueTickers.map((ticker, index) => (
+            {uniqueSeries.map((item, index) => (
               <Line
-                key={ticker}
+                key={item.key}
                 type="monotone"
-                dataKey={ticker}
-                name={ticker}
+                dataKey={item.key}
+                name={item.label}
                 stroke={CHART_COLORS[index % CHART_COLORS.length]}
                 strokeWidth={isMobile ? 1 : 1.5}
                 dot={false}
                 activeDot={{ r: isMobile ? 3 : 4, strokeWidth: 0, fill: CHART_COLORS[index % CHART_COLORS.length] }}
                 connectNulls
-                hide={hiddenSeries.includes(ticker)}
+                hide={hiddenSeries.includes(item.key)}
                 animationDuration={800}
               />
             ))}
@@ -149,7 +156,7 @@ const TickerHistoryChart = ({ data, tickers, loading }) => {
         </ResponsiveContainer>
       </div>
       
-      {uniqueTickers.length > 1 && (
+      {uniqueSeries.length > 1 && (
         <CustomLegend 
           payload={legendPayload} 
           hiddenSeries={hiddenSeries} 

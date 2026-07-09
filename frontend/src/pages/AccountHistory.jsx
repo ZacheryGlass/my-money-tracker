@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { format, subDays, subMonths, subYears, differenceInDays, parseISO } from 'date-fns';
-import { Check, Calendar } from 'lucide-react';
+import { Check, Search, X } from 'lucide-react';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import { accounts as accountsApi, history as historyApi } from '../utils/api';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
@@ -36,6 +36,7 @@ const AccountHistory = () => {
   const [portfolioData, setPortfolioData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [accountSearch, setAccountSearch] = useState('');
 
   useEffect(() => {
     const fetchAccounts = async () => {
@@ -126,6 +127,23 @@ const AccountHistory = () => {
     () => accounts.map((account) => ({ ...account, effective_name: displayAccountName(account) })),
     [accounts, displayAccountName]
   );
+  const filteredAccounts = useMemo(() => {
+    const query = accountSearch.trim().toLowerCase();
+    if (!query) return displayAccounts;
+    return displayAccounts.filter((account) =>
+      account.effective_name.toLowerCase().includes(query) ||
+      account.name?.toLowerCase().includes(query) ||
+      account.type?.toLowerCase().includes(query)
+    );
+  }, [accountSearch, displayAccounts]);
+  const selectedDisplayAccounts = useMemo(() => {
+    const selected = new Set(selectedAccounts);
+    return displayAccounts.filter((account) => selected.has(account.id));
+  }, [displayAccounts, selectedAccounts]);
+  const selectAccountPreset = (predicate, includePortfolio = false) => {
+    setShowPortfolio(includePortfolio);
+    setSelectedAccounts(displayAccounts.filter(predicate).map((account) => account.id));
+  };
 
   return (
     <div className="px-4 py-4">
@@ -168,10 +186,92 @@ const AccountHistory = () => {
               {showPortfolio && <Check size={12} />}
               Net Worth
             </button>
+            <button
+              onClick={() => { setShowPortfolio(true); setSelectedAccounts([]); }}
+              className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${
+                showPortfolio && selectedAccounts.length === 0 ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'
+              }`}
+            >
+              {showPortfolio && selectedAccounts.length === 0 && <Check size={12} />}
+              Total Portfolio
+            </button>
+            <button
+              onClick={() => selectAccountPreset((account) => !['credit', 'loan'].includes(account.type))}
+              className="flex items-center gap-1.5 border border-border bg-surface px-2 py-1 text-caption text-tertiary transition-colors hover:text-secondary"
+            >
+              Assets Only
+            </button>
+            <button
+              onClick={() => selectAccountPreset((account) => ['credit', 'loan'].includes(account.type))}
+              className="flex items-center gap-1.5 border border-border bg-surface px-2 py-1 text-caption text-tertiary transition-colors hover:text-secondary"
+            >
+              Liabilities Only
+            </button>
+            <button
+              onClick={() => selectAccountPreset((account) => account.type === 'depository')}
+              className="flex items-center gap-1.5 border border-border bg-surface px-2 py-1 text-caption text-tertiary transition-colors hover:text-secondary"
+            >
+              Cash Only
+            </button>
           </div>
 
-          <div className="flex flex-wrap gap-1">
-            {accounts.map((account) => {
+          <div className="grid gap-3 border-t border-border pt-3 lg:grid-cols-[minmax(220px,0.7fr)_1fr]">
+            <div>
+              <label className="mb-1 flex items-center gap-2 text-caption uppercase text-tertiary">
+                <Search size={12} />
+                Search Accounts
+              </label>
+              <div className="relative">
+                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />
+                <input
+                  type="text"
+                  value={accountSearch}
+                  onChange={(event) => setAccountSearch(event.target.value)}
+                  placeholder="Name or type"
+                  className="w-full bg-surface-3 border-border py-1 pl-7 pr-7 text-caption"
+                />
+                {accountSearch && (
+                  <button
+                    onClick={() => setAccountSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-tertiary hover:text-primary"
+                    aria-label="Clear account search"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-1 text-caption uppercase text-tertiary">
+                Selected {selectedDisplayAccounts.length}{showPortfolio ? ' + Net Worth' : ''}
+              </div>
+              <div className="flex min-h-[30px] flex-wrap gap-1">
+                {selectedDisplayAccounts.slice(0, 8).map((account) => (
+                  <button
+                    key={account.id}
+                    onClick={() => handleAccountToggle(account.id)}
+                    className="flex max-w-[220px] items-center gap-1.5 border border-accent/20 bg-accent-muted px-2 py-1 text-caption text-accent"
+                    title={account.effective_name}
+                  >
+                    <span className="truncate">{account.effective_name}</span>
+                    <X size={10} />
+                  </button>
+                ))}
+                {selectedDisplayAccounts.length > 8 && (
+                  <span className="border border-border bg-surface-2 px-2 py-1 text-caption text-tertiary">
+                    +{selectedDisplayAccounts.length - 8} more
+                  </span>
+                )}
+                {selectedDisplayAccounts.length === 0 && !showPortfolio && (
+                  <span className="px-2 py-1 text-caption text-tertiary">No account series selected</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex max-h-36 flex-wrap gap-1 overflow-y-auto pr-1">
+            {filteredAccounts.map((account) => {
               const isSelected = selectedAccounts.includes(account.id);
               return (
                 <button
@@ -180,12 +280,15 @@ const AccountHistory = () => {
                   className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${
                     isSelected ? 'bg-surface-3 border-accent/30 text-primary' : 'bg-surface border-border text-tertiary hover:text-secondary'
                   }`}
+                  title={account.effective_name}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${isSelected ? 'bg-accent' : 'bg-tertiary'}`} />
-                  <span className="max-w-[200px] truncate">{displayAccountName(account)}</span>
+                  <span className="max-w-[200px] truncate">{account.effective_name}</span>
+                  <span className="text-[9px] uppercase text-tertiary">{account.type}</span>
                 </button>
               );
             })}
+            {filteredAccounts.length === 0 && <p className="py-1 text-caption text-tertiary">No accounts found</p>}
           </div>
 
           {dateRangeOption === 'custom' && (

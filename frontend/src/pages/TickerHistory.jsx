@@ -27,15 +27,51 @@ const TickerHistory = () => {
   const [initialLoading, setInitialLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const availableTickers = useMemo(() => {
-    const tickers = holdings.map(h => h.ticker).filter(t => t && t.trim() !== '');
-    return [...new Set(tickers)].sort();
+  const tickerOptions = useMemo(() => {
+    const tickerAccounts = new Map();
+    holdings.forEach((holding) => {
+      if (!holding.ticker?.trim()) return;
+      const ticker = holding.ticker.trim().toUpperCase();
+      if (!tickerAccounts.has(ticker)) tickerAccounts.set(ticker, new Set());
+      tickerAccounts.get(ticker).add(holding.account_id);
+    });
+
+    const optionMap = new Map();
+    holdings.forEach((holding) => {
+      if (!holding.ticker?.trim() || !holding.account_id) return;
+      const ticker = holding.ticker.trim().toUpperCase();
+      const key = `${ticker}:${holding.account_id}`;
+      const duplicateTicker = (tickerAccounts.get(ticker)?.size || 0) > 1;
+      const accountName = holding.account_name || `Account ${holding.account_id}`;
+      const currentValue = Number(holding.current_value ?? holding.manual_value ?? holding.value ?? 0);
+      const existing = optionMap.get(key);
+      optionMap.set(key, {
+        key,
+        ticker,
+        accountId: holding.account_id,
+        accountName,
+        label: duplicateTicker ? `${ticker} · ${accountName}` : ticker,
+        value: (existing?.value || 0) + currentValue,
+      });
+    });
+
+    return Array.from(optionMap.values()).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
   }, [holdings]);
 
   const filteredTickers = useMemo(() => {
-    if (!searchQuery) return availableTickers;
-    return availableTickers.filter(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [availableTickers, searchQuery]);
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return tickerOptions;
+    return tickerOptions.filter((option) =>
+      option.ticker.toLowerCase().includes(query) ||
+      option.accountName.toLowerCase().includes(query) ||
+      option.label.toLowerCase().includes(query)
+    );
+  }, [tickerOptions, searchQuery]);
+
+  const selectedTickerOptions = useMemo(() => {
+    const optionByKey = new Map(tickerOptions.map((option) => [option.key, option]));
+    return selectedTickers.map((key) => optionByKey.get(key)).filter(Boolean);
+  }, [selectedTickers, tickerOptions]);
 
   useEffect(() => {
     const loadHoldings = async () => {
@@ -43,7 +79,18 @@ const TickerHistory = () => {
         const data = await holdingsAPI.getAll();
         const list = data.holdings || [];
         setHoldings(list);
-        const topTickers = list.filter(h => h.ticker).sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0)).slice(0, 5).map(h => h.ticker);
+        const optionMap = new Map();
+        list.forEach((holding) => {
+          if (!holding.ticker?.trim() || !holding.account_id) return;
+          const ticker = holding.ticker.trim().toUpperCase();
+          const key = `${ticker}:${holding.account_id}`;
+          const currentValue = Number(holding.current_value ?? holding.manual_value ?? holding.value ?? 0);
+          optionMap.set(key, { key, value: (optionMap.get(key)?.value || 0) + currentValue });
+        });
+        const topTickers = Array.from(optionMap.values())
+          .sort((a, b) => b.value - a.value)
+          .slice(0, 5)
+          .map((option) => option.key);
         setSelectedTickers(topTickers);
       } catch {
         setError('Failed to load holdings');
@@ -65,17 +112,26 @@ const TickerHistory = () => {
   }, [dateRangeOption]);
 
   useEffect(() => {
-    if (!startDate || !endDate || selectedTickers.length === 0) {
-      if (selectedTickers.length === 0) setHistoryData([]);
+    if (!startDate || !endDate || selectedTickerOptions.length === 0) {
+      if (selectedTickerOptions.length === 0) setHistoryData([]);
       return;
     }
     const fetchHistory = async () => {
       setLoading(true); setError(null);
       try {
         const params = { startDate, endDate, limit: DEFAULT_HISTORY_LIMIT };
-        const promises = selectedTickers.map(ticker => historyAPI.getTickers({ ...params, ticker }));
+        const promises = selectedTickerOptions.map((option) =>
+          historyAPI.getTickers({ ...params, ticker: option.ticker, account_id: option.accountId })
+        );
         const results = await Promise.all(promises);
-        setHistoryData(results.flatMap(r => r.data || []));
+        setHistoryData(results.flatMap((result, index) => {
+          const option = selectedTickerOptions[index];
+          return (result.data || []).map((row) => ({
+            ...row,
+            seriesKey: option.key,
+            seriesLabel: option.label,
+          }));
+        }));
       } catch {
         setError('Failed to load history data');
         setHistoryData([]);
@@ -84,14 +140,14 @@ const TickerHistory = () => {
       }
     };
     fetchHistory();
-  }, [selectedTickers, startDate, endDate]);
+  }, [selectedTickerOptions, startDate, endDate]);
 
-  const handleTickerToggle = (ticker) => {
-    setSelectedTickers(prev => prev.includes(ticker) ? prev.filter(t => t !== ticker) : [...prev, ticker]);
+  const handleTickerToggle = (tickerKey) => {
+    setSelectedTickers(prev => prev.includes(tickerKey) ? prev.filter(t => t !== tickerKey) : [...prev, tickerKey]);
   };
 
   const handleSelectAll = () => {
-    setSelectedTickers(selectedTickers.length === availableTickers.length ? [] : availableTickers);
+    setSelectedTickers(selectedTickers.length === tickerOptions.length ? [] : tickerOptions.map((option) => option.key));
   };
 
   if (initialLoading) {
@@ -141,29 +197,31 @@ const TickerHistory = () => {
               <button
                 onClick={handleSelectAll}
                 className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${
-                  selectedTickers.length === availableTickers.length && availableTickers.length > 0
+                    selectedTickers.length === tickerOptions.length && tickerOptions.length > 0
                     ? 'bg-accent-muted border-accent/30 text-accent'
                     : 'bg-surface border-border text-tertiary hover:text-secondary'
                 }`}
               >
-                {selectedTickers.length === availableTickers.length && <Check size={12} />}
-                {selectedTickers.length === availableTickers.length ? 'Deselect All' : 'Select All'}
+                {selectedTickers.length === tickerOptions.length && <Check size={12} />}
+                {selectedTickers.length === tickerOptions.length ? 'Deselect All' : 'Select All'}
               </button>
             </div>
           </div>
 
           <div className="flex max-h-40 flex-wrap gap-1 overflow-y-auto pr-1">
-            {filteredTickers.map((ticker) => {
-              const isSelected = selectedTickers.includes(ticker);
+            {filteredTickers.map((option) => {
+              const isSelected = selectedTickers.includes(option.key);
               return (
                 <button
-                  key={ticker}
-                  onClick={() => handleTickerToggle(ticker)}
+                  key={option.key}
+                  onClick={() => handleTickerToggle(option.key)}
                   className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${
                     isSelected ? 'bg-surface-3 border-accent/30 text-primary' : 'bg-surface border-border text-tertiary hover:text-secondary'
                   }`}
+                  title={option.label}
                 >
-                  <span className="font-semibold">{ticker}</span>
+                  <span className="font-semibold">{option.ticker}</span>
+                  {option.label !== option.ticker && <span className="max-w-[160px] truncate text-tertiary">{option.accountName}</span>}
                   {isSelected && <Check size={10} className="text-accent" />}
                 </button>
               );
@@ -192,7 +250,7 @@ const TickerHistory = () => {
         </div>
       )}
 
-      <TickerHistoryChart data={historyData} tickers={selectedTickers} loading={loading} />
+      <TickerHistoryChart data={historyData} series={selectedTickerOptions} loading={loading} />
     </div>
   );
 };
