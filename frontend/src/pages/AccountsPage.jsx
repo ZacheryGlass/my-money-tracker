@@ -40,6 +40,25 @@ const PlaidBadge = () => (
   </span>
 );
 
+const AccountStatusPills = ({ account, inactive }) => (
+  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+    <span
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
+        account.plaid_item_id
+          ? 'border-accent/20 bg-accent-muted text-accent'
+          : 'border-border bg-surface-3 text-tertiary'
+      }`}
+    >
+      {account.plaid_item_id ? 'Linked' : 'Manual'}
+    </span>
+    {inactive && (
+      <span className="inline-flex items-center rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-300">
+        Inactive
+      </span>
+    )}
+  </div>
+);
+
 const AccountsPage = () => {
   const [accounts, setAccounts] = useState([]);
   const [holdings, setHoldings] = useState([]);
@@ -157,6 +176,13 @@ const AccountsPage = () => {
     return [...filtered].sort((a, b) => (accountTotals.get(b.id) || 0) - (accountTotals.get(a.id) || 0));
   }, [accounts, accountTotals, inactiveAccountIds, showInactive, typeFilter]);
 
+  const hasActiveFilters = Boolean(typeFilter || showInactive);
+  const clearFilters = () => {
+    setTypeFilterRaw('');
+    setShowInactive(false);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
+
   const grandTotal = useMemo(() => {
     return holdings.reduce((sum, h) => sum + (parseFloat(h.current_value) || 0), 0);
   }, [holdings]);
@@ -186,28 +212,46 @@ const AccountsPage = () => {
         id: 'name',
         accessorFn: (row) => displayAccountName(row),
         header: 'Name',
-        cell: ({ row }) => (
-          <div className="flex items-center gap-3 min-w-0">
+        cell: ({ row }) => {
+          const accountName = displayAccountName(row.original);
+          return (
             <div className="min-w-0">
-              <span className="font-bold text-primary text-base truncate block">{displayAccountName(row.original)}</span>
+              <span className="block truncate text-base font-bold text-primary" title={accountName}>
+                {accountName}
+              </span>
               {hasAccountDisplayName(row.original) && (
-                <span className="text-[10px] text-tertiary truncate block uppercase tracking-tight">{row.original.name}</span>
+                <span className="block truncate text-[10px] uppercase tracking-tight text-tertiary" title={row.original.name}>
+                  {row.original.name}
+                </span>
               )}
+              <AccountStatusPills account={row.original} inactive={inactiveAccountIds.has(row.original.id)} />
             </div>
-            {row.original.plaid_item_id && <PlaidBadge />}
-          </div>
-        ),
+          );
+        },
+        meta: {
+          headerClassName: 'w-[42%] min-w-[260px]',
+          cellClassName: 'w-[42%] min-w-[260px]',
+        },
       },
       {
         accessorKey: 'type',
         header: 'Type',
         cell: ({ getValue }) => <TypeBadge type={getValue()} />,
+        meta: {
+          headerClassName: 'w-[120px]',
+          cellClassName: 'w-[120px] whitespace-nowrap',
+        },
       },
       {
         id: 'holdings_count',
         accessorFn: (row) => row.holdings_count || 0,
         header: 'Assets',
-        cell: ({ getValue }) => <span className="font-mono text-base text-secondary">{getValue()}</span>,
+        cell: ({ getValue }) => <span className="block text-right font-mono text-base text-secondary">{getValue()}</span>,
+        meta: {
+          align: 'right',
+          headerClassName: 'w-[90px]',
+          cellClassName: 'w-[90px] whitespace-nowrap',
+        },
       },
       {
         id: 'total_value',
@@ -216,14 +260,19 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`font-mono text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`block text-right font-mono text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
         },
+        meta: {
+          align: 'right',
+          headerClassName: 'w-[150px]',
+          cellClassName: 'w-[150px] whitespace-nowrap',
+        },
       },
     ],
-    [accountTotals, displayAccountName]
+    [accountTotals, displayAccountName, inactiveAccountIds]
   );
 
   const listTable = useReactTable({
@@ -410,34 +459,39 @@ const AccountsPage = () => {
     );
   };
 
-  const renderTable = (table, columns, emptyMessage, onRowClick) => (
-    <div className="card overflow-hidden">
-      <div className="hidden md:block overflow-x-auto">
-        <table className="min-w-full divide-y divide-border">
+  const renderTable = (table, columns, emptyMessage, onRowClick, options = {}) => (
+    <div className="card w-full min-w-0 overflow-hidden">
+      <div className="hidden md:block max-w-full overflow-x-auto">
+        <table className={`${options.tableClassName || 'min-w-full'} divide-y divide-border`}>
           <thead className="bg-surface-2">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    className="px-5 py-5 text-left text-sm font-bold text-tertiary uppercase tracking-wide cursor-pointer hover:bg-surface-3 transition-colors"
-                    onClick={header.column.getToggleSortingHandler()}
-                  >
-                    <div className="flex items-center gap-2">
-                      {flexRender(header.column.columnDef.header, header.getContext())}
-                      {header.column.getIsSorted() && (
-                        <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
-                      )}
-                    </div>
-                  </th>
-                ))}
+                {headerGroup.headers.map((header) => {
+                  const meta = header.column.columnDef.meta || {};
+                  return (
+                    <th
+                      key={header.id}
+                      className={`px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-tertiary transition-colors hover:bg-surface-3 ${
+                        header.column.getCanSort() ? 'cursor-pointer' : ''
+                      } ${meta.headerClassName || ''}`}
+                      onClick={header.column.getToggleSortingHandler()}
+                    >
+                      <div className={`flex items-center gap-2 ${meta.align === 'right' ? 'justify-end' : ''}`}>
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {header.column.getIsSorted() && (
+                          <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
+                        )}
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>
           <tbody className="divide-y divide-border bg-surface">
             {table.getRowModel().rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-5 py-12 text-center text-tertiary text-base font-medium">
+                <td colSpan={columns.length} className="px-4 py-12 text-center text-base font-medium text-tertiary">
                   {emptyMessage}
                 </td>
               </tr>
@@ -448,11 +502,17 @@ const AccountsPage = () => {
                   className={`hover:bg-surface-2 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
                   onClick={() => onRowClick?.(row.original)}
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-5 py-4 whitespace-nowrap text-base text-primary">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
+                  {row.getVisibleCells().map((cell) => {
+                    const meta = cell.column.columnDef.meta || {};
+                    return (
+                      <td
+                        key={cell.id}
+                        className={`px-4 py-3 align-middle text-base text-primary ${meta.cellClassName || 'whitespace-nowrap'}`}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))
             )}
@@ -496,63 +556,98 @@ const AccountsPage = () => {
         </div>
       )}
 
-      <div className="mb-5 rounded border border-border bg-surface overflow-hidden">
-        <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-2 shrink-0">
-            <Filter size={16} className="text-accent" />
-            <span className="text-sm font-bold uppercase tracking-wide text-primary">Filters</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setTypeFilter('')}
-              className={`flex items-center gap-3 rounded border px-3 py-2 transition-all ${
-                typeFilter === ''
-                  ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                  : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
-              }`}
-            >
-              <span className="text-xs font-bold uppercase tracking-wider">All Types</span>
-              <span className="text-[10px] font-mono font-bold opacity-60">{showInactive ? accounts.length : activeAccountCount}</span>
-            </button>
-            {distinctTypes.map((type) => {
-              const count = accounts.filter((a) => a.type === type && (showInactive || !inactiveAccountIds.has(a.id))).length;
-              return (
-                <button
-                  key={type}
-                  onClick={() => setTypeFilter(type)}
-                  className={`flex items-center gap-3 rounded border px-3 py-2 transition-all ${
-                    typeFilter === type
-                      ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                      : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
-                  }`}
-                >
-                  <span className="text-xs font-bold uppercase tracking-wider">{type}</span>
-                  <span className="text-[10px] font-mono font-bold opacity-60">{count}</span>
-                </button>
-              );
-            })}
-            {inactiveAccounts.length > 0 && (
+      <div className="mb-5 overflow-hidden rounded border border-border bg-surface">
+        <div className="flex flex-col gap-4 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-3">
+              <Filter size={16} className="mt-0.5 text-accent" />
+              <div>
+                <span className="block text-sm font-bold uppercase tracking-wide text-primary">Filters</span>
+                <span className="text-xs text-tertiary">
+                  Showing {filteredAccounts.length} of {accounts.length} accounts
+                </span>
+              </div>
+            </div>
+            {hasActiveFilters && (
               <button
-                onClick={() => {
-                  setShowInactive((value) => !value);
-                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                }}
-                className={`flex items-center gap-3 rounded border px-3 py-2 transition-all ${
-                  showInactive
-                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 ring-1 ring-amber-500/10'
+                onClick={clearFilters}
+                className="self-start rounded border border-border bg-surface-2 px-3 py-2 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 flex-1 flex-wrap gap-2">
+              <button
+                onClick={() => setTypeFilter('')}
+                className={`inline-flex items-center gap-3 rounded border px-3 py-2 transition-all ${
+                  typeFilter === ''
+                    ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
                     : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
                 }`}
               >
-                <span className="text-xs font-bold uppercase tracking-wider">{showInactive ? 'Hide Inactive' : 'Show Inactive'}</span>
-                <span className="text-[10px] font-mono font-bold opacity-60">{inactiveAccounts.length}</span>
+                <span className="text-xs font-bold uppercase tracking-wider">All Types</span>
+                <span className="text-[10px] font-mono font-bold opacity-60">{showInactive ? accounts.length : activeAccountCount}</span>
               </button>
+              {distinctTypes.map((type) => {
+                const count = accounts.filter((a) => a.type === type && (showInactive || !inactiveAccountIds.has(a.id))).length;
+                return (
+                  <button
+                    key={type}
+                    onClick={() => setTypeFilter(type)}
+                    className={`inline-flex items-center gap-3 rounded border px-3 py-2 transition-all ${
+                      typeFilter === type
+                        ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
+                        : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
+                    }`}
+                  >
+                    <span className="text-xs font-bold uppercase tracking-wider">{type}</span>
+                    <span className="text-[10px] font-mono font-bold opacity-60">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {inactiveAccounts.length > 0 && (
+              <div className="rounded border border-border bg-surface-2 p-3 lg:w-[290px]">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <span className="block text-xs font-bold uppercase tracking-wide text-primary">Inactive Accounts</span>
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wide text-tertiary">
+                      {inactiveAccounts.length} hidden by default
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowInactive((value) => !value);
+                      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                    }}
+                    className={`rounded border px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all ${
+                      showInactive
+                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/10'
+                        : 'border-border bg-surface text-secondary hover:border-border-hover hover:text-primary'
+                    }`}
+                  >
+                    {showInactive ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <p className="mt-2 text-xs leading-snug text-tertiary">
+                  Zero-balance accounts with no assets are kept out of the main list until shown.
+                </p>
+              </div>
             )}
           </div>
         </div>
       </div>
 
-      {renderTable(listTable, listColumns, 'No accounts match the selected filters.', (account) =>
-        setSelectedAccountId(account.id)
+      {renderTable(
+        listTable,
+        listColumns,
+        'No accounts match the selected filters.',
+        (account) => setSelectedAccountId(account.id),
+        { tableClassName: 'w-full min-w-[640px] table-fixed' }
       )}
 
       {/* Mobile cards */}
@@ -569,12 +664,14 @@ const AccountsPage = () => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-bold text-primary truncate text-base">{displayAccountName(account)}</span>
-                    {account.plaid_item_id && <PlaidBadge />}
                   </div>
                   {hasAccountDisplayName(account) && (
                     <div className="text-[10px] text-tertiary truncate uppercase tracking-tight mb-1">{account.name}</div>
                   )}
-                  <TypeBadge type={account.type} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <TypeBadge type={account.type} />
+                    <AccountStatusPills account={account} inactive={inactiveAccountIds.has(account.id)} />
+                  </div>
                 </div>
                 <div className={`text-lg font-mono font-bold ${total < 0 ? 'text-loss' : 'text-primary'}`}>
                   {formatCurrency(total)}
@@ -784,7 +881,7 @@ const AccountsPage = () => {
   };
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8">
+    <div className="mx-auto w-full max-w-[1240px] px-3 py-6 sm:px-4 md:py-8">
       <AnimatePresence mode="wait">
         {selectedAccountId === null ? renderListView() : renderDetailView()}
       </AnimatePresence>
