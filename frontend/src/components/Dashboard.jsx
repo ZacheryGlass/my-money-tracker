@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity, ChevronRight, TrendingUp, Clock, Landmark } from 'lucide-react';
+import { RefreshCw, Wallet, ArrowDownCircle, ArrowUpCircle, Activity, ChevronRight, TrendingUp, Clock, Landmark, AlertTriangle } from 'lucide-react';
 import { dashboard as dashboardAPI, history as historyAPI, plaid as plaidAPI } from '../utils/api';
-import { formatCurrency, formatPercent, formatCompactCurrency } from '../utils/format';
+import { formatCurrency, formatPercent, formatCompactCurrency, formatDateDisplay } from '../utils/format';
 import DashboardTable from './DashboardTable';
 import MetricCard from './MetricCard';
 import AllocationDonut from './AllocationDonut';
@@ -45,14 +45,28 @@ const Dashboard = ({ onNavigate }) => {
     setRefreshing(true);
     try {
       const { items } = await plaidAPI.getItems();
-      const plaidSync = (items || []).map((item) => plaidAPI.syncItem(item.id));
-      await Promise.allSettled([...plaidSync, dashboardAPI.refreshPrices()]);
+      const syncTasks = (items || []).map((item) =>
+        plaidAPI.syncItem(item.id).then((result) => ({
+          type: 'plaid',
+          name: item.institution_name || 'Linked account',
+          result,
+        }))
+      );
+      const refreshResults = await Promise.allSettled([
+        ...syncTasks,
+        dashboardAPI.refreshPrices().then((result) => ({ type: 'prices', name: 'Price update', result })),
+      ]);
+      const failures = refreshResults.filter((result) => result.status === 'rejected');
       await fetchData();
+      if (failures.length > 0) {
+        setError(`${failures.length} update${failures.length === 1 ? '' : 's'} failed. Some account data may still be stale.`);
+      }
     } catch (err) {
       console.error('Sync failures:', err);
-      setError('Some updates failed. Please try again.');
+      setError(err.response?.data?.error || 'Some updates failed. Please try again.');
+    } finally {
+      setRefreshing(false);
     }
-    setRefreshing(false);
   };
 
   const { totalAssets, totalLiabilities, netWorth } = useMemo(() => {
@@ -86,6 +100,33 @@ const Dashboard = ({ onNavigate }) => {
     const percent = first !== 0 ? (amount / first) * 100 : 0;
     return { amount, percent };
   }, [historyData]);
+
+  const freshnessAlerts = useMemo(() => {
+    const freshness = data?.freshness;
+    if (!freshness || freshness.status === 'ok') return [];
+
+    const alerts = [];
+    if (freshness.snapshot?.isStale) {
+      const dateText = freshness.snapshot.latestDate
+        ? `latest snapshot is ${formatDateDisplay(freshness.snapshot.latestDate)}`
+        : 'no portfolio snapshot has been recorded';
+      alerts.push(`Portfolio history may be stale: ${dateText}.`);
+    }
+
+    if (freshness.plaid?.errorCount > 0) {
+      const firstItem = freshness.plaid.attentionItems?.find((item) => item.hasError);
+      const name = firstItem?.institutionName ? ` (${firstItem.institutionName})` : '';
+      alerts.push(`${freshness.plaid.errorCount} linked institution${freshness.plaid.errorCount === 1 ? '' : 's'} need attention${name}.`);
+    } else if (freshness.plaid?.staleCount > 0) {
+      alerts.push(`${freshness.plaid.staleCount} linked institution${freshness.plaid.staleCount === 1 ? '' : 's'} have not synced recently.`);
+    }
+
+    if (freshness.prices?.isStale) {
+      alerts.push(`Market prices are about ${Math.round(freshness.prices.ageHours)} hours old.`);
+    }
+
+    return alerts;
+  }, [data]);
 
   const accountSummaries = useMemo(() => {
     if (!data?.items) return [];
@@ -160,6 +201,17 @@ const Dashboard = ({ onNavigate }) => {
       {error && (
         <div className="px-3 py-2 bg-loss-bg border border-loss/20 text-loss text-body-sm">
           {error}
+        </div>
+      )}
+
+      {freshnessAlerts.length > 0 && (
+        <div className="flex gap-3 px-3 py-2 bg-amber-500/10 border border-amber-500/25 text-amber-300 text-body-sm">
+          <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+          <div className="space-y-1">
+            {freshnessAlerts.map((alert) => (
+              <p key={alert}>{alert}</p>
+            ))}
+          </div>
         </div>
       )}
 
