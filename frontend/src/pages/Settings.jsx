@@ -4,6 +4,8 @@ import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff } from 'lucide-react';
 import { plaid as plaidAPI, accounts as accountsAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
+import useChartPreferences from '../hooks/useChartPreferences';
+import { YEAR_REVIEW_CHARTS } from '../utils/chartPreferences';
 
 function PlaidLinkButton({ onSuccess, onError, disabled }) {
   const [linkToken, setLinkToken] = useState(null);
@@ -134,6 +136,7 @@ const buildInstitutionSummary = (items, consentItems) => {
 };
 
 const Settings = () => {
+  const { preferences: chartPreferences, setChartEnabled } = useChartPreferences();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -351,7 +354,10 @@ const Settings = () => {
         </div>
       )}
 
-      <nav className="mb-6 grid grid-cols-1 gap-2 md:grid-cols-3" aria-label="Settings sections">
+      <nav className="mb-6 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4" aria-label="Settings sections">
+        <a href="#chart-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
+          Display Charts
+        </a>
         <a href="#institution-health" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Institution Health
         </a>
@@ -362,6 +368,42 @@ const Settings = () => {
           Display Names
         </a>
       </nav>
+
+      <section id="chart-display" className="mb-8 scroll-mt-4">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Display Charts</h2>
+          <p className="mt-1 text-xs text-secondary">Choose which dynamic charts appear in Year in Review.</p>
+        </div>
+
+        <div className="card divide-y divide-border overflow-hidden">
+          {YEAR_REVIEW_CHARTS.map((chart) => {
+            const enabled = chartPreferences[chart.id] !== false;
+            return (
+              <div key={chart.id} className="flex items-center justify-between gap-4 p-4">
+                <div className="min-w-0">
+                  <h3 className="text-body-sm font-semibold text-primary">{chart.label}</h3>
+                  <p className="text-caption text-tertiary">{chart.description}</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={enabled}
+                  aria-label={`Show ${chart.label}`}
+                  onClick={() => setChartEnabled(chart.id, !enabled)}
+                  className={`flex h-10 shrink-0 items-center gap-2 border px-3 text-caption font-semibold uppercase transition-colors ${
+                    enabled
+                      ? 'border-accent/30 bg-accent-muted text-accent'
+                      : 'border-border bg-surface-2 text-tertiary'
+                  }`}
+                >
+                  {enabled ? <Eye size={14} /> : <EyeOff size={14} />}
+                  {enabled ? 'Shown' : 'Hidden'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       <section id="institution-health" className="mb-8">
         <div className="mb-3 px-2">

@@ -12,6 +12,7 @@ import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import { formatCurrency, formatCompactCurrency, formatPercent, formatDateAxis } from '../utils/format';
 import { analytics, dashboard, history as historyAPI } from '../utils/api';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import useChartPreferences from '../hooks/useChartPreferences';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -82,6 +83,7 @@ function SwingLabel({ x, y, width, value, payload }) {
 
 export default function YearInReview() {
   const isMobile = useIsMobile();
+  const { preferences: chartPreferences } = useChartPreferences();
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [loading, setLoading] = useState(true);
@@ -223,6 +225,30 @@ export default function YearInReview() {
     })),
   [portfolioHistory]);
 
+  const cumulativeGrowthData = useMemo(() => {
+    return chartData.map((row, index) => ({
+      month: row.month,
+      cumulative: chartData
+        .slice(0, index + 1)
+        .reduce((sum, item) => sum + item.change, 0),
+    }));
+  }, [chartData]);
+
+  const monthlyCashFlowData = useMemo(() => ivsData.map((row) => ({
+    month: MONTHS[new Date(row.month).getUTCMonth()],
+    income: parseFloat(row.income) || 0,
+    spending: parseFloat(row.spending) || 0,
+  })), [ivsData]);
+
+  const visibleChartLinks = useMemo(() => [
+    chartPreferences.monthlyChange && ['Monthly swings', '#monthly-change'],
+    chartPreferences.cumulativeGrowth && ['Cumulative growth', '#cumulative-growth'],
+    chartPreferences.trajectory && ['Trajectory', '#trajectory'],
+    chartPreferences.allocation && ['Allocation', '#allocation'],
+    chartPreferences.monthlyCashFlow && ['Monthly cash flow', '#monthly-cash-flow'],
+    chartPreferences.cashFlow && ['Cash flow', '#cash-flow'],
+  ].filter(Boolean), [chartPreferences]);
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
@@ -345,13 +371,9 @@ export default function YearInReview() {
         </div>
       </div>
 
-      <div className="grid gap-2 md:grid-cols-4">
-        {[
-          ['Monthly swings', '#monthly-change'],
-          ['Trajectory', '#trajectory'],
-          ['Allocation', '#allocation'],
-          ['Cash flow', '#cash-flow'],
-        ].map(([label, href]) => (
+      {visibleChartLinks.length > 0 && (
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {visibleChartLinks.map(([label, href]) => (
           <a
             key={href}
             href={href}
@@ -361,8 +383,10 @@ export default function YearInReview() {
           </a>
         ))}
       </div>
+      )}
 
       {/* Monthly Net Worth Change Bar Chart */}
+      {chartPreferences.monthlyChange && (
       <div id="monthly-change" className="card p-4 md:p-6 scroll-mt-24">
         <div className="flex flex-col gap-2 mb-4 md:flex-row md:items-end md:justify-between">
           <div>
@@ -403,10 +427,44 @@ export default function YearInReview() {
           )}
         </div>
       </div>
+      )}
+
+      {chartPreferences.cumulativeGrowth && (
+        <div id="cumulative-growth" className="card scroll-mt-24 p-4 md:p-6">
+          <div className="mb-4 flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Cumulative Growth</h2>
+              <p className="text-caption text-tertiary">Running net worth change from the start of {selectedYear}.</p>
+            </div>
+            <p className={`value-emphasis ${yearMetrics.growth >= 0 ? 'text-gain' : 'text-loss'}`}>
+              {formatCurrency(yearMetrics.growth)}
+            </p>
+          </div>
+          <div style={{ height: isMobile ? 220 : 300 }}>
+            {cumulativeGrowthData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={cumulativeGrowthData} margin={{ top: 8, right: 10, left: 0, bottom: 5 }}>
+                  <defs>{areaGradient('cumulativeGrowth', yearMetrics.growth >= 0 ? '#72C892' : '#f48771')}</defs>
+                  <CartesianGrid {...GRID_STYLE} vertical={false} />
+                  <XAxis dataKey="month" {...AXIS_STYLE} />
+                  <YAxis {...AXIS_STYLE} tickFormatter={formatCompactCurrency} width={isMobile ? 45 : 60} />
+                  <Tooltip content={<ChartTooltip formatValue={formatCurrency} />} cursor={{ stroke: 'var(--border)', strokeWidth: 1 }} />
+                  <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
+                  <Area type="monotone" dataKey="cumulative" stroke={yearMetrics.growth >= 0 ? 'var(--gain)' : 'var(--loss)'} strokeWidth={2} fill="url(#cumulativeGrowth)" name="Cumulative Growth" animationDuration={900} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-tertiary">No growth history for {selectedYear}</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Mini Charts Row */}
+      {(chartPreferences.trajectory || chartPreferences.allocation) && (
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Net Worth Trajectory */}
+        {chartPreferences.trajectory && (
         <div id="trajectory" className="card p-4 md:p-6 scroll-mt-24">
           <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Net Worth Trajectory</h2>
           <div style={{ height: isMobile ? 180 : 220 }}>
@@ -426,8 +484,10 @@ export default function YearInReview() {
             )}
           </div>
         </div>
+        )}
 
         {/* Year-End Allocation */}
+        {chartPreferences.allocation && (
         <div id="allocation" className="card p-4 md:p-6 scroll-mt-24">
           <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">{isPartialYear ? 'Latest Allocation' : 'Year-End Allocation'}</h2>
           <div style={{ height: isMobile ? 180 : 220 }}>
@@ -438,7 +498,9 @@ export default function YearInReview() {
             )}
           </div>
         </div>
+        )}
       </div>
+      )}
 
       {/* Best/Worst Months */}
       <div className="grid lg:grid-cols-2 gap-6">
@@ -514,8 +576,39 @@ export default function YearInReview() {
         </div>
       )}
 
+      {chartPreferences.monthlyCashFlow && (
+        <div id="monthly-cash-flow" className="card scroll-mt-24 p-4 md:p-6">
+          <div className="mb-4 flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Monthly Cash Flow</h2>
+              <p className="text-caption text-tertiary">Income versus spending for each available month.</p>
+            </div>
+            <div className="flex gap-3 text-caption">
+              <span className="inline-flex items-center gap-1.5 text-gain"><span className="h-2.5 w-2.5 bg-gain" />Income</span>
+              <span className="inline-flex items-center gap-1.5 text-loss"><span className="h-2.5 w-2.5 bg-loss" />Spending</span>
+            </div>
+          </div>
+          <div style={{ height: isMobile ? 240 : 320 }}>
+            {monthlyCashFlowData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyCashFlowData} margin={{ top: 8, right: 10, left: 0, bottom: 5 }}>
+                  <CartesianGrid {...GRID_STYLE} vertical={false} />
+                  <XAxis dataKey="month" {...AXIS_STYLE} />
+                  <YAxis {...AXIS_STYLE} tickFormatter={formatCompactCurrency} width={isMobile ? 45 : 60} />
+                  <Tooltip content={<ChartTooltip formatValue={formatCurrency} />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
+                  <Bar dataKey="income" fill="var(--gain)" radius={[3, 3, 0, 0]} name="Income" animationDuration={800} />
+                  <Bar dataKey="spending" fill="var(--loss)" radius={[3, 3, 0, 0]} name="Spending" animationDuration={800} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-tertiary">No cash flow data for {selectedYear}</div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Annual Income vs Spending Summary */}
-      {spendingMetrics.totalIncome > 0 && (
+      {chartPreferences.cashFlow && spendingMetrics.totalIncome > 0 && (
         <div id="cash-flow" className="card p-4 md:p-6 scroll-mt-24">
           <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">{isPartialYear ? 'YTD Cash Flow' : 'Annual Cash Flow'}</h2>
           <div className="grid grid-cols-3 gap-6">
