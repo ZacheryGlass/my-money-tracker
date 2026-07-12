@@ -3,6 +3,7 @@ import { subDays, subMonths, subYears, format } from 'date-fns';
 import { Check, X, Search } from 'lucide-react';
 import { holdings as holdingsAPI, history as historyAPI } from '../utils/api';
 import TickerHistoryChart from '../components/TickerHistoryChart';
+import FilterDisclosure from '../components/FilterDisclosure';
 
 const DEFAULT_HISTORY_LIMIT = 2000;
 
@@ -179,8 +180,13 @@ const TickerHistory = () => {
         </div>
       </div>
 
-      <div className="card mb-4">
-        <div className="p-3 space-y-3">
+      <FilterDisclosure
+        label="Ticker Series"
+        summary={`${selectedTickers.length} of ${tickerOptions.length} selected`}
+        activeCount={selectedTickers.length}
+        onClear={() => setSelectedTickers([])}
+      >
+        <div className="space-y-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-title-sm text-secondary uppercase tracking-wide">Tickers</span>
             <div className="flex items-center gap-2">
@@ -242,7 +248,7 @@ const TickerHistory = () => {
             </div>
           )}
         </div>
-      </div>
+      </FilterDisclosure>
 
       {error && (
         <div className="mb-4 p-2 bg-loss-bg border border-loss/20 text-loss text-body-sm flex items-center gap-2">
