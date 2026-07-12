@@ -170,15 +170,10 @@ const HoldingsTable = ({ pageFilter }) => {
         },
       },
       {
-        accessorKey: 'ticker',
-        header: 'Ticker',
-        cell: ({ getValue }) => getValue() || '-',
-      },
-      {
         accessorKey: 'name',
-        header: 'Name',
+        header: 'Asset Name',
         cell: ({ row }) => (
-          <div className="min-w-[220px] max-w-[300px]">
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="truncate font-semibold text-primary" title={row.original.name}>{row.original.name}</span>
               {row.original.is_plaid_managed && (
@@ -189,7 +184,7 @@ const HoldingsTable = ({ pageFilter }) => {
               )}
             </div>
             <p className="text-caption text-tertiary truncate" title={row.original.location || row.original.notes || ''}>
-              {formatCategoryLabel(row.original.category)}{row.original.location ? ` / ${row.original.location}` : ''}
+              {row.original.ticker ? `${row.original.ticker} / ` : ''}{formatCategoryLabel(row.original.category)}{row.original.location ? ` / ${row.original.location}` : ''}
             </p>
           </div>
         ),
@@ -200,13 +195,7 @@ const HoldingsTable = ({ pageFilter }) => {
         header: 'Value',
         cell: ({ getValue }) => {
           const v = getValue();
-          const abs = Math.abs(v);
-          const sign = v < 0 ? '-' : '';
-          let display;
-          if (abs >= 1_000_000) display = `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
-          else if (abs >= 1_000) display = `${sign}$${(abs / 1_000).toFixed(1)}k`;
-          else display = formatCurrency(v);
-          return <span className="value-emphasis text-primary">{display}</span>;
+          return <span className="value-emphasis text-gain">{formatCurrency(v)}</span>;
         },
       },
       {
@@ -214,30 +203,8 @@ const HoldingsTable = ({ pageFilter }) => {
         header: 'Category',
         cell: ({ getValue }) => <span className="block max-w-[120px] truncate text-tertiary" title={formatCategoryLabel(getValue())}>{formatCategoryLabel(getValue())}</span>,
       },
-      {
-        id: 'actions',
-        header: 'Actions',
-        enableSorting: false,
-        cell: ({ row }) => (
-          row.original.is_plaid_managed ? (
-            <span className="inline-flex items-center gap-1 px-2 py-1 text-caption bg-accent-muted text-accent border border-accent/20">
-              <Link2 size={11} /> Linked
-            </span>
-          ) : (
-            <button
-              onClick={(event) => {
-                event.stopPropagation();
-                handleEdit(row.original);
-              }}
-              className="inline-flex items-center gap-1 px-2 py-1 text-caption bg-surface-3 text-secondary border border-border hover:text-primary hover:border-border-hover"
-            >
-              <Pencil size={11} /> Edit
-            </button>
-          )
-        ),
-      },
     ],
-    [accountsMap, displayAccountName, handleEdit]
+    [accountsMap, displayAccountName]
   );
 
   const table = useReactTable({
@@ -264,58 +231,41 @@ const HoldingsTable = ({ pageFilter }) => {
   }
 
   return (
-    <div className="px-4 py-3">
-      <div className="mb-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between mb-3">
-          <div>
-            <h1 className="text-display-md text-primary mb-1">{pageFilter === 'assets' ? 'Assets' : 'Holdings'}</h1>
-            <p className="text-body-sm text-tertiary">
-              {filteredData.length} visible holdings across {accountsWithHoldings.length} accounts
-            </p>
+    <div className="px-4 py-4">
+      <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">{pageFilter === 'assets' ? 'Assets' : 'Holdings'}</p>
+          <h1 className="font-money text-display-lg text-primary">{formatCurrency(summary.totalValue)}</h1>
+          <p className="text-body-sm text-tertiary">
+            {scopedHoldings.length} holdings across {accountsWithHoldings.length} accounts
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="border border-border bg-surface-3 p-2">
+            <p className="mb-0.5 text-caption uppercase text-tertiary">Accounts</p>
+            <p className="font-money font-semibold text-primary">{accountsWithHoldings.length}</p>
           </div>
-          <div className="flex flex-wrap gap-2 items-center">
+          <div className="border border-border bg-surface-3 p-2">
+            <p className="mb-0.5 text-caption uppercase text-tertiary">Holdings</p>
+            <p className="font-money font-semibold text-primary">{scopedHoldings.length}</p>
+          </div>
             <button onClick={handleAddNew} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white hover:bg-accent-hover rounded text-button font-semibold">
               <Plus size={14} /> Add Holding
             </button>
             <button onClick={handleExportHoldings} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface-3 text-secondary border border-border hover:border-border-hover rounded text-button">
               <Download size={14} /> Export CSV
             </button>
-          </div>
         </div>
+      </div>
 
-        {successMessage && (
-          <div className="mb-3 bg-gain-bg text-gain border border-gain/20 p-2 text-body-sm">{successMessage}</div>
-        )}
-        {error && (
-          <div className="mb-3 bg-loss-bg text-loss border border-loss/20 p-2 text-body-sm">{error}</div>
-        )}
+      {successMessage && (
+        <div className="mb-3 bg-gain-bg text-gain border border-gain/20 p-2 text-body-sm">{successMessage}</div>
+      )}
+      {error && (
+        <div className="mb-3 bg-loss-bg text-loss border border-loss/20 p-2 text-body-sm">{error}</div>
+      )}
 
-        <div className="grid gap-3 mb-3 md:grid-cols-2 xl:grid-cols-4">
-          <div className="border border-border bg-surface p-3">
-            <p className="text-caption text-tertiary uppercase tracking-wide">Total Assets</p>
-            <p className="value-emphasis text-primary">{formatCurrency(summary.totalValue)}</p>
-            <p className="text-caption text-tertiary">{scopedHoldings.length} tracked rows</p>
-          </div>
-          <div className="border border-border bg-surface p-3">
-            <p className="text-caption text-tertiary uppercase tracking-wide">Visible Total</p>
-            <p className="value-emphasis text-gain">{formatCurrency(summary.visibleValue)}</p>
-            <p className="text-caption text-tertiary">{summary.activeFilters || 'No'} active filters</p>
-          </div>
-          <div className="border border-border bg-surface p-3">
-            <p className="text-caption text-tertiary uppercase tracking-wide">Category Total</p>
-            <p className="value-emphasis text-primary">{formatCurrency(summary.categoryValue)}</p>
-            <p className="text-caption text-tertiary truncate" title={summary.selectedCategory}>{summary.selectedCategory}</p>
-          </div>
-          <div className="border border-border bg-surface p-3">
-            <p className="text-caption text-tertiary uppercase tracking-wide">Account Total</p>
-            <p className="value-emphasis text-primary">{formatCurrency(summary.accountValue)}</p>
-            <p className="text-caption text-tertiary truncate" title={summary.selectedAccount ? displayAccountName(summary.selectedAccount) : 'All accounts'}>
-              {summary.selectedAccount ? displayAccountName(summary.selectedAccount) : 'All accounts'}
-            </p>
-          </div>
-        </div>
-
-        <FilterDisclosure
+      <FilterDisclosure
           summary={summary.activeFilters ? `${summary.activeFilters} filter${summary.activeFilters === 1 ? '' : 's'} applied` : 'All holdings shown'}
           activeCount={summary.activeFilters}
           onClear={clearFilters}
@@ -383,26 +333,21 @@ const HoldingsTable = ({ pageFilter }) => {
             </div>
           )}
           </div>
-        </FilterDisclosure>
-
-      </div>
+      </FilterDisclosure>
       <div className="card overflow-hidden">
-        <div className="hidden max-w-full overflow-hidden xl:block">
+        <div className="hidden max-w-full overflow-hidden lg:block">
           <table className="w-full table-fixed divide-y divide-border">
             <thead className="bg-surface-2">
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id}>
-                  {hg.headers.map((header) => {
-                    const isActions = header.column.id === 'actions';
-                    return (
-                    <th key={header.id} className={`px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide cursor-pointer hover:bg-surface-3 ${isActions ? 'sticky right-0 z-20 bg-surface-2 shadow-[-8px_0_12px_rgba(0,0,0,0.18)]' : ''}`} onClick={header.column.getToggleSortingHandler()}>
+                  {hg.headers.map((header) => (
+                    <th key={header.id} className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide cursor-pointer hover:bg-surface-3" onClick={header.column.getToggleSortingHandler()}>
                       <div className="flex items-center gap-1">
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {header.column.getIsSorted() && <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>}
                       </div>
                     </th>
-                    );
-                  })}
+                  ))}
                 </tr>
               ))}
             </thead>
@@ -412,12 +357,9 @@ const HoldingsTable = ({ pageFilter }) => {
               ) : (
                 table.getRowModel().rows.map((row) => (
                   <tr key={row.id} className={`hover:bg-surface-2 transition-colors ${row.original.is_plaid_managed ? '' : 'cursor-pointer'}`} onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}>
-                    {row.getVisibleCells().map((cell) => {
-                      const isActions = cell.column.id === 'actions';
-                      return (
-                      <td key={cell.id} className={`px-3 py-2 whitespace-nowrap text-body-sm text-secondary ${isActions ? 'sticky right-0 z-10 bg-surface shadow-[-8px_0_12px_rgba(0,0,0,0.18)]' : ''}`}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                      );
-                    })}
+                    {row.getVisibleCells().map((cell) => (
+                      <td key={cell.id} className="px-3 py-2 text-body-sm text-secondary">{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+                    ))}
                   </tr>
                 ))
               )}
@@ -425,7 +367,7 @@ const HoldingsTable = ({ pageFilter }) => {
           </table>
         </div>
 
-        <div className="divide-y divide-border xl:hidden">
+        <div className="divide-y divide-border lg:hidden">
           {table.getRowModel().rows.length === 0 ? (
             <div className="px-3 py-8 text-center text-tertiary text-body-sm">No holdings found.</div>
           ) : (
