@@ -4,7 +4,6 @@ import {
   BarChart3,
   Calendar,
   Check,
-  ChevronDown,
   CreditCard,
   Landmark,
   Search,
@@ -13,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import AccountHistoryChart from '../components/AccountHistoryChart';
+import FilterDisclosure from '../components/FilterDisclosure';
 import { accounts as accountsApi, history as historyApi } from '../utils/api';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCompactCurrency } from '../utils/format';
@@ -86,7 +86,6 @@ const AccountHistory = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [accountSearch, setAccountSearch] = useState('');
-  const [selectorOpen, setSelectorOpen] = useState(false);
   const selectionInitializedRef = useRef(false);
 
   useEffect(() => {
@@ -170,7 +169,6 @@ const AccountHistory = () => {
     if (preset === 'portfolio') {
       setShowPortfolio(true);
       setSelectedAccounts([]);
-      setSelectorOpen(false);
       return;
     }
     if (preset === 'major') {
@@ -250,14 +248,9 @@ const AccountHistory = () => {
     <div className="max-w-[1600px] space-y-5 px-4 py-5">
       <section className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <div className="mb-2 flex items-center gap-2 text-accent">
-            <BarChart3 size={18} />
-            <span className="text-caption-upper uppercase">Account Trends</span>
-          </div>
-          <h1 className="text-4xl font-bold tracking-tight text-primary">Account History</h1>
-          <p className="mt-1 max-w-2xl text-body-sm text-secondary">
-            Compare net worth and selected account series with focused presets and clear period context.
-          </p>
+          <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">Account History</p>
+          <h1 className="text-display-md text-primary">Account Trends</h1>
+          <p className="text-body-sm text-tertiary">Compare portfolio and account balances over time.</p>
         </div>
 
         <div className="flex flex-wrap gap-2 rounded border border-border bg-surface p-1">
@@ -279,27 +272,14 @@ const AccountHistory = () => {
         </div>
       </section>
 
-      <section className="card p-4">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <h2 className="text-title-sm uppercase tracking-wide text-primary">Chart Setup</h2>
-            <p className="mt-1 text-body-sm text-secondary">
-              {selectedRange?.fullLabel || 'Selected range'} with {visibleSeriesCount} visible series.
-            </p>
-          </div>
+      <FilterDisclosure
+        label="Chart Setup"
+        summary={`${selectedRange?.fullLabel || 'Selected range'} · ${visibleSeriesCount} series`}
+        activeCount={visibleSeriesCount}
+        onClear={clearSelection}
+      >
 
-          <button
-            type="button"
-            onClick={() => setSelectorOpen((open) => !open)}
-            className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-2 px-3 py-2 text-caption-upper uppercase text-secondary transition-colors hover:border-accent/40 hover:text-primary"
-          >
-            <Search size={14} />
-            {selectorOpen ? 'Hide Account Selector' : 'Choose Accounts'}
-            <ChevronDown size={14} className={selectorOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
-          </button>
-        </div>
-
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           {presets.map((preset) => {
             const Icon = preset.icon;
             return (
@@ -367,8 +347,7 @@ const AccountHistory = () => {
           )}
         </div>
 
-        {selectorOpen && (
-          <div className="mt-4 border-t border-border pt-4">
+        <div className="mt-4 border-t border-border pt-4">
             <div className="grid gap-3 lg:grid-cols-[minmax(260px,360px)_1fr]">
               <div>
                 <label className="mb-2 flex items-center gap-2 text-caption-upper uppercase text-secondary">
@@ -435,8 +414,7 @@ const AccountHistory = () => {
                 )}
               </div>
             </div>
-          </div>
-        )}
+        </div>
 
         {dateRangeOption === 'custom' && (
           <div className="mt-4 grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-2 lg:max-w-xl">
@@ -466,7 +444,7 @@ const AccountHistory = () => {
             </div>
           </div>
         )}
-      </section>
+      </FilterDisclosure>
 
       <AccountHistoryChart
         accountData={accountData}
