@@ -451,53 +451,6 @@ export default function SpendingAnalytics({ embedded = false }) {
           <div className="flex items-center justify-center h-[120px] text-tertiary text-sm">No spending data for heatmap</div>
         )}
       </div>
-
-      {/* Day of Week Summary */}
-      {heatmapData.length > 0 && (
-        <div className="card p-4 md:p-6">
-          <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary mb-4">Average Spending by Day of Week</h2>
-          <DayOfWeekChart data={heatmapData} isMobile={isMobile} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function DayOfWeekChart({ data = [], isMobile }) {
-  const chartData = useMemo(() => {
-    const buckets = Array.from({ length: 7 }, () => ({ total: 0, count: 0 }));
-    for (const d of data) {
-      if (!d || !d.date) continue;
-      const dateStr = String(d.date).slice(0, 10);
-      const parsed = new Date(dateStr + 'T12:00:00Z');
-      const day = parsed.getUTCDay();
-      if (isNaN(day)) continue;
-      buckets[day].total += parseFloat(d.total) || 0;
-      buckets[day].count += 1;
-    }
-    return DAY_NAMES.map((name, i) => ({
-      name,
-      avg: buckets[i].count > 0 ? Math.round((buckets[i].total / buckets[i].count) * 100) / 100 : 0,
-    }));
-  }, [data]);
-
-  return (
-    <div style={{ height: isMobile ? 200 : 250 }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={chartData} margin={{ top: 10, right: 10, left: isMobile ? 0 : 10, bottom: 5 }}>
-          <CartesianGrid {...GRID_STYLE} vertical={false} />
-          <XAxis dataKey="name" {...AXIS_STYLE} />
-          <YAxis {...AXIS_STYLE} tickFormatter={formatCompactCurrency} width={isMobile ? 45 : 60} />
-          <Tooltip content={<ChartTooltip formatValue={(v) => formatCurrency(v)} />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-          <Bar dataKey="avg" fill="var(--accent)" radius={[4, 4, 0, 0]} animationDuration={800} name="Avg Spending">
-            {chartData.map((_, i) => (
-              <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
     </div>
   );
 }
