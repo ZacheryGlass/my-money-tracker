@@ -65,10 +65,19 @@
     color-scheme: dark;
   }
 
+  html, body, #root {
+    width: 100%;
+    max-width: 100%;
+  }
+
   body {
     background-color: var(--bg-base);
     color: var(--text-secondary);
     overflow-x: hidden;
+  }
+
+  img, svg, canvas, video, table, input, select, textarea {
+    max-width: 100%;
   }
 
   ::selection {

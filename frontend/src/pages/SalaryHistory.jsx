@@ -224,11 +224,11 @@ const SalaryHistory = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="p-3 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+          <div className="min-w-0 rounded border border-border bg-surface-2 p-3 shadow-sm sm:min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Career Growth</p>
             <p className="text-lg font-mono font-bold text-gain">+{careerGrowth.toFixed(1)}%</p>
           </div>
-          <div className="p-3 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+          <div className="min-w-0 rounded border border-border bg-surface-2 p-3 shadow-sm sm:min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Last Increase</p>
             <p className="text-lg font-mono font-bold text-gain">{lastRaise ? `+${formatCurrency(lastRaise.amount)}` : '—'}</p>
           </div>
@@ -398,12 +398,12 @@ const SalaryHistory = () => {
             </div>
             
             <div className="card overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-border">
+              <div className="max-w-full overflow-hidden">
+                <table className="w-full table-fixed divide-y divide-border">
                   <thead className="bg-surface-2">
                     <tr>
-                      {['Date', 'Title', 'Base Salary', 'Equity/Bonus', 'Total Comp', 'Change', 'Actions'].map((h) => (
-                        <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">{h}</th>
+                      {['Date', 'Title', 'Base Salary', 'Equity/Bonus', 'Total Comp', 'Change', 'Actions'].map((h, index) => (
+                        <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${[2, 3, 5].includes(index) ? 'hidden lg:table-cell' : ''}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -415,16 +415,16 @@ const SalaryHistory = () => {
                     ) : (
                       [...records].sort((a, b) => new Date(b.effective_date) - new Date(a.effective_date)).map((r) => (
                         <tr key={r.id} className="hover:bg-surface-2 transition-colors group">
-                          <td className="px-5 py-4 whitespace-nowrap text-xs font-mono text-secondary">{formatDateDisplay(r.effective_date)}</td>
-                          <td className="px-5 py-4">
+                          <td className="px-2 py-4 text-xs font-mono text-secondary sm:px-5">{formatDateDisplay(r.effective_date)}</td>
+                          <td className="px-2 py-4 sm:px-5">
                             <div className="text-sm font-bold text-primary">{r.title}</div>
                           </td>
-                          <td className="px-5 py-4 text-sm font-mono text-primary">{formatCurrency(r.salary_amount)}</td>
-                          <td className="px-5 py-4 text-xs font-mono text-secondary">
+                          <td className="hidden px-5 py-4 text-sm font-mono text-primary lg:table-cell">{formatCurrency(r.salary_amount)}</td>
+                          <td className="hidden px-5 py-4 text-xs font-mono text-secondary lg:table-cell">
                             {r.psu > 0 || r.rsu > 0 ? formatCurrency((parseFloat(r.psu) || 0) + (parseFloat(r.rsu) || 0)) : <span className="opacity-30">—</span>}
                           </td>
-                          <td className="px-5 py-4 text-sm font-mono font-bold text-accent">{formatCurrency(r.total_comp)}</td>
-                          <td className="px-5 py-4">
+                          <td className="px-2 py-4 text-sm font-mono font-bold text-accent sm:px-5">{formatCurrency(r.total_comp)}</td>
+                          <td className="hidden px-5 py-4 lg:table-cell">
                             {r.change_amount ? (
                               <div className="flex flex-col">
                                 <span className="text-xs font-bold text-gain">+{formatCurrency(r.change_amount)}</span>
@@ -432,7 +432,7 @@ const SalaryHistory = () => {
                               </div>
                             ) : <span className="text-tertiary opacity-30">—</span>}
                           </td>
-                          <td className="px-5 py-4 text-right">
+                          <td className="px-2 py-4 text-right sm:px-5">
                             <div className="flex justify-end gap-1">
                               <button
                                 onClick={() => handleEdit(r)}

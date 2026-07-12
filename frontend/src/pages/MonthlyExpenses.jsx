@@ -239,11 +239,11 @@ const MonthlyExpenses = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="p-3 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+          <div className="min-w-0 rounded border border-border bg-surface-2 p-3 shadow-sm sm:min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Annual Cost</p>
             <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalAll * 12)}</p>
           </div>
-          <div className="p-3 bg-surface-2 border border-border rounded shadow-sm min-w-[140px]">
+          <div className="min-w-0 rounded border border-border bg-surface-2 p-3 shadow-sm sm:min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Manual Pays</p>
             <p className="text-lg font-mono font-bold text-primary">{stats.manualCount}</p>
           </div>
@@ -295,7 +295,7 @@ const MonthlyExpenses = () => {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex min-w-[180px] items-center justify-between gap-4 rounded border px-3 py-2 transition-all ${
+                className={`flex min-w-0 items-center justify-between gap-4 rounded border px-3 py-2 transition-all ${
                   activeTab === tab.key
                     ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
                     : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
@@ -332,12 +332,12 @@ const MonthlyExpenses = () => {
           
           {activeTab !== 'detected' ? (
             <div className="card overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-border">
+              <div className="max-w-full overflow-hidden">
+                <table className="w-full table-fixed divide-y divide-border">
                   <thead className="bg-surface-2">
                     <tr>
-                      {['Name', 'Monthly Cost', 'Fixed', 'Auto-pay', 'Payment', 'Account', activeTab === 'bill' ? 'Company' : 'Who Uses', 'Actions'].map((h) => (
-                        <th key={h} className="px-5 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">{h}</th>
+                      {['Name', 'Monthly Cost', 'Fixed', 'Auto-pay', 'Payment', 'Account', activeTab === 'bill' ? 'Company' : 'Who Uses', 'Actions'].map((h, index) => (
+                        <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${index >= 2 && index <= 6 ? 'hidden xl:table-cell' : ''}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -366,7 +366,7 @@ const MonthlyExpenses = () => {
                               exit={{ opacity: 0 }}
                               className="hover:bg-surface-3 transition-colors group"
                             >
-                              <td className="px-5 py-4">
+                              <td className="px-2 py-4 sm:px-5">
                                 <div className="flex items-center gap-2">
                                   <div className="text-sm font-bold text-primary">{exp.name}</div>
                                   {cleanupFlag && (
@@ -378,24 +378,24 @@ const MonthlyExpenses = () => {
                                 </div>
                                 {exp.notes && <div className="text-[10px] text-tertiary truncate max-w-[190px]">{exp.notes}</div>}
                               </td>
-                              <td className="px-5 py-4">
+                              <td className="px-2 py-4 sm:px-5">
                                 <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
                               </td>
-                              <td className="px-5 py-4"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
-                              <td className="px-5 py-4"><Badge active={exp.is_autopay}>{exp.is_autopay ? 'Auto' : 'Manual'}</Badge></td>
-                              <td className="px-5 py-4">
+                              <td className="hidden px-5 py-4 xl:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
+                              <td className="hidden px-5 py-4 xl:table-cell"><Badge active={exp.is_autopay}>{exp.is_autopay ? 'Auto' : 'Manual'}</Badge></td>
+                              <td className="hidden px-5 py-4 xl:table-cell">
                                 <div className="space-y-0.5">
                                   <p className={`text-[10px] font-bold uppercase tracking-wide ${toneClass}`}>{payment.label}</p>
                                   <p className="text-[10px] text-tertiary">{payment.detail}</p>
                                 </div>
                               </td>
-                              <td className="px-5 py-4">
+                              <td className="hidden px-5 py-4 xl:table-cell">
                                 <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
                               </td>
-                              <td className="px-5 py-4">
+                              <td className="hidden px-5 py-4 xl:table-cell">
                                 <span className="text-xs font-medium text-secondary">{(activeTab === 'bill' ? exp.company : exp.who_uses) || <span className="text-tertiary">—</span>}</span>
                               </td>
-                              <td className="px-5 py-4 text-right">
+                              <td className="px-2 py-4 text-right sm:px-5">
                                 <div className="flex justify-end gap-1">
                                   <button onClick={() => handleEdit(exp)} className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors" title="Edit" aria-label={`Edit ${exp.name}`}>
                                     <Edit2 size={14} />

@@ -48,7 +48,7 @@ export default function Spending({ initialTab = 'overview' }) {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex min-w-[190px] items-center gap-3 rounded px-3 py-2 text-left transition-colors ${
+                className={`flex min-w-0 items-center gap-3 rounded px-3 py-2 text-left transition-colors ${
                   active
                     ? 'bg-accent/15 text-accent'
                     : 'text-secondary hover:bg-surface-2 hover:text-primary'

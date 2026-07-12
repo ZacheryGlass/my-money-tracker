@@ -307,7 +307,7 @@ const Dashboard = ({ onNavigate }) => {
       {freshnessIssues.length > 0 && (
         <div className="border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-body-sm text-amber-300">
           <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-            <div className="flex min-w-[220px] items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2 xl:min-w-[220px]">
               <AlertTriangle size={15} className="flex-shrink-0" />
               <div>
                 <h2 className="text-caption font-semibold uppercase tracking-wide text-amber-200">

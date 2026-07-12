@@ -696,8 +696,8 @@ export default function SpendingExplorer({ embedded = false }) {
           </span>
         </div>
 
-        <div className="hidden md:block overflow-x-auto">
-          <table className="min-w-full divide-y divide-border">
+        <div className="hidden max-w-full overflow-hidden xl:block">
+          <table className="w-full table-fixed divide-y divide-border">
             <thead className="bg-surface-2">
               <tr>
                 {['Date', 'Store', 'Kind / Category', 'Account', 'Amount'].map((header) => (
@@ -718,7 +718,7 @@ export default function SpendingExplorer({ embedded = false }) {
                 visibleTransactions.map((txn) => (
                   <tr key={txn.id} className="hover:bg-surface-2 transition-colors">
                     <td className="px-5 py-3 whitespace-nowrap text-xs font-mono text-secondary">{formatDateDisplay(txn.date)}</td>
-                    <td className="px-5 py-3 min-w-[260px]">
+                    <td className="min-w-0 px-5 py-3">
                       <div className="text-sm font-bold text-primary truncate">{txn.merchantLabel}</div>
                       {txn.name && txn.name !== txn.merchantLabel && (
                         <div className="text-[10px] text-tertiary truncate uppercase">{txn.name}</div>
@@ -747,7 +747,7 @@ export default function SpendingExplorer({ embedded = false }) {
           </table>
         </div>
 
-        <div className="md:hidden divide-y divide-border">
+        <div className="divide-y divide-border xl:hidden">
           {visibleTransactions.length === 0 ? (
             <div className="p-10 text-center text-tertiary text-sm">No transactions match these filters.</div>
           ) : (

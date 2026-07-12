@@ -227,7 +227,7 @@ export default function SpendingAnalytics({ embedded = false }) {
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Spending Analytics</h1>
           <p className="text-sm text-secondary mt-1">Everyday outflows, likely income, and savings rate</p>
         </div>
-        <div className="border border-border bg-surface p-3 min-w-[240px]">
+        <div className="min-w-0 border border-border bg-surface p-3 sm:min-w-[240px]">
           <p className="text-caption text-tertiary uppercase tracking-wide">Showing</p>
           <p className="font-semibold text-primary">{selectedRange?.label || 'Custom'} period</p>
           <p className="text-caption text-tertiary">{visibleRangeLabel}</p>
@@ -440,7 +440,7 @@ export default function SpendingAnalytics({ embedded = false }) {
           <p className="text-caption text-secondary">{visibleRangeLabel}</p>
         </div>
         {heatmapData.length > 0 ? (
-          <div className="overflow-x-auto">
+          <div className="max-w-full overflow-hidden">
             <CalendarHeatmap
               data={heatmapData}
               startDate={range.startDate}

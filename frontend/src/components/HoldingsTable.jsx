@@ -387,8 +387,8 @@ const HoldingsTable = ({ pageFilter }) => {
 
       </div>
       <div className="card overflow-hidden">
-        <div className="hidden md:block overflow-x-auto">
-          <table className="min-w-[840px] w-full divide-y divide-border">
+        <div className="hidden max-w-full overflow-hidden xl:block">
+          <table className="w-full table-fixed divide-y divide-border">
             <thead className="bg-surface-2">
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id}>
@@ -425,7 +425,7 @@ const HoldingsTable = ({ pageFilter }) => {
           </table>
         </div>
 
-        <div className="md:hidden divide-y divide-border">
+        <div className="divide-y divide-border xl:hidden">
           {table.getRowModel().rows.length === 0 ? (
             <div className="px-3 py-8 text-center text-tertiary text-body-sm">No holdings found.</div>
           ) : (

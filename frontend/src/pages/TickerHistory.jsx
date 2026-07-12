@@ -184,7 +184,7 @@ const TickerHistory = () => {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-title-sm text-secondary uppercase tracking-wide">Tickers</span>
             <div className="flex items-center gap-2">
-              <div className="relative min-w-[180px]">
+              <div className="relative min-w-0 flex-1 sm:min-w-[180px]">
                 <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />
                 <input
                   type="text"

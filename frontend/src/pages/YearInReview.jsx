@@ -267,7 +267,7 @@ export default function YearInReview() {
               </p>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-2 min-w-[280px]">
+          <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:w-auto">
             <div className="border border-border bg-surface-2 p-2">
               <p className="text-caption text-tertiary uppercase">Best</p>
               <p className="text-body-sm font-semibold text-gain">{yearMetrics.bestMonth ? yearMetrics.bestMonth.month : '--'}</p>

@@ -229,8 +229,8 @@ const AccountsPage = () => {
           );
         },
         meta: {
-          headerClassName: 'w-[42%] min-w-[260px]',
-          cellClassName: 'w-[42%] min-w-[260px]',
+          headerClassName: 'w-[42%]',
+          cellClassName: 'w-[42%] min-w-0',
         },
       },
       {
@@ -461,8 +461,8 @@ const AccountsPage = () => {
 
   const renderTable = (table, columns, emptyMessage, onRowClick, options = {}) => (
     <div className="card w-full min-w-0 overflow-hidden">
-      <div className="hidden md:block max-w-full overflow-x-auto">
-        <table className={`${options.tableClassName || 'min-w-full'} divide-y divide-border`}>
+      <div className="hidden max-w-full overflow-hidden lg:block">
+        <table className={`${options.tableClassName || 'w-full table-fixed'} divide-y divide-border`}>
           <thead className="bg-surface-2">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -631,11 +631,11 @@ const AccountsPage = () => {
         listColumns,
         'No accounts match the selected filters.',
         (account) => setSelectedAccountId(account.id),
-        { tableClassName: 'w-full min-w-[640px] table-fixed' }
+        { tableClassName: 'w-full table-fixed' }
       )}
 
       {/* Mobile cards */}
-      <div className="md:hidden space-y-3">
+      <div className="space-y-3 lg:hidden">
         {filteredAccounts.map((account) => {
           const total = accountTotals.get(account.id) || 0;
           return (

@@ -444,13 +444,13 @@ export default function HoldingsAnalysis() {
                 <h3 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Top Holdings by Value</h3>
                 <span className="text-caption text-tertiary">{assetItems.slice(0, 10).length} shown</span>
               </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-[720px] w-full divide-y divide-border">
+              <div className="max-w-full overflow-hidden">
+                <table className="w-full table-fixed divide-y divide-border">
                   <thead className="bg-surface-2">
                     <tr>
                       <th className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide">Holding</th>
-                      <th className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide">Account</th>
-                      <th className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide">Category</th>
+                      <th className="hidden px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide lg:table-cell">Account</th>
+                      <th className="hidden px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide lg:table-cell">Category</th>
                       <th className="px-3 py-2 text-right text-caption font-semibold text-tertiary uppercase tracking-wide">Value</th>
                       <th className="px-3 py-2 text-right text-caption font-semibold text-tertiary uppercase tracking-wide">Share</th>
                     </tr>
@@ -462,8 +462,8 @@ export default function HoldingsAnalysis() {
                           <p className="font-semibold truncate max-w-[280px]" title={item.name}>{item.name}</p>
                           {item.ticker && <p className="text-caption text-tertiary">{item.ticker}</p>}
                         </td>
-                        <td className="px-3 py-2 text-body-sm text-secondary">{item.account}</td>
-                        <td className="px-3 py-2 text-body-sm text-tertiary">{item.categoryLabel}</td>
+                        <td className="hidden px-3 py-2 text-body-sm text-secondary lg:table-cell">{item.account}</td>
+                        <td className="hidden px-3 py-2 text-body-sm text-tertiary lg:table-cell">{item.categoryLabel}</td>
                         <td className="px-3 py-2 text-right font-mono text-body-sm text-primary">{formatCurrency(item.valueNumber)}</td>
                         <td className="px-3 py-2 text-right font-mono text-body-sm text-secondary">{formatPercent(totalAssets > 0 ? (item.valueNumber / totalAssets) * 100 : 0, 1, { sign: false })}</td>
                       </tr>

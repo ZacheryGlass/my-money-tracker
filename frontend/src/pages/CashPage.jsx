@@ -211,8 +211,8 @@ const CashPage = () => {
       {successMessage && <div className="p-2 bg-gain-bg border border-gain/20 text-gain text-body-sm flex items-center gap-2 mb-3"><Check size={14} />{successMessage}</div>}
 
       <div className="card overflow-hidden">
-        <div className="hidden md:block overflow-x-auto">
-          <table className="min-w-full divide-y divide-border">
+        <div className="hidden max-w-full overflow-hidden lg:block">
+          <table className="w-full table-fixed divide-y divide-border">
             <thead className="bg-surface-2">
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id}>
@@ -240,7 +240,7 @@ const CashPage = () => {
             </tbody>
           </table>
         </div>
-        <div className="md:hidden divide-y divide-border">
+        <div className="divide-y divide-border lg:hidden">
           {table.getRowModel().rows.map((row) => {
             const value = parseFloat(row.original.current_value ?? row.original.manual_value ?? 0);
             return (

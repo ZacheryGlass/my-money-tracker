@@ -161,8 +161,8 @@ const DashboardTable = ({ items, onNavigate }) => {
   return (
     <div className="flex flex-col gap-4">
       <div className="order-2">
-        <div className="hidden max-w-full overflow-x-auto lg:block">
-          <table className="w-full min-w-[945px] table-fixed divide-y divide-border">
+        <div className="hidden max-w-full overflow-hidden xl:block">
+          <table className="w-full table-fixed divide-y divide-border">
             <thead className="bg-surface-2">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
@@ -212,7 +212,7 @@ const DashboardTable = ({ items, onNavigate }) => {
         </div>
 
         {/* Mobile Card View */}
-        <div className="lg:hidden divide-y divide-border">
+        <div className="divide-y divide-border xl:hidden">
           {table.getRowModel().rows.length === 0 ? (
             <div className="px-3 py-8 text-center text-tertiary text-body-sm">No holdings found.</div>
           ) : (
