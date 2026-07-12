@@ -282,23 +282,23 @@ const PortfolioTimeline = () => {
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
             <div className="border border-border bg-surface-3 p-2">
               <p className="text-caption text-tertiary uppercase mb-0.5">Current Value</p>
-              <p className="font-mono font-semibold text-primary">{formatCurrency(metrics.currentValue)}</p>
+              <p className="value-emphasis text-primary">{formatCurrency(metrics.currentValue)}</p>
             </div>
             <div className="border border-border bg-surface-3 p-2">
               <p className="text-caption text-tertiary uppercase mb-0.5">Period Growth</p>
               <div className="flex items-end gap-1.5">
-                <p className={`font-mono font-semibold ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>{formatCurrency(metrics.totalGrowth)}</p>
+                <p className={`value-emphasis ${metrics.totalGrowth >= 0 ? 'text-gain' : 'text-loss'}`}>{formatCurrency(metrics.totalGrowth)}</p>
                 <p className={`text-caption font-mono ${metrics.percentChange >= 0 ? 'text-gain' : 'text-loss'}`}>{formatPercent(metrics.percentChange)}</p>
               </div>
             </div>
             <div className="border border-border bg-surface-3 p-2">
               <p className="text-caption text-tertiary uppercase mb-0.5">All-Time High</p>
-              <p className="font-mono text-body-sm font-semibold text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
+              <p className="value-emphasis text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
               <p className="text-caption text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
             </div>
             <div className="border border-border bg-surface-3 p-2">
               <p className="text-caption text-tertiary uppercase mb-0.5">{showDrawdown ? 'Max Drawdown' : 'All-Time Low'}</p>
-              <p className="font-mono text-body-sm font-semibold text-loss">
+              <p className="value-emphasis text-loss">
                 {showDrawdown ? formatPercent(maxDrawdownValue, 1) : formatCurrency(metrics.allTimeLow)}
               </p>
               {!showDrawdown && <p className="text-caption text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>}

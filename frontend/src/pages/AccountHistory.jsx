@@ -420,7 +420,7 @@ const AccountHistory = () => {
                         </span>
                       </span>
                       <span className="shrink-0 text-right">
-                        <span className="block font-money text-body-sm font-semibold text-primary">
+                        <span className="block value-emphasis text-primary">
                           {formatCompactCurrency(latestValue)}
                         </span>
                         {selected && <Check size={14} className="ml-auto mt-1 text-accent" />}

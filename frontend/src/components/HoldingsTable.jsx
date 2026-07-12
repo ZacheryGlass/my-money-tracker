@@ -7,10 +7,11 @@ import {
   getPaginationRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import { Download, FilterX, Link2, Pencil, Plus } from 'lucide-react';
+import { Download, Link2, Pencil, Plus } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
+import FilterDisclosure from './FilterDisclosure';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 
@@ -205,7 +206,7 @@ const HoldingsTable = ({ pageFilter }) => {
           if (abs >= 1_000_000) display = `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
           else if (abs >= 1_000) display = `${sign}$${(abs / 1_000).toFixed(1)}k`;
           else display = formatCurrency(v);
-          return <span className="font-mono font-semibold text-primary">{display}</span>;
+          return <span className="value-emphasis text-primary">{display}</span>;
         },
       },
       {
@@ -292,42 +293,34 @@ const HoldingsTable = ({ pageFilter }) => {
         <div className="grid gap-3 mb-3 md:grid-cols-2 xl:grid-cols-4">
           <div className="border border-border bg-surface p-3">
             <p className="text-caption text-tertiary uppercase tracking-wide">Total Assets</p>
-            <p className="font-mono text-xl font-semibold text-primary">{formatCurrency(summary.totalValue)}</p>
+            <p className="value-emphasis text-primary">{formatCurrency(summary.totalValue)}</p>
             <p className="text-caption text-tertiary">{scopedHoldings.length} tracked rows</p>
           </div>
           <div className="border border-border bg-surface p-3">
             <p className="text-caption text-tertiary uppercase tracking-wide">Visible Total</p>
-            <p className="font-mono text-xl font-semibold text-gain">{formatCurrency(summary.visibleValue)}</p>
+            <p className="value-emphasis text-gain">{formatCurrency(summary.visibleValue)}</p>
             <p className="text-caption text-tertiary">{summary.activeFilters || 'No'} active filters</p>
           </div>
           <div className="border border-border bg-surface p-3">
             <p className="text-caption text-tertiary uppercase tracking-wide">Category Total</p>
-            <p className="font-mono text-xl font-semibold text-primary">{formatCurrency(summary.categoryValue)}</p>
+            <p className="value-emphasis text-primary">{formatCurrency(summary.categoryValue)}</p>
             <p className="text-caption text-tertiary truncate" title={summary.selectedCategory}>{summary.selectedCategory}</p>
           </div>
           <div className="border border-border bg-surface p-3">
             <p className="text-caption text-tertiary uppercase tracking-wide">Account Total</p>
-            <p className="font-mono text-xl font-semibold text-primary">{formatCurrency(summary.accountValue)}</p>
+            <p className="value-emphasis text-primary">{formatCurrency(summary.accountValue)}</p>
             <p className="text-caption text-tertiary truncate" title={summary.selectedAccount ? displayAccountName(summary.selectedAccount) : 'All accounts'}>
               {summary.selectedAccount ? displayAccountName(summary.selectedAccount) : 'All accounts'}
             </p>
           </div>
         </div>
 
-        <div className="card p-3 mb-3 space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-caption text-tertiary uppercase tracking-wide">Filters</p>
-              <p className="text-body-sm text-secondary">
-                {summary.activeFilters ? `${summary.activeFilters} active filter${summary.activeFilters === 1 ? '' : 's'}` : 'All holdings shown'}
-              </p>
-            </div>
-            {summary.activeFilters > 0 && (
-              <button onClick={clearFilters} className="inline-flex items-center gap-1.5 text-caption text-accent hover:text-accent-hover">
-                <FilterX size={13} /> Clear filters
-              </button>
-            )}
-          </div>
+        <FilterDisclosure
+          summary={summary.activeFilters ? `${summary.activeFilters} filter${summary.activeFilters === 1 ? '' : 's'} applied` : 'All holdings shown'}
+          activeCount={summary.activeFilters}
+          onClear={clearFilters}
+        >
+          <div className="space-y-3">
 
           {distinctCategories.length > 0 && (
             <div>
@@ -390,8 +383,9 @@ const HoldingsTable = ({ pageFilter }) => {
             </div>
           )}
           </div>
-      </div>
+        </FilterDisclosure>
 
+      </div>
       <div className="card overflow-hidden">
         <div className="hidden md:block overflow-x-auto">
           <table className="min-w-[840px] w-full divide-y divide-border">
@@ -450,7 +444,7 @@ const HoldingsTable = ({ pageFilter }) => {
                       )}
                       {row.original.ticker && <div className="text-caption text-tertiary mt-0.5">{row.original.ticker}</div>}
                     </div>
-                    <div className="font-mono font-semibold text-primary">{formatCurrency(value)}</div>
+                    <div className="value-emphasis text-primary">{formatCurrency(value)}</div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-caption text-tertiary">
                     <div>{account ? displayAccountName(account) : 'Unknown'}</div>

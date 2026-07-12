@@ -59,7 +59,7 @@ const DashboardTable = ({ items, onNavigate }) => {
           const value = row.original.value;
           const isLiability = row.original.type === 'liability';
           return (
-            <span className={`font-money font-semibold ${isLiability ? 'text-loss' : 'text-gain'}`}>
+            <span className={`font-money text-title-md font-semibold ${isLiability ? 'text-loss' : 'text-gain'}`}>
               {formatCurrency(Math.abs(value))}
             </span>
           );
@@ -159,8 +159,8 @@ const DashboardTable = ({ items, onNavigate }) => {
   }, [items]);
 
   return (
-    <div className="space-y-4">
-      <div>
+    <div className="flex flex-col gap-4">
+      <div className="order-2">
         <div className="hidden max-w-full overflow-x-auto lg:block">
           <table className="w-full min-w-[945px] table-fixed divide-y divide-border">
             <thead className="bg-surface-2">
@@ -218,19 +218,19 @@ const DashboardTable = ({ items, onNavigate }) => {
           ) : (
             table.getRowModel().rows.map((row) => (
               <div key={row.id} className="p-3 hover:bg-surface-2 transition-colors cursor-pointer" onClick={() => onNavigate('accounts')}>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-start">
-                    <div className="min-w-0 pr-3">
-                      <div className="truncate text-body-sm font-semibold text-primary">{row.original.name}</div>
-                      <div className="flex items-center gap-2 mt-0.5">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4">
+                  <div className="min-w-0">
+                    <div className="truncate text-title-sm font-semibold text-primary">{row.original.name}</div>
+                    <div className="mt-1 flex min-w-0 items-center gap-2">
                         <span className="font-money text-caption px-1.5 py-0.5 bg-surface-3 text-tertiary border border-border">
                           {row.original.ticker || '-'}
                         </span>
-                        <span className="text-caption text-tertiary">{row.original.account}</span>
-                      </div>
+                        <span className="truncate text-body-sm text-tertiary">{accountDisplayNames.get(row.original.account_id) || row.original.account || 'Other'}</span>
                     </div>
+                  </div>
+                  <div className="text-right">
                     <span
-                      className={`px-2 py-0.5 text-caption font-semibold uppercase ${
+                      className={`inline-flex px-2 py-0.5 text-caption font-semibold uppercase ${
                         row.original.type === 'liability'
                           ? 'bg-loss-bg text-loss'
                           : 'bg-gain-bg text-gain'
@@ -238,13 +238,10 @@ const DashboardTable = ({ items, onNavigate }) => {
                     >
                       {row.original.type === 'liability' ? 'Liability' : 'Asset'}
                     </span>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 border-t border-border">
-                    <span className="text-caption text-tertiary uppercase">Value</span>
-                    <span className={`font-money font-semibold ${row.original.type === 'liability' ? 'text-loss' : 'text-gain'}`}>
+                    <div className="mt-2 text-caption uppercase text-tertiary">Value</div>
+                    <div className={`font-money text-display-md font-semibold leading-tight ${row.original.type === 'liability' ? 'text-loss' : 'text-gain'}`}>
                       {formatCurrency(Math.abs(row.original.value))}
-                    </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -254,16 +251,16 @@ const DashboardTable = ({ items, onNavigate }) => {
       </div>
 
       {/* Breakdowns */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-border">
+      <div className="order-1 grid grid-cols-1 gap-px bg-border md:grid-cols-2">
         <div className="card p-4 space-y-2">
           <h3 className="text-caption text-tertiary uppercase tracking-wide">
             Account Subtotals
           </h3>
           <div className="space-y-1">
             {accountTotals.map((account) => (
-              <div key={account.id} className="flex justify-between items-center px-2 py-1.5 hover:bg-surface-2 transition-colors cursor-pointer" onClick={() => onNavigate('accounts')}>
-                <span className="text-body-sm text-secondary">{account.name}</span>
-                <span className={`font-money text-body-sm font-semibold ${account.value < 0 ? 'text-loss' : 'text-gain'}`}>
+              <div key={account.id} className="flex items-center justify-between gap-3 px-2 py-1.5 hover:bg-surface-2 transition-colors cursor-pointer" onClick={() => onNavigate('accounts')}>
+                <span className="min-w-0 truncate text-body-sm text-secondary">{account.name}</span>
+                <span className={`shrink-0 font-money text-title-sm font-semibold ${account.value < 0 ? 'text-loss' : 'text-gain'}`}>
                   {formatCurrency(account.value)}
                 </span>
               </div>
@@ -277,9 +274,9 @@ const DashboardTable = ({ items, onNavigate }) => {
           </h3>
           <div className="space-y-1">
             {categoryTotals.map(([category, total]) => (
-              <div key={category} className="flex justify-between items-center px-2 py-1.5">
-                <span className="text-body-sm text-secondary">{category}</span>
-                <span className={`font-money text-body-sm font-semibold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
+              <div key={category} className="flex items-center justify-between gap-3 px-2 py-1.5">
+                <span className="min-w-0 truncate text-body-sm text-secondary">{category}</span>
+                <span className={`shrink-0 font-money text-title-sm font-semibold ${total < 0 ? 'text-loss' : 'text-gain'}`}>
                   {formatCurrency(total)}
                 </span>
               </div>

@@ -2,10 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   useReactTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel, getPaginationRowModel, flexRender,
 } from '@tanstack/react-table';
-import { Plus, Link2, Check, X, Clock, CreditCard, Landmark, ShieldAlert, TrendingDown } from 'lucide-react';
+import { Plus, Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
+import FilterDisclosure from '../components/FilterDisclosure';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const LIABILITY_TYPES = new Set(['credit', 'loan']);
@@ -158,7 +159,7 @@ const LiabilitiesPage = () => {
       </div>
     )},
     { id: 'value', accessorFn: (row) => getLiabilityValue(row), header: 'Owed',
-      cell: ({ getValue }) => <span className="font-mono font-semibold text-loss">{formatCurrency(getValue())}</span> },
+      cell: ({ getValue }) => <span className="value-emphasis text-loss">{formatCurrency(getValue())}</span> },
     { id: 'type', accessorFn: (row) => accountsMap.get(row.account_id)?.type === 'credit' ? 'Credit' : 'Loan',
       header: 'Type', cell: ({ getValue }) => (
         <span className={`inline-flex px-2 py-1 text-caption uppercase border ${getValue() === 'Credit' ? 'border-loss/20 text-loss bg-loss-bg' : 'border-accent/20 text-accent bg-accent-muted'}`}>
@@ -184,11 +185,11 @@ const LiabilitiesPage = () => {
         <div className="flex flex-wrap items-center gap-2">
           <div className="border border-border bg-surface-3 p-2">
             <p className="text-caption text-tertiary uppercase mb-0.5">Credit Cards</p>
-            <p className="font-mono font-semibold text-loss">{formatCurrency(totalCredit)}</p>
+            <p className="value-emphasis text-loss">{formatCurrency(totalCredit)}</p>
           </div>
           <div className="border border-border bg-surface-3 p-2">
             <p className="text-caption text-tertiary uppercase mb-0.5">Loans</p>
-            <p className="font-mono font-semibold text-loss">{formatCurrency(totalLoans)}</p>
+            <p className="value-emphasis text-loss">{formatCurrency(totalLoans)}</p>
           </div>
           <div className="border border-border bg-surface-3 p-2">
             <p className="text-caption text-tertiary uppercase mb-0.5">Freshness</p>
@@ -200,24 +201,15 @@ const LiabilitiesPage = () => {
         </div>
       </div>
 
-      <div className="card mb-4">
-        <div className="grid gap-3 p-3 2xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
-          <div>
-            <div className="flex items-center justify-between gap-3 mb-2">
-              <div>
-                <p className="text-caption text-tertiary uppercase tracking-wide">Account Filter</p>
-                <p className="text-body-sm text-secondary">
-                  {liabilityPageStats.selectedSummary
-                    ? `${displayAccountName(liabilityPageStats.selectedSummary.account)} selected`
-                    : `${liabilityAccountSummaries.length} liability accounts shown`}
-                </p>
-              </div>
-              {accountFilter && (
-                <button onClick={() => setAccountFilter('')} className="text-caption text-accent hover:text-accent-hover">
-                  Clear
-                </button>
-              )}
-            </div>
+      <FilterDisclosure
+        summary={liabilityPageStats.selectedSummary
+          ? displayAccountName(liabilityPageStats.selectedSummary.account)
+          : `${liabilityAccountSummaries.length} liability accounts shown`}
+        activeCount={accountFilter ? 1 : 0}
+        onClear={() => setAccountFilter('')}
+      >
+        <div>
+          <p className="mb-2 text-caption font-semibold uppercase tracking-wide text-tertiary">Account</p>
             <div className="flex flex-wrap gap-1">
               <button onClick={() => setAccountFilter('')} className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${accountFilter === '' ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'}`}>
                 All Accounts {accountFilter === '' && <Check size={12} />}
@@ -231,68 +223,7 @@ const LiabilitiesPage = () => {
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="border border-border bg-surface-2 p-3">
-              <div className="flex items-center gap-2 text-tertiary mb-2">
-                <ShieldAlert size={14} />
-                <p className="text-caption uppercase tracking-wide">Largest Balance</p>
-              </div>
-              <p className="font-mono text-xl font-semibold text-loss">{formatCurrency(liabilityPageStats.largestAccount?.total || 0)}</p>
-              <p className="text-caption text-tertiary truncate">{liabilityPageStats.largestAccount ? displayAccountName(liabilityPageStats.largestAccount.account) : 'No accounts'}</p>
-            </div>
-            <div className="border border-border bg-surface-2 p-3">
-              <div className="flex items-center gap-2 text-tertiary mb-2">
-                <TrendingDown size={14} />
-                <p className="text-caption uppercase tracking-wide">Debt Mix</p>
-              </div>
-              <p className="font-mono text-xl font-semibold text-primary">{liabilityPageStats.creditAccounts.length}/{liabilityAccountSummaries.length}</p>
-              <p className="text-caption text-tertiary">credit cards, {liabilityPageStats.loanAccounts.length} loans</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-3 mb-4 2xl:grid-cols-2">
-        {[
-          { label: 'Credit Cards', icon: CreditCard, summaries: liabilityPageStats.creditAccounts, tone: 'text-loss', border: 'border-loss/20' },
-          { label: 'Loans', icon: Landmark, summaries: liabilityPageStats.loanAccounts, tone: 'text-accent', border: 'border-accent/20' },
-        ].map(({ label, icon, summaries, tone, border }) => (
-          <div key={label} className={`border ${border} bg-surface p-3`}>
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <div className="flex items-center gap-2">
-                {React.createElement(icon, { size: 15, className: tone })}
-                <h2 className="text-body-sm font-semibold text-primary">{label}</h2>
-              </div>
-              <span className="text-caption text-tertiary">{summaries.length} accounts</span>
-            </div>
-            <div className="space-y-2">
-              {summaries.length === 0 ? (
-                <div className="border border-border bg-surface-2 p-3 text-caption text-tertiary">No {label.toLowerCase()} tracked.</div>
-              ) : summaries.map(({ account, total, holdingCount, isLinked, isZeroBalance, latestUpdate }) => (
-                <button
-                  key={account.id}
-                  onClick={() => setAccountFilter(String(account.id))}
-                  className={`w-full text-left border p-3 bg-surface-2 hover:bg-surface-3 transition-colors ${accountFilter === String(account.id) ? 'border-accent/40' : 'border-border'}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-primary truncate">{displayAccountName(account)}</p>
-                      <p className="text-caption text-tertiary">{holdingCount} rows, {isZeroBalance ? 'zero balance' : formatLastUpdated(latestUpdate)}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-mono font-semibold text-loss">{formatCurrency(total)}</p>
-                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-caption border ${isLinked ? 'bg-accent-muted text-accent border-accent/20' : 'bg-surface text-tertiary border-border'}`}>
-                        {isLinked ? <Link2 size={10} /> : <Clock size={10} />}
-                        {isLinked ? 'Linked' : 'Manual'}
-                      </span>
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+      </FilterDisclosure>
 
       {error && <div className="p-2 bg-loss-bg border border-loss/20 text-loss text-body-sm flex items-center gap-2 mb-3"><X size={14} />{error}</div>}
       {successMessage && <div className="p-2 bg-gain-bg border border-gain/20 text-gain text-body-sm flex items-center gap-2 mb-3"><Check size={14} />{successMessage}</div>}
@@ -337,7 +268,7 @@ const LiabilitiesPage = () => {
                     <p className="text-body-sm font-semibold text-primary truncate">{row.original.name}</p>
                     <p className="text-caption text-tertiary">{displayAccountName(accountsMap.get(row.original.account_id))} / {formatLastUpdated(row.original.updated_at)}</p>
                   </div>
-                  <p className="font-mono font-semibold text-loss">{formatCurrency(value)}</p>
+                  <p className="value-emphasis text-loss">{formatCurrency(value)}</p>
                 </div>
               </div>
             );

@@ -7,10 +7,11 @@ import {
   flexRender,
 } from '@tanstack/react-table';
 import { AnimatePresence, motion as Motion } from 'framer-motion';
-import { ArrowLeft, Link2, Building2, Wallet, Filter, Receipt, X, Activity } from 'lucide-react';
+import { ArrowLeft, Link2, Building2, Wallet, Receipt, X, Activity } from 'lucide-react';
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
+import FilterDisclosure from '../components/FilterDisclosure';
 import { buildAccountDisplayNameMap, getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 
@@ -176,7 +177,6 @@ const AccountsPage = () => {
     return [...filtered].sort((a, b) => (accountTotals.get(b.id) || 0) - (accountTotals.get(a.id) || 0));
   }, [accounts, accountTotals, inactiveAccountIds, showInactive, typeFilter]);
 
-  const hasActiveFilters = Boolean(typeFilter || showInactive);
   const clearFilters = () => {
     setTypeFilterRaw('');
     setShowInactive(false);
@@ -260,7 +260,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`block text-right font-mono text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`block text-right value-emphasis ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
@@ -313,7 +313,7 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`font-mono text-base font-bold ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`value-emphasis ${v < 0 ? 'text-loss' : 'text-primary'}`}>
               {formatCurrency(v)}
             </span>
           );
@@ -531,7 +531,7 @@ const AccountsPage = () => {
             <Building2 className="text-accent w-5 h-5" />
             <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Asset Management</span>
           </div>
-          <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
+          <h1 className="text-3xl md:text-5xl font-money font-bold text-primary tracking-tighter leading-none mb-2">
             {formatCurrency(grandTotal)}
           </h1>
           <p className="text-sm text-secondary">Aggregate balance across {activeAccountCount} active accounts</p>
@@ -556,28 +556,12 @@ const AccountsPage = () => {
         </div>
       )}
 
-      <div className="mb-5 overflow-hidden rounded border border-border bg-surface">
-        <div className="flex flex-col gap-4 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3">
-              <Filter size={16} className="mt-0.5 text-accent" />
-              <div>
-                <span className="block text-sm font-bold uppercase tracking-wide text-primary">Filters</span>
-                <span className="text-xs text-tertiary">
-                  Showing {filteredAccounts.length} of {accounts.length} accounts
-                </span>
-              </div>
-            </div>
-            {hasActiveFilters && (
-              <button
-                onClick={clearFilters}
-                className="self-start rounded border border-border bg-surface-2 px-3 py-2 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary"
-              >
-                Clear filters
-              </button>
-            )}
-          </div>
-
+      <FilterDisclosure
+        summary={`Showing ${filteredAccounts.length} of ${accounts.length} accounts`}
+        activeCount={Number(Boolean(typeFilter)) + Number(showInactive)}
+        onClear={clearFilters}
+      >
+        <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex min-w-0 flex-1 flex-wrap gap-2">
               <button
@@ -640,7 +624,7 @@ const AccountsPage = () => {
             )}
           </div>
         </div>
-      </div>
+      </FilterDisclosure>
 
       {renderTable(
         listTable,
@@ -673,7 +657,7 @@ const AccountsPage = () => {
                     <AccountStatusPills account={account} inactive={inactiveAccountIds.has(account.id)} />
                   </div>
                 </div>
-                <div className={`text-lg font-mono font-bold ${total < 0 ? 'text-loss' : 'text-primary'}`}>
+                <div className={`value-emphasis ${total < 0 ? 'text-loss' : 'text-primary'}`}>
                   {formatCurrency(total)}
                 </div>
               </div>
@@ -734,7 +718,7 @@ const AccountsPage = () => {
           <div className="flex items-center gap-4">
             <div className="p-5 bg-surface-2 border border-border rounded min-w-[180px]">
               <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Account Value</p>
-              <p className={`text-2xl font-mono font-bold ${accountTotal < 0 ? 'text-loss' : 'text-gain'}`}>
+              <p className={`value-emphasis ${accountTotal < 0 ? 'text-loss' : 'text-gain'}`}>
                 {formatCurrency(accountTotal)}
               </p>
             </div>

@@ -2,10 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   useReactTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel, getPaginationRowModel, flexRender,
 } from '@tanstack/react-table';
-import { Plus, Link2, Check, X, Clock, Landmark, Activity, Wallet } from 'lucide-react';
+import { Plus, Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
+import FilterDisclosure from '../components/FilterDisclosure';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const CASH_TYPES = new Set(['depository']);
@@ -145,7 +146,7 @@ const CashPage = () => {
       </div>
     )},
     { id: 'value', accessorFn: (row) => row.current_value ?? row.manual_value ?? 0, header: 'Balance',
-      cell: ({ getValue }) => <span className="font-mono font-semibold text-gain">{formatCurrency(parseFloat(getValue()) || 0)}</span> },
+      cell: ({ getValue }) => <span className="value-emphasis text-gain">{formatCurrency(parseFloat(getValue()) || 0)}</span> },
     { accessorKey: 'category', header: 'Type', cell: ({ getValue, row }) => (
       <span className={`inline-flex px-2 py-1 text-caption uppercase border ${Math.abs(getHoldingValue(row.original)) < 0.01 ? 'border-border text-tertiary bg-surface-2' : 'border-gain/20 text-gain bg-gain-bg'}`}>
         {Math.abs(getHoldingValue(row.original)) < 0.01 ? 'Zero Balance' : getValue() || 'Depository'}
@@ -182,24 +183,15 @@ const CashPage = () => {
         </div>
       </div>
 
-      <div className="card mb-4">
-        <div className="grid gap-3 p-3 2xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
-          <div>
-            <div className="flex items-center justify-between gap-3 mb-2">
-              <div>
-                <p className="text-caption text-tertiary uppercase tracking-wide">Account Filter</p>
-                <p className="text-body-sm text-secondary">
-                  {cashPageStats.selectedSummary
-                    ? `${displayAccountName(cashPageStats.selectedSummary.account)} selected`
-                    : `${cashAccountSummaries.length} cash accounts shown`}
-                </p>
-              </div>
-              {accountFilter && (
-                <button onClick={() => setAccountFilter('')} className="text-caption text-accent hover:text-accent-hover">
-                  Clear
-                </button>
-              )}
-            </div>
+      <FilterDisclosure
+        summary={cashPageStats.selectedSummary
+          ? displayAccountName(cashPageStats.selectedSummary.account)
+          : `${cashAccountSummaries.length} cash accounts shown`}
+        activeCount={accountFilter ? 1 : 0}
+        onClear={() => setAccountFilter('')}
+      >
+        <div>
+          <p className="mb-2 text-caption font-semibold uppercase tracking-wide text-tertiary">Account</p>
             <div className="flex flex-wrap gap-1">
               <button onClick={() => setAccountFilter('')} className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${accountFilter === '' ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'}`}>
                 All Accounts {accountFilter === '' && <Check size={12} />}
@@ -213,54 +205,7 @@ const CashPage = () => {
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="border border-border bg-surface-2 p-3">
-              <div className="flex items-center gap-2 text-tertiary mb-2">
-                <Wallet size={14} />
-                <p className="text-caption uppercase tracking-wide">Selected Total</p>
-              </div>
-              <p className="font-mono text-xl font-semibold text-gain">{formatCurrency(totalCash)}</p>
-              <p className="text-caption text-tertiary">{filteredData.length} balance rows</p>
-            </div>
-            <div className="border border-border bg-surface-2 p-3">
-              <div className="flex items-center gap-2 text-tertiary mb-2">
-                <Activity size={14} />
-                <p className="text-caption uppercase tracking-wide">Status Mix</p>
-              </div>
-              <p className="font-mono text-xl font-semibold text-primary">{cashPageStats.linkedAccounts}/{cashAccountSummaries.length}</p>
-              <p className="text-caption text-tertiary">{cashPageStats.zeroBalanceAccounts} zero-balance accounts</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-3 mb-4 xl:grid-cols-2 2xl:grid-cols-3">
-        {cashAccountSummaries.slice(0, 6).map(({ account, total, holdingCount, isLinked, isZeroBalance, latestUpdate }) => (
-          <button
-            key={account.id}
-            onClick={() => setAccountFilter(String(account.id))}
-            className={`text-left border p-3 bg-surface hover:bg-surface-2 transition-colors ${accountFilter === String(account.id) ? 'border-accent/40' : 'border-border'}`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-tertiary mb-1">
-                  <Landmark size={14} />
-                  <p className="text-caption uppercase tracking-wide truncate">{displayAccountName(account)}</p>
-                </div>
-                <p className="font-mono text-lg font-semibold text-primary">{formatCurrency(total)}</p>
-              </div>
-              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-caption border ${isLinked ? 'bg-accent-muted text-accent border-accent/20' : 'bg-surface-2 text-tertiary border-border'}`}>
-                {isLinked ? <Link2 size={10} /> : <Clock size={10} />}
-                {isLinked ? 'Linked' : 'Manual'}
-              </span>
-            </div>
-            <div className="mt-3 flex items-center justify-between text-caption text-tertiary">
-              <span>{holdingCount} rows</span>
-              <span>{isZeroBalance ? 'Zero balance' : formatLastUpdated(latestUpdate)}</span>
-            </div>
-          </button>
-        ))}
-      </div>
+      </FilterDisclosure>
 
       {error && <div className="p-2 bg-loss-bg border border-loss/20 text-loss text-body-sm flex items-center gap-2 mb-3"><X size={14} />{error}</div>}
       {successMessage && <div className="p-2 bg-gain-bg border border-gain/20 text-gain text-body-sm flex items-center gap-2 mb-3"><Check size={14} />{successMessage}</div>}
@@ -305,7 +250,7 @@ const CashPage = () => {
                     <p className="text-body-sm font-semibold text-primary truncate">{row.original.name}</p>
                     <p className="text-caption text-tertiary">{displayAccountName(accountsMap.get(row.original.account_id))} / {formatLastUpdated(row.original.updated_at)}</p>
                   </div>
-                  <p className="font-mono font-semibold text-gain">{formatCurrency(value)}</p>
+                  <p className="value-emphasis text-gain">{formatCurrency(value)}</p>
                 </div>
               </div>
             );

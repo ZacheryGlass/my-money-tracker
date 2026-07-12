@@ -44,8 +44,8 @@ export default {
         accent: 'var(--accent)',
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe WPC"', '"Segoe UI"', 'system-ui', 'Ubuntu', '"Droid Sans"', 'sans-serif'],
-        mono: ['Consolas', '"Courier New"', 'monospace'],
+        sans: ['"Atkinson Hyperlegible"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'system-ui', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'Consolas', '"Courier New"', 'monospace'],
       },
       fontSize: {
         'display-mega': ['36px', { lineHeight: '1.18', fontWeight: '650' }],
