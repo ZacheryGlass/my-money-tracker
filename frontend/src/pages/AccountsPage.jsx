@@ -7,7 +7,7 @@ import {
   flexRender,
 } from '@tanstack/react-table';
 import { AnimatePresence, motion as Motion } from 'framer-motion';
-import { ArrowLeft, Link2, Building2, Wallet, Receipt, X, Activity } from 'lucide-react';
+import { ArrowLeft, Link2, Wallet, Receipt, X, Activity } from 'lucide-react';
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
@@ -524,33 +524,29 @@ const AccountsPage = () => {
 
   const renderListView = () => (
     <Motion.div key="list" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      {/* Hero Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-6 pt-4">
+      <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <div className="flex items-center gap-2 mb-2">
-            <Building2 className="text-accent w-5 h-5" />
-            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Asset Management</span>
-          </div>
-          <h1 className="text-3xl md:text-5xl font-money font-bold text-primary tracking-tighter leading-none mb-2">
+          <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">Accounts</p>
+          <h1 className="font-money text-display-lg text-primary">
             {formatCurrency(grandTotal)}
           </h1>
-          <p className="text-sm text-secondary">Aggregate balance across {activeAccountCount} active accounts</p>
+          <p className="text-body-sm text-tertiary">Aggregate balance across {activeAccountCount} active accounts</p>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[120px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Active</p>
-            <p className="text-lg font-mono font-bold text-primary">{activeAccountCount}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="border border-border bg-surface-3 p-2">
+            <p className="mb-0.5 text-caption uppercase text-tertiary">Active</p>
+            <p className="font-money font-semibold text-primary">{activeAccountCount}</p>
           </div>
-          <div className="p-4 bg-surface-2 border border-border rounded shadow-sm min-w-[120px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Plaid Items</p>
-            <p className="text-lg font-mono font-bold text-accent">{plaidCount}</p>
+          <div className="border border-border bg-surface-3 p-2">
+            <p className="mb-0.5 text-caption uppercase text-tertiary">Linked</p>
+            <p className="font-money font-semibold text-accent">{plaidCount}</p>
           </div>
         </div>
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
+        <div className="mb-3 flex items-center gap-2 border border-loss/20 bg-loss-bg p-2 text-body-sm text-loss">
           <X size={16} />
           {error}
         </div>
