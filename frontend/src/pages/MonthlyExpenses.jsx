@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Copy, CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
+import { AlertTriangle, Copy, CreditCard, Receipt, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
 import { expenses as expensesAPI, analytics } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 
@@ -34,6 +35,8 @@ function getPaymentConfidence(expense) {
 }
 
 const MonthlyExpenses = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [allExpenses, setAllExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -79,14 +82,23 @@ const MonthlyExpenses = () => {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  const handleAddNew = () => {
+  const handleAddNew = useCallback((requestedType = activeTab) => {
+    const entryType = requestedType === 'subscription' ? 'subscription' : 'bill';
+    setActiveTab(entryType);
     setEditingExpense(null);
     setFormData({
-      type: activeTab, name: '', cost: '', is_fixed_rate: true, is_autopay: false,
+      type: entryType, name: '', cost: '', is_fixed_rate: true, is_autopay: false,
       pay_account: '', company: '', who_uses: '', notes: '',
     });
     setIsFormOpen(true);
-  };
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (location.state?.openAdd === 'bill' || location.state?.openAdd === 'subscription') {
+      handleAddNew(location.state.openAdd);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [handleAddNew, location.pathname, location.state, navigate]);
 
   const handleEdit = (expense) => {
     setEditingExpense(expense);
@@ -247,13 +259,6 @@ const MonthlyExpenses = () => {
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Manual Pays</p>
             <p className="text-lg font-mono font-bold text-primary">{stats.manualCount}</p>
           </div>
-          <button
-            onClick={handleAddNew}
-            className="flex items-center gap-2 px-4 py-3 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all"
-          >
-            <Plus size={18} />
-            <span>Add {activeTab === 'bill' ? 'Bill' : 'Sub'}</span>
-          </button>
         </div>
       </div>
 

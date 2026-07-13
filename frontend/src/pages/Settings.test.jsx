@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import Settings from './Settings';
 
@@ -16,11 +17,24 @@ const apiMocks = vi.hoisted(() => ({
     syncItem: vi.fn(),
     removeItem: vi.fn(),
   },
+  holdings: {
+    create: vi.fn(),
+  },
+  exportData: {
+    downloadHoldings: vi.fn(),
+    downloadHistory: vi.fn(),
+  },
+  history: {
+    getPortfolio: vi.fn(),
+  },
 }));
 
 vi.mock('../utils/api', () => ({
   accounts: apiMocks.accounts,
   plaid: apiMocks.plaid,
+  holdings: apiMocks.holdings,
+  exportData: apiMocks.exportData,
+  history: apiMocks.history,
 }));
 
 vi.mock('react-plaid-link', () => ({
@@ -28,6 +42,12 @@ vi.mock('react-plaid-link', () => ({
 }));
 
 describe('Settings display names', () => {
+  const renderSettings = () => render(
+    <MemoryRouter initialEntries={['/settings']}>
+      <Settings />
+    </MemoryRouter>
+  );
+
   beforeEach(() => {
     vi.clearAllMocks();
     apiMocks.plaid.getItems.mockResolvedValue({ items: [] });
@@ -50,7 +70,7 @@ describe('Settings display names', () => {
   });
 
   it('saves an account display name override', async () => {
-    render(<Settings />);
+    renderSettings();
 
     const input = await screen.findByPlaceholderText('Bank of Example - Very Long Checking Account Name');
     fireEvent.change(input, { target: { value: 'Checking' } });
@@ -62,7 +82,7 @@ describe('Settings display names', () => {
   });
 
   it('loads all accounts and toggles account visibility', async () => {
-    render(<Settings />);
+    renderSettings();
 
     await screen.findByText('Account Display');
     expect(apiMocks.accounts.getAll).toHaveBeenCalledWith({ includeHidden: true });

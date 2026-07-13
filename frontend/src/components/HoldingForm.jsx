@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
-const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) => {
+const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, title }) => {
   const [formData, setFormData] = useState({
     account_id: '',
     ticker: '',
@@ -91,7 +91,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts }) =
       <div className="bg-surface-2 border border-border shadow-float w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
         <div className="px-4 py-3 border-b border-border">
           <h2 className="text-display-sm text-primary">
-            {holding ? 'Edit Holding' : 'Add New Holding'}
+            {holding ? 'Edit Holding' : (title || 'Add New Holding')}
           </h2>
           {holding?.is_plaid_managed && (
             <div className="mt-2 px-2 py-1.5 bg-accent-muted border border-accent/20 text-caption text-accent">

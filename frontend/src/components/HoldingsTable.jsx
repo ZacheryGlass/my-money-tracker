@@ -7,8 +7,8 @@ import {
   getPaginationRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import { Download, Link2, Plus } from 'lucide-react';
-import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
+import { Link2 } from 'lucide-react';
+import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
 import FilterDisclosure from './FilterDisclosure';
@@ -56,7 +56,6 @@ const HoldingsTable = ({ pageFilter }) => {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  const handleAddNew = () => { setEditingHolding(null); setIsFormOpen(true); };
   const handleEdit = useCallback((holding) => { setEditingHolding(holding); setIsFormOpen(true); }, []);
 
   const handleSave = async (data) => {
@@ -83,7 +82,6 @@ const HoldingsTable = ({ pageFilter }) => {
     }
   };
 
-  const handleExportHoldings = () => { exportData.downloadHoldings(); };
   const handleCategoryFilterChange = (value) => { setCategoryFilter(value); setPagination((p) => ({ ...p, pageIndex: 0 })); };
   const handleAccountFilterChange = (value) => { setAccountFilter(value); setPagination((p) => ({ ...p, pageIndex: 0 })); };
   const clearFilters = () => {
@@ -249,12 +247,6 @@ const HoldingsTable = ({ pageFilter }) => {
             <p className="mb-0.5 text-caption uppercase text-tertiary">Holdings</p>
             <p className="font-money font-semibold text-primary">{scopedHoldings.length}</p>
           </div>
-            <button onClick={handleAddNew} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white hover:bg-accent-hover rounded text-button font-semibold">
-              <Plus size={14} /> Add Holding
-            </button>
-            <button onClick={handleExportHoldings} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface-3 text-secondary border border-border hover:border-border-hover rounded text-button">
-              <Download size={14} /> Export CSV
-            </button>
         </div>
       </div>
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   useReactTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel, getPaginationRowModel, flexRender,
 } from '@tanstack/react-table';
-import { Plus, Link2, Check, X } from 'lucide-react';
+import { Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
@@ -50,7 +50,6 @@ const CashPage = () => {
   };
 
   const showSuccess = (message) => { setSuccessMessage(message); setTimeout(() => setSuccessMessage(''), 3000); };
-  const handleAddNew = () => { setEditingHolding(null); setIsFormOpen(true); };
   const handleEdit = (holding) => { if (holding.is_plaid_managed) return; setEditingHolding(holding); setIsFormOpen(true); };
 
   const handleSave = async (data) => {
@@ -177,9 +176,6 @@ const CashPage = () => {
             <p className="text-caption text-tertiary uppercase mb-0.5">Freshness</p>
             <p className="font-mono font-semibold text-primary">{formatLastUpdated(cashPageStats.latestUpdate)}</p>
           </div>
-          <button onClick={handleAddNew} className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded text-button font-semibold hover:bg-accent-hover">
-            <Plus size={14} /> Add Entry
-          </button>
         </div>
       </div>
 

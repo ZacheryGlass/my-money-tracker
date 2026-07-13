@@ -1,11 +1,68 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff } from 'lucide-react';
-import { plaid as plaidAPI, accounts as accountsAPI } from '../utils/api';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt } from 'lucide-react';
+import { plaid as plaidAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useChartPreferences from '../hooks/useChartPreferences';
 import { YEAR_REVIEW_CHARTS } from '../utils/chartPreferences';
+import HoldingForm from '../components/HoldingForm';
+
+const MANUAL_ENTRY_TYPES = {
+  asset: {
+    label: 'Asset',
+    description: 'Investment, crypto, property, or other asset',
+    accountTypes: new Set(['investment', 'crypto', 'property', 'other']),
+  },
+  cash: {
+    label: 'Cash',
+    description: 'Checking, savings, or other depository balance',
+    accountTypes: new Set(['depository']),
+  },
+  liability: {
+    label: 'Liability',
+    description: 'Credit card or loan balance',
+    accountTypes: new Set(['credit', 'loan']),
+  },
+  salary: {
+    label: 'Salary Record',
+    description: 'Compensation, equity, and role changes',
+    path: '/salary-history',
+    entryType: 'salary',
+  },
+  bill: {
+    label: 'Monthly Bill',
+    description: 'Recurring household or personal expense',
+    path: '/monthly-expenses',
+    entryType: 'bill',
+  },
+  subscription: {
+    label: 'Subscription',
+    description: 'Recurring service or membership',
+    path: '/monthly-expenses',
+    entryType: 'subscription',
+  },
+};
+
+const downloadPortfolioCsv = (rows) => {
+  const escapeCsv = (value) => {
+    const text = String(value ?? '');
+    return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  };
+  const csv = [
+    ['Date', 'Total Value'],
+    ...rows.map((row) => [row.snapshot_date, row.total_value]),
+  ].map((row) => row.map(escapeCsv).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `portfolio-history-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
 
 function PlaidLinkButton({ onSuccess, onError, disabled }) {
   const [linkToken, setLinkToken] = useState(null);
@@ -136,6 +193,7 @@ const buildInstitutionSummary = (items, consentItems) => {
 };
 
 const Settings = () => {
+  const navigate = useNavigate();
   const { preferences: chartPreferences, setChartEnabled } = useChartPreferences();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -153,11 +211,21 @@ const Settings = () => {
   const [savingVisibilityId, setSavingVisibilityId] = useState(null);
   const [orphanedAccounts, setOrphanedAccounts] = useState([]);
   const [deletingAccountId, setDeletingAccountId] = useState(null);
+  const [manualEntryType, setManualEntryType] = useState(null);
+  const [exportStartDate, setExportStartDate] = useState('');
+  const [exportEndDate, setExportEndDate] = useState('');
+  const [exporting, setExporting] = useState(null);
 
   const institutionSummary = useMemo(
     () => buildInstitutionSummary(items, consentItems),
     [items, consentItems]
   );
+  const manualEntryAccounts = useMemo(() => {
+    if (!manualEntryType) return [];
+    const allowedTypes = MANUAL_ENTRY_TYPES[manualEntryType].accountTypes;
+    if (!allowedTypes) return [];
+    return allAccounts.filter((account) => !account.is_hidden && allowedTypes.has(account.type));
+  }, [allAccounts, manualEntryType]);
 
   const fetchItems = useCallback(async () => {
     try {
@@ -304,6 +372,57 @@ const Settings = () => {
     }
   };
 
+  const handleManualEntrySave = async (data) => {
+    try {
+      await holdingsAPI.create(data);
+      showSuccess(`${MANUAL_ENTRY_TYPES[manualEntryType]?.label || 'Manual entry'} added`);
+      setManualEntryType(null);
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to add manual entry');
+      throw err;
+    }
+  };
+
+  const handleManualEntryAction = (key) => {
+    const entry = MANUAL_ENTRY_TYPES[key];
+    if (entry.path) {
+      navigate(entry.path, { state: { openAdd: entry.entryType } });
+      return;
+    }
+    setManualEntryType(key);
+  };
+
+  const runExport = async (key, action, successText) => {
+    setExporting(key);
+    setError(null);
+    try {
+      await action();
+      showSuccess(successText);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to export data');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const handlePortfolioExport = async () => {
+    if (exportStartDate && exportEndDate && exportStartDate > exportEndDate) {
+      setError('Portfolio export start date must be before the end date');
+      return;
+    }
+    await runExport('portfolio', async () => {
+      const response = await historyAPI.getPortfolio({
+        startDate: exportStartDate || undefined,
+        endDate: exportEndDate || undefined,
+        limit: 10000,
+      });
+      const rows = response.data || [];
+      if (rows.length === 0) throw new Error('No portfolio history exists for that date range');
+      downloadPortfolioCsv(rows);
+    }, 'Portfolio history exported');
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
@@ -325,7 +444,7 @@ const Settings = () => {
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
             Settings
           </h1>
-          <p className="text-sm text-secondary">Manage institution connections, display names, and visibility</p>
+          <p className="text-sm text-secondary">Manage data tools, institution connections, display names, and visibility</p>
         </div>
 
         <div className="flex items-center gap-4">
@@ -354,9 +473,12 @@ const Settings = () => {
         </div>
       )}
 
-      <nav className="mb-6 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4" aria-label="Settings sections">
+      <nav className="mb-6 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5" aria-label="Settings sections">
         <a href="#chart-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Display Charts
+        </a>
+        <a href="#data-tools" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
+          Data Tools
         </a>
         <a href="#institution-health" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Institution Health
@@ -402,6 +524,122 @@ const Settings = () => {
               </div>
             );
           })}
+        </div>
+      </section>
+
+      <section id="data-tools" className="mb-8 scroll-mt-4">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Data Tools</h2>
+          <p className="mt-1 text-xs text-secondary">Add manual records and export data without cluttering the main pages.</p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div className="card overflow-hidden">
+            <div className="border-b border-border bg-surface-2 px-4 py-3">
+              <h3 className="text-body-sm font-bold uppercase tracking-wide text-primary">Manual Entries</h3>
+              <p className="mt-1 text-caption text-tertiary">Choose the kind of balance or holding you want to add.</p>
+            </div>
+            <div className="divide-y divide-border">
+              {Object.entries(MANUAL_ENTRY_TYPES).map(([key, entry]) => {
+                const accountCount = entry.accountTypes
+                  ? allAccounts.filter((account) => !account.is_hidden && entry.accountTypes.has(account.type)).length
+                  : null;
+                const Icon = key === 'asset'
+                  ? TrendingUp
+                  : key === 'cash'
+                    ? Wallet
+                    : key === 'liability'
+                      ? Landmark
+                      : key === 'salary'
+                        ? Briefcase
+                        : Receipt;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => handleManualEntryAction(key)}
+                    disabled={accountCount === 0}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-accent/20 bg-accent-muted text-accent">
+                      <Icon size={16} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-body-sm font-semibold text-primary">Add Manual {entry.label}</span>
+                      <span className="block truncate text-caption text-tertiary">{entry.description}</span>
+                    </span>
+                    {accountCount !== null && (
+                      <span className="shrink-0 text-caption text-tertiary">{accountCount} account{accountCount === 1 ? '' : 's'}</span>
+                    )}
+                    <Plus size={15} className="shrink-0 text-accent" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="border-b border-border bg-surface-2 px-4 py-3">
+              <h3 className="text-body-sm font-bold uppercase tracking-wide text-primary">CSV Exports</h3>
+              <p className="mt-1 text-caption text-tertiary">Download a local copy of holdings or historical values.</p>
+            </div>
+            <div className="grid grid-cols-1 gap-px bg-border sm:grid-cols-3">
+              {[
+                ['holdings', 'Holdings', () => exportData.downloadHoldings(), 'Holdings exported'],
+                ['accounts', 'Account History', () => exportData.downloadHistory('accounts'), 'Account history exported'],
+                ['tickers', 'Ticker History', () => exportData.downloadHistory('tickers'), 'Ticker history exported'],
+              ].map(([key, label, action, successText]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => runExport(key, action, successText)}
+                  disabled={Boolean(exporting)}
+                  className="flex items-center justify-center gap-2 bg-surface px-3 py-3 text-caption font-semibold text-secondary transition-colors hover:bg-surface-2 hover:text-primary disabled:opacity-40"
+                >
+                  {exporting === key ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="border-t border-border p-4">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-body-sm font-semibold text-primary">Portfolio History</h4>
+                  <p className="text-caption text-tertiary">Leave dates blank to export all history.</p>
+                </div>
+                <Download size={16} className="mt-0.5 shrink-0 text-accent" />
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                <label className="min-w-0 text-caption text-tertiary">
+                  Start date
+                  <input
+                    type="date"
+                    value={exportStartDate}
+                    onChange={(event) => setExportStartDate(event.target.value)}
+                    className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                  />
+                </label>
+                <label className="min-w-0 text-caption text-tertiary">
+                  End date
+                  <input
+                    type="date"
+                    value={exportEndDate}
+                    onChange={(event) => setExportEndDate(event.target.value)}
+                    className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={handlePortfolioExport}
+                  disabled={Boolean(exporting)}
+                  className="inline-flex h-10 items-center justify-center gap-2 bg-accent px-4 text-button font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-40"
+                >
+                  {exporting === 'portfolio' ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+                  Export
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -747,6 +985,15 @@ const Settings = () => {
           </div>
         </Motion.div>
       )}
+
+      <HoldingForm
+        isOpen={Boolean(manualEntryType)}
+        onClose={() => setManualEntryType(null)}
+        onSave={handleManualEntrySave}
+        holding={null}
+        accounts={manualEntryAccounts}
+        title={manualEntryType ? `Add Manual ${MANUAL_ENTRY_TYPES[manualEntryType].label}` : undefined}
+      />
 
       {/* Disconnect Confirm Modal */}
       <AnimatePresence>

@@ -9,7 +9,7 @@ import {
   ReferenceLine,
   ReferenceDot,
 } from 'recharts';
-import { Download, TrendingUp, TrendingDown, Check, Calendar } from 'lucide-react';
+import { TrendingUp, TrendingDown, Check, Calendar } from 'lucide-react';
 import { dashboard as dashboardAPI, history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
@@ -170,22 +170,6 @@ const PortfolioTimeline = () => {
     return `${formatDateDisplay(start)} to ${formatDateDisplay(end)}`;
   }, [portfolioData]);
 
-  const exportToCSV = useCallback(() => {
-    if (!portfolioData || portfolioData.length === 0) return;
-    const headers = ['Date', 'Total Value'];
-    const rows = portfolioData.map(d => [d.snapshot_date, d.total_value]);
-    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `portfolio-history-${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, [portfolioData]);
-
   const handleRangeChange = (range) => {
     setUseCustomRange(false);
     setCustomControlsOpen(false);
@@ -239,9 +223,6 @@ const PortfolioTimeline = () => {
               <Calendar size={12} /> Custom
             </button>
           </div>
-          <button onClick={exportToCSV} disabled={portfolioData.length === 0} className="inline-flex items-center gap-1.5 px-2 py-1.5 bg-surface border border-border text-tertiary hover:text-secondary transition-colors disabled:opacity-40" title="Export portfolio history as CSV">
-            <Download size={14} /> Export CSV
-          </button>
         </div>
       </div>
 

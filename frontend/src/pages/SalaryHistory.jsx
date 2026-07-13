@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceDot,
 } from 'recharts';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Briefcase, TrendingUp, Plus, Edit2, Trash2, Check, X, Award, Target, Calendar } from 'lucide-react';
+import { Briefcase, TrendingUp, Edit2, Trash2, Check, X, Award, Target, Calendar } from 'lucide-react';
 import { salary as salaryAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
@@ -11,6 +12,8 @@ import ChartTooltip from '../components/ChartTooltip';
 import ResponsiveContainer from '../components/ResponsiveContainer';
 
 const SalaryHistory = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -43,14 +46,21 @@ const SalaryHistory = () => {
 
   useEffect(() => { fetchData(); }, []);
 
-  const handleAddNew = () => {
+  const handleAddNew = useCallback(() => {
     setEditingRecord(null);
     setFormData({
       effective_date: '', title: '', salary_amount: '', psu: '', rsu: '',
       total_comp: '', change_amount: '', change_percent: '',
     });
     setIsFormOpen(true);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (location.state?.openAdd === 'salary') {
+      handleAddNew();
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [handleAddNew, location.pathname, location.state, navigate]);
 
   const handleEdit = (record) => {
     setEditingRecord(record);
@@ -232,13 +242,6 @@ const SalaryHistory = () => {
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Last Increase</p>
             <p className="text-lg font-mono font-bold text-gain">{lastRaise ? `+${formatCurrency(lastRaise.amount)}` : '—'}</p>
           </div>
-          <button
-            onClick={handleAddNew}
-            className="flex items-center gap-2 px-4 py-3 bg-accent text-white hover:bg-accent-hover rounded text-sm font-bold transition-all"
-          >
-            <Plus size={18} />
-            <span>Add Record</span>
-          </button>
         </div>
       </div>
 
