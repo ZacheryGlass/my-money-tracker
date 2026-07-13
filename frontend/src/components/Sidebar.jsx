@@ -22,7 +22,7 @@ import {
   BarChart3,
   CalendarDays,
 } from 'lucide-react';
-import { useIsMobile, useIsDesktop } from '../hooks/useMediaQuery';
+import { useMediaQuery, useIsDesktop } from '../hooks/useMediaQuery';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -52,7 +52,7 @@ function getStoredExpanded() {
 }
 
 export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobileOpen, onMobileClose }) {
-  const isMobile = useIsMobile();
+  const isMobile = useMediaQuery('(max-width: 1023px)');
   const isDesktop = useIsDesktop();
   const [expanded, setExpanded] = useState(getStoredExpanded);
 
@@ -65,6 +65,15 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
       /* Ignore localStorage failures. */
     }
   }, [expanded]);
+
+  useEffect(() => {
+    if (!isMobile || !mobileOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobile, mobileOpen]);
 
   const handleToggleExpand = () => {
     if (isDesktop) {
@@ -82,11 +91,11 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
   const sidebarContent = (
     <Motion.aside
       initial={false}
-      animate={{ width: isMobile ? '240px' : (showExpanded ? '220px' : '48px') }}
+      animate={{ width: isMobile ? 'min(86vw, 320px)' : (showExpanded ? '220px' : '48px') }}
       className="flex flex-col h-full bg-surface border-r border-border overflow-hidden z-50"
     >
       {/* Header */}
-      <div className="flex items-center h-[35px] px-3 border-b border-border flex-shrink-0">
+      <div className="flex h-12 flex-shrink-0 items-center border-b border-border px-3 lg:h-[35px]">
         <div className="w-5 h-5 rounded-sm bg-accent flex items-center justify-center flex-shrink-0">
           <Banknote className="text-white w-3 h-3" />
         </div>
@@ -94,6 +103,16 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
           <span className="ml-2 text-body-sm font-semibold text-secondary whitespace-nowrap">
             My Money Tracker
           </span>
+        )}
+        {isMobile && (
+          <button
+            type="button"
+            onClick={onMobileClose}
+            className="ml-auto flex h-10 w-10 items-center justify-center text-tertiary transition-colors hover:bg-surface-2 hover:text-primary"
+            aria-label="Close menu"
+          >
+            <X size={20} />
+          </button>
         )}
       </div>
 
@@ -121,7 +140,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
                 className={`
-                  flex items-center gap-2 w-full px-2 py-[5px] text-left transition-colors relative
+                  relative flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left transition-colors lg:min-h-0 lg:gap-2 lg:px-2 lg:py-[5px]
                   ${isActive
                     ? 'bg-[#3994BC26] text-primary'
                     : 'text-secondary hover:bg-surface-2 hover:text-primary'}
@@ -149,7 +168,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
       <div className="border-t border-border">
         <button
           onClick={() => handleNavClick('settings')}
-          className={`flex items-center gap-2 w-full px-2 py-2 text-left transition-colors
+          className={`flex min-h-12 w-full items-center gap-3 px-3 py-2 text-left transition-colors lg:min-h-0 lg:gap-2 lg:px-2
             ${currentPage === 'settings' ? 'bg-[#3994BC26] text-primary' : 'text-secondary hover:bg-surface-2 hover:text-primary'}
             ${(!showExpanded && !isMobile) ? 'justify-center' : ''}`}
           title={(!showExpanded && !isMobile) ? 'Settings' : undefined}
@@ -172,7 +191,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
         <button
           onClick={onLogout}
           className={`
-            flex items-center gap-2 w-full px-2 py-2 text-left
+            flex min-h-12 w-full items-center gap-3 px-3 py-2 text-left lg:min-h-0 lg:gap-2 lg:px-2
             text-secondary hover:bg-loss-bg hover:text-loss transition-colors
             ${(!showExpanded && !isMobile) ? 'justify-center' : ''}
           `}

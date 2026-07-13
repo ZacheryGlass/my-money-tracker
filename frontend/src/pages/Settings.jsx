@@ -215,6 +215,7 @@ const Settings = () => {
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState('');
   const [exporting, setExporting] = useState(null);
+  const [mobileEditingAccountId, setMobileEditingAccountId] = useState(null);
 
   const institutionSummary = useMemo(
     () => buildInstitutionSummary(items, consentItems),
@@ -336,6 +337,7 @@ const Settings = () => {
     try {
       await accountsAPI.updateDisplayName(account.id, normalizedName);
       showSuccess(normalizedName ? `"${normalizedName}" saved` : `"${account.name}" restored`);
+      setMobileEditingAccountId(null);
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update display name');
@@ -433,9 +435,9 @@ const Settings = () => {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1180px] px-4 py-6 md:py-8">
+    <div className="mx-auto w-full max-w-[1180px] px-3 py-5 sm:px-4 md:py-8">
       {/* Hero Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+      <div className="mb-6 flex flex-col justify-between gap-4 md:mb-10 md:flex-row md:items-end md:gap-6">
         <div>
           <div className="flex items-center gap-2 mb-2">
             <ShieldCheck className="text-accent w-5 h-5" />
@@ -447,7 +449,7 @@ const Settings = () => {
           <p className="text-sm text-secondary">Manage data tools, institution connections, display names, and visibility</p>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 [&>button]:w-full sm:[&>button]:w-auto">
           <PlaidLinkButton onSuccess={handlePlaidSuccess} onError={setError} disabled={connecting} />
         </div>
       </div>
@@ -473,7 +475,7 @@ const Settings = () => {
         </div>
       )}
 
-      <nav className="mb-6 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5" aria-label="Settings sections">
+      <nav className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-2 xl:grid-cols-5" aria-label="Settings sections">
         <a href="#chart-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Display Charts
         </a>
@@ -486,7 +488,7 @@ const Settings = () => {
         <a href="#institutions" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Institutions
         </a>
-        <a href="#account-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
+        <a href="#account-display" className="col-span-2 border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary md:col-span-1">
           Display Names
         </a>
       </nav>
@@ -569,7 +571,7 @@ const Settings = () => {
                       <span className="block truncate text-caption text-tertiary">{entry.description}</span>
                     </span>
                     {accountCount !== null && (
-                      <span className="shrink-0 text-caption text-tertiary">{accountCount} account{accountCount === 1 ? '' : 's'}</span>
+                      <span className="hidden shrink-0 text-caption text-tertiary sm:inline">{accountCount} account{accountCount === 1 ? '' : 's'}</span>
                     )}
                     <Plus size={15} className="shrink-0 text-accent" />
                   </button>
@@ -736,26 +738,36 @@ const Settings = () => {
                   key={account.id}
                   className={`p-4 md:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)_minmax(150px,0.45fr)_auto] gap-4 items-center ${account.is_hidden ? 'bg-surface-2' : ''}`}
                 >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-bold text-primary truncate">{getAccountDisplayName(account)}</span>
-                      {account.is_hidden && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-loss/10 text-loss border border-loss/20">
-                          <EyeOff size={10} />
-                          Hidden
-                        </span>
-                      )}
-                      {account.plaid_item_id && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
-                          <Link2 size={10} />
-                          Plaid
-                        </span>
-                      )}
+                  <div className="flex min-w-0 items-start justify-between gap-3 lg:block">
+                    <div className="min-w-0">
+                      <div className="mb-1 flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate text-sm font-bold text-primary">{getAccountDisplayName(account)}</span>
+                        {account.is_hidden && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-loss/10 text-loss border border-loss/20">
+                            <EyeOff size={10} />
+                            Hidden
+                          </span>
+                        )}
+                        {account.plaid_item_id && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-accent/10 text-accent border border-accent/20">
+                            <Link2 size={10} />
+                            Plaid
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                        <span>{account.type}</span>
+                        {hasAccountDisplayName(account) && <span className="truncate normal-case tracking-normal font-medium">Source: {account.name}</span>}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-tertiary">
-                      <span>{account.type}</span>
-                      {hasAccountDisplayName(account) && <span className="truncate normal-case tracking-normal font-medium">Source: {account.name}</span>}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMobileEditingAccountId(mobileEditingAccountId === account.id ? null : account.id)}
+                      className="inline-flex min-h-10 shrink-0 items-center justify-center border border-border bg-surface-3 px-3 text-caption font-semibold uppercase text-secondary lg:hidden"
+                      aria-expanded={mobileEditingAccountId === account.id}
+                    >
+                      {mobileEditingAccountId === account.id ? 'Done' : 'Edit'}
+                    </button>
                   </div>
 
                   <input
@@ -764,7 +776,7 @@ const Settings = () => {
                     onChange={(e) => handleDisplayNameChange(account.id, e.target.value)}
                     maxLength={100}
                     placeholder={account.name}
-                    className="w-full h-11 px-3 bg-surface-2 border border-border rounded text-sm text-primary placeholder:text-tertiary focus:ring-1 focus:ring-accent outline-none"
+                    className={`${mobileEditingAccountId === account.id ? 'block' : 'hidden'} h-11 w-full rounded border border-border bg-surface-2 px-3 text-sm text-primary outline-none placeholder:text-tertiary focus:ring-1 focus:ring-accent lg:block`}
                     disabled={isSaving}
                   />
 
@@ -775,7 +787,7 @@ const Settings = () => {
                     aria-label={`Hide ${getAccountDisplayName(account)} from UI`}
                     onClick={() => handleVisibilityChange(account, !account.is_hidden)}
                     disabled={isSavingVisibility}
-                    className={`flex h-11 items-center justify-between gap-3 rounded border px-3 text-left transition-all disabled:opacity-50 ${
+                    className={`${mobileEditingAccountId === account.id ? 'flex' : 'hidden'} h-11 items-center justify-between gap-3 rounded border px-3 text-left transition-all disabled:opacity-50 lg:flex ${
                       account.is_hidden
                         ? 'border-loss/30 bg-loss/10 text-loss'
                         : 'border-border bg-surface-2 text-secondary hover:text-primary'
@@ -796,7 +808,7 @@ const Settings = () => {
                     </span>
                   </button>
 
-                  <div className="flex items-center gap-2 lg:justify-end">
+                  <div className={`${mobileEditingAccountId === account.id ? 'flex' : 'hidden'} items-center gap-2 lg:flex lg:justify-end`}>
                     {(isDirty || isSaving) ? (
                       <button
                         onClick={() => handleSaveDisplayName(account)}
@@ -998,10 +1010,10 @@ const Settings = () => {
       {/* Disconnect Confirm Modal */}
       <AnimatePresence>
         {disconnectingItem && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
             <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 " onClick={() => setDisconnectingItem(null)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
-              <div className="p-8 pb-4 text-center">
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative max-h-[100dvh] w-full max-w-lg overflow-y-auto border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
+              <div className="p-5 pb-3 text-center sm:p-8 sm:pb-4">
                 <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-6">
                   <Unlink size={28} />
                 </div>
@@ -1011,7 +1023,7 @@ const Settings = () => {
                 </p>
               </div>
 
-              <div className="p-8 space-y-3">
+              <div className="space-y-3 p-5 sm:p-8">
                 <button 
                   onClick={() => setRemoveDataOnDisconnect(true)}
                   className={`w-full flex items-start gap-4 p-4 rounded border text-left transition-all ${removeDataOnDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
@@ -1039,7 +1051,7 @@ const Settings = () => {
                 </button>
               </div>
 
-              <div className="p-8 pt-0 flex gap-3">
+              <div className="sticky bottom-0 flex gap-3 bg-surface p-5 pt-0 sm:static sm:p-8 sm:pt-0">
                 <button
                   onClick={() => setDisconnectingItem(null)}
                   className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all"

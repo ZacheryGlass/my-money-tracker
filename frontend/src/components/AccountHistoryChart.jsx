@@ -218,8 +218,8 @@ const AccountHistoryChart = ({
   };
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="card p-4 md:p-5">
+    <section className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="card min-w-0 overflow-hidden p-3 sm:p-4 md:p-5">
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="mb-2 flex items-center gap-2 text-accent">
@@ -253,7 +253,7 @@ const AccountHistoryChart = ({
           </div>
         </div>
 
-        <div className="h-[360px] w-full md:h-[480px]">
+        <div className="h-[300px] min-w-0 w-full overflow-hidden sm:h-[360px] md:h-[480px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={displayData}
@@ -265,7 +265,7 @@ const AccountHistoryChart = ({
                 tickFormatter={formatDateAxis}
                 {...axisStyle}
                 padding={{ left: 10, right: 10 }}
-                minTickGap={32}
+                minTickGap={isMobile ? 48 : 32}
               />
               <YAxis
                 tickFormatter={formatChartValue}
@@ -305,13 +305,13 @@ const AccountHistoryChart = ({
           </ResponsiveContainer>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-caption text-secondary">
+        <div className="mt-3 flex min-w-0 flex-col gap-1 border-t border-border pt-3 text-caption text-secondary sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
           <span>{activeSeriesCount} visible series</span>
-          <span>{chartMode === 'change' ? 'Change view normalizes each line to its own starting value.' : 'Value view shows actual dollar balances.'}</span>
+          <span className="min-w-0 leading-relaxed">{chartMode === 'change' ? 'Change view normalizes each line to its own starting value.' : 'Value view shows actual dollar balances.'}</span>
         </div>
       </div>
 
-      <aside className="space-y-4">
+      <aside className="min-w-0 space-y-4">
         <div className="card p-4">
           <h3 className="text-caption-upper uppercase text-primary">Period Summary</h3>
           <div className="mt-4 space-y-4">
@@ -382,12 +382,12 @@ const AccountHistoryChart = ({
 const SummaryRow = ({ label, value, change, positive }) => {
   const Icon = positive ? ArrowUpRight : ArrowDownRight;
   return (
-    <div>
+    <div className="min-w-0">
       <p className="text-caption-upper uppercase text-secondary">{label}</p>
-      <p className="mt-1 truncate text-body-sm font-semibold text-primary" title={String(value)}>{value}</p>
-      <p className={`mt-1 flex items-center gap-1 text-caption font-semibold ${positive ? 'text-gain' : 'text-loss'}`}>
-        <Icon size={14} />
-        {change}
+      <p className="mt-1 break-words text-body-sm font-semibold text-primary" title={String(value)}>{value}</p>
+      <p className={`mt-1 flex min-w-0 items-start gap-1 text-caption font-semibold ${positive ? 'text-gain' : 'text-loss'}`}>
+        <Icon size={14} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 break-words">{change}</span>
       </p>
     </div>
   );

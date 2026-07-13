@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -9,8 +9,11 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 import { formatCurrency } from '../utils/format';
 import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
+import { useIsMobile } from '../hooks/useMediaQuery';
 
 const DashboardTable = ({ items, onNavigate }) => {
+  const isMobile = useIsMobile();
+  const [showAllMobile, setShowAllMobile] = useState(false);
   const [sorting, setSorting] = React.useState([{ id: 'value', desc: true }]);
   const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(
     items.map((item) => ({
@@ -157,6 +160,8 @@ const DashboardTable = ({ items, onNavigate }) => {
     });
     return Object.entries(totals).sort((a, b) => b[1] - a[1]);
   }, [items]);
+  const sortedRows = table.getRowModel().rows;
+  const mobileRows = isMobile && !showAllMobile ? sortedRows.slice(0, 8) : sortedRows;
 
   return (
     <div className="flex flex-col gap-4">
@@ -213,10 +218,10 @@ const DashboardTable = ({ items, onNavigate }) => {
 
         {/* Mobile Card View */}
         <div className="divide-y divide-border xl:hidden">
-          {table.getRowModel().rows.length === 0 ? (
+          {sortedRows.length === 0 ? (
             <div className="px-3 py-8 text-center text-tertiary text-body-sm">No holdings found.</div>
           ) : (
-            table.getRowModel().rows.map((row) => (
+            mobileRows.map((row) => (
               <div key={row.id} className="p-3 hover:bg-surface-2 transition-colors cursor-pointer" onClick={() => onNavigate('accounts')}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4">
                   <div className="min-w-0">
@@ -246,6 +251,15 @@ const DashboardTable = ({ items, onNavigate }) => {
                 </div>
               </div>
             ))
+          )}
+          {isMobile && sortedRows.length > 8 && (
+            <button
+              type="button"
+              onClick={() => setShowAllMobile((shown) => !shown)}
+              className="flex min-h-12 w-full items-center justify-center border-t border-border bg-surface-2 px-4 text-body-sm font-semibold text-accent transition-colors hover:bg-surface-3"
+            >
+              {showAllMobile ? 'Show fewer holdings' : `Show all ${sortedRows.length} holdings`}
+            </button>
           )}
         </div>
       </div>

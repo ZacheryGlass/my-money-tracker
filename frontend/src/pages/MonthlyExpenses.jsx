@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Copy, CreditCard, Receipt, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
+import { AlertTriangle, Copy, CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
 import { expenses as expensesAPI, analytics } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 
@@ -520,15 +520,15 @@ const MonthlyExpenses = () => {
       {/* Form Modal */}
       <AnimatePresence>
         {isFormOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
             <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setIsFormOpen(false)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-lg w-full overflow-hidden">
-              <div className="p-6 border-b border-border  flex items-center justify-between">
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
+              <div className="flex shrink-0 items-center justify-between border-b border-border p-4 sm:p-6">
                 <h2 className="text-lg font-bold text-primary">{editingExpense ? 'Modify' : 'Track New'} {formData.type === 'bill' ? 'Bill' : 'Subscription'}</h2>
                 <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
               </div>
-              <form onSubmit={handleSave} className="p-6 space-y-5">
-                <div className="grid grid-cols-2 gap-4">
+              <form onSubmit={handleSave} className="space-y-5 overflow-y-auto p-4 sm:p-6">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Type</label>
                     <select value={formData.type} onChange={(e) => setFormData({ ...formData, type: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none">
@@ -548,7 +548,7 @@ const MonthlyExpenses = () => {
                   <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Name / Descriptor</label>
                   <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Fiber Internet, Netflix" required />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
                   <button type="button" onClick={() => setFormData({ ...formData, is_fixed_rate: !formData.is_fixed_rate })} className={`flex items-center justify-center gap-2 p-3 rounded border transition-all text-[10px] font-bold uppercase tracking-wider ${formData.is_fixed_rate ? 'bg-accent/10 border-accent/30 text-accent' : 'bg-surface-3 border-border text-tertiary'}`}>
                     {formData.is_fixed_rate ? <Check size={12} /> : null} Fixed Rate
                   </button>
@@ -556,7 +556,7 @@ const MonthlyExpenses = () => {
                     {formData.is_autopay ? <Check size={12} /> : null} Auto-pay
                   </button>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Payment Account</label>
                     <input type="text" value={formData.pay_account} onChange={(e) => setFormData({ ...formData, pay_account: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Chase" />
@@ -570,9 +570,9 @@ const MonthlyExpenses = () => {
                   <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Notes</label>
                   <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none min-h-[80px]" />
                 </div>
-                <div className="flex justify-end gap-3 pt-4">
-                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-6 py-3 bg-surface-2 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all">Cancel</button>
-                  <button type="submit" className="px-8 py-3 bg-accent text-white hover:bg-accent-hover rounded text-xs font-bold uppercase tracking-wider transition-all">Save Entry</button>
+                <div className="sticky bottom-0 -mx-4 -mb-4 grid grid-cols-2 gap-3 border-t border-border bg-surface px-4 py-3 sm:static sm:mx-0 sm:mb-0 sm:flex sm:justify-end sm:border-0 sm:bg-transparent sm:px-0 sm:pt-4">
+                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-4 py-3 bg-surface-2 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all sm:px-6">Cancel</button>
+                  <button type="submit" className="px-4 py-3 bg-accent text-white hover:bg-accent-hover rounded text-xs font-bold uppercase tracking-wider transition-all sm:px-8">Save Entry</button>
                 </div>
               </form>
             </Motion.div>
@@ -583,9 +583,9 @@ const MonthlyExpenses = () => {
       {/* Delete Confirm Modal */}
       <AnimatePresence>
         {deletingExpense && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-4">
             <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setDeletingExpense(null)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-surface rounded-3xl border border-border shadow-2xl max-w-sm w-full p-6 text-center">
+            <Motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative w-full max-w-sm border border-border bg-surface p-5 text-center shadow-2xl sm:rounded-3xl sm:p-6">
               <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-4">
                 <Trash2 size={24} />
               </div>

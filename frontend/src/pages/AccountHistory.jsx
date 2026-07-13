@@ -245,7 +245,7 @@ const AccountHistory = () => {
   ];
 
   return (
-    <div className="max-w-[1600px] space-y-5 px-4 py-5">
+    <div className="w-full min-w-0 max-w-[1600px] space-y-5 overflow-hidden px-3 py-4 sm:px-4 sm:py-5">
       <section className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">Account History</p>
@@ -253,13 +253,13 @@ const AccountHistory = () => {
           <p className="text-body-sm text-tertiary">Compare portfolio and account balances over time.</p>
         </div>
 
-        <div className="flex flex-wrap gap-2 rounded border border-border bg-surface p-1">
+        <div className="grid grid-cols-4 gap-1 rounded border border-border bg-surface p-1 sm:flex sm:flex-wrap sm:gap-2">
           {DATE_RANGE_OPTIONS.map((option) => (
             <button
               key={option.value}
               type="button"
               onClick={() => setDateRangeOption(option.value)}
-              className={`rounded px-3 py-2 text-caption-upper uppercase transition-colors ${
+              className={`min-w-0 rounded px-2 py-2 text-caption-upper uppercase transition-colors sm:px-3 ${
                 dateRangeOption === option.value
                   ? 'bg-accent/20 text-accent'
                   : 'text-secondary hover:bg-surface-2 hover:text-primary'

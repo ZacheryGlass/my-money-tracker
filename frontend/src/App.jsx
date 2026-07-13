@@ -119,22 +119,23 @@ function App() {
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
       />
-      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
         {/* Mobile Header */}
-        <div className="lg:hidden flex items-center h-[35px] px-3 bg-surface border-b border-border sticky top-0 z-30">
+        <div className="sticky top-0 z-30 flex h-12 items-center border-b border-border bg-surface px-2 lg:hidden">
           <button
             onClick={() => setMobileOpen(true)}
-            className="w-7 h-7 flex items-center justify-center text-secondary hover:text-primary transition-colors"
+            className="flex h-11 w-11 items-center justify-center text-secondary transition-colors hover:bg-surface-2 hover:text-primary"
             aria-label="Open menu"
+            aria-expanded={mobileOpen}
           >
-            <Menu size={16} />
+            <Menu size={20} />
           </button>
-          <span className="ml-2 text-body-sm font-semibold text-primary">
+          <span className="ml-1 min-w-0 truncate text-body-sm font-semibold text-primary">
             {navItems.find((n) => n.id === currentPage)?.label || 'Not Found'}
           </span>
         </div>
 
-        <main className="flex-1 relative bg-base">
+        <main className="relative min-w-0 flex-1 bg-base pb-[env(safe-area-inset-bottom)]">
           <ErrorBoundary>
             <Suspense fallback={<PageSpinner />}>
               {renderPage()}
@@ -143,7 +144,7 @@ function App() {
         </main>
 
         {/* Status Bar */}
-        <div className="h-[22px] bg-surface border-t border-border flex items-center px-3 text-body-sm text-tertiary flex-shrink-0">
+        <div className="hidden h-[22px] flex-shrink-0 items-center border-t border-border bg-surface px-3 text-body-sm text-tertiary lg:flex">
           <span>My Money Tracker</span>
         </div>
       </div>

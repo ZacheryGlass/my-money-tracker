@@ -87,9 +87,9 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-surface-2 border border-border shadow-float w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="px-4 py-3 border-b border-border">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4">
+      <div className="flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden border border-border bg-surface-2 shadow-float sm:max-h-[90vh]">
+        <div className="shrink-0 border-b border-border px-4 py-3">
           <h2 className="text-display-sm text-primary">
             {holding ? 'Edit Holding' : (title || 'Add New Holding')}
           </h2>
@@ -100,7 +100,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
           )}
         </div>
 
-        <div className="p-4">
+        <div className="overflow-y-auto p-4">
           <form onSubmit={handleSubmit}>
             <fieldset disabled={holding?.is_plaid_managed}>
               <div className="space-y-3">
@@ -241,7 +241,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
               </div>
             </fieldset>
 
-            <div className="pt-4 mt-4 border-t border-border flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="sticky bottom-0 -mx-4 -mb-4 mt-4 flex flex-col items-stretch gap-2 border-t border-border bg-surface-2 px-4 py-3 sm:static sm:mx-0 sm:mb-0 sm:flex-row sm:items-center sm:bg-transparent sm:px-0 sm:pt-4">
               {holding && !holding.is_plaid_managed && onDelete && (
                 <button
                   type="button"
