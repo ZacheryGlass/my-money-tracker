@@ -7,7 +7,7 @@ import {
   getPaginationRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import { Download, Link2, Pencil, Plus } from 'lucide-react';
+import { Download, Link2, Plus } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI, exportData } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
@@ -376,38 +376,15 @@ const HoldingsTable = ({ pageFilter }) => {
               const value = row.original.current_value ?? 0;
               return (
                 <div key={row.id} className={`p-3 ${row.original.is_plaid_managed ? '' : 'cursor-pointer hover:bg-surface-2'}`} onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}>
-                  <div className="flex justify-between items-start mb-1">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-body-sm font-semibold text-primary truncate">{row.original.name}</div>
-                      {row.original.is_plaid_managed && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-caption bg-accent-muted text-accent border border-accent/20 mt-0.5">
-                          <Link2 size={10} /> Plaid
-                        </span>
-                      )}
-                      {row.original.ticker && <div className="text-caption text-tertiary mt-0.5">{row.original.ticker}</div>}
+                  <div className="flex items-start justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-body-sm font-semibold text-primary">{row.original.name}</p>
+                      <p className="truncate text-caption text-tertiary">
+                        {account ? displayAccountName(account) : 'Unknown'} / {formatCategoryLabel(row.original.category)}
+                        {row.original.ticker ? ` / ${row.original.ticker}` : ''}
+                      </p>
                     </div>
-                    <div className="value-emphasis text-primary">{formatCurrency(value)}</div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-caption text-tertiary">
-                    <div>{account ? displayAccountName(account) : 'Unknown'}</div>
-                    <div>{formatCategoryLabel(row.original.category)}</div>
-                  </div>
-                  <div className="mt-2">
-                    {row.original.is_plaid_managed ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 text-caption bg-accent-muted text-accent border border-accent/20">
-                        <Link2 size={11} /> Linked
-                      </span>
-                    ) : (
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleEdit(row.original);
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-1 text-caption bg-surface-3 text-secondary border border-border"
-                      >
-                        <Pencil size={11} /> Edit
-                      </button>
-                    )}
+                    <p className="value-emphasis shrink-0 pl-3 text-gain">{formatCurrency(value)}</p>
                   </div>
                 </div>
               );
