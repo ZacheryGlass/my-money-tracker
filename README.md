@@ -9,6 +9,7 @@ A modern web application for personal portfolio tracking, replacing the legacy G
 - **Historical Snapshots**: Automatic daily snapshots of holdings and account values
 - **Dashboard**: Consolidated view of all assets and liabilities with sorting and filtering
 - **Authentication**: JWT-based authentication for secure API access
+- **AI Access**: Read-only financial MCP endpoint with semantic analysis tools
 
 ## Tech Stack
 
@@ -102,6 +103,12 @@ Frontend will be available at `http://localhost:5173`
 
 ### Health Check
 - `GET /health` - Server health check
+
+### Model Context Protocol
+- `POST /mcp` - Authenticated Streamable HTTP MCP endpoint
+
+See [backend/docs/MCP.md](./backend/docs/MCP.md) for the tool catalog, client
+workflow, security guidance, and semantic-data requirements.
 
 ## Environment Variables
 

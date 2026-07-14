@@ -25,6 +25,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "axios": "^1.13.1",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
@@ -40,7 +41,8 @@
     "pino-http": "^11.0.0",
     "plaid": "^42.2.0",
     "xlsx": "^0.18.5",
-    "yahoo-finance2": "^3.14.0"
+    "yahoo-finance2": "^3.14.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "eslint": "^9.39.0",
