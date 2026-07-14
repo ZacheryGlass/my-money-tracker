@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  Treemap,
+  PieChart, Pie, Cell,
 } from 'recharts';
-import { Grid3X3, Layers, BarChart3, TrendingUp } from 'lucide-react';
+import { PieChart as PieIcon, Grid3X3, Layers, BarChart3, TrendingUp } from 'lucide-react';
 import MetricCard from '../components/MetricCard';
-import WaterfallChart from '../components/WaterfallChart';
 import ChartTooltip from '../components/ChartTooltip';
 import ResponsiveContainer from '../components/ResponsiveContainer';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
@@ -16,8 +15,7 @@ import { getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 
 const VIEWS = [
-  { id: 'treemap', label: 'Treemap', icon: Grid3X3 },
-  { id: 'waterfall', label: 'Waterfall', icon: BarChart3 },
+  { id: 'pie', label: 'Pie Chart', icon: PieIcon },
   { id: 'allocation', label: 'Allocation', icon: Layers },
 ];
 
@@ -43,33 +41,9 @@ function getDateRange(rangeId) {
   };
 }
 
-function TreemapContent({ x, y, width, height, name, value, color, share }) {
-  if (width < 40 || height < 30) return null;
-  return (
-    <g>
-      <rect x={x} y={y} width={width} height={height} rx={4} fill={color} stroke="var(--bg-surface)" strokeWidth={2} />
-      {width > 60 && height > 40 && (
-        <>
-          <text x={x + 8} y={y + 18} fill="var(--text-primary)" fontSize={11} fontWeight={600}>
-            {name.length > Math.floor(width / 7) ? name.slice(0, Math.floor(width / 7)) + '...' : name}
-          </text>
-          <text x={x + 8} y={y + 34} fill="var(--text-secondary)" fontSize={10} fontFamily="var(--font-money)">
-            {formatCompactCurrency(value)}
-          </text>
-          {width > 110 && height > 58 && (
-            <text x={x + 8} y={y + 50} fill="var(--text-secondary)" fontSize={9}>
-              {formatPercent(share || 0, 1, { sign: false })}
-            </text>
-          )}
-        </>
-      )}
-    </g>
-  );
-}
-
 export default function HoldingsAnalysis() {
   const isMobile = useIsMobile();
-  const [view, setView] = useState('treemap');
+  const [view, setView] = useState('pie');
   const [groupBy, setGroupBy] = useState('account');
   const [dateRange, setDateRange] = useState('3m');
   const [loading, setLoading] = useState(true);
@@ -77,7 +51,6 @@ export default function HoldingsAnalysis() {
   const [totalAssets, setTotalAssets] = useState(0);
   const [accountSnaps, setAccountSnaps] = useState([]);
   const [accountList, setAccountList] = useState([]);
-  const [tickerSnaps, setTickerSnaps] = useState([]);
   const [allocationMode, setAllocationMode] = useState('percent');
   const [selectedGroup, setSelectedGroup] = useState(null);
 
@@ -96,16 +69,12 @@ export default function HoldingsAnalysis() {
       setAccountSnaps(acctData.data || []);
       setAccountList(acctList.accounts || []);
 
-      if (view === 'waterfall') {
-        const tickerData = await history.getTickers({ ...range, limit: 10000 });
-        setTickerSnaps(tickerData.data || []);
-      }
     } catch (err) {
       console.error('Failed to load holdings analysis data:', err);
     } finally {
       setLoading(false);
     }
-  }, [dateRange, view]);
+  }, [dateRange]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => { setSelectedGroup(null); }, [groupBy, view]);
@@ -117,6 +86,7 @@ export default function HoldingsAnalysis() {
         ...item,
         valueNumber: Math.abs(parseFloat(item.value)) || 0,
         categoryLabel: formatCategoryLabel(item.category),
+        accountTypeLabel: formatCategoryLabel(item.account_type),
       }))
       .sort((a, b) => b.valueNumber - a.valueNumber);
   }, [portfolioItems]);
@@ -129,12 +99,12 @@ export default function HoldingsAnalysis() {
     return { topHolding, topHoldingShare, topFiveShare };
   }, [assetItems, totalAssets]);
 
-  const treemapData = useMemo(() => {
+  const groupedData = useMemo(() => {
     const groups = {};
     for (const item of assetItems) {
       const key = groupBy === 'account' ? item.account
         : groupBy === 'category' ? item.categoryLabel
-        : item.type;
+        : item.accountTypeLabel;
       if (!groups[key]) groups[key] = { name: key, children: [], total: 0 };
       groups[key].children.push({
         name: item.name || item.ticker,
@@ -161,58 +131,24 @@ export default function HoldingsAnalysis() {
       }));
   }, [assetItems, groupBy, totalAssets]);
 
-  const flatTreemapData = useMemo(() => {
-    return treemapData.flatMap((g) =>
+  const flatGroupedData = useMemo(() => {
+    return groupedData.flatMap((g) =>
       g.children.map((c) => ({ ...c, color: g.color, group: g.name }))
     );
-  }, [treemapData]);
+  }, [groupedData]);
 
   const selectedGroupRows = useMemo(() => {
     if (!selectedGroup) return assetItems.slice(0, 6);
-    return flatTreemapData
+    return flatGroupedData
       .filter((item) => item.group === selectedGroup)
       .sort((a, b) => b.size - a.size)
       .slice(0, 6);
-  }, [assetItems, flatTreemapData, selectedGroup]);
+  }, [assetItems, flatGroupedData, selectedGroup]);
 
   const selectedGroupTotal = useMemo(() => {
     if (!selectedGroup) return null;
-    return treemapData.find((group) => group.name === selectedGroup) || null;
-  }, [treemapData, selectedGroup]);
-
-  const waterfallData = useMemo(() => {
-    if (tickerSnaps.length === 0 || portfolioItems.length === 0) return [];
-
-    const startValues = {};
-    for (const snap of tickerSnaps) {
-      const key = snap.ticker || snap.name;
-      if (!startValues[key] || snap.snapshot_date < startValues[key].date) {
-        startValues[key] = { date: snap.snapshot_date, value: parseFloat(snap.value) };
-      }
-    }
-
-    const deltas = portfolioItems
-      .filter((i) => i.type === 'asset')
-      .map((item) => {
-        const key = item.ticker || item.name;
-        const startVal = startValues[key]?.value || 0;
-        const currentVal = parseFloat(item.value);
-        return { name: key, delta: currentVal - startVal };
-      })
-      .filter((d) => Math.abs(d.delta) > 1)
-      .sort((a, b) => b.delta - a.delta);
-
-    const top = deltas.slice(0, 8);
-    const otherDelta = deltas.slice(8).reduce((sum, d) => sum + d.delta, 0);
-    if (deltas.length > 8 && Math.abs(otherDelta) > 1) {
-      top.push({ name: 'Other', delta: otherDelta });
-    }
-
-    const totalDelta = deltas.reduce((sum, d) => sum + d.delta, 0);
-    top.push({ name: 'Net Change', delta: totalDelta, isTotal: true });
-
-    return top;
-  }, [tickerSnaps, portfolioItems]);
+    return groupedData.find((group) => group.name === selectedGroup) || null;
+  }, [groupedData, selectedGroup]);
 
   const allocationData = useMemo(() => {
     if (accountSnaps.length === 0 || accountList.length === 0) return [];
@@ -259,27 +195,29 @@ export default function HoldingsAnalysis() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px] space-y-8">
+    <div className="mx-auto max-w-[1600px] space-y-4 px-4 py-4">
       {/* Hero */}
       <div>
-        <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter">Holdings Analysis</h1>
-        <p className="text-sm text-secondary mt-1">Visual breakdown of your portfolio composition and changes</p>
+        <h1 className="text-display-md text-primary">Holdings Analysis</h1>
+        <p className="mt-1 text-body-sm text-secondary">Visual breakdown of your portfolio composition and changes</p>
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Total Assets" value={formatCurrency(totalAssets)} icon={TrendingUp} valueColor="accent" caption={`${assetItems.length} asset holdings`} />
-        <MetricCard label="Top Holding Share" value={formatPercent(concentration.topHoldingShare, 1, { sign: false })} icon={Grid3X3} caption={concentration.topHolding?.name || '--'} />
+      <div className="grid grid-cols-1 gap-px bg-border sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard compact label="Total Assets" value={formatCurrency(totalAssets)} icon={TrendingUp} valueColor="accent" caption={`${assetItems.length} asset holdings`} />
+        <MetricCard compact label="Top Holding Share" value={formatPercent(concentration.topHoldingShare, 1, { sign: false })} icon={Grid3X3} caption={concentration.topHolding?.name || '--'} />
         <MetricCard
+          compact
           label="Largest Holding"
-          value={concentration.topHolding?.name || '--'}
-          change={concentration.topHolding ? formatCurrency(concentration.topHolding.valueNumber) : ''}
+          value={concentration.topHolding ? formatCurrency(concentration.topHolding.valueNumber) : '--'}
+          caption={concentration.topHolding?.name || '--'}
           icon={Layers}
         />
         <MetricCard
+          compact
           label="Top 5 Share"
           value={formatPercent(concentration.topFiveShare, 1, { sign: false })}
-          change={`${treemapData.length} groups by ${groupBy}`}
+          caption={`${groupedData.length} groups by ${groupBy}`}
           icon={BarChart3}
         />
       </div>
@@ -290,7 +228,7 @@ export default function HoldingsAnalysis() {
           <div>
             <p className="text-caption text-tertiary uppercase tracking-wide">Analysis View</p>
             <p className="text-body-sm text-secondary">
-              {VIEWS.find((item) => item.id === view)?.label} view{view === 'treemap' ? ` grouped by ${groupBy}` : ''}
+              {VIEWS.find((item) => item.id === view)?.label} view{view === 'pie' ? ` grouped by ${groupBy}` : ''}
             </p>
           </div>
           <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
@@ -312,7 +250,7 @@ export default function HoldingsAnalysis() {
           </div>
         </div>
 
-        {view === 'treemap' && (
+        {view === 'pie' && (
           <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
             {GROUP_BY_OPTIONS.map((opt) => (
               <button
@@ -328,7 +266,7 @@ export default function HoldingsAnalysis() {
           </div>
         )}
 
-        {view !== 'treemap' && (
+        {view === 'allocation' && (
           <div className="flex bg-surface-2 rounded border border-border p-1 gap-1">
             {DATE_RANGES.map((r) => (
               <button
@@ -368,29 +306,44 @@ export default function HoldingsAnalysis() {
 
       {/* Chart Area */}
       <div className="card p-4 md:p-6">
-        {view === 'treemap' && (
+        {view === 'pie' && (
           <div className="space-y-4">
             <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
               <div>
-                <h2 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Treemap by {groupBy}</h2>
+                <h2 className="text-caption font-semibold uppercase tracking-wide text-tertiary">Portfolio by {groupBy}</h2>
                 <p className="text-caption text-secondary">
                   Portfolio values grouped by {groupBy}; top five holdings are {formatPercent(concentration.topFiveShare, 1, { sign: false })} of assets.
                 </p>
               </div>
-              <p className="text-caption text-tertiary">{treemapData.length} groups / {flatTreemapData.length} holdings</p>
+              <p className="text-caption text-tertiary">{groupedData.length} groups / {flatGroupedData.length} holdings</p>
             </div>
 
-            <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_280px]">
-              <div style={{ height: isMobile ? 300 : 500 }}>
-                {flatTreemapData.length > 0 ? (
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div style={{ height: isMobile ? 300 : 380 }}>
+                {groupedData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <Treemap
-                      data={flatTreemapData}
-                      dataKey="size"
-                      nameKey="name"
-                      content={<TreemapContent />}
-                      animationDuration={800}
-                    >
+                    <PieChart accessibilityLayer>
+                      <Pie
+                        data={groupedData}
+                        dataKey="total"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={isMobile ? 112 : 150}
+                        stroke="var(--bg-surface)"
+                        strokeWidth={2}
+                        paddingAngle={1}
+                        animationDuration={800}
+                        onClick={(entry) => setSelectedGroup(selectedGroup === entry.name ? null : entry.name)}
+                      >
+                        {groupedData.map((group) => (
+                          <Cell
+                            key={group.name}
+                            fill={group.color}
+                            opacity={!selectedGroup || selectedGroup === group.name ? 1 : 0.35}
+                          />
+                        ))}
+                      </Pie>
                       <Tooltip
                         content={({ payload }) => {
                           if (!payload || !payload.length) return null;
@@ -398,15 +351,14 @@ export default function HoldingsAnalysis() {
                           if (!item) return null;
                           return (
                             <div className="px-3 py-2 rounded border" style={{ backgroundColor: 'var(--bg-surface-2)', borderColor: 'var(--border)' }}>
-                              <div className="text-xs text-secondary">{item.group}</div>
-                              <div className="text-sm font-semibold text-primary">{item.name}</div>
-                              <div className="text-sm font-money text-accent">{formatCurrency(item.size)}</div>
+                              <div className="text-body-sm font-semibold text-primary">{item.name}</div>
+                              <div className="font-money text-body-sm text-accent">{formatCurrency(item.total)}</div>
                               <div className="text-xs text-tertiary">{formatPercent(item.share || 0, 1, { sign: false })} of assets</div>
                             </div>
                           );
                         }}
                       />
-                    </Treemap>
+                    </PieChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="flex items-center justify-center h-full text-tertiary text-sm">No holdings data</div>
@@ -475,10 +427,6 @@ export default function HoldingsAnalysis() {
           </div>
         )}
 
-        {view === 'waterfall' && (
-          <WaterfallChart data={waterfallData} height={isMobile ? 300 : 450} />
-        )}
-
         {view === 'allocation' && (
           <div style={{ height: isMobile ? 300 : 450 }}>
             {allocationData.length > 0 ? (
@@ -524,10 +472,10 @@ export default function HoldingsAnalysis() {
         )}
       </div>
 
-      {/* Legend for treemap */}
-      {view === 'treemap' && treemapData.length > 0 && (
+      {/* Legend for pie chart */}
+      {view === 'pie' && groupedData.length > 0 && (
         <div className="card p-4 flex flex-wrap gap-3">
-          {treemapData.map((group) => (
+          {groupedData.map((group) => (
             <button
               key={group.name}
               onClick={() => setSelectedGroup(selectedGroup === group.name ? null : group.name)}

@@ -74,6 +74,7 @@ class DashboardService {
         account: holding.account_name,
         account_id: holding.account_id,
         account_source_name: holding.account_source_name,
+        account_type: holding.account_type,
         category,
         type: type
       });

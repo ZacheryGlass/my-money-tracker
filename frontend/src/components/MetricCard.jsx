@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
-const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, valueColor = 'primary', caption, onClick }) => {
+const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, valueColor = 'primary', caption, onClick, compact = false }) => {
   const valueClass =
     valueColor === 'gain' ? 'text-gain' : valueColor === 'loss' ? 'text-loss' : valueColor === 'accent' ? 'text-accent' : 'text-primary';
 
@@ -10,7 +10,7 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
   return (
     <div
       onClick={onClick}
-      className={`card p-3.5 flex flex-col gap-1.5${onClick ? ' cursor-pointer hover:border-border-hover' : ''}`}
+      className={`card flex flex-col ${compact ? 'gap-1 p-3' : 'gap-1.5 p-3.5'}${onClick ? ' cursor-pointer hover:border-border-hover' : ''}`}
     >
       <div className="flex items-start justify-between">
         <div>
@@ -25,18 +25,18 @@ const MetricCard = ({ label, value, change, trend = 'neutral', icon: Icon, value
           )}
         </div>
         {Icon && (
-          <div className="p-1.5 bg-surface-2 border border-border text-tertiary">
-            <Icon size={16} strokeWidth={1.5} />
+          <div className={`${compact ? 'p-1' : 'p-1.5'} bg-surface-2 border border-border text-tertiary`}>
+            <Icon size={compact ? 14 : 16} strokeWidth={1.5} />
           </div>
         )}
       </div>
 
       <div>
-        <span className={`font-money font-semibold text-display-mega ${valueClass}`}>
+        <span className={`font-money font-semibold ${compact ? 'text-display-md' : 'text-display-mega'} ${valueClass}`}>
           {value}
         </span>
         {caption && (
-          <p className="mt-1 text-body-sm text-secondary">
+          <p className={`mt-1 ${compact ? 'text-caption' : 'text-body-sm'} text-secondary`}>
             {caption}
           </p>
         )}
