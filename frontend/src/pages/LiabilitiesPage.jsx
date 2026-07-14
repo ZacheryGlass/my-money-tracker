@@ -7,6 +7,7 @@ import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
 import FilterDisclosure from '../components/FilterDisclosure';
+import SummaryStats from '../components/SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const LIABILITY_TYPES = new Set(['credit', 'loan']);
@@ -175,26 +176,17 @@ const LiabilitiesPage = () => {
 
   return (
     <div className="px-4 py-4">
-      <div className="flex flex-col xl:flex-row xl:items-end justify-between mb-4 gap-4">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-caption text-tertiary uppercase tracking-wide mb-0.5">Liabilities</p>
           <h1 className="text-display-lg font-money text-primary">{formatCurrency(totalLiabilities)}</h1>
           <p className="text-body-sm text-tertiary">{liabilityAccounts.length} accounts, {liabilityPageStats.linkedAccounts} linked</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="text-caption text-tertiary uppercase mb-0.5">Credit Cards</p>
-            <p className="value-emphasis text-loss">{formatCurrency(totalCredit)}</p>
-          </div>
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="text-caption text-tertiary uppercase mb-0.5">Loans</p>
-            <p className="value-emphasis text-loss">{formatCurrency(totalLoans)}</p>
-          </div>
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="text-caption text-tertiary uppercase mb-0.5">Freshness</p>
-            <p className="font-mono font-semibold text-primary">{formatLastUpdated(liabilityPageStats.latestUpdate)}</p>
-          </div>
-        </div>
+        <SummaryStats stats={[
+          { label: 'Credit Cards', value: formatCurrency(totalCredit), valueClassName: 'value-emphasis text-loss' },
+          { label: 'Loans', value: formatCurrency(totalLoans), valueClassName: 'value-emphasis text-loss' },
+          { label: 'Freshness', value: formatLastUpdated(liabilityPageStats.latestUpdate) },
+        ]} />
       </div>
 
       <FilterDisclosure

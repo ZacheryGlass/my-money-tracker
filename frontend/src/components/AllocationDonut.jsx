@@ -114,13 +114,13 @@ const AllocationDonut = ({ items = [], className = '', compact = false }) => {
           </div>
         </div>
 
-        <div className="grid w-full flex-1 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
+        <div className="grid w-full flex-1 grid-cols-1 gap-x-3 gap-y-1 min-[480px]:grid-cols-2">
           {slices.map((entry) => {
             const pct = total > 0 ? (entry.value / total) * 100 : 0;
             return (
               <div
                 key={entry.name}
-                className="flex items-center justify-between gap-3 px-2 py-1 transition-colors hover:bg-surface-2"
+                className="flex items-center justify-between gap-2 px-2 py-1.5 transition-colors hover:bg-surface-2"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span
@@ -132,10 +132,10 @@ const AllocationDonut = ({ items = [], className = '', compact = false }) => {
                   </span>
                 </div>
                 <div className="text-right">
-                  <div className="font-money text-caption text-primary font-semibold">
+                  <div className="font-money text-body-sm text-primary font-semibold">
                     {formatPercent(pct, 1, { sign: false })}
                   </div>
-                  <div className="font-money text-[10px] text-tertiary">
+                  <div className="font-money text-caption text-tertiary">
                     {formatCompactCurrency(entry.value)}
                   </div>
                 </div>

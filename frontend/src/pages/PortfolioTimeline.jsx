@@ -91,6 +91,14 @@ const PortfolioTimeline = () => {
         allData = [...allData, ...(moreResponse.data || [])];
         offset += PAGE_SIZE;
       }
+
+      // All-time pagination is fetched newest page first, while each page is
+      // returned in ascending order. Normalize the combined result before any
+      // first/last-date calculations or chart rendering.
+      allData.sort((a, b) => (
+        String(a.snapshot_date).localeCompare(String(b.snapshot_date))
+      ));
+
       const livePortfolio = await livePortfolioPromise;
       const liveValue = livePortfolio?.summary?.netWorth;
       const latestDate = allData[allData.length - 1]?.snapshot_date?.slice(0, 10);
@@ -260,7 +268,7 @@ const PortfolioTimeline = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="border border-border bg-surface-3 p-2">
               <p className="text-caption text-tertiary uppercase mb-0.5">Current Value</p>
               <p className="value-emphasis text-primary">{formatCurrency(metrics.currentValue)}</p>
@@ -276,13 +284,6 @@ const PortfolioTimeline = () => {
               <p className="text-caption text-tertiary uppercase mb-0.5">All-Time High</p>
               <p className="value-emphasis text-gain">{formatCurrency(metrics.allTimeHigh)}</p>
               <p className="text-caption text-tertiary">{formatDateDisplay(metrics.peakDate)}</p>
-            </div>
-            <div className="border border-border bg-surface-3 p-2">
-              <p className="text-caption text-tertiary uppercase mb-0.5">{showDrawdown ? 'Max Drawdown' : 'All-Time Low'}</p>
-              <p className="value-emphasis text-loss">
-                {showDrawdown ? formatPercent(maxDrawdownValue, 1) : formatCurrency(metrics.allTimeLow)}
-              </p>
-              {!showDrawdown && <p className="text-caption text-tertiary">{formatDateDisplay(metrics.troughDate)}</p>}
             </div>
           </div>
 

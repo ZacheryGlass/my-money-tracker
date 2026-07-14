@@ -7,6 +7,7 @@ import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
 import FilterDisclosure from '../components/FilterDisclosure';
+import SummaryStats from '../components/SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const CASH_TYPES = new Set(['depository']);
@@ -161,22 +162,16 @@ const CashPage = () => {
 
   return (
     <div className="px-4 py-4">
-      <div className="flex flex-col xl:flex-row xl:items-end justify-between mb-4 gap-4">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-caption text-tertiary uppercase tracking-wide mb-0.5">Liquidity</p>
           <h1 className="text-display-lg font-money text-primary">{formatCurrency(totalCash)}</h1>
           <p className="text-body-sm text-tertiary">{cashAccountSummaries.length} depository accounts, {cashPageStats.linkedAccounts} linked</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="text-caption text-tertiary uppercase mb-0.5">Accounts</p>
-            <p className="font-mono font-semibold text-primary">{cashAccounts.length}</p>
-          </div>
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="text-caption text-tertiary uppercase mb-0.5">Freshness</p>
-            <p className="font-mono font-semibold text-primary">{formatLastUpdated(cashPageStats.latestUpdate)}</p>
-          </div>
-        </div>
+        <SummaryStats stats={[
+          { label: 'Accounts', value: cashAccounts.length },
+          { label: 'Freshness', value: formatLastUpdated(cashPageStats.latestUpdate) },
+        ]} />
       </div>
 
       <FilterDisclosure

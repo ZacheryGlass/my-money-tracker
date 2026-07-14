@@ -12,6 +12,7 @@ import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
 import FilterDisclosure from './FilterDisclosure';
+import SummaryStats from './SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 
@@ -25,7 +26,7 @@ const HoldingsTable = ({ pageFilter }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
-  const [sorting, setSorting] = useState([]);
+  const [sorting, setSorting] = useState([{ id: 'value', desc: true }]);
   const [accountFilter, setAccountFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
@@ -189,7 +190,7 @@ const HoldingsTable = ({ pageFilter }) => {
       },
       {
         id: 'value',
-        accessorFn: (row) => row.current_value ?? 0,
+        accessorFn: getHoldingValue,
         header: 'Value',
         cell: ({ getValue }) => {
           const v = getValue();
@@ -230,7 +231,7 @@ const HoldingsTable = ({ pageFilter }) => {
 
   return (
     <div className="px-4 py-4">
-      <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">{pageFilter === 'assets' ? 'Assets' : 'Holdings'}</p>
           <h1 className="font-money text-display-lg text-primary">{formatCurrency(summary.totalValue)}</h1>
@@ -238,16 +239,10 @@ const HoldingsTable = ({ pageFilter }) => {
             {scopedHoldings.length} holdings across {accountsWithHoldings.length} accounts
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="mb-0.5 text-caption uppercase text-tertiary">Accounts</p>
-            <p className="font-money font-semibold text-primary">{accountsWithHoldings.length}</p>
-          </div>
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="mb-0.5 text-caption uppercase text-tertiary">Holdings</p>
-            <p className="font-money font-semibold text-primary">{scopedHoldings.length}</p>
-          </div>
-        </div>
+        <SummaryStats stats={[
+          { label: 'Accounts', value: accountsWithHoldings.length },
+          { label: 'Holdings', value: scopedHoldings.length },
+        ]} />
       </div>
 
       {successMessage && (
@@ -365,7 +360,7 @@ const HoldingsTable = ({ pageFilter }) => {
           ) : (
             table.getRowModel().rows.map((row) => {
               const account = accountsMap.get(row.original.account_id);
-              const value = row.original.current_value ?? 0;
+              const value = getHoldingValue(row.original);
               return (
                 <div key={row.id} className={`p-3 ${row.original.is_plaid_managed ? '' : 'cursor-pointer hover:bg-surface-2'}`} onClick={() => !row.original.is_plaid_managed && handleEdit(row.original)}>
                   <div className="flex items-start justify-between">

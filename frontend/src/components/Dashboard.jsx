@@ -5,7 +5,6 @@ import { formatCurrency, formatPercent, formatCompactCurrency, formatDateDisplay
 import DashboardTable from './DashboardTable';
 import MetricCard from './MetricCard';
 import AllocationDonut from './AllocationDonut';
-import SparkLine from './SparkLine';
 import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
 
 const formatAttentionNames = (items = []) => {
@@ -213,7 +212,6 @@ const Dashboard = ({ onNavigate }) => {
         .filter((d) => d.account_id === s.accountId)
         .sort((a, b) => (a.snapshot_date < b.snapshot_date ? -1 : 1))
         .map((d) => ({ date: d.snapshot_date, value: parseFloat(d.total_value) }));
-      s.sparkData = history.map((point) => ({ value: point.value }));
       if (history.length >= 2) {
         const first = history[0]?.value || 0;
         const last = history[history.length - 1]?.value || 0;
@@ -421,8 +419,8 @@ const Dashboard = ({ onNavigate }) => {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="min-w-[74px] text-right">
-                    <div className={`font-money text-caption font-semibold ${
+                  <div className="min-w-[88px] text-right sm:min-w-[74px]">
+                    <div className={`font-money text-display-sm font-semibold sm:text-caption ${
                       account.hasTrend ? (account.trendAmount >= 0 ? 'text-gain' : 'text-loss') : 'text-tertiary'
                     }`}
                     >
@@ -430,7 +428,6 @@ const Dashboard = ({ onNavigate }) => {
                     </div>
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-tertiary">30-day change</div>
                   </div>
-                  <SparkLine data={account.sparkData} width={72} height={28} label={account.trendRangeLabel} />
                 </div>
               </div>
             ))}

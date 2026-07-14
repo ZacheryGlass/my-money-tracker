@@ -7,11 +7,12 @@ import {
   flexRender,
 } from '@tanstack/react-table';
 import { AnimatePresence, motion as Motion } from 'framer-motion';
-import { ArrowLeft, Link2, Wallet, Receipt, X, Activity } from 'lucide-react';
+import { ArrowLeft, Link2, Wallet, Receipt, X, Activity, PenLine } from 'lucide-react';
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import FilterDisclosure from '../components/FilterDisclosure';
+import SummaryStats from '../components/SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 
@@ -26,7 +27,7 @@ const TYPE_COLORS = {
 };
 
 const TypeBadge = ({ type }) => (
-  <span className={`inline-flex items-center px-1.5 py-0.5 text-caption font-semibold uppercase border ${TYPE_COLORS[type] || TYPE_COLORS.other}`}>
+  <span className={`inline-flex items-center px-2 py-1 text-body-sm font-semibold uppercase border ${TYPE_COLORS[type] || TYPE_COLORS.other}`}>
     {type}
   </span>
 );
@@ -41,22 +42,41 @@ const PlaidBadge = () => (
   </span>
 );
 
+const AccountConnectionPill = ({ account, compact = false }) => {
+  const isLinked = Boolean(account.plaid_item_id);
+  const className = isLinked
+    ? 'border-accent/20 bg-accent-muted text-accent'
+    : 'border-border bg-surface-3 text-tertiary';
+
+  if (compact) {
+    return (
+      <span
+        className={`inline-flex h-6 w-6 items-center justify-center rounded border ${className}`}
+        title={isLinked ? 'Linked account' : 'Manual account'}
+        aria-label={isLinked ? 'Linked account' : 'Manual account'}
+      >
+        {isLinked ? <Link2 size={13} /> : <PenLine size={13} />}
+      </span>
+    );
+  }
+
+  return (
+    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${className}`}>
+      {isLinked ? 'Linked' : 'Manual'}
+    </span>
+  );
+};
+
+const InactivePill = () => (
+  <span className="inline-flex items-center rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-300">
+    Inactive
+  </span>
+);
+
 const AccountStatusPills = ({ account, inactive }) => (
   <div className="mt-1 flex flex-wrap items-center gap-1.5">
-    <span
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
-        account.plaid_item_id
-          ? 'border-accent/20 bg-accent-muted text-accent'
-          : 'border-border bg-surface-3 text-tertiary'
-      }`}
-    >
-      {account.plaid_item_id ? 'Linked' : 'Manual'}
-    </span>
-    {inactive && (
-      <span className="inline-flex items-center rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-300">
-        Inactive
-      </span>
-    )}
+    <AccountConnectionPill account={account} />
+    {inactive && <InactivePill />}
   </div>
 );
 
@@ -209,6 +229,16 @@ const AccountsPage = () => {
   const listColumns = useMemo(
     () => [
       {
+        id: 'connection',
+        header: '',
+        cell: ({ row }) => <AccountConnectionPill account={row.original} compact />,
+        meta: {
+          width: '32px',
+          headerClassName: 'w-[32px] !px-1',
+          cellClassName: 'w-[32px] !px-1 whitespace-nowrap',
+        },
+      },
+      {
         id: 'name',
         accessorFn: (row) => displayAccountName(row),
         header: 'Name',
@@ -224,13 +254,14 @@ const AccountsPage = () => {
                   {row.original.name}
                 </span>
               )}
-              <AccountStatusPills account={row.original} inactive={inactiveAccountIds.has(row.original.id)} />
+              {inactiveAccountIds.has(row.original.id) && (
+                <div className="mt-1"><InactivePill /></div>
+              )}
             </div>
           );
         },
         meta: {
-          headerClassName: 'w-[42%]',
-          cellClassName: 'w-[42%] min-w-0',
+          cellClassName: 'min-w-0',
         },
       },
       {
@@ -238,19 +269,21 @@ const AccountsPage = () => {
         header: 'Type',
         cell: ({ getValue }) => <TypeBadge type={getValue()} />,
         meta: {
-          headerClassName: 'w-[120px]',
-          cellClassName: 'w-[120px] whitespace-nowrap',
+          width: '160px',
+          headerClassName: 'w-[160px]',
+          cellClassName: 'w-[160px] whitespace-nowrap',
         },
       },
       {
         id: 'holdings_count',
         accessorFn: (row) => row.holdings_count || 0,
         header: 'Assets',
-        cell: ({ getValue }) => <span className="block text-right font-mono text-base text-secondary">{getValue()}</span>,
+        cell: ({ getValue }) => <span className="block text-right font-money text-display-sm font-semibold text-secondary">{getValue()}</span>,
         meta: {
+          width: '100px',
           align: 'right',
-          headerClassName: 'w-[90px]',
-          cellClassName: 'w-[90px] whitespace-nowrap',
+          headerClassName: 'w-[100px]',
+          cellClassName: 'w-[100px] whitespace-nowrap',
         },
       },
       {
@@ -260,15 +293,16 @@ const AccountsPage = () => {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <span className={`block text-right value-emphasis ${v < 0 ? 'text-loss' : 'text-primary'}`}>
+            <span className={`block text-right value-emphasis ${v < 0 ? 'text-loss' : 'text-gain'}`}>
               {formatCurrency(v)}
             </span>
           );
         },
         meta: {
+          width: '180px',
           align: 'right',
-          headerClassName: 'w-[150px]',
-          cellClassName: 'w-[150px] whitespace-nowrap',
+          headerClassName: 'w-[180px]',
+          cellClassName: 'w-[180px] whitespace-nowrap',
         },
       },
     ],
@@ -463,6 +497,14 @@ const AccountsPage = () => {
     <div className="card w-full min-w-0 overflow-hidden">
       <div className="hidden max-w-full overflow-hidden lg:block">
         <table className={`${options.tableClassName || 'w-full table-fixed'} divide-y divide-border`}>
+          <colgroup>
+            {columns.map((column, index) => (
+              <col
+                key={column.id || column.accessorKey || index}
+                style={column.meta?.width ? { width: column.meta.width } : undefined}
+              />
+            ))}
+          </colgroup>
           <thead className="bg-surface-2">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -524,7 +566,7 @@ const AccountsPage = () => {
 
   const renderListView = () => (
     <Motion.div key="list" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">Accounts</p>
           <h1 className="font-money text-display-lg text-primary">
@@ -533,16 +575,10 @@ const AccountsPage = () => {
           <p className="text-body-sm text-tertiary">Aggregate balance across {activeAccountCount} active accounts</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="mb-0.5 text-caption uppercase text-tertiary">Active</p>
-            <p className="font-money font-semibold text-primary">{activeAccountCount}</p>
-          </div>
-          <div className="border border-border bg-surface-3 p-2">
-            <p className="mb-0.5 text-caption uppercase text-tertiary">Linked</p>
-            <p className="font-money font-semibold text-accent">{plaidCount}</p>
-          </div>
-        </div>
+        <SummaryStats stats={[
+          { label: 'Active', value: activeAccountCount },
+          { label: 'Linked', value: plaidCount, valueClassName: 'font-money font-semibold text-accent' },
+        ]} />
       </div>
 
       {error && (

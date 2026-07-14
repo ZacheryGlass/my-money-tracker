@@ -94,8 +94,8 @@ def _assign_to_job(proc, job_handle):
         kernel32.CloseHandle(handle)
 
 
-def spawn(cmd, cwd):
-    kwargs = dict(cwd=cwd)
+def spawn(cmd, cwd, env=None):
+    kwargs = dict(cwd=cwd, env=env)
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
@@ -170,8 +170,13 @@ if __name__ == "__main__":
     print("Starting backend  (http://localhost:3000)...")
     spawn("npm run dev", cwd=ROOT / "backend")
 
-    print("Starting frontend (http://localhost:5173)...")
-    spawn("npm run dev", cwd=ROOT / "frontend")
+    # Bind Vite to all interfaces so the app is reachable from other devices on
+    # the local network. Route API requests through Vite's proxy rather than
+    # embedding localhost in the browser bundle (where localhost is the phone).
+    frontend_env = os.environ.copy()
+    frontend_env["VITE_API_URL"] = "/"
+    print("Starting frontend (http://localhost:5173, available on your local network)...")
+    spawn("npm run dev -- --host 0.0.0.0", cwd=ROOT / "frontend", env=frontend_env)
 
     print("\nBoth servers running. Press Ctrl+C to stop.\n")
 

@@ -7,6 +7,14 @@ export default defineConfig({
     react(),
     visualizer({ filename: 'dist/stats.html', open: false }),
   ],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,
