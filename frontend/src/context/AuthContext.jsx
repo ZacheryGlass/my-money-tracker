@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { auth as authAPI } from '../utils/api';
 
 const AuthContext = createContext(null);
+const developmentAuthBypassEnabled = import.meta.env.MODE === 'development'
+  && import.meta.env.VITE_DEV_BYPASS_AUTH === 'true';
 
 const storage = {
   getToken: () => {
@@ -34,7 +36,7 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       const token = storage.getToken();
-      if (token) {
+      if (token || developmentAuthBypassEnabled) {
         try {
           const userData = await authAPI.me();
           setUser(userData.user);
@@ -57,6 +59,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
+    if (developmentAuthBypassEnabled) return;
     storage.removeToken();
     setUser(null);
   };
