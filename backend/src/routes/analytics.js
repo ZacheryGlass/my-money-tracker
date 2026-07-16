@@ -4,6 +4,7 @@ const express = require('express');
 const pool = require('../config/database');
 const authenticateToken = require('../middleware/auth');
 const logger = require('../config/logger');
+const FinancialQueryService = require('../services/FinancialQueryService');
 
 const router = express.Router();
 
@@ -151,7 +152,7 @@ router.get('/spending-by-category', async (req, res) => {
 // GET /api/analytics/income-vs-spending
 router.get('/income-vs-spending', async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, account_id: accountId } = req.query;
 
     const conditions = ['t.pending = false', 'a.is_hidden = FALSE'];
     const params = [];
@@ -172,6 +173,16 @@ router.get('/income-vs-spending', async (req, res) => {
       }
       conditions.push(`t.date <= $${paramIndex}`);
       params.push(endDate);
+      paramIndex++;
+    }
+
+    if (accountId) {
+      const parsedAccountId = parseInt(accountId, 10);
+      if (isNaN(parsedAccountId)) {
+        return res.status(400).json({ error: 'Invalid account_id parameter.' });
+      }
+      conditions.push(`t.account_id = $${paramIndex}`);
+      params.push(parsedAccountId);
       paramIndex++;
     }
 
@@ -201,6 +212,40 @@ router.get('/income-vs-spending', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get income vs spending error');
     res.status(500).json({ error: 'Server error retrieving income vs spending' });
+  }
+});
+
+// GET /api/analytics/investment-performance
+router.get('/investment-performance', async (req, res) => {
+  try {
+    const {
+      startDate,
+      endDate,
+      account_id: accountId,
+      benchmark = 'SPY',
+    } = req.query;
+
+    if (!isValidDate(startDate) || !isValidDate(endDate)) {
+      return res.status(400).json({ error: 'Dates must use YYYY-MM-DD format.' });
+    }
+
+    const parsedAccountId = accountId ? parseInt(accountId, 10) : null;
+    if (accountId && isNaN(parsedAccountId)) {
+      return res.status(400).json({ error: 'Invalid account_id parameter.' });
+    }
+
+    const result = await FinancialQueryService.analyzeInvestments({
+      startDate,
+      endDate,
+      scopeType: parsedAccountId ? 'account' : 'portfolio',
+      accountId: parsedAccountId,
+      benchmarkSymbol: benchmark,
+    });
+
+    res.json({ data: result });
+  } catch (error) {
+    logger.error({ err: error }, 'Get investment performance error');
+    res.status(500).json({ error: 'Server error retrieving investment performance' });
   }
 });
 
