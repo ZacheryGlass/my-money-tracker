@@ -1,0 +1,1751 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Dashboard Priorities</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;max-width:736px;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Dashboard Priorities" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Dashboard Priorities&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(--background) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: light-dark(rgb(255 255 255), rgb(24 24 24));
+  --foreground: light-dark(rgb(26 28 31), rgb(255 255 255));
+  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --card-foreground: var(--foreground);
+  --popover: light-dark(rgb(255 255 255), rgb(45 45 45));
+  --popover-foreground: var(--foreground);
+  --primary: light-dark(rgb(51 156 255), rgb(131 195 255));
+  --primary-foreground: light-dark(rgb(255 255 255), rgb(13 13 13));
+  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: light-dark(
+    rgb(26 28 31 / 49.4%),
+    rgb(255 255 255 / 49.8%)
+  );
+  --accent: light-dark(rgb(229 242 255), rgb(13 39 63));
+  --accent-foreground: var(--primary);
+  --destructive: light-dark(rgb(226 85 7), rgb(255 133 73));
+  --border: light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%));
+  --input: light-dark(
+    rgb(26 28 31 / 11.8%),
+    color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+  );
+  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
+  --font-size-base: 14px;
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: 12.5px;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+  --color-background-primary: var(--background);
+  --color-text-primary: var(--foreground);
+  --color-border-secondary: var(--border);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--viz-font-weight-medium);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+    [aria-pressed=&quot;true&quot;],
+    [aria-selected=&quot;true&quot;],
+    .is-selected
+  ) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div id=&quot;dashboard-priority-planner&quot;&gt;
+  &lt;style&gt;
+    #dashboard-priority-planner {
+      display: grid;
+      gap: 1rem;
+      color: var(--foreground);
+    }
+
+    #dashboard-priority-planner .dp-header,
+    #dashboard-priority-planner .dp-stack,
+    #dashboard-priority-planner .dp-question,
+    #dashboard-priority-planner .dp-summary-section {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    #dashboard-priority-planner progress {
+      width: 100%;
+      accent-color: var(--primary);
+    }
+
+    #dashboard-priority-planner .dp-step[hidden],
+    #dashboard-priority-planner .dp-summary[hidden],
+    #dashboard-priority-planner .dp-error[hidden] {
+      display: none;
+    }
+
+    #dashboard-priority-planner .dp-choice-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+      gap: 0.65rem 1rem;
+    }
+
+    #dashboard-priority-planner .dp-priority-list {
+      display: grid;
+    }
+
+    #dashboard-priority-planner .dp-priority-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(11rem, 14rem);
+      gap: 1rem;
+      align-items: center;
+      padding: 0.7rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #dashboard-priority-planner .dp-priority-row:last-child {
+      border-bottom: 0;
+    }
+
+    #dashboard-priority-planner .dp-priority-row .form-label {
+      margin: 0;
+    }
+
+    #dashboard-priority-planner .dp-subtitle {
+      margin: 0;
+    }
+
+    #dashboard-priority-planner .dp-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    #dashboard-priority-planner .dp-actions-end {
+      justify-content: flex-end;
+    }
+
+    #dashboard-priority-planner .dp-summary-list {
+      margin: 0;
+      padding-left: 1.2rem;
+    }
+
+    #dashboard-priority-planner .dp-summary-list li + li {
+      margin-top: 0.3rem;
+    }
+
+    #dashboard-priority-planner .dp-brief {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+    }
+
+    @media (max-width: 520px) {
+      #dashboard-priority-planner .dp-priority-row {
+        grid-template-columns: 1fr;
+        gap: 0.4rem;
+      }
+
+      #dashboard-priority-planner .dp-actions .btn {
+        flex: 1 1 auto;
+      }
+    }
+  &lt;/style&gt;
+
+  &lt;div class=&quot;dp-header&quot;&gt;
+    &lt;div class=&quot;viz-row&quot;&gt;
+      &lt;span class=&quot;viz-badge&quot; id=&quot;dp-step-badge&quot;&gt;Step 1 of 7&lt;/span&gt;
+      &lt;span class=&quot;text-muted&quot; id=&quot;dp-step-label&quot;&gt;Define the dashboard&#x27;s job&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;progress id=&quot;dp-progress&quot; value=&quot;1&quot; max=&quot;7&quot; aria-label=&quot;Questionnaire progress&quot;&gt;&lt;/progress&gt;
+  &lt;/div&gt;
+
+  &lt;form id=&quot;dp-form&quot;&gt;
+    &lt;section class=&quot;card dp-step dp-stack&quot; data-step=&quot;0&quot; aria-labelledby=&quot;dp-purpose-title&quot;&gt;
+      &lt;div&gt;
+        &lt;h2 id=&quot;dp-purpose-title&quot;&gt;What should the dashboard do for you?&lt;/h2&gt;
+        &lt;p class=&quot;text-muted dp-subtitle&quot;&gt;Choose the questions you want answered immediately. Pick as many as matter, then name the three that drive real decisions.&lt;/p&gt;
+      &lt;/div&gt;
+
+      &lt;fieldset class=&quot;dp-question&quot;&gt;
+        &lt;legend&gt;When I open the dashboard, I want to know…&lt;/legend&gt;
+        &lt;div class=&quot;dp-choice-grid&quot; id=&quot;dp-goal-options&quot;&gt;&lt;/div&gt;
+      &lt;/fieldset&gt;
+
+      &lt;div class=&quot;viz-controls&quot;&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-visit-frequency&quot;&gt;
+          How often do you expect to check it?
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-visit-frequency&quot; name=&quot;visitFrequency&quot;&gt;
+            &lt;option value=&quot;Several times a day&quot;&gt;Several times a day&lt;/option&gt;
+            &lt;option value=&quot;Daily&quot; selected&gt;Daily&lt;/option&gt;
+            &lt;option value=&quot;A few times a week&quot;&gt;A few times a week&lt;/option&gt;
+            &lt;option value=&quot;Weekly&quot;&gt;Weekly&lt;/option&gt;
+            &lt;option value=&quot;Monthly or for reviews&quot;&gt;Monthly or for reviews&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-dashboard-mode&quot;&gt;
+          What kind of dashboard is this primarily?
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-dashboard-mode&quot; name=&quot;dashboardMode&quot;&gt;
+            &lt;option value=&quot;Status monitor&quot; selected&gt;Status monitor&lt;/option&gt;
+            &lt;option value=&quot;Decision workspace&quot;&gt;Decision workspace&lt;/option&gt;
+            &lt;option value=&quot;Early-warning system&quot;&gt;Early-warning system&lt;/option&gt;
+            &lt;option value=&quot;Progress scorecard&quot;&gt;Progress scorecard&lt;/option&gt;
+            &lt;option value=&quot;A blend of all four&quot;&gt;A blend of all four&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+      &lt;/div&gt;
+
+      &lt;p class=&quot;text-destructive dp-error&quot; id=&quot;dp-goal-error&quot; hidden&gt;Please choose at least one job for the dashboard.&lt;/p&gt;
+      &lt;div class=&quot;dp-actions dp-actions-end&quot;&gt;
+        &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; data-next&gt;Next: top-line numbers&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;card dp-step dp-stack&quot; data-step=&quot;1&quot; aria-labelledby=&quot;dp-snapshot-title&quot; hidden&gt;
+      &lt;div&gt;
+        &lt;h2 id=&quot;dp-snapshot-title&quot;&gt;Which numbers deserve the first screen?&lt;/h2&gt;
+        &lt;p class=&quot;text-muted dp-subtitle&quot;&gt;“Hero” means prominent above the fold. “Visible” earns regular dashboard space. “Detail” stays one click away.&lt;/p&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;dp-priority-list&quot; id=&quot;dp-snapshot-metrics&quot;&gt;&lt;/div&gt;
+      &lt;div class=&quot;dp-actions&quot;&gt;
+        &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; data-back&gt;Back&lt;/button&gt;
+        &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; data-next&gt;Next: performance&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;card dp-step dp-stack&quot; data-step=&quot;2&quot; aria-labelledby=&quot;dp-performance-title&quot; hidden&gt;
+      &lt;div&gt;
+        &lt;h2 id=&quot;dp-performance-title&quot;&gt;How should investment performance be explained?&lt;/h2&gt;
+        &lt;p class=&quot;text-muted dp-subtitle&quot;&gt;Prioritize the views that help you separate market performance, contributions, risk, and allocation decisions.&lt;/p&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;dp-priority-list&quot; id=&quot;dp-performance-metrics&quot;&gt;&lt;/div&gt;
+      &lt;div class=&quot;viz-controls&quot;&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-default-period&quot;&gt;
+          Default performance period
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-default-period&quot; name=&quot;defaultPeriod&quot;&gt;
+            &lt;option value=&quot;Today&quot;&gt;Today&lt;/option&gt;
+            &lt;option value=&quot;30 days&quot;&gt;30 days&lt;/option&gt;
+            &lt;option value=&quot;Year to date&quot; selected&gt;Year to date&lt;/option&gt;
+            &lt;option value=&quot;1 year&quot;&gt;1 year&lt;/option&gt;
+            &lt;option value=&quot;Since inception&quot;&gt;Since inception&lt;/option&gt;
+            &lt;option value=&quot;Remember my last selection&quot;&gt;Remember my last selection&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-benchmark&quot;&gt;
+          Default benchmark
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-benchmark&quot; name=&quot;benchmark&quot;&gt;
+            &lt;option value=&quot;S&amp;P 500&quot; selected&gt;S&amp;amp;P 500&lt;/option&gt;
+            &lt;option value=&quot;Total US stock market&quot;&gt;Total US stock market&lt;/option&gt;
+            &lt;option value=&quot;60/40 portfolio&quot;&gt;60/40 portfolio&lt;/option&gt;
+            &lt;option value=&quot;Inflation&quot;&gt;Inflation&lt;/option&gt;
+            &lt;option value=&quot;Custom blended benchmark&quot;&gt;Custom blended benchmark&lt;/option&gt;
+            &lt;option value=&quot;No default benchmark&quot;&gt;No default benchmark&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;dp-actions&quot;&gt;
+        &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; data-back&gt;Back&lt;/button&gt;
+        &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; data-next&gt;Next: cash flow&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;card dp-step dp-stack&quot; data-step=&quot;3&quot; aria-labelledby=&quot;dp-cashflow-title&quot; hidden&gt;
+      &lt;div&gt;
+        &lt;h2 id=&quot;dp-cashflow-title&quot;&gt;How much operating detail belongs here?&lt;/h2&gt;
+        &lt;p class=&quot;text-muted dp-subtitle&quot;&gt;Decide whether the home screen should help run the month, or leave budgeting and transaction analysis to dedicated pages.&lt;/p&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;dp-priority-list&quot; id=&quot;dp-cashflow-metrics&quot;&gt;&lt;/div&gt;
+      &lt;div class=&quot;dp-actions&quot;&gt;
+        &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; data-back&gt;Back&lt;/button&gt;
+        &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; data-next&gt;Next: charts and features&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;card dp-step dp-stack&quot; data-step=&quot;4&quot; aria-labelledby=&quot;dp-visuals-title&quot; hidden&gt;
+      &lt;div&gt;
+        &lt;h2 id=&quot;dp-visuals-title&quot;&gt;Which visuals and behaviors earn their space?&lt;/h2&gt;
+        &lt;p class=&quot;text-muted dp-subtitle&quot;&gt;A chart should answer a question faster than a number. Hide anything that is mostly decoration.&lt;/p&gt;
+      &lt;/div&gt;
+      &lt;h3&gt;Charts&lt;/h3&gt;
+      &lt;div class=&quot;dp-priority-list&quot; id=&quot;dp-chart-options&quot;&gt;&lt;/div&gt;
+      &lt;h3&gt;Interactions and proactive features&lt;/h3&gt;
+      &lt;div class=&quot;dp-choice-grid&quot; id=&quot;dp-feature-options&quot;&gt;&lt;/div&gt;
+      &lt;h3&gt;Notify or flag me when…&lt;/h3&gt;
+      &lt;div class=&quot;dp-choice-grid&quot; id=&quot;dp-alert-options&quot;&gt;&lt;/div&gt;
+      &lt;div class=&quot;dp-actions&quot;&gt;
+        &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; data-back&gt;Back&lt;/button&gt;
+        &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; data-next&gt;Next: layout&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;card dp-step dp-stack&quot; data-step=&quot;5&quot; aria-labelledby=&quot;dp-layout-title&quot; hidden&gt;
+      &lt;div&gt;
+        &lt;h2 id=&quot;dp-layout-title&quot;&gt;Set the information density and reading order&lt;/h2&gt;
+        &lt;p class=&quot;text-muted dp-subtitle&quot;&gt;These choices define how much must fit at a glance and what moves below the fold.&lt;/p&gt;
+      &lt;/div&gt;
+
+      &lt;div class=&quot;viz-controls&quot;&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-device&quot;&gt;
+          Primary screen
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-device&quot; name=&quot;primaryDevice&quot;&gt;
+            &lt;option value=&quot;Desktop first&quot;&gt;Desktop first&lt;/option&gt;
+            &lt;option value=&quot;Mobile first&quot;&gt;Mobile first&lt;/option&gt;
+            &lt;option value=&quot;Desktop and mobile equally&quot; selected&gt;Desktop and mobile equally&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-glance-time&quot;&gt;
+          Target time to understand the page
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-glance-time&quot; name=&quot;glanceTime&quot;&gt;
+            &lt;option value=&quot;5 seconds&quot;&gt;5 seconds&lt;/option&gt;
+            &lt;option value=&quot;15 seconds&quot; selected&gt;15 seconds&lt;/option&gt;
+            &lt;option value=&quot;30 seconds&quot;&gt;30 seconds&lt;/option&gt;
+            &lt;option value=&quot;1 minute&quot;&gt;1 minute&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-density&quot;&gt;
+          Visual density
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-density&quot; name=&quot;density&quot;&gt;
+            &lt;option value=&quot;Compact&quot;&gt;Compact&lt;/option&gt;
+            &lt;option value=&quot;Balanced&quot; selected&gt;Balanced&lt;/option&gt;
+            &lt;option value=&quot;Spacious&quot;&gt;Spacious&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-columns&quot;&gt;
+          Desktop layout
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-columns&quot; name=&quot;desktopColumns&quot;&gt;
+            &lt;option value=&quot;One clear column&quot;&gt;One clear column&lt;/option&gt;
+            &lt;option value=&quot;Two columns&quot; selected&gt;Two columns&lt;/option&gt;
+            &lt;option value=&quot;Three dense columns&quot;&gt;Three dense columns&lt;/option&gt;
+            &lt;option value=&quot;Adaptive by module&quot;&gt;Adaptive by module&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-mobile-first&quot;&gt;
+          First module on mobile
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-mobile-first&quot; name=&quot;mobileFirst&quot;&gt;
+            &lt;option value=&quot;Net worth and change&quot; selected&gt;Net worth and change&lt;/option&gt;
+            &lt;option value=&quot;Cash flow this month&quot;&gt;Cash flow this month&lt;/option&gt;
+            &lt;option value=&quot;Portfolio performance&quot;&gt;Portfolio performance&lt;/option&gt;
+            &lt;option value=&quot;Alerts and exceptions&quot;&gt;Alerts and exceptions&lt;/option&gt;
+            &lt;option value=&quot;Goal progress&quot;&gt;Goal progress&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+        &lt;label class=&quot;form-label&quot; for=&quot;dp-money-display&quot;&gt;
+          Default money display
+          &lt;select class=&quot;form-select&quot; id=&quot;dp-money-display&quot; name=&quot;moneyDisplay&quot;&gt;
+            &lt;option value=&quot;Exact dollars&quot; selected&gt;Exact dollars&lt;/option&gt;
+            &lt;option value=&quot;Rounded compact values&quot;&gt;Rounded compact values&lt;/option&gt;
+            &lt;option value=&quot;Percentages first&quot;&gt;Percentages first&lt;/option&gt;
+            &lt;option value=&quot;Privacy toggle available&quot;&gt;Privacy toggle available&lt;/option&gt;
+          &lt;/select&gt;
+        &lt;/label&gt;
+      &lt;/div&gt;
+
+      &lt;label class=&quot;form-label&quot; for=&quot;dp-module-count&quot;&gt;
+        Maximum above-the-fold modules: &lt;strong id=&quot;dp-module-count-value&quot;&gt;5&lt;/strong&gt;
+        &lt;input class=&quot;form-range&quot; id=&quot;dp-module-count&quot; name=&quot;moduleCount&quot; type=&quot;range&quot; min=&quot;3&quot; max=&quot;8&quot; value=&quot;5&quot;&gt;
+      &lt;/label&gt;
+
+      &lt;fieldset class=&quot;dp-question&quot;&gt;
+        &lt;legend&gt;Default detail behavior&lt;/legend&gt;
+        &lt;div class=&quot;dp-choice-grid&quot;&gt;
+          &lt;div class=&quot;form-check&quot;&gt;
+            &lt;input class=&quot;form-check-input&quot; type=&quot;radio&quot; name=&quot;detailBehavior&quot; value=&quot;Summary first; expand on demand&quot; id=&quot;dp-detail-summary&quot; checked&gt;
+            &lt;label class=&quot;form-check-label&quot; for=&quot;dp-detail-summary&quot;&gt;Summary first; expand on demand&lt;/label&gt;
+          &lt;/div&gt;
+          &lt;div class=&quot;form-check&quot;&gt;
+            &lt;input class=&quot;form-check-input&quot; type=&quot;radio&quot; name=&quot;detailBehavior&quot; value=&quot;Dense information visible immediately&quot; id=&quot;dp-detail-dense&quot;&gt;
+            &lt;label class=&quot;form-check-label&quot; for=&quot;dp-detail-dense&quot;&gt;Dense information visible immediately&lt;/label&gt;
+          &lt;/div&gt;
+          &lt;div class=&quot;form-check&quot;&gt;
+            &lt;input class=&quot;form-check-input&quot; type=&quot;radio&quot; name=&quot;detailBehavior&quot; value=&quot;Only exceptions; browse details elsewhere&quot; id=&quot;dp-detail-exceptions&quot;&gt;
+            &lt;label class=&quot;form-check-label&quot; for=&quot;dp-detail-exceptions&quot;&gt;Only exceptions; browse details elsewhere&lt;/label&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/fieldset&gt;
+
+      &lt;div class=&quot;dp-actions&quot;&gt;
+        &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; data-back&gt;Back&lt;/button&gt;
+        &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; data-next&gt;Next: final context&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;card dp-step dp-stack&quot; data-step=&quot;6&quot; aria-labelledby=&quot;dp-context-title&quot; hidden&gt;
+      &lt;div&gt;
+        &lt;h2 id=&quot;dp-context-title&quot;&gt;Finish with the questions only you can answer&lt;/h2&gt;
+        &lt;p class=&quot;text-muted dp-subtitle&quot;&gt;Specific examples are more useful than design terminology.&lt;/p&gt;
+      &lt;/div&gt;
+
+      &lt;label class=&quot;form-label&quot; for=&quot;dp-top-questions&quot;&gt;
+        What are the three real questions you most often want your financial data to answer?
+        &lt;textarea class=&quot;form-control&quot; id=&quot;dp-top-questions&quot; name=&quot;topQuestions&quot; rows=&quot;4&quot; placeholder=&quot;For example: Am I spending more than usual? Is my portfolio actually beating the S&amp;amp;P 500 after contributions? How much cash can I safely invest?&quot;&gt;&lt;/textarea&gt;
+      &lt;/label&gt;
+      &lt;label class=&quot;form-label&quot; for=&quot;dp-actions&quot;&gt;
+        What decisions or actions should this dashboard help you take?
+        &lt;textarea class=&quot;form-control&quot; id=&quot;dp-actions&quot; name=&quot;desiredActions&quot; rows=&quot;3&quot; placeholder=&quot;Rebalance, move excess cash, cut a category, investigate a stale account…&quot;&gt;&lt;/textarea&gt;
+      &lt;/label&gt;
+      &lt;label class=&quot;form-label&quot; for=&quot;dp-waste&quot;&gt;
+        What currently feels like wasted space, noise, or repetition?
+        &lt;textarea class=&quot;form-control&quot; id=&quot;dp-waste&quot; name=&quot;currentWaste&quot; rows=&quot;3&quot; placeholder=&quot;Name specific cards, charts, labels, empty areas, or repeated numbers.&quot;&gt;&lt;/textarea&gt;
+      &lt;/label&gt;
+      &lt;label class=&quot;form-label&quot; for=&quot;dp-missing&quot;&gt;
+        What information is missing, hard to trust, or hard to find today?
+        &lt;textarea class=&quot;form-control&quot; id=&quot;dp-missing&quot; name=&quot;missingInfo&quot; rows=&quot;3&quot; placeholder=&quot;Include data quality concerns, missing benchmarks, account freshness, calculations, or useful context.&quot;&gt;&lt;/textarea&gt;
+      &lt;/label&gt;
+      &lt;label class=&quot;form-label&quot; for=&quot;dp-success&quot;&gt;
+        Complete this sentence: “The redesigned dashboard is successful if…”
+        &lt;textarea class=&quot;form-control&quot; id=&quot;dp-success&quot; name=&quot;successDefinition&quot; rows=&quot;2&quot;&gt;&lt;/textarea&gt;
+      &lt;/label&gt;
+
+      &lt;div class=&quot;dp-actions&quot;&gt;
+        &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; data-back&gt;Back&lt;/button&gt;
+        &lt;button class=&quot;btn btn-primary&quot; type=&quot;submit&quot;&gt;Build my dashboard brief&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+  &lt;/form&gt;
+
+  &lt;section class=&quot;card dp-summary dp-stack&quot; id=&quot;dp-summary&quot; aria-labelledby=&quot;dp-summary-title&quot; hidden&gt;
+    &lt;div&gt;
+      &lt;div class=&quot;viz-row&quot;&gt;
+        &lt;span class=&quot;viz-badge&quot;&gt;Ready for design&lt;/span&gt;
+        &lt;span class=&quot;text-muted&quot; id=&quot;dp-summary-count&quot;&gt;&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;h2 id=&quot;dp-summary-title&quot;&gt;Your dashboard direction&lt;/h2&gt;
+    &lt;/div&gt;
+    &lt;div id=&quot;dp-summary-content&quot;&gt;&lt;/div&gt;
+    &lt;div class=&quot;dp-actions&quot;&gt;
+      &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; id=&quot;dp-revise&quot;&gt;Revise answers&lt;/button&gt;
+      &lt;button class=&quot;btn&quot; type=&quot;button&quot; id=&quot;dp-copy&quot;&gt;Copy brief&lt;/button&gt;
+      &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; id=&quot;dp-send&quot;&gt;Send brief to Codex&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;p class=&quot;text-muted&quot; id=&quot;dp-send-status&quot; aria-live=&quot;polite&quot;&gt;&lt;/p&gt;
+  &lt;/section&gt;
+
+  &lt;p class=&quot;sr-only&quot; id=&quot;dp-live&quot; aria-live=&quot;polite&quot;&gt;&lt;/p&gt;
+
+  &lt;script&gt;
+    (() =&gt; {
+      const root = document.getElementById(&#x27;dashboard-priority-planner&#x27;);
+      if (!root) return;
+
+      const form = root.querySelector(&#x27;#dp-form&#x27;);
+      const steps = Array.from(root.querySelectorAll(&#x27;.dp-step&#x27;));
+      const progress = root.querySelector(&#x27;#dp-progress&#x27;);
+      const stepBadge = root.querySelector(&#x27;#dp-step-badge&#x27;);
+      const stepLabel = root.querySelector(&#x27;#dp-step-label&#x27;);
+      const summary = root.querySelector(&#x27;#dp-summary&#x27;);
+      const summaryContent = root.querySelector(&#x27;#dp-summary-content&#x27;);
+      const summaryCount = root.querySelector(&#x27;#dp-summary-count&#x27;);
+      const liveRegion = root.querySelector(&#x27;#dp-live&#x27;);
+      const goalError = root.querySelector(&#x27;#dp-goal-error&#x27;);
+      const sendStatus = root.querySelector(&#x27;#dp-send-status&#x27;);
+      let currentStep = 0;
+      let latestBrief = &#x27;&#x27;;
+
+      const stepLabels = [
+        &quot;Define the dashboard&#x27;s job&quot;,
+        &#x27;Prioritize top-line numbers&#x27;,
+        &#x27;Explain performance&#x27;,
+        &#x27;Choose cash-flow detail&#x27;,
+        &#x27;Select charts and features&#x27;,
+        &#x27;Set density and reading order&#x27;,
+        &#x27;Add your real-world context&#x27;,
+      ];
+
+      const goals = [
+        &#x27;Where my net worth stands and why it changed&#x27;,
+        &#x27;Whether my investments are performing well&#x27;,
+        &#x27;How I compare with an appropriate benchmark&#x27;,
+        &#x27;Whether cash flow and spending are on track&#x27;,
+        &#x27;How much cash is available to deploy safely&#x27;,
+        &#x27;Whether debt or liabilities need attention&#x27;,
+        &#x27;Whether I am progressing toward financial goals&#x27;,
+        &#x27;Where portfolio risk or concentration is building&#x27;,
+        &#x27;What changed enough to deserve action&#x27;,
+        &#x27;Whether all accounts and data are current&#x27;,
+      ];
+
+      const snapshotMetrics = [
+        [&#x27;Net worth&#x27;, &#x27;Hero&#x27;],
+        [&#x27;Net worth change for the selected period&#x27;, &#x27;Hero&#x27;],
+        [&#x27;Total assets&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Total liabilities and debt&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Liquid cash available&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Invested portfolio value&#x27;, &#x27;Visible&#x27;],
+        [&quot;Today&#x27;s dollar and percentage change&quot;, &#x27;Detail&#x27;],
+        [&#x27;30-day change&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Year-to-date change&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Goal progress&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Data freshness and last sync&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Account errors or missing data&#x27;, &#x27;Visible&#x27;],
+      ];
+
+      const performanceMetrics = [
+        [&#x27;Portfolio return for the selected period&#x27;, &#x27;Hero&#x27;],
+        [&#x27;Return versus benchmark&#x27;, &#x27;Hero&#x27;],
+        [&#x27;Investment gains versus contributions&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Time-weighted return&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Money-weighted return / IRR&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Best and worst holdings&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Asset allocation&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Allocation by account&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Top-five concentration&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Realized and unrealized gains&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Dividends and investment income&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Maximum drawdown&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Volatility or risk level&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Fees and estimated tax impact&#x27;, &#x27;Hide&#x27;],
+      ];
+
+      const cashflowMetrics = [
+        [&#x27;Spending this month&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Income this month&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Net cash flow&#x27;, &#x27;Hero&#x27;],
+        [&#x27;Savings rate&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Budget remaining&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Spending versus last month&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Spending by category&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Recurring charges and subscriptions&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Unusual or large transactions&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Upcoming bills&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Cash runway / months of expenses&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Debt payoff progress&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Projected end-of-month balance&#x27;, &#x27;Detail&#x27;],
+      ];
+
+      const chartOptions = [
+        [&#x27;Net worth timeline&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Portfolio return versus benchmark&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Contributions versus investment growth&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Asset allocation donut&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Cash-flow trend&#x27;, &#x27;Visible&#x27;],
+        [&#x27;Expense-category bars&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Drawdown / risk chart&#x27;, &#x27;Detail&#x27;],
+        [&#x27;Goal projection&#x27;, &#x27;Detail&#x27;],
+      ];
+
+      const features = [
+        &#x27;Date-range control shared across the page&#x27;,
+        &#x27;Global account filter&#x27;,
+        &#x27;Click any number to drill into its drivers&#x27;,
+        &#x27;Compact sparklines beside key numbers&#x27;,
+        &#x27;Compare with a previous period&#x27;,
+        &#x27;Automatic plain-language insight summary&#x27;,
+        &#x27;Annotations for major transfers or life events&#x27;,
+        &#x27;Quick links to add or correct data&#x27;,
+      ];
+
+      const alerts = [
+        &#x27;Spending is unusually high&#x27;,
+        &#x27;Cash falls below a threshold&#x27;,
+        &#x27;Portfolio concentration exceeds a threshold&#x27;,
+        &#x27;Performance materially trails the benchmark&#x27;,
+        &#x27;A large account balance changes&#x27;,
+        &#x27;An account has stale or failed data&#x27;,
+        &#x27;A budget or savings target is missed&#x27;,
+        &#x27;A recurring bill changes or appears twice&#x27;,
+      ];
+
+      const priorityOptions = [
+        [&#x27;Hero&#x27;, &#x27;Hero — above the fold&#x27;],
+        [&#x27;Visible&#x27;, &#x27;Visible — regular module&#x27;],
+        [&#x27;Detail&#x27;, &#x27;Detail — one click away&#x27;],
+        [&#x27;Hide&#x27;, &#x27;Hide from dashboard&#x27;],
+      ];
+
+      function escapeHtml(value) {
+        return String(value || &#x27;&#x27;)
+          .replaceAll(&#x27;&amp;&#x27;, &#x27;&amp;amp;&#x27;)
+          .replaceAll(&#x27;&lt;&#x27;, &#x27;&amp;lt;&#x27;)
+          .replaceAll(&#x27;&gt;&#x27;, &#x27;&amp;gt;&#x27;)
+          .replaceAll(&#x27;&quot;&#x27;, &#x27;&amp;quot;&#x27;)
+          .replaceAll(&quot;&#x27;&quot;, &#x27;&amp;#039;&#x27;);
+      }
+
+      function slug(value) {
+        return value.toLowerCase().replace(/[^a-z0-9]+/g, &#x27;-&#x27;).replace(/^-|-$/g, &#x27;&#x27;);
+      }
+
+      function renderChecks(targetId, items, name, defaults = []) {
+        const target = root.querySelector(&#x27;#&#x27; + targetId);
+        target.innerHTML = items.map((label, index) =&gt; {
+          const id = `${name}-${index}`;
+          const checked = defaults.includes(label) ? &#x27; checked&#x27; : &#x27;&#x27;;
+          return `&lt;div class=&quot;form-check&quot;&gt;
+            &lt;input class=&quot;form-check-input&quot; type=&quot;checkbox&quot; id=&quot;${id}&quot; name=&quot;${name}&quot; value=&quot;${escapeHtml(label)}&quot;${checked}&gt;
+            &lt;label class=&quot;form-check-label&quot; for=&quot;${id}&quot;&gt;${escapeHtml(label)}&lt;/label&gt;
+          &lt;/div&gt;`;
+        }).join(&#x27;&#x27;);
+      }
+
+      function renderPriorities(targetId, items, group) {
+        const target = root.querySelector(&#x27;#&#x27; + targetId);
+        target.innerHTML = items.map(([label, selected], index) =&gt; {
+          const id = `${group}-${index}-${slug(label)}`;
+          const options = priorityOptions.map(([value, optionLabel]) =&gt;
+            `&lt;option value=&quot;${value}&quot;${value === selected ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;${optionLabel}&lt;/option&gt;`
+          ).join(&#x27;&#x27;);
+          return `&lt;div class=&quot;dp-priority-row&quot;&gt;
+            &lt;label class=&quot;form-label&quot; for=&quot;${id}&quot;&gt;${escapeHtml(label)}&lt;/label&gt;
+            &lt;select class=&quot;form-select&quot; id=&quot;${id}&quot; name=&quot;${id}&quot; data-priority data-group=&quot;${group}&quot; data-label=&quot;${escapeHtml(label)}&quot;&gt;${options}&lt;/select&gt;
+          &lt;/div&gt;`;
+        }).join(&#x27;&#x27;);
+      }
+
+      renderChecks(&#x27;dp-goal-options&#x27;, goals, &#x27;goals&#x27;);
+      renderChecks(&#x27;dp-feature-options&#x27;, features, &#x27;features&#x27;, [
+        &#x27;Date-range control shared across the page&#x27;,
+        &#x27;Click any number to drill into its drivers&#x27;,
+        &#x27;Compare with a previous period&#x27;,
+      ]);
+      renderChecks(&#x27;dp-alert-options&#x27;, alerts, &#x27;alerts&#x27;, [
+        &#x27;Spending is unusually high&#x27;,
+        &#x27;An account has stale or failed data&#x27;,
+      ]);
+      renderPriorities(&#x27;dp-snapshot-metrics&#x27;, snapshotMetrics, &#x27;Snapshot&#x27;);
+      renderPriorities(&#x27;dp-performance-metrics&#x27;, performanceMetrics, &#x27;Performance&#x27;);
+      renderPriorities(&#x27;dp-cashflow-metrics&#x27;, cashflowMetrics, &#x27;Cash flow&#x27;);
+      renderPriorities(&#x27;dp-chart-options&#x27;, chartOptions, &#x27;Charts&#x27;);
+
+      function valuesFor(name) {
+        return Array.from(form.querySelectorAll(`[name=&quot;${name}&quot;]:checked`)).map(input =&gt; input.value);
+      }
+
+      function valueFor(name) {
+        const field = form.elements[name];
+        if (!field) return &#x27;&#x27;;
+        if (field instanceof RadioNodeList) return field.value;
+        return field.value;
+      }
+
+      function showStep(index) {
+        currentStep = Math.max(0, Math.min(index, steps.length - 1));
+        steps.forEach((step, stepIndex) =&gt; {
+          step.hidden = stepIndex !== currentStep;
+        });
+        summary.hidden = true;
+        form.hidden = false;
+        progress.value = currentStep + 1;
+        stepBadge.textContent = `Step ${currentStep + 1} of ${steps.length}`;
+        stepLabel.textContent = stepLabels[currentStep];
+        liveRegion.textContent = `${stepBadge.textContent}: ${stepLabels[currentStep]}`;
+      }
+
+      root.querySelectorAll(&#x27;[data-next]&#x27;).forEach(button =&gt; {
+        button.addEventListener(&#x27;click&#x27;, () =&gt; {
+          if (currentStep === 0 &amp;&amp; valuesFor(&#x27;goals&#x27;).length === 0) {
+            goalError.hidden = false;
+            return;
+          }
+          goalError.hidden = true;
+          showStep(currentStep + 1);
+        });
+      });
+
+      root.querySelectorAll(&#x27;[data-back]&#x27;).forEach(button =&gt; {
+        button.addEventListener(&#x27;click&#x27;, () =&gt; showStep(currentStep - 1));
+      });
+
+      root.querySelector(&#x27;#dp-module-count&#x27;).addEventListener(&#x27;input&#x27;, event =&gt; {
+        root.querySelector(&#x27;#dp-module-count-value&#x27;).textContent = event.target.value;
+      });
+
+      function priorityGroups() {
+        const result = { Hero: [], Visible: [], Detail: [], Hide: [] };
+        root.querySelectorAll(&#x27;[data-priority]&#x27;).forEach(select =&gt; {
+          result[select.value].push(`${select.dataset.group}: ${select.dataset.label}`);
+        });
+        return result;
+      }
+
+      function optionalText(name) {
+        return valueFor(name).trim() || &#x27;Not specified&#x27;;
+      }
+
+      function buildBrief() {
+        const priorities = priorityGroups();
+        const selectedGoals = valuesFor(&#x27;goals&#x27;);
+        const selectedFeatures = valuesFor(&#x27;features&#x27;);
+        const selectedAlerts = valuesFor(&#x27;alerts&#x27;);
+        const heroLimit = Number(valueFor(&#x27;moduleCount&#x27;));
+        const heroOverflow = Math.max(0, priorities.Hero.length - heroLimit);
+
+        const lines = [
+          &#x27;DASHBOARD DESIGN BRIEF&#x27;,
+          &#x27;&#x27;,
+          `Primary job: ${valueFor(&#x27;dashboardMode&#x27;)}`,
+          `Usage: ${valueFor(&#x27;visitFrequency&#x27;)}; ${valueFor(&#x27;primaryDevice&#x27;)}; understood within ${valueFor(&#x27;glanceTime&#x27;)}`,
+          `Layout: ${valueFor(&#x27;density&#x27;)} density, ${valueFor(&#x27;desktopColumns&#x27;)}, maximum ${heroLimit} above-the-fold modules`,
+          `Mobile starts with: ${valueFor(&#x27;mobileFirst&#x27;)}`,
+          `Money display: ${valueFor(&#x27;moneyDisplay&#x27;)}`,
+          `Detail behavior: ${valueFor(&#x27;detailBehavior&#x27;)}`,
+          &#x27;&#x27;,
+          &#x27;The dashboard must answer:&#x27;,
+          ...selectedGoals.map(item =&gt; `- ${item}`),
+          &#x27;&#x27;,
+          &#x27;Hero / above the fold:&#x27;,
+          ...(priorities.Hero.length ? priorities.Hero.map(item =&gt; `- ${item}`) : [&#x27;- None selected&#x27;]),
+          ...(heroOverflow ? [`- WARNING: ${heroOverflow} more hero items than the stated module limit`] : []),
+          &#x27;&#x27;,
+          &#x27;Visible dashboard modules:&#x27;,
+          ...(priorities.Visible.length ? priorities.Visible.map(item =&gt; `- ${item}`) : [&#x27;- None selected&#x27;]),
+          &#x27;&#x27;,
+          &#x27;One-click detail:&#x27;,
+          ...(priorities.Detail.length ? priorities.Detail.map(item =&gt; `- ${item}`) : [&#x27;- None selected&#x27;]),
+          &#x27;&#x27;,
+          &#x27;Keep off the dashboard:&#x27;,
+          ...(priorities.Hide.length ? priorities.Hide.map(item =&gt; `- ${item}`) : [&#x27;- None selected&#x27;]),
+          &#x27;&#x27;,
+          `Performance defaults: ${valueFor(&#x27;defaultPeriod&#x27;)} compared with ${valueFor(&#x27;benchmark&#x27;)}`,
+          &#x27;&#x27;,
+          &#x27;Interactions:&#x27;,
+          ...(selectedFeatures.length ? selectedFeatures.map(item =&gt; `- ${item}`) : [&#x27;- No extras selected&#x27;]),
+          &#x27;&#x27;,
+          &#x27;Alerts:&#x27;,
+          ...(selectedAlerts.length ? selectedAlerts.map(item =&gt; `- ${item}`) : [&#x27;- No alerts selected&#x27;]),
+          &#x27;&#x27;,
+          &#x27;Real questions:&#x27;,
+          optionalText(&#x27;topQuestions&#x27;),
+          &#x27;&#x27;,
+          &#x27;Actions this should support:&#x27;,
+          optionalText(&#x27;desiredActions&#x27;),
+          &#x27;&#x27;,
+          &#x27;Current waste:&#x27;,
+          optionalText(&#x27;currentWaste&#x27;),
+          &#x27;&#x27;,
+          &#x27;Missing or untrusted information:&#x27;,
+          optionalText(&#x27;missingInfo&#x27;),
+          &#x27;&#x27;,
+          &#x27;Success definition:&#x27;,
+          optionalText(&#x27;successDefinition&#x27;),
+        ];
+
+        return {
+          text: lines.join(&#x27;\n&#x27;),
+          priorities,
+          selectedGoals,
+          selectedFeatures,
+          selectedAlerts,
+          heroLimit,
+          heroOverflow,
+        };
+      }
+
+      function listMarkup(items, fallback) {
+        const values = items.length ? items : [fallback];
+        return `&lt;ul class=&quot;dp-summary-list&quot;&gt;${values.map(item =&gt; `&lt;li&gt;${escapeHtml(item)}&lt;/li&gt;`).join(&#x27;&#x27;)}&lt;/ul&gt;`;
+      }
+
+      function renderSummary(brief) {
+        latestBrief = brief.text;
+        summaryCount.textContent = `${brief.priorities.Hero.length} hero priorities · ${brief.priorities.Visible.length} visible modules`;
+        summaryContent.innerHTML = `
+          &lt;div class=&quot;dp-summary-section&quot;&gt;
+            &lt;div&gt;
+              &lt;h3&gt;North star&lt;/h3&gt;
+              ${listMarkup(brief.selectedGoals, &#x27;No primary questions selected&#x27;)}
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;h3&gt;Above the fold&lt;/h3&gt;
+              ${listMarkup(brief.priorities.Hero, &#x27;No hero metrics selected&#x27;)}
+              ${brief.heroOverflow ? `&lt;p class=&quot;text-destructive&quot;&gt;You selected ${brief.heroOverflow} more hero items than your ${brief.heroLimit}-module limit. The redesign should force a ranking.&lt;/p&gt;` : &#x27;&#x27;}
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;h3&gt;Regular modules&lt;/h3&gt;
+              ${listMarkup(brief.priorities.Visible, &#x27;No regular modules selected&#x27;)}
+            &lt;/div&gt;
+            &lt;div&gt;
+              &lt;h3&gt;Interactions and alerts&lt;/h3&gt;
+              ${listMarkup([...brief.selectedFeatures, ...brief.selectedAlerts], &#x27;No proactive features selected&#x27;)}
+            &lt;/div&gt;
+            &lt;details&gt;
+              &lt;summary&gt;Review the complete brief&lt;/summary&gt;
+              &lt;pre class=&quot;dp-brief&quot;&gt;&lt;code&gt;${escapeHtml(brief.text)}&lt;/code&gt;&lt;/pre&gt;
+            &lt;/details&gt;
+          &lt;/div&gt;`;
+        form.hidden = true;
+        summary.hidden = false;
+        stepBadge.textContent = &#x27;Complete&#x27;;
+        stepLabel.textContent = &#x27;Dashboard brief ready&#x27;;
+        progress.value = steps.length;
+        liveRegion.textContent = &#x27;Dashboard brief ready for review.&#x27;;
+      }
+
+      form.addEventListener(&#x27;submit&#x27;, event =&gt; {
+        event.preventDefault();
+        renderSummary(buildBrief());
+      });
+
+      root.querySelector(&#x27;#dp-revise&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; {
+        sendStatus.textContent = &#x27;&#x27;;
+        showStep(0);
+      });
+
+      root.querySelector(&#x27;#dp-copy&#x27;).addEventListener(&#x27;click&#x27;, async () =&gt; {
+        try {
+          await navigator.clipboard.writeText(latestBrief);
+          sendStatus.textContent = &#x27;Brief copied.&#x27;;
+        } catch (error) {
+          sendStatus.textContent = &#x27;Copy was blocked. Open the complete brief and copy it manually.&#x27;;
+        }
+      });
+
+      root.querySelector(&#x27;#dp-send&#x27;).addEventListener(&#x27;click&#x27;, async () =&gt; {
+        const prompt = `Use this dashboard design brief to propose a lean main-dashboard layout. Identify conflicts, recommend the exact above-the-fold hierarchy for desktop and mobile, and ask only the follow-up questions that materially change the design.\n\n${latestBrief}`;
+        if (window.openai &amp;&amp; typeof window.openai.sendFollowUpMessage === &#x27;function&#x27;) {
+          await window.openai.sendFollowUpMessage({
+            title: &#x27;Design the dashboard from this brief&#x27;,
+            prompt,
+          });
+          sendStatus.textContent = &#x27;Brief sent to Codex.&#x27;;
+        } else {
+          try {
+            await navigator.clipboard.writeText(prompt);
+            sendStatus.textContent = &#x27;Brief copied. Paste it into your next message.&#x27;;
+          } catch (error) {
+            sendStatus.textContent = &#x27;Open the complete brief and copy it into your next message.&#x27;;
+          }
+        }
+      });
+
+      showStep(0);
+    })();
+  &lt;/script&gt;
+&lt;/div&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>
