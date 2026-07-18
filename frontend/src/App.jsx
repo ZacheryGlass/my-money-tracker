@@ -1,8 +1,7 @@
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { useAuth } from './context/AuthContext';
-import Login from './components/Login';
+import { me } from './utils/api';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
 import Sidebar from './components/Sidebar';
@@ -56,11 +55,19 @@ function normalizePath(pathname) {
 }
 
 function App() {
-  const { user, loading, logout } = useAuth();
+  // Login happens upstream (Azure Easy Auth); by the time this app loads the
+  // user is already authenticated. /api/me only supplies the display name.
+  const [user, setUser] = useState(null);
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const currentPage = pagesByPath[normalizePath(location.pathname)] || null;
+
+  useEffect(() => {
+    me()
+      .then((data) => setUser(data.user))
+      .catch(() => setUser(null));
+  }, []);
 
   const handleNavigate = (page) => {
     const path = pagePaths[page];
@@ -69,20 +76,11 @@ function App() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-base">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-          <div className="text-caption text-tertiary">Authenticating</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Login />;
-  }
+  const handleLogout = () => {
+    // Easy Auth session logout; no-op in dev where there is no login.
+    if (import.meta.env.DEV) return;
+    window.location.href = '/.auth/logout?post_logout_redirect_uri=/';
+  };
 
   const renderPage = () => {
     if (!currentPage) {
@@ -115,7 +113,7 @@ function App() {
         currentPage={currentPage}
         onNavigate={handleNavigate}
         user={user}
-        onLogout={logout}
+        onLogout={handleLogout}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
       />

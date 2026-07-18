@@ -1,21 +1,15 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+// Same-origin by default: the Vite dev proxy forwards /api in development,
+// and in production the backend serves the app and API from one origin.
+// Auth is handled upstream by Azure Easy Auth (session cookie, no tokens).
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 const api = axios.create({
   baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
-});
-
-// Add token to requests
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
 });
 
 // Handle auth errors and retry on 5xx / network errors (1 retry, 500ms backoff)
@@ -25,13 +19,9 @@ api.interceptors.response.use(
     const config = error.config;
 
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      // Don't redirect when the login call itself fails — let the form display the error.
-      // For other 401s (e.g. expired token), reload to '/' so AuthContext re-initializes.
-      const isLoginCall = error.config?.url?.includes('/api/auth/login');
-      if (!isLoginCall) {
-        window.location.href = '/';
-      }
+      // Easy Auth session expired; a full page load lets the platform
+      // redirect through login and back.
+      window.location.reload();
       return Promise.reject(error);
     }
 
@@ -46,16 +36,10 @@ api.interceptors.response.use(
   }
 );
 
-// Auth API
-export const auth = {
-  login: async (username, password) => {
-    const response = await api.post('/api/auth/login', { username, password });
-    return response.data;
-  },
-  me: async () => {
-    const response = await api.get('/api/auth/me');
-    return response.data;
-  },
+// Identity (display name for the sidebar)
+export const me = async () => {
+  const response = await api.get('/api/me');
+  return response.data;
 };
 
 // Holdings API

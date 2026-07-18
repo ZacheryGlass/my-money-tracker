@@ -2,13 +2,13 @@
 
 const express = require('express');
 const pool = require('../config/database');
-const authenticateToken = require('../middleware/auth');
+const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
 
 const router = express.Router();
 
 // Apply auth middleware to all routes
-router.use(authenticateToken);
+router.use(requireUser);
 
 // Helper function to convert array to CSV
 function arrayToCSV(data, headers) {

@@ -2,13 +2,13 @@
 
 const express = require('express');
 const pool = require('../config/database');
-const authenticateToken = require('../middleware/auth');
+const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
 
 const router = express.Router();
 
 // Apply auth middleware to all routes
-router.use(authenticateToken);
+router.use(requireUser);
 
 const VALID_ACCOUNT_TYPES = ['investment', 'depository', 'credit', 'loan', 'crypto', 'property', 'other'];
 const EFFECTIVE_ACCOUNT_NAME_SQL = "COALESCE(NULLIF(TRIM(a.display_name), ''), a.name)";

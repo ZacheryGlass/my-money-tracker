@@ -1,15 +1,12 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
-import { AuthProvider } from '../context/AuthContext';
+import { me } from '../utils/api';
 
-// Prevent real API calls from AuthContext on mount.
-// authAPI.me rejects so no token check attempt lands (localStorage is empty in tests anyway).
+// Login happens upstream (Azure Easy Auth); the app assumes it is already
+// authenticated and only fetches /api/me for the sidebar display name.
 vi.mock('../utils/api', () => ({
-  auth: {
-    login: vi.fn(),
-    me: vi.fn().mockRejectedValue(new Error('no network in tests')),
-  },
+  me: vi.fn().mockResolvedValue({ user: { id: 1, username: 'zachery' } }),
   holdings: { getAll: vi.fn() },
   accounts: { getAll: vi.fn() },
   dashboard: { getPortfolio: vi.fn() },
@@ -25,19 +22,24 @@ vi.mock('../utils/api', () => ({
   default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }));
 
+// Stub the dashboard page so the smoke test exercises the app shell without
+// mocking every dashboard API response shape.
+vi.mock('../components/Dashboard', () => ({
+  default: () => <div>Dashboard stub</div>,
+}));
+
 describe('App smoke test', () => {
-  it('renders the login form when unauthenticated', async () => {
+  it('renders the app shell for the authenticated user', async () => {
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
+        <App />
       </MemoryRouter>
     );
 
-    // After auth initialization completes (no token in localStorage), Login renders.
-    // findByText waits for async state updates to settle.
-    const heading = await screen.findByText('My Money Tracker');
-    expect(heading).toBeInTheDocument();
+    // Lazy page resolves through Suspense; findByText waits for it.
+    expect(await screen.findByText('Dashboard stub')).toBeInTheDocument();
+    // The app fetches the identity for the sidebar (collapsed in jsdom,
+    // so the username itself is not visible).
+    expect(me).toHaveBeenCalled();
   });
 });

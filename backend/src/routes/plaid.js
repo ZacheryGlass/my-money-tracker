@@ -1,14 +1,14 @@
 'use strict';
 
 const express = require('express');
-const authenticateToken = require('../middleware/auth');
+const requireUser = require('../middleware/auth');
 const PlaidItem = require('../models/PlaidItem');
 const PlaidService = require('../services/PlaidService');
 const logger = require('../config/logger');
 
 const router = express.Router();
 
-router.use(authenticateToken);
+router.use(requireUser);
 
 router.post('/link-token', async (req, res) => {
   try {

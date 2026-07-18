@@ -1,14 +1,42 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
-const authenticateToken = require('../middleware/auth');
 const createFinancialMcpServer = require('../mcp/createFinancialMcpServer');
 const logger = require('../config/logger');
 
 const router = express.Router();
 
-router.use(authenticateToken);
+// MCP clients (AI agents) cannot complete an interactive browser login, so
+// this endpoint sits outside Easy Auth and is protected by a static bearer
+// key instead. Compare SHA-256 digests so the check is constant-time
+// regardless of key length.
+function requireMcpKey(req, res, next) {
+  const configuredKey = process.env.MCP_API_KEY;
+
+  if (!configuredKey) {
+    if (process.env.NODE_ENV === 'production') {
+      logger.error('MCP_API_KEY is not set; rejecting MCP request');
+      return res.status(401).json({ error: 'MCP endpoint is not configured' });
+    }
+    // Local development: no key required.
+    req.user = { id: 1, username: 'mcp-local' };
+    return next();
+  }
+
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const digest = (value) => crypto.createHash('sha256').update(value).digest();
+  if (!token || !crypto.timingSafeEqual(digest(token), digest(configuredKey))) {
+    return res.status(401).json({ error: 'Valid MCP API key required' });
+  }
+
+  req.user = { id: 1, username: 'mcp' };
+  return next();
+}
+
+router.use(requireMcpKey);
 
 router.use((req, res, next) => {
   const allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || '')

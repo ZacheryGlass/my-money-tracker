@@ -78,17 +78,12 @@ run_super "$DB_NAME" -c "
 
 unset PGPASSWORD
 
-# Generate JWT secret using node (already required by the project).
-JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
-
 if [[ ! -f backend/.env ]]; then
   echo "==> Writing backend/.env"
   cat > backend/.env <<EOF
 PORT=3000
 NODE_ENV=development
 DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@$PG_HOST:$PG_PORT/$DB_NAME
-JWT_SECRET=$JWT_SECRET
-INITIAL_PASSWORD=password
 CMC_PRO_API_KEY=
 CG_API_KEY=
 EOF
@@ -98,7 +93,7 @@ fi
 
 if [[ ! -f frontend/.env ]]; then
   echo "==> Writing frontend/.env"
-  echo "VITE_API_URL=http://localhost:3000" > frontend/.env
+  echo "VITE_API_URL=" > frontend/.env
 else
   echo "==> frontend/.env already exists, skipping"
 fi

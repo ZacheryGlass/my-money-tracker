@@ -2,7 +2,7 @@
 
 const express = require('express');
 const Holding = require('../models/Holding');
-const authenticateToken = require('../middleware/auth');
+const requireUser = require('../middleware/auth');
 const { validateHolding } = require('../middleware/validator');
 const pool = require('../config/database');
 const csvParser = require('csv-parser');
@@ -12,7 +12,7 @@ const logger = require('../config/logger');
 const router = express.Router();
 
 // Apply auth middleware to all routes
-router.use(authenticateToken);
+router.use(requireUser);
 
 // GET /api/holdings - List all holdings
 router.get('/', async (req, res) => {

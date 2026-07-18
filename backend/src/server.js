@@ -1,5 +1,7 @@
 require('dotenv').config();
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const pinoHttp = require('pino-http');
@@ -8,7 +10,6 @@ const rateLimit = require('express-rate-limit');
 const logger = require('./config/logger');
 
 // Routes
-const authRoutes = require('./routes/auth');
 const holdingsRoutes = require('./routes/holdings');
 const accountsRoutes = require('./routes/accounts');
 const dashboardRoutes = require('./routes/dashboard');
@@ -27,6 +28,7 @@ const { initializeJobs, stopJobs } = require('./jobs');
 
 // Middleware
 const errorHandler = require('./middleware/errorHandler');
+const requireUser = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -85,19 +87,11 @@ app.get('/ready', async (req, res) => {
   }
 });
 
-// Login rate limit: 10 attempts / 15 min per IP.
-// Keep this off /api/auth/me so normal page reloads do not lock out login.
-const loginRateLimit = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  handler: rateLimitJsonHandler('Too many login attempts. Please try again later.'),
-});
-
 // Routes
-app.post('/api/auth/login', loginRateLimit);
-app.use('/api/auth', authRoutes);
+// Identity comes from Azure Easy Auth headers (see middleware/auth.js).
+app.get('/api/me', requireUser, (req, res) => {
+  res.status(200).json({ user: req.user });
+});
 app.use('/api/accounts', accountsRoutes);
 app.use('/api/holdings', holdingsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
@@ -110,6 +104,20 @@ app.use('/api/plaid', plaidRoutes);
 app.use('/api/transactions', transactionsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/mcp', mcpRoutes);
+
+// Public landing page (excluded from Easy Auth in the Azure config).
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Private React app. Azure Easy Auth enforces login for /private/* upstream;
+// locally the dist may not exist since Vite serves the app in dev.
+const frontendDist = path.join(__dirname, '../../frontend/dist');
+if (fs.existsSync(frontendDist)) {
+  app.use('/private', express.static(frontendDist));
+  // SPA fallback for client-side routes (Express 5 wildcard syntax).
+  app.get('/private/{*splat}', (req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

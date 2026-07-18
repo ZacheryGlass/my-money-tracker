@@ -2,13 +2,13 @@
 
 const express = require('express');
 const DashboardService = require('../services/DashboardService');
-const authenticateToken = require('../middleware/auth');
+const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
 
 const router = express.Router();
 
 // Apply auth middleware to all routes
-router.use(authenticateToken);
+router.use(requireUser);
 
 // GET /api/dashboard - Get portfolio summary
 router.get('/', async (req, res) => {

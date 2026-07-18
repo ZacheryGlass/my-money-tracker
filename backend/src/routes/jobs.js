@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const authenticateToken = require('../middleware/auth');
+const requireUser = require('../middleware/auth');
 const { getJobStatus, PriceUpdateJob, SnapshotJob } = require('../jobs');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
-router.use(authenticateToken);
+router.use(requireUser);
 
 // GET /api/jobs/status - Get job configuration and status
 router.get('/status', async (req, res, next) => {

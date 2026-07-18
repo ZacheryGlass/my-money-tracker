@@ -2,12 +2,12 @@
 
 const express = require('express');
 const SalaryHistory = require('../models/SalaryHistory');
-const authenticateToken = require('../middleware/auth');
+const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
 
 const router = express.Router();
 
-router.use(authenticateToken);
+router.use(requireUser);
 
 router.get('/', async (req, res) => {
   try {

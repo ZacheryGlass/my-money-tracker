@@ -2,10 +2,8 @@
 
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const jwt = require('jsonwebtoken');
 
 process.env.NODE_ENV = 'test';
-process.env.JWT_SECRET = 'test-secret';
 process.env.DATABASE_URL = 'postgresql://test:test@localhost/test';
 
 let queryHandler;
@@ -36,8 +34,6 @@ require.cache[pgModulePath] = {
 const request = require('supertest');
 const app = require('../src/server');
 
-const token = jwt.sign({ id: 1, username: 'test' }, process.env.JWT_SECRET);
-
 beforeEach(() => {
   queryHandler = async () => {
     throw new Error('Unexpected query');
@@ -67,8 +63,7 @@ test('GET /api/accounts returns raw and effective account names', async () => {
   };
 
   const response = await request(app)
-    .get('/api/accounts')
-    .set('Authorization', `Bearer ${token}`);
+    .get('/api/accounts');
 
   assert.equal(response.status, 200);
   assert.equal(response.body.accounts[0].name, 'Very Long Plaid Account Name');
@@ -97,8 +92,7 @@ test('GET /api/accounts can include hidden accounts for settings', async () => {
   };
 
   const response = await request(app)
-    .get('/api/accounts?include_hidden=true')
-    .set('Authorization', `Bearer ${token}`);
+    .get('/api/accounts?include_hidden=true');
 
   assert.equal(response.status, 200);
   assert.equal(response.body.accounts[0].is_hidden, true);
@@ -125,7 +119,6 @@ test('PATCH /api/accounts/:id/display-name saves a trimmed display name', async 
 
   const response = await request(app)
     .patch('/api/accounts/7/display-name')
-    .set('Authorization', `Bearer ${token}`)
     .send({ display_name: '  Checking  ' });
 
   assert.equal(response.status, 200);
@@ -153,7 +146,6 @@ test('PATCH /api/accounts/:id/display-name clears blank display names', async ()
 
   const response = await request(app)
     .patch('/api/accounts/7/display-name')
-    .set('Authorization', `Bearer ${token}`)
     .send({ display_name: '   ' });
 
   assert.equal(response.status, 200);
@@ -164,7 +156,6 @@ test('PATCH /api/accounts/:id/display-name clears blank display names', async ()
 test('PATCH /api/accounts/:id/display-name rejects invalid payloads', async () => {
   const response = await request(app)
     .patch('/api/accounts/7/display-name')
-    .set('Authorization', `Bearer ${token}`)
     .send({ display_name: 42 });
 
   assert.equal(response.status, 400);
@@ -175,7 +166,6 @@ test('PATCH /api/accounts/:id/display-name returns 404 for missing accounts', as
 
   const response = await request(app)
     .patch('/api/accounts/999/display-name')
-    .set('Authorization', `Bearer ${token}`)
     .send({ display_name: 'Checking' });
 
   assert.equal(response.status, 404);
@@ -203,7 +193,6 @@ test('PATCH /api/accounts/:id/visibility hides an account', async () => {
 
   const response = await request(app)
     .patch('/api/accounts/7/visibility')
-    .set('Authorization', `Bearer ${token}`)
     .send({ is_hidden: true });
 
   assert.equal(response.status, 200);
@@ -213,7 +202,6 @@ test('PATCH /api/accounts/:id/visibility hides an account', async () => {
 test('PATCH /api/accounts/:id/visibility rejects invalid payloads', async () => {
   const response = await request(app)
     .patch('/api/accounts/7/visibility')
-    .set('Authorization', `Bearer ${token}`)
     .send({ is_hidden: 'true' });
 
   assert.equal(response.status, 400);

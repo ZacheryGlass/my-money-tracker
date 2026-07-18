@@ -2,13 +2,13 @@
 
 const express = require('express');
 const pool = require('../config/database');
-const authenticateToken = require('../middleware/auth');
+const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
 const FinancialQueryService = require('../services/FinancialQueryService');
 
 const router = express.Router();
 
-router.use(authenticateToken);
+router.use(requireUser);
 
 function isValidDate(dateString) {
   if (!dateString) return true;
