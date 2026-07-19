@@ -1,6 +1,10 @@
 # Personal data files
 *.xlsx
 *.pdf
+backend/data/
+
+# OS junk
+.DS_Store
 
 # Google Sheets export (contains API keys)
 google-sheet-export/
