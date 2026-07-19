@@ -538,14 +538,6 @@ const MonthlyExpenses = () => {
                   <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Name / Descriptor</label>
                   <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Fiber Internet, Netflix" required />
                 </div>
-                <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                  <button type="button" onClick={() => setFormData({ ...formData, is_fixed_rate: !formData.is_fixed_rate })} className={`flex items-center justify-center gap-2 p-3 rounded border transition-all text-[10px] font-bold uppercase tracking-wider ${formData.is_fixed_rate ? 'bg-accent/10 border-accent/30 text-accent' : 'bg-surface-3 border-border text-tertiary'}`}>
-                    {formData.is_fixed_rate ? <Check size={12} /> : null} Fixed Rate
-                  </button>
-                  <button type="button" onClick={() => setFormData({ ...formData, is_autopay: !formData.is_autopay })} className={`flex items-center justify-center gap-2 p-3 rounded border transition-all text-[10px] font-bold uppercase tracking-wider ${formData.is_autopay ? 'bg-accent/10 border-accent/30 text-accent' : 'bg-surface-3 border-border text-tertiary'}`}>
-                    {formData.is_autopay ? <Check size={12} /> : null} Auto-pay
-                  </button>
-                </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Payment Account</label>
