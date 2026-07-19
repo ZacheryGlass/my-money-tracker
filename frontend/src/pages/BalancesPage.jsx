@@ -5,9 +5,9 @@ import {
 import { Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
+import FilterTabs from '../components/FilterTabs';
 import HoldingForm from '../components/HoldingForm';
 import SummaryStats from '../components/SummaryStats';
-import TabStrip from '../components/TabStrip';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 
@@ -274,12 +274,13 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
         ]} />
       </div>
 
-      <TabStrip
+      <FilterTabs
+        id="balances-group"
+        label="Balances"
         className="mb-3"
-        ariaLabel="Balance groups"
-        tabs={TABS}
-        active={tab}
-        onSelect={(id) => onTabChange?.(id)}
+        options={TABS.map((t) => ({ value: t.id, label: t.label }))}
+        value={tab}
+        onChange={(id) => onTabChange?.(id)}
       />
 
       {successMessage && <div className="mb-3 flex items-center gap-2 border border-gain/20 bg-gain-bg p-2 text-body-sm text-gain"><Check size={14} />{successMessage}</div>}

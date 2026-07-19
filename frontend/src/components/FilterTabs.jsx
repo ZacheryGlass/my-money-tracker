@@ -1,11 +1,13 @@
 import React from 'react';
-import TabStrip from './TabStrip';
 
 // Single-choice control that renders as an underline tab strip on desktop and
 // as a labeled dropdown on mobile. `options` is [{ value, label, badge?,
 // selectLabel? }] — `badge` is an element shown on the desktop tab, and
 // `selectLabel` is its text fallback for the dropdown (options are text-only).
 // `actions` is an optional element pinned to the right on both layouts.
+// In the strip, the -mb-px overlap lives on the scroll wrapper, not the
+// buttons: putting it on the buttons inside an overflow-x-auto container
+// creates a vertical scrollbar.
 const FilterTabs = ({ id, label, options, value, onChange, actions, className = '' }) => (
   <div className={className}>
     <div className="flex items-end gap-3 sm:hidden">
@@ -27,14 +29,27 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
       {actions}
     </div>
 
-    <div className="hidden sm:block">
-      <TabStrip
-        tabs={options.map((option) => ({ id: option.value, label: option.label, badge: option.badge }))}
-        active={value}
-        onSelect={onChange}
-        ariaLabel={label}
-        actions={actions}
-      />
+    <div className="hidden items-center justify-between gap-3 border-b border-border sm:flex">
+      <div className="-mb-px flex min-w-0 overflow-x-auto" role="tablist" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.value || 'all'}
+            type="button"
+            role="tab"
+            aria-selected={value === option.value}
+            onClick={() => onChange(option.value)}
+            className={`whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
+              value === option.value
+                ? 'border-accent text-primary'
+                : 'border-transparent text-tertiary hover:text-primary'
+            }`}
+          >
+            {option.label}
+            {option.badge}
+          </button>
+        ))}
+      </div>
+      {actions}
     </div>
   </div>
 );
