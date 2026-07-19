@@ -2,8 +2,17 @@
 
 const express = require('express');
 const RecurringExpense = require('../models/RecurringExpense');
+const { BUDGET_RULES } = require('../services/ExpenseSyncService');
 const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
+
+// merchant: fields sync nightly from linked transactions; budget: cost is a
+// rolling category-spend average; manual: hand-maintained.
+function provenanceOf(expense) {
+  if (expense.merchant_key) return 'merchant';
+  if (BUDGET_RULES[String(expense.name || '').trim().toLowerCase()]) return 'budget';
+  return 'manual';
+}
 
 const router = express.Router();
 
@@ -13,7 +22,7 @@ router.get('/', async (req, res) => {
   try {
     const type = req.query.type || null;
     const expenses = await RecurringExpense.findAll(type);
-    res.status(200).json({ expenses });
+    res.status(200).json({ expenses: expenses.map((e) => ({ ...e, provenance: provenanceOf(e) })) });
   } catch (error) {
     logger.error({ err: error }, 'Get expenses error');
     res.status(500).json({ error: 'Server error retrieving expenses' });

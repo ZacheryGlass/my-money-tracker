@@ -45,6 +45,14 @@ export const formatRelativeTime = (dateString, fallback = 'Never') => {
   return `${Math.floor(diffHours / 24)}d ago`;
 };
 
+export const formatDayOrdinal = (day) => {
+  if (day == null) return null;
+  const n = Number(day);
+  if (!Number.isInteger(n) || n < 1 || n > 31) return null;
+  const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return `${n}${suffix}`;
+};
+
 export const formatCompactCurrency = (value) => {
   const sign = value < 0 ? '-' : '';
   const abs = Math.abs(value);

@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, Copy, CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
 import { expenses as expensesAPI, analytics } from '../utils/api';
-import { formatCurrency, formatDateDisplay } from '../utils/format';
+import { formatCurrency, formatDateDisplay, formatDayOrdinal } from '../utils/format';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
 
@@ -16,6 +16,12 @@ const Badge = ({ active, children }) => (
 );
 
 const ROUGH_NAMES = new Set(['bullshit', 'misc', 'miscellaneous', 'other', 'unknown', 'stuff']);
+
+const PROVENANCE_LABELS = {
+  merchant: { label: 'Auto', title: 'Synced nightly from linked transactions' },
+  budget: { label: 'Budget', title: 'Rolling 3-month average of category spending' },
+  manual: { label: 'Manual', title: 'Hand-maintained entry' },
+};
 
 function getCleanupFlag(expense) {
   const name = String(expense.name || '').trim();
@@ -305,8 +311,8 @@ const MonthlyExpenses = () => {
                 <table className="w-full table-fixed divide-y divide-border">
                   <thead className="bg-surface-2">
                     <tr>
-                      {['Name', 'Monthly Cost', 'Fixed', 'Account', 'Company', 'Actions'].map((h, index) => (
-                        <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${index >= 2 && index <= 4 ? 'hidden xl:table-cell' : ''}`}>{h}</th>
+                      {['Name', 'Monthly Cost', 'Fixed', 'Due', 'Source', 'Account', 'Company', 'Actions'].map((h, index) => (
+                        <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${index >= 2 && index <= 6 ? 'hidden xl:table-cell' : ''}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -314,7 +320,7 @@ const MonthlyExpenses = () => {
                     <AnimatePresence mode="popLayout">
                       {filtered.length === 0 ? (
                         <tr key="empty">
-                          <td colSpan={6} className="px-5 py-12 text-center">
+                          <td colSpan={8} className="px-5 py-12 text-center">
                             <div className="flex flex-col items-center gap-3 opacity-40">
                               <Calendar size={32} className="text-tertiary" />
                               <p className="text-sm font-medium text-tertiary">No {activeTab}s tracked yet</p>
@@ -324,6 +330,7 @@ const MonthlyExpenses = () => {
                       ) : (
                         filtered.map((exp) => {
                           const cleanupFlag = getCleanupFlag(exp);
+                          const provenance = PROVENANCE_LABELS[exp.provenance] || PROVENANCE_LABELS.manual;
                           return (
                             <Motion.tr
                               layout
@@ -342,12 +349,26 @@ const MonthlyExpenses = () => {
                                       Review
                                     </span>
                                   )}
+                                  {exp.is_stale && (
+                                    <span className="inline-flex items-center gap-1 border border-loss/20 bg-loss/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-loss" title={`No charge since ${formatDateDisplay(exp.last_charge_date)}; expected every ${exp.charge_interval_days || 30} days`}>
+                                      <Calendar size={10} />
+                                      Stale
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                               <td className="px-2 py-4 sm:px-5">
                                 <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
                               </td>
                               <td className="hidden px-5 py-4 xl:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
+                              <td className="hidden px-5 py-4 xl:table-cell">
+                                <span className="text-xs font-medium text-secondary" title={exp.last_charge_date ? `Last charge ${formatDateDisplay(exp.last_charge_date)}` : undefined}>
+                                  {formatDayOrdinal(exp.due_day) || <span className="text-tertiary">—</span>}
+                                </span>
+                              </td>
+                              <td className="hidden px-5 py-4 xl:table-cell">
+                                <Badge active={exp.provenance === 'merchant'}><span title={provenance.title}>{provenance.label}</span></Badge>
+                              </td>
                               <td className="hidden px-5 py-4 xl:table-cell">
                                 <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
                               </td>
@@ -457,9 +478,18 @@ const MonthlyExpenses = () => {
           <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
             <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setIsFormOpen(false)} />
             <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
-              <div className="flex shrink-0 items-center justify-between border-b border-border p-4 sm:p-6">
-                <h2 className="text-lg font-bold text-primary">{editingExpense ? `Modify ${formData.type === 'bill' ? 'Bill' : 'Subscription'}` : 'Track New Subscription'}</h2>
-                <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
+              <div className="shrink-0 border-b border-border p-4 sm:p-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-primary">{editingExpense ? `Modify ${formData.type === 'bill' ? 'Bill' : 'Subscription'}` : 'Track New Subscription'}</h2>
+                  <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
+                </div>
+                {editingExpense && editingExpense.provenance !== 'manual' && (
+                  <p className="mt-1 text-caption text-tertiary">
+                    {editingExpense.provenance === 'merchant'
+                      ? 'This entry syncs nightly from transactions; cost and account edits will be overwritten.'
+                      : 'Cost refreshes nightly from category spending averages.'}
+                  </p>
+                )}
               </div>
               <form onSubmit={handleSave} className="space-y-5 overflow-y-auto p-4 sm:p-6">
                 <div>
