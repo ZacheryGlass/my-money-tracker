@@ -9,6 +9,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+    <script>
+      // Set the theme before CSS paints so light-mode users don't get a dark
+      // flash while the JS bundle loads. Mirrors appearancePreferences.js.
+      try {
+        var prefs = JSON.parse(localStorage.getItem('appearance-preferences') || '{}');
+        var theme = prefs.theme === 'system'
+          ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+          : (prefs.theme || 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) { /* default dark */ }
+    </script>
     <title>My Money Tracker</title>
   </head>
   <body class="bg-base">

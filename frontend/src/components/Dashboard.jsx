@@ -110,10 +110,14 @@ const Dashboard = ({ onNavigate }) => {
   useEffect(() => {
     let cancelled = false;
     const loadBenchmarks = async () => {
+      // Fetch a lookback buffer before the range start so the as-of alignment
+      // can anchor to the last close on or before the first timeline date
+      // (otherwise the first trading day's return is silently dropped).
+      const fetchStart = selectedStartDate ? shiftDays(selectedStartDate, -10) : null;
       const [spy, qqq] = await Promise.all([
-        analytics.getBenchmarkHistory({ symbol: 'SPY', startDate: selectedStartDate, endDate: today })
+        analytics.getBenchmarkHistory({ symbol: 'SPY', startDate: fetchStart, endDate: today })
           .catch(() => ({ data: [] })),
-        analytics.getBenchmarkHistory({ symbol: 'QQQ', startDate: selectedStartDate, endDate: today })
+        analytics.getBenchmarkHistory({ symbol: 'QQQ', startDate: fetchStart, endDate: today })
           .catch(() => ({ data: [] })),
       ]);
       if (!cancelled) {
@@ -212,9 +216,11 @@ const Dashboard = ({ onNavigate }) => {
     const filtered = baseHistorySeries.filter((point) => !selectedStartDate || point.date >= selectedStartDate);
     const series = filtered.map((point) => ({ ...point }));
     const latest = series.at(-1);
-    if (!latest || latest.date !== today) {
+    if (!latest || latest.date < today) {
       series.push({ date: today, value: totals.netWorth });
     } else {
+      // latest.date >= today (UTC-dated snapshots can run ahead of local time);
+      // update in place so the series stays in ascending date order.
       latest.value = totals.netWorth;
     }
     return series;
@@ -311,12 +317,11 @@ const Dashboard = ({ onNavigate }) => {
       .slice(0, 3);
   }, [accountDisplayNames, accountHistoryData, selectedItems, selectedStartDate]);
 
-  // Rebase each benchmark to the portfolio's starting net worth (V0) and align
-  // it to the net-worth timeline dates via an as-of lookup, so both lines share
-  // the same x-axis and start from the same value.
+  // Rebase each benchmark to the portfolio's net worth at the first date the
+  // benchmark has coverage, aligned to the timeline dates via an as-of lookup,
+  // so both lines share the same x-axis and start from the same value.
   const benchmarkTimeline = useMemo(() => {
-    const v0 = timelineData[0]?.value;
-    if (!timelineData.length || !Number.isFinite(v0) || v0 === 0) {
+    if (!timelineData.length) {
       return { spy: [], qqq: [] };
     }
     const dates = timelineData.map((point) => point.date);
@@ -339,9 +344,15 @@ const Dashboard = ({ onNavigate }) => {
         return lastClose;
       });
 
-      const firstClose = asof.find((close) => close != null);
-      if (!(firstClose > 0)) return [];
-      return asof.map((close) => (close != null ? v0 * (close / firstClose) : null));
+      // Anchor at the first timeline date the benchmark covers (benchmark
+      // history may start later than the portfolio's, e.g. the ALL range with
+      // a capped backfill). A non-positive base would invert the overlay.
+      const firstIndex = asof.findIndex((close) => close != null);
+      if (firstIndex === -1) return [];
+      const firstClose = asof[firstIndex];
+      const base = timelineData[firstIndex].value;
+      if (!(firstClose > 0) || !(base > 0)) return [];
+      return asof.map((close) => (close != null ? base * (close / firstClose) : null));
     };
 
     return {

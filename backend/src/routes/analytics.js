@@ -5,6 +5,7 @@ const pool = require('../config/database');
 const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
 const FinancialQueryService = require('../services/FinancialQueryService');
+const BenchmarkService = require('../services/BenchmarkService');
 
 const router = express.Router();
 
@@ -268,18 +269,16 @@ router.get('/investment-performance', async (req, res) => {
 });
 
 // GET /api/analytics/benchmark-history
-const BENCHMARK_SYMBOLS = ['SPY', 'QQQ'];
-
 router.get('/benchmark-history', async (req, res) => {
   try {
     const { symbol, startDate, endDate } = req.query;
 
-    if (!symbol) {
+    if (!symbol || typeof symbol !== 'string') {
       return res.status(400).json({ error: 'symbol parameter is required.' });
     }
     const normalizedSymbol = symbol.toUpperCase();
-    if (!BENCHMARK_SYMBOLS.includes(normalizedSymbol)) {
-      return res.status(400).json({ error: `Invalid symbol. Must be one of: ${BENCHMARK_SYMBOLS.join(', ')}.` });
+    if (!BenchmarkService.SYMBOLS.includes(normalizedSymbol)) {
+      return res.status(400).json({ error: `Invalid symbol. Must be one of: ${BenchmarkService.SYMBOLS.join(', ')}.` });
     }
 
     const conditions = ['UPPER(symbol) = $1'];

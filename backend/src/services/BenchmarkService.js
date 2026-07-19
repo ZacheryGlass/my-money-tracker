@@ -12,19 +12,9 @@ const SYMBOLS = ['SPY', 'QQQ'];
 const MAX_BACKFILL_DAYS = 5 * 365;
 
 class BenchmarkService {
-  // Resume from the day after the latest stored price; on first run, backfill
-  // far enough to cover the full account snapshot history (capped at 5 years).
-  static async getFetchStartDate(symbol) {
-    const latest = await pool.query(
-      'SELECT MAX(price_date) AS latest FROM benchmark_prices WHERE UPPER(symbol) = UPPER($1)',
-      [symbol]
-    );
-    if (latest.rows[0]?.latest) {
-      const next = new Date(latest.rows[0].latest);
-      next.setUTCDate(next.getUTCDate() + 1);
-      return next;
-    }
-
+  // Earliest date worth backfilling: far enough to cover the full account
+  // snapshot history (capped at 5 years).
+  static async getBackfillStartDate() {
     const cap = new Date();
     cap.setUTCDate(cap.getUTCDate() - MAX_BACKFILL_DAYS);
     const snapshot = await pool.query('SELECT MIN(snapshot_date) AS earliest FROM account_snapshots');
@@ -34,8 +24,27 @@ class BenchmarkService {
     return earliest > cap ? earliest : cap;
   }
 
-  static async updateBenchmarkPrices(symbol = DEFAULT_SYMBOL) {
-    const period1 = await this.getFetchStartDate(symbol);
+  // Resume from the latest stored price date (inclusive, so a partial-day
+  // price stored by an intraday manual trigger gets corrected by the next
+  // run's upsert); on first run, backfill the full window.
+  static async getFetchStartDate(symbol) {
+    const latest = await pool.query(
+      'SELECT MAX(price_date) AS latest FROM benchmark_prices WHERE UPPER(symbol) = UPPER($1)',
+      [symbol]
+    );
+    if (latest.rows[0]?.latest) {
+      return new Date(latest.rows[0].latest);
+    }
+    return this.getBackfillStartDate();
+  }
+
+  // fullRefresh re-fetches the entire window: Yahoo rescales historical
+  // adjclose values on every dividend/split, so an incremental-only series
+  // drifts; a periodic full pass (the job runs one weekly) re-bases all rows.
+  static async updateBenchmarkPrices(symbol = DEFAULT_SYMBOL, { fullRefresh = false } = {}) {
+    const period1 = fullRefresh
+      ? await this.getBackfillStartDate()
+      : await this.getFetchStartDate(symbol);
     const period2 = new Date();
     if (period1 >= period2) {
       return { symbol, fetched: 0, upserted: 0, message: 'Already up to date' };
@@ -59,15 +68,6 @@ class BenchmarkService {
 
     logger.info({ symbol, fetched: quotes.length, upserted }, 'Benchmark prices updated');
     return { symbol, fetched: quotes.length, upserted };
-  }
-
-  // Update every configured benchmark symbol, returning per-symbol results.
-  static async updateAll() {
-    const results = [];
-    for (const symbol of SYMBOLS) {
-      results.push(await this.updateBenchmarkPrices(symbol));
-    }
-    return results;
   }
 }
 

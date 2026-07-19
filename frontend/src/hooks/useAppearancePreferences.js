@@ -34,13 +34,14 @@ export default function useAppearancePreferences() {
     return () => media.removeEventListener('change', onChange);
   }, [preferences.theme]);
 
+  // Side effects (persist, apply to DOM, event dispatch) stay outside the
+  // state updater: updaters can run during render and are double-invoked
+  // under StrictMode. Merge onto the persisted value so no update is lost.
   const setPreference = useCallback((key, value) => {
-    setPreferences((current) => {
-      const next = { ...current, [key]: value };
-      saveAppearancePreferences(next);
-      applyAppearancePreferences(next);
-      return next;
-    });
+    const next = { ...loadAppearancePreferences(), [key]: value };
+    saveAppearancePreferences(next);
+    applyAppearancePreferences(next);
+    setPreferences(next);
   }, []);
 
   const setTheme = useCallback((value) => setPreference('theme', value), [setPreference]);

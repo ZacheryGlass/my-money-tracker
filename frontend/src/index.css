@@ -3,8 +3,10 @@
 
 @layer base {
   :root {
-    /* Typography controls (driven by appearance preferences) */
-    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    /* Typography controls (driven by appearance preferences). The default
+       must match DEFAULT_APPEARANCE_PREFERENCES (hyperlegible) so first
+       paint doesn't flash a different font before JS applies preferences. */
+    --font-ui: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     --font-scale: 1;
 
     /* Surface hierarchy - Workbench chrome */

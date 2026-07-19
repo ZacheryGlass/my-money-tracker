@@ -114,6 +114,20 @@ const HoldingsTable = ({ pageFilter }) => {
     return Array.from(cats).sort();
   }, [scopedHoldings]);
 
+  // Reset a filter whose option vanished (e.g. the filtered account's last
+  // holding was deleted); otherwise the select goes blank while the table
+  // silently keeps filtering by it.
+  useEffect(() => {
+    if (accountFilter && !accountsWithHoldings.some((a) => String(a.id) === accountFilter)) {
+      setAccountFilter('');
+    }
+  }, [accountFilter, accountsWithHoldings]);
+  useEffect(() => {
+    if (categoryFilter && !distinctCategories.includes(categoryFilter)) {
+      setCategoryFilter('');
+    }
+  }, [categoryFilter, distinctCategories]);
+
   const filteredData = useMemo(() => {
     let data = scopedHoldings;
     if (accountFilter) data = data.filter((h) => h.account_id === parseInt(accountFilter));
@@ -139,7 +153,6 @@ const HoldingsTable = ({ pageFilter }) => {
       accountValue,
       selectedAccount,
       selectedCategory: categoryFilter || 'All categories',
-      activeFilters: Number(Boolean(accountFilter)) + Number(Boolean(categoryFilter)),
     };
   }, [scopedHoldings, filteredData, categoryFilter, accountFilter, accountsMap]);
 

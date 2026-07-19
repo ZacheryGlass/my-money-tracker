@@ -111,19 +111,14 @@ const CashPage = () => {
       const timestamp = new Date(account.latestUpdate).getTime();
       return Number.isNaN(timestamp) || timestamp <= latest ? latest : timestamp;
     }, 0);
-    const selectedSummary = accountFilter
-      ? cashAccountSummaries.find((summary) => summary.account.id === parseInt(accountFilter))
-      : null;
-
     return {
       allCash,
       linkedAccounts,
       manualAccounts: cashAccountSummaries.length - linkedAccounts,
       zeroBalanceAccounts,
       latestUpdate: latestUpdate ? new Date(latestUpdate).toISOString() : null,
-      selectedSummary,
     };
-  }, [cashAccountSummaries, accountFilter]);
+  }, [cashAccountSummaries]);
 
   const columns = useMemo(() => [
     {

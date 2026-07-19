@@ -126,10 +126,6 @@ const LiabilitiesPage = () => {
       const timestamp = new Date(account.latestUpdate).getTime();
       return Number.isNaN(timestamp) || timestamp <= latest ? latest : timestamp;
     }, 0);
-    const selectedSummary = accountFilter
-      ? liabilityAccountSummaries.find((summary) => summary.account.id === parseInt(accountFilter))
-      : null;
-
     return {
       largestAccount,
       linkedAccounts,
@@ -137,9 +133,8 @@ const LiabilitiesPage = () => {
       creditAccounts,
       loanAccounts,
       latestUpdate: latestUpdate ? new Date(latestUpdate).toISOString() : null,
-      selectedSummary,
     };
-  }, [liabilityAccountSummaries, accountFilter]);
+  }, [liabilityAccountSummaries]);
 
   const columns = useMemo(() => [
     {

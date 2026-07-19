@@ -1,8 +1,10 @@
 import { createElement } from 'react';
 
+// Theme-aware series palette: resolves to the --chart-N tokens defined per
+// theme in index.css (the dark values equal the previous hardcoded hexes).
 export const CHART_COLORS = [
-  '#3994BC', '#72C892', '#e5ba7d', '#79c0ff',
-  '#f48771', '#73c991', '#c9a0ff', '#7ee0c0',
+  'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)',
+  'var(--chart-5)', 'var(--chart-6)', 'var(--chart-7)', 'var(--chart-8)',
 ];
 
 export const GRID_STYLE = {

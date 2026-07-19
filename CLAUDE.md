@@ -72,7 +72,7 @@ cd frontend && npm run lint     # eslint
 - **Shared formatters** (`frontend/src/utils/format.js`): `formatCurrency`, `formatPercent`, `formatDateDisplay`, `formatDateAxis`, `formatCompactCurrency` — all components import from here, no local duplicates
 - **Chart theme** (`frontend/src/utils/chartTheme.js`): `CHART_COLORS`, `GRID_STYLE`, `AXIS_STYLE`, `TOOLTIP_STYLE`, `areaGradient` — all charts use these
 - **Design tokens**: CSS variables in `index.css` (canvas/surface hierarchy, ink/body/muted text, primary action blue, gain/loss semantics, hairline borders) consumed by Tailwind config. Component classes: `.card`, `.font-money`. Square panels with 1px borders, 4px radius on buttons/inputs only.
-- **Scheduled jobs**: Plaid sync 7:30, price updates 8:00, snapshots 9:00 (all UTC). Controlled by `RUN_SCHEDULED_JOBS` env var
+- **Scheduled jobs**: Plaid sync 7:30, price updates 8:00, benchmark prices (SPY/QQQ) 8:30, snapshots 9:00 (all UTC). Controlled by `RUN_SCHEDULED_JOBS` env var
 
 ## Database
 

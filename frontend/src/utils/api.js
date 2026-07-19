@@ -322,17 +322,6 @@ export const analytics = {
     const response = await api.get(url);
     return response.data;
   },
-  getInvestmentPerformance: async (params = {}) => {
-    const queryParams = new URLSearchParams();
-    if (params.startDate) queryParams.append('startDate', params.startDate);
-    if (params.endDate) queryParams.append('endDate', params.endDate);
-    if (params.accountId) queryParams.append('account_id', params.accountId);
-    if (params.benchmarkSymbol) queryParams.append('benchmark', params.benchmarkSymbol);
-    const queryString = queryParams.toString();
-    const url = `/api/analytics/investment-performance${queryString ? `?${queryString}` : ''}`;
-    const response = await api.get(url);
-    return response.data;
-  },
   getBenchmarkHistory: async (params = {}) => {
     const queryParams = new URLSearchParams();
     if (params.symbol) queryParams.append('symbol', params.symbol);
