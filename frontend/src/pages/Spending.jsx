@@ -3,6 +3,7 @@ import { ReceiptText, RefreshCw } from 'lucide-react';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { accounts as accountsApi, transactions as transactionsApi } from '../utils/api';
 import { getAccountDisplayName } from '../utils/accountDisplay';
+import FilterTabs from '../components/FilterTabs';
 
 const PAGE_SIZE = 100;
 
@@ -89,33 +90,25 @@ export default function Spending() {
 
   return (
     <div className="container mx-auto max-w-[1100px] space-y-6 px-4 py-6 md:py-8">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="mb-2 flex items-center gap-2">
-            <ReceiptText className="h-5 w-5 text-accent" />
-            <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Transactions</span>
-          </div>
-          <h1 className="text-3xl font-bold tracking-tighter text-primary md:text-5xl">Spending</h1>
-          <p className="mt-1 text-sm text-secondary">All transactions across your accounts</p>
+      <div>
+        <div className="mb-2 flex items-center gap-2">
+          <ReceiptText className="h-5 w-5 text-accent" />
+          <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Transactions</span>
         </div>
-
-        <div className="sm:min-w-[240px]">
-          <label htmlFor="account-filter" className="mb-2 block text-[10px] font-bold uppercase tracking-wide text-tertiary">
-            Account
-          </label>
-          <select
-            id="account-filter"
-            value={selectedAccountId}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
-            className="h-11 w-full rounded border border-border bg-surface-2 px-3 text-sm text-primary"
-          >
-            <option value="">All accounts</option>
-            {accountList.map((account) => (
-              <option key={account.id} value={account.id}>{getAccountDisplayName(account)}</option>
-            ))}
-          </select>
-        </div>
+        <h1 className="text-3xl font-bold tracking-tighter text-primary md:text-5xl">Spending</h1>
+        <p className="mt-1 text-sm text-secondary">All transactions across your accounts</p>
       </div>
+
+      <FilterTabs
+        id="account-filter"
+        label="Account"
+        options={[
+          { value: '', label: 'All accounts' },
+          ...accountList.map((account) => ({ value: String(account.id), label: getAccountDisplayName(account) })),
+        ]}
+        value={selectedAccountId}
+        onChange={setSelectedAccountId}
+      />
 
       {error && (
         <div className="card border-loss/30 bg-loss-bg p-4 text-sm text-loss">

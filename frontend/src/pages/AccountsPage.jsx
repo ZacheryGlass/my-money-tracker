@@ -11,6 +11,7 @@ import { ArrowLeft, Link2, Wallet, Receipt, X, Activity, PenLine } from 'lucide-
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
+import FilterTabs from '../components/FilterTabs';
 import SummaryStats from '../components/SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
@@ -581,23 +582,14 @@ const AccountsPage = () => {
         </div>
       )}
 
-      <div className="mb-3 flex items-center justify-between gap-3 border-b border-border">
-        <div className="-mb-px flex min-w-0 overflow-x-auto">
-          {['', ...distinctTypes].map((type) => (
-            <button
-              key={type || 'all'}
-              onClick={() => setTypeFilter(type)}
-              className={`whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
-                typeFilter === type
-                  ? 'border-accent text-primary'
-                  : 'border-transparent text-tertiary hover:text-primary'
-              }`}
-            >
-              {type || 'All'}
-            </button>
-          ))}
-        </div>
-        {inactiveAccounts.length > 0 && (
+      <FilterTabs
+        id="account-type-filter"
+        label="Type"
+        className="mb-3"
+        options={[{ value: '', label: 'All' }, ...distinctTypes.map((type) => ({ value: type, label: type }))]}
+        value={typeFilter}
+        onChange={setTypeFilter}
+        actions={inactiveAccounts.length > 0 && (
           <button
             onClick={() => {
               setShowInactive((value) => !value);
@@ -613,7 +605,7 @@ const AccountsPage = () => {
             {showInactive ? 'Hide' : 'Show'} {inactiveAccounts.length} inactive
           </button>
         )}
-      </div>
+      />
 
       {renderTable(
         listTable,
