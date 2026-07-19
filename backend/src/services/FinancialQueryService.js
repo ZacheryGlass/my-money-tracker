@@ -948,7 +948,6 @@ class FinancialQueryService {
         type: expense.type,
         name: expense.name,
         monthlyCost: round(toNumber(expense.cost)),
-        autopay: Boolean(expense.is_autopay),
         fixedRate: Boolean(expense.is_fixed_rate),
       })),
       anomalies,
@@ -1165,7 +1164,7 @@ class FinancialQueryService {
         table: 'salary_history', date: 'effective_date', columns: ['id', 'effective_date', 'title', 'salary_amount', 'psu', 'rsu', 'total_comp', 'change_amount', 'change_percent'],
       },
       recurring_expenses: {
-        table: 'recurring_expenses', date: null, columns: ['id', 'type', 'name', 'cost', 'is_fixed_rate', 'is_autopay', 'pay_account', 'company', 'who_uses', 'notes'],
+        table: 'recurring_expenses', date: null, columns: ['id', 'type', 'name', 'cost', 'is_fixed_rate', 'pay_account', 'company'],
       },
       benchmark_prices: {
         table: 'benchmark_prices', date: 'price_date', columns: ['symbol', 'price_date', 'adjusted_close', 'total_return_index', 'source'],
@@ -1269,10 +1268,8 @@ class FinancialQueryService {
         name: row.name,
         monthlyCost: round(toNumber(row.cost)),
         fixedRate: Boolean(row.is_fixed_rate),
-        autopay: Boolean(row.is_autopay),
         payAccount: row.pay_account,
         company: row.company,
-        whoUses: row.who_uses,
       })),
     };
   }

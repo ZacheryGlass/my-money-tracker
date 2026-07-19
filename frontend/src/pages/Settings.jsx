@@ -42,12 +42,6 @@ const MANUAL_ENTRY_TYPES = {
     path: '/salary-history',
     entryType: 'salary',
   },
-  bill: {
-    label: 'Monthly Bill',
-    description: 'Recurring household or personal expense',
-    path: '/monthly-expenses',
-    entryType: 'bill',
-  },
   subscription: {
     label: 'Subscription',
     description: 'Recurring service or membership',

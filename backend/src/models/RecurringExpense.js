@@ -19,22 +19,22 @@ class RecurringExpense {
   }
 
   static async create(data) {
-    const { type, name, cost, is_fixed_rate, is_autopay, pay_account, company, who_uses, notes } = data;
+    const { type, name, cost, is_fixed_rate, pay_account, company } = data;
     const result = await pool.query(
-      `INSERT INTO recurring_expenses (type, name, cost, is_fixed_rate, is_autopay, pay_account, company, who_uses, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [type, name, cost, is_fixed_rate ?? true, is_autopay ?? false, pay_account, company, who_uses, notes]
+      `INSERT INTO recurring_expenses (type, name, cost, is_fixed_rate, pay_account, company)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [type, name, cost, is_fixed_rate ?? true, pay_account, company]
     );
     return result.rows[0];
   }
 
   static async update(id, data) {
-    const { type, name, cost, is_fixed_rate, is_autopay, pay_account, company, who_uses, notes } = data;
+    const { type, name, cost, is_fixed_rate, pay_account, company } = data;
     const result = await pool.query(
-      `UPDATE recurring_expenses SET type = $1, name = $2, cost = $3, is_fixed_rate = $4, is_autopay = $5,
-       pay_account = $6, company = $7, who_uses = $8, notes = $9, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $10 RETURNING *`,
-      [type, name, cost, is_fixed_rate, is_autopay, pay_account, company, who_uses, notes, id]
+      `UPDATE recurring_expenses SET type = $1, name = $2, cost = $3, is_fixed_rate = $4,
+       pay_account = $5, company = $6, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $7 RETURNING *`,
+      [type, name, cost, is_fixed_rate, pay_account, company, id]
     );
     return result.rows[0];
   }

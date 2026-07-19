@@ -36,8 +36,8 @@ router.post('/', async (req, res) => {
     if (!type || !name || cost == null) {
       return res.status(400).json({ error: 'Missing required fields: type, name, cost' });
     }
-    if (!['bill', 'subscription'].includes(type)) {
-      return res.status(400).json({ error: 'Type must be "bill" or "subscription"' });
+    if (type !== 'subscription') {
+      return res.status(400).json({ error: 'Only subscription entries can be created; bills are read-only' });
     }
     const expense = await RecurringExpense.create(req.body);
     res.status(201).json({ expense });

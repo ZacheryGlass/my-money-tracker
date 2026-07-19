@@ -22,18 +22,8 @@ function getCleanupFlag(expense) {
   if (!name) return 'Missing name';
   if (name.length < 4) return 'Too short';
   if (ROUGH_NAMES.has(name.toLowerCase())) return 'Review name';
-  if (!expense.company && !expense.who_uses && !expense.notes) return 'Add details';
+  if (!expense.company) return 'Add details';
   return null;
-}
-
-function getPaymentConfidence(expense) {
-  if (expense.is_autopay && expense.pay_account) {
-    return { label: 'High', detail: 'Autopay + account', tone: 'gain' };
-  }
-  if (expense.is_autopay || expense.pay_account) {
-    return { label: 'Medium', detail: expense.is_autopay ? 'Autopay, no account' : 'Manual, account set', tone: 'accent' };
-  }
-  return { label: 'Low', detail: 'Manual, no account', tone: 'loss' };
 }
 
 const MonthlyExpenses = () => {
@@ -50,8 +40,8 @@ const MonthlyExpenses = () => {
   const [editingExpense, setEditingExpense] = useState(null);
   const [deletingExpense, setDeletingExpense] = useState(null);
   const [formData, setFormData] = useState({
-    type: 'bill', name: '', cost: '', is_fixed_rate: true, is_autopay: false,
-    pay_account: '', company: '', who_uses: '', notes: '',
+    type: 'subscription', name: '', cost: '', is_fixed_rate: true,
+    pay_account: '', company: '',
   });
 
   const fetchData = async () => {
@@ -79,20 +69,19 @@ const MonthlyExpenses = () => {
     }
   }, [activeTab]);
 
-  const handleAddNew = useCallback((requestedType = activeTab) => {
-    const entryType = requestedType === 'subscription' ? 'subscription' : 'bill';
-    setActiveTab(entryType);
+  const handleAddNew = useCallback(() => {
+    setActiveTab('subscription');
     setEditingExpense(null);
     setFormData({
-      type: entryType, name: '', cost: '', is_fixed_rate: true, is_autopay: false,
-      pay_account: '', company: '', who_uses: '', notes: '',
+      type: 'subscription', name: '', cost: '', is_fixed_rate: true,
+      pay_account: '', company: '',
     });
     setIsFormOpen(true);
-  }, [activeTab]);
+  }, []);
 
   useEffect(() => {
-    if (location.state?.openAdd === 'bill' || location.state?.openAdd === 'subscription') {
-      handleAddNew(location.state.openAdd);
+    if (location.state?.openAdd === 'subscription') {
+      handleAddNew();
       navigate(location.pathname, { replace: true, state: null });
     }
   }, [handleAddNew, location.pathname, location.state, navigate]);
@@ -104,11 +93,8 @@ const MonthlyExpenses = () => {
       name: expense.name || '',
       cost: expense.cost ?? '',
       is_fixed_rate: expense.is_fixed_rate ?? true,
-      is_autopay: expense.is_autopay ?? false,
       pay_account: expense.pay_account || '',
       company: expense.company || '',
-      who_uses: expense.who_uses || '',
-      notes: expense.notes || '',
     });
     setIsFormOpen(true);
   };
@@ -120,8 +106,6 @@ const MonthlyExpenses = () => {
       cost: parseFloat(formData.cost) || 0,
       pay_account: formData.pay_account || null,
       company: formData.company || null,
-      who_uses: formData.who_uses || null,
-      notes: formData.notes || null,
     };
 
     try {
@@ -158,11 +142,8 @@ const MonthlyExpenses = () => {
         name: `${expense.name} Copy`,
         cost: parseFloat(expense.cost) || 0,
         is_fixed_rate: expense.is_fixed_rate,
-        is_autopay: expense.is_autopay,
         pay_account: expense.pay_account || null,
         company: expense.company || null,
-        who_uses: expense.who_uses || null,
-        notes: expense.notes || null,
       });
       showSuccess(`Duplicated "${expense.name}"`);
       await fetchData();
@@ -178,9 +159,7 @@ const MonthlyExpenses = () => {
         name: sub.merchant,
         cost: parseFloat(sub.avg_amount) || 0,
         is_fixed_rate: true,
-        is_autopay: true,
         company: sub.merchant,
-        notes: `Auto-detected from ${sub.occurrence_count} charges`,
       });
       showSuccess(`Now tracking "${sub.merchant}"`);
       await fetchData();
@@ -200,16 +179,13 @@ const MonthlyExpenses = () => {
 
   const { totalBills, totalSubs, totalAll, billCount, subCount, filtered, stats } = useMemo(() => {
     let bills = 0, subs = 0, bc = 0, sc = 0;
-    let fixedTotal = 0, variableTotal = 0, autopayCount = 0, manualCount = 0, missingAccountCount = 0, cleanupCount = 0;
+    let fixedTotal = 0, variableTotal = 0, cleanupCount = 0;
     allExpenses.forEach((e) => {
       const c = parseFloat(e.cost) || 0;
       if (e.type === 'bill') { bills += c; bc++; }
       else { subs += c; sc++; }
       if (e.is_fixed_rate) fixedTotal += c;
       else variableTotal += c;
-      if (e.is_autopay) autopayCount++;
-      else manualCount++;
-      if (!e.pay_account) missingAccountCount++;
       if (getCleanupFlag(e)) cleanupCount++;
     });
     return {
@@ -219,7 +195,7 @@ const MonthlyExpenses = () => {
       billCount: bc,
       subCount: sc,
       filtered: allExpenses.filter((e) => e.type === activeTab),
-      stats: { fixedTotal, variableTotal, autopayCount, manualCount, missingAccountCount, cleanupCount },
+      stats: { fixedTotal, variableTotal, cleanupCount },
     };
   }, [allExpenses, activeTab]);
 
@@ -246,10 +222,6 @@ const MonthlyExpenses = () => {
           <div className="min-w-0 rounded border border-border bg-surface-2 p-3 shadow-sm sm:min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Annual Cost</p>
             <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalAll * 12)}</p>
-          </div>
-          <div className="min-w-0 rounded border border-border bg-surface-2 p-3 shadow-sm sm:min-w-[140px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Manual Pays</p>
-            <p className="text-lg font-mono font-bold text-primary">{stats.manualCount}</p>
           </div>
         </div>
       </div>
@@ -333,8 +305,8 @@ const MonthlyExpenses = () => {
                 <table className="w-full table-fixed divide-y divide-border">
                   <thead className="bg-surface-2">
                     <tr>
-                      {['Name', 'Monthly Cost', 'Fixed', 'Auto-pay', 'Payment', 'Account', activeTab === 'bill' ? 'Company' : 'Who Uses', 'Actions'].map((h, index) => (
-                        <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${index >= 2 && index <= 6 ? 'hidden xl:table-cell' : ''}`}>{h}</th>
+                      {['Name', 'Monthly Cost', 'Fixed', 'Account', 'Company', 'Actions'].map((h, index) => (
+                        <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${index >= 2 && index <= 4 ? 'hidden xl:table-cell' : ''}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -342,7 +314,7 @@ const MonthlyExpenses = () => {
                     <AnimatePresence mode="popLayout">
                       {filtered.length === 0 ? (
                         <tr key="empty">
-                          <td colSpan={8} className="px-5 py-12 text-center">
+                          <td colSpan={6} className="px-5 py-12 text-center">
                             <div className="flex flex-col items-center gap-3 opacity-40">
                               <Calendar size={32} className="text-tertiary" />
                               <p className="text-sm font-medium text-tertiary">No {activeTab}s tracked yet</p>
@@ -352,8 +324,6 @@ const MonthlyExpenses = () => {
                       ) : (
                         filtered.map((exp) => {
                           const cleanupFlag = getCleanupFlag(exp);
-                          const payment = getPaymentConfidence(exp);
-                          const toneClass = payment.tone === 'gain' ? 'text-gain' : payment.tone === 'loss' ? 'text-loss' : 'text-accent';
                           return (
                             <Motion.tr
                               layout
@@ -373,33 +343,27 @@ const MonthlyExpenses = () => {
                                     </span>
                                   )}
                                 </div>
-                                {exp.notes && <div className="text-[10px] text-tertiary truncate max-w-[190px]">{exp.notes}</div>}
                               </td>
                               <td className="px-2 py-4 sm:px-5">
                                 <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
                               </td>
                               <td className="hidden px-5 py-4 xl:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
-                              <td className="hidden px-5 py-4 xl:table-cell"><Badge active={exp.is_autopay}>{exp.is_autopay ? 'Auto' : 'Manual'}</Badge></td>
-                              <td className="hidden px-5 py-4 xl:table-cell">
-                                <div className="space-y-0.5">
-                                  <p className={`text-[10px] font-bold uppercase tracking-wide ${toneClass}`}>{payment.label}</p>
-                                  <p className="text-[10px] text-tertiary">{payment.detail}</p>
-                                </div>
-                              </td>
                               <td className="hidden px-5 py-4 xl:table-cell">
                                 <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
                               </td>
                               <td className="hidden px-5 py-4 xl:table-cell">
-                                <span className="text-xs font-medium text-secondary">{(activeTab === 'bill' ? exp.company : exp.who_uses) || <span className="text-tertiary">—</span>}</span>
+                                <span className="text-xs font-medium text-secondary">{exp.company || <span className="text-tertiary">—</span>}</span>
                               </td>
                               <td className="px-2 py-4 text-right sm:px-5">
                                 <div className="flex justify-end gap-1">
                                   <button onClick={() => handleEdit(exp)} className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors" title="Edit" aria-label={`Edit ${exp.name}`}>
                                     <Edit2 size={14} />
                                   </button>
-                                  <button onClick={() => handleDuplicate(exp)} className="p-2 border border-border bg-surface-2 text-secondary hover:bg-surface-3 rounded transition-colors" title="Duplicate" aria-label={`Duplicate ${exp.name}`}>
-                                    <Copy size={14} />
-                                  </button>
+                                  {exp.type === 'subscription' && (
+                                    <button onClick={() => handleDuplicate(exp)} className="p-2 border border-border bg-surface-2 text-secondary hover:bg-surface-3 rounded transition-colors" title="Duplicate" aria-label={`Duplicate ${exp.name}`}>
+                                      <Copy size={14} />
+                                    </button>
+                                  )}
                                   <button onClick={() => setDeletingExpense(exp)} className="p-2 border border-border bg-surface-2 text-loss hover:bg-loss/10 rounded transition-colors" title="Delete" aria-label={`Delete ${exp.name}`}>
                                     <Trash2 size={14} />
                                   </button>
@@ -464,39 +428,19 @@ const MonthlyExpenses = () => {
             </div>
           )}
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="card p-4">
-              <h2 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-tertiary">Annualized Impact</h2>
-              <div className="space-y-3">
-                {[
-                  ['Fixed bills', stats.fixedTotal, 'text-primary'],
-                  ['Variable bills', stats.variableTotal, 'text-loss'],
-                  ['Subscriptions', totalSubs, 'text-primary'],
-                ].map(([label, value, colorClass]) => (
-                  <div key={label} className="flex items-center justify-between border-b border-border pb-2 last:border-0 last:pb-0">
-                    <span className="text-sm text-secondary">{label}</span>
-                    <span className={`font-mono text-sm font-bold ${colorClass}`}>{formatCurrency(value * 12)}/yr</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="card p-4">
-              <h2 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-tertiary">Payment Readiness</h2>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="border border-border bg-surface-2 p-3">
-                  <p className="text-caption uppercase text-tertiary">Autopay</p>
-                  <p className="font-mono text-lg font-bold text-gain">{stats.autopayCount}</p>
+          <div className="card p-4">
+            <h2 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-tertiary">Annualized Impact</h2>
+            <div className="space-y-3">
+              {[
+                ['Fixed bills', stats.fixedTotal, 'text-primary'],
+                ['Variable bills', stats.variableTotal, 'text-loss'],
+                ['Subscriptions', totalSubs, 'text-primary'],
+              ].map(([label, value, colorClass]) => (
+                <div key={label} className="flex items-center justify-between border-b border-border pb-2 last:border-0 last:pb-0">
+                  <span className="text-sm text-secondary">{label}</span>
+                  <span className={`font-mono text-sm font-bold ${colorClass}`}>{formatCurrency(value * 12)}/yr</span>
                 </div>
-                <div className="border border-border bg-surface-2 p-3">
-                  <p className="text-caption uppercase text-tertiary">Manual</p>
-                  <p className="font-mono text-lg font-bold text-primary">{stats.manualCount}</p>
-                </div>
-                <div className="border border-border bg-surface-2 p-3">
-                  <p className="text-caption uppercase text-tertiary">No Account</p>
-                  <p className={`font-mono text-lg font-bold ${stats.missingAccountCount > 0 ? 'text-loss' : 'text-gain'}`}>{stats.missingAccountCount}</p>
-                </div>
-              </div>
-              <p className="mt-3 text-caption text-tertiary">Due dates are not stored yet, so readiness uses autopay and payment-account coverage.</p>
+              ))}
             </div>
           </div>
           
@@ -514,18 +458,15 @@ const MonthlyExpenses = () => {
             <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setIsFormOpen(false)} />
             <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
               <div className="flex shrink-0 items-center justify-between border-b border-border p-4 sm:p-6">
-                <h2 className="text-lg font-bold text-primary">{editingExpense ? 'Modify' : 'Track New'} {formData.type === 'bill' ? 'Bill' : 'Subscription'}</h2>
+                <h2 className="text-lg font-bold text-primary">{editingExpense ? `Modify ${formData.type === 'bill' ? 'Bill' : 'Subscription'}` : 'Track New Subscription'}</h2>
                 <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
               </div>
               <form onSubmit={handleSave} className="space-y-5 overflow-y-auto p-4 sm:p-6">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Name / Descriptor</label>
+                  <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Fiber Internet, Netflix" required />
+                </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Type</label>
-                    <select value={formData.type} onChange={(e) => setFormData({ ...formData, type: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none">
-                      <option value="bill">Fixed Bill</option>
-                      <option value="subscription">Subscription</option>
-                    </select>
-                  </div>
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Monthly Cost</label>
                     <div className="relative">
@@ -533,24 +474,14 @@ const MonthlyExpenses = () => {
                       <input type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} className="w-full bg-surface-3 border-border rounded pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
                     </div>
                   </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Name / Descriptor</label>
-                  <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Fiber Internet, Netflix" required />
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Payment Account</label>
                     <input type="text" value={formData.pay_account} onChange={(e) => setFormData({ ...formData, pay_account: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Chase" />
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">{formData.type === 'bill' ? 'Company' : 'Who Uses'}</label>
-                    <input type="text" value={formData.type === 'bill' ? formData.company : formData.who_uses} onChange={(e) => setFormData({ ...formData, [formData.type === 'bill' ? 'company' : 'who_uses']: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" />
-                  </div>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Notes</label>
-                  <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none min-h-[80px]" />
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Company</label>
+                  <input type="text" value={formData.company} onChange={(e) => setFormData({ ...formData, company: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" />
                 </div>
                 <div className="sticky bottom-0 -mx-4 -mb-4 grid grid-cols-2 gap-3 border-t border-border bg-surface px-4 py-3 sm:static sm:mx-0 sm:mb-0 sm:flex sm:justify-end sm:border-0 sm:bg-transparent sm:px-0 sm:pt-4">
                   <button type="button" onClick={() => setIsFormOpen(false)} className="px-4 py-3 bg-surface-2 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all sm:px-6">Cancel</button>
