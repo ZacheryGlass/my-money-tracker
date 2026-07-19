@@ -371,6 +371,7 @@ const Dashboard = ({ onNavigate }) => {
         title: 'Linked accounts need attention',
         detail: formatAttentionNames(freshness.plaid.attentionItems),
         page: 'settings',
+        navState: { tab: 'institutions' },
       });
     }
     if (freshness?.prices?.isStale) {
@@ -458,7 +459,7 @@ const Dashboard = ({ onNavigate }) => {
             <button
               key={issue.title}
               type="button"
-              onClick={() => issue.refresh ? handleRefresh() : onNavigate(issue.page)}
+              onClick={() => issue.refresh ? handleRefresh() : onNavigate(issue.page, issue.navState)}
               className="flex w-full min-w-0 items-center justify-between gap-3 border border-loss/30 bg-loss-bg px-3 py-2 text-left hover:bg-surface-2 md:w-auto md:min-w-[360px]"
             >
               <span className="min-w-0">

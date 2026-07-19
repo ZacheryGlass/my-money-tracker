@@ -69,10 +69,10 @@ function App() {
       .catch(() => setUser(null));
   }, []);
 
-  const handleNavigate = (page) => {
+  const handleNavigate = (page, state) => {
     const path = pagePaths[page];
     if (path) {
-      navigate(path);
+      navigate(path, state ? { state } : undefined);
     }
   };
 

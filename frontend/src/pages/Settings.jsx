@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt } from 'lucide-react';
@@ -229,6 +229,7 @@ function AppearanceOptions({ options, value, onChange, ariaLabel, previewFont = 
 
 const Settings = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     preferences: appearance,
     setTheme,
@@ -256,7 +257,9 @@ const Settings = () => {
   const [exportEndDate, setExportEndDate] = useState('');
   const [exporting, setExporting] = useState(null);
   const [mobileEditingAccountId, setMobileEditingAccountId] = useState(null);
-  const [activeTab, setActiveTab] = useState('appearance');
+  const [activeTab, setActiveTab] = useState(() =>
+    SETTINGS_TABS.some((t) => t.id === location.state?.tab) ? location.state.tab : 'appearance'
+  );
 
   const institutionSummary = useMemo(
     () => buildInstitutionSummary(items, consentItems),
@@ -530,12 +533,17 @@ const Settings = () => {
             }`}
           >
             {t.label}
+            {t.id === 'institutions' && institutionSummary.attentionCount > 0 && (
+              <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-loss px-1 font-mono text-[10px] font-bold leading-none text-white">
+                {institutionSummary.attentionCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
       {activeTab === 'appearance' && (
-      <section id="appearance" className="mb-8">
+      <section className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Appearance</h2>
           <p className="mt-1 text-xs text-secondary">Theme, text size, and interface font apply across the entire app.</p>
@@ -586,7 +594,7 @@ const Settings = () => {
       )}
 
       {activeTab === 'data-tools' && (
-      <section id="data-tools" className="mb-8">
+      <section className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Data Tools</h2>
           <p className="mt-1 text-xs text-secondary">Add manual records and export data without cluttering the main pages.</p>
@@ -705,7 +713,7 @@ const Settings = () => {
 
       {activeTab === 'institutions' && (
       <>
-      <section id="institution-health" className="mb-8">
+      <section className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Institution Health</h2>
           <p className="mt-1 text-xs text-secondary">Authorization status, sync activity, and connection errors.</p>
@@ -775,7 +783,7 @@ const Settings = () => {
         )}
       </section>
 
-      <section id="institutions" className="mb-8 space-y-4">
+      <section className="mb-8 space-y-4">
         <div className="px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Institutions</h2>
           <p className="mt-1 text-xs text-secondary">Review linked Plaid connections, sync status, and disconnect actions.</p>
@@ -890,7 +898,7 @@ const Settings = () => {
 
       {activeTab === 'accounts' && (
       <>
-      <section id="account-display" className="mb-8">
+      <section className="mb-8">
         <div className="px-2 mb-4">
           <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Account Display</h2>
           <p className="mt-1 text-xs text-secondary">Rename accounts for readability and hide accounts that should stay out of the main views.</p>

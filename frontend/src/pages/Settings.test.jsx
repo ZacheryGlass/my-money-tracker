@@ -73,6 +73,17 @@ describe('Settings display names', () => {
     fireEvent.click(await screen.findByRole('tab', { name: 'Accounts' }));
   };
 
+  it('opens the tab requested via navigation state', async () => {
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/settings', state: { tab: 'institutions' } }]}>
+        <Settings />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Institution Health');
+    expect(screen.getByRole('tab', { name: 'Institutions' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('saves an account display name override', async () => {
     renderSettings();
     await openAccountsTab();
