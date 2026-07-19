@@ -168,7 +168,9 @@ class PlaidService {
       if (balance == null) continue;
 
       const holdingName = `${pa.official_name || pa.name} Balance`;
-      const value = pa.type === 'credit' ? -Math.abs(balance) : balance;
+      // Plaid reports credit and loan balances as positive amounts owed;
+      // store liabilities negative so snapshots and net worth stay consistent.
+      const value = pa.type === 'credit' || pa.type === 'loan' ? -Math.abs(balance) : balance;
 
       await this._upsertHolding(accountId, null, holdingName, null, value);
       results.balances++;
