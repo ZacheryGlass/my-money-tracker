@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -61,26 +60,13 @@ const sortSnapshots = (snapshots = []) => (
   [...snapshots].sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)))
 );
 
-const ReturnValue = ({ value, large = false, emptyLabel = '—' }) => {
-  if (!Number.isFinite(value)) {
-    return <span className="font-money text-caption text-tertiary">{emptyLabel}</span>;
-  }
-  return (
-    <span className={`font-money font-semibold ${large ? 'text-display-sm' : ''} ${value >= 0 ? 'text-gain' : 'text-loss'}`}>
-      {formatPercent(value)}
-    </span>
-  );
-};
-
 const Dashboard = ({ onNavigate }) => {
   const [data, setData] = useState(null);
   const [historyData, setHistoryData] = useState([]);
   const [accountHistoryData, setAccountHistoryData] = useState([]);
   const [tickerHistoryData, setTickerHistoryData] = useState([]);
-  const [performanceData, setPerformanceData] = useState(null);
-  const [cashFlowData, setCashFlowData] = useState([]);
+  const [benchmarkData, setBenchmarkData] = useState({ SPY: [], QQQ: [] });
   const [loading, setLoading] = useState(true);
-  const [overviewLoading, setOverviewLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedRange, setSelectedRange] = useState('YTD');
@@ -122,33 +108,21 @@ const Dashboard = ({ onNavigate }) => {
   }, [fetchData]);
 
   useEffect(() => {
-    if (!data) return;
-    const loadOverviewMetrics = async () => {
-      setOverviewLoading(true);
-      const accountId = selectedAccountId === 'all' ? null : selectedAccountId;
-      const monthStart = `${today.slice(0, 7)}-01`;
-      try {
-        const [performance, cashFlow] = await Promise.all([
-          analytics.getInvestmentPerformance({
-            startDate: selectedStartDate || historyData[0]?.snapshot_date || `${today.slice(0, 4)}-01-01`,
-            endDate: today,
-            accountId,
-            benchmarkSymbol: 'SPY',
-          }).catch(() => ({ data: null })),
-          analytics.getIncomeVsSpending({
-            startDate: monthStart,
-            endDate: today,
-            accountId,
-          }).catch(() => ({ data: [] })),
-        ]);
-        setPerformanceData(performance.data || null);
-        setCashFlowData(cashFlow.data || []);
-      } finally {
-        setOverviewLoading(false);
+    let cancelled = false;
+    const loadBenchmarks = async () => {
+      const [spy, qqq] = await Promise.all([
+        analytics.getBenchmarkHistory({ symbol: 'SPY', startDate: selectedStartDate, endDate: today })
+          .catch(() => ({ data: [] })),
+        analytics.getBenchmarkHistory({ symbol: 'QQQ', startDate: selectedStartDate, endDate: today })
+          .catch(() => ({ data: [] })),
+      ]);
+      if (!cancelled) {
+        setBenchmarkData({ SPY: spy.data || [], QQQ: qqq.data || [] });
       }
     };
-    loadOverviewMetrics();
-  }, [data, historyData, selectedAccountId, selectedStartDate, today]);
+    loadBenchmarks();
+    return () => { cancelled = true; };
+  }, [selectedStartDate, today]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -179,13 +153,32 @@ const Dashboard = ({ onNavigate }) => {
     }))
   ), [data]);
 
+  // The account selector only lets you drill into investment accounts (other
+  // account types don't have per-account holdings worth charting here). The
+  // "all" view stays whole-portfolio so the Net worth headline is unchanged.
+  const investmentAccountIds = useMemo(() => {
+    const ids = new Set();
+    (data?.items || []).forEach((item) => {
+      if (item.account_type === 'investment') ids.add(String(item.account_id));
+    });
+    return ids;
+  }, [data]);
+
   const accountOptions = useMemo(() => {
     const options = new Map();
     (data?.items || []).forEach((item) => {
+      if (item.account_type !== 'investment') return;
       options.set(item.account_id, accountDisplayNames.get(item.account_id) || item.account || 'Other');
     });
     return [...options.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [accountDisplayNames, data]);
+
+  // Reset to "all" when the selected account is no longer an investment option.
+  useEffect(() => {
+    if (selectedAccountId !== 'all' && !investmentAccountIds.has(String(selectedAccountId))) {
+      setSelectedAccountId('all');
+    }
+  }, [investmentAccountIds, selectedAccountId]);
 
   const selectedItems = useMemo(() => (
     (data?.items || []).filter((item) => (
@@ -294,7 +287,6 @@ const Dashboard = ({ onNavigate }) => {
   const liabilities = useMemo(() => enrichedItems
     .filter((item) => item.type === 'liability')
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)), [enrichedItems]);
-  const topHoldings = assets.slice(0, 3);
   const topFiveValue = assets.slice(0, 5).reduce((sum, item) => sum + numberValue(item.value), 0);
   const concentration = totals.totalAssets > 0 ? (topFiveValue / totals.totalAssets) * 100 : 0;
 
@@ -319,36 +311,54 @@ const Dashboard = ({ onNavigate }) => {
       .slice(0, 3);
   }, [accountDisplayNames, accountHistoryData, selectedItems, selectedStartDate]);
 
-  const performance = useMemo(() => {
-    const summary = performanceData?.summary || {};
-    const portfolioReturn = Number.isFinite(summary.timeWeightedReturnPercent)
-      ? summary.timeWeightedReturnPercent
-      : Number.isFinite(summary.simpleReturnPercent) ? summary.simpleReturnPercent : null;
-    const benchmarkReturn = Number.isFinite(performanceData?.benchmark?.returnPercent)
-      ? performanceData.benchmark.returnPercent
-      : null;
-    return {
-      portfolioReturn,
-      benchmarkReturn,
-      difference: Number.isFinite(portfolioReturn) && Number.isFinite(benchmarkReturn)
-        ? portfolioReturn - benchmarkReturn
-        : null,
-      externalFlows: Number.isFinite(summary.externalNetFlows) ? summary.externalNetFlows : null,
-    };
-  }, [performanceData]);
+  // Rebase each benchmark to the portfolio's starting net worth (V0) and align
+  // it to the net-worth timeline dates via an as-of lookup, so both lines share
+  // the same x-axis and start from the same value.
+  const benchmarkTimeline = useMemo(() => {
+    const v0 = timelineData[0]?.value;
+    if (!timelineData.length || !Number.isFinite(v0) || v0 === 0) {
+      return { spy: [], qqq: [] };
+    }
+    const dates = timelineData.map((point) => point.date);
 
-  const cashFlow = useMemo(() => {
-    const row = cashFlowData.find((item) => isoDate(item.month).slice(0, 7) === today.slice(0, 7));
-    if (!row) return null;
-    const income = numberValue(row.income);
-    const spending = numberValue(row.spending);
-    return {
-      income,
-      spending,
-      net: income - spending,
-      savingsRate: numberValue(row.savings_rate),
+    const rebaseAndAlign = (points) => {
+      const sorted = (points || [])
+        .map((point) => ({ date: isoDate(point.date), close: numberValue(point.close) }))
+        .filter((point) => point.close > 0)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (!sorted.length) return [];
+
+      // As-of close for each timeline date: the last close on or before it.
+      let index = 0;
+      let lastClose = null;
+      const asof = dates.map((date) => {
+        while (index < sorted.length && sorted[index].date <= date) {
+          lastClose = sorted[index].close;
+          index += 1;
+        }
+        return lastClose;
+      });
+
+      const firstClose = asof.find((close) => close != null);
+      if (!(firstClose > 0)) return [];
+      return asof.map((close) => (close != null ? v0 * (close / firstClose) : null));
     };
-  }, [cashFlowData, today]);
+
+    return {
+      spy: rebaseAndAlign(benchmarkData.SPY),
+      qqq: rebaseAndAlign(benchmarkData.QQQ),
+    };
+  }, [benchmarkData, timelineData]);
+
+  const hasSpy = benchmarkTimeline.spy.some((value) => value != null);
+  const hasQqq = benchmarkTimeline.qqq.some((value) => value != null);
+
+  const netWorthChartData = useMemo(() => timelineData.map((point, i) => ({
+    date: point.date,
+    value: point.value,
+    spy: benchmarkTimeline.spy[i] ?? null,
+    qqq: benchmarkTimeline.qqq[i] ?? null,
+  })), [benchmarkTimeline, timelineData]);
 
   const freshnessIssues = useMemo(() => {
     const freshness = data?.freshness;
@@ -374,17 +384,8 @@ const Dashboard = ({ onNavigate }) => {
         refresh: true,
       });
     }
-    const benchmarkWarning = (performanceData?.warnings || [])
-      .find((warning) => warning.startsWith('Benchmark '));
-    if (benchmarkWarning) {
-      issues.push({
-        title: 'Benchmark history is missing',
-        detail: 'S&P 500 comparison needs stored SPY history',
-        page: 'settings',
-      });
-    }
     return issues;
-  }, [data, performanceData]);
+  }, [data]);
 
   const syncLabel = data?.lastUpdated
     ? new Date(data.lastUpdated).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -534,8 +535,8 @@ const Dashboard = ({ onNavigate }) => {
               </div>
             </div>
           </div>
-          <button type="button" onClick={() => onNavigate('portfolio-timeline')} className="mt-auto block w-full border-t border-border text-left">
-            <DashboardNetWorthChart data={timelineData} />
+          <button type="button" onClick={() => onNavigate('portfolio-timeline')} className="mt-auto block w-full text-left">
+            <DashboardNetWorthChart data={netWorthChartData} showSpy={hasSpy} showQqq={hasQqq} />
           </button>
         </section>
 
@@ -560,102 +561,6 @@ const Dashboard = ({ onNavigate }) => {
           />
         </section>
 
-        <section className="card xl:col-span-7" aria-labelledby="dashboard-performance-title">
-          <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
-            <div>
-              <h2 id="dashboard-performance-title" className="text-caption font-semibold uppercase text-tertiary">Performance & holdings</h2>
-              <p className="text-caption text-tertiary">{rangeLabel} versus S&amp;P 500 · holding changes stay fixed at 30D</p>
-            </div>
-            {overviewLoading && <span className="text-caption text-tertiary">Updating…</span>}
-          </div>
-
-          <div className="grid divide-y divide-border lg:grid-cols-[minmax(240px,0.9fr)_minmax(0,1.4fr)] lg:divide-x lg:divide-y-0">
-            <div className="grid grid-cols-3 gap-px bg-border">
-              <div className="bg-surface p-3">
-                <div className="text-caption text-tertiary">Portfolio</div>
-                <div className="mt-1"><ReturnValue value={performance.portfolioReturn} large /></div>
-              </div>
-              <div className="bg-surface p-3">
-                <div className="text-caption text-tertiary">S&amp;P 500</div>
-                <div className="mt-1"><ReturnValue value={performance.benchmarkReturn} large emptyLabel="No data" /></div>
-              </div>
-              <div className="bg-surface p-3">
-                <div className="text-caption text-tertiary">Difference</div>
-                <div className="mt-1"><ReturnValue value={performance.difference} large emptyLabel="No data" /></div>
-              </div>
-              <div className="col-span-3 flex items-center justify-between gap-3 bg-surface px-3 py-2 text-body-sm">
-                <span className="text-tertiary">External contributions</span>
-                <span className="font-money font-semibold text-secondary">
-                  {Number.isFinite(performance.externalFlows) ? formatCompactCurrency(performance.externalFlows) : '—'}
-                </span>
-              </div>
-            </div>
-
-            <div>
-              {topHoldings.map((holding) => (
-                <button
-                  key={holding.identity}
-                  type="button"
-                  onClick={() => onNavigate('assets')}
-                  className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border px-3 py-2.5 text-left last:border-b-0 hover:bg-surface-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-body-sm font-semibold text-primary">{holding.name}</span>
-                    <span className="block truncate text-caption text-tertiary">{holding.displayAccount}</span>
-                  </span>
-                  <span className="font-money text-body-sm font-semibold text-gain">{formatCompactCurrency(holding.value)}</span>
-                  <span className="min-w-[58px] text-right text-body-sm"><ReturnValue value={holding.thirtyDayReturnPercent} /></span>
-                </button>
-              ))}
-              {!topHoldings.length && <div className="px-3 py-8 text-center text-body-sm text-tertiary">No investment holdings in this view.</div>}
-            </div>
-          </div>
-        </section>
-
-        <section className="card xl:col-span-5" aria-labelledby="dashboard-cash-flow-title">
-          <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
-            <div>
-              <h2 id="dashboard-cash-flow-title" className="text-caption font-semibold uppercase text-tertiary">Monthly cash flow</h2>
-              <p className="text-caption text-tertiary">Month to date</p>
-            </div>
-            <button type="button" onClick={() => onNavigate('spending-analytics')} className="text-caption font-semibold text-accent hover:underline">
-              Review <ChevronRight size={12} className="inline" />
-            </button>
-          </div>
-
-          {cashFlow ? (
-            <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-4 xl:grid-cols-2">
-              <div className="bg-surface p-3">
-                <div className="text-caption text-tertiary">Income</div>
-                <div className="mt-1 font-money text-display-sm font-semibold text-gain">{formatCompactCurrency(cashFlow.income)}</div>
-              </div>
-              <div className="bg-surface p-3">
-                <div className="text-caption text-tertiary">Spending</div>
-                <div className="mt-1 font-money text-display-sm font-semibold text-loss">{formatCompactCurrency(cashFlow.spending)}</div>
-              </div>
-              <div className="bg-surface p-3">
-                <div className="text-caption text-tertiary">Net cash flow</div>
-                <div className={`mt-1 font-money text-display-sm font-semibold ${cashFlow.net >= 0 ? 'text-gain' : 'text-loss'}`}>
-                  {formatCompactCurrency(cashFlow.net)}
-                </div>
-              </div>
-              <div className="bg-surface p-3">
-                <div className="text-caption text-tertiary">Savings rate</div>
-                <div className={`mt-1 font-money text-display-sm font-semibold ${cashFlow.savingsRate >= 0 ? 'text-gain' : 'text-loss'}`}>
-                  {formatPercent(cashFlow.savingsRate, 1, { sign: false })}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <button type="button" onClick={() => onNavigate('spending-analytics')} className="flex w-full items-center justify-between gap-3 px-3 py-8 text-left hover:bg-surface-2">
-              <span>
-                <span className="block text-body-sm font-semibold text-primary">No synced cash-flow activity this month</span>
-                <span className="block text-caption text-tertiary">Open spending to review transaction coverage.</span>
-              </span>
-              <ArrowRight size={16} className="text-accent" />
-            </button>
-          )}
-        </section>
       </div>
 
       <section className="space-y-2" aria-labelledby="dashboard-holdings-title">
