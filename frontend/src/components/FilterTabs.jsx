@@ -22,7 +22,7 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
           className="h-11 w-full rounded border border-border bg-surface-2 px-3 text-sm text-primary"
         >
           {options.map((option) => (
-            <option key={option.value || 'all'} value={option.value}>{option.selectLabel || option.label}</option>
+            <option key={String(option.value)} value={option.value}>{option.selectLabel || option.label}</option>
           ))}
         </select>
       </div>
@@ -33,7 +33,7 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
       <div className="-mb-px flex min-w-0 overflow-x-auto" role="tablist" aria-label={label}>
         {options.map((option) => (
           <button
-            key={option.value || 'all'}
+            key={String(option.value)}
             type="button"
             role="tab"
             aria-selected={value === option.value}
