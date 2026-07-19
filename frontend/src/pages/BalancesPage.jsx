@@ -7,6 +7,7 @@ import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
 import SummaryStats from '../components/SummaryStats';
+import TabStrip from '../components/TabStrip';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 
@@ -273,21 +274,13 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
         ]} />
       </div>
 
-      <div className="mb-3 flex border-b border-border">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => onTabChange?.(t.id)}
-            className={`-mb-px border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
-              tab === t.id
-                ? 'border-accent text-primary'
-                : 'border-transparent text-tertiary hover:text-primary'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <TabStrip
+        className="mb-3"
+        ariaLabel="Balance groups"
+        tabs={TABS}
+        active={tab}
+        onSelect={(id) => onTabChange?.(id)}
+      />
 
       {successMessage && <div className="mb-3 flex items-center gap-2 border border-gain/20 bg-gain-bg p-2 text-body-sm text-gain"><Check size={14} />{successMessage}</div>}
       {error && <div className="mb-3 flex items-center gap-2 border border-loss/20 bg-loss-bg p-2 text-body-sm text-loss"><X size={14} />{error}</div>}

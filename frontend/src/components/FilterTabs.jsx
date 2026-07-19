@@ -1,4 +1,5 @@
 import React from 'react';
+import TabStrip from './TabStrip';
 
 // Single-choice filter that renders as an underline tab strip on desktop and
 // as a labeled dropdown on mobile. `options` is [{ value, label }]; `actions`
@@ -24,26 +25,14 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
       {actions}
     </div>
 
-    <div className="hidden items-center justify-between gap-3 border-b border-border sm:flex">
-      <div className="-mb-px flex min-w-0 overflow-x-auto" role="tablist" aria-label={label}>
-        {options.map((option) => (
-          <button
-            key={option.value || 'all'}
-            type="button"
-            role="tab"
-            aria-selected={value === option.value}
-            onClick={() => onChange(option.value)}
-            className={`whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
-              value === option.value
-                ? 'border-accent text-primary'
-                : 'border-transparent text-tertiary hover:text-primary'
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-      {actions}
+    <div className="hidden sm:block">
+      <TabStrip
+        tabs={options.map((option) => ({ id: option.value, label: option.label }))}
+        active={value}
+        onSelect={onChange}
+        ariaLabel={label}
+        actions={actions}
+      />
     </div>
   </div>
 );
