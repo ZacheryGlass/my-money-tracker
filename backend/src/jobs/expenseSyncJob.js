@@ -2,6 +2,7 @@
 
 const JobLog = require('../models/JobLog');
 const ExpenseSyncService = require('../services/ExpenseSyncService');
+const TransactionClassificationService = require('../services/TransactionClassificationService');
 const logger = require('../config/logger');
 
 const JOB_NAME = 'expense-sync';
@@ -18,9 +19,11 @@ async function run() {
   const jobLog = await JobLog.create(JOB_NAME);
 
   try {
+    const classification = await TransactionClassificationService.backfill();
     const result = await ExpenseSyncService.run();
     const updated = result.refreshed.length + result.created.length + result.budget.length;
     await JobLog.complete(jobLog.id, result.groupCount, updated, 0, {
+      classified: classification.classified,
       matched: result.matched,
       refreshed: result.refreshed.length,
       created: result.created,

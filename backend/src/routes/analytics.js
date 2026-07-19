@@ -87,9 +87,11 @@ router.get('/detected-subscriptions', async (req, res) => {
         (ARRAY_AGG(t.category ORDER BY t.date DESC))[1] as category
       FROM transactions t
       JOIN accounts a ON t.account_id = a.id
+      LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
       WHERE t.amount > 0 AND t.pending = false AND a.is_hidden = FALSE
         AND a.type IN ('depository', 'credit')
-        AND UPPER(COALESCE(t.category, '')) NOT LIKE '%TRANSFER%'
+        AND (tc.direction = 'spending'
+          OR (tc.transaction_id IS NULL AND UPPER(COALESCE(t.category, '')) NOT LIKE '%TRANSFER%'))
       GROUP BY COALESCE(t.merchant_name, t.name)
       HAVING COUNT(*) >= 3
          AND STDDEV(t.amount) < 5
