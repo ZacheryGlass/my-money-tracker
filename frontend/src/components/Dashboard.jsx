@@ -71,7 +71,6 @@ const Dashboard = ({ onNavigate }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedRange, setSelectedRange] = useState('YTD');
   const [selectedAccountId, setSelectedAccountId] = useState('all');
-  const [comparePrevious, setComparePrevious] = useState(false);
   const [assetClassFilter, setAssetClassFilter] = useState(null);
 
   const today = localIsoDate();
@@ -236,20 +235,6 @@ const Dashboard = ({ onNavigate }) => {
       available: true,
     };
   }, [timelineData, totals.netWorth]);
-
-  const previousPeriodChange = useMemo(() => {
-    if (!selectedStartDate || selectedRange === 'ALL') return null;
-    const periodDays = Math.max(1, Math.round((new Date(`${today}T00:00:00Z`) - new Date(`${selectedStartDate}T00:00:00Z`)) / 86400000));
-    const previousEnd = shiftDays(selectedStartDate, -1);
-    const previousStart = shiftDays(previousEnd, -periodDays);
-    const prior = baseHistorySeries.filter((point) => point.date >= previousStart && point.date <= previousEnd);
-    if (prior.length < 2) return null;
-    const amount = prior.at(-1).value - prior[0].value;
-    return {
-      amount,
-      percent: prior[0].value !== 0 ? (amount / Math.abs(prior[0].value)) * 100 : 0,
-    };
-  }, [baseHistorySeries, selectedRange, selectedStartDate, today]);
 
   const thirtyDayReturns = useMemo(() => {
     const targetDate = shiftDays(today, -30);
@@ -455,16 +440,6 @@ const Dashboard = ({ onNavigate }) => {
 
           <button
             type="button"
-            onClick={() => setComparePrevious((value) => !value)}
-            className={`h-11 border px-3 text-button font-semibold transition-colors md:h-9 ${
-              comparePrevious ? 'border-accent bg-accent-muted text-accent' : 'border-border bg-surface text-secondary hover:bg-surface-2'
-            }`}
-            aria-pressed={comparePrevious}
-          >
-            Compare prior
-          </button>
-          <button
-            type="button"
             onClick={handleRefresh}
             disabled={refreshing}
             className="inline-flex h-11 items-center justify-center gap-2 bg-accent px-3 text-button font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-50 md:h-9"
@@ -519,11 +494,6 @@ const Dashboard = ({ onNavigate }) => {
                 <button type="button" onClick={() => onNavigate('liabilities')} className="text-left text-secondary hover:text-primary">
                   Debt <span className="font-money font-semibold text-loss">{formatCompactCurrency(totals.totalLiabilities)}</span>
                 </button>
-                {comparePrevious && previousPeriodChange && (
-                  <span className="text-tertiary">
-                    Prior period <span className={`font-money ${previousPeriodChange.amount >= 0 ? 'text-gain' : 'text-loss'}`}>{formatPercent(previousPeriodChange.percent)}</span>
-                  </span>
-                )}
               </div>
             </div>
 
