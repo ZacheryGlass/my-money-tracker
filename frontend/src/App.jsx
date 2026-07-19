@@ -8,9 +8,7 @@ import Sidebar from './components/Sidebar';
 import { Menu } from 'lucide-react';
 
 const Dashboard = lazy(() => import('./components/Dashboard'));
-const HoldingsTable = lazy(() => import('./components/HoldingsTable'));
-const CashPage = lazy(() => import('./pages/CashPage'));
-const LiabilitiesPage = lazy(() => import('./pages/LiabilitiesPage'));
+const BalancesPage = lazy(() => import('./pages/BalancesPage'));
 const AccountsPage = lazy(() => import('./pages/AccountsPage'));
 const TickerHistory = lazy(() => import('./pages/TickerHistory'));
 const AccountHistory = lazy(() => import('./pages/AccountHistory'));
@@ -46,6 +44,11 @@ const navItems = [
 
 const pagePaths = Object.fromEntries(navItems.map((item) => [item.id, item.path]));
 const pagesByPath = Object.fromEntries(navItems.map((item) => [item.path, item.id]));
+
+// Assets, Cash and Liabilities are tabs of the combined Balances page; the
+// sidebar shows a single "Balances" entry that lands on the assets tab.
+const BALANCES_TABS = new Set(['assets', 'cash', 'liabilities']);
+pagePaths.balances = pagePaths.assets;
 
 function normalizePath(pathname) {
   return pathname.replace(/\/+$/, '') || '/';
@@ -84,11 +87,9 @@ function App() {
       return <NotFound />;
     }
     return (
-      <div key={currentPage} className="w-full">
+      <div key={BALANCES_TABS.has(currentPage) ? 'balances' : currentPage} className="w-full">
         {currentPage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
-        {currentPage === 'assets' && <HoldingsTable pageFilter="assets" />}
-        {currentPage === 'cash' && <CashPage />}
-        {currentPage === 'liabilities' && <LiabilitiesPage />}
+        {BALANCES_TABS.has(currentPage) && <BalancesPage tab={currentPage} onTabChange={handleNavigate} />}
         {currentPage === 'accounts' && <AccountsPage />}
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
@@ -105,7 +106,7 @@ function App() {
   return (
     <div className="flex min-h-screen bg-base font-sans">
       <Sidebar
-        currentPage={currentPage}
+        currentPage={BALANCES_TABS.has(currentPage) ? 'balances' : currentPage}
         onNavigate={handleNavigate}
         user={user}
         onLogout={handleLogout}

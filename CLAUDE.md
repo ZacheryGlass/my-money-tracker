@@ -39,9 +39,9 @@ backend/src/
 frontend/src/
   components/   # Sidebar, Dashboard, DashboardTable, MetricCard, AllocationDonut,
                 # SparkLine, ChartTooltip, AccountHistoryChart, TickerHistoryChart,
-                # HoldingsTable, HoldingForm, BulkImportForm, StaticAssetsForm,
-                # ErrorBoundary
-  pages/        # PortfolioTimeline, AccountHistory, TickerHistory, StaticAssets,
+                # HoldingForm, BulkImportForm, StaticAssetsForm, ErrorBoundary
+  pages/        # BalancesPage (Assets/Cash/Liabilities tabs), AccountsPage,
+                # PortfolioTimeline, AccountHistory, TickerHistory, StaticAssets,
                 # ErrorPage, NotFound
   utils/        # api.js (axios), format.js (shared formatters), chartTheme.js
 
