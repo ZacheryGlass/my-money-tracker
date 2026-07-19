@@ -5,6 +5,7 @@ const PriceUpdateJob = require('./priceUpdateJob');
 const SnapshotJob = require('./snapshotJob');
 const PlaidSyncJob = require('./plaidSyncJob');
 const BenchmarkUpdateJob = require('./benchmarkUpdateJob');
+const ExpenseSyncJob = require('./expenseSyncJob');
 const JobLog = require('../models/JobLog');
 const logger = require('../config/logger');
 
@@ -13,6 +14,7 @@ let plaidSyncTask = null;
 let priceUpdateTask = null;
 let snapshotTask = null;
 let benchmarkUpdateTask = null;
+let expenseSyncTask = null;
 
 function initializeJobs() {
   // Schedule Plaid sync at 7:30 AM UTC daily (before price update)
@@ -22,6 +24,18 @@ function initializeJobs() {
       await PlaidSyncJob.run();
     } catch (error) {
       logger.error({ err: error }, '[scheduler] Plaid sync failed');
+    }
+  }, {
+    timezone: 'Etc/UTC'
+  });
+
+  // Schedule expense sync at 7:45 AM UTC daily (after Plaid sync lands new transactions)
+  expenseSyncTask = cron.schedule('45 7 * * *', async () => {
+    logger.info('[scheduler] Running scheduled expense sync...');
+    try {
+      await ExpenseSyncJob.run();
+    } catch (error) {
+      logger.error({ err: error }, '[scheduler] Expense sync failed');
     }
   }, {
     timezone: 'Etc/UTC'
@@ -83,15 +97,20 @@ function stopJobs() {
     benchmarkUpdateTask.stop();
     benchmarkUpdateTask.destroy();
   }
+  if (expenseSyncTask) {
+    expenseSyncTask.stop();
+    expenseSyncTask.destroy();
+  }
   logger.info('[scheduler] Scheduled jobs stopped');
 }
 
 async function getJobStatus() {
-  const [latestPlaidSync, latestPriceUpdate, latestSnapshot, latestBenchmarkUpdate] = await Promise.all([
+  const [latestPlaidSync, latestPriceUpdate, latestSnapshot, latestBenchmarkUpdate, latestExpenseSync] = await Promise.all([
     JobLog.getLatest(PlaidSyncJob.JOB_NAME),
     JobLog.getLatest(PriceUpdateJob.JOB_NAME),
     JobLog.getLatest(SnapshotJob.JOB_NAME),
-    JobLog.getLatest(BenchmarkUpdateJob.JOB_NAME)
+    JobLog.getLatest(BenchmarkUpdateJob.JOB_NAME),
+    JobLog.getLatest(ExpenseSyncJob.JOB_NAME)
   ]);
 
   return {
@@ -101,6 +120,12 @@ async function getJobStatus() {
         timezone: 'Etc/UTC',
         description: 'Syncs balances and holdings from connected Plaid accounts',
         lastRun: latestPlaidSync || null
+      },
+      'expense-sync': {
+        schedule: '45 7 * * *',
+        timezone: 'Etc/UTC',
+        description: 'Matches recurring expenses to transaction merchants and refreshes derived costs',
+        lastRun: latestExpenseSync || null
       },
       'price-update': {
         schedule: '0 8 * * *',
@@ -131,5 +156,6 @@ module.exports = {
   PlaidSyncJob,
   PriceUpdateJob,
   SnapshotJob,
-  BenchmarkUpdateJob
+  BenchmarkUpdateJob,
+  ExpenseSyncJob
 };
