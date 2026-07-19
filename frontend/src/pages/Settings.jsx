@@ -9,6 +9,13 @@ import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
 import HoldingForm from '../components/HoldingForm';
 
+const SETTINGS_TABS = [
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'data-tools', label: 'Data Tools' },
+  { id: 'institutions', label: 'Institutions' },
+  { id: 'accounts', label: 'Accounts' },
+];
+
 const MANUAL_ENTRY_TYPES = {
   asset: {
     label: 'Asset',
@@ -249,6 +256,7 @@ const Settings = () => {
   const [exportEndDate, setExportEndDate] = useState('');
   const [exporting, setExporting] = useState(null);
   const [mobileEditingAccountId, setMobileEditingAccountId] = useState(null);
+  const [activeTab, setActiveTab] = useState('appearance');
 
   const institutionSummary = useMemo(
     () => buildInstitutionSummary(items, consentItems),
@@ -502,31 +510,32 @@ const Settings = () => {
       )}
 
       {connecting && (
-        <div className="card p-8 flex flex-col items-center justify-center gap-4 animate-fade-in border-accent/20 bg-accent/5">
+        <div className="card mb-6 p-8 flex flex-col items-center justify-center gap-4 animate-fade-in border-accent/20 bg-accent/5">
           <RefreshCw size={32} className="animate-spin text-accent" />
           <p className="text-sm font-bold uppercase tracking-wide text-accent">Exchanging tokens and syncing data...</p>
         </div>
       )}
 
-      <nav className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5" aria-label="Settings sections">
-        <a href="#appearance" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
-          Appearance
-        </a>
-        <a href="#data-tools" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
-          Data Tools
-        </a>
-        <a href="#institution-health" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
-          Institution Health
-        </a>
-        <a href="#institutions" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
-          Institutions
-        </a>
-        <a href="#account-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
-          Display Names
-        </a>
-      </nav>
+      <div className="mb-6 flex overflow-x-auto border-b border-border" role="tablist" aria-label="Settings sections">
+        {SETTINGS_TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={activeTab === t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
+              activeTab === t.id
+                ? 'border-accent text-primary'
+                : 'border-transparent text-tertiary hover:text-primary'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-      <section id="appearance" className="mb-8 scroll-mt-4">
+      {activeTab === 'appearance' && (
+      <section id="appearance" className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Appearance</h2>
           <p className="mt-1 text-xs text-secondary">Theme, text size, and interface font apply across the entire app.</p>
@@ -574,8 +583,10 @@ const Settings = () => {
           </div>
         </div>
       </section>
+      )}
 
-      <section id="data-tools" className="mb-8 scroll-mt-4">
+      {activeTab === 'data-tools' && (
+      <section id="data-tools" className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Data Tools</h2>
           <p className="mt-1 text-xs text-secondary">Add manual records and export data without cluttering the main pages.</p>
@@ -690,7 +701,10 @@ const Settings = () => {
           </div>
         </div>
       </section>
+      )}
 
+      {activeTab === 'institutions' && (
+      <>
       <section id="institution-health" className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Institution Health</h2>
@@ -761,8 +775,122 @@ const Settings = () => {
         )}
       </section>
 
-      <div className="flex flex-col">
-      <section id="account-display" className="order-2 mb-12">
+      <section id="institutions" className="mb-8 space-y-4">
+        <div className="px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Institutions</h2>
+          <p className="mt-1 text-xs text-secondary">Review linked Plaid connections, sync status, and disconnect actions.</p>
+        </div>
+
+        {items.length === 0 && !connecting ? (
+          <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
+            <Building2 size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
+            <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Institutions Linked</h3>
+            <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed">
+              Link your brokerage or depository accounts to automatically pull balance and performance history.
+            </p>
+          </div>
+        ) : (
+          items.map((item) => (
+            <Motion.div layout key={item.id} className="card overflow-hidden border-border">
+              <div className="p-5 md:p-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-12 h-12 rounded bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <Building2 size={24} className="text-accent" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-base font-bold text-primary truncate leading-tight">
+                        {item.institution_name || 'Financial Institution'}
+                      </h3>
+                      <div className="flex items-center gap-4 mt-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                          {item.accounts?.length || 0} Account{(item.accounts?.length || 0) !== 1 ? 's' : ''}
+                        </span>
+                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                          <Clock size={12} />
+                          {formatSyncTime(item.last_synced_at)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {consentItems.has(item.id) && (
+                      <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} onError={setError} />
+                    )}
+                    <button
+                      onClick={() => handleSync(item.id)}
+                      disabled={syncingId === item.id}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all disabled:opacity-50"
+                    >
+                      <RefreshCw size={14} className={syncingId === item.id ? 'animate-spin' : ''} />
+                      Sync
+                    </button>
+                    <button
+                      onClick={() => { setRemoveDataOnDisconnect(true); setDisconnectingItem(item); }}
+                      className="p-2.5 rounded text-tertiary hover:text-loss hover:bg-loss/10 border border-transparent transition-all"
+                      title="Disconnect Institution"
+                    >
+                      <Unlink size={18} />
+                    </button>
+                  </div>
+                </div>
+
+                {(item.error_code || consentItems.has(item.id)) && (
+                  <div className={`mt-5 p-4 rounded border text-xs leading-relaxed ${consentItems.has(item.id) ? 'bg-accent/5 border-accent/20 text-accent' : 'bg-loss/5 border-loss/20 text-loss'}`}>
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                      <p>
+                        {consentItems.has(item.id)
+                          ? 'This institution requires additional authorization to provide investment and holdings data. Please click "Re-link" to grant permission.'
+                          : (item.error_message || `Institution reported an error: ${item.error_code}`)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sub-accounts Grid */}
+                {item.accounts?.length > 0 && (
+                  <div className="mt-6 pt-5 border-t border-border">
+                    <button
+                      onClick={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
+                      className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-tertiary hover:text-primary transition-colors group"
+                    >
+                      <span>{expandedItem === item.id ? 'Collapse' : 'View'} Internal Accounts</span>
+                      <ChevronRight size={12} className={`transition-transform duration-200 ${expandedItem === item.id ? 'rotate-90' : ''}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {expandedItem === item.id && (
+                        <Motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+                            {item.accounts.map((acct) => (
+                              <div key={acct.id} className="flex items-center justify-between gap-4 px-4 py-3 rounded  border border-transparent hover:border-border transition-colors">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <Link2 size={12} className="text-accent opacity-60 flex-shrink-0" />
+                                  <span className="text-xs font-bold text-primary truncate">{getAccountDisplayName(acct)}</span>
+                                  {acct.is_hidden && <EyeOff size={12} className="text-loss flex-shrink-0" />}
+                                </div>
+                                <span className="text-[9px] font-bold text-tertiary uppercase tracking-wide px-2 py-0.5 rounded-full bg-surface-3">{acct.type}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </Motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+              </div>
+            </Motion.div>
+          ))
+        )}
+      </section>
+      </>
+      )}
+
+      {activeTab === 'accounts' && (
+      <>
+      <section id="account-display" className="mb-8">
         <div className="px-2 mb-4">
           <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Account Display</h2>
           <p className="mt-1 text-xs text-secondary">Rename accounts for readability and hide accounts that should stay out of the main views.</p>
@@ -888,121 +1016,9 @@ const Settings = () => {
         </div>
       </section>
 
-      <section id="institutions" className="order-1 mb-12 space-y-4">
-        <div className="px-2">
-          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Institutions</h2>
-          <p className="mt-1 text-xs text-secondary">Review linked Plaid connections, sync status, and disconnect actions.</p>
-        </div>
-
-        {items.length === 0 && !connecting ? (
-          <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
-            <Building2 size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
-            <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Institutions Linked</h3>
-            <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed">
-              Link your brokerage or depository accounts to automatically pull balance and performance history.
-            </p>
-          </div>
-        ) : (
-          items.map((item) => (
-            <Motion.div layout key={item.id} className="card overflow-hidden border-border">
-              <div className="p-5 md:p-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className="w-12 h-12 rounded bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 shadow-sm">
-                      <Building2 size={24} className="text-accent" />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="text-base font-bold text-primary truncate leading-tight">
-                        {item.institution_name || 'Financial Institution'}
-                      </h3>
-                      <div className="flex items-center gap-4 mt-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
-                          {item.accounts?.length || 0} Account{(item.accounts?.length || 0) !== 1 ? 's' : ''}
-                        </span>
-                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
-                          <Clock size={12} />
-                          {formatSyncTime(item.last_synced_at)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {consentItems.has(item.id) && (
-                      <UpdateLinkButton itemId={item.id} onSuccess={handleRelink} onError={setError} />
-                    )}
-                    <button
-                      onClick={() => handleSync(item.id)}
-                      disabled={syncingId === item.id}
-                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all disabled:opacity-50"
-                    >
-                      <RefreshCw size={14} className={syncingId === item.id ? 'animate-spin' : ''} />
-                      Sync
-                    </button>
-                    <button
-                      onClick={() => { setRemoveDataOnDisconnect(true); setDisconnectingItem(item); }}
-                      className="p-2.5 rounded text-tertiary hover:text-loss hover:bg-loss/10 border border-transparent transition-all"
-                      title="Disconnect Institution"
-                    >
-                      <Unlink size={18} />
-                    </button>
-                  </div>
-                </div>
-
-                {(item.error_code || consentItems.has(item.id)) && (
-                  <div className={`mt-5 p-4 rounded border text-xs leading-relaxed ${consentItems.has(item.id) ? 'bg-accent/5 border-accent/20 text-accent' : 'bg-loss/5 border-loss/20 text-loss'}`}>
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                      <p>
-                        {consentItems.has(item.id) 
-                          ? 'This institution requires additional authorization to provide investment and holdings data. Please click "Re-link" to grant permission.'
-                          : (item.error_message || `Institution reported an error: ${item.error_code}`)}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Sub-accounts Grid */}
-                {item.accounts?.length > 0 && (
-                  <div className="mt-6 pt-5 border-t border-border">
-                    <button
-                      onClick={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
-                      className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-tertiary hover:text-primary transition-colors group"
-                    >
-                      <span>{expandedItem === item.id ? 'Collapse' : 'View'} Internal Accounts</span>
-                      <ChevronRight size={12} className={`transition-transform duration-200 ${expandedItem === item.id ? 'rotate-90' : ''}`} />
-                    </button>
-                    
-                    <AnimatePresence>
-                      {expandedItem === item.id && (
-                        <Motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
-                            {item.accounts.map((acct) => (
-                              <div key={acct.id} className="flex items-center justify-between gap-4 px-4 py-3 rounded  border border-transparent hover:border-border transition-colors">
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <Link2 size={12} className="text-accent opacity-60 flex-shrink-0" />
-                                  <span className="text-xs font-bold text-primary truncate">{getAccountDisplayName(acct)}</span>
-                                  {acct.is_hidden && <EyeOff size={12} className="text-loss flex-shrink-0" />}
-                                </div>
-                                <span className="text-[9px] font-bold text-tertiary uppercase tracking-wide px-2 py-0.5 rounded-full bg-surface-3">{acct.type}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </Motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                )}
-              </div>
-            </Motion.div>
-          ))
-        )}
-      </section>
-      </div>
-
       {/* Orphaned Accounts */}
       {orphanedAccounts.length > 0 && (
-        <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-12 space-y-6">
+        <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8 space-y-4">
           <div className="px-2">
             <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Manual / Orphaned Entries</h2>
             <p className="text-xs text-secondary mt-1">These accounts are not linked to Plaid. Deleting removes the account and all its historical value points.</p>
@@ -1042,6 +1058,8 @@ const Settings = () => {
             ))}
           </div>
         </Motion.div>
+      )}
+      </>
       )}
 
       <HoldingForm

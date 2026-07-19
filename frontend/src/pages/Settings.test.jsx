@@ -69,8 +69,13 @@ describe('Settings display names', () => {
     apiMocks.accounts.updateVisibility.mockResolvedValue({ account: { id: 7, is_hidden: true } });
   });
 
+  const openAccountsTab = async () => {
+    fireEvent.click(await screen.findByRole('tab', { name: 'Accounts' }));
+  };
+
   it('saves an account display name override', async () => {
     renderSettings();
+    await openAccountsTab();
 
     const input = await screen.findByPlaceholderText('Bank of Example - Very Long Checking Account Name');
     fireEvent.change(input, { target: { value: 'Checking' } });
@@ -83,6 +88,7 @@ describe('Settings display names', () => {
 
   it('loads all accounts and toggles account visibility', async () => {
     renderSettings();
+    await openAccountsTab();
 
     await screen.findByText('Account Display');
     expect(apiMocks.accounts.getAll).toHaveBeenCalledWith({ includeHidden: true });
