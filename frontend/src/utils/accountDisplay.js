@@ -36,19 +36,28 @@ export function buildAccountDisplayNameMap(accounts = []) {
     uniqueAccounts.set(id, account);
   });
 
-  const baseNameCounts = new Map();
+  const totalCounts = new Map();
+  const renamedCounts = new Map();
   uniqueAccounts.forEach((account) => {
-    const baseName = getAccountDisplayName(account);
-    const key = baseName.toLocaleLowerCase();
-    baseNameCounts.set(key, (baseNameCounts.get(key) || 0) + 1);
+    const key = getAccountDisplayName(account).toLocaleLowerCase();
+    totalCounts.set(key, (totalCounts.get(key) || 0) + 1);
+    if (hasAccountDisplayName(account)) {
+      renamedCounts.set(key, (renamedCounts.get(key) || 0) + 1);
+    }
   });
 
   const displayNames = new Map();
   uniqueAccounts.forEach((account, id) => {
     const baseName = getAccountDisplayName(account);
-    const count = baseNameCounts.get(baseName.toLocaleLowerCase()) || 0;
+    const key = baseName.toLocaleLowerCase();
 
-    if (count <= 1) {
+    // A user-chosen rename is authoritative: only suffix it when it collides
+    // with another explicit rename. Auto-named accounts suffix on any collision.
+    const needsSuffix = hasAccountDisplayName(account)
+      ? (renamedCounts.get(key) || 0) > 1
+      : (totalCounts.get(key) || 0) > 1;
+
+    if (!needsSuffix) {
       displayNames.set(id, baseName);
       return;
     }

@@ -39,7 +39,7 @@ router.get('/holdings', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        a.name as account,
+        COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) as account,
         h.ticker,
         h.name,
         h.quantity,
@@ -50,7 +50,7 @@ router.get('/holdings', async (req, res) => {
       FROM holdings h
       JOIN accounts a ON h.account_id = a.id
       WHERE a.is_hidden = FALSE
-      ORDER BY a.name, h.name
+      ORDER BY account, h.name
     `);
 
     const headers = ['account', 'ticker', 'name', 'quantity', 'manual_value', 'category', 'location', 'notes'];
@@ -78,12 +78,12 @@ router.get('/history', async (req, res) => {
       query = `
         SELECT
           acs.snapshot_date,
-          a.name as account_name,
+          COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) as account_name,
           acs.total_value
         FROM account_snapshots acs
         JOIN accounts a ON acs.account_id = a.id
         WHERE a.is_hidden = FALSE
-        ORDER BY snapshot_date DESC, a.name
+        ORDER BY snapshot_date DESC, account_name
       `;
       headers = ['snapshot_date', 'account_name', 'total_value'];
       filename = 'account_history';
@@ -105,14 +105,14 @@ router.get('/history', async (req, res) => {
       query = `
         SELECT
           ts.snapshot_date,
-          a.name as account_name,
+          COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) as account_name,
           ts.ticker,
           ts.name,
           ts.value
         FROM ticker_snapshots ts
         JOIN accounts a ON ts.account_id = a.id
         WHERE a.is_hidden = FALSE
-        ORDER BY snapshot_date DESC, a.name, ticker
+        ORDER BY snapshot_date DESC, account_name, ticker
       `;
       headers = ['snapshot_date', 'account_name', 'ticker', 'name', 'value'];
       filename = 'ticker_history';

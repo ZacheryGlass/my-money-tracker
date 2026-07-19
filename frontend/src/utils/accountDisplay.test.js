@@ -31,4 +31,14 @@ describe('accountDisplay', () => {
     expect(names.get(2)).toBe('401k (Empower - 401k)');
     expect(names.get(3)).toBe('Checking');
   });
+
+  it('keeps an explicit rename unsuffixed when it collides with an auto-named account', () => {
+    const names = buildAccountDisplayNameMap([
+      { id: 52, name: 'T. Rowe Price - GARMIN INTERNATIONAL, INC. RETIREMENT PLAN', display_name: '401k' },
+      { id: 84, name: '401k' },
+    ]);
+
+    expect(names.get(52)).toBe('401k');
+    expect(names.get(84)).toBe('401k (Account 84)');
+  });
 });
