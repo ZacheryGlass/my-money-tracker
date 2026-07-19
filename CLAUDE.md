@@ -37,13 +37,18 @@ backend/src/
   server.js     # entry point
 
 frontend/src/
-  components/   # Sidebar, Dashboard, DashboardTable, MetricCard, AllocationDonut,
-                # SparkLine, ChartTooltip, AccountHistoryChart, TickerHistoryChart,
-                # HoldingForm, BulkImportForm, StaticAssetsForm, ErrorBoundary
+  components/   # Sidebar, Dashboard, DashboardTable, DashboardNetWorthChart,
+                # MetricCard, AllocationDonut, SparkLine, ChartTooltip,
+                # AccountHistoryChart, TickerHistoryChart, HoldingForm,
+                # BulkImportForm, ErrorBoundary, FilterTabs, FilterDisclosure,
+                # LoadingState, SummaryStats, ResponsiveContainer
   pages/        # BalancesPage (Assets/Cash/Liabilities tabs), AccountsPage,
-                # PortfolioTimeline, AccountHistory, TickerHistory, StaticAssets,
+                # Settings, Spending, HoldingsAnalysis, PortfolioTimeline,
+                # AccountHistory, TickerHistory, SalaryHistory, MonthlyExpenses,
                 # ErrorPage, NotFound
-  utils/        # api.js (axios), format.js (shared formatters), chartTheme.js
+  hooks/        # useAppearancePreferences, useMediaQuery, useTransientMessage
+  utils/        # api.js (axios), format.js (shared formatters), dataLabels.js,
+                # accountDisplay.js, chartTheme.js
 
 scripts/
   setup-local.sh  # one-time local env bootstrap
@@ -69,7 +74,8 @@ cd frontend && npm run lint     # eslint
 ## Key Patterns
 
 - **API interceptor** (`frontend/src/utils/api.js`): same-origin requests (Easy Auth session cookie), retries on 5xx (once, 500ms), reloads page on 401 so Easy Auth re-authenticates
-- **Shared formatters** (`frontend/src/utils/format.js`): `formatCurrency`, `formatPercent`, `formatDateDisplay`, `formatDateAxis`, `formatCompactCurrency` — all components import from here, no local duplicates
+- **Shared formatters** (`frontend/src/utils/format.js`): `formatCurrency`, `formatPercent`, `formatDateDisplay`, `formatDateAxis`, `formatCompactCurrency`, `formatRelativeTime` — all components import from here, no local duplicates. Category labels in `utils/dataLabels.js`.
+- **Shared UI**: `FilterTabs` (single-choice control — tab strip on desktop, dropdown on mobile; used by Balances, Settings, Accounts, Spending), `LoadingState` (all loading spinners), `useTransientMessage` (auto-clearing success messages)
 - **Chart theme** (`frontend/src/utils/chartTheme.js`): `CHART_COLORS`, `GRID_STYLE`, `AXIS_STYLE`, `TOOLTIP_STYLE`, `areaGradient` — all charts use these
 - **Design tokens**: CSS variables in `index.css` (canvas/surface hierarchy, ink/body/muted text, primary action blue, gain/loss semantics, hairline borders) consumed by Tailwind config. Component classes: `.card`, `.font-money`. Square panels with 1px borders, 4px radius on buttons/inputs only.
 - **Scheduled jobs**: Plaid sync 7:30, price updates 8:00, benchmark prices (SPY/QQQ) 8:30, snapshots 9:00 (all UTC). Controlled by `RUN_SCHEDULED_JOBS` env var
