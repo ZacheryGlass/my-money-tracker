@@ -6,6 +6,10 @@ import { getAccountDisplayName } from '../utils/accountDisplay';
 
 const PAGE_SIZE = 100;
 
+// Only these account types carry transactions (Plaid syncs transactions for
+// bank and credit card accounts, not investments/property).
+const TRANSACTION_ACCOUNT_TYPES = new Set(['depository', 'credit']);
+
 function formatCategory(category) {
   if (!category) return 'Uncategorized';
   return category
@@ -36,7 +40,9 @@ export default function Spending() {
 
   useEffect(() => {
     accountsApi.getAll()
-      .then((data) => setAccountList(data.accounts || []))
+      .then((data) => setAccountList(
+        (data.accounts || []).filter((account) => TRANSACTION_ACCOUNT_TYPES.has(account.type))
+      ))
       .catch(() => setAccountList([]));
   }, []);
 
