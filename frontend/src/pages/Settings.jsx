@@ -240,7 +240,7 @@ const Settings = () => {
   const [displayNameDrafts, setDisplayNameDrafts] = useState({});
   const [savingDisplayNameId, setSavingDisplayNameId] = useState(null);
   const [savingVisibilityId, setSavingVisibilityId] = useState(null);
-  const [orphanedAccounts, setOrphanedAccounts] = useState([]);
+  const [deletingAccount, setDeletingAccount] = useState(null);
   const [deletingAccountId, setDeletingAccountId] = useState(null);
   const [manualEntryType, setManualEntryType] = useState(null);
   const [exportStartDate, setExportStartDate] = useState('');
@@ -279,9 +279,6 @@ const Settings = () => {
       setAllAccounts(allAccounts);
       setDisplayNameDrafts(
         Object.fromEntries(allAccounts.map((account) => [account.id, account.display_name || '']))
-      );
-      setOrphanedAccounts(
-        allAccounts.filter(a => !a.plaid_item_id && a.type === 'investment' && a.name.includes(' - '))
       );
       setError(null);
     } catch (err) {
@@ -386,6 +383,22 @@ const Settings = () => {
       setError(err.response?.data?.error || 'Failed to clear display name');
     } finally {
       setSavingDisplayNameId(null);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    const account = deletingAccount;
+    setDeletingAccount(null);
+    setDeletingAccountId(account.id);
+    setError(null);
+    try {
+      await accountsAPI.delete(account.id);
+      showSuccess(`"${getAccountDisplayName(account)}" deleted`);
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete account');
+    } finally {
+      setDeletingAccountId(null);
     }
   };
 
@@ -879,7 +892,7 @@ const Settings = () => {
       <section className="mb-8">
         <div className="px-2 mb-4">
           <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Account Display</h2>
-          <p className="mt-1 text-xs text-secondary">Rename accounts for readability and hide accounts that should stay out of the main views.</p>
+          <p className="mt-1 text-xs text-secondary">Rename accounts for readability and hide accounts that should stay out of the main views. Manual accounts can be deleted; Plaid accounts are removed by disconnecting their institution.</p>
         </div>
 
         <div className="card overflow-hidden divide-y divide-border border-border">
@@ -994,6 +1007,16 @@ const Settings = () => {
                         Clear
                       </button>
                     )}
+                    {!account.plaid_item_id && (
+                      <button
+                        onClick={() => setDeletingAccount(account)}
+                        disabled={deletingAccountId === account.id}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-loss/30 hover:bg-loss/10 hover:text-loss disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {deletingAccountId === account.id ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -1002,49 +1025,6 @@ const Settings = () => {
         </div>
       </section>
 
-      {/* Orphaned Accounts */}
-      {orphanedAccounts.length > 0 && (
-        <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8 space-y-4">
-          <div className="px-2">
-            <h2 className="text-lg font-bold text-primary uppercase tracking-tight">Manual / Orphaned Entries</h2>
-            <p className="text-xs text-secondary mt-1">These accounts are not linked to Plaid. Deleting removes the account and all its historical value points.</p>
-          </div>
-          
-          <div className="card overflow-hidden divide-y divide-border border-border">
-            {orphanedAccounts.map((acct) => (
-              <div key={acct.id} className="flex items-center justify-between p-5 hover:bg-surface-2 transition-colors group">
-                <div className="min-w-0">
-                  <span className="text-sm font-bold text-primary truncate block">{getAccountDisplayName(acct)}</span>
-                  {hasAccountDisplayName(acct) && (
-                    <span className="text-[10px] text-tertiary uppercase tracking-tight truncate block mt-1">{acct.name}</span>
-                  )}
-                  <span className="text-[10px] font-bold text-tertiary uppercase tracking-wide mt-1 block">
-                    {acct.holdings_count || 0} Assets • Manual Tracking
-                  </span>
-                </div>
-                <button
-                  onClick={async () => {
-                    setDeletingAccountId(acct.id);
-                    try {
-                      await accountsAPI.delete(acct.id);
-                      showSuccess(`"${getAccountDisplayName(acct)}" deleted`);
-                      await fetchItems();
-                    } catch (err) {
-                      setError(err.response?.data?.error || 'Failed to delete account');
-                    } finally {
-                      setDeletingAccountId(null);
-                    }
-                  }}
-                  disabled={deletingAccountId === acct.id}
-                  className="p-2.5 rounded text-tertiary hover:text-loss hover:bg-loss/10 transition-all opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </Motion.div>
-      )}
       </>
       )}
 
@@ -1056,6 +1036,40 @@ const Settings = () => {
         accounts={manualEntryAccounts}
         title={manualEntryType ? `Add Manual ${MANUAL_ENTRY_TYPES[manualEntryType].label}` : undefined}
       />
+
+      {/* Delete Account Confirm Modal */}
+      <AnimatePresence>
+        {deletingAccount && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setDeletingAccount(null)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative w-full max-w-lg border border-border bg-surface shadow-2xl sm:rounded-3xl">
+              <div className="p-5 pb-3 text-center sm:p-8 sm:pb-4">
+                <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Trash2 size={28} />
+                </div>
+                <h2 className="text-2xl font-bold text-primary mb-2 tracking-tight">Delete Account</h2>
+                <p className="text-sm text-secondary leading-relaxed">
+                  You are about to permanently delete <span className="text-primary font-bold">{getAccountDisplayName(deletingAccount)}</span> along with its holdings and all historical value points. This cannot be undone.
+                </p>
+              </div>
+              <div className="sticky bottom-0 flex gap-3 bg-surface p-5 sm:static sm:p-8 sm:pt-6">
+                <button
+                  onClick={() => setDeletingAccount(null)}
+                  className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteConfirm}
+                  className="flex-1 py-4 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all"
+                >
+                  Confirm Delete
+                </button>
+              </div>
+            </Motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Disconnect Confirm Modal */}
       <AnimatePresence>
