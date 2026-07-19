@@ -4,10 +4,12 @@ import {
 } from '@tanstack/react-table';
 import { Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, formatDateAxis } from '../utils/format';
 import FilterTabs from '../components/FilterTabs';
 import HoldingForm from '../components/HoldingForm';
+import LoadingState from '../components/LoadingState';
 import SummaryStats from '../components/SummaryStats';
+import useTransientMessage from '../hooks/useTransientMessage';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 
@@ -31,7 +33,7 @@ const formatLastUpdated = (dateString) => {
   if (days === 1) return 'Updated yesterday';
   if (days < 14) return `Updated ${days}d ago`;
 
-  return `Updated ${updatedAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+  return `Updated ${formatDateAxis(dateString)}`;
 };
 
 const LinkedPill = () => (
@@ -46,7 +48,7 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successMessage, showSuccess] = useTransientMessage();
   const [sorting, setSorting] = useState([{ id: 'value', desc: true }]);
   const [accountFilter, setAccountFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -78,7 +80,6 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
     }
   };
 
-  const showSuccess = (message) => { setSuccessMessage(message); setTimeout(() => setSuccessMessage(''), 3000); };
   const handleEdit = (holding) => { if (holding.is_plaid_managed) return; setEditingHolding(holding); setIsFormOpen(true); };
 
   const handleSave = async (data) => {
@@ -247,12 +248,7 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
   });
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-        <span className="text-caption text-tertiary">Loading...</span>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   const activeLabel = TAB_CONFIG[tab]?.label || 'Balances';

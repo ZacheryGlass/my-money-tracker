@@ -3,22 +3,15 @@ import { ReceiptText, RefreshCw } from 'lucide-react';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { accounts as accountsApi, transactions as transactionsApi } from '../utils/api';
 import { getAccountDisplayName } from '../utils/accountDisplay';
+import { formatTransactionCategory } from '../utils/dataLabels';
 import FilterTabs from '../components/FilterTabs';
+import LoadingState from '../components/LoadingState';
 
 const PAGE_SIZE = 100;
 
 // Only these account types carry transactions (Plaid syncs transactions for
 // bank and credit card accounts, not investments/property).
 const TRANSACTION_ACCOUNT_TYPES = new Set(['depository', 'credit']);
-
-function formatCategory(category) {
-  if (!category) return 'Uncategorized';
-  return category
-    .toLowerCase()
-    .split(/[_\s]+/)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
 
 function Amount({ value }) {
   const amount = parseFloat(value) || 0;
@@ -117,10 +110,7 @@ export default function Spending() {
       )}
 
       {loading ? (
-        <div className="flex min-h-[300px] flex-col items-center justify-center gap-4">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          <span className="text-xs font-bold uppercase tracking-wide text-tertiary">Loading Transactions</span>
-        </div>
+        <LoadingState label="Loading Transactions" className="min-h-[300px]" />
       ) : (
         <div className="card overflow-hidden">
           <div className="flex items-center justify-between border-b border-border p-4">
@@ -165,7 +155,7 @@ export default function Spending() {
                           )}
                         </div>
                       </td>
-                      <td className="truncate px-5 py-3 text-xs text-secondary">{formatCategory(txn.category)}</td>
+                      <td className="truncate px-5 py-3 text-xs text-secondary">{formatTransactionCategory(txn.category)}</td>
                       <td className="truncate px-5 py-3 text-xs text-secondary">{txn.account_name}</td>
                       <td className="whitespace-nowrap px-5 py-3 text-right text-sm">
                         <Amount value={txn.amount} />
@@ -195,7 +185,7 @@ export default function Spending() {
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-tertiary">
                         <span>{formatDateDisplay(txn.date)}</span>
-                        <span>{formatCategory(txn.category)}</span>
+                        <span>{formatTransactionCategory(txn.category)}</span>
                       </div>
                     </div>
                     <div className="shrink-0 text-sm">

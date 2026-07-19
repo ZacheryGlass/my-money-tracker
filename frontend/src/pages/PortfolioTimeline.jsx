@@ -10,6 +10,7 @@ import {
   ReferenceDot,
 } from 'recharts';
 import { TrendingUp, TrendingDown, Check, Calendar } from 'lucide-react';
+import LoadingState from '../components/LoadingState';
 import { dashboard as dashboardAPI, history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
@@ -191,12 +192,7 @@ const PortfolioTimeline = () => {
   };
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-        <span className="text-caption text-tertiary">Loading timeline...</span>
-      </div>
-    );
+    return <LoadingState label="Loading timeline" />;
   }
 
   return (

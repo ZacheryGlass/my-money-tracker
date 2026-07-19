@@ -4,6 +4,8 @@ import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, Copy, CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
 import { expenses as expensesAPI, analytics } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
+import LoadingState from '../components/LoadingState';
+import useTransientMessage from '../hooks/useTransientMessage';
 
 const Badge = ({ active, children }) => (
   <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase ${
@@ -40,7 +42,7 @@ const MonthlyExpenses = () => {
   const [allExpenses, setAllExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successMessage, showSuccess] = useTransientMessage();
   const [activeTab, setActiveTab] = useState('bill');
   const [detectedSubs, setDetectedSubs] = useState([]);
   const [detectedLoading, setDetectedLoading] = useState(false);
@@ -76,11 +78,6 @@ const MonthlyExpenses = () => {
         .finally(() => setDetectedLoading(false));
     }
   }, [activeTab]);
-
-  const showSuccess = (msg) => {
-    setSuccessMessage(msg);
-    setTimeout(() => setSuccessMessage(''), 3000);
-  };
 
   const handleAddNew = useCallback((requestedType = activeTab) => {
     const entryType = requestedType === 'subscription' ? 'subscription' : 'bill';
@@ -227,12 +224,7 @@ const MonthlyExpenses = () => {
   }, [allExpenses, activeTab]);
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Calculating Expenses</span>
-      </div>
-    );
+    return <LoadingState label="Calculating Expenses" />;
   }
 
   return (
@@ -430,9 +422,7 @@ const MonthlyExpenses = () => {
                 <span className="text-[10px] text-tertiary ml-auto">from Plaid transactions</span>
               </div>
               {detectedLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                </div>
+                <LoadingState label={null} className="py-12" />
               ) : filteredDetected.length === 0 ? (
                 <div className="px-5 py-12 text-center">
                   <div className="flex flex-col items-center gap-3 opacity-40">

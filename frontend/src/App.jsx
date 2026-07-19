@@ -5,6 +5,7 @@ import { me } from './utils/api';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
 import Sidebar from './components/Sidebar';
+import LoadingState from './components/LoadingState';
 import { Menu } from 'lucide-react';
 
 const Dashboard = lazy(() => import('./components/Dashboard'));
@@ -18,13 +19,6 @@ const MonthlyExpenses = lazy(() => import('./pages/MonthlyExpenses'));
 const Settings = lazy(() => import('./pages/Settings'));
 const HoldingsAnalysis = lazy(() => import('./pages/HoldingsAnalysis'));
 const Spending = lazy(() => import('./pages/Spending'));
-
-const PageSpinner = () => (
-  <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-    <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-    <span className="text-caption text-tertiary">Loading...</span>
-  </div>
-);
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', path: '/' },
@@ -131,7 +125,7 @@ function App() {
 
         <main className="relative min-w-0 flex-1 bg-base pb-[env(safe-area-inset-bottom)]">
           <ErrorBoundary>
-            <Suspense fallback={<PageSpinner />}>
+            <Suspense fallback={<LoadingState />}>
               {renderPage()}
             </Suspense>
           </ErrorBoundary>

@@ -8,6 +8,7 @@ import {
   Tooltip,
 } from 'recharts';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import LoadingState from './LoadingState';
 import { formatCurrency, formatDateAxis } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE } from '../utils/chartTheme';
 import ChartTooltip from './ChartTooltip';
@@ -92,12 +93,7 @@ const TickerHistoryChart = ({ data, series, tickers, loading }) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 md:h-[520px] card">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-          <span className="text-caption text-tertiary">Loading...</span>
-        </div>
-      </div>
+      <LoadingState className="h-64 md:h-[520px] card" />
     );
   }
 

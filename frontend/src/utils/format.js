@@ -33,6 +33,18 @@ export const formatDateAxis = (dateString) => {
   }).format(date);
 };
 
+export const formatRelativeTime = (dateString, fallback = 'Never') => {
+  if (!dateString) return fallback;
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return fallback;
+  const diffMins = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${Math.floor(diffHours / 24)}d ago`;
+};
+
 export const formatCompactCurrency = (value) => {
   const sign = value < 0 ? '-' : '';
   const abs = Math.abs(value);

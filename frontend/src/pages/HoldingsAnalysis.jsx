@@ -6,6 +6,7 @@ import {
 import { PieChart as PieIcon, Grid3X3, Layers, BarChart3, TrendingUp } from 'lucide-react';
 import MetricCard from '../components/MetricCard';
 import ChartTooltip from '../components/ChartTooltip';
+import LoadingState from '../components/LoadingState';
 import ResponsiveContainer from '../components/ResponsiveContainer';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import { formatCurrency, formatCompactCurrency, formatDateAxis, formatPercent } from '../utils/format';
@@ -186,12 +187,7 @@ export default function HoldingsAnalysis() {
   }, [allocationData]);
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Analyzing Holdings</span>
-      </div>
-    );
+    return <LoadingState label="Analyzing Holdings" />;
   }
 
   return (

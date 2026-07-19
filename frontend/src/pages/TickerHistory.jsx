@@ -4,6 +4,7 @@ import { Check, X, Search } from 'lucide-react';
 import { holdings as holdingsAPI, history as historyAPI } from '../utils/api';
 import TickerHistoryChart from '../components/TickerHistoryChart';
 import FilterDisclosure from '../components/FilterDisclosure';
+import LoadingState from '../components/LoadingState';
 
 const DEFAULT_HISTORY_LIMIT = 2000;
 
@@ -152,12 +153,7 @@ const TickerHistory = () => {
   };
 
   if (initialLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-        <span className="text-caption text-tertiary">Loading tickers...</span>
-      </div>
-    );
+    return <LoadingState label="Loading tickers" />;
   }
 
   return (

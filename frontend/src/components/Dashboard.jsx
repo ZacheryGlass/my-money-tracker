@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { analytics, dashboard as dashboardAPI, history as historyAPI, plaid as plaidAPI } from '../utils/api';
 import { formatCompactCurrency, formatCurrency, formatDateDisplay, formatPercent } from '../utils/format';
+import LoadingState from './LoadingState';
 import { buildAccountDisplayNameMap } from '../utils/accountDisplay';
 import { getAssetClass, getHoldingIdentity } from '../utils/assetClass';
 import AllocationDonut from './AllocationDonut';
@@ -390,12 +391,7 @@ const Dashboard = ({ onNavigate }) => {
   const rangeLabel = RANGE_OPTIONS.find((option) => option.value === selectedRange)?.label || selectedRange;
 
   if (loading) {
-    return (
-      <div className="flex min-h-[400px] flex-col items-center justify-center gap-3">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-        <span className="text-caption text-tertiary">Building overview</span>
-      </div>
-    );
+    return <LoadingState label="Building overview" />;
   }
 
   return (

@@ -9,7 +9,9 @@ import { salary as salaryAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import ChartTooltip from '../components/ChartTooltip';
+import LoadingState from '../components/LoadingState';
 import ResponsiveContainer from '../components/ResponsiveContainer';
+import useTransientMessage from '../hooks/useTransientMessage';
 
 const SalaryHistory = () => {
   const location = useLocation();
@@ -17,7 +19,7 @@ const SalaryHistory = () => {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successMessage, showSuccess] = useTransientMessage();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
   const [deletingRecord, setDeletingRecord] = useState(null);
@@ -37,11 +39,6 @@ const SalaryHistory = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const showSuccess = (msg) => {
-    setSuccessMessage(msg);
-    setTimeout(() => setSuccessMessage(''), 3000);
   };
 
   useEffect(() => { fetchData(); }, []);
@@ -210,12 +207,7 @@ const SalaryHistory = () => {
   }, [records]);
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Analyzing Earnings</span>
-      </div>
-    );
+    return <LoadingState label="Analyzing Earnings" />;
   }
 
   return (

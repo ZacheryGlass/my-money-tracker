@@ -12,9 +12,10 @@ import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import FilterTabs from '../components/FilterTabs';
+import LoadingState from '../components/LoadingState';
 import SummaryStats from '../components/SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
-import { formatCategoryLabel } from '../utils/dataLabels';
+import { formatCategoryLabel, formatTransactionCategory } from '../utils/dataLabels';
 
 const TYPE_COLORS = {
   investment: 'bg-accent/10 text-accent border-accent/20',
@@ -392,10 +393,9 @@ const AccountsPage = () => {
       {
         accessorKey: 'category',
         header: 'Category',
-        cell: ({ getValue }) => {
-          const display = formatCategoryLabel(getValue()).replace(/_/g, ' ').toLowerCase();
-          return <span className="text-xs font-bold uppercase text-secondary tracking-tight">{display}</span>;
-        },
+        cell: ({ getValue }) => (
+          <span className="text-xs font-bold uppercase text-secondary tracking-tight">{formatTransactionCategory(getValue())}</span>
+        ),
       },
       {
         accessorKey: 'amount',
@@ -438,12 +438,7 @@ const AccountsPage = () => {
   });
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Loading Accounts</span>
-      </div>
-    );
+    return <LoadingState label="Loading Accounts" />;
   }
 
   const renderPagination = (table, data) => {
@@ -780,10 +775,7 @@ const AccountsPage = () => {
               
               <div className="space-y-3">
                 {txnLoading ? (
-                  <div className="flex flex-col items-center justify-center py-12 gap-3 card">
-                    <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                    <span className="text-[10px] font-bold uppercase text-tertiary">Fetching transactions</span>
-                  </div>
+                  <LoadingState label="Fetching transactions" className="py-12 card" />
                 ) : accountTransactions.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-2 card opacity-50">
                     <Receipt size={32} className="text-tertiary" />

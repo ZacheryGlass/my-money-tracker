@@ -9,6 +9,9 @@ import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
 import HoldingForm from '../components/HoldingForm';
 import FilterTabs from '../components/FilterTabs';
+import LoadingState from '../components/LoadingState';
+import useTransientMessage from '../hooks/useTransientMessage';
+import { formatRelativeTime } from '../utils/format';
 
 const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance' },
@@ -166,20 +169,6 @@ function UpdateLinkButton({ itemId, onSuccess, onError }) {
   );
 }
 
-function formatSyncTime(timestamp) {
-  if (!timestamp) return 'Never';
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diffMs = now - date;
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
-}
-
 const buildInstitutionSummary = (items, consentItems) => {
   const consentRequired = items.filter((item) => consentItems.has(item.id));
   const errored = items.filter((item) => item.error_code && !consentItems.has(item.id));
@@ -240,7 +229,7 @@ const Settings = () => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successMessage, showSuccess] = useTransientMessage();
   const [syncingId, setSyncingId] = useState(null);
   const [disconnectingItem, setDisconnectingItem] = useState(null);
   const [removeDataOnDisconnect, setRemoveDataOnDisconnect] = useState(true);
@@ -303,11 +292,6 @@ const Settings = () => {
   }, []);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
-
-  const showSuccess = (msg) => {
-    setSuccessMessage(msg);
-    setTimeout(() => setSuccessMessage(''), 3000);
-  };
 
   const handlePlaidSuccess = async (publicToken, metadata) => {
     setConnecting(true);
@@ -471,12 +455,7 @@ const Settings = () => {
   };
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-        <span className="text-xs font-bold tracking-wide uppercase text-tertiary ">Initializing Settings</span>
-      </div>
-    );
+    return <LoadingState label="Initializing Settings" />;
   }
 
   return (
@@ -732,7 +711,7 @@ const Settings = () => {
           <div className="bg-surface p-4">
             <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Latest Sync</p>
             <p className="mt-2 font-mono text-lg font-bold text-primary">
-              {institutionSummary.latestSynced ? formatSyncTime(institutionSummary.latestSynced.last_synced_at) : 'Never'}
+              {institutionSummary.latestSynced ? formatRelativeTime(institutionSummary.latestSynced.last_synced_at) : 'Never'}
             </p>
           </div>
         </div>
@@ -815,7 +794,7 @@ const Settings = () => {
                         </span>
                         <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
                           <Clock size={12} />
-                          {formatSyncTime(item.last_synced_at)}
+                          {formatRelativeTime(item.last_synced_at)}
                         </span>
                       </div>
                     </div>
