@@ -11,7 +11,6 @@ import { ArrowLeft, Link2, Wallet, Receipt, X, Activity, PenLine } from 'lucide-
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
-import FilterDisclosure from '../components/FilterDisclosure';
 import SummaryStats from '../components/SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
@@ -196,12 +195,6 @@ const AccountsPage = () => {
     if (!showInactive) filtered = filtered.filter((a) => !inactiveAccountIds.has(a.id));
     return [...filtered].sort((a, b) => (accountTotals.get(b.id) || 0) - (accountTotals.get(a.id) || 0));
   }, [accounts, accountTotals, inactiveAccountIds, showInactive, typeFilter]);
-
-  const clearFilters = () => {
-    setTypeFilterRaw('');
-    setShowInactive(false);
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  };
 
   const grandTotal = useMemo(() => {
     return holdings.reduce((sum, h) => sum + (parseFloat(h.current_value) || 0), 0);
@@ -588,75 +581,39 @@ const AccountsPage = () => {
         </div>
       )}
 
-      <FilterDisclosure
-        summary={`Showing ${filteredAccounts.length} of ${accounts.length} accounts`}
-        activeCount={Number(Boolean(typeFilter)) + Number(showInactive)}
-        onClear={clearFilters}
-      >
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex min-w-0 flex-1 flex-wrap gap-2">
-              <button
-                onClick={() => setTypeFilter('')}
-                className={`inline-flex items-center gap-3 rounded border px-3 py-2 transition-all ${
-                  typeFilter === ''
-                    ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                    : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
-                }`}
-              >
-                <span className="text-xs font-bold uppercase tracking-wider">All Types</span>
-                <span className="text-[10px] font-mono font-bold opacity-60">{showInactive ? accounts.length : activeAccountCount}</span>
-              </button>
-              {distinctTypes.map((type) => {
-                const count = accounts.filter((a) => a.type === type && (showInactive || !inactiveAccountIds.has(a.id))).length;
-                return (
-                  <button
-                    key={type}
-                    onClick={() => setTypeFilter(type)}
-                    className={`inline-flex items-center gap-3 rounded border px-3 py-2 transition-all ${
-                      typeFilter === type
-                        ? 'bg-accent/10 border-accent/30 text-accent ring-1 ring-accent/10'
-                        : 'bg-surface-2 border-transparent text-secondary hover:border-border hover:text-primary'
-                    }`}
-                  >
-                    <span className="text-xs font-bold uppercase tracking-wider">{type}</span>
-                    <span className="text-[10px] font-mono font-bold opacity-60">{count}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {inactiveAccounts.length > 0 && (
-              <div className="rounded border border-border bg-surface-2 p-3 lg:w-[290px]">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <span className="block text-xs font-bold uppercase tracking-wide text-primary">Inactive Accounts</span>
-                    <span className="text-[10px] font-mono font-bold uppercase tracking-wide text-tertiary">
-                      {inactiveAccounts.length} hidden by default
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setShowInactive((value) => !value);
-                      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                    }}
-                    className={`rounded border px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all ${
-                      showInactive
-                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/10'
-                        : 'border-border bg-surface text-secondary hover:border-border-hover hover:text-primary'
-                    }`}
-                  >
-                    {showInactive ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-                <p className="mt-2 text-xs leading-snug text-tertiary">
-                  Zero-balance accounts with no assets are kept out of the main list until shown.
-                </p>
-              </div>
-            )}
-          </div>
+      <div className="mb-3 flex items-center justify-between gap-3 border-b border-border">
+        <div className="flex min-w-0 overflow-x-auto">
+          {['', ...distinctTypes].map((type) => (
+            <button
+              key={type || 'all'}
+              onClick={() => setTypeFilter(type)}
+              className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
+                typeFilter === type
+                  ? 'border-accent text-primary'
+                  : 'border-transparent text-tertiary hover:text-primary'
+              }`}
+            >
+              {type || 'All'}
+            </button>
+          ))}
         </div>
-      </FilterDisclosure>
+        {inactiveAccounts.length > 0 && (
+          <button
+            onClick={() => {
+              setShowInactive((value) => !value);
+              setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+            }}
+            title="Zero-balance accounts with no assets are kept out of the list until shown."
+            className={`mb-1 shrink-0 rounded border px-2.5 py-1 text-caption font-semibold uppercase tracking-wide transition-colors ${
+              showInactive
+                ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                : 'border-border bg-surface-2 text-tertiary hover:text-primary'
+            }`}
+          >
+            {showInactive ? 'Hide' : 'Show'} {inactiveAccounts.length} inactive
+          </button>
+        )}
+      </div>
 
       {renderTable(
         listTable,
