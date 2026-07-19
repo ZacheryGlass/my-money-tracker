@@ -582,12 +582,12 @@ const AccountsPage = () => {
       )}
 
       <div className="mb-3 flex items-center justify-between gap-3 border-b border-border">
-        <div className="flex min-w-0 overflow-x-auto">
+        <div className="-mb-px flex min-w-0 overflow-x-auto">
           {['', ...distinctTypes].map((type) => (
             <button
               key={type || 'all'}
               onClick={() => setTypeFilter(type)}
-              className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
+              className={`whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
                 typeFilter === type
                   ? 'border-accent text-primary'
                   : 'border-transparent text-tertiary hover:text-primary'

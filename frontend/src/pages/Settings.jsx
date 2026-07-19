@@ -519,27 +519,29 @@ const Settings = () => {
         </div>
       )}
 
-      <div className="mb-6 flex overflow-x-auto border-b border-border" role="tablist" aria-label="Settings sections">
-        {SETTINGS_TABS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={activeTab === t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
-              activeTab === t.id
-                ? 'border-accent text-primary'
-                : 'border-transparent text-tertiary hover:text-primary'
-            }`}
-          >
-            {t.label}
-            {t.id === 'institutions' && institutionSummary.attentionCount > 0 && (
-              <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-loss px-1 font-mono text-[10px] font-bold leading-none text-white">
-                {institutionSummary.attentionCount}
-              </span>
-            )}
-          </button>
-        ))}
+      <div className="mb-6 border-b border-border">
+        <div className="-mb-px flex overflow-x-auto" role="tablist" aria-label="Settings sections">
+          {SETTINGS_TABS.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={activeTab === t.id}
+              onClick={() => setActiveTab(t.id)}
+              className={`whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
+                activeTab === t.id
+                  ? 'border-accent text-primary'
+                  : 'border-transparent text-tertiary hover:text-primary'
+              }`}
+            >
+              {t.label}
+              {t.id === 'institutions' && institutionSummary.attentionCount > 0 && (
+                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-loss px-1 font-mono text-[10px] font-bold leading-none text-white">
+                  {institutionSummary.attentionCount}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       {activeTab === 'appearance' && (
