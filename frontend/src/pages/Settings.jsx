@@ -8,7 +8,7 @@ import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDi
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
 import HoldingForm from '../components/HoldingForm';
-import TabStrip from '../components/TabStrip';
+import FilterTabs from '../components/FilterTabs';
 
 const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance' },
@@ -520,19 +520,25 @@ const Settings = () => {
         </div>
       )}
 
-      <TabStrip
+      <FilterTabs
+        id="settings-section"
+        label="Section"
         className="mb-6"
-        ariaLabel="Settings sections"
-        active={activeTab}
-        onSelect={setActiveTab}
-        tabs={SETTINGS_TABS.map((t) => ({
-          ...t,
-          badge: t.id === 'institutions' && institutionSummary.attentionCount > 0 && (
-            <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-loss px-1 font-mono text-[10px] font-bold leading-none text-white">
-              {institutionSummary.attentionCount}
-            </span>
-          ),
-        }))}
+        value={activeTab}
+        onChange={setActiveTab}
+        options={SETTINGS_TABS.map((t) => {
+          const attention = t.id === 'institutions' && institutionSummary.attentionCount > 0;
+          return {
+            value: t.id,
+            label: t.label,
+            selectLabel: attention ? `${t.label} (${institutionSummary.attentionCount})` : t.label,
+            badge: attention && (
+              <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-loss px-1 font-mono text-[10px] font-bold leading-none text-white">
+                {institutionSummary.attentionCount}
+              </span>
+            ),
+          };
+        })}
       />
 
       {activeTab === 'appearance' && (
