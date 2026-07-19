@@ -5,8 +5,6 @@ import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt } from 'lucide-react';
 import { plaid as plaidAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
-import useChartPreferences from '../hooks/useChartPreferences';
-import { YEAR_REVIEW_CHARTS } from '../utils/chartPreferences';
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
 import HoldingForm from '../components/HoldingForm';
@@ -224,7 +222,6 @@ function AppearanceOptions({ options, value, onChange, ariaLabel, previewFont = 
 
 const Settings = () => {
   const navigate = useNavigate();
-  const { preferences: chartPreferences, setChartEnabled } = useChartPreferences();
   const {
     preferences: appearance,
     setTheme,
@@ -511,12 +508,9 @@ const Settings = () => {
         </div>
       )}
 
-      <nav className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6" aria-label="Settings sections">
+      <nav className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5" aria-label="Settings sections">
         <a href="#appearance" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Appearance
-        </a>
-        <a href="#chart-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
-          Display Charts
         </a>
         <a href="#data-tools" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Data Tools
@@ -578,42 +572,6 @@ const Settings = () => {
               previewFont
             />
           </div>
-        </div>
-      </section>
-
-      <section id="chart-display" className="mb-8 scroll-mt-4">
-        <div className="mb-3 px-2">
-          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Display Charts</h2>
-          <p className="mt-1 text-xs text-secondary">Choose which dynamic charts appear in Year in Review.</p>
-        </div>
-
-        <div className="card divide-y divide-border overflow-hidden">
-          {YEAR_REVIEW_CHARTS.map((chart) => {
-            const enabled = chartPreferences[chart.id] !== false;
-            return (
-              <div key={chart.id} className="flex items-center justify-between gap-4 p-4">
-                <div className="min-w-0">
-                  <h3 className="text-body-sm font-semibold text-primary">{chart.label}</h3>
-                  <p className="text-caption text-tertiary">{chart.description}</p>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={enabled}
-                  aria-label={`Show ${chart.label}`}
-                  onClick={() => setChartEnabled(chart.id, !enabled)}
-                  className={`flex h-10 shrink-0 items-center gap-2 border px-3 text-caption font-semibold uppercase transition-colors ${
-                    enabled
-                      ? 'border-accent/30 bg-accent-muted text-accent'
-                      : 'border-border bg-surface-2 text-tertiary'
-                  }`}
-                >
-                  {enabled ? <Eye size={14} /> : <EyeOff size={14} />}
-                  {enabled ? 'Shown' : 'Hidden'}
-                </button>
-              </div>
-            );
-          })}
         </div>
       </section>
 

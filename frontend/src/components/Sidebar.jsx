@@ -19,8 +19,7 @@ import {
   Landmark,
   Building2,
   Grid3X3,
-  BarChart3,
-  CalendarDays,
+  ReceiptText,
 } from 'lucide-react';
 import { useMediaQuery, useIsDesktop } from '../hooks/useMediaQuery';
 
@@ -35,8 +34,7 @@ const NAV_ITEMS = [
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', icon: Calendar },
   { id: '_separator_analytics', section: 'ANALYTICS' },
   { id: 'holdings-analysis', label: 'Holdings Analysis', icon: Grid3X3 },
-  { id: 'spending-analytics', label: 'Spending', icon: BarChart3 },
-  { id: 'year-in-review', label: 'Year in Review', icon: CalendarDays },
+  { id: 'spending', label: 'Spending', icon: ReceiptText },
   { id: '_separator_planning', section: 'PLANNING' },
   { id: 'salary-history', label: 'Salary History', icon: Banknote },
   { id: 'monthly-expenses', label: 'Monthly Expenses', icon: CreditCard },
@@ -133,7 +131,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
             }
 
             const Icon = item.icon;
-            const isActive = currentPage === item.id || (item.id === 'spending-analytics' && currentPage === 'spending-explorer');
+            const isActive = currentPage === item.id;
 
             return (
               <button

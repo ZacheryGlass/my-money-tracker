@@ -292,36 +292,6 @@ export const plaid = {
 
 // Analytics API
 export const analytics = {
-  getNetWorthMonthly: async (params = {}) => {
-    const queryParams = new URLSearchParams();
-    if (params.year) queryParams.append('year', params.year);
-    if (params.startDate) queryParams.append('startDate', params.startDate);
-    if (params.endDate) queryParams.append('endDate', params.endDate);
-    const queryString = queryParams.toString();
-    const url = `/api/analytics/net-worth-monthly${queryString ? `?${queryString}` : ''}`;
-    const response = await api.get(url);
-    return response.data;
-  },
-  getSpendingByCategory: async (params = {}) => {
-    const queryParams = new URLSearchParams();
-    if (params.startDate) queryParams.append('startDate', params.startDate);
-    if (params.endDate) queryParams.append('endDate', params.endDate);
-    if (params.groupBy) queryParams.append('groupBy', params.groupBy);
-    const queryString = queryParams.toString();
-    const url = `/api/analytics/spending-by-category${queryString ? `?${queryString}` : ''}`;
-    const response = await api.get(url);
-    return response.data;
-  },
-  getIncomeVsSpending: async (params = {}) => {
-    const queryParams = new URLSearchParams();
-    if (params.startDate) queryParams.append('startDate', params.startDate);
-    if (params.endDate) queryParams.append('endDate', params.endDate);
-    if (params.accountId) queryParams.append('account_id', params.accountId);
-    const queryString = queryParams.toString();
-    const url = `/api/analytics/income-vs-spending${queryString ? `?${queryString}` : ''}`;
-    const response = await api.get(url);
-    return response.data;
-  },
   getBenchmarkHistory: async (params = {}) => {
     const queryParams = new URLSearchParams();
     if (params.symbol) queryParams.append('symbol', params.symbol);
@@ -329,15 +299,6 @@ export const analytics = {
     if (params.endDate) queryParams.append('endDate', params.endDate);
     const queryString = queryParams.toString();
     const url = `/api/analytics/benchmark-history${queryString ? `?${queryString}` : ''}`;
-    const response = await api.get(url);
-    return response.data;
-  },
-  getSpendingHeatmap: async (params = {}) => {
-    const queryParams = new URLSearchParams();
-    if (params.startDate) queryParams.append('startDate', params.startDate);
-    if (params.endDate) queryParams.append('endDate', params.endDate);
-    const queryString = queryParams.toString();
-    const url = `/api/analytics/spending-heatmap${queryString ? `?${queryString}` : ''}`;
     const response = await api.get(url);
     return response.data;
   },
