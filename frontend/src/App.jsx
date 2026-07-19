@@ -137,10 +137,6 @@ function App() {
           </ErrorBoundary>
         </main>
 
-        {/* Status Bar */}
-        <div className="hidden h-[22px] flex-shrink-0 items-center border-t border-border bg-surface px-3 text-body-sm text-tertiary lg:flex">
-          <span>My Money Tracker</span>
-        </div>
       </div>
     </div>
   );
