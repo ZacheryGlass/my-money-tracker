@@ -6,7 +6,6 @@ import { Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from '../components/HoldingForm';
-import FilterDisclosure from '../components/FilterDisclosure';
 import SummaryStats from '../components/SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
@@ -174,29 +173,21 @@ const CashPage = () => {
         ]} />
       </div>
 
-      <FilterDisclosure
-        summary={cashPageStats.selectedSummary
-          ? displayAccountName(cashPageStats.selectedSummary.account)
-          : `${cashAccountSummaries.length} cash accounts shown`}
-        activeCount={accountFilter ? 1 : 0}
-        onClear={() => setAccountFilter('')}
-      >
-        <div>
-          <p className="mb-2 text-caption font-semibold uppercase tracking-wide text-tertiary">Account</p>
-            <div className="flex flex-wrap gap-1">
-              <button onClick={() => setAccountFilter('')} className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${accountFilter === '' ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'}`}>
-                All Accounts {accountFilter === '' && <Check size={12} />}
-              </button>
-              {cashAccountSummaries.map(({ account, total, isZeroBalance }) => (
-                <button key={account.id} onClick={() => setAccountFilter(String(account.id))} className={`flex items-center gap-1.5 border px-2 py-1 text-caption transition-colors ${accountFilter === String(account.id) ? 'bg-accent-muted border-accent/30 text-accent' : 'bg-surface border-border text-tertiary hover:text-secondary'}`}>
-                  <span className="max-w-[180px] truncate">{displayAccountName(account)}</span>
-                  <span className={isZeroBalance ? 'text-tertiary' : 'text-gain'}>{formatCurrency(total)}</span>
-                  {accountFilter === String(account.id) && <Check size={12} />}
-                </button>
-              ))}
-            </div>
-          </div>
-      </FilterDisclosure>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2">
+          <span className="text-caption font-semibold uppercase tracking-wide text-tertiary">Account</span>
+          <select
+            value={accountFilter}
+            onChange={(e) => setAccountFilter(e.target.value)}
+            className="h-9 min-w-[200px] border border-border bg-surface px-2 text-body-sm text-primary"
+          >
+            <option value="">All accounts</option>
+            {cashAccountSummaries.map(({ account }) => (
+              <option key={account.id} value={String(account.id)}>{displayAccountName(account)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       {error && <div className="p-2 bg-loss-bg border border-loss/20 text-loss text-body-sm flex items-center gap-2 mb-3"><X size={14} />{error}</div>}
       {successMessage && <div className="p-2 bg-gain-bg border border-gain/20 text-gain text-body-sm flex items-center gap-2 mb-3"><Check size={14} />{successMessage}</div>}

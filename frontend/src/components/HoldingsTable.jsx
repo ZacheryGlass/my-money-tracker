@@ -11,7 +11,6 @@ import { Link2 } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency } from '../utils/format';
 import HoldingForm from './HoldingForm';
-import FilterDisclosure from './FilterDisclosure';
 import SummaryStats from './SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
@@ -85,11 +84,6 @@ const HoldingsTable = ({ pageFilter }) => {
 
   const handleCategoryFilterChange = (value) => { setCategoryFilter(value); setPagination((p) => ({ ...p, pageIndex: 0 })); };
   const handleAccountFilterChange = (value) => { setAccountFilter(value); setPagination((p) => ({ ...p, pageIndex: 0 })); };
-  const clearFilters = () => {
-    setCategoryFilter('');
-    setAccountFilter('');
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  };
 
   const accountsMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
   const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
@@ -252,75 +246,38 @@ const HoldingsTable = ({ pageFilter }) => {
         <div className="mb-3 bg-loss-bg text-loss border border-loss/20 p-2 text-body-sm">{error}</div>
       )}
 
-      <FilterDisclosure
-          summary={summary.activeFilters ? `${summary.activeFilters} filter${summary.activeFilters === 1 ? '' : 's'} applied` : 'All holdings shown'}
-          activeCount={summary.activeFilters}
-          onClear={clearFilters}
-        >
-          <div className="space-y-3">
-
-          {distinctCategories.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="text-caption font-semibold text-tertiary uppercase">Category</span>
-                <span className="text-caption text-tertiary">{distinctCategories.length} categories</span>
-              </div>
-              <div className="flex flex-wrap gap-1">
-            <button
-              onClick={() => handleCategoryFilterChange('')}
-              className={`px-2 py-1 rounded text-caption transition-colors ${
-                categoryFilter === '' ? 'bg-accent text-white' : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-              }`}
-            >All</button>
-            {distinctCategories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => handleCategoryFilterChange(categoryFilter === cat ? '' : cat)}
-                className={`px-2 py-1 rounded text-caption transition-colors ${
-                  categoryFilter === cat ? 'bg-accent text-white' : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-                }`}
-                title={cat}
-              >
-                <span className="inline-block max-w-[180px] truncate align-bottom">{cat}</span>
-              </button>
-            ))}
-              </div>
-            </div>
-          )}
-
-          {accountsWithHoldings.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="text-caption font-semibold text-tertiary uppercase">Account</span>
-                <span className="text-caption text-tertiary">{accountsWithHoldings.length} accounts</span>
-              </div>
-              <div className="flex flex-wrap gap-1">
-                <button
-                  onClick={() => handleAccountFilterChange('')}
-                  className={`px-2 py-1 rounded text-caption transition-colors ${
-                    accountFilter === '' ? 'bg-accent text-white' : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-                  }`}
-                >All</button>
-                {accountsWithHoldings.map((account) => {
-                  const accountName = displayAccountName(account);
-                  return (
-                    <button
-                      key={account.id}
-                      onClick={() => handleAccountFilterChange(accountFilter === String(account.id) ? '' : String(account.id))}
-                      className={`px-2 py-1 rounded text-caption transition-colors ${
-                        accountFilter === String(account.id) ? 'bg-accent text-white' : 'bg-surface-3 text-secondary border border-border hover:text-primary'
-                      }`}
-                      title={accountName}
-                    >
-                      <span className="inline-block max-w-[190px] truncate align-bottom">{accountName}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          </div>
-      </FilterDisclosure>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        {distinctCategories.length > 0 && (
+          <label className="flex items-center gap-2">
+            <span className="text-caption font-semibold uppercase tracking-wide text-tertiary">Category</span>
+            <select
+              value={categoryFilter}
+              onChange={(e) => handleCategoryFilterChange(e.target.value)}
+              className="h-9 min-w-[180px] border border-border bg-surface px-2 text-body-sm text-primary"
+            >
+              <option value="">All categories</option>
+              {distinctCategories.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {accountsWithHoldings.length > 0 && (
+          <label className="flex items-center gap-2">
+            <span className="text-caption font-semibold uppercase tracking-wide text-tertiary">Account</span>
+            <select
+              value={accountFilter}
+              onChange={(e) => handleAccountFilterChange(e.target.value)}
+              className="h-9 min-w-[180px] border border-border bg-surface px-2 text-body-sm text-primary"
+            >
+              <option value="">All accounts</option>
+              {accountsWithHoldings.map((account) => (
+                <option key={account.id} value={String(account.id)}>{displayAccountName(account)}</option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
       <div className="card overflow-hidden">
         <div className="hidden max-w-full overflow-hidden lg:block">
           <table className="w-full table-fixed divide-y divide-border">
