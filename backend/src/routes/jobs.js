@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const requireUser = require('../middleware/auth');
-const { getJobStatus, PriceUpdateJob, SnapshotJob } = require('../jobs');
+const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob } = require('../jobs');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
@@ -87,6 +87,27 @@ router.post('/trigger/price-update', async (req, res, next) => {
     const result = await PriceUpdateJob.run();
     res.json({
       message: 'Price update job completed',
+      result
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/jobs/trigger/benchmark-update - Manually trigger benchmark price update
+router.post('/trigger/benchmark-update', async (req, res, next) => {
+  try {
+    const isRunning = await JobLog.isRunning(BenchmarkUpdateJob.JOB_NAME);
+    if (isRunning) {
+      return res.status(409).json({
+        error: 'Job already running',
+        message: 'A benchmark update job is currently in progress'
+      });
+    }
+
+    const result = await BenchmarkUpdateJob.run();
+    res.json({
+      message: 'Benchmark update job completed',
       result
     });
   } catch (error) {

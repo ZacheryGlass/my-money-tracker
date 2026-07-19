@@ -149,12 +149,30 @@ router.get('/spending-by-category', async (req, res) => {
   }
 });
 
+// Categories that move money between the user's own accounts (transfers,
+// credit card payments, investment buys/sells) rather than true income or
+// spending. Counting them double-counts card purchases and inflates both sides.
+const NON_CASH_FLOW_CATEGORIES = [
+  'TRANSFER_IN',
+  'TRANSFER_OUT',
+  'LOAN_PAYMENTS',
+  'BUY',
+  'SELL',
+  'CONTRIBUTION',
+  'WITHDRAWAL',
+  'DIVIDEND',
+];
+
 // GET /api/analytics/income-vs-spending
 router.get('/income-vs-spending', async (req, res) => {
   try {
     const { startDate, endDate, account_id: accountId } = req.query;
 
-    const conditions = ['t.pending = false', 'a.is_hidden = FALSE'];
+    const conditions = [
+      't.pending = false',
+      'a.is_hidden = FALSE',
+      `UPPER(COALESCE(t.category, '')) NOT IN (${NON_CASH_FLOW_CATEGORIES.map((c) => `'${c}'`).join(', ')})`,
+    ];
     const params = [];
     let paramIndex = 1;
 
@@ -246,6 +264,64 @@ router.get('/investment-performance', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get investment performance error');
     res.status(500).json({ error: 'Server error retrieving investment performance' });
+  }
+});
+
+// GET /api/analytics/benchmark-history
+const BENCHMARK_SYMBOLS = ['SPY', 'QQQ'];
+
+router.get('/benchmark-history', async (req, res) => {
+  try {
+    const { symbol, startDate, endDate } = req.query;
+
+    if (!symbol) {
+      return res.status(400).json({ error: 'symbol parameter is required.' });
+    }
+    const normalizedSymbol = symbol.toUpperCase();
+    if (!BENCHMARK_SYMBOLS.includes(normalizedSymbol)) {
+      return res.status(400).json({ error: `Invalid symbol. Must be one of: ${BENCHMARK_SYMBOLS.join(', ')}.` });
+    }
+
+    const conditions = ['UPPER(symbol) = $1'];
+    const params = [normalizedSymbol];
+    let paramIndex = 2;
+
+    if (startDate) {
+      if (!isValidDate(startDate)) {
+        return res.status(400).json({ error: 'Invalid startDate format. Must be YYYY-MM-DD.' });
+      }
+      conditions.push(`price_date >= $${paramIndex}`);
+      params.push(startDate);
+      paramIndex++;
+    }
+
+    if (endDate) {
+      if (!isValidDate(endDate)) {
+        return res.status(400).json({ error: 'Invalid endDate format. Must be YYYY-MM-DD.' });
+      }
+      conditions.push(`price_date <= $${paramIndex}`);
+      params.push(endDate);
+      paramIndex++;
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+    const result = await pool.query(`
+      SELECT TO_CHAR(price_date, 'YYYY-MM-DD') as date, adjusted_close
+      FROM benchmark_prices
+      ${whereClause}
+      ORDER BY price_date ASC
+    `, params);
+
+    const data = result.rows.map((row) => ({
+      date: row.date,
+      close: Number(row.adjusted_close),
+    }));
+
+    res.json({ data });
+  } catch (error) {
+    logger.error({ err: error }, 'Get benchmark history error');
+    res.status(500).json({ error: 'Server error retrieving benchmark history' });
   }
 });
 
