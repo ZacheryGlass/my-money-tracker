@@ -4,13 +4,13 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   getPaginationRowModel,
-  flexRender,
 } from '@tanstack/react-table';
 import { AnimatePresence, motion as Motion } from 'framer-motion';
 import { ArrowLeft, Link2, Wallet, Receipt, X, Activity, PenLine } from 'lucide-react';
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
+import DataTable, { DataTablePagination } from '../components/DataTable';
 import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 import SummaryStats from '../components/SummaryStats';
@@ -441,118 +441,6 @@ const AccountsPage = () => {
     return <LoadingState label="Loading Accounts" />;
   }
 
-  const renderPagination = (table, data) => {
-    if (data.length <= table.getState().pagination.pageSize) return null;
-    return (
-      <div className="flex items-center justify-between mt-6 px-4">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-bold uppercase tracking-wide text-tertiary">Show</span>
-          <select
-            value={table.getState().pagination.pageSize}
-            onChange={(e) => table.setPageSize(Number(e.target.value))}
-            className="bg-surface-3 border-border rounded px-3 py-1.5 text-sm font-bold focus:ring-1 focus:ring-accent"
-          >
-            {[10, 25, 50, 100].map((size) => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-center gap-6">
-          <span className="text-xs font-bold uppercase tracking-wide text-tertiary">
-            Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-              className="px-4 py-2 bg-surface-3 text-secondary border border-border rounded text-sm font-bold hover:bg-surface-2 hover:text-primary hover:border-accent disabled:opacity-30 transition-all"
-            >
-              Prev
-            </button>
-            <button
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-              className="px-4 py-2 bg-surface-3 text-secondary border border-border rounded text-sm font-bold hover:bg-surface-2 hover:text-primary hover:border-accent disabled:opacity-30 transition-all"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderTable = (table, columns, emptyMessage, onRowClick, options = {}) => (
-    <div className="card w-full min-w-0 overflow-hidden">
-      <div className="hidden max-w-full overflow-hidden lg:block">
-        <table className={`${options.tableClassName || 'w-full table-fixed'} divide-y divide-border`}>
-          <colgroup>
-            {columns.map((column, index) => (
-              <col
-                key={column.id || column.accessorKey || index}
-                style={column.meta?.width ? { width: column.meta.width } : undefined}
-              />
-            ))}
-          </colgroup>
-          <thead className="bg-surface-2">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  const meta = header.column.columnDef.meta || {};
-                  return (
-                    <th
-                      key={header.id}
-                      className={`px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-tertiary transition-colors hover:bg-surface-3 ${
-                        header.column.getCanSort() ? 'cursor-pointer' : ''
-                      } ${meta.headerClassName || ''}`}
-                      onClick={header.column.getToggleSortingHandler()}
-                    >
-                      <div className={`flex items-center gap-2 ${meta.align === 'right' ? 'justify-end' : ''}`}>
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {header.column.getIsSorted() && (
-                          <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
-                        )}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody className="divide-y divide-border bg-surface">
-            {table.getRowModel().rows.length === 0 ? (
-              <tr>
-                <td colSpan={columns.length} className="px-4 py-12 text-center text-base font-medium text-tertiary">
-                  {emptyMessage}
-                </td>
-              </tr>
-            ) : (
-              table.getRowModel().rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className={`hover:bg-surface-2 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
-                  onClick={() => onRowClick?.(row.original)}
-                >
-                  {row.getVisibleCells().map((cell) => {
-                    const meta = cell.column.columnDef.meta || {};
-                    return (
-                      <td
-                        key={cell.id}
-                        className={`px-4 py-3 align-middle text-base text-primary ${meta.cellClassName || 'whitespace-nowrap'}`}
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-
   const renderListView = () => (
     <Motion.div key="list" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
@@ -602,13 +490,12 @@ const AccountsPage = () => {
         )}
       />
 
-      {renderTable(
-        listTable,
-        listColumns,
-        'No accounts match the selected filters.',
-        (account) => setSelectedAccountId(account.id),
-        { tableClassName: 'w-full table-fixed' }
-      )}
+      <DataTable
+        table={listTable}
+        columns={listColumns}
+        emptyMessage="No accounts match the selected filters."
+        onRowClick={(account) => setSelectedAccountId(account.id)}
+      />
 
       {/* Mobile cards */}
       <div className="space-y-3 lg:hidden">
@@ -649,7 +536,9 @@ const AccountsPage = () => {
         )}
       </div>
 
-      {renderPagination(listTable, filteredAccounts)}
+      <div className="hidden lg:block">
+        <DataTablePagination table={listTable} total={filteredAccounts.length} />
+      </div>
     </Motion.div>
   );
 
@@ -728,10 +617,10 @@ const AccountsPage = () => {
                   <Wallet className="text-accent w-4 h-4" />
                   <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Underlying Assets ({accountHoldings.length})</h2>
                 </div>
-                {renderTable(detailTable, detailColumns, 'No holdings found.')}
+                <DataTable table={detailTable} columns={detailColumns} emptyMessage="No holdings found." />
                 
                 {/* Mobile Asset Cards */}
-                <div className="md:hidden space-y-3">
+                <div className="lg:hidden space-y-3">
                   {accountHoldings.map((holding) => {
                     const value = parseFloat(holding.current_value) || parseFloat(holding.manual_value) || 0;
                     return (
@@ -753,7 +642,9 @@ const AccountsPage = () => {
                     );
                   })}
                 </div>
-                {renderPagination(detailTable, accountHoldings)}
+                <div className="hidden lg:block">
+                  <DataTablePagination table={detailTable} total={accountHoldings.length} />
+                </div>
               </section>
             )}
           </div>
@@ -783,12 +674,13 @@ const AccountsPage = () => {
                   </div>
                 ) : (
                   <>
-                    <div className="hidden md:block">
-                      {renderTable(txnTable, txnColumns, 'No transactions found.')}
+                    <div className="hidden lg:block">
+                      <DataTable table={txnTable} columns={txnColumns} emptyMessage="No transactions found." />
+                      <DataTablePagination table={txnTable} total={accountTransactions.length} />
                     </div>
 
                     {/* Mobile Only Cards */}
-                    <div className="md:hidden space-y-2">
+                    <div className="lg:hidden space-y-2">
                        {accountTransactions.map((txn) => {
                         const amount = parseFloat(txn.amount);
                         return (

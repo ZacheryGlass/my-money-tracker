@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  useReactTable, getCoreRowModel, getSortedRowModel, getPaginationRowModel, flexRender,
+  useReactTable, getCoreRowModel, getSortedRowModel, getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency, formatDateAxis } from '../utils/format';
+import DataTable, { DataTablePagination } from '../components/DataTable';
 import FilterTabs from '../components/FilterTabs';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
@@ -315,88 +316,35 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
         )}
       </div>
 
-      <div className="card overflow-hidden">
-        <div className="hidden max-w-full overflow-hidden lg:block">
-          <table className="w-full table-fixed divide-y divide-border">
-            <thead className="bg-surface-2">
-              {table.getHeaderGroups().map((hg) => (
-                <tr key={hg.id}>
-                  {hg.headers.map((header) => (
-                    <th key={header.id} className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide cursor-pointer hover:bg-surface-3" onClick={header.column.getToggleSortingHandler()}>
-                      <div className="flex items-center gap-1">
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {header.column.getIsSorted() && <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              ))}
-            </thead>
-            <tbody className="divide-y divide-border">
-              {table.getRowModel().rows.length === 0 ? (
-                <tr><td colSpan={columns.length} className="px-3 py-8 text-center text-tertiary text-body-sm">No {activeLabel.toLowerCase()} found.</td></tr>
-              ) : (
-                table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className={`hover:bg-surface-2 transition-colors ${row.original.is_plaid_managed ? '' : 'cursor-pointer'}`} onClick={() => handleEdit(row.original)}>
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-3 py-2 text-body-sm text-secondary">{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                    ))}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="divide-y divide-border lg:hidden">
-          {table.getRowModel().rows.length === 0 ? (
-            <div className="px-3 py-8 text-center text-tertiary text-body-sm">No {activeLabel.toLowerCase()} found.</div>
-          ) : (
-            table.getRowModel().rows.map((row) => {
-              const account = accountsMap.get(row.original.account_id);
-              const value = isLiabilities ? Math.abs(getHoldingValue(row.original)) : getHoldingValue(row.original);
-              return (
-                <div key={row.id} className={`p-3 ${row.original.is_plaid_managed ? '' : 'cursor-pointer hover:bg-surface-2'}`} onClick={() => handleEdit(row.original)}>
-                  <div className="flex items-start justify-between">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-body-sm font-semibold text-primary">{row.original.name}</p>
-                      <p className="truncate text-caption text-tertiary">
-                        {displayAccountName(account)}
-                        {tab === 'assets'
-                          ? ` / ${formatCategoryLabel(row.original.category)}${row.original.ticker ? ` / ${row.original.ticker}` : ''}`
-                          : ` / ${formatLastUpdated(row.original.updated_at)}`}
-                      </p>
-                    </div>
-                    <p className={`value-emphasis shrink-0 pl-3 ${valueClass}`}>{formatCurrency(value)}</p>
-                  </div>
+      <DataTable
+        table={table}
+        columns={columns}
+        emptyMessage={`No ${activeLabel.toLowerCase()} found.`}
+        onRowClick={handleEdit}
+        rowClassName={(holding) => (holding.is_plaid_managed ? '' : 'cursor-pointer')}
+        renderMobileRow={(row) => {
+          const account = accountsMap.get(row.original.account_id);
+          const value = isLiabilities ? Math.abs(getHoldingValue(row.original)) : getHoldingValue(row.original);
+          return (
+            <div key={row.id} className={`p-3 ${row.original.is_plaid_managed ? '' : 'cursor-pointer hover:bg-surface-2'}`} onClick={() => handleEdit(row.original)}>
+              <div className="flex items-start justify-between">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-body-sm font-semibold text-primary">{row.original.name}</p>
+                  <p className="truncate text-caption text-tertiary">
+                    {displayAccountName(account)}
+                    {tab === 'assets'
+                      ? ` / ${formatCategoryLabel(row.original.category)}${row.original.ticker ? ` / ${row.original.ticker}` : ''}`
+                      : ` / ${formatLastUpdated(row.original.updated_at)}`}
+                  </p>
                 </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+                <p className={`value-emphasis shrink-0 pl-3 ${valueClass}`}>{formatCurrency(value)}</p>
+              </div>
+            </div>
+          );
+        }}
+      />
 
-      {filteredData.length > 0 && (
-        <div className="flex items-center justify-between mt-3">
-          <div className="flex items-center gap-2">
-            <span className="text-caption text-tertiary">Rows:</span>
-            <select
-              value={pagination.pageSize}
-              onChange={(e) => setPagination((p) => ({ ...p, pageIndex: 0, pageSize: Number(e.target.value) }))}
-              className="px-2 py-1 text-caption"
-            >
-              {[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-caption text-tertiary">
-              Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
-            </span>
-            <button onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()} className="px-2 py-1 bg-surface-3 text-secondary border border-border rounded text-caption disabled:opacity-30">Prev</button>
-            <button onClick={() => table.nextPage()} disabled={!table.getCanNextPage()} className="px-2 py-1 bg-surface-3 text-secondary border border-border rounded text-caption disabled:opacity-30">Next</button>
-          </div>
-        </div>
-      )}
+      <DataTablePagination table={table} total={filteredData.length} />
 
       <HoldingForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSave} onDelete={handleDelete} holding={editingHolding} accounts={accounts} />
     </div>

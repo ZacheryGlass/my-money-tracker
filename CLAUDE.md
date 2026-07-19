@@ -75,7 +75,7 @@ cd frontend && npm run lint     # eslint
 
 - **API interceptor** (`frontend/src/utils/api.js`): same-origin requests (Easy Auth session cookie), retries on 5xx (once, 500ms), reloads page on 401 so Easy Auth re-authenticates
 - **Shared formatters** (`frontend/src/utils/format.js`): `formatCurrency`, `formatPercent`, `formatDateDisplay`, `formatDateAxis`, `formatCompactCurrency`, `formatRelativeTime` — all components import from here, no local duplicates. Category labels in `utils/dataLabels.js`.
-- **Shared UI**: `FilterTabs` (single-choice control — tab strip on desktop, dropdown on mobile; used by Balances, Settings, Accounts, Spending), `LoadingState` (all loading spinners), `useTransientMessage` (auto-clearing success messages)
+- **Shared UI**: `FilterTabs` (single-choice control — tab strip on desktop, dropdown on mobile; used by Balances, Settings, Accounts, Spending), `DataTable`/`DataTablePagination` (TanStack table shell — used by Balances, Accounts), `LoadingState` (all loading spinners), `useTransientMessage` (auto-clearing success messages)
 - **Chart theme** (`frontend/src/utils/chartTheme.js`): `CHART_COLORS`, `GRID_STYLE`, `AXIS_STYLE`, `TOOLTIP_STYLE`, `areaGradient` — all charts use these
 - **Design tokens**: CSS variables in `index.css` (canvas/surface hierarchy, ink/body/muted text, primary action blue, gain/loss semantics, hairline borders) consumed by Tailwind config. Component classes: `.card`, `.font-money`. Square panels with 1px borders, 4px radius on buttons/inputs only.
 - **Scheduled jobs**: Plaid sync 7:30, price updates 8:00, benchmark prices (SPY/QQQ) 8:30, snapshots 9:00 (all UTC). Controlled by `RUN_SCHEDULED_JOBS` env var
