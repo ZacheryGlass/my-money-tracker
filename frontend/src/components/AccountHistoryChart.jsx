@@ -69,6 +69,7 @@ const AccountHistoryChart = ({
   showPortfolio,
   loading,
   error,
+  singleColumn = false,
 }) => {
   const isMobile = useIsMobile();
   const [hiddenSeries, setHiddenSeries] = useState([]);
@@ -218,7 +219,7 @@ const AccountHistoryChart = ({
   };
 
   return (
-    <section className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <section className={`grid min-w-0 gap-4 ${singleColumn ? '' : 'xl:grid-cols-[minmax(0,1fr)_360px]'}`}>
       <div className="card min-w-0 overflow-hidden p-3 sm:p-4 md:p-5">
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>

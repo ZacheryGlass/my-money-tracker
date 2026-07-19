@@ -757,8 +757,8 @@ const AccountsPage = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-5 gap-8">
-          <div className="xl:col-span-3 space-y-10">
+        <div className="space-y-10">
+          <div className="space-y-10">
             {/* Chart Section */}
             <section>
               <div className="flex items-center gap-2 mb-4">
@@ -773,6 +773,7 @@ const AccountsPage = () => {
                 showPortfolio={false}
                 loading={historyLoading}
                 error={historyError}
+                singleColumn
               />
             </section>
 
@@ -813,7 +814,7 @@ const AccountsPage = () => {
             )}
           </div>
 
-          <div className="xl:col-span-2 space-y-10">
+          <div className="space-y-10">
             {/* Transactions Section */}
             <section>
               <div className="flex items-center justify-between mb-4">
@@ -844,28 +845,7 @@ const AccountsPage = () => {
                     <div className="hidden md:block">
                       {renderTable(txnTable, txnColumns, 'No transactions found.')}
                     </div>
-                    
-                    {/* Compact Transaction Cards for Sidebar/Mobile */}
-                    <div className="md:grid grid-cols-1 gap-2 hidden xl:block">
-                      {accountTransactions.slice(0, 10).map((txn) => {
-                        const amount = parseFloat(txn.amount);
-                        return (
-                          <div key={txn.id} className="p-3 bg-surface-2 border border-border rounded flex items-center justify-between gap-4 hover:bg-surface-3 transition-colors">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-bold text-primary truncate leading-tight">{txn.merchant_name || txn.name}</p>
-                              <p className="text-[9px] text-tertiary uppercase font-medium mt-0.5">{formatDateDisplay(txn.date)} • {formatCategoryLabel(txn.category).replace(/_/g, ' ')}</p>
-                            </div>
-                            <div className={`text-xs font-mono font-bold whitespace-nowrap ${amount > 0 ? 'text-loss' : 'text-gain'}`}>
-                              {amount > 0 ? '—' : '+'}{formatCurrency(Math.abs(amount))}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {accountTransactions.length > 10 && (
-                        <p className="text-center text-[9px] font-bold text-tertiary uppercase tracking-wide pt-2">Showing latest 10 of {accountTransactions.length}</p>
-                      )}
-                    </div>
-                    
+
                     {/* Mobile Only Cards */}
                     <div className="md:hidden space-y-2">
                        {accountTransactions.map((txn) => {
