@@ -3,6 +3,10 @@
 
 @layer base {
   :root {
+    /* Typography controls (driven by appearance preferences) */
+    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-scale: 1;
+
     /* Surface hierarchy - Workbench chrome */
     --bg-base: #121314;
     --bg-surface: #191A1B;
@@ -56,9 +60,71 @@
     --muted-soft: #555555;
   }
 
+  /* Explicit dark mirror (default values) */
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+  }
+
+  /* Light theme - flips the semantic tokens the whole UI is built on */
+  :root[data-theme='light'] {
+    color-scheme: light;
+
+    /* Surface hierarchy - raised elements get darker on a light canvas */
+    --bg-base: #F3F4F6;
+    --bg-surface: #FFFFFF;
+    --bg-surface-2: #F1F2F4;
+    --bg-surface-3: #E7E9EC;
+    --bg-overlay: rgba(17, 24, 39, 0.45);
+
+    /* Text hierarchy */
+    --text-primary: #17181A;
+    --text-secondary: #33363B;
+    --text-tertiary: #5A5E66;
+    --text-inverse: #ffffff;
+
+    /* Primary action: deepened blue for AA contrast on white */
+    --accent: #1F6E92;
+    --accent-hover: #1B627F;
+    --accent-muted: rgba(41, 122, 160, 0.12);
+    --accent-subtle: rgba(41, 122, 160, 0.06);
+    --accent-focus: #1F6E92;
+
+    /* Semantic: gain/loss tuned for light backgrounds */
+    --gain: #1E874B;
+    --gain-bg: rgba(30, 135, 75, 0.12);
+    --loss: #C4361B;
+    --loss-bg: rgba(196, 54, 27, 0.10);
+
+    /* Chart palette - deepened for contrast on white */
+    --chart-1: #1F6E92;
+    --chart-2: #2E9E5B;
+    --chart-3: #B9822F;
+    --chart-4: #2F7DD1;
+    --chart-5: #D6492B;
+    --chart-6: #2E9E5B;
+    --chart-7: #7A54C7;
+    --chart-8: #1F9C86;
+
+    /* Borders */
+    --border: #E2E4E7;
+    --border-hover: #CBD0D6;
+    --border-focus: #1F6E92;
+
+    /* Inputs */
+    --input-bg: #FFFFFF;
+    --input-border: #CBD0D6;
+
+    /* Scrollbar */
+    --scrollbar-track: #EDEFF1;
+    --scrollbar-thumb: #C4C9CF;
+
+    /* Muted soft */
+    --muted-soft: #9AA0A6;
+  }
+
   html {
-    font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    font-size: 14px;
+    font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
+    font-size: calc(14px * var(--font-scale, 1));
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -101,7 +167,7 @@
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #444;
+    background: var(--muted-soft);
   }
 
   input, select, textarea {
@@ -111,7 +177,7 @@
     border-radius: 4px;
     border-width: 1px;
     transition: border-color 0.15s ease;
-    font-size: 15px;
+    font-size: calc(15px * var(--font-scale, 1));
   }
 
   input:focus, select:focus, textarea:focus {
@@ -157,27 +223,27 @@
 
 @layer utilities {
   .text-xs {
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale, 1));
     line-height: 1.45;
   }
 
   .text-sm {
-    font-size: 15px;
+    font-size: calc(15px * var(--font-scale, 1));
     line-height: 1.45;
   }
 
   .text-\[9px\] {
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale, 1));
     line-height: 1.35;
   }
 
   .text-\[10px\] {
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale, 1));
     line-height: 1.4;
   }
 
   .text-\[11px\] {
-    font-size: 13px;
+    font-size: calc(13px * var(--font-scale, 1));
     line-height: 1.4;
   }
 
@@ -234,7 +300,7 @@
   @media (max-width: 767px) {
     input, select, textarea {
       min-height: 44px;
-      font-size: 16px;
+      font-size: calc(16px * var(--font-scale, 1));
     }
 
     main,

@@ -7,6 +7,8 @@ import { plaid as plaidAPI, accounts as accountsAPI, holdings as holdingsAPI, ex
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useChartPreferences from '../hooks/useChartPreferences';
 import { YEAR_REVIEW_CHARTS } from '../utils/chartPreferences';
+import useAppearancePreferences from '../hooks/useAppearancePreferences';
+import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
 import HoldingForm from '../components/HoldingForm';
 
 const MANUAL_ENTRY_TYPES = {
@@ -192,9 +194,43 @@ const buildInstitutionSummary = (items, consentItems) => {
   };
 };
 
+function AppearanceOptions({ options, value, onChange, ariaLabel, previewFont = false }) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className="flex shrink-0 flex-wrap gap-px overflow-hidden rounded border border-border bg-border"
+    >
+      {options.map((option) => {
+        const active = value === option.id;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option.id)}
+            style={previewFont ? { fontFamily: option.stack } : undefined}
+            className={`px-4 py-2 text-caption font-semibold transition-colors ${
+              active ? 'bg-accent text-white' : 'bg-surface-2 text-tertiary hover:text-primary'
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 const Settings = () => {
   const navigate = useNavigate();
   const { preferences: chartPreferences, setChartEnabled } = useChartPreferences();
+  const {
+    preferences: appearance,
+    setTheme,
+    setFontScale,
+    setFontFamily,
+  } = useAppearancePreferences();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -475,7 +511,10 @@ const Settings = () => {
         </div>
       )}
 
-      <nav className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-2 xl:grid-cols-5" aria-label="Settings sections">
+      <nav className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6" aria-label="Settings sections">
+        <a href="#appearance" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
+          Appearance
+        </a>
         <a href="#chart-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Display Charts
         </a>
@@ -488,10 +527,59 @@ const Settings = () => {
         <a href="#institutions" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Institutions
         </a>
-        <a href="#account-display" className="col-span-2 border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary md:col-span-1">
+        <a href="#account-display" className="border border-border bg-surface px-4 py-3 text-xs font-bold uppercase tracking-wide text-secondary transition-colors hover:border-accent/40 hover:text-primary">
           Display Names
         </a>
       </nav>
+
+      <section id="appearance" className="mb-8 scroll-mt-4">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Appearance</h2>
+          <p className="mt-1 text-xs text-secondary">Theme, text size, and interface font apply across the entire app.</p>
+        </div>
+
+        <div className="card divide-y divide-border overflow-hidden">
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-body-sm font-semibold text-primary">Theme</h3>
+              <p className="text-caption text-tertiary">Pick a color scheme or follow your system setting.</p>
+            </div>
+            <AppearanceOptions
+              options={APPEARANCE_THEMES}
+              value={appearance.theme}
+              onChange={setTheme}
+              ariaLabel="Theme"
+            />
+          </div>
+
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-body-sm font-semibold text-primary">Text Size</h3>
+              <p className="text-caption text-tertiary">Scale the interface text. Default keeps the dense layout.</p>
+            </div>
+            <AppearanceOptions
+              options={APPEARANCE_FONT_SIZES}
+              value={appearance.fontScale}
+              onChange={setFontScale}
+              ariaLabel="Text size"
+            />
+          </div>
+
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-body-sm font-semibold text-primary">Interface Font</h3>
+              <p className="text-caption text-tertiary">Financial figures always stay in the monospace font.</p>
+            </div>
+            <AppearanceOptions
+              options={APPEARANCE_FONT_FAMILIES}
+              value={appearance.fontFamily}
+              onChange={setFontFamily}
+              ariaLabel="Interface font"
+              previewFont
+            />
+          </div>
+        </div>
+      </section>
 
       <section id="chart-display" className="mb-8 scroll-mt-4">
         <div className="mb-3 px-2">
@@ -804,7 +892,7 @@ const Settings = () => {
                       {account.is_hidden ? 'Hidden' : 'Visible'}
                     </span>
                     <span className={`h-5 w-9 rounded-full p-0.5 transition-colors ${account.is_hidden ? 'bg-loss/70' : 'bg-surface-3'}`}>
-                      <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${account.is_hidden ? 'translate-x-4' : ''}`} />
+                      <span className={`block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${account.is_hidden ? 'translate-x-4' : ''}`} />
                     </span>
                   </button>
 
