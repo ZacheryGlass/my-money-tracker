@@ -789,7 +789,11 @@ class FinancialQueryService {
       meta: toolMeta({ startDate, endDate, scopeType }),
       summary: {
         ...baseSummary,
-        externalNetFlows: round(externalFlows.reduce((sum, flow) => sum + toNumber(flow.amount), 0)),
+        // null (not 0) when no flows are recorded: an untracked value must not
+        // present as a measured zero.
+        externalNetFlows: externalFlows.length
+          ? round(externalFlows.reduce((sum, flow) => sum + toNumber(flow.amount), 0))
+          : null,
         simpleReturnPercent: baseSummary.changePercent,
         timeWeightedReturnPercent: twr,
         moneyWeightedReturnPercent: xirr(datedCashFlows),
