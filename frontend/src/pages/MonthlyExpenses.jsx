@@ -198,7 +198,7 @@ const MonthlyExpenses = () => {
   return (
     <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px]">
       {/* Hero Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-6 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-6 gap-4">
         <div>
           <div className="flex items-center gap-2 mb-2">
             <TrendingDown className="text-loss w-5 h-5" />
@@ -218,7 +218,7 @@ const MonthlyExpenses = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
         <div className="border border-border bg-surface p-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Fixed Monthly</p>
           <p className="font-mono text-lg font-bold text-primary">{formatCurrency(stats.fixedTotal)}</p>
