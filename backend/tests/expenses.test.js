@@ -115,20 +115,59 @@ test('POST /api/expenses rejects missing fields', async () => {
   assert.equal(response.status, 400);
 });
 
-test('PUT /api/expenses/:id updates editable fields only', async () => {
+test('PATCH /api/expenses/:id/tag saves a trimmed tag', async () => {
   queryHandler = async (sql, params) => {
-    assert.match(sql, /UPDATE recurring_expenses/);
-    assert.doesNotMatch(sql, /merchant_key|is_auto_tracked/);
-    assert.equal(params[params.length - 1], 1);
-    return { rows: [expenseRow({ name: 'Rent (Evernest)' })] };
+    assert.match(sql, /UPDATE recurring_expenses SET tag/);
+    assert.deepEqual(params, ['Sewer & Trash', 17]);
+    return { rows: [expenseRow({ id: 17, name: 'S & T', tag: 'Sewer & Trash' })] };
   };
 
   const response = await request(app)
-    .put('/api/expenses/1')
-    .send({ type: 'bill', name: 'Rent (Evernest)', cost: 2160.99, is_fixed_rate: true });
+    .patch('/api/expenses/17/tag')
+    .send({ tag: '  Sewer & Trash  ' });
 
   assert.equal(response.status, 200);
-  assert.equal(response.body.expense.name, 'Rent (Evernest)');
+  assert.equal(response.body.expense.tag, 'Sewer & Trash');
+});
+
+test('PATCH /api/expenses/:id/tag clears the tag with null or blank', async () => {
+  queryHandler = async (sql, params) => {
+    assert.deepEqual(params, [null, 17]);
+    return { rows: [expenseRow({ id: 17, name: 'S & T', tag: null })] };
+  };
+
+  const response = await request(app)
+    .patch('/api/expenses/17/tag')
+    .send({ tag: '   ' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.expense.tag, null);
+});
+
+test('PATCH /api/expenses/:id/tag rejects non-string tags', async () => {
+  const response = await request(app)
+    .patch('/api/expenses/17/tag')
+    .send({ tag: 42 });
+
+  assert.equal(response.status, 400);
+});
+
+test('PATCH /api/expenses/:id/tag returns 404 for missing expenses', async () => {
+  queryHandler = async () => ({ rows: [] });
+
+  const response = await request(app)
+    .patch('/api/expenses/999/tag')
+    .send({ tag: 'Anything' });
+
+  assert.equal(response.status, 404);
+});
+
+test('PUT /api/expenses/:id no longer exists', async () => {
+  const response = await request(app)
+    .put('/api/expenses/1')
+    .send({ name: 'Rent' });
+
+  assert.equal(response.status, 404);
 });
 
 test('GET /api/analytics/detected-subscriptions uses classifications', async () => {

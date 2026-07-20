@@ -33,13 +33,10 @@ class RecurringExpense {
     return result.rows[0];
   }
 
-  static async update(id, data) {
-    const { type, name, cost, is_fixed_rate, pay_account, company } = data;
+  static async setTag(id, tag) {
     const result = await pool.query(
-      `UPDATE recurring_expenses SET type = $1, name = $2, cost = $3, is_fixed_rate = $4,
-       pay_account = $5, company = $6, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7 RETURNING *`,
-      [type, name, cost, is_fixed_rate, pay_account, company, id]
+      'UPDATE recurring_expenses SET tag = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
+      [tag, id]
     );
     return result.rows[0];
   }

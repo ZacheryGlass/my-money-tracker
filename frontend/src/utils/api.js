@@ -252,8 +252,8 @@ export const expenses = {
     const response = await api.post('/api/expenses', data);
     return response.data;
   },
-  update: async (id, data) => {
-    const response = await api.put(`/api/expenses/${id}`, data);
+  setTag: async (id, tag) => {
+    const response = await api.patch(`/api/expenses/${id}/tag`, { tag });
     return response.data;
   },
   delete: async (id) => {

@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Copy, CreditCard, Receipt, Plus, Edit2, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
+import { AlertTriangle, CreditCard, Receipt, Plus, Tag, Trash2, Check, X, TrendingDown, Calendar, Search, Zap } from 'lucide-react';
 import { expenses as expensesAPI, analytics } from '../utils/api';
 import { formatCurrency, formatDateDisplay, formatDayOrdinal } from '../utils/format';
 import LoadingState from '../components/LoadingState';
@@ -33,8 +32,6 @@ function getCleanupFlag(expense) {
 }
 
 const MonthlyExpenses = () => {
-  const location = useLocation();
-  const navigate = useNavigate();
   const [allExpenses, setAllExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -42,13 +39,9 @@ const MonthlyExpenses = () => {
   const [activeTab, setActiveTab] = useState('bill');
   const [detectedSubs, setDetectedSubs] = useState([]);
   const [detectedLoading, setDetectedLoading] = useState(false);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingExpense, setEditingExpense] = useState(null);
   const [deletingExpense, setDeletingExpense] = useState(null);
-  const [formData, setFormData] = useState({
-    type: 'subscription', name: '', cost: '', is_fixed_rate: true,
-    pay_account: '', company: '',
-  });
+  const [taggingId, setTaggingId] = useState(null);
+  const [tagDraft, setTagDraft] = useState('');
 
   const fetchData = async () => {
     setLoading(true);
@@ -75,57 +68,19 @@ const MonthlyExpenses = () => {
     }
   }, [activeTab]);
 
-  const handleAddNew = useCallback(() => {
-    setActiveTab('subscription');
-    setEditingExpense(null);
-    setFormData({
-      type: 'subscription', name: '', cost: '', is_fixed_rate: true,
-      pay_account: '', company: '',
-    });
-    setIsFormOpen(true);
-  }, []);
-
-  useEffect(() => {
-    if (location.state?.openAdd === 'subscription') {
-      handleAddNew();
-      navigate(location.pathname, { replace: true, state: null });
-    }
-  }, [handleAddNew, location.pathname, location.state, navigate]);
-
-  const handleEdit = (expense) => {
-    setEditingExpense(expense);
-    setFormData({
-      type: expense.type,
-      name: expense.name || '',
-      cost: expense.cost ?? '',
-      is_fixed_rate: expense.is_fixed_rate ?? true,
-      pay_account: expense.pay_account || '',
-      company: expense.company || '',
-    });
-    setIsFormOpen(true);
+  const startTagging = (expense) => {
+    setTaggingId(expense.id);
+    setTagDraft(expense.tag || '');
   };
 
-  const handleSave = async (e) => {
-    e.preventDefault();
-    const payload = {
-      ...formData,
-      cost: parseFloat(formData.cost) || 0,
-      pay_account: formData.pay_account || null,
-      company: formData.company || null,
-    };
-
+  const handleTagSave = async (expense) => {
     try {
-      if (editingExpense) {
-        await expensesAPI.update(editingExpense.id, payload);
-        showSuccess('Expense updated');
-      } else {
-        await expensesAPI.create(payload);
-        showSuccess('Expense created');
-      }
+      await expensesAPI.setTag(expense.id, tagDraft.trim() || null);
+      showSuccess(tagDraft.trim() ? `Tagged "${expense.name}"` : `Tag removed from "${expense.name}"`);
+      setTaggingId(null);
       await fetchData();
-      setIsFormOpen(false);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save');
+      setError(err.response?.data?.error || 'Failed to save tag');
     }
   };
 
@@ -138,23 +93,6 @@ const MonthlyExpenses = () => {
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to delete');
       setDeletingExpense(null);
-    }
-  };
-
-  const handleDuplicate = async (expense) => {
-    try {
-      await expensesAPI.create({
-        type: expense.type,
-        name: `${expense.name} Copy`,
-        cost: parseFloat(expense.cost) || 0,
-        is_fixed_rate: expense.is_fixed_rate,
-        pay_account: expense.pay_account || null,
-        company: expense.company || null,
-      });
-      showSuccess(`Duplicated "${expense.name}"`);
-      await fetchData();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to duplicate expense');
     }
   };
 
@@ -341,8 +279,14 @@ const MonthlyExpenses = () => {
                               className="hover:bg-surface-3 transition-colors group"
                             >
                               <td className="px-2 py-4 sm:px-5">
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                   <div className="text-sm font-bold text-primary">{exp.name}</div>
+                                  {taggingId !== exp.id && exp.tag && (
+                                    <span className="inline-flex items-center gap-1 border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent" title="Your tag">
+                                      <Tag size={10} />
+                                      {exp.tag}
+                                    </span>
+                                  )}
                                   {cleanupFlag && (
                                     <span className="inline-flex items-center gap-1 border border-loss/20 bg-loss/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-loss" title={cleanupFlag}>
                                       <AlertTriangle size={10} />
@@ -356,6 +300,29 @@ const MonthlyExpenses = () => {
                                     </span>
                                   )}
                                 </div>
+                                {taggingId === exp.id && (
+                                  <div className="mt-1.5 flex items-center gap-1.5">
+                                    <input
+                                      type="text"
+                                      value={tagDraft}
+                                      autoFocus
+                                      maxLength={100}
+                                      placeholder="e.g. Sewer & Trash"
+                                      onChange={(e) => setTagDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleTagSave(exp);
+                                        if (e.key === 'Escape') setTaggingId(null);
+                                      }}
+                                      className="w-40 bg-surface-3 border border-border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-accent outline-none"
+                                    />
+                                    <button onClick={() => handleTagSave(exp)} className="p-1 border border-border bg-surface-2 text-gain hover:bg-gain/10 rounded transition-colors" title="Save tag" aria-label={`Save tag for ${exp.name}`}>
+                                      <Check size={12} />
+                                    </button>
+                                    <button onClick={() => setTaggingId(null)} className="p-1 border border-border bg-surface-2 text-tertiary hover:text-primary rounded transition-colors" title="Cancel" aria-label="Cancel tag edit">
+                                      <X size={12} />
+                                    </button>
+                                  </div>
+                                )}
                               </td>
                               <td className="px-2 py-4 sm:px-5">
                                 <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
@@ -377,14 +344,9 @@ const MonthlyExpenses = () => {
                               </td>
                               <td className="px-2 py-4 text-right sm:px-5">
                                 <div className="flex justify-end gap-1">
-                                  <button onClick={() => handleEdit(exp)} className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors" title="Edit" aria-label={`Edit ${exp.name}`}>
-                                    <Edit2 size={14} />
+                                  <button onClick={() => (taggingId === exp.id ? setTaggingId(null) : startTagging(exp))} className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors" title={exp.tag ? 'Edit tag' : 'Add tag'} aria-label={`${exp.tag ? 'Edit' : 'Add'} tag for ${exp.name}`}>
+                                    <Tag size={14} />
                                   </button>
-                                  {exp.type === 'subscription' && (
-                                    <button onClick={() => handleDuplicate(exp)} className="p-2 border border-border bg-surface-2 text-secondary hover:bg-surface-3 rounded transition-colors" title="Duplicate" aria-label={`Duplicate ${exp.name}`}>
-                                      <Copy size={14} />
-                                    </button>
-                                  )}
                                   <button onClick={() => setDeletingExpense(exp)} className="p-2 border border-border bg-surface-2 text-loss hover:bg-loss/10 rounded transition-colors" title="Delete" aria-label={`Delete ${exp.name}`}>
                                     <Trash2 size={14} />
                                   </button>
@@ -471,57 +433,6 @@ const MonthlyExpenses = () => {
             <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-surface-3 border border-border" /> Fixed vs Variable</span>
           </div>
       </div>
-
-      {/* Form Modal */}
-      <AnimatePresence>
-        {isFormOpen && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setIsFormOpen(false)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
-              <div className="shrink-0 border-b border-border p-4 sm:p-6">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold text-primary">{editingExpense ? `Modify ${formData.type === 'bill' ? 'Bill' : 'Subscription'}` : 'Track New Subscription'}</h2>
-                  <button onClick={() => setIsFormOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
-                </div>
-                {editingExpense && editingExpense.provenance !== 'manual' && (
-                  <p className="mt-1 text-caption text-tertiary">
-                    {editingExpense.provenance === 'merchant'
-                      ? 'This entry syncs nightly from transactions; cost and account edits will be overwritten.'
-                      : 'Cost refreshes nightly from category spending averages.'}
-                  </p>
-                )}
-              </div>
-              <form onSubmit={handleSave} className="space-y-5 overflow-y-auto p-4 sm:p-6">
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Name / Descriptor</label>
-                  <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Fiber Internet, Netflix" required />
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Monthly Cost</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary font-mono">$</span>
-                      <input type="number" step="0.01" value={formData.cost} onChange={(e) => setFormData({ ...formData, cost: e.target.value })} className="w-full bg-surface-3 border-border rounded pl-7 pr-3 py-2.5 text-sm font-mono focus:ring-1 focus:ring-accent outline-none" required />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Payment Account</label>
-                    <input type="text" value={formData.pay_account} onChange={(e) => setFormData({ ...formData, pay_account: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" placeholder="e.g. Chase" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wide text-tertiary mb-2 px-1">Company</label>
-                  <input type="text" value={formData.company} onChange={(e) => setFormData({ ...formData, company: e.target.value })} className="w-full bg-surface-3 border-border rounded px-3 py-2.5 text-sm focus:ring-1 focus:ring-accent outline-none" />
-                </div>
-                <div className="sticky bottom-0 -mx-4 -mb-4 grid grid-cols-2 gap-3 border-t border-border bg-surface px-4 py-3 sm:static sm:mx-0 sm:mb-0 sm:flex sm:justify-end sm:border-0 sm:bg-transparent sm:px-0 sm:pt-4">
-                  <button type="button" onClick={() => setIsFormOpen(false)} className="px-4 py-3 bg-surface-2 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all sm:px-6">Cancel</button>
-                  <button type="submit" className="px-4 py-3 bg-accent text-white hover:bg-accent-hover rounded text-xs font-bold uppercase tracking-wider transition-all sm:px-8">Save Entry</button>
-                </div>
-              </form>
-            </Motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* Delete Confirm Modal */}
       <AnimatePresence>

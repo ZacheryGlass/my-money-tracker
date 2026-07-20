@@ -56,16 +56,21 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.patch('/:id/tag', async (req, res) => {
   try {
-    const expense = await RecurringExpense.update(parseInt(req.params.id), req.body);
+    const { tag } = req.body;
+    if (tag !== null && typeof tag !== 'string') {
+      return res.status(400).json({ error: 'Tag must be a string or null' });
+    }
+    const trimmed = typeof tag === 'string' ? tag.trim().slice(0, 100) : null;
+    const expense = await RecurringExpense.setTag(parseInt(req.params.id), trimmed || null);
     if (!expense) {
       return res.status(404).json({ error: 'Expense not found' });
     }
     res.status(200).json({ expense });
   } catch (error) {
-    logger.error({ err: error }, 'Update expense error');
-    res.status(500).json({ error: 'Server error updating expense' });
+    logger.error({ err: error }, 'Set expense tag error');
+    res.status(500).json({ error: 'Server error setting tag' });
   }
 });
 

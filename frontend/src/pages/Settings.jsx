@@ -42,12 +42,6 @@ const MANUAL_ENTRY_TYPES = {
     path: '/salary-history',
     entryType: 'salary',
   },
-  subscription: {
-    label: 'Subscription',
-    description: 'Recurring service or membership',
-    path: '/monthly-expenses',
-    entryType: 'subscription',
-  },
 };
 
 const downloadPortfolioCsv = (rows) => {
