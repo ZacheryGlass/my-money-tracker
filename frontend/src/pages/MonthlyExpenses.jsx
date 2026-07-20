@@ -211,13 +211,6 @@ const MonthlyExpenses = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={openIgnored}
-            className="flex items-center gap-2 rounded border border-border bg-surface-2 px-3 py-3 text-xs font-bold uppercase tracking-wider text-secondary shadow-sm transition-all hover:border-accent/30 hover:text-accent"
-          >
-            <EyeOff size={14} />
-            Ignored
-          </button>
           <div className="min-w-0 rounded border border-border bg-surface-2 p-3 shadow-sm sm:min-w-[140px]">
             <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Annual Cost</p>
             <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalAll * 12)}</p>
@@ -236,10 +229,19 @@ const MonthlyExpenses = () => {
           <p className="font-mono text-lg font-bold text-loss">{formatCurrency(stats.variableTotal)}</p>
           <p className="text-caption text-tertiary">Annual {formatCurrency(stats.variableTotal * 12)}</p>
         </div>
-        <div className="border border-border bg-surface p-3">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Recurring Charges</p>
-          <p className="font-mono text-lg font-bold text-primary">{visibleExpenses.length}</p>
-          <p className="text-caption text-tertiary">Synced nightly from transactions</p>
+        <div className="flex items-center justify-between gap-3 border border-border bg-surface p-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Recurring Charges</p>
+            <p className="font-mono text-lg font-bold text-primary">{visibleExpenses.length}</p>
+            <p className="text-caption text-tertiary">Synced nightly from transactions</p>
+          </div>
+          <button
+            onClick={openIgnored}
+            className="flex shrink-0 items-center gap-2 rounded border border-border bg-surface-2 px-3 py-3 text-xs font-bold uppercase tracking-wider text-secondary shadow-sm transition-all hover:border-accent/30 hover:text-accent"
+          >
+            <EyeOff size={14} />
+            Ignored
+          </button>
         </div>
       </div>
 
