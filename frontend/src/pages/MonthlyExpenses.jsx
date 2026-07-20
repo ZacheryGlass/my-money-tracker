@@ -25,7 +25,9 @@ const MonthlyExpenses = () => {
   const [ignoredOpen, setIgnoredOpen] = useState(false);
   const [ignored, setIgnored] = useState([]);
   const [ignoredLoading, setIgnoredLoading] = useState(false);
+  const [ignoredError, setIgnoredError] = useState(null);
   const [restoringKey, setRestoringKey] = useState(null);
+  const [ignoreSubmitting, setIgnoreSubmitting] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -44,11 +46,13 @@ const MonthlyExpenses = () => {
 
   const fetchIgnored = async () => {
     setIgnoredLoading(true);
+    setIgnoredError(null);
     try {
       const data = await expensesAPI.getIgnored();
       setIgnored(data.ignored || []);
-    } catch {
+    } catch (err) {
       setIgnored([]);
+      setIgnoredError(err.response?.data?.error || 'Failed to load ignored charges');
     } finally {
       setIgnoredLoading(false);
     }
@@ -76,22 +80,29 @@ const MonthlyExpenses = () => {
   };
 
   const handleIgnoreConfirm = async () => {
+    if (ignoreSubmitting) return;
+    const expense = ignoringExpense;
+    setIgnoreSubmitting(true);
+    setIgnoringExpense(null);
     try {
-      await expensesAPI.ignore(ignoringExpense.id);
-      showSuccess(`Ignored "${ignoringExpense.name}"`);
+      await expensesAPI.ignore(expense.id);
+      showSuccess(`Ignored "${expense.name}"`);
       await fetchData();
-      setIgnoringExpense(null);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to ignore');
-      setIgnoringExpense(null);
+    } finally {
+      setIgnoreSubmitting(false);
     }
   };
 
   const handleRestore = async (item) => {
+    const label = item.name || item.merchant_key;
     setRestoringKey(item.merchant_key);
     try {
-      await expensesAPI.restoreIgnored(item.merchant_key);
-      showSuccess(`Restored "${item.name || item.merchant_key}"`);
+      const res = await expensesAPI.restoreIgnored(item.merchant_key);
+      showSuccess(res.recreated
+        ? `Restored "${label}"`
+        : `"${label}" un-ignored; it will reappear once it has recent recurring charges`);
       await Promise.all([fetchData(), fetchIgnored()]);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to restore');
@@ -315,7 +326,7 @@ const MonthlyExpenses = () => {
               </p>
               <div className="flex gap-3">
                 <button onClick={() => setIgnoringExpense(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
-                <button onClick={handleIgnoreConfirm} className="flex-1 py-3 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Ignore</button>
+                <button onClick={handleIgnoreConfirm} disabled={ignoreSubmitting} className="flex-1 py-3 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all disabled:opacity-50">Ignore</button>
               </div>
             </Motion.div>
           </div>
@@ -338,6 +349,11 @@ const MonthlyExpenses = () => {
               <div className="overflow-y-auto p-4 sm:p-6">
                 {ignoredLoading ? (
                   <LoadingState label={null} className="py-8" />
+                ) : ignoredError ? (
+                  <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
+                    <X size={16} />
+                    {ignoredError}
+                  </div>
                 ) : ignored.length === 0 ? (
                   <div className="flex flex-col items-center gap-3 py-8 opacity-40">
                     <Eye size={32} className="text-tertiary" />

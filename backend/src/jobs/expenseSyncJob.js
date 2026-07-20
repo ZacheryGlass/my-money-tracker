@@ -21,13 +21,12 @@ async function run() {
   try {
     const classification = await TransactionClassificationService.backfill();
     const result = await ExpenseSyncService.run();
-    const updated = result.refreshed.length + result.created.length + result.budget.length;
+    const updated = result.refreshed.length + result.created.length;
     await JobLog.complete(jobLog.id, result.groupCount, updated, 0, {
       classified: classification.classified,
       matched: result.matched,
       refreshed: result.refreshed.length,
       created: result.created,
-      budget: result.budget,
       skipped: result.skipped,
     });
     logger.info({ job: JOB_NAME, updated, created: result.created.length }, 'Expense sync job completed');

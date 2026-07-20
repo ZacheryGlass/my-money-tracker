@@ -234,6 +234,8 @@ async function run() {
       last_charge_date: derived.lastChargeDate,
       charge_interval_days: derived.intervalDays,
     });
+    // A concurrent run won the insert; skip without double-recording.
+    if (!row) continue;
     await RecurringExpense.appendHistory(row.id, derived.cost);
     usedKeys.add(group.merchantKey);
     created.push({ id: row.id, name: group.merchantKey, cost: derived.cost });

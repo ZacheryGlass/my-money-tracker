@@ -128,7 +128,7 @@ test('DELETE /api/expenses/:id returns 404 for a missing expense', async () => {
   assert.equal(response.status, 404);
 });
 
-test('DELETE /api/expenses/ignored/:key restores a merchant and re-runs sync', async () => {
+test('DELETE /api/expenses/ignored restores a merchant (query param) and re-runs sync', async () => {
   const queries = [];
   queryHandler = async (sql) => {
     queries.push(sql);
@@ -137,13 +137,24 @@ test('DELETE /api/expenses/ignored/:key restores a merchant and re-runs sync', a
     return { rows: [] };
   };
 
-  const response = await request(app).delete('/api/expenses/ignored/Claude.ai');
+  const response = await request(app).delete('/api/expenses/ignored').query({ key: 'City/Water & Co' });
 
   assert.equal(response.status, 200);
-  assert.equal(response.body.restored, 'Claude.ai');
+  assert.equal(response.body.restored, 'City/Water & Co');
+  assert.equal(response.body.recreated, false);
   assert.ok(queries.some((sql) => /DELETE FROM ignored_merchants/.test(sql)));
   // Proof the sync ran: it queries the transactions and recurring_expenses tables.
   assert.ok(queries.some((sql) => /FROM transactions/.test(sql)));
+});
+
+test('DELETE /api/expenses/ignored requires a key', async () => {
+  const response = await request(app).delete('/api/expenses/ignored');
+  assert.equal(response.status, 400);
+});
+
+test('DELETE /api/expenses/:id rejects a non-numeric id', async () => {
+  const response = await request(app).delete('/api/expenses/not-a-number');
+  assert.equal(response.status, 400);
 });
 
 test('PATCH /api/expenses/:id/tag saves a trimmed tag', async () => {

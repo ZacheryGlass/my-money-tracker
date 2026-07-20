@@ -256,7 +256,7 @@ export const expenses = {
     return response.data;
   },
   restoreIgnored: async (merchantKey) => {
-    const response = await api.delete(`/api/expenses/ignored/${encodeURIComponent(merchantKey)}`);
+    const response = await api.delete('/api/expenses/ignored', { params: { key: merchantKey } });
     return response.data;
   },
 };
