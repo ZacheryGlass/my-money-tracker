@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**my-money-tracker** — personal portfolio tracker. Node.js/Express backend, React/Vite frontend (JSX, not TypeScript), PostgreSQL, Tailwind CSS 4. Single-user. No in-app login: production auth is Azure App Service Easy Auth (identity read from `x-ms-client-principal-*` headers); local dev uses a stub identity. `/mcp` is protected by an `MCP_API_KEY` bearer token instead.
+**my-money-tracker** — personal portfolio tracker. Node.js/Express backend, React/Vite frontend (JSX, not TypeScript), PostgreSQL, Tailwind CSS 4. Single-user. No in-app login: production auth is Azure App Service Easy Auth with Google sign-in (identity read from `x-ms-client-principal-*` headers, gated by `ALLOWED_PRINCIPALS` email allowlist); local dev uses a stub identity. `/mcp` is protected by an `MCP_API_KEY` bearer token instead.
 
 ## Quick Start
 
@@ -86,7 +86,7 @@ Tables: `accounts`, `holdings`, `price_cache`, `ticker_snapshots`, `account_snap
 
 ## Environment Variables
 
-Backend `.env`: `DATABASE_URL`, `MCP_API_KEY`, `CMC_PRO_API_KEY`, `CG_API_KEY`, `PORT`, `NODE_ENV`, `RUN_SCHEDULED_JOBS`
+Backend `.env`: `DATABASE_URL`, `ALLOWED_PRINCIPALS` (prod only), `MCP_API_KEY`, `CMC_PRO_API_KEY`, `CG_API_KEY`, `PORT`, `NODE_ENV`, `RUN_SCHEDULED_JOBS`
 
 Frontend `.env`: `VITE_API_URL` (empty = same origin)
 

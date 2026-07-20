@@ -50,6 +50,7 @@ test('GET /api/me in production without Easy Auth headers returns 401', async ()
 
 test('GET /api/me in production reads the Easy Auth principal headers', async () => {
   process.env.NODE_ENV = 'production';
+  process.env.ALLOWED_PRINCIPALS = 'zacheryglass@pm.me';
   try {
     const response = await request(app)
       .get('/api/me')
@@ -59,6 +60,52 @@ test('GET /api/me in production reads the Easy Auth principal headers', async ()
     assert.equal(response.status, 200);
     assert.equal(response.body.user.username, 'zacheryglass@pm.me');
     assert.equal(response.body.user.principalId, 'abc-123');
+  } finally {
+    process.env.NODE_ENV = 'test';
+    delete process.env.ALLOWED_PRINCIPALS;
+  }
+});
+
+test('allowlist match is case-insensitive and trims entries', async () => {
+  process.env.NODE_ENV = 'production';
+  process.env.ALLOWED_PRINCIPALS = ' Other@Example.com , ZacheryGlass@PM.me ';
+  try {
+    const response = await request(app)
+      .get('/api/me')
+      .set('X-MS-CLIENT-PRINCIPAL-NAME', 'zacheryglass@pm.me');
+
+    assert.equal(response.status, 200);
+  } finally {
+    process.env.NODE_ENV = 'test';
+    delete process.env.ALLOWED_PRINCIPALS;
+  }
+});
+
+test('authenticated principal not in the allowlist gets 403', async () => {
+  process.env.NODE_ENV = 'production';
+  process.env.ALLOWED_PRINCIPALS = 'zacheryglass@pm.me';
+  try {
+    const response = await request(app)
+      .get('/api/me')
+      .set('X-MS-CLIENT-PRINCIPAL-NAME', 'stranger@gmail.com');
+
+    assert.equal(response.status, 403);
+    assert.equal(response.body.error, 'Not authorized');
+  } finally {
+    process.env.NODE_ENV = 'test';
+    delete process.env.ALLOWED_PRINCIPALS;
+  }
+});
+
+test('production with no allowlist configured fails closed with 403', async () => {
+  process.env.NODE_ENV = 'production';
+  delete process.env.ALLOWED_PRINCIPALS;
+  try {
+    const response = await request(app)
+      .get('/api/me')
+      .set('X-MS-CLIENT-PRINCIPAL-NAME', 'zacheryglass@pm.me');
+
+    assert.equal(response.status, 403);
   } finally {
     process.env.NODE_ENV = 'test';
   }
