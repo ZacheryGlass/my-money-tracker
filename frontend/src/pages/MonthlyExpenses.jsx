@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Tag, EyeOff, Eye, RotateCcw, Check, X, TrendingDown, Calendar } from 'lucide-react';
+import { Tag, EyeOff, Eye, RotateCcw, Check, X, TrendingDown, Calendar, ChevronRight } from 'lucide-react';
 import { expenses as expensesAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay, formatDayOrdinal } from '../utils/format';
+import { formatTransactionCategory } from '../utils/dataLabels';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
 
@@ -13,6 +14,48 @@ const Badge = ({ active, children }) => (
     {children}
   </span>
 );
+
+// The individual charges behind an expense, shown when its row is expanded.
+const ExpenseTransactions = ({ detail }) => {
+  if (!detail || detail.loading) {
+    return <LoadingState label={null} className="py-6" />;
+  }
+  if (detail.error) {
+    return (
+      <div className="my-3 flex items-center gap-2 rounded border border-loss/20 bg-loss-bg px-3 py-2 text-xs text-loss">
+        <X size={14} />
+        {detail.error}
+      </div>
+    );
+  }
+  const { transactions } = detail;
+  if (!transactions.length) {
+    return <div className="py-6 text-center text-xs text-tertiary">No matching transactions found.</div>;
+  }
+  return (
+    <div className="py-3">
+      <div className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
+        <Calendar size={11} />
+        Charge history · {transactions.length} {transactions.length === 1 ? 'charge' : 'charges'}
+      </div>
+      <ul className="divide-y divide-border/60">
+        {transactions.map((t) => (
+          <li key={t.id} className="flex items-center justify-between gap-4 py-2">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-tertiary">
+                {t.account && <span>{t.account}</span>}
+                {t.account && t.category && <span className="opacity-40">·</span>}
+                {t.category && <span>{formatTransactionCategory(t.category)}</span>}
+              </div>
+            </div>
+            <span className="shrink-0 font-mono text-xs font-bold text-primary">{formatCurrency(t.amount)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
 
 const MonthlyExpenses = () => {
   const [allExpenses, setAllExpenses] = useState([]);
@@ -28,6 +71,8 @@ const MonthlyExpenses = () => {
   const [ignoredError, setIgnoredError] = useState(null);
   const [restoringKey, setRestoringKey] = useState(null);
   const [ignoreSubmitting, setIgnoreSubmitting] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [txById, setTxById] = useState({});
 
   const fetchData = async () => {
     setLoading(true);
@@ -66,6 +111,22 @@ const MonthlyExpenses = () => {
   const startTagging = (expense) => {
     setTaggingId(expense.id);
     setTagDraft(expense.tag || '');
+  };
+
+  const fetchTransactions = async (expense) => {
+    setTxById((prev) => ({ ...prev, [expense.id]: { loading: true, error: null, transactions: [] } }));
+    try {
+      const data = await expensesAPI.getTransactions(expense.id);
+      setTxById((prev) => ({ ...prev, [expense.id]: { loading: false, error: null, transactions: data.transactions || [] } }));
+    } catch (err) {
+      setTxById((prev) => ({ ...prev, [expense.id]: { loading: false, error: err.response?.data?.error || 'Failed to load transactions', transactions: [] } }));
+    }
+  };
+
+  const toggleExpand = (expense) => {
+    const next = expandedId === expense.id ? null : expense.id;
+    setExpandedId(next);
+    if (next !== null && !txById[expense.id]) fetchTransactions(expense);
   };
 
   const handleTagSave = async (expense) => {
@@ -219,17 +280,25 @@ const MonthlyExpenses = () => {
                         </td>
                       </tr>
                     ) : (
-                      visibleExpenses.map((exp) => (
+                      visibleExpenses.flatMap((exp) => {
+                        const isExpanded = expandedId === exp.id;
+                        const rows = [
                         <Motion.tr
                           layout
                           key={exp.id}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
-                          className="hover:bg-surface-3 transition-colors group"
+                          onClick={() => toggleExpand(exp)}
+                          aria-expanded={isExpanded}
+                          className={`cursor-pointer transition-colors group ${isExpanded ? 'bg-surface-3' : 'hover:bg-surface-3'}`}
                         >
                           <td className="px-2 py-4 sm:px-5">
                             <div className="flex flex-wrap items-center gap-2">
+                              <ChevronRight
+                                size={14}
+                                className={`shrink-0 transition-transform ${isExpanded ? 'rotate-90 text-accent' : 'text-tertiary group-hover:text-secondary'}`}
+                              />
                               <div className="text-sm font-bold text-primary">{exp.name}</div>
                               {taggingId !== exp.id && exp.tag && (
                                 <span className="inline-flex items-center gap-1 border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent" title="Your tag">
@@ -245,7 +314,7 @@ const MonthlyExpenses = () => {
                               )}
                             </div>
                             {taggingId === exp.id && (
-                              <div className="mt-1.5 flex items-center gap-1.5">
+                              <div className="mt-1.5 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="text"
                                   value={tagDraft}
@@ -283,7 +352,7 @@ const MonthlyExpenses = () => {
                           <td className="hidden px-5 py-4 xl:table-cell">
                             <span className="text-xs font-medium text-secondary">{exp.company || <span className="text-tertiary">—</span>}</span>
                           </td>
-                          <td className="px-2 py-4 text-right sm:px-5">
+                          <td className="px-2 py-4 text-right sm:px-5" onClick={(e) => e.stopPropagation()}>
                             <div className="flex justify-end gap-1">
                               <button onClick={() => (taggingId === exp.id ? setTaggingId(null) : startTagging(exp))} className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors" title={exp.tag ? 'Edit tag' : 'Add tag'} aria-label={`${exp.tag ? 'Edit' : 'Add'} tag for ${exp.name}`}>
                                 <Tag size={14} />
@@ -293,8 +362,25 @@ const MonthlyExpenses = () => {
                               </button>
                             </div>
                           </td>
-                        </Motion.tr>
-                      ))
+                        </Motion.tr>,
+                        ];
+                        if (isExpanded) {
+                          // Plain <tr> (not Motion): it unmounts instantly on
+                          // collapse. A Motion.tr here gets stuck mid-exit
+                          // because AnimatePresence's popLayout absolutely-
+                          // positions exiting rows, which breaks table layout.
+                          rows.push(
+                            <tr key={`${exp.id}-detail`} className="bg-base">
+                              <td colSpan={7} className="px-2 py-0 sm:px-5">
+                                <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                                  <ExpenseTransactions detail={txById[exp.id]} />
+                                </Motion.div>
+                              </td>
+                            </tr>
+                          );
+                        }
+                        return rows;
+                      })
                     )}
                   </AnimatePresence>
                 </tbody>

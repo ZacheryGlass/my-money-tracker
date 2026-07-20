@@ -22,6 +22,26 @@ class RecurringExpense {
     return result.rows[0];
   }
 
+  // The individual charges that make up a tracked expense: transactions whose
+  // merchant_key (COALESCE(merchant_name, name)) matches, under the same
+  // eligibility filters the sync uses to build the group, newest first.
+  static async chargesForMerchant(merchantKey, limit = 36) {
+    const result = await pool.query(`
+      SELECT t.id, t.date::text AS date, t.amount::float8 AS amount,
+             t.name, t.merchant_name, t.category,
+             COALESCE(a.display_name, a.name) AS account
+      FROM transactions t
+      JOIN accounts a ON t.account_id = a.id
+      WHERE COALESCE(t.merchant_name, t.name) = $1
+        AND t.amount > 0 AND t.pending = false AND a.is_hidden = FALSE
+        AND a.type IN ('depository', 'credit')
+        AND UPPER(COALESCE(t.category, '')) NOT LIKE '%TRANSFER%'
+      ORDER BY t.date DESC
+      LIMIT $2
+    `, [merchantKey, limit]);
+    return result.rows;
+  }
+
   static async setTag(id, tag) {
     const result = await pool.query(
       'UPDATE recurring_expenses SET tag = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',

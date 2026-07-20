@@ -87,6 +87,56 @@ test('GET /api/expenses/ignored lists ignored merchants', async () => {
   assert.equal(response.body.ignored[0].last_cost, '100.00');
 });
 
+test('GET /api/expenses/:id/transactions returns the charges behind an expense', async () => {
+  queryHandler = async (sql, params) => {
+    if (/SELECT \* FROM recurring_expenses WHERE id/.test(sql)) {
+      return { rows: [expenseRow({ id: 16, name: 'Spotify', merchant_key: 'Spotify' })] };
+    }
+    if (/FROM transactions/.test(sql)) {
+      assert.match(sql, /COALESCE\(t\.merchant_name, t\.name\) = \$1/);
+      assert.equal(params[0], 'Spotify');
+      return {
+        rows: [
+          { id: 5, date: '2026-07-02', amount: 18.99, name: 'Spotify', merchant_name: 'Spotify', category: 'ENTERTAINMENT', account: 'Ally Checking' },
+        ],
+      };
+    }
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+
+  const response = await request(app).get('/api/expenses/16/transactions');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.transactions.length, 1);
+  assert.equal(response.body.transactions[0].amount, 18.99);
+  assert.equal(response.body.transactions[0].account, 'Ally Checking');
+});
+
+test('GET /api/expenses/:id/transactions returns [] when the expense has no merchant', async () => {
+  queryHandler = async (sql) => {
+    if (/SELECT \* FROM recurring_expenses WHERE id/.test(sql)) {
+      return { rows: [expenseRow({ id: 20, merchant_key: null })] };
+    }
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+
+  const response = await request(app).get('/api/expenses/20/transactions');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.transactions, []);
+});
+
+test('GET /api/expenses/:id/transactions returns 404 for a missing expense', async () => {
+  queryHandler = async (sql) => {
+    if (/SELECT \* FROM recurring_expenses WHERE id/.test(sql)) return { rows: [] };
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+
+  const response = await request(app).get('/api/expenses/999/transactions');
+
+  assert.equal(response.status, 404);
+});
+
 test('POST /api/expenses is no longer supported', async () => {
   const response = await request(app)
     .post('/api/expenses')

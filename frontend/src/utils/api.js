@@ -247,6 +247,10 @@ export const expenses = {
     const response = await api.get('/api/expenses/ignored');
     return response.data;
   },
+  getTransactions: async (id) => {
+    const response = await api.get(`/api/expenses/${id}/transactions`);
+    return response.data;
+  },
   setTag: async (id, tag) => {
     const response = await api.patch(`/api/expenses/${id}/tag`, { tag });
     return response.data;

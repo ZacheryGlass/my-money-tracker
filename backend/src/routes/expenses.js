@@ -58,6 +58,28 @@ router.delete('/ignored', async (req, res) => {
   }
 });
 
+// The individual charges behind a tracked expense, for the expandable row on
+// the Monthly Expenses page. Returns [] when the expense has no linked merchant.
+router.get('/:id/transactions', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid expense id' });
+    }
+    const expense = await RecurringExpense.findById(id);
+    if (!expense) {
+      return res.status(404).json({ error: 'Expense not found' });
+    }
+    const transactions = expense.merchant_key
+      ? await RecurringExpense.chargesForMerchant(expense.merchant_key)
+      : [];
+    res.status(200).json({ transactions });
+  } catch (error) {
+    logger.error({ err: error }, 'Get expense transactions error');
+    res.status(500).json({ error: 'Server error retrieving expense transactions' });
+  }
+});
+
 router.patch('/:id/tag', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
