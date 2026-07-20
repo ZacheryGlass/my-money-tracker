@@ -13,17 +13,9 @@ const MIN_SPAN_DAYS = 60;
 const FIXED_STDDEV_DOLLARS = 5;
 const MONTHLY_MIN_DAYS = 20;
 const MONTHLY_MAX_DAYS = 45;
-// Debt payments already live as liability accounts; creating expense rows for
-// them would double-count. Income is never an expense.
-const AUTO_CREATE_EXCLUDED = new Set(['LOAN_PAYMENTS', 'INCOME']);
-
-// Budget placeholders with no single merchant: cost is derived from category
-// spending instead of merchant charges.
-const BUDGET_RULES = {
-  food: ['FOOD_AND_DRINK'],
-  'car gas': ['TRANSPORTATION'],
-  bullshit: ['GENERAL_MERCHANDISE'],
-};
+// Income is never an expense. Loan/debt payments are intentionally allowed
+// through — they are recurring outflows the user wants to see here.
+const AUTO_CREATE_EXCLUDED = new Set(['INCOME']);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -172,29 +164,12 @@ async function fetchEligibleCharges() {
   return result.rows;
 }
 
-function budgetKeyFor(expense) {
-  return BUDGET_RULES[String(expense.name || '').trim().toLowerCase()] ? String(expense.name).trim().toLowerCase() : null;
-}
-
-function budgetMonthlyAverage(rows, categories, trackedKeys, today) {
-  const wanted = new Set(categories);
-  const total = rows
-    .filter((r) => wanted.has(r.category) && !trackedKeys.has(r.merchant_key)
-      && daysBetween(r.date, today) <= AVG_WINDOW_DAYS)
-    .reduce((s, r) => s + r.amount, 0);
-  return Math.round((total / 3) * 100) / 100;
-}
-
 async function run() {
   const today = new Date().toISOString().slice(0, 10);
   const rows = await fetchEligibleCharges();
   const groups = buildGroups(rows);
   const groupByKey = new Map(groups.map((g) => [g.merchantKey, g]));
-  const expenses = await RecurringExpense.findAll();
-
-  const budgetExpenses = expenses.filter((e) => budgetKeyFor(e));
-  const budgetIds = new Set(budgetExpenses.map((e) => e.id));
-  const linkable = expenses.filter((e) => !budgetIds.has(e.id));
+  const linkable = await RecurringExpense.findAll();
 
   const usedKeys = new Set(linkable.map((e) => e.merchant_key).filter(Boolean));
   const links = matchExpenses(
@@ -243,7 +218,8 @@ async function run() {
       skipped.push({ merchantKey: group.merchantKey, reason: `excluded category ${group.category}` });
       continue;
     }
-    if (group.sd >= FIXED_STDDEV_DOLLARS) continue;
+    // Monthly cadence is the recurrence test; amount variance is allowed so
+    // variable utilities (electric, gas) and loan autopays still qualify.
     const derived = deriveFields(group.charges, today);
     if (!derived || !isMonthlyCadence(derived.intervalDays)) continue;
     const row = await RecurringExpense.createAutoTracked({
@@ -263,18 +239,7 @@ async function run() {
     created.push({ id: row.id, name: group.merchantKey, cost: derived.cost });
   }
 
-  const budget = [];
-  for (const expense of budgetExpenses) {
-    const categories = BUDGET_RULES[budgetKeyFor(expense)];
-    const cost = budgetMonthlyAverage(rows, categories, usedKeys, today);
-    await RecurringExpense.updateDerived(expense.id, { cost, is_fixed_rate: false });
-    if (Math.abs(Number(expense.cost) - cost) > 0.005) {
-      await RecurringExpense.appendHistory(expense.id, cost);
-    }
-    budget.push({ id: expense.id, name: expense.name, categories, cost });
-  }
-
-  const summary = { matched: links, refreshed, created, budget, skipped, groupCount: groups.length };
+  const summary = { matched: links, refreshed, created, skipped, groupCount: groups.length };
   logger.info({ ...summary, refreshed: refreshed.length }, 'Expense sync completed');
   return summary;
 }
@@ -291,6 +256,4 @@ module.exports = {
   deriveFields,
   isMonthlyCadence,
   buildGroups,
-  budgetMonthlyAverage,
-  BUDGET_RULES,
 };

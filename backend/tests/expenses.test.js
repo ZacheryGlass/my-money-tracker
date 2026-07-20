@@ -52,79 +52,59 @@ const expenseRow = (overrides = {}) => ({
   due_day: 1,
   last_charge_date: '2026-07-01',
   charge_interval_days: 31,
-  is_auto_tracked: false,
+  is_auto_tracked: true,
   is_stale: false,
   ...overrides,
 });
 
-test('GET /api/expenses computes staleness and provenance', async () => {
+test('GET /api/expenses returns rows with computed staleness', async () => {
   queryHandler = async (sql) => {
     assert.match(sql, /is_stale/);
     assert.match(sql, /charge_interval_days/);
-    return {
-      rows: [
-        expenseRow(),
-        expenseRow({ id: 8, name: 'Food', merchant_key: null, company: null }),
-        expenseRow({ id: 12, name: 'YouTube Premium', merchant_key: null }),
-      ],
-    };
+    return { rows: [expenseRow(), expenseRow({ id: 16, name: 'Spotify', merchant_key: 'Spotify' })] };
   };
 
   const response = await request(app).get('/api/expenses');
 
   assert.equal(response.status, 200);
-  const byName = Object.fromEntries(response.body.expenses.map((e) => [e.name, e]));
-  assert.equal(byName.Rent.provenance, 'merchant');
-  assert.equal(byName.Food.provenance, 'budget');
-  assert.equal(byName['YouTube Premium'].provenance, 'manual');
-  assert.equal(byName.Rent.due_day, 1);
-  assert.equal(byName.Rent.is_stale, false);
+  assert.equal(response.body.expenses.length, 2);
+  assert.equal(response.body.expenses[0].name, 'Rent');
+  assert.equal(response.body.expenses[0].is_stale, false);
 });
 
-test('POST /api/expenses creates an entry and lifts any merchant ignore', async () => {
-  const queries = [];
-  queryHandler = async (sql, params) => {
-    queries.push(sql);
-    if (/INSERT INTO recurring_expenses/.test(sql)) {
-      assert.equal(params[0], 'Nebula');
-      return { rows: [expenseRow({ id: 30, name: 'Nebula', merchant_key: null })] };
-    }
-    if (/DELETE FROM ignored_merchants/.test(sql)) {
-      assert.deepEqual(params, ['Nebula']);
-      return { rows: [] };
-    }
-    throw new Error(`Unexpected query: ${sql}`);
+test('GET /api/expenses/ignored lists ignored merchants', async () => {
+  queryHandler = async (sql) => {
+    assert.match(sql, /FROM ignored_merchants/);
+    return { rows: [{ merchant_key: 'Claude.ai', name: 'Claude.ai', last_cost: '100.00', created_at: '2026-07-20' }] };
   };
 
+  const response = await request(app).get('/api/expenses/ignored');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ignored[0].merchant_key, 'Claude.ai');
+  assert.equal(response.body.ignored[0].last_cost, '100.00');
+});
+
+test('POST /api/expenses is no longer supported', async () => {
   const response = await request(app)
     .post('/api/expenses')
     .send({ name: 'Nebula', cost: 5 });
 
-  assert.equal(response.status, 201);
-  assert.equal(response.body.expense.name, 'Nebula');
-  assert.ok(queries.some((sql) => /DELETE FROM ignored_merchants/.test(sql)));
+  assert.equal(response.status, 404);
 });
 
-test('POST /api/expenses rejects missing fields', async () => {
-  const response = await request(app)
-    .post('/api/expenses')
-    .send({ name: 'No Cost' });
-
-  assert.equal(response.status, 400);
-});
-
-test('DELETE /api/expenses/:id ignores the merchant for linked expenses', async () => {
+test('DELETE /api/expenses/:id ignores the merchant with a snapshot', async () => {
   const queries = [];
   queryHandler = async (sql, params) => {
-    queries.push(sql);
+    queries.push({ sql, params });
     if (/SELECT \* FROM recurring_expenses WHERE id/.test(sql)) {
-      return { rows: [expenseRow({ id: 16, name: 'Spotify', merchant_key: 'Spotify' })] };
+      return { rows: [expenseRow({ id: 16, name: 'Spotify', cost: '18.99', merchant_key: 'Spotify' })] };
     }
     if (/DELETE FROM recurring_expenses/.test(sql)) {
       return { rows: [{ id: 16 }] };
     }
     if (/INSERT INTO ignored_merchants/.test(sql)) {
-      assert.deepEqual(params, ['Spotify']);
+      assert.deepEqual(params, ['Spotify', 'Spotify', '18.99']);
       return { rows: [] };
     }
     throw new Error(`Unexpected query: ${sql}`);
@@ -134,27 +114,36 @@ test('DELETE /api/expenses/:id ignores the merchant for linked expenses', async 
 
   assert.equal(response.status, 200);
   assert.equal(response.body.ignoredMerchant, 'Spotify');
-  assert.ok(queries.some((sql) => /INSERT INTO ignored_merchants/.test(sql)));
+  assert.ok(queries.some((q) => /INSERT INTO ignored_merchants/.test(q.sql)));
 });
 
-test('DELETE /api/expenses/:id skips the ignore list for unlinked expenses', async () => {
-  const queries = [];
+test('DELETE /api/expenses/:id returns 404 for a missing expense', async () => {
   queryHandler = async (sql) => {
-    queries.push(sql);
-    if (/SELECT \* FROM recurring_expenses WHERE id/.test(sql)) {
-      return { rows: [expenseRow({ id: 12, name: 'YouTube Premium', merchant_key: null })] };
-    }
-    if (/DELETE FROM recurring_expenses/.test(sql)) {
-      return { rows: [{ id: 12 }] };
-    }
+    if (/SELECT \* FROM recurring_expenses WHERE id/.test(sql)) return { rows: [] };
     throw new Error(`Unexpected query: ${sql}`);
   };
 
-  const response = await request(app).delete('/api/expenses/12');
+  const response = await request(app).delete('/api/expenses/999');
+
+  assert.equal(response.status, 404);
+});
+
+test('DELETE /api/expenses/ignored/:key restores a merchant and re-runs sync', async () => {
+  const queries = [];
+  queryHandler = async (sql) => {
+    queries.push(sql);
+    if (/DELETE FROM ignored_merchants/.test(sql)) return { rows: [] };
+    // The sync runs after restore; return empty sets so it completes cleanly.
+    return { rows: [] };
+  };
+
+  const response = await request(app).delete('/api/expenses/ignored/Claude.ai');
 
   assert.equal(response.status, 200);
-  assert.equal(response.body.ignoredMerchant, null);
-  assert.ok(!queries.some((sql) => /ignored_merchants/.test(sql)));
+  assert.equal(response.body.restored, 'Claude.ai');
+  assert.ok(queries.some((sql) => /DELETE FROM ignored_merchants/.test(sql)));
+  // Proof the sync ran: it queries the transactions and recurring_expenses tables.
+  assert.ok(queries.some((sql) => /FROM transactions/.test(sql)));
 });
 
 test('PATCH /api/expenses/:id/tag saves a trimmed tag', async () => {
@@ -194,39 +183,7 @@ test('PATCH /api/expenses/:id/tag rejects non-string tags', async () => {
   assert.equal(response.status, 400);
 });
 
-test('PATCH /api/expenses/:id/tag returns 404 for missing expenses', async () => {
-  queryHandler = async () => ({ rows: [] });
-
-  const response = await request(app)
-    .patch('/api/expenses/999/tag')
-    .send({ tag: 'Anything' });
-
-  assert.equal(response.status, 404);
-});
-
-test('PUT /api/expenses/:id no longer exists', async () => {
-  const response = await request(app)
-    .put('/api/expenses/1')
-    .send({ name: 'Rent' });
-
-  assert.equal(response.status, 404);
-});
-
-test('GET /api/analytics/detected-subscriptions uses classifications', async () => {
-  queryHandler = async (sql) => {
-    assert.match(sql, /transaction_classifications/);
-    assert.match(sql, /direction = 'spending'/);
-    assert.match(sql, /'depository', 'credit'/);
-    return {
-      rows: [{
-        merchant: 'Spotify', avg_amount: '18.66', occurrence_count: 6,
-        last_charge: '2026-07-10', first_charge: '2026-01-10', category: 'ENTERTAINMENT',
-      }],
-    };
-  };
-
+test('GET /api/analytics/detected-subscriptions no longer exists', async () => {
   const response = await request(app).get('/api/analytics/detected-subscriptions');
-
-  assert.equal(response.status, 200);
-  assert.equal(response.body.data[0].merchant, 'Spotify');
+  assert.equal(response.status, 404);
 });

@@ -74,36 +74,4 @@ router.get('/benchmark-history', async (req, res) => {
   }
 });
 
-// GET /api/analytics/detected-subscriptions
-router.get('/detected-subscriptions', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        COALESCE(t.merchant_name, t.name) as merchant,
-        ROUND(AVG(t.amount)::numeric, 2) as avg_amount,
-        COUNT(*)::int as occurrence_count,
-        MAX(t.date) as last_charge,
-        MIN(t.date) as first_charge,
-        (ARRAY_AGG(t.category ORDER BY t.date DESC))[1] as category
-      FROM transactions t
-      JOIN accounts a ON t.account_id = a.id
-      LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
-      WHERE t.amount > 0 AND t.pending = false AND a.is_hidden = FALSE
-        AND a.type IN ('depository', 'credit')
-        AND (tc.direction = 'spending'
-          OR (tc.transaction_id IS NULL AND UPPER(COALESCE(t.category, '')) NOT LIKE '%TRANSFER%'))
-      GROUP BY COALESCE(t.merchant_name, t.name)
-      HAVING COUNT(*) >= 3
-         AND STDDEV(t.amount) < 5
-         AND (MAX(t.date) - MIN(t.date)) > 60
-      ORDER BY ROUND(AVG(t.amount)::numeric, 2) DESC
-    `);
-
-    res.json({ data: result.rows });
-  } catch (error) {
-    logger.error({ err: error }, 'Get detected subscriptions error');
-    res.status(500).json({ error: 'Server error detecting subscriptions' });
-  }
-});
-
 module.exports = router;

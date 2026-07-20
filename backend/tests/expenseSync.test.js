@@ -27,7 +27,6 @@ const {
   deriveFields,
   isMonthlyCadence,
   buildGroups,
-  budgetMonthlyAverage,
 } = require('../src/services/ExpenseSyncService');
 const { classify } = require('../src/services/TransactionClassificationService');
 
@@ -123,16 +122,31 @@ test('buildGroups: requires 3+ charges spanning more than 60 days', () => {
   assert.deepEqual(groups.map((g) => g.merchantKey), ['Keeper']);
 });
 
-test('budgetMonthlyAverage: averages 3 months of category spend excluding tracked merchants', () => {
-  const rows = [
-    { date: '2026-07-01', amount: 300, category: 'FOOD_AND_DRINK', merchant_key: 'A' },
-    { date: '2026-06-01', amount: 300, category: 'FOOD_AND_DRINK', merchant_key: 'B' },
-    { date: '2026-01-01', amount: 900, category: 'FOOD_AND_DRINK', merchant_key: 'C' },
-    { date: '2026-07-02', amount: 300, category: 'FOOD_AND_DRINK', merchant_key: 'Tracked' },
-    { date: '2026-07-03', amount: 300, category: 'ENTERTAINMENT', merchant_key: 'D' },
+test('deriveFields: a high-variance monthly utility still derives a valid entry', () => {
+  // Variance no longer gates auto-create; a variable monthly bill (e.g. Evergy)
+  // must still yield a monthly-cadence entry with an averaged cost.
+  const charges = [
+    { date: '2026-04-19', amount: 60, account_id: 65, merchant_name: 'Evergy', account_display: 'Chase' },
+    { date: '2026-05-19', amount: 120, account_id: 65, merchant_name: 'Evergy', account_display: 'Chase' },
+    { date: '2026-06-19', amount: 180, account_id: 65, merchant_name: 'Evergy', account_display: 'Chase' },
+    { date: '2026-07-19', amount: 240, account_id: 65, merchant_name: 'Evergy', account_display: 'Chase' },
   ];
-  const cost = budgetMonthlyAverage(rows, ['FOOD_AND_DRINK'], new Set(['Tracked']), '2026-07-19');
-  assert.equal(cost, 200);
+  const derived = deriveFields(charges, '2026-07-20');
+  assert.equal(derived.isFixed, false);
+  assert.ok(isMonthlyCadence(derived.intervalDays), 'monthly cadence recognized despite variance');
+  assert.ok(derived.cost > 0);
+});
+
+test('buildGroups: keeps a group regardless of amount variance', () => {
+  // Loan/utility charges vary in amount but must still form a group so the
+  // auto-create loop (which no longer checks variance) can consider them.
+  const charges = ['2026-04-01', '2026-05-01', '2026-06-05', '2026-07-05'].map((date, i) => ({
+    merchant_key: 'Lightstream', date, amount: 100 + i * 50, category: 'LOAN_PAYMENTS',
+  }));
+  const groups = buildGroups(charges);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].merchantKey, 'Lightstream');
+  assert.ok(groups[0].sd >= 5, 'high variance group is retained');
 });
 
 test('classify: maps categories to directions with transfer flag', () => {

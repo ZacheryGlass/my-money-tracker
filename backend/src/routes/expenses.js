@@ -3,17 +3,9 @@
 const express = require('express');
 const RecurringExpense = require('../models/RecurringExpense');
 const IgnoredMerchant = require('../models/IgnoredMerchant');
-const { BUDGET_RULES } = require('../services/ExpenseSyncService');
+const ExpenseSyncService = require('../services/ExpenseSyncService');
 const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
-
-// merchant: fields sync nightly from linked transactions; budget: cost is a
-// rolling category-spend average; manual: hand-maintained.
-function provenanceOf(expense) {
-  if (expense.merchant_key) return 'merchant';
-  if (BUDGET_RULES[String(expense.name || '').trim().toLowerCase()]) return 'budget';
-  return 'manual';
-}
 
 const router = express.Router();
 
@@ -22,27 +14,20 @@ router.use(requireUser);
 router.get('/', async (req, res) => {
   try {
     const expenses = await RecurringExpense.findAll();
-    res.status(200).json({ expenses: expenses.map((e) => ({ ...e, provenance: provenanceOf(e) })) });
+    res.status(200).json({ expenses });
   } catch (error) {
     logger.error({ err: error }, 'Get expenses error');
     res.status(500).json({ error: 'Server error retrieving expenses' });
   }
 });
 
-router.post('/', async (req, res) => {
+router.get('/ignored', async (req, res) => {
   try {
-    const { name, cost } = req.body;
-    if (!name || cost == null) {
-      return res.status(400).json({ error: 'Missing required fields: name, cost' });
-    }
-    const expense = await RecurringExpense.create(req.body);
-    // Tracking a merchant again is an explicit opt-in; lift any earlier ignore
-    // so the sync can link and maintain it.
-    await IgnoredMerchant.remove(name);
-    res.status(201).json({ expense });
+    const ignored = await IgnoredMerchant.all();
+    res.status(200).json({ ignored });
   } catch (error) {
-    logger.error({ err: error }, 'Create expense error');
-    res.status(500).json({ error: 'Server error creating expense' });
+    logger.error({ err: error }, 'Get ignored merchants error');
+    res.status(500).json({ error: 'Server error retrieving ignored merchants' });
   }
 });
 
@@ -64,6 +49,8 @@ router.patch('/:id/tag', async (req, res) => {
   }
 });
 
+// Ignoring removes the row and records the merchant so the nightly sync won't
+// re-create it. A snapshot (name, cost) is kept so the Ignored panel is legible.
 router.delete('/:id', async (req, res) => {
   try {
     const expense = await RecurringExpense.findById(parseInt(req.params.id));
@@ -71,14 +58,27 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Expense not found' });
     }
     await RecurringExpense.delete(expense.id);
-    // Without this, the next sync would re-create any still-charging merchant.
     if (expense.merchant_key) {
-      await IgnoredMerchant.add(expense.merchant_key);
+      await IgnoredMerchant.add(expense.merchant_key, { name: expense.name, lastCost: expense.cost });
     }
-    res.status(200).json({ message: 'Expense deleted', ignoredMerchant: expense.merchant_key || null });
+    res.status(200).json({ message: 'Expense ignored', ignoredMerchant: expense.merchant_key || null });
   } catch (error) {
-    logger.error({ err: error }, 'Delete expense error');
-    res.status(500).json({ error: 'Server error deleting expense' });
+    logger.error({ err: error }, 'Ignore expense error');
+    res.status(500).json({ error: 'Server error ignoring expense' });
+  }
+});
+
+// Restoring lifts the ignore and runs a sync so the merchant reappears now
+// instead of waiting for the nightly job.
+router.delete('/ignored/:merchantKey', async (req, res) => {
+  try {
+    const merchantKey = req.params.merchantKey;
+    await IgnoredMerchant.remove(merchantKey);
+    await ExpenseSyncService.run();
+    res.status(200).json({ restored: merchantKey });
+  } catch (error) {
+    logger.error({ err: error }, 'Restore ignored merchant error');
+    res.status(500).json({ error: 'Server error restoring merchant' });
   }
 });
 

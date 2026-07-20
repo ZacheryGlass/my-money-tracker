@@ -243,16 +243,20 @@ export const expenses = {
     const response = await api.get('/api/expenses');
     return response.data;
   },
-  create: async (data) => {
-    const response = await api.post('/api/expenses', data);
+  getIgnored: async () => {
+    const response = await api.get('/api/expenses/ignored');
     return response.data;
   },
   setTag: async (id, tag) => {
     const response = await api.patch(`/api/expenses/${id}/tag`, { tag });
     return response.data;
   },
-  delete: async (id) => {
+  ignore: async (id) => {
     const response = await api.delete(`/api/expenses/${id}`);
+    return response.data;
+  },
+  restoreIgnored: async (merchantKey) => {
+    const response = await api.delete(`/api/expenses/ignored/${encodeURIComponent(merchantKey)}`);
     return response.data;
   },
 };
@@ -295,10 +299,6 @@ export const analytics = {
     const queryString = queryParams.toString();
     const url = `/api/analytics/benchmark-history${queryString ? `?${queryString}` : ''}`;
     const response = await api.get(url);
-    return response.data;
-  },
-  getDetectedSubscriptions: async () => {
-    const response = await api.get('/api/analytics/detected-subscriptions');
     return response.data;
   },
 };

@@ -16,16 +16,6 @@ class RecurringExpense {
     return result.rows[0];
   }
 
-  static async create(data) {
-    const { name, cost, is_fixed_rate, pay_account, company } = data;
-    const result = await pool.query(
-      `INSERT INTO recurring_expenses (name, cost, is_fixed_rate, pay_account, company)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [name, cost, is_fixed_rate ?? true, pay_account, company]
-    );
-    return result.rows[0];
-  }
-
   static async setTag(id, tag) {
     const result = await pool.query(
       'UPDATE recurring_expenses SET tag = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
