@@ -111,16 +111,24 @@ const MonthlyExpenses = () => {
     }
   };
 
+  // Expenses past 2.0x their charge interval are dropped by the backend flag;
+  // they fall off the list (and totals) but stay tracked, reappearing if the
+  // merchant charges again.
+  const visibleExpenses = useMemo(
+    () => allExpenses.filter((e) => !e.is_dropped),
+    [allExpenses]
+  );
+
   const { totalAll, stats } = useMemo(() => {
     let total = 0, fixedTotal = 0, variableTotal = 0;
-    allExpenses.forEach((e) => {
+    visibleExpenses.forEach((e) => {
       const c = parseFloat(e.cost) || 0;
       total += c;
       if (e.is_fixed_rate) fixedTotal += c;
       else variableTotal += c;
     });
     return { totalAll: total, stats: { fixedTotal, variableTotal } };
-  }, [allExpenses]);
+  }, [visibleExpenses]);
 
   if (loading) {
     return <LoadingState label="Calculating Expenses" />;
@@ -138,7 +146,7 @@ const MonthlyExpenses = () => {
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
             {formatCurrency(totalAll)}
           </h1>
-          <p className="text-sm text-secondary">Auto-detected across {allExpenses.length} recurring charges</p>
+          <p className="text-sm text-secondary">Auto-detected across {visibleExpenses.length} recurring charges</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -169,7 +177,7 @@ const MonthlyExpenses = () => {
         </div>
         <div className="border border-border bg-surface p-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Recurring Charges</p>
-          <p className="font-mono text-lg font-bold text-primary">{allExpenses.length}</p>
+          <p className="font-mono text-lg font-bold text-primary">{visibleExpenses.length}</p>
           <p className="text-caption text-tertiary">Synced nightly from transactions</p>
         </div>
       </div>
@@ -201,7 +209,7 @@ const MonthlyExpenses = () => {
                 </thead>
                 <tbody className="divide-y divide-border">
                   <AnimatePresence mode="popLayout">
-                    {allExpenses.length === 0 ? (
+                    {visibleExpenses.length === 0 ? (
                       <tr key="empty">
                         <td colSpan={7} className="px-5 py-12 text-center">
                           <div className="flex flex-col items-center gap-3 opacity-40">
@@ -211,7 +219,7 @@ const MonthlyExpenses = () => {
                         </td>
                       </tr>
                     ) : (
-                      allExpenses.map((exp) => (
+                      visibleExpenses.map((exp) => (
                         <Motion.tr
                           layout
                           key={exp.id}

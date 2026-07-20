@@ -54,13 +54,14 @@ const expenseRow = (overrides = {}) => ({
   charge_interval_days: 31,
   is_auto_tracked: true,
   is_stale: false,
+  is_dropped: false,
   ...overrides,
 });
 
-test('GET /api/expenses returns rows with computed staleness', async () => {
+test('GET /api/expenses returns rows with computed staleness and drop flags', async () => {
   queryHandler = async (sql) => {
-    assert.match(sql, /is_stale/);
-    assert.match(sql, /charge_interval_days/);
+    assert.match(sql, /1\.5 \* COALESCE\(charge_interval_days, 30\).*is_stale/s);
+    assert.match(sql, /2\.0 \* COALESCE\(charge_interval_days, 30\).*is_dropped/s);
     return { rows: [expenseRow(), expenseRow({ id: 16, name: 'Spotify', merchant_key: 'Spotify' })] };
   };
 
@@ -70,6 +71,7 @@ test('GET /api/expenses returns rows with computed staleness', async () => {
   assert.equal(response.body.expenses.length, 2);
   assert.equal(response.body.expenses[0].name, 'Rent');
   assert.equal(response.body.expenses[0].is_stale, false);
+  assert.equal(response.body.expenses[0].is_dropped, false);
 });
 
 test('GET /api/expenses/ignored lists ignored merchants', async () => {

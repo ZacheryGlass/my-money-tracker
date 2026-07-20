@@ -4,9 +4,15 @@ class RecurringExpense {
   static async findAll() {
     // is_stale: no charge seen within 1.5x the merchant's median charge
     // interval (default 30 days when cadence is unknown).
+    // is_dropped: no charge within 2.0x that interval -- the page hides these
+    // so lapsed/cancelled expenses fall off on their own. The row is kept, not
+    // deleted: if the merchant charges again, sync refreshes last_charge_date
+    // and it reappears automatically.
     const result = await pool.query(`SELECT *,
       (last_charge_date IS NOT NULL
-        AND (CURRENT_DATE - last_charge_date) > CEIL(1.5 * COALESCE(charge_interval_days, 30)))::boolean AS is_stale
+        AND (CURRENT_DATE - last_charge_date) > CEIL(1.5 * COALESCE(charge_interval_days, 30)))::boolean AS is_stale,
+      (last_charge_date IS NOT NULL
+        AND (CURRENT_DATE - last_charge_date) > CEIL(2.0 * COALESCE(charge_interval_days, 30)))::boolean AS is_dropped
       FROM recurring_expenses ORDER BY cost DESC`);
     return result.rows;
   }
