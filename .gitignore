@@ -15,3 +15,4 @@ google-sheet-export/
 node_modules/
 docs/quickstart/
 
+.claude/settings.local.json
