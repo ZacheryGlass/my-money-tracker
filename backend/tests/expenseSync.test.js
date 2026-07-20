@@ -26,6 +26,7 @@ const {
   matchExpenses,
   deriveFields,
   isMonthlyCadence,
+  isCreditCardPayment,
   buildGroups,
 } = require('../src/services/ExpenseSyncService');
 const { classify } = require('../src/services/TransactionClassificationService');
@@ -147,6 +148,41 @@ test('buildGroups: keeps a group regardless of amount variance', () => {
   assert.equal(groups.length, 1);
   assert.equal(groups[0].merchantKey, 'Lightstream');
   assert.ok(groups[0].sd >= 5, 'high variance group is retained');
+});
+
+test('deriveFields: regular monthly gaps are flagged consistent', () => {
+  const charges = ['2026-03-02', '2026-04-01', '2026-05-02', '2026-06-01', '2026-07-02'].map((date) => ({
+    date, amount: 15.99, account_id: 64, merchant_name: 'Spotify', account_display: 'Ally Checking',
+  }));
+  assert.equal(deriveFields(charges, '2026-07-19').intervalRegular, true);
+});
+
+test('deriveFields: erratic gaps (discretionary spend) are flagged irregular', () => {
+  // Median gap lands in the monthly band but the spacing is all over the place
+  // -- this is the liquor-store false positive the regularity gate should stop.
+  const charges = ['2026-03-01', '2026-03-20', '2026-05-10', '2026-06-05'].map((date) => ({
+    date, amount: 24, account_id: 64, merchant_name: "King's Liquor", account_display: 'Ally Checking',
+  }));
+  const derived = deriveFields(charges, '2026-07-19');
+  assert.ok(isMonthlyCadence(derived.intervalDays), 'median gap still in monthly band');
+  assert.equal(derived.intervalRegular, false);
+});
+
+test('isCreditCardPayment: payment to a tracked card is excluded, a loan is kept', () => {
+  const cardTokens = new Set(['chase', 'discover', 'amazon', 'freedom', 'sapphire']);
+  assert.equal(
+    isCreditCardPayment({ merchantKey: 'DISCOVER E-PAYMENT', category: 'LOAN_PAYMENTS' }, cardTokens),
+    true
+  );
+  assert.equal(
+    isCreditCardPayment({ merchantKey: 'LIGHTSTREAM LOAN PMTS', category: 'LOAN_PAYMENTS' }, cardTokens),
+    false
+  );
+  // Non-loan categories never trip it, even if the name matches a card issuer.
+  assert.equal(
+    isCreditCardPayment({ merchantKey: 'Amazon Prime', category: 'GENERAL_MERCHANDISE' }, cardTokens),
+    false
+  );
 });
 
 test('classify: maps categories to directions with transfer flag', () => {

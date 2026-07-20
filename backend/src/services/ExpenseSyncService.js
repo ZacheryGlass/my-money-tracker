@@ -13,9 +13,22 @@ const MIN_SPAN_DAYS = 60;
 const FIXED_STDDEV_DOLLARS = 5;
 const MONTHLY_MIN_DAYS = 20;
 const MONTHLY_MAX_DAYS = 45;
-// Income is never an expense. Loan/debt payments are intentionally allowed
-// through — they are recurring outflows the user wants to see here.
+// Auto-create requires the inter-charge gaps to be consistent, not just a
+// median in the monthly band -- this separates real subscriptions ("billed
+// on the 2nd every month") from routine discretionary spend a user happens
+// to make roughly monthly (a liquor store, a favorite restaurant).
+const GAP_TOLERANCE_DAYS = 7;
+// Income is never an expense. Installment loans (mortgage, auto, personal)
+// stay -- their payment is the only record of that obligation. Credit-card
+// payments are excluded separately (isCreditCardPayment): the card's own
+// purchases are already counted, so the payment would double-count.
 const AUTO_CREATE_EXCLUDED = new Set(['INCOME']);
+// Generic tokens dropped when matching a payment merchant to a card account,
+// so "Chase"/"Discover" identify the issuer but "card"/"visa" don't overmatch.
+const CARD_TOKEN_STOPLIST = new Set([
+  'card', 'cards', 'credit', 'visa', 'mastercard', 'amex', 'debit',
+  'bank', 'account', 'payment', 'payments', 'autopay', 'the',
+]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -107,11 +120,16 @@ function deriveFields(charges, today) {
   const gaps = [];
   for (let i = 1; i < recent.length; i++) gaps.push(daysBetween(recent[i - 1].date, recent[i].date));
   const intervalDays = gaps.length ? Math.round(median(gaps)) : null;
+  // Regular = every gap is within tolerance of the median. Needs >=2 gaps to
+  // be meaningful; consumed only by the auto-create gate, not by refresh.
+  const intervalRegular = gaps.length >= 2
+    && gaps.every((g) => Math.abs(g - intervalDays) <= GAP_TOLERANCE_DAYS);
   return {
     cost: Math.round((isFixed ? last.amount : avg) * 100) / 100,
     isFixed,
     dueDay: Math.round(median(recent.map((c) => new Date(c.date).getUTCDate()))),
     intervalDays,
+    intervalRegular,
     lastChargeDate: last.date,
     accountId: last.account_id,
     company: last.merchant_name || null,
@@ -121,6 +139,30 @@ function deriveFields(charges, today) {
 
 function isMonthlyCadence(intervalDays) {
   return intervalDays !== null && intervalDays >= MONTHLY_MIN_DAYS && intervalDays <= MONTHLY_MAX_DAYS;
+}
+
+// Distinctive name tokens of the user's tracked credit-card accounts (e.g.
+// "chase", "discover"), used to recognize a payment TO one of those cards.
+async function fetchCreditCardTokens() {
+  const result = await pool.query(
+    "SELECT name FROM accounts WHERE type = 'credit' AND is_hidden = FALSE"
+  );
+  const set = new Set();
+  for (const row of result.rows) {
+    for (const token of tokens(row.name)) {
+      if (!CARD_TOKEN_STOPLIST.has(token)) set.add(token);
+    }
+  }
+  return set;
+}
+
+// A credit-card payment double-counts (the card's purchases are already
+// tracked), so it must not become a recurring expense. Installment loans
+// (Lightstream, mortgage) share the LOAN_PAYMENTS category but match no card
+// account, so they are correctly kept.
+function isCreditCardPayment(group, cardTokens) {
+  if (!String(group.category || '').toUpperCase().includes('LOAN_PAYMENT')) return false;
+  return tokens(group.merchantKey).some((token) => cardTokens.has(token));
 }
 
 function buildGroups(rows) {
@@ -208,6 +250,7 @@ async function run() {
   const created = [];
   const skipped = [];
   const ignoredKeys = await IgnoredMerchant.allKeys();
+  const cardTokens = await fetchCreditCardTokens();
   for (const group of groups) {
     if (usedKeys.has(group.merchantKey)) continue;
     if (ignoredKeys.has(group.merchantKey)) {
@@ -218,10 +261,14 @@ async function run() {
       skipped.push({ merchantKey: group.merchantKey, reason: `excluded category ${group.category}` });
       continue;
     }
-    // Monthly cadence is the recurrence test; amount variance is allowed so
-    // variable utilities (electric, gas) and loan autopays still qualify.
+    if (isCreditCardPayment(group, cardTokens)) {
+      skipped.push({ merchantKey: group.merchantKey, reason: 'credit-card payment (double-counts card spend)' });
+      continue;
+    }
+    // Recurrence test: a monthly-band cadence AND regular gaps (variable
+    // amounts are fine, so utilities and loan autopays still qualify).
     const derived = deriveFields(group.charges, today);
-    if (!derived || !isMonthlyCadence(derived.intervalDays)) continue;
+    if (!derived || !isMonthlyCadence(derived.intervalDays) || !derived.intervalRegular) continue;
     const row = await RecurringExpense.createAutoTracked({
       name: group.merchantKey,
       cost: derived.cost,
@@ -257,5 +304,6 @@ module.exports = {
   matchExpenses,
   deriveFields,
   isMonthlyCadence,
+  isCreditCardPayment,
   buildGroups,
 };
