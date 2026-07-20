@@ -202,7 +202,7 @@ const MonthlyExpenses = () => {
               <table className="w-full table-fixed divide-y divide-border">
                 <thead className="bg-surface-2">
                   <tr>
-                    {['Name', 'Monthly Cost', 'Fixed', 'Due', 'Account', 'Company', 'Actions'].map((h, index) => (
+                    {['Name', 'Monthly Cost', 'Fixed', 'Date', 'Account', 'Company', 'Actions'].map((h, index) => (
                       <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${index >= 2 && index <= 5 ? 'hidden xl:table-cell' : ''}`}>{h}</th>
                     ))}
                   </tr>
@@ -273,8 +273,8 @@ const MonthlyExpenses = () => {
                           </td>
                           <td className="hidden px-5 py-4 xl:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
                           <td className="hidden px-5 py-4 xl:table-cell">
-                            <span className="text-xs font-medium text-secondary" title={exp.last_charge_date ? `Last charge ${formatDateDisplay(exp.last_charge_date)}` : undefined}>
-                              {formatDayOrdinal(exp.due_day) || <span className="text-tertiary">—</span>}
+                            <span className="text-xs font-medium text-secondary" title={exp.due_day ? `Typically billed on the ${formatDayOrdinal(exp.due_day)}` : undefined}>
+                              {exp.last_charge_date ? formatDateDisplay(exp.last_charge_date) : <span className="text-tertiary">—</span>}
                             </span>
                           </td>
                           <td className="hidden px-5 py-4 xl:table-cell">
