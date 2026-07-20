@@ -239,13 +239,8 @@ export const salary = {
 
 // Recurring Expenses API
 export const expenses = {
-  getAll: async (type) => {
-    const url = type ? `/api/expenses?type=${type}` : '/api/expenses';
-    const response = await api.get(url);
-    return response.data;
-  },
-  getSummary: async () => {
-    const response = await api.get('/api/expenses/summary');
+  getAll: async () => {
+    const response = await api.get('/api/expenses');
     return response.data;
   },
   create: async (data) => {

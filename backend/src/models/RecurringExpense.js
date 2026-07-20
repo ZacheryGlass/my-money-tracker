@@ -1,20 +1,13 @@
 const pool = require('../config/database');
 
 class RecurringExpense {
-  static async findAll(type) {
+  static async findAll() {
     // is_stale: no charge seen within 1.5x the merchant's median charge
     // interval (default 30 days when cadence is unknown).
-    let query = `SELECT *,
+    const result = await pool.query(`SELECT *,
       (last_charge_date IS NOT NULL
         AND (CURRENT_DATE - last_charge_date) > CEIL(1.5 * COALESCE(charge_interval_days, 30)))::boolean AS is_stale
-      FROM recurring_expenses`;
-    const params = [];
-    if (type) {
-      query += ' WHERE type = $1';
-      params.push(type);
-    }
-    query += ' ORDER BY cost DESC';
-    const result = await pool.query(query, params);
+      FROM recurring_expenses ORDER BY cost DESC`);
     return result.rows;
   }
 
@@ -24,11 +17,11 @@ class RecurringExpense {
   }
 
   static async create(data) {
-    const { type, name, cost, is_fixed_rate, pay_account, company } = data;
+    const { name, cost, is_fixed_rate, pay_account, company } = data;
     const result = await pool.query(
-      `INSERT INTO recurring_expenses (type, name, cost, is_fixed_rate, pay_account, company)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [type, name, cost, is_fixed_rate ?? true, pay_account, company]
+      `INSERT INTO recurring_expenses (name, cost, is_fixed_rate, pay_account, company)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [name, cost, is_fixed_rate ?? true, pay_account, company]
     );
     return result.rows[0];
   }
@@ -70,10 +63,10 @@ class RecurringExpense {
   static async createAutoTracked(data) {
     const result = await pool.query(
       `INSERT INTO recurring_expenses
-        (type, name, cost, is_fixed_rate, pay_account, company, merchant_key, account_id,
+        (name, cost, is_fixed_rate, pay_account, company, merchant_key, account_id,
          due_day, last_charge_date, charge_interval_days, is_auto_tracked)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE) RETURNING *`,
-      [data.type, data.name, data.cost, data.is_fixed_rate, data.pay_account, data.company,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE) RETURNING *`,
+      [data.name, data.cost, data.is_fixed_rate, data.pay_account, data.company,
         data.merchant_key, data.account_id, data.due_day, data.last_charge_date, data.charge_interval_days]
     );
     return result.rows[0];
@@ -86,20 +79,6 @@ class RecurringExpense {
        ON CONFLICT (recurring_expense_id, effective_date) DO UPDATE SET cost = EXCLUDED.cost`,
       [id, cost]
     );
-  }
-
-  static async getSummary() {
-    const result = await pool.query(
-      `SELECT type, COALESCE(SUM(cost), 0) as total
-       FROM recurring_expenses GROUP BY type`
-    );
-    const summary = { bills: 0, subscriptions: 0, total: 0 };
-    for (const row of result.rows) {
-      if (row.type === 'bill') summary.bills = parseFloat(row.total);
-      if (row.type === 'subscription') summary.subscriptions = parseFloat(row.total);
-    }
-    summary.total = summary.bills + summary.subscriptions;
-    return summary;
   }
 }
 

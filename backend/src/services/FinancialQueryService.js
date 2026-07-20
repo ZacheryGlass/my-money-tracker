@@ -945,7 +945,6 @@ class FinancialQueryService {
       recurringCandidates: recurring,
       savedRecurringExpenses: savedRecurring.map((expense) => ({
         id: expense.id,
-        type: expense.type,
         name: expense.name,
         monthlyCost: round(toNumber(expense.cost)),
         fixedRate: Boolean(expense.is_fixed_rate),
@@ -1164,7 +1163,7 @@ class FinancialQueryService {
         table: 'salary_history', date: 'effective_date', columns: ['id', 'effective_date', 'title', 'salary_amount', 'psu', 'rsu', 'total_comp', 'change_amount', 'change_percent'],
       },
       recurring_expenses: {
-        table: 'recurring_expenses', date: null, columns: ['id', 'type', 'name', 'cost', 'is_fixed_rate', 'pay_account', 'company'],
+        table: 'recurring_expenses', date: null, columns: ['id', 'name', 'cost', 'is_fixed_rate', 'pay_account', 'company', 'merchant_key', 'due_day', 'last_charge_date', 'tag'],
       },
       benchmark_prices: {
         table: 'benchmark_prices', date: 'price_date', columns: ['symbol', 'price_date', 'adjusted_close', 'total_return_index', 'source'],
@@ -1264,7 +1263,6 @@ class FinancialQueryService {
       })),
       recurringExpenses: recurring.map((row) => ({
         id: row.id,
-        type: row.type,
         name: row.name,
         monthlyCost: round(toNumber(row.cost)),
         fixedRate: Boolean(row.is_fixed_rate),

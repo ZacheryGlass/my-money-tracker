@@ -42,7 +42,6 @@ beforeEach(() => {
 
 const expenseRow = (overrides = {}) => ({
   id: 1,
-  type: 'bill',
   name: 'Rent',
   cost: '2160.99',
   is_fixed_rate: true,
@@ -66,7 +65,7 @@ test('GET /api/expenses computes staleness and provenance', async () => {
       rows: [
         expenseRow(),
         expenseRow({ id: 8, name: 'Food', merchant_key: null, company: null }),
-        expenseRow({ id: 12, name: 'YouTube Premium', type: 'subscription', merchant_key: null }),
+        expenseRow({ id: 12, name: 'YouTube Premium', merchant_key: null }),
       ],
     };
   };
@@ -82,37 +81,80 @@ test('GET /api/expenses computes staleness and provenance', async () => {
   assert.equal(byName.Rent.is_stale, false);
 });
 
-test('POST /api/expenses accepts subscriptions', async () => {
+test('POST /api/expenses creates an entry and lifts any merchant ignore', async () => {
+  const queries = [];
   queryHandler = async (sql, params) => {
-    assert.match(sql, /INSERT INTO recurring_expenses/);
-    assert.equal(params[0], 'subscription');
-    assert.equal(params[1], 'Nebula');
-    return { rows: [expenseRow({ id: 30, type: 'subscription', name: 'Nebula', merchant_key: null })] };
+    queries.push(sql);
+    if (/INSERT INTO recurring_expenses/.test(sql)) {
+      assert.equal(params[0], 'Nebula');
+      return { rows: [expenseRow({ id: 30, name: 'Nebula', merchant_key: null })] };
+    }
+    if (/DELETE FROM ignored_merchants/.test(sql)) {
+      assert.deepEqual(params, ['Nebula']);
+      return { rows: [] };
+    }
+    throw new Error(`Unexpected query: ${sql}`);
   };
 
   const response = await request(app)
     .post('/api/expenses')
-    .send({ type: 'subscription', name: 'Nebula', cost: 5 });
+    .send({ name: 'Nebula', cost: 5 });
 
   assert.equal(response.status, 201);
   assert.equal(response.body.expense.name, 'Nebula');
-});
-
-test('POST /api/expenses rejects bill creation', async () => {
-  const response = await request(app)
-    .post('/api/expenses')
-    .send({ type: 'bill', name: 'New Bill', cost: 10 });
-
-  assert.equal(response.status, 400);
-  assert.match(response.body.error, /subscription/);
+  assert.ok(queries.some((sql) => /DELETE FROM ignored_merchants/.test(sql)));
 });
 
 test('POST /api/expenses rejects missing fields', async () => {
   const response = await request(app)
     .post('/api/expenses')
-    .send({ type: 'subscription', name: 'No Cost' });
+    .send({ name: 'No Cost' });
 
   assert.equal(response.status, 400);
+});
+
+test('DELETE /api/expenses/:id ignores the merchant for linked expenses', async () => {
+  const queries = [];
+  queryHandler = async (sql, params) => {
+    queries.push(sql);
+    if (/SELECT \* FROM recurring_expenses WHERE id/.test(sql)) {
+      return { rows: [expenseRow({ id: 16, name: 'Spotify', merchant_key: 'Spotify' })] };
+    }
+    if (/DELETE FROM recurring_expenses/.test(sql)) {
+      return { rows: [{ id: 16 }] };
+    }
+    if (/INSERT INTO ignored_merchants/.test(sql)) {
+      assert.deepEqual(params, ['Spotify']);
+      return { rows: [] };
+    }
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+
+  const response = await request(app).delete('/api/expenses/16');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ignoredMerchant, 'Spotify');
+  assert.ok(queries.some((sql) => /INSERT INTO ignored_merchants/.test(sql)));
+});
+
+test('DELETE /api/expenses/:id skips the ignore list for unlinked expenses', async () => {
+  const queries = [];
+  queryHandler = async (sql) => {
+    queries.push(sql);
+    if (/SELECT \* FROM recurring_expenses WHERE id/.test(sql)) {
+      return { rows: [expenseRow({ id: 12, name: 'YouTube Premium', merchant_key: null })] };
+    }
+    if (/DELETE FROM recurring_expenses/.test(sql)) {
+      return { rows: [{ id: 12 }] };
+    }
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+
+  const response = await request(app).delete('/api/expenses/12');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ignoredMerchant, null);
+  assert.ok(!queries.some((sql) => /ignored_merchants/.test(sql)));
 });
 
 test('PATCH /api/expenses/:id/tag saves a trimmed tag', async () => {

@@ -2,6 +2,7 @@
 
 const pool = require('../config/database');
 const RecurringExpense = require('../models/RecurringExpense');
+const IgnoredMerchant = require('../models/IgnoredMerchant');
 const logger = require('../config/logger');
 
 const GROUP_WINDOW_DAYS = 400;
@@ -231,8 +232,13 @@ async function run() {
 
   const created = [];
   const skipped = [];
+  const ignoredKeys = await IgnoredMerchant.allKeys();
   for (const group of groups) {
     if (usedKeys.has(group.merchantKey)) continue;
+    if (ignoredKeys.has(group.merchantKey)) {
+      skipped.push({ merchantKey: group.merchantKey, reason: 'ignored by user' });
+      continue;
+    }
     if (AUTO_CREATE_EXCLUDED.has(group.category)) {
       skipped.push({ merchantKey: group.merchantKey, reason: `excluded category ${group.category}` });
       continue;
@@ -241,7 +247,6 @@ async function run() {
     const derived = deriveFields(group.charges, today);
     if (!derived || !isMonthlyCadence(derived.intervalDays)) continue;
     const row = await RecurringExpense.createAutoTracked({
-      type: 'subscription',
       name: group.merchantKey,
       cost: derived.cost,
       is_fixed_rate: derived.isFixed,

@@ -22,11 +22,16 @@ const PROVENANCE_LABELS = {
   manual: { label: 'Manual', title: 'Hand-maintained entry' },
 };
 
+// A tag resolves any naming concern; derived rows (merchant/budget) get their
+// details from transactions, so only manual entries are held to the
+// name-length and company checks.
 function getCleanupFlag(expense) {
   const name = String(expense.name || '').trim();
   if (!name) return 'Missing name';
-  if (name.length < 4) return 'Too short';
+  if (expense.tag) return null;
   if (ROUGH_NAMES.has(name.toLowerCase())) return 'Review name';
+  if (expense.provenance !== 'manual') return null;
+  if (name.length < 4) return 'Too short';
   if (!expense.company) return 'Add details';
   return null;
 }
@@ -36,7 +41,7 @@ const MonthlyExpenses = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [successMessage, showSuccess] = useTransientMessage();
-  const [activeTab, setActiveTab] = useState('bill');
+  const [activeTab, setActiveTab] = useState('tracked');
   const [detectedSubs, setDetectedSubs] = useState([]);
   const [detectedLoading, setDetectedLoading] = useState(false);
   const [deletingExpense, setDeletingExpense] = useState(null);
@@ -99,7 +104,6 @@ const MonthlyExpenses = () => {
   const handleTrackDetected = async (sub) => {
     try {
       await expensesAPI.create({
-        type: 'subscription',
         name: sub.merchant,
         cost: parseFloat(sub.avg_amount) || 0,
         is_fixed_rate: true,
@@ -109,7 +113,7 @@ const MonthlyExpenses = () => {
       await fetchData();
       setDetectedSubs((prev) => prev.filter((d) => d.merchant !== sub.merchant));
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to track subscription');
+      setError(err.response?.data?.error || 'Failed to track merchant');
     }
   };
 
@@ -117,31 +121,30 @@ const MonthlyExpenses = () => {
     new Set(allExpenses.map((e) => e.name.toLowerCase())),
   [allExpenses]);
 
-  const filteredDetected = useMemo(() =>
-    detectedSubs.filter((d) => !trackedNames.has(d.merchant.toLowerCase())),
-  [detectedSubs, trackedNames]);
+  const trackedMerchants = useMemo(() =>
+    new Set(allExpenses.map((e) => e.merchant_key).filter(Boolean)),
+  [allExpenses]);
 
-  const { totalBills, totalSubs, totalAll, billCount, subCount, filtered, stats } = useMemo(() => {
-    let bills = 0, subs = 0, bc = 0, sc = 0;
-    let fixedTotal = 0, variableTotal = 0, cleanupCount = 0;
+  const filteredDetected = useMemo(() =>
+    detectedSubs.filter((d) => !trackedNames.has(d.merchant.toLowerCase()) && !trackedMerchants.has(d.merchant)),
+  [detectedSubs, trackedNames, trackedMerchants]);
+
+  const { totalAll, filtered, stats } = useMemo(() => {
+    let total = 0, fixedTotal = 0, variableTotal = 0, autoCount = 0, cleanupCount = 0;
     allExpenses.forEach((e) => {
       const c = parseFloat(e.cost) || 0;
-      if (e.type === 'bill') { bills += c; bc++; }
-      else { subs += c; sc++; }
+      total += c;
       if (e.is_fixed_rate) fixedTotal += c;
       else variableTotal += c;
+      if (e.provenance !== 'manual') autoCount++;
       if (getCleanupFlag(e)) cleanupCount++;
     });
     return {
-      totalBills: bills,
-      totalSubs: subs,
-      totalAll: bills + subs,
-      billCount: bc,
-      subCount: sc,
-      filtered: allExpenses.filter((e) => e.type === activeTab),
-      stats: { fixedTotal, variableTotal, cleanupCount },
+      totalAll: total,
+      filtered: allExpenses,
+      stats: { fixedTotal, variableTotal, autoCount, cleanupCount },
     };
-  }, [allExpenses, activeTab]);
+  }, [allExpenses]);
 
   if (loading) {
     return <LoadingState label="Calculating Expenses" />;
@@ -159,7 +162,7 @@ const MonthlyExpenses = () => {
           <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
             {formatCurrency(totalAll)}
           </h1>
-          <p className="text-sm text-secondary">Aggregated across {billCount} bills and {subCount} subscriptions</p>
+          <p className="text-sm text-secondary">Aggregated across {allExpenses.length} tracked recurring costs</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -182,9 +185,9 @@ const MonthlyExpenses = () => {
           <p className="text-caption text-tertiary">Annual {formatCurrency(stats.variableTotal * 12)}</p>
         </div>
         <div className="border border-border bg-surface p-3">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Subscriptions</p>
-          <p className="font-mono text-lg font-bold text-primary">{formatCurrency(totalSubs)}</p>
-          <p className="text-caption text-tertiary">{subCount} tracked items</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Automated</p>
+          <p className="font-mono text-lg font-bold text-primary">{stats.autoCount}/{allExpenses.length}</p>
+          <p className="text-caption text-tertiary">Entries derived from transactions</p>
         </div>
         <div className="border border-border bg-surface p-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Cleanup Flags</p>
@@ -201,8 +204,7 @@ const MonthlyExpenses = () => {
           </div>
           <div className="flex flex-wrap gap-2">
             {[
-              { key: 'bill', label: 'Fixed Bills', icon: Receipt, count: billCount, total: totalBills },
-              { key: 'subscription', label: 'Subscriptions', icon: CreditCard, count: subCount, total: totalSubs },
+              { key: 'tracked', label: 'Tracked', icon: CreditCard, count: allExpenses.length, total: totalAll },
               { key: 'detected', label: 'Detected', icon: Search, count: filteredDetected.length, total: null },
             ].map((tab) => (
               <button
@@ -261,7 +263,7 @@ const MonthlyExpenses = () => {
                           <td colSpan={8} className="px-5 py-12 text-center">
                             <div className="flex flex-col items-center gap-3 opacity-40">
                               <Calendar size={32} className="text-tertiary" />
-                              <p className="text-sm font-medium text-tertiary">No {activeTab}s tracked yet</p>
+                              <p className="text-sm font-medium text-tertiary">Nothing tracked yet; check the Detected tab</p>
                             </div>
                           </td>
                         </tr>
@@ -415,9 +417,9 @@ const MonthlyExpenses = () => {
             <h2 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-tertiary">Annualized Impact</h2>
             <div className="space-y-3">
               {[
-                ['Fixed bills', stats.fixedTotal, 'text-primary'],
-                ['Variable bills', stats.variableTotal, 'text-loss'],
-                ['Subscriptions', totalSubs, 'text-primary'],
+                ['Fixed costs', stats.fixedTotal, 'text-primary'],
+                ['Variable costs', stats.variableTotal, 'text-loss'],
+                ['Everything tracked', totalAll, 'text-primary'],
               ].map(([label, value, colorClass]) => (
                 <div key={label} className="flex items-center justify-between border-b border-border pb-2 last:border-0 last:pb-0">
                   <span className="text-sm text-secondary">{label}</span>
@@ -443,8 +445,13 @@ const MonthlyExpenses = () => {
               <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-4">
                 <Trash2 size={24} />
               </div>
-              <h2 className="text-xl font-bold text-primary mb-2">Confirm Delete</h2>
-              <p className="text-sm text-secondary mb-8">Are you sure you want to delete <span className="text-primary font-bold">"{deletingExpense.name}"</span>? This action cannot be undone.</p>
+              <h2 className="text-xl font-bold text-primary mb-2">Stop Tracking</h2>
+              <p className="text-sm text-secondary mb-8">
+                Remove <span className="text-primary font-bold">"{deletingExpense.name}"</span> from your burn rate?
+                {deletingExpense.merchant_key
+                  ? ' This merchant will not be auto-tracked again; you can re-track it from the Detected tab.'
+                  : ' This action cannot be undone.'}
+              </p>
               <div className="flex gap-3">
                 <button onClick={() => setDeletingExpense(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
                 <button onClick={handleDeleteConfirm} className="flex-1 py-3 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all">Delete</button>
