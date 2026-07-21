@@ -5,9 +5,9 @@ import { formatCurrency, formatDateDisplay } from '../../utils/format';
 import LoadingState from '../LoadingState';
 
 // The Ignored panel, shared by the Monthly Expenses and Top Merchants pages.
-// One ignore list backs both pages, so restoring here brings the merchant
-// back everywhere. State/actions come from the useIgnoredMerchants hook.
-const IgnoredMerchantsModal = ({ open, onClose, items, loading, error, restoringKey, onRestore }) => (
+// Each page passes its own scope's items (see useIgnoredMerchants) plus
+// page-appropriate title/footnote copy.
+const IgnoredMerchantsModal = ({ open, onClose, items, loading, error, restoringKey, onRestore, title = 'Ignored Charges', footnote = 'Restoring re-runs detection so the charge reappears immediately.' }) => (
   <AnimatePresence>
     {open && (
       <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
@@ -16,7 +16,7 @@ const IgnoredMerchantsModal = ({ open, onClose, items, loading, error, restoring
           <div className="flex shrink-0 items-center justify-between border-b border-border p-4 sm:p-6">
             <div className="flex items-center gap-2">
               <EyeOff size={18} className="text-secondary" />
-              <h2 className="text-lg font-bold text-primary">Ignored Charges</h2>
+              <h2 className="text-lg font-bold text-primary">{title}</h2>
             </div>
             <button onClick={onClose} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
           </div>
@@ -56,7 +56,7 @@ const IgnoredMerchantsModal = ({ open, onClose, items, loading, error, restoring
                 ))}
               </div>
             )}
-            <p className="mt-4 text-caption text-tertiary">Restoring re-runs detection so the charge reappears immediately.</p>
+            <p className="mt-4 text-caption text-tertiary">{footnote}</p>
           </div>
         </Motion.div>
       </div>

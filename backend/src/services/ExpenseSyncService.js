@@ -249,7 +249,7 @@ async function run() {
 
   const created = [];
   const skipped = [];
-  const ignoredKeys = await IgnoredMerchant.allKeys();
+  const ignoredKeys = await IgnoredMerchant.allKeys('expenses');
   const cardTokens = await fetchCreditCardTokens();
   for (const group of groups) {
     if (usedKeys.has(group.merchantKey)) continue;

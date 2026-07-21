@@ -243,8 +243,10 @@ export const expenses = {
     const response = await api.get('/api/expenses');
     return response.data;
   },
-  getIgnored: async () => {
-    const response = await api.get('/api/expenses/ignored');
+  // scope is 'expenses' (Monthly Expenses list) or 'merchants' (Top Merchants
+  // ranking) — each page has its own independent ignore list.
+  getIgnored: async (scope) => {
+    const response = await api.get('/api/expenses/ignored', { params: { scope } });
     return response.data;
   },
   getTransactions: async (id) => {
@@ -259,8 +261,8 @@ export const expenses = {
     const response = await api.delete(`/api/expenses/${id}`);
     return response.data;
   },
-  restoreIgnored: async (merchantKey) => {
-    const response = await api.delete('/api/expenses/ignored', { params: { key: merchantKey } });
+  restoreIgnored: async (merchantKey, scope) => {
+    const response = await api.delete('/api/expenses/ignored', { params: { key: merchantKey, scope } });
     return response.data;
   },
   // Top Merchants page. Merchant keys travel as query params (they can

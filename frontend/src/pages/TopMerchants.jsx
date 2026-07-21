@@ -71,6 +71,7 @@ const TopMerchants = () => {
   }, [days]);
 
   const ignoredPanel = useIgnoredMerchants({
+    scope: 'merchants',
     onRestored: async (res, item) => {
       showSuccess(`Restored "${item.name || item.merchant_key}"`);
       await fetchData();
@@ -291,7 +292,7 @@ const TopMerchants = () => {
         item={ignoringMerchant}
         title="Ignore Merchant"
         description={ignoringMerchant && (
-          <>Ignore <span className="text-primary font-bold">"{ignoringMerchant.merchant_key}"</span>? Its spending won't be counted here and it won't be tracked as a recurring charge until you restore it from Ignored.</>
+          <>Ignore <span className="text-primary font-bold">"{ignoringMerchant.merchant_key}"</span>? It will be hidden from this ranking until you restore it from Ignored. Recurring charges on Monthly Expenses are unaffected.</>
         )}
         submitting={ignoreSubmitting}
         onCancel={() => setIgnoringMerchant(null)}
@@ -306,6 +307,8 @@ const TopMerchants = () => {
         error={ignoredPanel.error}
         restoringKey={ignoredPanel.restoringKey}
         onRestore={ignoredPanel.restore}
+        title="Ignored Merchants"
+        footnote="Restoring brings the merchant back into the ranking immediately."
       />
     </div>
   );

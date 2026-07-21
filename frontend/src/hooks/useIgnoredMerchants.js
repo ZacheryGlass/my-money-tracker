@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { expenses as expensesAPI } from '../utils/api';
 
 // State + actions behind the shared Ignored panel (IgnoredMerchantsModal).
-// One ignore list backs both the Monthly Expenses and Top Merchants pages.
+// `scope` selects the page's own list — 'expenses' (Monthly Expenses) or
+// 'merchants' (Top Merchants); the lists are independent server-side.
 // `onRestored(result, item)` runs after a successful restore so the host page
 // can refresh its own data and show its own success copy; `onError(message)`
 // surfaces failures in the page's error slot.
-export default function useIgnoredMerchants({ onRestored, onError } = {}) {
+export default function useIgnoredMerchants({ scope, onRestored, onError } = {}) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -17,7 +18,7 @@ export default function useIgnoredMerchants({ onRestored, onError } = {}) {
     setLoading(true);
     setError(null);
     try {
-      const data = await expensesAPI.getIgnored();
+      const data = await expensesAPI.getIgnored(scope);
       setItems(data.ignored || []);
     } catch (err) {
       setItems([]);
@@ -35,7 +36,7 @@ export default function useIgnoredMerchants({ onRestored, onError } = {}) {
   const restore = async (item) => {
     setRestoringKey(item.merchant_key);
     try {
-      const res = await expensesAPI.restoreIgnored(item.merchant_key);
+      const res = await expensesAPI.restoreIgnored(item.merchant_key, scope);
       await onRestored?.(res, item);
       await fetchIgnored();
     } catch (err) {

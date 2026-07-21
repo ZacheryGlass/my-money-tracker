@@ -58,14 +58,6 @@ class RecurringExpense {
     return result.rows[0];
   }
 
-  // Used when ignoring a merchant from the Top Merchants page: any tracked
-  // expense for that merchant must go too, so both pages agree. Returns the
-  // deleted row (if any) so the caller can keep its name/cost snapshot.
-  static async deleteByMerchantKey(merchantKey) {
-    const result = await pool.query('DELETE FROM recurring_expenses WHERE merchant_key = $1 RETURNING *', [merchantKey]);
-    return result.rows[0];
-  }
-
   static async setMerchantKey(id, merchantKey) {
     const result = await pool.query(
       'UPDATE recurring_expenses SET merchant_key = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',

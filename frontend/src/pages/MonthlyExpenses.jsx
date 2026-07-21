@@ -72,6 +72,7 @@ const MonthlyExpenses = () => {
   useEffect(() => { fetchData(); }, []);
 
   const ignoredPanel = useIgnoredMerchants({
+    scope: 'expenses',
     onRestored: async (res, item) => {
       const label = item.name || item.merchant_key;
       showSuccess(res.recreated

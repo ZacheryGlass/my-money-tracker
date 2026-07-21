@@ -22,9 +22,15 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Each page has its own ignore list, selected by `scope` ('expenses' for the
+// Monthly Expenses page, 'merchants' for Top Merchants).
 router.get('/ignored', async (req, res) => {
   try {
-    const ignored = await IgnoredMerchant.all();
+    const scope = req.query.scope ?? 'expenses';
+    if (!IgnoredMerchant.isValidScope(scope)) {
+      return res.status(400).json({ error: 'Invalid scope' });
+    }
+    const ignored = await IgnoredMerchant.all(scope);
     res.status(200).json({ ignored });
   } catch (error) {
     logger.error({ err: error }, 'Get ignored merchants error');
@@ -32,25 +38,32 @@ router.get('/ignored', async (req, res) => {
   }
 });
 
-// Restoring lifts the ignore and runs a sync so the merchant reappears now
-// instead of waiting for the nightly job. The key travels as a query param
-// (not a path segment) so merchant names containing '/' survive Azure's
-// encoded-slash path filtering. `recreated` tells the client whether the
-// merchant still has qualifying recent charges to rebuild a row from.
+// Restoring lifts the ignore for the given scope. For the expenses scope it
+// also runs a sync so the recurring charge reappears now instead of waiting
+// for the nightly job; `recreated` tells the client whether the merchant still
+// has qualifying recent charges to rebuild a row from. The key travels as a
+// query param (not a path segment) so merchant names containing '/' survive
+// Azure's encoded-slash path filtering.
 router.delete('/ignored', async (req, res) => {
   try {
     const merchantKey = req.query.key;
     if (typeof merchantKey !== 'string' || !merchantKey) {
       return res.status(400).json({ error: 'Missing merchant key' });
     }
-    await IgnoredMerchant.remove(merchantKey);
+    const scope = req.query.scope ?? 'expenses';
+    if (!IgnoredMerchant.isValidScope(scope)) {
+      return res.status(400).json({ error: 'Invalid scope' });
+    }
+    await IgnoredMerchant.remove(merchantKey, scope);
     let recreated = false;
-    try {
-      const result = await ExpenseSyncService.run();
-      recreated = [...result.created, ...result.refreshed].some((r) => r.merchantKey === merchantKey || r.name === merchantKey);
-    } catch (syncError) {
-      // The un-ignore already persisted; the nightly sync will rebuild the row.
-      logger.error({ err: syncError }, 'Sync after restore failed');
+    if (scope === 'expenses') {
+      try {
+        const result = await ExpenseSyncService.run();
+        recreated = [...result.created, ...result.refreshed].some((r) => r.merchantKey === merchantKey || r.name === merchantKey);
+      } catch (syncError) {
+        // The un-ignore already persisted; the nightly sync will rebuild the row.
+        logger.error({ err: syncError }, 'Sync after restore failed');
+      }
     }
     res.status(200).json({ restored: merchantKey, recreated });
   } catch (error) {
@@ -64,9 +77,9 @@ router.delete('/ignored', async (req, res) => {
 const MERCHANT_WINDOWS = new Set([30, 60, 90]);
 
 // Top merchants by spend over a trailing window, for the Top Merchants page.
-// Ignored merchants are excluded, so the shared Ignored panel governs this
-// list the same way it governs recurring expenses. Defined before the /:id
-// routes so 'merchants' is never parsed as an expense id.
+// Merchants-scope ignores are excluded; the expenses-scope list has no effect
+// here. Defined before the /:id routes so 'merchants' is never parsed as an
+// expense id.
 router.get('/merchants', async (req, res) => {
   try {
     const days = req.query.days === undefined ? 30 : parseInt(req.query.days, 10);
@@ -102,19 +115,16 @@ router.get('/merchants/transactions', async (req, res) => {
   }
 });
 
-// Ignore by merchant key, for the Top Merchants page (most rows there have no
-// recurring-expense id to DELETE). Any tracked expense for the merchant is
-// dropped too so both pages agree; the shared restore route lifts it back.
+// Ignore a merchant from the Top Merchants ranking only. Tracked recurring
+// expenses are untouched — the Monthly Expenses page has its own ignore list.
 router.post('/ignored', async (req, res) => {
   try {
     const { key, name } = req.body || {};
     if (typeof key !== 'string' || !key) {
       return res.status(400).json({ error: 'Missing merchant key' });
     }
-    const tracked = await RecurringExpense.deleteByMerchantKey(key);
-    await IgnoredMerchant.add(key, {
-      name: tracked?.name || (typeof name === 'string' && name) || key,
-      lastCost: tracked?.cost ?? null,
+    await IgnoredMerchant.add(key, 'merchants', {
+      name: (typeof name === 'string' && name) || key,
     });
     res.status(200).json({ message: 'Merchant ignored', ignoredMerchant: key });
   } catch (error) {
@@ -181,7 +191,7 @@ router.delete('/:id', async (req, res) => {
     }
     await RecurringExpense.delete(expense.id);
     if (expense.merchant_key) {
-      await IgnoredMerchant.add(expense.merchant_key, { name: expense.name, lastCost: expense.cost });
+      await IgnoredMerchant.add(expense.merchant_key, 'expenses', { name: expense.name, lastCost: expense.cost });
     }
     res.status(200).json({ message: 'Expense ignored', ignoredMerchant: expense.merchant_key || null });
   } catch (error) {
