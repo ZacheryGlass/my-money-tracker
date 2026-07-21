@@ -57,17 +57,19 @@ const ExpenseTransactions = ({ detail }) => {
   );
 };
 
-// Table columns. Optional columns reveal progressively as the viewport widens
-// (md -> lg -> xl -> 2xl) instead of all disappearing at once. Widths are fixed
-// so Name absorbs the slack and Actions stays compact.
+// Table columns. Constant-content columns (Cost, Fixed badge, Date, Actions)
+// get fixed widths sized to their content; Name, Account and Company have no
+// width so table-fixed splits the leftover space evenly between whichever of
+// them are visible. Optional columns reveal progressively (sm -> md -> xl ->
+// 2xl); Account/Company wait for xl/2xl because the sidebar appears at lg.
 const COLUMNS = [
   { label: 'Name', className: 'text-left' },
-  { label: 'Monthly Cost', className: 'w-28 text-left sm:w-32' },
-  { label: 'Fixed', className: 'hidden w-24 text-left md:table-cell' },
-  { label: 'Date', className: 'hidden w-28 text-left lg:table-cell' },
-  { label: 'Account', className: 'hidden w-40 text-left xl:table-cell' },
-  { label: 'Company', className: 'hidden w-36 text-left 2xl:table-cell' },
-  { label: 'Actions', className: 'w-24 text-right' },
+  { label: 'Monthly Cost', className: 'w-24 text-left sm:w-28' },
+  { label: 'Fixed', className: 'hidden w-32 text-left sm:table-cell' },
+  { label: 'Date', className: 'hidden w-32 text-left md:table-cell' },
+  { label: 'Account', className: 'hidden text-left xl:table-cell' },
+  { label: 'Company', className: 'hidden text-left 2xl:table-cell' },
+  { label: 'Actions', className: 'w-24 text-right sm:w-28' },
 ];
 
 const MonthlyExpenses = () => {
@@ -353,8 +355,8 @@ const MonthlyExpenses = () => {
                           <td className="px-2 py-4 sm:px-5">
                             <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
                           </td>
-                          <td className="hidden px-5 py-4 md:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
-                          <td className="hidden px-5 py-4 lg:table-cell">
+                          <td className="hidden px-5 py-4 sm:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
+                          <td className="hidden px-5 py-4 md:table-cell">
                             <span className="text-xs font-medium text-secondary" title={exp.due_day ? `Typically billed on the ${formatDayOrdinal(exp.due_day)}` : undefined}>
                               {exp.last_charge_date ? formatDateDisplay(exp.last_charge_date) : <span className="text-tertiary">—</span>}
                             </span>
@@ -367,10 +369,10 @@ const MonthlyExpenses = () => {
                           </td>
                           <td className="px-2 py-4 text-right sm:px-5" onClick={(e) => e.stopPropagation()}>
                             <div className="flex justify-end gap-1">
-                              <button onClick={() => (taggingId === exp.id ? setTaggingId(null) : startTagging(exp))} className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors" title={exp.tag ? 'Edit tag' : 'Add tag'} aria-label={`${exp.tag ? 'Edit' : 'Add'} tag for ${exp.name}`}>
+                              <button onClick={() => (taggingId === exp.id ? setTaggingId(null) : startTagging(exp))} className="shrink-0 p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors" title={exp.tag ? 'Edit tag' : 'Add tag'} aria-label={`${exp.tag ? 'Edit' : 'Add'} tag for ${exp.name}`}>
                                 <Tag size={14} />
                               </button>
-                              <button onClick={() => setIgnoringExpense(exp)} className="p-2 border border-border bg-surface-2 text-loss hover:bg-loss/10 rounded transition-colors" title="Ignore" aria-label={`Ignore ${exp.name}`}>
+                              <button onClick={() => setIgnoringExpense(exp)} className="shrink-0 p-2 border border-border bg-surface-2 text-loss hover:bg-loss/10 rounded transition-colors" title="Ignore" aria-label={`Ignore ${exp.name}`}>
                                 <EyeOff size={14} />
                               </button>
                             </div>
