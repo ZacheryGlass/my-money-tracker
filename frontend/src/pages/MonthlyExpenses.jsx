@@ -57,6 +57,19 @@ const ExpenseTransactions = ({ detail }) => {
   );
 };
 
+// Table columns. Optional columns reveal progressively as the viewport widens
+// (md -> lg -> xl -> 2xl) instead of all disappearing at once. Widths are fixed
+// so Name absorbs the slack and Actions stays compact.
+const COLUMNS = [
+  { label: 'Name', className: 'text-left' },
+  { label: 'Monthly Cost', className: 'w-28 text-left sm:w-32' },
+  { label: 'Fixed', className: 'hidden w-24 text-left md:table-cell' },
+  { label: 'Date', className: 'hidden w-28 text-left lg:table-cell' },
+  { label: 'Account', className: 'hidden w-40 text-left xl:table-cell' },
+  { label: 'Company', className: 'hidden w-36 text-left 2xl:table-cell' },
+  { label: 'Actions', className: 'w-24 text-right' },
+];
+
 const MonthlyExpenses = () => {
   const [allExpenses, setAllExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -263,8 +276,8 @@ const MonthlyExpenses = () => {
               <table className="w-full table-fixed divide-y divide-border">
                 <thead className="bg-surface-2">
                   <tr>
-                    {['Name', 'Monthly Cost', 'Fixed', 'Date', 'Account', 'Company', 'Actions'].map((h, index) => (
-                      <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${index >= 2 && index <= 5 ? 'hidden xl:table-cell' : ''}`}>{h}</th>
+                    {COLUMNS.map((col) => (
+                      <th key={col.label} className={`px-2 py-4 text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${col.className}`}>{col.label}</th>
                     ))}
                   </tr>
                 </thead>
@@ -340,8 +353,8 @@ const MonthlyExpenses = () => {
                           <td className="px-2 py-4 sm:px-5">
                             <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
                           </td>
-                          <td className="hidden px-5 py-4 xl:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
-                          <td className="hidden px-5 py-4 xl:table-cell">
+                          <td className="hidden px-5 py-4 md:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
+                          <td className="hidden px-5 py-4 lg:table-cell">
                             <span className="text-xs font-medium text-secondary" title={exp.due_day ? `Typically billed on the ${formatDayOrdinal(exp.due_day)}` : undefined}>
                               {exp.last_charge_date ? formatDateDisplay(exp.last_charge_date) : <span className="text-tertiary">—</span>}
                             </span>
@@ -349,7 +362,7 @@ const MonthlyExpenses = () => {
                           <td className="hidden px-5 py-4 xl:table-cell">
                             <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
                           </td>
-                          <td className="hidden px-5 py-4 xl:table-cell">
+                          <td className="hidden px-5 py-4 2xl:table-cell">
                             <span className="text-xs font-medium text-secondary">{exp.company || <span className="text-tertiary">—</span>}</span>
                           </td>
                           <td className="px-2 py-4 text-right sm:px-5" onClick={(e) => e.stopPropagation()}>
