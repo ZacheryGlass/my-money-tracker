@@ -6,6 +6,7 @@ import { formatCurrency, formatDateDisplay, formatDayOrdinal } from '../utils/fo
 import { formatTransactionCategory } from '../utils/dataLabels';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 const Badge = ({ active, children }) => (
   <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase ${
@@ -43,7 +44,8 @@ const ExpenseTransactions = ({ detail }) => {
           <li key={t.id} className="flex items-center justify-between gap-4 py-2">
             <div className="min-w-0">
               <div className="text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</div>
-              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-tertiary">
+              {/* Secondary detail; on small screens only date and amount show. */}
+              <div className="mt-0.5 hidden flex-wrap items-center gap-x-2 text-[10px] text-tertiary sm:flex">
                 {t.account && <span>{t.account}</span>}
                 {t.account && t.category && <span className="opacity-40">·</span>}
                 {t.category && <span>{formatTransactionCategory(t.category)}</span>}
@@ -88,6 +90,16 @@ const MonthlyExpenses = () => {
   const [ignoreSubmitting, setIgnoreSubmitting] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [txById, setTxById] = useState({});
+
+  // Number of currently visible table columns; must mirror the reveal
+  // breakpoints in COLUMNS. Spanned rows (empty state, expanded detail) need
+  // an exact colSpan — spanning more than the visible columns creates phantom
+  // columns that render wider than the real rows.
+  const isSm = useMediaQuery('(min-width: 640px)');
+  const isMd = useMediaQuery('(min-width: 768px)');
+  const isXl = useMediaQuery('(min-width: 1280px)');
+  const is2xl = useMediaQuery('(min-width: 1536px)');
+  const visibleColumns = 3 + isSm + isMd + isXl + is2xl;
 
   const fetchData = async () => {
     setLoading(true);
@@ -287,7 +299,7 @@ const MonthlyExpenses = () => {
                   <AnimatePresence mode="popLayout">
                     {visibleExpenses.length === 0 ? (
                       <tr key="empty">
-                        <td colSpan={7} className="px-5 py-12 text-center">
+                        <td colSpan={visibleColumns} className="px-5 py-12 text-center">
                           <div className="flex flex-col items-center gap-3 opacity-40">
                             <Calendar size={32} className="text-tertiary" />
                             <p className="text-sm font-medium text-tertiary">No recurring charges detected yet</p>
@@ -386,7 +398,7 @@ const MonthlyExpenses = () => {
                           // positions exiting rows, which breaks table layout.
                           rows.push(
                             <tr key={`${exp.id}-detail`} className="bg-base">
-                              <td colSpan={7} className="px-2 py-0 sm:px-5">
+                              <td colSpan={visibleColumns} className="px-2 py-0 sm:px-5">
                                 <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                                   <ExpenseTransactions detail={txById[exp.id]} />
                                 </Motion.div>
