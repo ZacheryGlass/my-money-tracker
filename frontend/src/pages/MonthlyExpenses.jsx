@@ -198,8 +198,8 @@ const MonthlyExpenses = () => {
   return (
     <div className="container mx-auto px-4 py-6 md:py-8 max-w-[1600px]">
       {/* Hero Section */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-6 gap-4">
-        <div>
+      <div className="flex flex-row items-start justify-between gap-3 mb-6 sm:items-end sm:gap-4">
+        <div className="min-w-0">
           <div className="flex items-center gap-2 mb-2">
             <TrendingDown className="text-loss w-5 h-5" />
             <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Monthly Burn Rate</span>
@@ -210,11 +210,9 @@ const MonthlyExpenses = () => {
           <p className="text-sm text-secondary">Auto-detected across {visibleExpenses.length} recurring charges</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0 rounded border border-border bg-surface-2 p-3 shadow-sm sm:min-w-[140px]">
-            <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Annual Cost</p>
-            <p className="text-lg font-mono font-bold text-loss">{formatCurrency(totalAll * 12)}</p>
-          </div>
+        <div className="shrink-0 rounded border border-border bg-surface-2 p-2.5 shadow-sm sm:min-w-[140px] sm:p-3">
+          <p className="text-[10px] font-bold text-tertiary uppercase tracking-wide mb-1">Annual Cost</p>
+          <p className="text-base font-mono font-bold text-loss sm:text-lg">{formatCurrency(totalAll * 12)}</p>
         </div>
       </div>
 
@@ -229,7 +227,7 @@ const MonthlyExpenses = () => {
           <p className="font-mono text-lg font-bold text-loss">{formatCurrency(stats.variableTotal)}</p>
           <p className="text-caption text-tertiary">Annual {formatCurrency(stats.variableTotal * 12)}</p>
         </div>
-        <div className="flex flex-col items-start gap-1.5 border border-border bg-surface p-3 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+        <div className="col-span-2 flex flex-row items-center justify-between gap-3 border border-border bg-surface p-3 sm:col-span-1 sm:flex-col sm:items-start sm:justify-start sm:gap-1.5 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Recurring Charges</p>
             <p className="font-mono text-lg font-bold text-primary">{visibleExpenses.length}</p>
@@ -237,7 +235,7 @@ const MonthlyExpenses = () => {
           </div>
           <button
             onClick={openIgnored}
-            className="-ml-1 flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[10px] font-bold uppercase tracking-wide text-tertiary transition-colors hover:text-accent lg:ml-0"
+            className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[10px] font-bold uppercase tracking-wide text-tertiary transition-colors hover:text-accent sm:-ml-1 lg:ml-0"
           >
             <EyeOff size={11} />
             Ignored
