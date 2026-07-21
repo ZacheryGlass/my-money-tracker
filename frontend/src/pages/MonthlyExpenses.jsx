@@ -3,8 +3,9 @@ import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Tag, EyeOff, Check, X, TrendingDown, Calendar, ChevronRight } from 'lucide-react';
 import { expenses as expensesAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay, formatDayOrdinal } from '../utils/format';
+import { formatTransactionCategory } from '../utils/dataLabels';
 import LoadingState from '../components/LoadingState';
-import TransactionHistoryList from '../components/expenses/TransactionHistoryList';
+import buildTransactionRows from '../components/expenses/TransactionHistoryRows';
 import IgnoreConfirmModal from '../components/expenses/IgnoreConfirmModal';
 import IgnoredMerchantsModal from '../components/expenses/IgnoredMerchantsModal';
 import useIgnoredMerchants from '../hooks/useIgnoredMerchants';
@@ -324,19 +325,31 @@ const MonthlyExpenses = () => {
                         </Motion.tr>,
                         ];
                         if (isExpanded) {
-                          // Plain <tr> (not Motion): it unmounts instantly on
-                          // collapse. A Motion.tr here gets stuck mid-exit
+                          // Plain <tr>s (not Motion): they unmount instantly
+                          // on collapse. A Motion.tr here gets stuck mid-exit
                           // because AnimatePresence's popLayout absolutely-
                           // positions exiting rows, which breaks table layout.
-                          rows.push(
-                            <tr key={`${exp.id}-detail`} className="bg-base">
-                              <td colSpan={visibleColumns} className="px-2 py-0 sm:px-5">
-                                <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                                  <TransactionHistoryList detail={txById[exp.id]} />
-                                </Motion.div>
-                              </td>
-                            </tr>
-                          );
+                          rows.push(...buildTransactionRows(txById[exp.id], {
+                            keyPrefix: `${exp.id}-tx`,
+                            colSpan: visibleColumns,
+                            renderCells: (t) => [
+                              <td key="name" className="px-2 py-2.5 sm:px-5">
+                                <span className="pl-[22px] text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</span>
+                              </td>,
+                              <td key="cost" className="px-2 py-2.5 sm:px-5">
+                                <span className="text-xs font-mono font-medium text-secondary">{formatCurrency(t.amount)}</span>
+                              </td>,
+                              <td key="fixed" className="hidden px-5 py-2.5 sm:table-cell">
+                                {t.category && <div className="truncate text-xs font-medium text-tertiary">{formatTransactionCategory(t.category)}</div>}
+                              </td>,
+                              <td key="date" className="hidden px-5 py-2.5 md:table-cell" />,
+                              <td key="account" className="hidden px-5 py-2.5 xl:table-cell">
+                                {t.account && <div className="truncate text-xs font-medium text-secondary">{t.account}</div>}
+                              </td>,
+                              <td key="company" className="hidden px-5 py-2.5 2xl:table-cell" />,
+                              <td key="actions" className="px-2 py-2.5 sm:px-5" />,
+                            ],
+                          }));
                         }
                         return rows;
                       })

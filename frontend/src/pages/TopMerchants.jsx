@@ -3,9 +3,10 @@ import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { EyeOff, X, Check, Store, Calendar, ChevronRight } from 'lucide-react';
 import { expenses as expensesAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
+import { formatTransactionCategory } from '../utils/dataLabels';
 import LoadingState from '../components/LoadingState';
 import FilterTabs from '../components/FilterTabs';
-import TransactionHistoryList from '../components/expenses/TransactionHistoryList';
+import buildTransactionRows from '../components/expenses/TransactionHistoryRows';
 import IgnoreConfirmModal from '../components/expenses/IgnoreConfirmModal';
 import IgnoredMerchantsModal from '../components/expenses/IgnoredMerchantsModal';
 import useIgnoredMerchants from '../hooks/useIgnoredMerchants';
@@ -266,17 +267,30 @@ const TopMerchants = () => {
                         </Motion.tr>,
                         ];
                         if (isExpanded) {
-                          // Plain <tr> (not Motion) for the same popLayout
+                          // Plain <tr>s (not Motion) for the same popLayout
                           // reason as the Monthly Expenses table.
-                          rows.push(
-                            <tr key={`${m.merchant_key}-detail`} className="bg-base">
-                              <td colSpan={visibleColumns} className="px-2 py-0 sm:px-5">
-                                <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                                  <TransactionHistoryList detail={txByKey[m.merchant_key]} label="Transactions" noun="transaction" />
-                                </Motion.div>
-                              </td>
-                            </tr>
-                          );
+                          rows.push(...buildTransactionRows(txByKey[m.merchant_key], {
+                            keyPrefix: `${m.merchant_key}-tx`,
+                            colSpan: visibleColumns,
+                            label: 'Transactions',
+                            noun: 'transaction',
+                            renderCells: (t) => [
+                              <td key="name" className="px-2 py-2.5 sm:px-5">
+                                <span className="pl-[22px] text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</span>
+                              </td>,
+                              <td key="total" className="px-2 py-2.5 sm:px-5">
+                                <span className="text-xs font-mono font-medium text-secondary">{formatCurrency(t.amount)}</span>
+                              </td>,
+                              <td key="charges" className="hidden px-5 py-2.5 sm:table-cell">
+                                {t.category && <div className="truncate text-xs font-medium text-tertiary">{formatTransactionCategory(t.category)}</div>}
+                              </td>,
+                              <td key="last" className="hidden px-5 py-2.5 md:table-cell" />,
+                              <td key="account" className="hidden px-5 py-2.5 xl:table-cell">
+                                {t.account && <div className="truncate text-xs font-medium text-secondary">{t.account}</div>}
+                              </td>,
+                              <td key="actions" className="px-2 py-2.5 sm:px-5" />,
+                            ],
+                          }));
                         }
                         return rows;
                       })
