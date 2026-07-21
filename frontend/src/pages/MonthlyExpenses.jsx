@@ -25,13 +25,21 @@ const Badge = ({ active, children }) => (
 // width so table-fixed splits the leftover space evenly between whichever of
 // them are visible. Optional columns reveal progressively (sm -> md -> xl ->
 // 2xl); Account/Company wait for xl/2xl because the sidebar appears at lg.
+// COL holds each optional column's visibility classes so the header, main
+// rows and expanded transaction rows hide/show together.
+const COL = {
+  fixed: 'hidden sm:table-cell',
+  date: 'hidden md:table-cell',
+  account: 'hidden xl:table-cell',
+  company: 'hidden 2xl:table-cell',
+};
 const COLUMNS = [
   { label: 'Name', className: 'text-left' },
   { label: 'Monthly Cost', className: 'w-24 text-left sm:w-28' },
-  { label: 'Fixed', className: 'hidden w-32 text-left sm:table-cell' },
-  { label: 'Date', className: 'hidden w-32 text-left md:table-cell' },
-  { label: 'Account', className: 'hidden text-left xl:table-cell' },
-  { label: 'Company', className: 'hidden text-left 2xl:table-cell' },
+  { label: 'Fixed', className: `w-32 text-left ${COL.fixed}` },
+  { label: 'Date', className: `w-32 text-left ${COL.date}` },
+  { label: 'Account', className: `text-left ${COL.account}` },
+  { label: 'Company', className: `text-left ${COL.company}` },
   { label: 'Actions', className: 'w-24 text-right sm:w-28' },
 ];
 
@@ -300,16 +308,16 @@ const MonthlyExpenses = () => {
                           <td className="px-2 py-4 sm:px-5">
                             <span className="text-sm font-mono font-bold text-loss">{formatCurrency(exp.cost)}</span>
                           </td>
-                          <td className="hidden px-5 py-4 sm:table-cell"><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
-                          <td className="hidden px-5 py-4 md:table-cell">
+                          <td className={`px-5 py-4 ${COL.fixed}`}><Badge active={exp.is_fixed_rate}>{exp.is_fixed_rate ? 'Fixed' : 'Variable'}</Badge></td>
+                          <td className={`px-5 py-4 ${COL.date}`}>
                             <span className="text-xs font-medium text-secondary" title={exp.due_day ? `Typically billed on the ${formatDayOrdinal(exp.due_day)}` : undefined}>
                               {exp.last_charge_date ? formatDateDisplay(exp.last_charge_date) : <span className="text-tertiary">—</span>}
                             </span>
                           </td>
-                          <td className="hidden px-5 py-4 xl:table-cell">
+                          <td className={`px-5 py-4 ${COL.account}`}>
                             <span className="text-xs font-medium text-secondary">{exp.pay_account || <span className="text-tertiary">—</span>}</span>
                           </td>
-                          <td className="hidden px-5 py-4 2xl:table-cell">
+                          <td className={`px-5 py-4 ${COL.company}`}>
                             <span className="text-xs font-medium text-secondary">{exp.company || <span className="text-tertiary">—</span>}</span>
                           </td>
                           <td className="px-2 py-4 text-right sm:px-5" onClick={(e) => e.stopPropagation()}>
@@ -333,20 +341,28 @@ const MonthlyExpenses = () => {
                             keyPrefix: `${exp.id}-tx`,
                             colSpan: visibleColumns,
                             renderCells: (t) => [
+                              // Below md the Date column is hidden, so the date
+                              // takes the Name slot; the swap breakpoint must
+                              // match COL.date.
                               <td key="name" className="px-2 py-2.5 sm:px-5">
-                                <span className="pl-[22px] text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</span>
+                                <div className="truncate pl-[22px] text-xs font-medium text-secondary">
+                                  <span className="md:hidden">{formatDateDisplay(t.date)}</span>
+                                  <span className="hidden md:inline">{t.name || t.merchant_name}</span>
+                                </div>
                               </td>,
                               <td key="cost" className="px-2 py-2.5 sm:px-5">
                                 <span className="text-xs font-mono font-medium text-secondary">{formatCurrency(t.amount)}</span>
                               </td>,
-                              <td key="fixed" className="hidden px-5 py-2.5 sm:table-cell">
+                              <td key="fixed" className={`px-5 py-2.5 ${COL.fixed}`}>
                                 {t.category && <div className="truncate text-xs font-medium text-tertiary">{formatTransactionCategory(t.category)}</div>}
                               </td>,
-                              <td key="date" className="hidden px-5 py-2.5 md:table-cell" />,
-                              <td key="account" className="hidden px-5 py-2.5 xl:table-cell">
+                              <td key="date" className={`px-5 py-2.5 ${COL.date}`}>
+                                <span className="text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</span>
+                              </td>,
+                              <td key="account" className={`px-5 py-2.5 ${COL.account}`}>
                                 {t.account && <div className="truncate text-xs font-medium text-secondary">{t.account}</div>}
                               </td>,
-                              <td key="company" className="hidden px-5 py-2.5 2xl:table-cell" />,
+                              <td key="company" className={`px-5 py-2.5 ${COL.company}`} />,
                               <td key="actions" className="px-2 py-2.5 sm:px-5" />,
                             ],
                           }));

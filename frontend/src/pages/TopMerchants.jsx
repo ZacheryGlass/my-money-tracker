@@ -21,13 +21,20 @@ const PERIOD_OPTIONS = [
 
 // Table columns, following the Monthly Expenses table conventions: fixed
 // widths on constant-content columns, no width on Name/Account so table-fixed
-// splits leftover space, optional columns revealing progressively.
+// splits leftover space, optional columns revealing progressively. COL holds
+// each optional column's visibility classes so the header, main rows and
+// expanded transaction rows hide/show together.
+const COL = {
+  charges: 'hidden sm:table-cell',
+  lastCharge: 'hidden md:table-cell',
+  account: 'hidden xl:table-cell',
+};
 const COLUMNS = [
   { label: 'Name', className: 'text-left' },
   { label: 'Total Spent', className: 'w-24 text-left sm:w-28' },
-  { label: 'Charges', className: 'hidden w-24 text-left sm:table-cell' },
-  { label: 'Last Charge', className: 'hidden w-32 text-left md:table-cell' },
-  { label: 'Account', className: 'hidden text-left xl:table-cell' },
+  { label: 'Charges', className: `w-24 text-left ${COL.charges}` },
+  { label: 'Last Charge', className: `w-32 text-left ${COL.lastCharge}` },
+  { label: 'Account', className: `text-left ${COL.account}` },
   { label: 'Actions', className: 'w-16 text-right sm:w-20' },
 ];
 
@@ -244,15 +251,15 @@ const TopMerchants = () => {
                           <td className="px-2 py-4 sm:px-5">
                             <span className="text-sm font-mono font-bold text-loss">{formatCurrency(m.total)}</span>
                           </td>
-                          <td className="hidden px-5 py-4 sm:table-cell">
+                          <td className={`px-5 py-4 ${COL.charges}`}>
                             <span className="text-xs font-medium text-secondary">{m.charge_count}</span>
                           </td>
-                          <td className="hidden px-5 py-4 md:table-cell">
+                          <td className={`px-5 py-4 ${COL.lastCharge}`}>
                             <span className="text-xs font-medium text-secondary">
                               {m.last_date ? formatDateDisplay(m.last_date) : <span className="text-tertiary">—</span>}
                             </span>
                           </td>
-                          <td className="hidden px-5 py-4 xl:table-cell">
+                          <td className={`px-5 py-4 ${COL.account}`}>
                             <span className="text-xs font-medium text-secondary">
                               {m.account_count > 1 ? `${m.account_count} accounts` : (m.account || <span className="text-tertiary">—</span>)}
                             </span>
@@ -275,17 +282,25 @@ const TopMerchants = () => {
                             label: 'Transactions',
                             noun: 'transaction',
                             renderCells: (t) => [
+                              // Below md the Last Charge column is hidden, so
+                              // the date takes the Name slot; the swap
+                              // breakpoint must match COL.lastCharge.
                               <td key="name" className="px-2 py-2.5 sm:px-5">
-                                <span className="pl-[22px] text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</span>
+                                <div className="truncate pl-[22px] text-xs font-medium text-secondary">
+                                  <span className="md:hidden">{formatDateDisplay(t.date)}</span>
+                                  <span className="hidden md:inline">{t.name || t.merchant_name}</span>
+                                </div>
                               </td>,
                               <td key="total" className="px-2 py-2.5 sm:px-5">
                                 <span className="text-xs font-mono font-medium text-secondary">{formatCurrency(t.amount)}</span>
                               </td>,
-                              <td key="charges" className="hidden px-5 py-2.5 sm:table-cell">
+                              <td key="charges" className={`px-5 py-2.5 ${COL.charges}`}>
                                 {t.category && <div className="truncate text-xs font-medium text-tertiary">{formatTransactionCategory(t.category)}</div>}
                               </td>,
-                              <td key="last" className="hidden px-5 py-2.5 md:table-cell" />,
-                              <td key="account" className="hidden px-5 py-2.5 xl:table-cell">
+                              <td key="last" className={`px-5 py-2.5 ${COL.lastCharge}`}>
+                                <span className="text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</span>
+                              </td>,
+                              <td key="account" className={`px-5 py-2.5 ${COL.account}`}>
                                 {t.account && <div className="truncate text-xs font-medium text-secondary">{t.account}</div>}
                               </td>,
                               <td key="actions" className="px-2 py-2.5 sm:px-5" />,
