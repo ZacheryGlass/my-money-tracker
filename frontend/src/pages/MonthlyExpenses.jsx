@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Tag, EyeOff, Eye, RotateCcw, Check, X, TrendingDown, Calendar, ChevronRight } from 'lucide-react';
+import { Tag, EyeOff, Check, X, TrendingDown, Calendar, ChevronRight } from 'lucide-react';
 import { expenses as expensesAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay, formatDayOrdinal } from '../utils/format';
-import { formatTransactionCategory } from '../utils/dataLabels';
 import LoadingState from '../components/LoadingState';
+import TransactionHistoryList from '../components/expenses/TransactionHistoryList';
+import IgnoreConfirmModal from '../components/expenses/IgnoreConfirmModal';
+import IgnoredMerchantsModal from '../components/expenses/IgnoredMerchantsModal';
+import useIgnoredMerchants from '../hooks/useIgnoredMerchants';
 import useTransientMessage from '../hooks/useTransientMessage';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 
@@ -15,49 +18,6 @@ const Badge = ({ active, children }) => (
     {children}
   </span>
 );
-
-// The individual charges behind an expense, shown when its row is expanded.
-const ExpenseTransactions = ({ detail }) => {
-  if (!detail || detail.loading) {
-    return <LoadingState label={null} className="py-6" />;
-  }
-  if (detail.error) {
-    return (
-      <div className="my-3 flex items-center gap-2 rounded border border-loss/20 bg-loss-bg px-3 py-2 text-xs text-loss">
-        <X size={14} />
-        {detail.error}
-      </div>
-    );
-  }
-  const { transactions } = detail;
-  if (!transactions.length) {
-    return <div className="py-6 text-center text-xs text-tertiary">No matching transactions found.</div>;
-  }
-  return (
-    <div className="py-3">
-      <div className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
-        <Calendar size={11} />
-        Charge history · {transactions.length} {transactions.length === 1 ? 'charge' : 'charges'}
-      </div>
-      <ul className="divide-y divide-border/60">
-        {transactions.map((t) => (
-          <li key={t.id} className="flex items-center justify-between gap-4 py-2">
-            <div className="min-w-0">
-              <div className="text-xs font-medium text-secondary">{formatDateDisplay(t.date)}</div>
-              {/* Secondary detail; on small screens only date and amount show. */}
-              <div className="mt-0.5 hidden flex-wrap items-center gap-x-2 text-[10px] text-tertiary sm:flex">
-                {t.account && <span>{t.account}</span>}
-                {t.account && t.category && <span className="opacity-40">·</span>}
-                {t.category && <span>{formatTransactionCategory(t.category)}</span>}
-              </div>
-            </div>
-            <span className="shrink-0 font-mono text-xs font-bold text-primary">{formatCurrency(t.amount)}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-};
 
 // Table columns. Constant-content columns (Cost, Fixed badge, Date, Actions)
 // get fixed widths sized to their content; Name, Account and Company have no
@@ -82,11 +42,6 @@ const MonthlyExpenses = () => {
   const [ignoringExpense, setIgnoringExpense] = useState(null);
   const [taggingId, setTaggingId] = useState(null);
   const [tagDraft, setTagDraft] = useState('');
-  const [ignoredOpen, setIgnoredOpen] = useState(false);
-  const [ignored, setIgnored] = useState([]);
-  const [ignoredLoading, setIgnoredLoading] = useState(false);
-  const [ignoredError, setIgnoredError] = useState(null);
-  const [restoringKey, setRestoringKey] = useState(null);
   const [ignoreSubmitting, setIgnoreSubmitting] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [txById, setTxById] = useState({});
@@ -116,24 +71,16 @@ const MonthlyExpenses = () => {
 
   useEffect(() => { fetchData(); }, []);
 
-  const fetchIgnored = async () => {
-    setIgnoredLoading(true);
-    setIgnoredError(null);
-    try {
-      const data = await expensesAPI.getIgnored();
-      setIgnored(data.ignored || []);
-    } catch (err) {
-      setIgnored([]);
-      setIgnoredError(err.response?.data?.error || 'Failed to load ignored charges');
-    } finally {
-      setIgnoredLoading(false);
-    }
-  };
-
-  const openIgnored = () => {
-    setIgnoredOpen(true);
-    fetchIgnored();
-  };
+  const ignoredPanel = useIgnoredMerchants({
+    onRestored: async (res, item) => {
+      const label = item.name || item.merchant_key;
+      showSuccess(res.recreated
+        ? `Restored "${label}"`
+        : `"${label}" un-ignored; it will reappear once it has recent recurring charges`);
+      await fetchData();
+    },
+    onError: setError,
+  });
 
   const startTagging = (expense) => {
     setTaggingId(expense.id);
@@ -180,22 +127,6 @@ const MonthlyExpenses = () => {
       setError(err.response?.data?.error || 'Failed to ignore');
     } finally {
       setIgnoreSubmitting(false);
-    }
-  };
-
-  const handleRestore = async (item) => {
-    const label = item.name || item.merchant_key;
-    setRestoringKey(item.merchant_key);
-    try {
-      const res = await expensesAPI.restoreIgnored(item.merchant_key);
-      showSuccess(res.recreated
-        ? `Restored "${label}"`
-        : `"${label}" un-ignored; it will reappear once it has recent recurring charges`);
-      await Promise.all([fetchData(), fetchIgnored()]);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to restore');
-    } finally {
-      setRestoringKey(null);
     }
   };
 
@@ -261,7 +192,7 @@ const MonthlyExpenses = () => {
             <p className="text-caption text-tertiary">Synced nightly from transactions</p>
           </div>
           <button
-            onClick={openIgnored}
+            onClick={ignoredPanel.openPanel}
             className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[10px] font-bold uppercase tracking-wide text-tertiary transition-colors hover:text-accent sm:-ml-1 lg:ml-0"
           >
             <EyeOff size={11} />
@@ -400,7 +331,7 @@ const MonthlyExpenses = () => {
                             <tr key={`${exp.id}-detail`} className="bg-base">
                               <td colSpan={visibleColumns} className="px-2 py-0 sm:px-5">
                                 <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                                  <ExpenseTransactions detail={txById[exp.id]} />
+                                  <TransactionHistoryList detail={txById[exp.id]} />
                                 </Motion.div>
                               </td>
                             </tr>
@@ -432,83 +363,26 @@ const MonthlyExpenses = () => {
           </div>
       </div>
 
-      {/* Ignore Confirm Modal */}
-      <AnimatePresence>
-        {ignoringExpense && (
-          <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setIgnoringExpense(null)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative w-full max-w-sm border border-border bg-surface p-5 text-center shadow-2xl sm:rounded-3xl sm:p-6">
-              <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-4">
-                <EyeOff size={24} />
-              </div>
-              <h2 className="text-xl font-bold text-primary mb-2">Ignore Charge</h2>
-              <p className="text-sm text-secondary mb-8">
-                Ignore <span className="text-primary font-bold">"{ignoringExpense.name}"</span>? It won't be counted or re-added by the nightly sync until you restore it from Ignored.
-              </p>
-              <div className="flex gap-3">
-                <button onClick={() => setIgnoringExpense(null)} className="flex-1 py-3 bg-surface-3 text-secondary rounded text-xs font-bold uppercase tracking-wider hover:bg-surface-2 transition-all">Cancel</button>
-                <button onClick={handleIgnoreConfirm} disabled={ignoreSubmitting} className="flex-1 py-3 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all disabled:opacity-50">Ignore</button>
-              </div>
-            </Motion.div>
-          </div>
+      <IgnoreConfirmModal
+        item={ignoringExpense}
+        title="Ignore Charge"
+        description={ignoringExpense && (
+          <>Ignore <span className="text-primary font-bold">"{ignoringExpense.name}"</span>? It won't be counted or re-added by the nightly sync until you restore it from Ignored.</>
         )}
-      </AnimatePresence>
+        submitting={ignoreSubmitting}
+        onCancel={() => setIgnoringExpense(null)}
+        onConfirm={handleIgnoreConfirm}
+      />
 
-      {/* Ignored List Panel */}
-      <AnimatePresence>
-        {ignoredOpen && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 " onClick={() => setIgnoredOpen(false)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
-              <div className="flex shrink-0 items-center justify-between border-b border-border p-4 sm:p-6">
-                <div className="flex items-center gap-2">
-                  <EyeOff size={18} className="text-secondary" />
-                  <h2 className="text-lg font-bold text-primary">Ignored Charges</h2>
-                </div>
-                <button onClick={() => setIgnoredOpen(false)} className="text-tertiary hover:text-primary transition-colors"><X size={20} /></button>
-              </div>
-              <div className="overflow-y-auto p-4 sm:p-6">
-                {ignoredLoading ? (
-                  <LoadingState label={null} className="py-8" />
-                ) : ignoredError ? (
-                  <div className="p-4 bg-loss-bg border border-loss/20 text-loss rounded text-xs flex items-center gap-3">
-                    <X size={16} />
-                    {ignoredError}
-                  </div>
-                ) : ignored.length === 0 ? (
-                  <div className="flex flex-col items-center gap-3 py-8 opacity-40">
-                    <Eye size={32} className="text-tertiary" />
-                    <p className="text-sm font-medium text-tertiary">Nothing ignored</p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-border">
-                    {ignored.map((item) => (
-                      <div key={item.merchant_key} className="flex items-center justify-between gap-4 py-3">
-                        <div className="min-w-0">
-                          <div className="text-sm font-bold text-primary truncate">{item.name || item.merchant_key}</div>
-                          <div className="flex items-center gap-3 mt-0.5 text-[10px] text-tertiary">
-                            {item.last_cost != null && <span className="font-mono">{formatCurrency(item.last_cost)}/mo</span>}
-                            <span>Ignored {formatDateDisplay(item.created_at)}</span>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handleRestore(item)}
-                          disabled={restoringKey === item.merchant_key}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent/10 text-accent border border-accent/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-accent hover:text-white transition-all disabled:opacity-50"
-                        >
-                          <RotateCcw size={12} />
-                          {restoringKey === item.merchant_key ? 'Restoring' : 'Restore'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <p className="mt-4 text-caption text-tertiary">Restoring re-runs detection so the charge reappears immediately.</p>
-              </div>
-            </Motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <IgnoredMerchantsModal
+        open={ignoredPanel.open}
+        onClose={ignoredPanel.closePanel}
+        items={ignoredPanel.items}
+        loading={ignoredPanel.loading}
+        error={ignoredPanel.error}
+        restoringKey={ignoredPanel.restoringKey}
+        onRestore={ignoredPanel.restore}
+      />
     </div>
   );
 };
