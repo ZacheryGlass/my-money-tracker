@@ -17,7 +17,10 @@ class ErrorBoundary extends React.Component {
   }
 
   handleReset() {
-    this.setState({ hasError: false, error: null });
+    // A full reload, not just clearing error state: the most common cause here
+    // is a failed dynamic import (stale chunk after a redeploy), which a
+    // re-render can't fix — only refetching index.html and the asset map can.
+    window.location.reload();
   }
 
   render() {

@@ -1,25 +1,26 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { me } from './utils/api';
+import lazyWithReload from './utils/lazyWithReload';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
 import Sidebar from './components/Sidebar';
 import LoadingState from './components/LoadingState';
 import { Menu } from 'lucide-react';
 
-const Dashboard = lazy(() => import('./components/Dashboard'));
-const BalancesPage = lazy(() => import('./pages/BalancesPage'));
-const AccountsPage = lazy(() => import('./pages/AccountsPage'));
-const TickerHistory = lazy(() => import('./pages/TickerHistory'));
-const AccountHistory = lazy(() => import('./pages/AccountHistory'));
-const PortfolioTimeline = lazy(() => import('./pages/PortfolioTimeline'));
-const SalaryHistory = lazy(() => import('./pages/SalaryHistory'));
-const MonthlyExpenses = lazy(() => import('./pages/MonthlyExpenses'));
-const Settings = lazy(() => import('./pages/Settings'));
-const HoldingsAnalysis = lazy(() => import('./pages/HoldingsAnalysis'));
-const Spending = lazy(() => import('./pages/Spending'));
-const TopMerchants = lazy(() => import('./pages/TopMerchants'));
+const Dashboard = lazyWithReload(() => import('./components/Dashboard'));
+const BalancesPage = lazyWithReload(() => import('./pages/BalancesPage'));
+const AccountsPage = lazyWithReload(() => import('./pages/AccountsPage'));
+const TickerHistory = lazyWithReload(() => import('./pages/TickerHistory'));
+const AccountHistory = lazyWithReload(() => import('./pages/AccountHistory'));
+const PortfolioTimeline = lazyWithReload(() => import('./pages/PortfolioTimeline'));
+const SalaryHistory = lazyWithReload(() => import('./pages/SalaryHistory'));
+const MonthlyExpenses = lazyWithReload(() => import('./pages/MonthlyExpenses'));
+const Settings = lazyWithReload(() => import('./pages/Settings'));
+const HoldingsAnalysis = lazyWithReload(() => import('./pages/HoldingsAnalysis'));
+const Spending = lazyWithReload(() => import('./pages/Spending'));
+const TopMerchants = lazyWithReload(() => import('./pages/TopMerchants'));
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', path: '/' },
