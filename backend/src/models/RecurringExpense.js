@@ -25,7 +25,9 @@ class RecurringExpense {
   // The individual charges that make up a tracked expense: transactions whose
   // merchant_key (COALESCE(merchant_name, name)) matches, under the same
   // eligibility filters the sync uses to build the group, newest first.
-  static async chargesForMerchant(merchantKey, limit = 36) {
+  // `days` (optional) restricts to a trailing window, for the Top Merchants
+  // page where the expansion should match the selected period.
+  static async chargesForMerchant(merchantKey, limit = 36, days = null) {
     const result = await pool.query(`
       SELECT t.id, t.date::text AS date, t.amount::float8 AS amount,
              t.name, t.merchant_name, t.category,
@@ -33,12 +35,13 @@ class RecurringExpense {
       FROM transactions t
       JOIN accounts a ON t.account_id = a.id
       WHERE COALESCE(t.merchant_name, t.name) = $1
+        AND ($3::int IS NULL OR t.date >= CURRENT_DATE - $3::int)
         AND t.amount > 0 AND t.pending = false AND a.is_hidden = FALSE
         AND a.type IN ('depository', 'credit')
         AND UPPER(COALESCE(t.category, '')) NOT LIKE '%TRANSFER%'
       ORDER BY t.date DESC
       LIMIT $2
-    `, [merchantKey, limit]);
+    `, [merchantKey, limit, days]);
     return result.rows;
   }
 
@@ -52,6 +55,14 @@ class RecurringExpense {
 
   static async delete(id) {
     const result = await pool.query('DELETE FROM recurring_expenses WHERE id = $1 RETURNING id', [id]);
+    return result.rows[0];
+  }
+
+  // Used when ignoring a merchant from the Top Merchants page: any tracked
+  // expense for that merchant must go too, so both pages agree. Returns the
+  // deleted row (if any) so the caller can keep its name/cost snapshot.
+  static async deleteByMerchantKey(merchantKey) {
+    const result = await pool.query('DELETE FROM recurring_expenses WHERE merchant_key = $1 RETURNING *', [merchantKey]);
     return result.rows[0];
   }
 

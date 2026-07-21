@@ -250,3 +250,117 @@ test('GET /api/analytics/detected-subscriptions no longer exists', async () => {
   const response = await request(app).get('/api/analytics/detected-subscriptions');
   assert.equal(response.status, 404);
 });
+
+// --- Top Merchants (merchant spend aggregation + ignore-by-key) ---
+
+test('GET /api/expenses/merchants aggregates spend excluding ignored merchants', async () => {
+  queryHandler = async (sql, params) => {
+    assert.match(sql, /GROUP BY COALESCE\(t\.merchant_name, t\.name\)/);
+    assert.match(sql, /NOT IN \(SELECT merchant_key FROM ignored_merchants\)/);
+    assert.match(sql, /t\.date >= CURRENT_DATE - \$1::int/);
+    assert.equal(params[0], 60);
+    return {
+      rows: [
+        { merchant_key: 'Costco', total: 812.44, charge_count: 6, last_date: '2026-07-18', account_count: 1, account: 'Amex' },
+        { merchant_key: 'Whole Foods', total: 401.02, charge_count: 9, last_date: '2026-07-19', account_count: 2, account: 'Ally Checking' },
+      ],
+    };
+  };
+
+  const response = await request(app).get('/api/expenses/merchants?days=60');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.days, 60);
+  assert.equal(response.body.merchants.length, 2);
+  assert.equal(response.body.merchants[0].merchant_key, 'Costco');
+  assert.equal(response.body.merchants[0].total, 812.44);
+});
+
+test('GET /api/expenses/merchants defaults to 30 days and rejects other windows', async () => {
+  queryHandler = async (sql, params) => {
+    assert.equal(params[0], 30);
+    return { rows: [] };
+  };
+  const ok = await request(app).get('/api/expenses/merchants');
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.days, 30);
+
+  const bad = await request(app).get('/api/expenses/merchants?days=45');
+  assert.equal(bad.status, 400);
+});
+
+test('GET /api/expenses/merchants/transactions windows the merchant charges', async () => {
+  queryHandler = async (sql, params) => {
+    assert.match(sql, /COALESCE\(t\.merchant_name, t\.name\) = \$1/);
+    assert.match(sql, /\$3::int IS NULL OR t\.date >= CURRENT_DATE - \$3::int/);
+    assert.deepEqual(params, ['Trader Joe\'s', 100, 90]);
+    return {
+      rows: [
+        { id: 9, date: '2026-07-15', amount: 64.1, name: 'Trader Joes', merchant_name: 'Trader Joe\'s', category: 'FOOD_AND_DRINK', account: 'Amex' },
+      ],
+    };
+  };
+
+  const response = await request(app)
+    .get('/api/expenses/merchants/transactions')
+    .query({ key: 'Trader Joe\'s', days: 90 });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.transactions.length, 1);
+  assert.equal(response.body.transactions[0].amount, 64.1);
+});
+
+test('GET /api/expenses/merchants/transactions requires a key', async () => {
+  const response = await request(app).get('/api/expenses/merchants/transactions?days=30');
+  assert.equal(response.status, 400);
+});
+
+test('POST /api/expenses/ignored ignores by key and drops any tracked expense', async () => {
+  const calls = [];
+  queryHandler = async (sql, params) => {
+    calls.push(sql);
+    if (/DELETE FROM recurring_expenses WHERE merchant_key/.test(sql)) {
+      assert.deepEqual(params, ['Spotify']);
+      return { rows: [expenseRow({ id: 16, name: 'Spotify', merchant_key: 'Spotify', cost: '18.99' })] };
+    }
+    if (/INSERT INTO ignored_merchants/.test(sql)) {
+      // Snapshot comes from the deleted tracked row when one existed.
+      assert.deepEqual(params, ['Spotify', 'Spotify', '18.99']);
+      return { rows: [] };
+    }
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+
+  const response = await request(app)
+    .post('/api/expenses/ignored')
+    .send({ key: 'Spotify' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ignoredMerchant, 'Spotify');
+  assert.equal(calls.length, 2);
+});
+
+test('POST /api/expenses/ignored works for merchants with no tracked expense', async () => {
+  queryHandler = async (sql, params) => {
+    if (/DELETE FROM recurring_expenses WHERE merchant_key/.test(sql)) {
+      return { rows: [] };
+    }
+    if (/INSERT INTO ignored_merchants/.test(sql)) {
+      assert.deepEqual(params, ['Costco', 'Costco', null]);
+      return { rows: [] };
+    }
+    throw new Error(`Unexpected query: ${sql}`);
+  };
+
+  const response = await request(app)
+    .post('/api/expenses/ignored')
+    .send({ key: 'Costco' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ignoredMerchant, 'Costco');
+});
+
+test('POST /api/expenses/ignored rejects a missing key', async () => {
+  const response = await request(app).post('/api/expenses/ignored').send({});
+  assert.equal(response.status, 400);
+});

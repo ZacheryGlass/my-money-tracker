@@ -19,6 +19,7 @@ const MonthlyExpenses = lazy(() => import('./pages/MonthlyExpenses'));
 const Settings = lazy(() => import('./pages/Settings'));
 const HoldingsAnalysis = lazy(() => import('./pages/HoldingsAnalysis'));
 const Spending = lazy(() => import('./pages/Spending'));
+const TopMerchants = lazy(() => import('./pages/TopMerchants'));
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', path: '/' },
@@ -31,6 +32,7 @@ const navItems = [
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', path: '/portfolio-timeline' },
   { id: 'holdings-analysis', label: 'Holdings Analysis', section: 'ANALYTICS', path: '/holdings-analysis' },
   { id: 'spending', label: 'Spending', path: '/spending' },
+  { id: 'top-merchants', label: 'Top Merchants', path: '/top-merchants' },
   { id: 'salary-history', label: 'Salary History', section: 'PLANNING', path: '/salary-history' },
   { id: 'monthly-expenses', label: 'Monthly Expenses', path: '/monthly-expenses' },
   { id: 'settings', label: 'Settings', path: '/settings' },
@@ -90,6 +92,7 @@ function App() {
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
         {currentPage === 'holdings-analysis' && <HoldingsAnalysis />}
         {currentPage === 'spending' && <Spending />}
+        {currentPage === 'top-merchants' && <TopMerchants />}
         {currentPage === 'salary-history' && <SalaryHistory />}
         {currentPage === 'monthly-expenses' && <MonthlyExpenses />}
         {currentPage === 'settings' && <Settings />}

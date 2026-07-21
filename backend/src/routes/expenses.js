@@ -3,6 +3,7 @@
 const express = require('express');
 const RecurringExpense = require('../models/RecurringExpense');
 const IgnoredMerchant = require('../models/IgnoredMerchant');
+const MerchantSpend = require('../models/MerchantSpend');
 const ExpenseSyncService = require('../services/ExpenseSyncService');
 const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
@@ -55,6 +56,70 @@ router.delete('/ignored', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Restore ignored merchant error');
     res.status(500).json({ error: 'Server error restoring merchant' });
+  }
+});
+
+// Windows the Top Merchants page can ask for. Kept in lockstep with the
+// period selector on the frontend.
+const MERCHANT_WINDOWS = new Set([30, 60, 90]);
+
+// Top merchants by spend over a trailing window, for the Top Merchants page.
+// Ignored merchants are excluded, so the shared Ignored panel governs this
+// list the same way it governs recurring expenses. Defined before the /:id
+// routes so 'merchants' is never parsed as an expense id.
+router.get('/merchants', async (req, res) => {
+  try {
+    const days = req.query.days === undefined ? 30 : parseInt(req.query.days, 10);
+    if (!MERCHANT_WINDOWS.has(days)) {
+      return res.status(400).json({ error: 'days must be 30, 60 or 90' });
+    }
+    const merchants = await MerchantSpend.topForWindow(days);
+    res.status(200).json({ merchants, days });
+  } catch (error) {
+    logger.error({ err: error }, 'Get top merchants error');
+    res.status(500).json({ error: 'Server error retrieving merchants' });
+  }
+});
+
+// A merchant's transactions within the window, for the expandable row on the
+// Top Merchants page. The key travels as a query param for the same
+// encoded-slash reason as the ignored restore route.
+router.get('/merchants/transactions', async (req, res) => {
+  try {
+    const merchantKey = req.query.key;
+    if (typeof merchantKey !== 'string' || !merchantKey) {
+      return res.status(400).json({ error: 'Missing merchant key' });
+    }
+    const days = req.query.days === undefined ? 30 : parseInt(req.query.days, 10);
+    if (!MERCHANT_WINDOWS.has(days)) {
+      return res.status(400).json({ error: 'days must be 30, 60 or 90' });
+    }
+    const transactions = await RecurringExpense.chargesForMerchant(merchantKey, 100, days);
+    res.status(200).json({ transactions });
+  } catch (error) {
+    logger.error({ err: error }, 'Get merchant transactions error');
+    res.status(500).json({ error: 'Server error retrieving merchant transactions' });
+  }
+});
+
+// Ignore by merchant key, for the Top Merchants page (most rows there have no
+// recurring-expense id to DELETE). Any tracked expense for the merchant is
+// dropped too so both pages agree; the shared restore route lifts it back.
+router.post('/ignored', async (req, res) => {
+  try {
+    const { key, name } = req.body || {};
+    if (typeof key !== 'string' || !key) {
+      return res.status(400).json({ error: 'Missing merchant key' });
+    }
+    const tracked = await RecurringExpense.deleteByMerchantKey(key);
+    await IgnoredMerchant.add(key, {
+      name: tracked?.name || (typeof name === 'string' && name) || key,
+      lastCost: tracked?.cost ?? null,
+    });
+    res.status(200).json({ message: 'Merchant ignored', ignoredMerchant: key });
+  } catch (error) {
+    logger.error({ err: error }, 'Ignore merchant error');
+    res.status(500).json({ error: 'Server error ignoring merchant' });
   }
 });
 

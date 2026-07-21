@@ -263,6 +263,20 @@ export const expenses = {
     const response = await api.delete('/api/expenses/ignored', { params: { key: merchantKey } });
     return response.data;
   },
+  // Top Merchants page. Merchant keys travel as query params (they can
+  // contain '/'; see the restoreIgnored route comment).
+  getMerchants: async (days) => {
+    const response = await api.get('/api/expenses/merchants', { params: { days } });
+    return response.data;
+  },
+  getMerchantTransactions: async (merchantKey, days) => {
+    const response = await api.get('/api/expenses/merchants/transactions', { params: { key: merchantKey, days } });
+    return response.data;
+  },
+  ignoreMerchant: async (merchantKey) => {
+    const response = await api.post('/api/expenses/ignored', { key: merchantKey });
+    return response.data;
+  },
 };
 
 // Plaid API

@@ -18,6 +18,7 @@ import {
   Building2,
   Grid3X3,
   ReceiptText,
+  Store,
 } from 'lucide-react';
 import { useMediaQuery, useIsDesktop } from '../hooks/useMediaQuery';
 
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { id: '_separator_analytics', section: 'ANALYTICS' },
   { id: 'holdings-analysis', label: 'Holdings Analysis', icon: Grid3X3 },
   { id: 'spending', label: 'Spending', icon: ReceiptText },
+  { id: 'top-merchants', label: 'Top Merchants', icon: Store },
   { id: '_separator_planning', section: 'PLANNING' },
   { id: 'salary-history', label: 'Salary History', icon: Banknote },
   { id: 'monthly-expenses', label: 'Monthly Expenses', icon: CreditCard },
