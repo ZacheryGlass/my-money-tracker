@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const requireUser = require('../middleware/auth');
-const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob } = require('../jobs');
+const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, PlaidSyncJob, ExpenseSyncJob } = require('../jobs');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
@@ -108,6 +108,49 @@ router.post('/trigger/benchmark-update', async (req, res, next) => {
     const result = await BenchmarkUpdateJob.run();
     res.json({
       message: 'Benchmark update job completed',
+      result
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/jobs/trigger/plaid-sync - Manually trigger Plaid sync for every item
+router.post('/trigger/plaid-sync', async (req, res, next) => {
+  try {
+    const isRunning = await JobLog.isRunning(PlaidSyncJob.JOB_NAME);
+    if (isRunning) {
+      return res.status(409).json({
+        error: 'Job already running',
+        message: 'A Plaid sync job is currently in progress'
+      });
+    }
+
+    const result = await PlaidSyncJob.run();
+    res.json({
+      message: 'Plaid sync job completed',
+      result
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/jobs/trigger/expense-sync - Manually trigger classification,
+// investment cash flow derivation, tax lot rebuild and expense matching
+router.post('/trigger/expense-sync', async (req, res, next) => {
+  try {
+    const isRunning = await JobLog.isRunning(ExpenseSyncJob.JOB_NAME);
+    if (isRunning) {
+      return res.status(409).json({
+        error: 'Job already running',
+        message: 'An expense sync job is currently in progress'
+      });
+    }
+
+    const result = await ExpenseSyncJob.run();
+    res.json({
+      message: 'Expense sync job completed',
       result
     });
   } catch (error) {

@@ -3,6 +3,8 @@
 const JobLog = require('../models/JobLog');
 const ExpenseSyncService = require('../services/ExpenseSyncService');
 const TransactionClassificationService = require('../services/TransactionClassificationService');
+const InvestmentCashFlowService = require('../services/InvestmentCashFlowService');
+const TaxLotService = require('../services/TaxLotService');
 const logger = require('../config/logger');
 
 const JOB_NAME = 'expense-sync';
@@ -20,10 +22,17 @@ async function run() {
 
   try {
     const classification = await TransactionClassificationService.backfill();
+    // Derived from the transactions the Plaid sync landed at 7:30, so this must
+    // stay after classification and before the tax lot rebuild reads trades.
+    const cashFlows = await InvestmentCashFlowService.backfill();
+    const taxLots = await TaxLotService.rebuild();
     const result = await ExpenseSyncService.run();
     const updated = result.refreshed.length + result.created.length;
     await JobLog.complete(jobLog.id, result.groupCount, updated, 0, {
       classified: classification.classified,
+      investmentCashFlows: cashFlows.created,
+      externalCashFlows: cashFlows.external,
+      taxLots: taxLots.lots,
       matched: result.matched,
       refreshed: result.refreshed.length,
       created: result.created,

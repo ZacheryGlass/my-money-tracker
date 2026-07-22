@@ -23,15 +23,19 @@ class TickerSnapshot {
       const placeholders = [];
       let paramIndex = 1;
       for (const snapshot of withTicker) {
-        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4})`);
-        values.push(snapshot.snapshotDate, snapshot.accountId, snapshot.ticker, snapshot.name, snapshot.value);
-        paramIndex += 5;
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6})`);
+        values.push(
+          snapshot.snapshotDate, snapshot.accountId, snapshot.ticker, snapshot.name,
+          snapshot.value, snapshot.quantity ?? null, snapshot.price ?? null
+        );
+        paramIndex += 7;
       }
       const result = await pool.query(
-        `INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value)
+        `INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value, quantity, price_usd)
          VALUES ${placeholders.join(', ')}
          ON CONFLICT (snapshot_date, account_id, ticker) WHERE ticker IS NOT NULL
-         DO UPDATE SET value = EXCLUDED.value, name = EXCLUDED.name
+         DO UPDATE SET value = EXCLUDED.value, name = EXCLUDED.name,
+                       quantity = EXCLUDED.quantity, price_usd = EXCLUDED.price_usd
          RETURNING *`,
         values
       );
@@ -43,15 +47,19 @@ class TickerSnapshot {
       const placeholders = [];
       let paramIndex = 1;
       for (const snapshot of withoutTicker) {
-        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, NULL, $${paramIndex + 2}, $${paramIndex + 3})`);
-        values.push(snapshot.snapshotDate, snapshot.accountId, snapshot.name, snapshot.value);
-        paramIndex += 4;
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, NULL, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5})`);
+        values.push(
+          snapshot.snapshotDate, snapshot.accountId, snapshot.name, snapshot.value,
+          snapshot.quantity ?? null, snapshot.price ?? null
+        );
+        paramIndex += 6;
       }
       const result = await pool.query(
-        `INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value)
+        `INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value, quantity, price_usd)
          VALUES ${placeholders.join(', ')}
          ON CONFLICT (snapshot_date, account_id, name) WHERE ticker IS NULL
-         DO UPDATE SET value = EXCLUDED.value
+         DO UPDATE SET value = EXCLUDED.value,
+                       quantity = EXCLUDED.quantity, price_usd = EXCLUDED.price_usd
          RETURNING *`,
         values
       );

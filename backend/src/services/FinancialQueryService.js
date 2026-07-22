@@ -1125,7 +1125,7 @@ class FinancialQueryService {
          LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
          WHERE a.is_hidden = FALSE AND a.type = 'investment' AND h.ticker IS NOT NULL AND tl.id IS NULL) AS positions_without_tax_lots,
         (SELECT COUNT(*)::int FROM benchmark_prices) AS benchmark_observations,
-        (SELECT COUNT(*)::int FROM investment_cash_flows) AS recorded_investment_flows,
+        (SELECT COUNT(*)::int FROM investment_cash_flows WHERE is_external) AS recorded_investment_flows,
         (SELECT MAX(date) FROM transactions) AS latest_transaction_date,
         (SELECT MAX(snapshot_date) FROM account_snapshots) AS latest_snapshot_date`
     );

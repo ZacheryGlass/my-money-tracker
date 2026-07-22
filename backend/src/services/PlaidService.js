@@ -5,6 +5,8 @@ const { Products, CountryCode } = require('plaid');
 const pool = require('../config/database');
 const PlaidItem = require('../models/PlaidItem');
 const PriceCache = require('../models/PriceCache');
+const Trade = require('../models/Trade');
+const SecurityMaster = require('../models/SecurityMaster');
 const logger = require('../config/logger');
 
 const ensurePlaidConfigured = () => {
@@ -109,6 +111,7 @@ class PlaidService {
         const holdingsResponse = await plaidClient.investmentsHoldingsGet({ access_token });
         const { holdings, securities } = holdingsResponse.data;
         const securityMap = new Map(securities.map(s => [s.security_id, s]));
+        await this._upsertSecurities(securities);
 
         for (const holding of holdings) {
           const security = securityMap.get(holding.security_id);
@@ -405,6 +408,7 @@ class PlaidService {
     const endDate = new Date().toISOString().split('T')[0];
     const startDate = '2000-01-01';
     let added = 0;
+    let trades = 0;
     let offset = 0;
     const count = 500;
     let total = Infinity;
@@ -419,6 +423,9 @@ class PlaidService {
       const data = response.data;
       total = data.total_investment_transactions;
       const securities = new Map(data.securities.map(s => [s.security_id, s]));
+      // Securities that have been fully sold out no longer appear in the holdings
+      // response, so this feed is the only place their metadata shows up.
+      await this._upsertSecurities(data.securities);
 
       for (const txn of data.investment_transactions) {
         const accountId = await this._getAccountIdByPlaidAccountId(txn.account_id);
@@ -431,13 +438,54 @@ class PlaidService {
 
         await this._upsertInvestmentTransaction(accountId, txn, description, category);
         added++;
+        if (await this._upsertTrade(accountId, txn, ticker)) trades++;
       }
 
       if (data.investment_transactions.length === 0) break;
       offset += data.investment_transactions.length;
     }
 
-    return { added };
+    return { added, trades };
+  }
+
+  static async _upsertSecurities(securities) {
+    for (const security of securities || []) {
+      if (!security.ticker_symbol) continue;
+      await SecurityMaster.upsert(security.ticker_symbol, security.name, security.type);
+    }
+  }
+
+  // Plaid's investment feed mixes security trades with cash events (dividends,
+  // contributions, fees); only type buy/sell are trades, and the cash events
+  // become investment_cash_flows instead. Quantity arrives negative on sells
+  // while the trades CHECK requires it positive, so `side` carries direction.
+  static async _upsertTrade(accountId, txn, ticker) {
+    const side = txn.type === 'buy' ? 'buy' : (txn.type === 'sell' ? 'sell' : null);
+    if (!side) return false;
+
+    const context = { investmentTransactionId: txn.investment_transaction_id, name: txn.name };
+    if (!ticker) {
+      logger.warn(context, 'Investment trade has no ticker symbol; skipping trade record');
+      return false;
+    }
+
+    const quantity = Math.abs(Number(txn.quantity) || 0);
+    if (quantity <= 0) {
+      logger.warn(context, 'Investment trade has no quantity; skipping trade record');
+      return false;
+    }
+
+    await Trade.upsert({
+      accountId,
+      tradeDate: txn.date,
+      symbol: ticker.toUpperCase(),
+      side,
+      quantity,
+      price: Math.abs(Number(txn.price) || 0),
+      fees: Math.abs(Number(txn.fees) || 0),
+      externalId: txn.investment_transaction_id,
+    });
+    return true;
   }
 
   static async _upsertInvestmentTransaction(accountId, txn, description, category) {

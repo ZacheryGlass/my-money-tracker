@@ -27,10 +27,17 @@ class SnapshotService {
 
     for (const holding of holdings) {
       let value = 0;
+      // Recorded alongside value so history can tell a price move apart from a
+      // change in position size. Null for manually valued holdings, which have
+      // no share count or unit price.
+      let quantity = null;
+      let price = null;
 
       const qty = parseFloat(holding.quantity || 0);
       if (holding.ticker && qty > 0 && priceMap[holding.ticker.toUpperCase()]) {
-        value = qty * priceMap[holding.ticker.toUpperCase()];
+        price = priceMap[holding.ticker.toUpperCase()];
+        quantity = qty;
+        value = qty * price;
         succeeded++;
       } else if (holding.manual_value !== null) {
         value = parseFloat(holding.manual_value);
@@ -47,7 +54,9 @@ class SnapshotService {
         accountId: holding.account_id,
         ticker: holding.ticker,
         name: holding.name,
-        value: value
+        value: value,
+        quantity: quantity,
+        price: price
       });
     }
 
