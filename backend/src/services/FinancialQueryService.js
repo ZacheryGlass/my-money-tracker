@@ -1157,7 +1157,7 @@ class FinancialQueryService {
         table: 'account_snapshots', date: 'snapshot_date', columns: ['id', 'snapshot_date', 'account_id', 'total_value'],
       },
       holding_snapshots: {
-        table: 'ticker_snapshots', date: 'snapshot_date', columns: ['id', 'snapshot_date', 'account_id', 'ticker', 'name', 'value'],
+        table: 'ticker_snapshots', date: 'snapshot_date', columns: ['id', 'snapshot_date', 'account_id', 'ticker', 'name', 'value', 'quantity', 'price_usd'],
       },
       salary_history: {
         table: 'salary_history', date: 'effective_date', columns: ['id', 'effective_date', 'title', 'salary_amount', 'psu', 'rsu', 'total_comp', 'change_amount', 'change_percent'],

@@ -110,6 +110,33 @@ test('buildLots spreads one sell across several lots', () => {
   assert.equal(lots[1].remainingQuantity, 5);
 });
 
+// Doubles cannot hold a DECIMAL(20,8) exactly, and rebuild() replays every day,
+// so any sub-unit drift becomes a permanent phantom lot or a recurring bogus
+// "sells exceeded lots" warning. Matching is done in integer units to prevent it.
+test('buildLots closes a position exactly at DECIMAL(20,8) magnitudes', () => {
+  const { lots, shortfall } = buildLots([
+    buy(1, '2024-01-01', '918273645.19283746', '0.00001'),
+    sell(2, '2024-01-02', '123456789.87654321'),
+    sell(3, '2024-01-03', '345678912.34567891'),
+    sell(4, '2024-01-04', '449137942.97061534'),
+  ]);
+
+  assert.equal(shortfall, 0);
+  assert.equal(lots.length, 0);
+});
+
+test('buildLots leaves no phantom remainder when many lots close together', () => {
+  const { lots, shortfall } = buildLots([
+    buy(1, '2024-01-01', '123456789.87654321', '0.00001'),
+    buy(2, '2024-01-02', '345678912.34567891', '0.00001'),
+    buy(3, '2024-01-03', '449137942.97061534', '0.00001'),
+    sell(4, '2024-01-04', '918273645.19283746'),
+  ]);
+
+  assert.equal(shortfall, 0);
+  assert.equal(lots.length, 0);
+});
+
 test('buildLots handles fractional quantities and string values from pg', () => {
   const { lots, shortfall } = buildLots([
     buy(1, '2024-01-01', '1.50000000', '100.00000000', '0'),

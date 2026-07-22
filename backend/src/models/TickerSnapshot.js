@@ -1,14 +1,6 @@
 const pool = require('../config/database');
 
 class TickerSnapshot {
-  static async create(snapshotDate, accountId, ticker, name, value) {
-    const result = await pool.query(
-      'INSERT INTO ticker_snapshots (snapshot_date, account_id, ticker, name, value) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [snapshotDate, accountId, ticker, name, value]
-    );
-    return result.rows[0];
-  }
-
   static async bulkCreate(snapshots) {
     if (snapshots.length === 0) {
       return [];

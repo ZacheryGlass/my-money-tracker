@@ -4,11 +4,37 @@ const pool = require('../config/database');
 const Trade = require('../models/Trade');
 const logger = require('../config/logger');
 
+// quantity is DECIMAL(20,8), so one unit is 1e-8 of a share.
 const QUANTITY_PRECISION = 8;
+const QUANTITY_SCALE = 10n ** BigInt(QUANTITY_PRECISION);
 
 function roundTo(value, places) {
   const factor = 10 ** places;
   return Math.round(value * factor) / factor;
+}
+
+// Quantities are matched as exact integer units rather than floats. Doubles
+// carry ~15-17 significant digits, which is not enough for a DECIMAL(20,8)
+// value, and the error is larger than the 1e-8 grid it would be rounded to --
+// so sells that exactly close a position can leave a sub-unit remainder behind.
+// That remainder is not harmless: rebuild() runs daily, so it reappears forever
+// as a phantom open lot, or as a spurious "sells exceeded lots" warning.
+function toUnits(value) {
+  let text = typeof value === 'string' ? value.trim() : '';
+  if (!/^-?(\d+(\.\d*)?|\.\d+)$/.test(text)) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 0n;
+    // Also normalizes exponent notation, which the parser below cannot read.
+    text = numeric.toFixed(QUANTITY_PRECISION);
+  }
+  const [, sign, whole = '', fraction = ''] = /^(-?)(\d*)(?:\.(\d*))?$/.exec(text);
+  const scaled = (fraction + '0'.repeat(QUANTITY_PRECISION)).slice(0, QUANTITY_PRECISION);
+  const units = BigInt(whole || '0') * QUANTITY_SCALE + BigInt(scaled || '0');
+  return sign === '-' ? -units : units;
+}
+
+function fromUnits(units) {
+  return Number(units) / Number(QUANTITY_SCALE);
 }
 
 // Replays one position's trades into open FIFO lots. Exported for testing.
@@ -19,18 +45,19 @@ function roundTo(value, places) {
 // has been scaled down alongside a partially sold lot.
 function buildLots(trades) {
   const lots = [];
-  let shortfall = 0;
+  let shortfallUnits = 0n;
 
   for (const trade of trades) {
-    const quantity = Number(trade.quantity) || 0;
+    const quantityUnits = toUnits(trade.quantity);
+    if (quantityUnits <= 0n) continue;
     const price = Number(trade.price) || 0;
     const fees = Number(trade.fees) || 0;
-    if (quantity <= 0) continue;
 
     if (trade.side === 'buy') {
+      const quantity = fromUnits(quantityUnits);
       lots.push({
-        quantity,
-        remaining: quantity,
+        quantityUnits,
+        remainingUnits: quantityUnits,
         unitCost: (quantity * price + fees) / quantity,
         acquiredDate: trade.trade_date,
         tradeId: trade.id,
@@ -38,30 +65,33 @@ function buildLots(trades) {
       continue;
     }
 
-    let unsold = quantity;
+    let unsoldUnits = quantityUnits;
     for (const lot of lots) {
-      if (unsold <= 0) break;
-      if (lot.remaining <= 0) continue;
-      const taken = Math.min(lot.remaining, unsold);
-      lot.remaining = roundTo(lot.remaining - taken, QUANTITY_PRECISION);
-      unsold = roundTo(unsold - taken, QUANTITY_PRECISION);
+      if (unsoldUnits <= 0n) break;
+      if (lot.remainingUnits <= 0n) continue;
+      const taken = lot.remainingUnits < unsoldUnits ? lot.remainingUnits : unsoldUnits;
+      lot.remainingUnits -= taken;
+      unsoldUnits -= taken;
     }
     // Sells that predate Plaid's trade window have no lot to consume. Clamping
     // and reporting keeps one old position from failing the whole rebuild.
-    if (unsold > 0) shortfall = roundTo(shortfall + unsold, QUANTITY_PRECISION);
+    if (unsoldUnits > 0n) shortfallUnits += unsoldUnits;
   }
 
   return {
     lots: lots
-      .filter((lot) => lot.remaining > 0)
-      .map((lot) => ({
-        quantity: roundTo(lot.quantity, QUANTITY_PRECISION),
-        remainingQuantity: roundTo(lot.remaining, QUANTITY_PRECISION),
-        costBasis: Math.max(0, roundTo(lot.remaining * lot.unitCost, 2)),
-        acquiredDate: lot.acquiredDate,
-        sourceTradeId: lot.tradeId,
-      })),
-    shortfall,
+      .filter((lot) => lot.remainingUnits > 0n)
+      .map((lot) => {
+        const remainingQuantity = fromUnits(lot.remainingUnits);
+        return {
+          quantity: fromUnits(lot.quantityUnits),
+          remainingQuantity,
+          costBasis: Math.max(0, roundTo(remainingQuantity * lot.unitCost, 2)),
+          acquiredDate: lot.acquiredDate,
+          sourceTradeId: lot.tradeId,
+        };
+      }),
+    shortfall: fromUnits(shortfallUnits),
   };
 }
 

@@ -60,18 +60,31 @@ function deriveFlow(transaction) {
   };
 }
 
-// Insert flows for transactions that do not have one yet. Idempotent, so it is
-// safe to run on every sync -- mirrors TransactionClassificationService.backfill.
+// Re-derives every flow from its source transaction, the same way
+// TaxLotService rebuilds lots from trades. Insert-if-missing is not enough:
+// _syncInvestmentTransactions re-fetches the full history on every run and
+// UPDATEs existing rows, so a Plaid correction or reclassification would
+// otherwise leave a stale flow behind and quietly skew XIRR.
 async function backfill() {
+  // A transaction reclassified out of the cash-event set leaves an orphaned
+  // flow that the upsert below would never revisit.
+  const removed = await pool.query(
+    `DELETE FROM investment_cash_flows f
+     USING transactions t
+     WHERE f.transaction_id = t.id AND NOT (t.category = ANY($1::text[]))`,
+    [FLOW_CATEGORIES]
+  );
+
   const pending = await pool.query(
     `SELECT t.id, t.account_id, t.date, t.category, t.amount
      FROM transactions t
-     LEFT JOIN investment_cash_flows f ON f.transaction_id = t.id
-     WHERE f.id IS NULL AND t.category = ANY($1::text[])
+     WHERE t.category = ANY($1::text[])
      ORDER BY t.date, t.id`,
     [FLOW_CATEGORIES]
   );
-  if (!pending.rows.length) return { created: 0, external: 0, ambiguousTransfers: 0 };
+  if (!pending.rows.length) {
+    return { derived: 0, external: 0, ambiguousTransfers: 0, removed: removed.rowCount };
+  }
 
   const accountIds = [];
   const dates = [];
@@ -95,12 +108,17 @@ async function backfill() {
     if (row.category === 'transfer') ambiguousTransfers++;
   }
 
-  if (!transactionIds.length) return { created: 0, external: 0, ambiguousTransfers: 0 };
+  if (!transactionIds.length) {
+    return { derived: 0, external: 0, ambiguousTransfers: 0, removed: removed.rowCount };
+  }
 
   await pool.query(
     `INSERT INTO investment_cash_flows (account_id, flow_date, amount, flow_type, is_external, transaction_id)
      SELECT * FROM UNNEST($1::int[], $2::date[], $3::numeric[], $4::varchar[], $5::boolean[], $6::int[])
-     ON CONFLICT (transaction_id) WHERE transaction_id IS NOT NULL DO NOTHING`,
+     ON CONFLICT (transaction_id) WHERE transaction_id IS NOT NULL
+     DO UPDATE SET account_id = EXCLUDED.account_id, flow_date = EXCLUDED.flow_date,
+                   amount = EXCLUDED.amount, flow_type = EXCLUDED.flow_type,
+                   is_external = EXCLUDED.is_external`,
     [accountIds, dates, amounts, flowTypes, externals, transactionIds]
   );
 
@@ -110,8 +128,11 @@ async function backfill() {
       'Investment transfers recorded as internal; review if any were external contributions'
     );
   }
-  logger.info({ created: transactionIds.length, external }, 'Investment cash flow backfill completed');
-  return { created: transactionIds.length, external, ambiguousTransfers };
+  logger.info(
+    { derived: transactionIds.length, external, removed: removed.rowCount },
+    'Investment cash flow derivation completed'
+  );
+  return { derived: transactionIds.length, external, ambiguousTransfers, removed: removed.rowCount };
 }
 
 module.exports = { backfill, deriveFlow, FLOW_RULES };
