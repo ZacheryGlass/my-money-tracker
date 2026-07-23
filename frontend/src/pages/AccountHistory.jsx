@@ -134,7 +134,7 @@ const AccountHistory = () => {
       try {
         const dateRange = getDateRange();
         const limit = calculateLimit(dateRangeOption, customStartDate, customEndDate);
-        const params = { ...dateRange, limit };
+        const params = { ...dateRange, limit, withCount: false };
         const [accountResult, portfolioResult] = await Promise.all([
           historyApi.getAccounts(params),
           historyApi.getPortfolio(params),

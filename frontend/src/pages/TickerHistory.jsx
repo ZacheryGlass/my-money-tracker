@@ -121,7 +121,7 @@ const TickerHistory = () => {
     const fetchHistory = async () => {
       setLoading(true); setError(null);
       try {
-        const params = { startDate, endDate, limit: DEFAULT_HISTORY_LIMIT };
+        const params = { startDate, endDate, limit: DEFAULT_HISTORY_LIMIT, withCount: false };
         const promises = selectedTickerOptions.map((option) =>
           historyAPI.getTickers({ ...params, ticker: option.ticker, account_id: option.accountId })
         );

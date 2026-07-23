@@ -136,6 +136,7 @@ const AccountsPage = () => {
         const result = await historyApi.getAccounts({
           account_id: selectedAccountId,
           limit: 365,
+          withCount: false,
         });
         setAccountHistory(result.data || []);
       } catch {

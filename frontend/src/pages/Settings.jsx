@@ -450,6 +450,7 @@ const Settings = () => {
         startDate: exportStartDate || undefined,
         endDate: exportEndDate || undefined,
         limit: 10000,
+        withCount: false,
       });
       const rows = response.data || [];
       if (rows.length === 0) throw new Error('No portfolio history exists for that date range');
