@@ -27,10 +27,14 @@ const CATEGORY_DIRECTIONS = {
 // Plaid's detailed category resolves cases the primary category gets wrong.
 // LOAN_PAYMENTS covers both paying a mortgage (real spending) and paying a
 // credit card off from checking (moving money between your own accounts).
+//
+// INCOME_DIVIDENDS and INCOME_INTEREST_EARNED are deliberately NOT remapped to
+// the 'dividend'/'interest' directions. Those directions exist for the
+// investment feed, and the aggregation layer counts only direction === 'income'
+// -- remapping bank interest would quietly erase it from income, net cash flow
+// and the savings rate across all history the next time backfill runs.
 const DETAILED_DIRECTIONS = {
   LOAN_PAYMENTS_CREDIT_CARD_PAYMENT: 'internal_transfer',
-  INCOME_DIVIDENDS: 'dividend',
-  INCOME_INTEREST_EARNED: 'interest',
 };
 
 // Plaid grades its own enrichment; use its grade rather than a flat 0.9.
@@ -88,8 +92,10 @@ function classify(transaction) {
 // clobbered by overwriting it.
 async function backfill() {
   const transactions = await pool.query(`
-    SELECT t.id, t.category, t.amount, t.detailed_category, t.category_confidence
+    SELECT t.id, t.category, t.amount, t.detailed_category, t.category_confidence,
+           tc.direction AS current_direction, tc.confidence AS current_confidence
     FROM transactions t
+    LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
   `);
   if (!transactions.rows.length) return { classified: 0 };
 
@@ -99,11 +105,17 @@ async function backfill() {
   const confidences = [];
   for (const row of transactions.rows) {
     const result = classify(row);
+    // Only rows whose derived values actually changed are written. Without this
+    // every run rewrites the whole table to change nothing.
+    const unchanged = row.current_direction === result.direction
+      && Number(row.current_confidence) === result.confidence;
+    if (unchanged) continue;
     ids.push(row.id);
     directions.push(result.direction);
     internals.push(result.isInternalTransfer);
     confidences.push(result.confidence);
   }
+  if (!ids.length) return { classified: 0 };
 
   await pool.query(`
     INSERT INTO transaction_classifications (transaction_id, direction, is_internal_transfer, confidence)

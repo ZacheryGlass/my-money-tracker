@@ -116,7 +116,7 @@ router.patch('/:id/tax-treatment', async (req, res) => {
       return res.status(400).json({ error: 'Invalid account id' });
     }
 
-    const { tax_treatment: taxTreatment } = req.body;
+    const taxTreatment = req.body?.tax_treatment;
     if (!VALID_TAX_TREATMENTS.includes(taxTreatment)) {
       return res.status(400).json({ error: `tax_treatment must be one of: ${VALID_TAX_TREATMENTS.join(', ')}` });
     }

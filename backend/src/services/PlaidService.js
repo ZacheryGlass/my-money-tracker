@@ -33,6 +33,11 @@ const TAX_TREATMENT_BY_SUBTYPE = {
 function deriveTaxTreatment(subtype, accountType) {
   if (accountType !== 'investment' && accountType !== 'brokerage') return null;
   const key = String(subtype || '').toLowerCase().trim();
+  // Plaid often returns a null subtype on the first accounts/get after linking
+  // and fills it in later. Guessing here would be permanent: the sync only ever
+  // fills a NULL tax_treatment, so a first-sync guess of 'taxable' would still
+  // be there after the subtype resolves to '401k'.
+  if (!key) return null;
   // An unrecognized investment subtype is far more likely to be a new flavor of
   // brokerage than a new flavor of retirement account.
   return TAX_TREATMENT_BY_SUBTYPE[key] || 'taxable';
@@ -41,7 +46,12 @@ function deriveTaxTreatment(subtype, accountType) {
 // debt_terms.apr is a FRACTION (0.2349), not a percentage: runScenario uses it
 // directly as a growth rate and renders it as apr * 100. Plaid reports
 // percentages (23.49). Every APR path below must divide by 100.
+//
+// Number(null) is 0, so the null check cannot be left to Number.isFinite: a
+// missing rate stored as 0 would survive the COALESCE in the upsert and
+// overwrite a real APR with 0%.
 function toAprFraction(percentage) {
+  if (percentage === null || percentage === undefined || percentage === '') return null;
   const value = Number(percentage);
   return Number.isFinite(value) ? value / 100 : null;
 }
@@ -70,7 +80,11 @@ function mapLiabilityToDebtTerms(liability, kind) {
     const aprs = liability.aprs || [];
     // Cards carry several APRs (purchase, cash advance, balance transfer,
     // promotional). Purchase is the one that applies to ordinary spending.
-    const apr = aprs.find(a => a.apr_type === 'purchase_apr') || aprs[0] || null;
+    // Falling back to the first entry would happily pick a 0% intro balance
+    // transfer rate and report the card as free money, so the fallback skips
+    // zero rates -- an unknown APR is more useful than a wrong one.
+    const purchase = aprs.find(a => a.apr_type === 'purchase_apr');
+    const apr = purchase || aprs.find(a => toAprFraction(a.apr_percentage) > 0) || null;
     return {
       ...common,
       apr: apr ? toAprFraction(apr.apr_percentage) : null,
@@ -410,9 +424,9 @@ class PlaidService {
     const finalName = nameConflict.rows.length > 0 ? `${name} (Plaid)` : name;
 
     const result = await pool.query(
-      `INSERT INTO accounts (name, type, plaid_item_id, plaid_account_id,
-       subtype, mask, balance_available, balance_current, balance_limit, tax_treatment)
-       VALUES ($7, $8, $9, $10, $1, $2, $3, $4, $5, $6) RETURNING *`,
+      `INSERT INTO accounts (subtype, mask, balance_available, balance_current, balance_limit,
+       tax_treatment, name, type, plaid_item_id, plaid_account_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
       [...detail, finalName, dbType, plaidItemId, plaidAccountId]
     );
     return result.rows[0];
@@ -487,31 +501,35 @@ class PlaidService {
   // (M1's margin loan returns nothing at all). A miss here is normal, so the
   // whole step is isolated and never fails the sync.
   static async _syncLiabilities(plaidItemId, accessToken) {
-    let liabilities;
+    let updated = 0;
     try {
       const response = await plaidClient.liabilitiesGet({ access_token: accessToken });
-      liabilities = response.data.liabilities || {};
+      const liabilities = response.data.liabilities || {};
+      for (const kind of ['credit', 'mortgage', 'student']) {
+        for (const liability of liabilities[kind] || []) {
+          const accountId = await this._getAccountIdByPlaidAccountId(liability.account_id);
+          if (!accountId) continue;
+          await this._upsertDebtTerms(accountId, mapLiabilityToDebtTerms(liability, kind));
+          updated++;
+        }
+      }
     } catch (err) {
+      // The whole body is inside the try, including the writes: syncItem calls
+      // this before the transaction sync, so anything escaping here would cost
+      // a day of transactions over an optional product.
       const errorCode = err.response?.data?.error_code;
       const expected = ['PRODUCTS_NOT_SUPPORTED', 'PRODUCT_NOT_READY', 'NO_LIABILITY_ACCOUNTS'];
       if (expected.includes(errorCode)) {
         logger.info({ plaidItemId, errorCode }, 'Liabilities not available for this item');
       } else if (errorCode === 'ADDITIONAL_CONSENT_REQUIRED') {
+        // Reported rather than logged only: items linked before liabilities was
+        // requested silently keep an empty debt_terms until they are re-linked.
         logger.info({ plaidItemId }, 'Additional consent required for liabilities — user must re-link');
+        return { updated, consentRequired: true };
       } else {
         logger.error({ plaidItemId, err }, 'Failed to sync liabilities');
       }
-      return { updated: 0 };
-    }
-
-    let updated = 0;
-    for (const kind of ['credit', 'mortgage', 'student']) {
-      for (const liability of liabilities[kind] || []) {
-        const accountId = await this._getAccountIdByPlaidAccountId(liability.account_id);
-        if (!accountId) continue;
-        await this._upsertDebtTerms(accountId, mapLiabilityToDebtTerms(liability, kind));
-        updated++;
-      }
+      return { updated, error: errorCode || 'unknown' };
     }
 
     return { updated };
@@ -529,7 +547,10 @@ class PlaidService {
        ON CONFLICT (account_id) DO UPDATE
        SET apr = COALESCE(EXCLUDED.apr, debt_terms.apr),
            minimum_payment = COALESCE(EXCLUDED.minimum_payment, debt_terms.minimum_payment),
-           due_day = COALESCE(EXCLUDED.due_day, debt_terms.due_day),
+           -- due_day is derived from next_payment_due_date, which is overwritten
+           -- unconditionally below; preserving one and not the other would let
+           -- the two disagree.
+           due_day = EXCLUDED.due_day,
            maturity_date = COALESCE(EXCLUDED.maturity_date, debt_terms.maturity_date),
            next_payment_due_date = EXCLUDED.next_payment_due_date,
            last_statement_balance = EXCLUDED.last_statement_balance,
@@ -593,10 +614,16 @@ class PlaidService {
     // when the item mutates mid-sync (TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION);
     // storing an intermediate cursor would make the abandoned run's pages look
     // consumed and silently drop the transactions on them.
-    await pool.query(
-      'UPDATE plaid_items SET transactions_cursor = $1 WHERE id = $2',
-      [cursor, plaidItemId]
-    );
+    //
+    // An empty next_cursor is never written over a real one: Plaid returns one
+    // while an item's initial historical pull is still running, and storing it
+    // would replay the item's entire history on the next sync.
+    if (cursor) {
+      await pool.query(
+        'UPDATE plaid_items SET transactions_cursor = $1 WHERE id = $2',
+        [cursor, plaidItemId]
+      );
+    }
 
     return { added, modified, removed };
   }

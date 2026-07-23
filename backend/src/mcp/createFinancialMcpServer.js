@@ -230,7 +230,7 @@ function createFinancialMcpServer() {
     title: 'Export a bounded financial dataset',
     description: 'Provides paginated raw records for unusual questions that cannot be answered by the semantic and analytical tools. It only exposes curated datasets and allowlisted columns; arbitrary SQL is never accepted. Prefer the other tools first because they return smaller, normalized, and financially meaningful results.',
     inputSchema: {
-      dataset: z.enum(['positions', 'transactions', 'account_snapshots', 'holding_snapshots', 'salary_history', 'recurring_expenses', 'benchmark_prices', 'investment_cash_flows', 'tax_lots', 'debt_terms']),
+      dataset: z.enum(['positions', 'transactions', 'account_snapshots', 'holding_snapshots', 'salary_history', 'recurring_expenses', 'benchmark_prices', 'investment_cash_flows', 'tax_lots', 'debt_terms', 'securities']),
       columns: z.array(z.string().max(100)).max(50).optional(),
       start_date: date.optional(),
       end_date: date.optional(),

@@ -24,6 +24,10 @@ const DEFAULT_TRANSACTION_DAYS = 90;
 const MAX_ANALYSIS_ROWS = 25000;
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 1000;
+// A position counts as fully covered by tax lots at this fraction of the shares
+// held; the slack absorbs DECIMAL(20,8) rounding. Shared by analyzeInvestments
+// and getDataHealth so the two can never disagree about the same position.
+const TAX_LOT_COVERAGE_TOLERANCE = 0.999;
 
 function isoDate(value) {
   if (!value) return null;
@@ -205,7 +209,8 @@ class FinancialQueryService {
     const [accounts, snapshotRange, transactionRange, semanticCounts] = await Promise.all([
       pool.query(
         `SELECT id, COALESCE(NULLIF(TRIM(display_name), ''), name) AS name,
-                type, subtype, tax_treatment, balance_current, is_hidden
+                type, subtype, tax_treatment,
+                balance_current, balance_available, balance_limit, is_hidden
          FROM accounts ${hiddenFilter}
          ORDER BY type, name`
       ),
@@ -232,7 +237,15 @@ class FinancialQueryService {
 
     return {
       meta: toolMeta(),
-      accounts: accounts.rows.map((row) => ({ ...row, is_hidden: Boolean(row.is_hidden) })),
+      // pg returns DECIMAL as a string; every other monetary value in this layer
+      // is a number, so the balances are converted rather than spread verbatim.
+      accounts: accounts.rows.map((row) => ({
+        ...row,
+        balance_current: row.balance_current == null ? null : round(toNumber(row.balance_current)),
+        balance_available: row.balance_available == null ? null : round(toNumber(row.balance_available)),
+        balance_limit: row.balance_limit == null ? null : round(toNumber(row.balance_limit)),
+        is_hidden: Boolean(row.is_hidden),
+      })),
       coverage: {
         snapshots: {
           earliest: isoDate(snapshotRange.rows[0]?.earliest),
@@ -924,7 +937,7 @@ class FinancialQueryService {
       // Money market funds hold their $1 basis by construction, so flagging them
       // as missing cost basis is permanent noise rather than an actionable gap.
       const coverageConditions = [
-        "a.type = 'investment'", 'h.ticker IS NOT NULL', 'h.quantity > 0',
+        'a.is_hidden = FALSE', "a.type = 'investment'", 'h.ticker IS NOT NULL', 'h.quantity > 0',
         'COALESCE(sm.is_cash_equivalent, FALSE) = FALSE',
       ];
       const coverageParams = [];
@@ -944,17 +957,16 @@ class FinancialQueryService {
          JOIN accounts a ON a.id = h.account_id
          LEFT JOIN security_master sm ON UPPER(sm.symbol) = UPPER(h.ticker)
          LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
+              AND tl.remaining_quantity > 0
          LEFT JOIN price_cache pc ON UPPER(pc.ticker) = UPPER(h.ticker)
          WHERE ${coverageConditions.join(' AND ')}
-         GROUP BY h.account_id, h.ticker, h.quantity, h.institution_cost_basis, pc.price_usd`,
+         GROUP BY h.id, h.account_id, h.ticker, h.quantity, h.institution_cost_basis, pc.price_usd`,
         coverageParams
       );
       result.taxLotCoverage = coverageResult.rows.map((row) => {
         const held = toNumber(row.held_quantity);
         const inLots = toNumber(row.lot_quantity);
-        // Small tolerance so DECIMAL(20,8) rounding cannot flag a fully
-        // reconciled position as incomplete.
-        const complete = inLots >= held * 0.999;
+        const complete = inLots >= held * TAX_LOT_COVERAGE_TOLERANCE;
         const institutionBasis = row.institution_cost_basis == null ? null : toNumber(row.institution_cost_basis);
         // Lots are preferred because they are dated (holding period, specific-lot
         // selection). The broker's aggregate basis is the fallback for positions
@@ -1229,8 +1241,8 @@ class FinancialQueryService {
            GROUP BY h.id, h.quantity
            -- Partial lots are counted alongside absent ones: lots covering a
            -- sliver of a position produce a plausible but wrong basis, which is
-           -- worse than no basis at all. Tolerance absorbs DECIMAL rounding.
-           HAVING COALESCE(SUM(tl.remaining_quantity), 0) < h.quantity * 0.999
+           -- worse than no basis at all.
+           HAVING COALESCE(SUM(tl.remaining_quantity), 0) < h.quantity * ${TAX_LOT_COVERAGE_TOLERANCE}
          ) incomplete) AS positions_without_cost_basis,
         (SELECT COUNT(*)::int FROM benchmark_prices) AS benchmark_observations,
         (SELECT COUNT(*)::int FROM investment_cash_flows WHERE is_external) AS recorded_investment_flows,
@@ -1299,6 +1311,9 @@ class FinancialQueryService {
       },
       tax_lots: {
         table: 'tax_lots', date: 'acquired_date', columns: ['id', 'account_id', 'symbol', 'acquired_date', 'quantity', 'remaining_quantity', 'cost_basis', 'source_trade_id'],
+      },
+      securities: {
+        table: 'security_master', date: null, columns: ['symbol', 'name', 'security_type', 'sector', 'industry', 'is_cash_equivalent', 'asset_class', 'benchmark_symbol', 'is_liquid', 'metadata'],
       },
       debt_terms: {
         table: 'debt_terms', date: null, columns: ['account_id', 'apr', 'minimum_payment', 'due_day', 'maturity_date', 'is_tax_deductible', 'notes', 'next_payment_due_date', 'last_statement_balance', 'last_statement_date', 'last_payment_amount', 'last_payment_date', 'is_overdue'],

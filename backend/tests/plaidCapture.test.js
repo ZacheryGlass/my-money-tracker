@@ -44,7 +44,15 @@ test('deriveTaxTreatment maps hsa to hsa', () => {
 test('deriveTaxTreatment defaults unknown investment subtypes to taxable', () => {
   assert.equal(deriveTaxTreatment('brokerage', 'investment'), 'taxable');
   assert.equal(deriveTaxTreatment('some new wrapper', 'investment'), 'taxable');
-  assert.equal(deriveTaxTreatment(null, 'investment'), 'taxable');
+});
+
+// Plaid often sends a null subtype on the first accounts/get and fills it in
+// later. The sync only ever fills a NULL tax_treatment, so a guess made here
+// would outlive the subtype it was guessed from.
+test('deriveTaxTreatment refuses to guess without a subtype', () => {
+  assert.equal(deriveTaxTreatment(null, 'investment'), null);
+  assert.equal(deriveTaxTreatment('', 'investment'), null);
+  assert.equal(deriveTaxTreatment('   ', 'investment'), null);
 });
 
 // Checking accounts have no tax treatment at all; forcing them to 'taxable'
@@ -90,6 +98,40 @@ test('mapLiabilityToDebtTerms picks the purchase APR over the other card APRs', 
 
   const noAprs = mapLiabilityToDebtTerms({ ...creditLiability, aprs: [] }, 'credit');
   assert.equal(noAprs.apr, null);
+});
+
+// A card in an intro offer reports a 0% balance transfer rate. Taking it would
+// report a 23% card as free money to the debt-vs-invest scenario.
+test('mapLiabilityToDebtTerms does not fall back to a 0% promotional APR', () => {
+  const terms = mapLiabilityToDebtTerms({
+    aprs: [
+      { apr_type: 'balance_transfer_apr', apr_percentage: 0 },
+      { apr_type: 'cash_apr', apr_percentage: 29.99 },
+    ],
+  }, 'credit');
+  assert.equal(terms.apr, 0.2999);
+
+  const onlyZero = mapLiabilityToDebtTerms({
+    aprs: [{ apr_type: 'balance_transfer_apr', apr_percentage: 0 }],
+  }, 'credit');
+  assert.equal(onlyZero.apr, null);
+
+  // A genuine 0% purchase APR is still honored.
+  const zeroPurchase = mapLiabilityToDebtTerms({
+    aprs: [{ apr_type: 'purchase_apr', apr_percentage: 0 }],
+  }, 'credit');
+  assert.equal(zeroPurchase.apr, 0);
+});
+
+// Number(null) is 0. Storing 0 would pass the COALESCE in the upsert and wipe
+// out a real or hand-entered APR.
+test('mapLiabilityToDebtTerms maps a missing rate to null, not zero', () => {
+  assert.equal(mapLiabilityToDebtTerms({ interest_rate: { percentage: null } }, 'mortgage').apr, null);
+  assert.equal(mapLiabilityToDebtTerms({}, 'mortgage').apr, null);
+  assert.equal(mapLiabilityToDebtTerms({ interest_rate_percentage: null }, 'student').apr, null);
+  assert.equal(mapLiabilityToDebtTerms({
+    aprs: [{ apr_type: 'purchase_apr', apr_percentage: null }],
+  }, 'credit').apr, null);
 });
 
 test('mapLiabilityToDebtTerms derives due_day from the next due date', () => {

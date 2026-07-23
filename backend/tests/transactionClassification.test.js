@@ -49,18 +49,13 @@ test('classify still treats other loan payments as debt payments', () => {
   assert.equal(result.isInternalTransfer, false);
 });
 
-test('classify splits INCOME into dividends and interest by detailed category', () => {
-  assert.equal(classify({
-    category: 'INCOME', detailed_category: 'INCOME_DIVIDENDS', amount: -42,
-  }).direction, 'dividend');
-
-  assert.equal(classify({
-    category: 'INCOME', detailed_category: 'INCOME_INTEREST_EARNED', amount: -3,
-  }).direction, 'interest');
-
-  assert.equal(classify({
-    category: 'INCOME', detailed_category: 'INCOME_WAGES', amount: -4000,
-  }).direction, 'income');
+// The aggregation layer counts only direction === 'income'. Splitting bank
+// interest and dividends into their own directions would erase them from
+// income, net cash flow and the savings rate across all history.
+test('classify keeps every INCOME detail as income', () => {
+  for (const detailed of ['INCOME_DIVIDENDS', 'INCOME_INTEREST_EARNED', 'INCOME_WAGES']) {
+    assert.equal(classify({ category: 'INCOME', detailed_category: detailed, amount: -42 }).direction, 'income', detailed);
+  }
 });
 
 // Investment-feed rows have lowercase primary categories and no detailed
