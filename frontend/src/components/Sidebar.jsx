@@ -26,16 +26,17 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'balances', label: 'Balances', icon: Wallet },
   { id: 'accounts', label: 'Accounts', icon: Building2 },
-  { id: 'ticker-history', label: 'Ticker History', icon: TrendingUp },
-  { id: 'account-history', label: 'Account History', icon: History },
-  { id: 'portfolio-timeline', label: 'Portfolio Timeline', icon: Calendar },
-  { id: '_separator_analytics', section: 'ANALYTICS' },
+  { id: '_separator_portfolio', section: 'PORTFOLIO' },
   { id: 'holdings-analysis', label: 'Holdings Analysis', icon: Grid3X3 },
+  { id: 'portfolio-timeline', label: 'Portfolio Timeline', icon: Calendar },
+  { id: 'account-history', label: 'Account History', icon: History },
+  { id: 'ticker-history', label: 'Ticker History', icon: TrendingUp },
+  { id: '_separator_spending', section: 'SPENDING' },
   { id: 'spending', label: 'Spending', icon: ReceiptText },
   { id: 'top-merchants', label: 'Top Merchants', icon: Store },
-  { id: '_separator_planning', section: 'PLANNING' },
-  { id: 'salary-history', label: 'Salary History', icon: Banknote },
   { id: 'monthly-expenses', label: 'Monthly Expenses', icon: CreditCard },
+  { id: '_separator_income', section: 'INCOME' },
+  { id: 'salary-history', label: 'Salary History', icon: Banknote },
 ];
 
 function getStoredExpanded() {
