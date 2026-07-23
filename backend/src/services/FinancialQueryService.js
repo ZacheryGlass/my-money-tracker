@@ -896,6 +896,52 @@ class FinancialQueryService {
         unrealizedGain: row.unrealized_gain === null ? null : round(toNumber(row.unrealized_gain)),
       }));
       if (!result.taxLots.length) warnings.push('No tax-lot data is stored; tax-aware analysis is unavailable.');
+
+      // Lots exist only as far back as each broker's trade feed reaches, so a
+      // position can have lots covering a sliver of the shares actually held.
+      // Those lots sum to a plausible-looking basis and unrealized gain for the
+      // whole position; without this comparison nothing distinguishes them from
+      // complete data.
+      const coverageConditions = ["a.type = 'investment'", 'h.ticker IS NOT NULL', 'h.quantity > 0'];
+      const coverageParams = [];
+      if (scopeType === 'account') {
+        coverageParams.push(options.accountId);
+        coverageConditions.push(`h.account_id = $${coverageParams.length}`);
+      } else if (scopeType === 'ticker') {
+        coverageParams.push(options.ticker);
+        coverageConditions.push(`UPPER(h.ticker) = UPPER($${coverageParams.length})`);
+      }
+      const coverageResult = await pool.query(
+        `SELECT h.account_id, h.ticker AS symbol, h.quantity AS held_quantity,
+                COALESCE(SUM(tl.remaining_quantity), 0) AS lot_quantity
+         FROM holdings h
+         JOIN accounts a ON a.id = h.account_id
+         LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
+         WHERE ${coverageConditions.join(' AND ')}
+         GROUP BY h.account_id, h.ticker, h.quantity`,
+        coverageParams
+      );
+      result.taxLotCoverage = coverageResult.rows.map((row) => {
+        const held = toNumber(row.held_quantity);
+        const inLots = toNumber(row.lot_quantity);
+        return {
+          accountId: row.account_id,
+          symbol: row.symbol,
+          heldQuantity: held,
+          lotQuantity: inLots,
+          coveragePercent: held > 0 ? round(Math.min(100, (inLots / held) * 100), 2) : null,
+          // Small tolerance so DECIMAL(20,8) rounding cannot flag a fully
+          // reconciled position as incomplete.
+          complete: inLots >= held * 0.999,
+        };
+      });
+      const incomplete = result.taxLotCoverage.filter((row) => !row.complete);
+      if (incomplete.length) {
+        const detail = incomplete
+          .map((row) => `${row.symbol} (${row.coveragePercent ?? 0}% of account ${row.accountId})`)
+          .join(', ');
+        warnings.push(`Tax lots are incomplete for ${detail}; cost basis and unrealized gain reflect only the covered shares, not the full position.`);
+      }
     }
 
     return result;
@@ -1120,10 +1166,18 @@ class FinancialQueryService {
          JOIN accounts a ON a.id = t.account_id
          LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
          WHERE a.is_hidden = FALSE AND tc.transaction_id IS NULL) AS unclassified_transactions,
-        (SELECT COUNT(*)::int FROM holdings h
-         JOIN accounts a ON a.id = h.account_id
-         LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
-         WHERE a.is_hidden = FALSE AND a.type = 'investment' AND h.ticker IS NOT NULL AND tl.id IS NULL) AS positions_without_tax_lots,
+        (SELECT COUNT(*)::int FROM (
+           SELECT h.id
+           FROM holdings h
+           JOIN accounts a ON a.id = h.account_id
+           LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
+           WHERE a.is_hidden = FALSE AND a.type = 'investment' AND h.ticker IS NOT NULL AND h.quantity > 0
+           GROUP BY h.id, h.quantity
+           -- Partial lots are counted alongside absent ones: lots covering a
+           -- sliver of a position produce a plausible but wrong basis, which is
+           -- worse than no basis at all. Tolerance absorbs DECIMAL rounding.
+           HAVING COALESCE(SUM(tl.remaining_quantity), 0) < h.quantity * 0.999
+         ) incomplete) AS positions_without_tax_lots,
         (SELECT COUNT(*)::int FROM benchmark_prices) AS benchmark_observations,
         (SELECT COUNT(*)::int FROM investment_cash_flows WHERE is_external) AS recorded_investment_flows,
         (SELECT MAX(date) FROM transactions) AS latest_transaction_date,
