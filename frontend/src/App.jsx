@@ -1,6 +1,5 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AnimatePresence } from 'framer-motion';
 import { me } from './utils/api';
 import lazyWithReload from './utils/lazyWithReload';
 import ErrorBoundary from './components/ErrorBoundary';

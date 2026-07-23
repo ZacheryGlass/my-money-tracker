@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { AnimatePresence, motion as Motion } from 'framer-motion';
 import {
   LayoutDashboard,
   Wallet,
@@ -85,11 +84,12 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
     }
   };
 
+  const sidebarWidth = isMobile ? 'min(86vw, 320px)' : (showExpanded ? '220px' : '48px');
+
   const sidebarContent = (
-    <Motion.aside
-      initial={false}
-      animate={{ width: isMobile ? 'min(86vw, 320px)' : (showExpanded ? '220px' : '48px') }}
-      className="flex flex-col h-full bg-surface border-r border-border overflow-hidden z-50"
+    <aside
+      style={{ width: sidebarWidth }}
+      className="flex flex-col h-full bg-surface border-r border-border overflow-hidden z-50 transition-[width] duration-200 ease-out"
     >
       {/* Header */}
       <div className="flex h-12 flex-shrink-0 items-center border-b border-border px-3 lg:h-[35px]">
@@ -210,34 +210,28 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
           {expanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
         </button>
       )}
-    </Motion.aside>
+    </aside>
   );
 
   if (isMobile) {
+    // Backdrop and drawer stay mounted; CSS transitions handle both enter and
+    // exit as `mobileOpen` toggles (no framer-motion needed).
     return (
       <>
-        <AnimatePresence>
-          {mobileOpen && (
-            <>
-              <Motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 z-40 bg-black/60"
-                onClick={onMobileClose}
-              />
-              <Motion.div
-                initial={{ x: '-100%' }}
-                animate={{ x: 0 }}
-                exit={{ x: '-100%' }}
-                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="fixed left-0 top-0 h-full z-50"
-              >
-                {sidebarContent}
-              </Motion.div>
-            </>
-          )}
-        </AnimatePresence>
+        <div
+          className={`fixed inset-0 z-40 bg-black/60 transition-opacity duration-200 ${
+            mobileOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+          onClick={onMobileClose}
+          aria-hidden={!mobileOpen}
+        />
+        <div
+          className={`fixed left-0 top-0 h-full z-50 transition-transform duration-200 ease-out ${
+            mobileOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          {sidebarContent}
+        </div>
       </>
     );
   }
