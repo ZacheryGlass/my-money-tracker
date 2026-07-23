@@ -47,6 +47,17 @@ class PlaidItem {
     return result.rows[0];
   }
 
+  static async updateConsentExpiration(id, consentExpiration) {
+    const result = await pool.query(
+      `UPDATE plaid_items
+       SET consent_expiration = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING *`,
+      [id, consentExpiration || null]
+    );
+    return result.rows[0];
+  }
+
   static async setError(id, errorCode, errorMessage) {
     const result = await pool.query(
       `UPDATE plaid_items

@@ -9,6 +9,35 @@ const Trade = require('../models/Trade');
 const SecurityMaster = require('../models/SecurityMaster');
 const logger = require('../config/logger');
 
+// Plaid investment subtypes carry the tax treatment exactly; the app only needs
+// to know whether gains are taxed now (taxable), on withdrawal (traditional),
+// never (roth), or never-when-medical (hsa). Non-investment subtypes have no
+// treatment, so they stay NULL rather than being forced into 'taxable'.
+const TAX_TREATMENT_BY_SUBTYPE = {
+  roth: 'roth',
+  'roth 401k': 'roth',
+  hsa: 'hsa',
+  '401k': 'traditional',
+  '401a': 'traditional',
+  '403b': 'traditional',
+  '457b': 'traditional',
+  ira: 'traditional',
+  'sep ira': 'traditional',
+  'simple ira': 'traditional',
+  sarsep: 'traditional',
+  pension: 'traditional',
+  keogh: 'traditional',
+  'thrift savings plan': 'traditional',
+};
+
+function deriveTaxTreatment(subtype, accountType) {
+  if (accountType !== 'investment' && accountType !== 'brokerage') return null;
+  const key = String(subtype || '').toLowerCase().trim();
+  // An unrecognized investment subtype is far more likely to be a new flavor of
+  // brokerage than a new flavor of retirement account.
+  return TAX_TREATMENT_BY_SUBTYPE[key] || 'taxable';
+}
+
 const ensurePlaidConfigured = () => {
   if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SECRET) {
     const error = new Error(
@@ -91,13 +120,19 @@ class PlaidService {
     }
 
     await PlaidItem.clearError(plaidItemId);
+    // Only set for items under OAuth consent windows (EU/UK today); NULL is the
+    // normal case in the US and must not be treated as "expired".
+    await PlaidItem.updateConsentExpiration(
+      plaidItemId,
+      accountsResponse.data.item?.consent_expiration_time || null
+    );
     const plaidAccounts = accountsResponse.data.accounts;
     const syncedAccountIds = [];
     const results = { accounts: 0, holdings: 0, balances: 0, removed: 0 };
 
     for (const pa of plaidAccounts) {
       const accountName = `${prefix} - ${pa.official_name || pa.name}`;
-      const dbAccount = await this._upsertAccount(accountName, plaidItemId, pa.account_id, pa.type);
+      const dbAccount = await this._upsertAccount(accountName, plaidItemId, pa);
       syncedAccountIds.push(dbAccount.id);
       results.accounts++;
     }
@@ -125,7 +160,11 @@ class PlaidService {
           const quantity = holding.quantity;
           const manualValue = holding.institution_value ?? null;
 
-          await this._upsertHolding(accountId, ticker, name, quantity, manualValue);
+          await this._upsertHolding(accountId, ticker, name, quantity, manualValue, {
+            costBasis: holding.cost_basis ?? null,
+            price: holding.institution_price ?? null,
+            priceAsOf: holding.institution_price_as_of ?? null,
+          });
 
           if (ticker && security.close_price != null) {
             await PriceCache.upsert(ticker, security.close_price, 'plaid');
@@ -256,30 +295,49 @@ class PlaidService {
     return TYPE_MAP[accountType] || 'other';
   }
 
-  static async _upsertAccount(name, plaidItemId, plaidAccountId, accountType) {
-    const dbType = this._mapPlaidType(accountType);
+  static async _upsertAccount(name, plaidItemId, pa) {
+    const plaidAccountId = pa.account_id;
+    const dbType = this._mapPlaidType(pa.type);
+    const balances = pa.balances || {};
+    // Raw Plaid convention: credit/loan balances are positive amounts owed.
+    // The negation applied to the pseudo-holdings is deliberately not repeated.
+    const detail = [
+      pa.subtype || null,
+      pa.mask || null,
+      balances.available ?? null,
+      balances.current ?? null,
+      balances.limit ?? null,
+      deriveTaxTreatment(pa.subtype, pa.type),
+    ];
+    // tax_treatment only fills a NULL: a manual override through the accounts
+    // route must survive the next sync.
+    const detailAssign = `subtype = $1, mask = $2, balance_available = $3,
+       balance_current = $4, balance_limit = $5,
+       tax_treatment = COALESCE(accounts.tax_treatment, $6)`;
 
     const existing = await pool.query(
-      'SELECT * FROM accounts WHERE plaid_account_id = $1',
+      'SELECT id FROM accounts WHERE plaid_account_id = $1',
       [plaidAccountId]
     );
 
     if (existing.rows.length > 0) {
       const result = await pool.query(
-        'UPDATE accounts SET plaid_item_id = $1, type = $2 WHERE plaid_account_id = $3 RETURNING *',
-        [plaidItemId, dbType, plaidAccountId]
+        `UPDATE accounts SET ${detailAssign}, plaid_item_id = $7, type = $8
+         WHERE plaid_account_id = $9 RETURNING *`,
+        [...detail, plaidItemId, dbType, plaidAccountId]
       );
       return result.rows[0];
     }
 
     const reclaimable = await pool.query(
-      'SELECT * FROM accounts WHERE name = $1 AND plaid_account_id IS NULL',
+      'SELECT id FROM accounts WHERE name = $1 AND plaid_account_id IS NULL',
       [name]
     );
     if (reclaimable.rows.length > 0) {
       const result = await pool.query(
-        'UPDATE accounts SET plaid_item_id = $1, plaid_account_id = $2, type = $3 WHERE id = $4 RETURNING *',
-        [plaidItemId, plaidAccountId, dbType, reclaimable.rows[0].id]
+        `UPDATE accounts SET ${detailAssign}, plaid_item_id = $7, plaid_account_id = $8, type = $9
+         WHERE id = $10 RETURNING *`,
+        [...detail, plaidItemId, plaidAccountId, dbType, reclaimable.rows[0].id]
       );
       return result.rows[0];
     }
@@ -291,8 +349,10 @@ class PlaidService {
     const finalName = nameConflict.rows.length > 0 ? `${name} (Plaid)` : name;
 
     const result = await pool.query(
-      'INSERT INTO accounts (name, type, plaid_item_id, plaid_account_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [finalName, dbType, plaidItemId, plaidAccountId]
+      `INSERT INTO accounts (name, type, plaid_item_id, plaid_account_id,
+       subtype, mask, balance_available, balance_current, balance_limit, tax_treatment)
+       VALUES ($7, $8, $9, $10, $1, $2, $3, $4, $5, $6) RETURNING *`,
+      [...detail, finalName, dbType, plaidItemId, plaidAccountId]
     );
     return result.rows[0];
   }
@@ -305,7 +365,10 @@ class PlaidService {
     return result.rows[0]?.id || null;
   }
 
-  static async _upsertHolding(accountId, ticker, name, quantity, manualValue) {
+  // `institution` carries what the brokerage itself reports for the position.
+  // institution_cost_basis is the only basis available for positions opened
+  // before Plaid's trade window, so tax lots fall back to it.
+  static async _upsertHolding(accountId, ticker, name, quantity, manualValue, institution = {}) {
     const matchClause = ticker
       ? 'account_id = $1 AND UPPER(ticker) = UPPER($2)'
       : 'account_id = $1 AND ticker IS NULL AND name = $2';
@@ -316,18 +379,26 @@ class PlaidService {
       matchParams
     );
 
+    const institutionValues = [
+      institution.costBasis ?? null,
+      institution.price ?? null,
+      institution.priceAsOf ?? null,
+    ];
+
     if (existing.rows.length > 0) {
       await pool.query(
         `UPDATE holdings SET name = $1, quantity = $2, manual_value = $3,
+         institution_cost_basis = $4, institution_price = $5, institution_price_as_of = $6,
          is_plaid_managed = TRUE, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $4`,
-        [name, quantity, manualValue, existing.rows[0].id]
+         WHERE id = $7`,
+        [name, quantity, manualValue, ...institutionValues, existing.rows[0].id]
       );
     } else {
       await pool.query(
-        `INSERT INTO holdings (account_id, ticker, name, quantity, manual_value, is_plaid_managed)
-         VALUES ($1, $2, $3, $4, $5, TRUE)`,
-        [accountId, ticker, name, quantity, manualValue]
+        `INSERT INTO holdings (account_id, ticker, name, quantity, manual_value,
+         institution_cost_basis, institution_price, institution_price_as_of, is_plaid_managed)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)`,
+        [accountId, ticker, name, quantity, manualValue, ...institutionValues]
       );
     }
   }
@@ -394,12 +465,16 @@ class PlaidService {
 
       cursor = data.next_cursor;
       hasMore = data.has_more;
-
-      await pool.query(
-        'UPDATE plaid_items SET transactions_cursor = $1 WHERE id = $2',
-        [cursor, plaidItemId]
-      );
     }
+
+    // Persisted once, after the last page. Plaid invalidates a pagination run
+    // when the item mutates mid-sync (TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION);
+    // storing an intermediate cursor would make the abandoned run's pages look
+    // consumed and silently drop the transactions on them.
+    await pool.query(
+      'UPDATE plaid_items SET transactions_cursor = $1 WHERE id = $2',
+      [cursor, plaidItemId]
+    );
 
     return { added, modified, removed };
   }
@@ -451,7 +526,7 @@ class PlaidService {
   static async _upsertSecurities(securities) {
     for (const security of securities || []) {
       if (!security.ticker_symbol) continue;
-      await SecurityMaster.upsert(security.ticker_symbol, security.name, security.type);
+      await SecurityMaster.upsert(security);
     }
   }
 
@@ -515,7 +590,37 @@ class PlaidService {
   }
 
   static async _upsertTransaction(accountId, txn) {
-    const category = txn.personal_finance_category?.primary || null;
+    const pfc = txn.personal_finance_category || {};
+    const values = [
+      accountId,
+      txn.date,
+      txn.name,
+      txn.merchant_name || null,
+      txn.amount,
+      txn.iso_currency_code || 'USD',
+      pfc.primary || null,
+      txn.pending,
+      pfc.detailed || null,
+      pfc.confidence_level || null,
+      txn.authorized_date || null,
+      txn.payment_channel || null,
+      txn.pending_transaction_id || null,
+      txn.merchant_entity_id || null,
+      txn.logo_url || null,
+      txn.website || null,
+    ];
+
+    // A settled transaction supersedes the pending row it came from. Plaid only
+    // sends a `removed` event for the pending row on the timeline that created
+    // it, so a cursor reset (full history replay) would otherwise leave the
+    // pending duplicate behind forever. Classifications cascade on delete.
+    if (txn.pending_transaction_id) {
+      await pool.query(
+        'DELETE FROM transactions WHERE plaid_transaction_id = $1',
+        [txn.pending_transaction_id]
+      );
+    }
+
     const existing = await pool.query(
       'SELECT id FROM transactions WHERE plaid_transaction_id = $1',
       [txn.transaction_id]
@@ -524,19 +629,22 @@ class PlaidService {
     if (existing.rows.length > 0) {
       await pool.query(
         `UPDATE transactions SET account_id = $1, date = $2, name = $3, merchant_name = $4,
-         amount = $5, currency_code = $6, category = $7, pending = $8
-         WHERE plaid_transaction_id = $9`,
-        [accountId, txn.date, txn.name, txn.merchant_name || null,
-         txn.amount, txn.iso_currency_code || 'USD', category, txn.pending,
-         txn.transaction_id]
+         amount = $5, currency_code = $6, category = $7, pending = $8,
+         detailed_category = $9, category_confidence = $10, authorized_date = $11,
+         payment_channel = $12, pending_transaction_id = $13, merchant_entity_id = $14,
+         logo_url = $15, website = $16
+         WHERE plaid_transaction_id = $17`,
+        [...values, txn.transaction_id]
       );
     } else {
       await pool.query(
-        `INSERT INTO transactions (account_id, plaid_transaction_id, date, name, merchant_name,
-         amount, currency_code, category, pending)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [accountId, txn.transaction_id, txn.date, txn.name, txn.merchant_name || null,
-         txn.amount, txn.iso_currency_code || 'USD', category, txn.pending]
+        `INSERT INTO transactions (account_id, date, name, merchant_name,
+         amount, currency_code, category, pending,
+         detailed_category, category_confidence, authorized_date,
+         payment_channel, pending_transaction_id, merchant_entity_id,
+         logo_url, website, plaid_transaction_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+        [...values, txn.transaction_id]
       );
     }
   }
@@ -552,3 +660,4 @@ class PlaidService {
 }
 
 module.exports = PlaidService;
+module.exports.deriveTaxTreatment = deriveTaxTreatment;
