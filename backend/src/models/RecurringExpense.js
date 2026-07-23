@@ -24,8 +24,9 @@ class RecurringExpense {
   }
 
   // The individual charges that make up a tracked expense: transactions whose
-  // merchant_key (COALESCE(merchant_name, name)) matches, under the same
-  // eligibility filters the sync uses to build the group, newest first.
+  // merchant_key (COALESCE(merchant_name, name)) matches, under
+  // SPEND_ELIGIBILITY_SQL -- the same rows the sync grouped to derive the
+  // expense, so the list reconciles with the cost shown -- newest first.
   // `days` (optional) restricts to a trailing window, for the Top Merchants
   // page where the expansion should match the selected period.
   static async chargesForMerchant(merchantKey, limit = 36, days = null) {

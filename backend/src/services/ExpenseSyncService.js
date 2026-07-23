@@ -21,8 +21,9 @@ const MONTHLY_MAX_DAYS = 45;
 const GAP_TOLERANCE_DAYS = 7;
 // Income is never an expense. Installment loans (mortgage, auto, personal)
 // stay -- their payment is the only record of that obligation. Credit-card
-// payments are excluded separately (isCreditCardPayment): the card's own
-// purchases are already counted, so the payment would double-count.
+// payments are already gone before this point: SPEND_ELIGIBILITY_SQL drops
+// them from fetchEligibleCharges, and isCreditCardPayment re-checks the
+// survivors below.
 const AUTO_CREATE_EXCLUDED = new Set(['INCOME']);
 // Generic tokens dropped when matching a payment merchant to a card account,
 // so "Chase"/"Discover" identify the issuer but "card"/"visa" don't overmatch.
@@ -161,6 +162,12 @@ async function fetchCreditCardTokens() {
 // tracked), so it must not become a recurring expense. Installment loans
 // (Lightstream, mortgage) share the LOAN_PAYMENTS category but match no card
 // account, so they are correctly kept.
+//
+// NOT redundant with SPEND_ELIGIBILITY_SQL, which excludes card payments by
+// Plaid's detailed category: this catches rows Plaid never enriched, whose
+// detailed category is NULL. It guards auto-creation only -- Top Merchants and
+// the charge list have no equivalent backstop, so an unenriched card payment
+// can still rank there.
 function isCreditCardPayment(group, cardTokens) {
   if (!String(group.category || '').toUpperCase().includes('LOAN_PAYMENT')) return false;
   return tokens(group.merchantKey).some((token) => cardTokens.has(token));
@@ -238,7 +245,11 @@ async function run() {
       account_id: derived.accountId,
       due_day: derived.dueDay,
       last_charge_date: derived.lastChargeDate,
-      charge_interval_days: derived.intervalDays,
+      // A single charge inside the derive window yields no gaps and so no
+      // cadence. Passing that null through would erase a cadence earlier runs
+      // established, and findAll's COALESCE(..., 30) would silently reset the
+      // stale/drop clock. undefined leaves the column alone.
+      charge_interval_days: derived.intervalDays ?? undefined,
     });
     if (Math.abs(Number(expense.cost) - derived.cost) > 0.005) {
       await RecurringExpense.appendHistory(expense.id, derived.cost);

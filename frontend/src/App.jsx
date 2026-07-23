@@ -31,10 +31,10 @@ const navItems = [
   { id: 'ticker-history', label: 'Ticker History', path: '/ticker-history' },
   { id: 'account-history', label: 'Account History', path: '/account-history' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', path: '/portfolio-timeline' },
-  { id: 'holdings-analysis', label: 'Holdings Analysis', section: 'ANALYTICS', path: '/holdings-analysis' },
+  { id: 'holdings-analysis', label: 'Holdings Analysis', path: '/holdings-analysis' },
   { id: 'spending', label: 'Spending', path: '/spending' },
   { id: 'top-merchants', label: 'Top Merchants', path: '/top-merchants' },
-  { id: 'salary-history', label: 'Salary History', section: 'PLANNING', path: '/salary-history' },
+  { id: 'salary-history', label: 'Salary History', path: '/salary-history' },
   { id: 'monthly-expenses', label: 'Monthly Expenses', path: '/monthly-expenses' },
   { id: 'settings', label: 'Settings', path: '/settings' },
 ];

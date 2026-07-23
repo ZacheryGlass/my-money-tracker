@@ -2,6 +2,7 @@
 
 const pool = require('../config/database');
 const logger = require('../config/logger');
+const { CREDIT_CARD_PAYMENT_CATEGORY } = require('../utils/spendFilters');
 
 // Category-first mapping onto transaction_classifications.direction. Uppercase
 // categories come from Plaid spending accounts, lowercase from investment
@@ -34,7 +35,7 @@ const CATEGORY_DIRECTIONS = {
 // -- remapping bank interest would quietly erase it from income, net cash flow
 // and the savings rate across all history the next time backfill runs.
 const DETAILED_DIRECTIONS = {
-  LOAN_PAYMENTS_CREDIT_CARD_PAYMENT: 'internal_transfer',
+  [CREDIT_CARD_PAYMENT_CATEGORY]: 'internal_transfer',
 };
 
 // Plaid grades its own enrichment; use its grade rather than a flat 0.9.

@@ -2,10 +2,11 @@ const pool = require('../config/database');
 const { SPEND_ELIGIBILITY_SQL } = require('../utils/spendFilters');
 
 // Aggregated card/bank spend by merchant over a trailing window, for the Top
-// Merchants page. Merchant identity (COALESCE(merchant_name, name)) and the
-// eligibility filters match RecurringExpense.chargesForMerchant / the expense
-// sync. Only merchants-scope ignores are excluded; the expenses-scope list is
-// a separate concern (see IgnoredMerchant).
+// Merchants page. Merchant identity is COALESCE(merchant_name, name); which
+// rows qualify comes from SPEND_ELIGIBILITY_SQL, shared with
+// RecurringExpense.chargesForMerchant and the expense sync. Only
+// merchants-scope ignores are excluded; the expenses-scope list is a separate
+// concern (see IgnoredMerchant).
 class MerchantSpend {
   static async topForWindow(days, limit = 50) {
     const result = await pool.query(`
