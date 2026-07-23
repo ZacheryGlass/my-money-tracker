@@ -15,7 +15,8 @@ const EFFECTIVE_ACCOUNT_NAME_SQL = "COALESCE(NULLIF(TRIM(a.display_name), ''), a
 const ACCOUNT_RETURN_SELECT = `a.id, a.name, a.display_name,
                  ${EFFECTIVE_ACCOUNT_NAME_SQL} AS effective_name,
                  a.is_hidden,
-                 a.type, a.plaid_item_id`;
+                 a.type, a.subtype, a.tax_treatment, a.plaid_item_id`;
+const VALID_TAX_TREATMENTS = ['taxable', 'traditional', 'roth', 'hsa'];
 
 // POST /api/accounts - Create a new manual account
 router.post('/', async (req, res) => {
@@ -100,6 +101,42 @@ router.patch('/:id/display-name', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Update account display name error');
     res.status(500).json({ error: 'Server error updating account display name' });
+  }
+});
+
+// PATCH /api/accounts/:id/tax-treatment - Override the derived tax treatment
+//
+// Clearing back to null is deliberately not supported: migrations re-run on
+// every boot, and the seed for the manual investment accounts fires whenever
+// tax_treatment IS NULL, so a cleared value would silently reappear.
+router.patch('/:id/tax-treatment', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid account id' });
+    }
+
+    const { tax_treatment: taxTreatment } = req.body;
+    if (!VALID_TAX_TREATMENTS.includes(taxTreatment)) {
+      return res.status(400).json({ error: `tax_treatment must be one of: ${VALID_TAX_TREATMENTS.join(', ')}` });
+    }
+
+    const result = await pool.query(
+      `UPDATE accounts a
+       SET tax_treatment = $1
+       WHERE a.id = $2
+       RETURNING ${ACCOUNT_RETURN_SELECT}`,
+      [taxTreatment, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    res.status(200).json({ account: result.rows[0] });
+  } catch (error) {
+    logger.error({ err: error }, 'Update account tax treatment error');
+    res.status(500).json({ error: 'Server error updating account tax treatment' });
   }
 });
 

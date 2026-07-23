@@ -75,6 +75,12 @@ function normalizedTransaction(row) {
     sourceAmount: round(toNumber(row.amount)),
     currency: row.currency_code || 'USD',
     category: row.normalized_category || row.category || 'Uncategorized',
+    // Plaid's own enrichment, kept alongside the app's normalized category so an
+    // analysis can tell what the bank said from what this app concluded.
+    categoryDetailed: row.detailed_category || null,
+    plaidConfidence: row.category_confidence || null,
+    paymentChannel: row.payment_channel || null,
+    authorizedDate: row.authorized_date ? isoDate(row.authorized_date) : null,
     direction,
     pending: Boolean(row.pending),
     isInternalTransfer: Boolean(row.is_internal_transfer || direction === 'internal_transfer'),
@@ -199,7 +205,7 @@ class FinancialQueryService {
     const [accounts, snapshotRange, transactionRange, semanticCounts] = await Promise.all([
       pool.query(
         `SELECT id, COALESCE(NULLIF(TRIM(display_name), ''), name) AS name,
-                type, is_hidden
+                type, subtype, tax_treatment, balance_current, is_hidden
          FROM accounts ${hiddenFilter}
          ORDER BY type, name`
       ),
@@ -255,6 +261,8 @@ class FinancialQueryService {
         timeWeightedReturn: 'Chain-linked return with external flows removed from each valuation period.',
         moneyWeightedReturn: 'Annualized XIRR using dated external flows and ending value.',
         transactionSigns: 'MCP output normalizes amounts to positive values and exposes direction separately.',
+        accountBalanceCurrent: 'Institution-reported balance in raw Plaid convention: credit and loan balances are POSITIVE amounts owed. This is the opposite of the negated values used for net worth.',
+        accountTaxTreatment: 'taxable, traditional (taxed on withdrawal), roth (never taxed), or hsa. Derived from the Plaid subtype; null when the account has no tax treatment.',
       },
     };
   }
@@ -352,7 +360,12 @@ class FinancialQueryService {
                 ts.snapshot_date,
                 COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) AS account_name,
                 a.type AS account_type,
-                NULL::varchar AS category, NULL::varchar AS location
+                NULL::varchar AS category, NULL::varchar AS location,
+                -- Institution basis is current-state only; historical snapshots
+                -- carry explicit nulls rather than leaking undefined.
+                NULL::numeric AS institution_cost_basis,
+                NULL::numeric AS institution_price,
+                NULL::date AS institution_price_as_of
          FROM ticker_snapshots ts
          JOIN accounts a ON a.id = ts.account_id
          WHERE ts.snapshot_date <= $1 ${includeHidden ? '' : 'AND a.is_hidden = FALSE'}
@@ -386,6 +399,11 @@ class FinancialQueryService {
         location: row.location || null,
         value: round(toNumber(row.current_value)),
         snapshotDate: isoDate(row.snapshot_date),
+        // What the brokerage itself reports for the position, as opposed to what
+        // the FIFO lot rebuild derives from the trade feed.
+        institutionCostBasis: row.institution_cost_basis == null ? null : round(toNumber(row.institution_cost_basis)),
+        institutionPrice: row.institution_price == null ? null : toNumber(row.institution_price),
+        institutionPriceAsOf: row.institution_price_as_of ? isoDate(row.institution_price_as_of) : null,
       }))
       .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
     const totalValue = filtered.reduce((sum, row) => sum + row.value, 0);
@@ -468,6 +486,7 @@ class FinancialQueryService {
     const result = await pool.query(
       `SELECT t.id, t.account_id, t.date, t.name, t.merchant_name, t.amount,
               t.currency_code, t.category, t.pending,
+              t.detailed_category, t.category_confidence, t.payment_channel, t.authorized_date,
               COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) AS account_name,
               tc.transaction_id AS classification_transaction_id,
               tc.direction, tc.normalized_category, tc.is_internal_transfer,
@@ -902,7 +921,12 @@ class FinancialQueryService {
       // Those lots sum to a plausible-looking basis and unrealized gain for the
       // whole position; without this comparison nothing distinguishes them from
       // complete data.
-      const coverageConditions = ["a.type = 'investment'", 'h.ticker IS NOT NULL', 'h.quantity > 0'];
+      // Money market funds hold their $1 basis by construction, so flagging them
+      // as missing cost basis is permanent noise rather than an actionable gap.
+      const coverageConditions = [
+        "a.type = 'investment'", 'h.ticker IS NOT NULL', 'h.quantity > 0',
+        'COALESCE(sm.is_cash_equivalent, FALSE) = FALSE',
+      ];
       const coverageParams = [];
       if (scopeType === 'account') {
         coverageParams.push(options.accountId);
@@ -913,34 +937,57 @@ class FinancialQueryService {
       }
       const coverageResult = await pool.query(
         `SELECT h.account_id, h.ticker AS symbol, h.quantity AS held_quantity,
-                COALESCE(SUM(tl.remaining_quantity), 0) AS lot_quantity
+                h.institution_cost_basis, pc.price_usd,
+                COALESCE(SUM(tl.remaining_quantity), 0) AS lot_quantity,
+                COALESCE(SUM(tl.cost_basis), 0) AS lot_cost_basis
          FROM holdings h
          JOIN accounts a ON a.id = h.account_id
+         LEFT JOIN security_master sm ON UPPER(sm.symbol) = UPPER(h.ticker)
          LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
+         LEFT JOIN price_cache pc ON UPPER(pc.ticker) = UPPER(h.ticker)
          WHERE ${coverageConditions.join(' AND ')}
-         GROUP BY h.account_id, h.ticker, h.quantity`,
+         GROUP BY h.account_id, h.ticker, h.quantity, h.institution_cost_basis, pc.price_usd`,
         coverageParams
       );
       result.taxLotCoverage = coverageResult.rows.map((row) => {
         const held = toNumber(row.held_quantity);
         const inLots = toNumber(row.lot_quantity);
+        // Small tolerance so DECIMAL(20,8) rounding cannot flag a fully
+        // reconciled position as incomplete.
+        const complete = inLots >= held * 0.999;
+        const institutionBasis = row.institution_cost_basis == null ? null : toNumber(row.institution_cost_basis);
+        // Lots are preferred because they are dated (holding period, specific-lot
+        // selection). The broker's aggregate basis is the fallback for positions
+        // opened before its trade feed starts -- whole-position, but undated.
+        const source = complete ? 'lots' : (institutionBasis === null ? 'incomplete' : 'institution');
+        const costBasis = source === 'lots' ? round(toNumber(row.lot_cost_basis))
+          : (source === 'institution' ? round(institutionBasis) : null);
+        const price = row.price_usd == null ? null : toNumber(row.price_usd);
+        const marketValue = price === null ? null : round(held * price);
         return {
           accountId: row.account_id,
           symbol: row.symbol,
           heldQuantity: held,
           lotQuantity: inLots,
           coveragePercent: held > 0 ? round(Math.min(100, (inLots / held) * 100), 2) : null,
-          // Small tolerance so DECIMAL(20,8) rounding cannot flag a fully
-          // reconciled position as incomplete.
-          complete: inLots >= held * 0.999,
+          complete,
+          basisSource: source,
+          costBasis,
+          marketValue,
+          unrealizedGain: costBasis === null || marketValue === null ? null : round(marketValue - costBasis),
         };
       });
-      const incomplete = result.taxLotCoverage.filter((row) => !row.complete);
-      if (incomplete.length) {
-        const detail = incomplete
+      const fromInstitution = result.taxLotCoverage.filter((row) => row.basisSource === 'institution');
+      const uncovered = result.taxLotCoverage.filter((row) => row.basisSource === 'incomplete');
+      if (fromInstitution.length) {
+        const detail = fromInstitution.map((row) => `${row.symbol} (account ${row.accountId})`).join(', ');
+        warnings.push(`Tax lots do not cover the full position for ${detail}; taxLotCoverage reports the broker's aggregate cost basis instead, which has no acquisition dates and cannot support holding-period or specific-lot analysis.`);
+      }
+      if (uncovered.length) {
+        const detail = uncovered
           .map((row) => `${row.symbol} (${row.coveragePercent ?? 0}% of account ${row.accountId})`)
           .join(', ');
-        warnings.push(`Tax lots are incomplete for ${detail}; cost basis and unrealized gain reflect only the covered shares, not the full position.`);
+        warnings.push(`No complete cost basis is available for ${detail}: the tax lots cover only the percentage shown and the broker reports no aggregate basis, so cost basis and unrealized gain are unavailable for these positions.`);
       }
     }
 
@@ -1170,16 +1217,26 @@ class FinancialQueryService {
            SELECT h.id
            FROM holdings h
            JOIN accounts a ON a.id = h.account_id
+           LEFT JOIN security_master sm ON UPPER(sm.symbol) = UPPER(h.ticker)
            LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
            WHERE a.is_hidden = FALSE AND a.type = 'investment' AND h.ticker IS NOT NULL AND h.quantity > 0
+             -- Money market funds hold their $1 basis by construction; counting
+             -- them as missing basis is permanent noise, not an actionable gap.
+             AND COALESCE(sm.is_cash_equivalent, FALSE) = FALSE
+             -- The broker's aggregate basis is undated, but it is a complete
+             -- basis; only positions with neither source are a real gap.
+             AND h.institution_cost_basis IS NULL
            GROUP BY h.id, h.quantity
            -- Partial lots are counted alongside absent ones: lots covering a
            -- sliver of a position produce a plausible but wrong basis, which is
            -- worse than no basis at all. Tolerance absorbs DECIMAL rounding.
            HAVING COALESCE(SUM(tl.remaining_quantity), 0) < h.quantity * 0.999
-         ) incomplete) AS positions_without_tax_lots,
+         ) incomplete) AS positions_without_cost_basis,
         (SELECT COUNT(*)::int FROM benchmark_prices) AS benchmark_observations,
         (SELECT COUNT(*)::int FROM investment_cash_flows WHERE is_external) AS recorded_investment_flows,
+        (SELECT COUNT(*)::int FROM plaid_items
+         WHERE consent_expiration IS NOT NULL
+           AND consent_expiration < CURRENT_TIMESTAMP + INTERVAL '30 days') AS expiring_plaid_consents,
         (SELECT MAX(date) FROM transactions) AS latest_transaction_date,
         (SELECT MAX(snapshot_date) FROM account_snapshots) AS latest_snapshot_date`
     );
@@ -1187,9 +1244,24 @@ class FinancialQueryService {
     const issues = [];
     if (counts.missing_prices) issues.push({ severity: 'warning', code: 'missing_prices', count: counts.missing_prices });
     if (counts.unclassified_transactions) issues.push({ severity: 'info', code: 'unclassified_transactions', count: counts.unclassified_transactions });
-    if (counts.positions_without_tax_lots) issues.push({ severity: 'info', code: 'missing_tax_lots', count: counts.positions_without_tax_lots });
+    if (counts.positions_without_cost_basis) {
+      issues.push({
+        severity: 'info',
+        code: 'positions_without_cost_basis',
+        count: counts.positions_without_cost_basis,
+        detail: 'Positions whose tax lots cover less than the shares held and for which the broker reports no aggregate cost basis. Cash-equivalent securities are excluded.',
+      });
+    }
     if (!counts.benchmark_observations) issues.push({ severity: 'info', code: 'missing_benchmark_history', count: 0 });
     if (!counts.recorded_investment_flows) issues.push({ severity: 'warning', code: 'missing_investment_cash_flows', count: 0 });
+    if (counts.expiring_plaid_consents) {
+      issues.push({
+        severity: 'warning',
+        code: 'expiring_plaid_consent',
+        count: counts.expiring_plaid_consents,
+        detail: 'Plaid consent expires within 30 days; the item must be re-linked or syncing stops.',
+      });
+    }
 
     return {
       meta: toolMeta(),
@@ -1229,7 +1301,7 @@ class FinancialQueryService {
         table: 'tax_lots', date: 'acquired_date', columns: ['id', 'account_id', 'symbol', 'acquired_date', 'quantity', 'remaining_quantity', 'cost_basis', 'source_trade_id'],
       },
       debt_terms: {
-        table: 'debt_terms', date: null, columns: ['account_id', 'apr', 'minimum_payment', 'due_day', 'maturity_date', 'is_tax_deductible', 'notes'],
+        table: 'debt_terms', date: null, columns: ['account_id', 'apr', 'minimum_payment', 'due_day', 'maturity_date', 'is_tax_deductible', 'notes', 'next_payment_due_date', 'last_statement_balance', 'last_statement_date', 'last_payment_amount', 'last_payment_date', 'is_overdue'],
       },
     };
     if (options.dataset === 'transactions') {
@@ -1238,6 +1310,7 @@ class FinancialQueryService {
         'id', 'date', 'accountId', 'accountName', 'name', 'merchant', 'amount', 'sourceAmount',
         'currency', 'category', 'direction', 'pending', 'isInternalTransfer', 'isRefund',
         'isReimbursement', 'isEssential', 'isOneTime', 'hasSemanticClassification',
+        'categoryDetailed', 'plaidConfidence', 'paymentChannel', 'authorizedDate',
       ];
       const selected = selectColumns(result.transactions, options.columns, allowedColumns);
       return {
@@ -1251,6 +1324,7 @@ class FinancialQueryService {
       const allowedColumns = [
         'id', 'accountId', 'accountName', 'accountType', 'ticker', 'name', 'category',
         'location', 'value', 'snapshotDate',
+        'institutionCostBasis', 'institutionPrice', 'institutionPriceAsOf',
       ];
       const selected = selectColumns(result.positions, options.columns, allowedColumns);
       return {
