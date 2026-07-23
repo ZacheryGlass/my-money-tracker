@@ -66,7 +66,7 @@ export default function HoldingsAnalysis() {
       const range = getDateRange(dateRange);
       const [dashData, acctData, acctList] = await Promise.all([
         dashboard.getPortfolio(),
-        history.getAccounts({ ...range, limit: 10000 }),
+        history.getAccounts({ ...range, limit: 10000, withCount: false }),
         accountsApi.getAll(),
       ]);
 

@@ -28,7 +28,8 @@ router.get('/tickers', async (req, res) => {
       startDate,
       endDate,
       limit = 30,
-      offset = 0
+      offset = 0,
+      withCount
     } = req.query;
 
     // Validate pagination parameters
@@ -84,15 +85,18 @@ router.get('/tickers', async (req, res) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    // Get total count for pagination
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM ticker_snapshots ts
-      JOIN accounts a ON ts.account_id = a.id
-      ${whereClause}
-    `;
-    const countResult = await pool.query(countQuery, params);
-    const total = parseInt(countResult.rows[0].total);
+    // Get total count for pagination unless the caller opted out (withCount=false)
+    let total = null;
+    if (withCount !== 'false') {
+      const countQuery = `
+        SELECT COUNT(*) as total
+        FROM ticker_snapshots ts
+        JOIN accounts a ON ts.account_id = a.id
+        ${whereClause}
+      `;
+      const countResult = await pool.query(countQuery, params);
+      total = parseInt(countResult.rows[0].total);
+    }
 
     const dataQuery = (!startDate && !endDate)
       ? `
@@ -151,7 +155,8 @@ router.get('/accounts', async (req, res) => {
       startDate,
       endDate,
       limit = 30,
-      offset = 0
+      offset = 0,
+      withCount
     } = req.query;
 
     // Validate pagination parameters
@@ -201,15 +206,18 @@ router.get('/accounts', async (req, res) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    // Get total count for pagination
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM account_snapshots acs
-      JOIN accounts a ON acs.account_id = a.id
-      ${whereClause}
-    `;
-    const countResult = await pool.query(countQuery, params);
-    const total = parseInt(countResult.rows[0].total);
+    // Get total count for pagination unless the caller opted out (withCount=false)
+    let total = null;
+    if (withCount !== 'false') {
+      const countQuery = `
+        SELECT COUNT(*) as total
+        FROM account_snapshots acs
+        JOIN accounts a ON acs.account_id = a.id
+        ${whereClause}
+      `;
+      const countResult = await pool.query(countQuery, params);
+      total = parseInt(countResult.rows[0].total);
+    }
 
     const dataQuery = (!startDate && !endDate)
       ? `
@@ -263,7 +271,8 @@ router.get('/portfolio', async (req, res) => {
       startDate,
       endDate,
       limit = 30,
-      offset = 0
+      offset = 0,
+      withCount
     } = req.query;
 
     // Validate pagination parameters
@@ -303,15 +312,18 @@ router.get('/portfolio', async (req, res) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    // Get total count for pagination
-    const countQuery = `
-      SELECT COUNT(DISTINCT acs.snapshot_date) as total
-      FROM account_snapshots acs
-      JOIN accounts a ON acs.account_id = a.id
-      ${whereClause}
-    `;
-    const countResult = await pool.query(countQuery, params);
-    const total = parseInt(countResult.rows[0].total);
+    // Get total count for pagination unless the caller opted out (withCount=false)
+    let total = null;
+    if (withCount !== 'false') {
+      const countQuery = `
+        SELECT COUNT(DISTINCT acs.snapshot_date) as total
+        FROM account_snapshots acs
+        JOIN accounts a ON acs.account_id = a.id
+        ${whereClause}
+      `;
+      const countResult = await pool.query(countQuery, params);
+      total = parseInt(countResult.rows[0].total);
+    }
 
     const dataQuery = (!startDate && !endDate)
       ? `

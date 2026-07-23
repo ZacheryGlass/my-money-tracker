@@ -81,9 +81,9 @@ const Dashboard = ({ onNavigate }) => {
     const tickerStartDate = shiftDays(today, -38);
     const [portfolio, portfolioHistory, accountHistory, tickerHistory] = await Promise.all([
       dashboardAPI.getPortfolio(),
-      historyAPI.getPortfolio({ limit: 10000 }).catch(() => ({ data: [] })),
-      historyAPI.getAccounts({ limit: 10000 }).catch(() => ({ data: [] })),
-      historyAPI.getTickers({ startDate: tickerStartDate, limit: 10000 }).catch(() => ({ data: [] })),
+      historyAPI.getPortfolio({ limit: 10000, withCount: false }).catch(() => ({ data: [] })),
+      historyAPI.getAccounts({ limit: 10000, withCount: false }).catch(() => ({ data: [] })),
+      historyAPI.getTickers({ startDate: tickerStartDate, limit: 10000, withCount: false }).catch(() => ({ data: [] })),
     ]);
     setData(portfolio);
     setHistoryData(portfolioHistory.data || []);

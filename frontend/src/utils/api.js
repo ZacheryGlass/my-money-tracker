@@ -122,6 +122,7 @@ export const history = {
     if (params.endDate) queryParams.append('endDate', params.endDate);
     if (params.limit) queryParams.append('limit', params.limit);
     if (params.offset) queryParams.append('offset', params.offset);
+    if (params.withCount === false) queryParams.append('withCount', 'false');
 
     const queryString = queryParams.toString();
     const url = `/api/history/portfolio${queryString ? `?${queryString}` : ''}`;
@@ -136,6 +137,7 @@ export const history = {
     if (params.endDate) queryParams.append('endDate', params.endDate);
     if (params.limit) queryParams.append('limit', params.limit);
     if (params.offset) queryParams.append('offset', params.offset);
+    if (params.withCount === false) queryParams.append('withCount', 'false');
 
     const queryString = queryParams.toString();
     const url = `/api/history/tickers${queryString ? `?${queryString}` : ''}`;
@@ -149,6 +151,7 @@ export const history = {
     if (params.endDate) queryParams.append('endDate', params.endDate);
     if (params.limit) queryParams.append('limit', params.limit);
     if (params.offset) queryParams.append('offset', params.offset);
+    if (params.withCount === false) queryParams.append('withCount', 'false');
 
     const queryString = queryParams.toString();
     const url = `/api/history/accounts${queryString ? `?${queryString}` : ''}`;
