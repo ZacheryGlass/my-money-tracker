@@ -17,7 +17,6 @@ import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
 import ChartTooltip from '../components/ChartTooltip';
 import ResponsiveContainer from '../components/ResponsiveContainer';
 
-const PAGE_SIZE = 100;
 const ACCENT = '#3994BC';
 
 const DATE_RANGES = {
@@ -83,19 +82,11 @@ const PortfolioTimeline = () => {
       const livePortfolioPromise = shouldAppendLivePoint
         ? dashboardAPI.getPortfolio().catch(() => null)
         : Promise.resolve(null);
-      const response = await historyAPI.getPortfolio({ startDate, endDate, limit: PAGE_SIZE });
+      const response = await historyAPI.getPortfolio({ startDate, endDate, limit: 10000, withCount: false });
       let allData = response.data || [];
-      let offset = PAGE_SIZE;
-      const total = response.pagination?.total || 0;
-      while (offset < total) {
-        const moreResponse = await historyAPI.getPortfolio({ startDate, endDate, limit: PAGE_SIZE, offset });
-        allData = [...allData, ...(moreResponse.data || [])];
-        offset += PAGE_SIZE;
-      }
 
-      // All-time pagination is fetched newest page first, while each page is
-      // returned in ascending order. Normalize the combined result before any
-      // first/last-date calculations or chart rendering.
+      // The endpoint returns rows in ascending date order; sort defensively
+      // before any first/last-date calculations or chart rendering.
       allData.sort((a, b) => (
         String(a.snapshot_date).localeCompare(String(b.snapshot_date))
       ));
