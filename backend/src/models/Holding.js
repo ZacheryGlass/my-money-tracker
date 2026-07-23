@@ -3,17 +3,26 @@ const pool = require('../config/database');
 const ACCOUNT_DISPLAY_SELECT = "COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) as account_name, a.name as account_source_name, a.display_name as account_display_name";
 
 class Holding {
-  static async findAll({ includeHidden = true } = {}) {
+  // withPrices joins price_cache to compute current_value. Callers that recompute
+  // value themselves (e.g. DashboardService) pass withPrices: false to skip the
+  // join — the UPPER(...)=UPPER(...) predicate can't use the price_cache index.
+  static async findAll({ includeHidden = true, withPrices = true } = {}) {
     const hiddenFilter = includeHidden ? '' : 'WHERE a.is_hidden = FALSE';
-    const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type,
+    const priceSelect = withPrices
+      ? `,
         CASE
           WHEN h.ticker IS NOT NULL AND pc.price_usd IS NOT NULL AND h.quantity > 0 THEN h.quantity * pc.price_usd
           ELSE h.manual_value
-        END as current_value
+        END as current_value`
+      : '';
+    const priceJoin = withPrices
+      ? 'LEFT JOIN price_cache pc ON UPPER(h.ticker) = UPPER(pc.ticker)'
+      : '';
+    const result = await pool.query(
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type${priceSelect}
       FROM holdings h
       JOIN accounts a ON h.account_id = a.id
-      LEFT JOIN price_cache pc ON UPPER(h.ticker) = UPPER(pc.ticker)
+      ${priceJoin}
       ${hiddenFilter}
       ORDER BY h.updated_at DESC`
     );
