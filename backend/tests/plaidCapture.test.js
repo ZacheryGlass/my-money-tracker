@@ -86,41 +86,30 @@ test('mapLiabilityToDebtTerms converts APR percentage to a fraction', () => {
   assert.equal(terms.apr, 0.2349);
 });
 
-test('mapLiabilityToDebtTerms picks the purchase APR over the other card APRs', () => {
-  const terms = mapLiabilityToDebtTerms(creditLiability, 'credit');
-  assert.equal(terms.apr, 0.2349);
+test('mapLiabilityToDebtTerms picks the purchase APR out of the card APR list', () => {
+  assert.equal(mapLiabilityToDebtTerms(creditLiability, 'credit').apr, 0.2349);
 
-  const noPurchase = mapLiabilityToDebtTerms(
-    { ...creditLiability, aprs: [{ apr_type: 'cash_apr', apr_percentage: 29.99 }] },
-    'credit'
-  );
-  assert.equal(noPurchase.apr, 0.2999);
-
-  const noAprs = mapLiabilityToDebtTerms({ ...creditLiability, aprs: [] }, 'credit');
-  assert.equal(noAprs.apr, null);
+  // A genuine 0% purchase APR is a real rate, not a missing one.
+  assert.equal(mapLiabilityToDebtTerms({
+    aprs: [{ apr_type: 'purchase_apr', apr_percentage: 0 }],
+  }, 'credit').apr, 0);
 });
 
-// A card in an intro offer reports a 0% balance transfer rate. Taking it would
-// report a 23% card as free money to the debt-vs-invest scenario.
-test('mapLiabilityToDebtTerms does not fall back to a 0% promotional APR', () => {
-  const terms = mapLiabilityToDebtTerms({
+// debt_terms.apr feeds the debt-vs-invest comparison. A 0% intro transfer rate
+// would report the card as free money and a cash advance rate would overstate
+// the case for paying it down, and Plaid does not order the array -- so with no
+// purchase APR the answer is "unknown", not "whichever came first".
+test('mapLiabilityToDebtTerms reports null rather than guessing from another APR type', () => {
+  const noPurchase = mapLiabilityToDebtTerms({
     aprs: [
       { apr_type: 'balance_transfer_apr', apr_percentage: 0 },
       { apr_type: 'cash_apr', apr_percentage: 29.99 },
     ],
   }, 'credit');
-  assert.equal(terms.apr, 0.2999);
+  assert.equal(noPurchase.apr, null);
 
-  const onlyZero = mapLiabilityToDebtTerms({
-    aprs: [{ apr_type: 'balance_transfer_apr', apr_percentage: 0 }],
-  }, 'credit');
-  assert.equal(onlyZero.apr, null);
-
-  // A genuine 0% purchase APR is still honored.
-  const zeroPurchase = mapLiabilityToDebtTerms({
-    aprs: [{ apr_type: 'purchase_apr', apr_percentage: 0 }],
-  }, 'credit');
-  assert.equal(zeroPurchase.apr, 0);
+  assert.equal(mapLiabilityToDebtTerms({ ...creditLiability, aprs: [] }, 'credit').apr, null);
+  assert.equal(mapLiabilityToDebtTerms({ ...creditLiability, aprs: undefined }, 'credit').apr, null);
 });
 
 // Number(null) is 0. Storing 0 would pass the COALESCE in the upsert and wipe

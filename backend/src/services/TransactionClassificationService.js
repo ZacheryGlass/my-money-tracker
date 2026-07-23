@@ -86,6 +86,9 @@ function classify(transaction) {
 // enrichment on existing transactions (a NULL detailed category becomes populated
 // on a later sync), and an insert-if-missing pass would never revisit them.
 //
+// Derivation covers every row; the WRITE is narrowed to the rows whose derived
+// values actually changed.
+//
 // The upsert deliberately writes only the three derived columns. normalized_category,
 // is_essential, is_one_time, is_refund, is_reimbursement and notes are omitted so
 // they survive; this service is the sole writer of direction, so nothing manual is
@@ -93,11 +96,11 @@ function classify(transaction) {
 async function backfill() {
   const transactions = await pool.query(`
     SELECT t.id, t.category, t.amount, t.detailed_category, t.category_confidence,
-           tc.direction AS current_direction, tc.confidence AS current_confidence
+           tc.direction AS current_direction, tc.confidence AS current_confidence,
+           tc.is_internal_transfer AS current_internal
     FROM transactions t
     LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
   `);
-  if (!transactions.rows.length) return { classified: 0 };
 
   const ids = [];
   const directions = [];
@@ -106,16 +109,21 @@ async function backfill() {
   for (const row of transactions.rows) {
     const result = classify(row);
     // Only rows whose derived values actually changed are written. Without this
-    // every run rewrites the whole table to change nothing.
+    // every run rewrites the whole table to change nothing. Every column the
+    // upsert writes is compared -- is_internal_transfer happens to be a pure
+    // function of direction today, but leaving it out would silently drop the
+    // first heuristic that breaks that.
     const unchanged = row.current_direction === result.direction
-      && Number(row.current_confidence) === result.confidence;
+      && Number(row.current_confidence) === result.confidence
+      && row.current_internal === result.isInternalTransfer;
     if (unchanged) continue;
     ids.push(row.id);
     directions.push(result.direction);
     internals.push(result.isInternalTransfer);
     confidences.push(result.confidence);
   }
-  if (!ids.length) return { classified: 0 };
+  const examined = transactions.rows.length;
+  if (!ids.length) return { classified: 0, examined };
 
   await pool.query(`
     INSERT INTO transaction_classifications (transaction_id, direction, is_internal_transfer, confidence)
@@ -127,8 +135,10 @@ async function backfill() {
         updated_at = CURRENT_TIMESTAMP
   `, [ids, directions, internals, confidences]);
 
-  logger.info({ classified: ids.length }, 'Transaction classification backfill completed');
-  return { classified: ids.length };
+  // `classified` counts rows CHANGED, not rows seen, so it reads 0 on a healthy
+  // steady-state run; `examined` distinguishes that from an empty table.
+  logger.info({ classified: ids.length, examined }, 'Transaction classification backfill completed');
+  return { classified: ids.length, examined };
 }
 
 module.exports = { classify, backfill, CATEGORY_DIRECTIONS, DETAILED_DIRECTIONS };

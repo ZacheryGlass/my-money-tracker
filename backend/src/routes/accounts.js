@@ -21,7 +21,7 @@ const VALID_TAX_TREATMENTS = ['taxable', 'traditional', 'roth', 'hsa'];
 // POST /api/accounts - Create a new manual account
 router.post('/', async (req, res) => {
   try {
-    const { name, type } = req.body;
+    const { name, type } = req.body || {};
     if (!name || !type) {
       return res.status(400).json({ error: 'name and type are required' });
     }
@@ -71,7 +71,7 @@ router.patch('/:id/display-name', async (req, res) => {
       return res.status(400).json({ error: 'Invalid account id' });
     }
 
-    if (!Object.prototype.hasOwnProperty.call(req.body, 'display_name')) {
+    if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'display_name')) {
       return res.status(400).json({ error: 'display_name is required' });
     }
 
@@ -148,7 +148,7 @@ router.patch('/:id/visibility', async (req, res) => {
       return res.status(400).json({ error: 'Invalid account id' });
     }
 
-    if (typeof req.body.is_hidden !== 'boolean') {
+    if (typeof req.body?.is_hidden !== 'boolean') {
       return res.status(400).json({ error: 'is_hidden must be a boolean' });
     }
 
@@ -207,7 +207,7 @@ router.delete('/:id', async (req, res) => {
 router.post('/migrate', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { sourceAccountId, targetAccountId } = req.body;
+    const { sourceAccountId, targetAccountId } = req.body || {};
     if (!sourceAccountId || !targetAccountId) {
       return res.status(400).json({ error: 'sourceAccountId and targetAccountId are required' });
     }

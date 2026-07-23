@@ -79,15 +79,16 @@ function mapLiabilityToDebtTerms(liability, kind) {
   if (kind === 'credit') {
     const aprs = liability.aprs || [];
     // Cards carry several APRs (purchase, cash advance, balance transfer,
-    // promotional). Purchase is the one that applies to ordinary spending.
-    // Falling back to the first entry would happily pick a 0% intro balance
-    // transfer rate and report the card as free money, so the fallback skips
-    // zero rates -- an unknown APR is more useful than a wrong one.
-    const purchase = aprs.find(a => a.apr_type === 'purchase_apr');
-    const apr = purchase || aprs.find(a => toAprFraction(a.apr_percentage) > 0) || null;
+    // promotional) and Plaid does not guarantee their order. Only the purchase
+    // APR applies to ordinary spending, and it is the one runScenario compares
+    // against expected investment returns. There is deliberately no fallback:
+    // a 0% intro transfer rate would report the card as free money and a cash
+    // advance rate would overstate the case for paying it down. An unknown APR
+    // is more useful than a confidently wrong one.
+    const purchase = aprs.find(a => a.apr_type === 'purchase_apr') || null;
     return {
       ...common,
-      apr: apr ? toAprFraction(apr.apr_percentage) : null,
+      apr: purchase ? toAprFraction(purchase.apr_percentage) : null,
       minimumPayment: liability.minimum_payment_amount ?? null,
     };
   }
@@ -151,22 +152,45 @@ class PlaidService {
     // widen scope. Re-listing a product the item already consented to is
     // accepted by Plaid; listing one the institution does not support is a hard
     // INVALID_FIELD, so the list is derived from the accounts actually held.
-    const additional = await this._missingConsentProducts(plaidItemId);
+    const additional = await this._consentableProducts(plaidItemId);
     if (additional.length) request.additional_consented_products = additional;
 
-    const response = await plaidClient.linkTokenCreate(request);
-    return response.data.link_token;
+    try {
+      const response = await plaidClient.linkTokenCreate(request);
+      return response.data.link_token;
+    } catch (err) {
+      // Holding a loan account does not prove the institution supports the
+      // liabilities product (M1's margin loan is exactly that case), and update
+      // mode is the recovery path for a broken item. Widening consent must
+      // never be the reason an item cannot be re-linked at all.
+      if (!request.additional_consented_products) throw err;
+      logger.warn(
+        { plaidItemId, additional, errorCode: err.response?.data?.error_code },
+        'Update link token rejected with additional consent; retrying without it'
+      );
+      delete request.additional_consented_products;
+      const response = await plaidClient.linkTokenCreate(request);
+      return response.data.link_token;
+    }
   }
 
-  static async _missingConsentProducts(plaidItemId) {
+  // Products this item could hold data for, judged by the accounts it has. Not
+  // "missing" consent -- no consent state is stored to diff against, and Plaid
+  // accepts a product that was already consented.
+  static async _consentableProducts(plaidItemId) {
     const result = await pool.query(
       'SELECT DISTINCT type FROM accounts WHERE plaid_item_id = $1',
       [plaidItemId]
     );
+    // An item whose first sync never completed has no account rows, and that is
+    // precisely when re-link is the prescribed recovery. Ask for both and let
+    // the retry above drop the list if the institution refuses.
+    if (!result.rows.length) return [Products.Liabilities, Products.Investments];
+
     const types = new Set(result.rows.map(row => row.type));
     const products = [];
-    if (types.has('credit') || types.has('loan')) products.push('liabilities');
-    if (types.has('investment')) products.push('investments');
+    if (types.has('credit') || types.has('loan')) products.push(Products.Liabilities);
+    if (types.has('investment')) products.push(Products.Investments);
     return products;
   }
 
@@ -547,9 +571,16 @@ class PlaidService {
       if (expected.includes(errorCode)) {
         logger.info({ plaidItemId, errorCode }, 'Liabilities not available for this item');
       } else if (errorCode === 'ADDITIONAL_CONSENT_REQUIRED') {
-        // Reported rather than logged only: items linked before liabilities was
-        // requested silently keep an empty debt_terms until they are re-linked.
+        // Persisted, not just returned: Settings rebuilds its consent set from
+        // error_code on every load, so a transient flag on the sync response is
+        // discarded before the re-link button can render. syncItem clears the
+        // error at the top of each run, so this re-arms itself while it applies.
         logger.info({ plaidItemId }, 'Additional consent required for liabilities — user must re-link');
+        await PlaidItem.setError(
+          plaidItemId,
+          'ADDITIONAL_CONSENT_REQUIRED',
+          'Additional consent required for liability data. Please re-link this account.'
+        );
         return { updated, consentRequired: true };
       } else {
         logger.error({ plaidItemId, err }, 'Failed to sync liabilities');

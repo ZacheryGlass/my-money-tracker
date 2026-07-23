@@ -299,7 +299,9 @@ const Settings = () => {
       const result = await plaidAPI.syncItem(id);
       if (result.sync?.consentRequired) {
         setConsentItems((prev) => new Set(prev).add(id));
-        setError('Additional consent required for investment data. Click "Re-link" to authorize.');
+        // Either investments or liabilities can raise this; the per-item banner
+        // below carries the backend's product-specific wording.
+        setError('This institution requires additional authorization. Click "Re-link" to authorize.');
       } else {
         setConsentItems((prev) => { const next = new Set(prev); next.delete(id); return next; });
         showSuccess('Account synced successfully');
@@ -828,8 +830,11 @@ const Settings = () => {
                     <div className="flex items-start gap-3">
                       <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
                       <p>
+                        {/* The backend names the product that needs consent
+                            (investments or liabilities); only fall back to
+                            generic wording when it sent nothing. */}
                         {consentItems.has(item.id)
-                          ? 'This institution requires additional authorization to provide investment and holdings data. Please click "Re-link" to grant permission.'
+                          ? `${item.error_message || 'This institution requires additional authorization.'} Click "Re-link" to grant permission.`
                           : (item.error_message || `Institution reported an error: ${item.error_code}`)}
                       </p>
                     </div>

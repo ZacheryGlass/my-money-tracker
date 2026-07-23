@@ -26,7 +26,8 @@ const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 1000;
 // A position counts as fully covered by tax lots at this fraction of the shares
 // held; the slack absorbs DECIMAL(20,8) rounding. Shared by analyzeInvestments
-// and getDataHealth so the two can never disagree about the same position.
+// and getDataHealth, which still hand-duplicate the rest of the predicate (the
+// hidden-account and cash-equivalent filters) and must be changed together.
 const TAX_LOT_COVERAGE_TOLERANCE = 0.999;
 
 function isoDate(value) {
@@ -276,6 +277,8 @@ class FinancialQueryService {
         transactionSigns: 'MCP output normalizes amounts to positive values and exposes direction separately.',
         accountBalanceCurrent: 'Institution-reported balance in raw Plaid convention: credit and loan balances are POSITIVE amounts owed. This is the opposite of the negated values used for net worth.',
         accountTaxTreatment: 'taxable, traditional (taxed on withdrawal), roth (never taxed), or hsa. Derived from the Plaid subtype; null when the account has no tax treatment.',
+        accountBalanceAvailable: 'Institution-reported spendable amount. For depository accounts this is the balance minus holds; for credit accounts it is remaining credit, NOT money owed.',
+        accountBalanceLimit: 'Credit limit for credit accounts. Null for every other account type.',
       },
     };
   }
@@ -949,18 +952,27 @@ class FinancialQueryService {
         coverageConditions.push(`UPPER(h.ticker) = UPPER($${coverageParams.length})`);
       }
       const coverageResult = await pool.query(
+        // Lots are pre-aggregated in a subquery rather than joined and grouped.
+        // The lot key is (account_id, symbol) while holdings is keyed by id, so
+        // joining directly fans out whenever one account holds two rows for the
+        // same ticker -- every row would then be credited the full lot total.
         `SELECT h.account_id, h.ticker AS symbol, h.quantity AS held_quantity,
                 h.institution_cost_basis, pc.price_usd,
-                COALESCE(SUM(tl.remaining_quantity), 0) AS lot_quantity,
-                COALESCE(SUM(tl.cost_basis), 0) AS lot_cost_basis
+                COALESCE(lots.lot_quantity, 0) AS lot_quantity,
+                COALESCE(lots.lot_cost_basis, 0) AS lot_cost_basis
          FROM holdings h
          JOIN accounts a ON a.id = h.account_id
          LEFT JOIN security_master sm ON UPPER(sm.symbol) = UPPER(h.ticker)
-         LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
-              AND tl.remaining_quantity > 0
+         LEFT JOIN (
+           SELECT account_id, UPPER(symbol) AS symbol,
+                  SUM(remaining_quantity) AS lot_quantity,
+                  SUM(cost_basis) AS lot_cost_basis
+           FROM tax_lots
+           WHERE remaining_quantity > 0
+           GROUP BY account_id, UPPER(symbol)
+         ) lots ON lots.account_id = h.account_id AND lots.symbol = UPPER(h.ticker)
          LEFT JOIN price_cache pc ON UPPER(pc.ticker) = UPPER(h.ticker)
-         WHERE ${coverageConditions.join(' AND ')}
-         GROUP BY h.id, h.account_id, h.ticker, h.quantity, h.institution_cost_basis, pc.price_usd`,
+         WHERE ${coverageConditions.join(' AND ')}`,
         coverageParams
       );
       result.taxLotCoverage = coverageResult.rows.map((row) => {
@@ -1231,6 +1243,7 @@ class FinancialQueryService {
            JOIN accounts a ON a.id = h.account_id
            LEFT JOIN security_master sm ON UPPER(sm.symbol) = UPPER(h.ticker)
            LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
+                AND tl.remaining_quantity > 0
            WHERE a.is_hidden = FALSE AND a.type = 'investment' AND h.ticker IS NOT NULL AND h.quantity > 0
              -- Money market funds hold their $1 basis by construction; counting
              -- them as missing basis is permanent noise, not an actionable gap.
@@ -1292,31 +1305,31 @@ class FinancialQueryService {
   static async exportDataset(options = {}) {
     const datasets = {
       account_snapshots: {
-        table: 'account_snapshots', date: 'snapshot_date', columns: ['id', 'snapshot_date', 'account_id', 'total_value'],
+        table: 'account_snapshots', date: 'snapshot_date', orderBy: 'snapshot_date, id', columns: ['id', 'snapshot_date', 'account_id', 'total_value'],
       },
       holding_snapshots: {
-        table: 'ticker_snapshots', date: 'snapshot_date', columns: ['id', 'snapshot_date', 'account_id', 'ticker', 'name', 'value', 'quantity', 'price_usd'],
+        table: 'ticker_snapshots', date: 'snapshot_date', orderBy: 'snapshot_date, id', columns: ['id', 'snapshot_date', 'account_id', 'ticker', 'name', 'value', 'quantity', 'price_usd'],
       },
       salary_history: {
-        table: 'salary_history', date: 'effective_date', columns: ['id', 'effective_date', 'title', 'salary_amount', 'psu', 'rsu', 'total_comp', 'change_amount', 'change_percent'],
+        table: 'salary_history', date: 'effective_date', orderBy: 'effective_date, id', columns: ['id', 'effective_date', 'title', 'salary_amount', 'psu', 'rsu', 'total_comp', 'change_amount', 'change_percent'],
       },
       recurring_expenses: {
-        table: 'recurring_expenses', date: null, columns: ['id', 'name', 'cost', 'is_fixed_rate', 'pay_account', 'company', 'merchant_key', 'due_day', 'last_charge_date', 'tag'],
+        table: 'recurring_expenses', date: null, orderBy: 'id', columns: ['id', 'name', 'cost', 'is_fixed_rate', 'pay_account', 'company', 'merchant_key', 'due_day', 'last_charge_date', 'tag'],
       },
       benchmark_prices: {
-        table: 'benchmark_prices', date: 'price_date', columns: ['symbol', 'price_date', 'adjusted_close', 'total_return_index', 'source'],
+        table: 'benchmark_prices', date: 'price_date', orderBy: 'price_date, symbol', columns: ['symbol', 'price_date', 'adjusted_close', 'total_return_index', 'source'],
       },
       investment_cash_flows: {
-        table: 'investment_cash_flows', date: 'flow_date', columns: ['id', 'account_id', 'flow_date', 'amount', 'flow_type', 'is_external', 'transaction_id', 'notes'],
+        table: 'investment_cash_flows', date: 'flow_date', orderBy: 'flow_date, id', columns: ['id', 'account_id', 'flow_date', 'amount', 'flow_type', 'is_external', 'transaction_id', 'notes'],
       },
       tax_lots: {
-        table: 'tax_lots', date: 'acquired_date', columns: ['id', 'account_id', 'symbol', 'acquired_date', 'quantity', 'remaining_quantity', 'cost_basis', 'source_trade_id'],
+        table: 'tax_lots', date: 'acquired_date', orderBy: 'acquired_date, id', columns: ['id', 'account_id', 'symbol', 'acquired_date', 'quantity', 'remaining_quantity', 'cost_basis', 'source_trade_id'],
       },
       securities: {
-        table: 'security_master', date: null, columns: ['symbol', 'name', 'security_type', 'sector', 'industry', 'is_cash_equivalent', 'asset_class', 'benchmark_symbol', 'is_liquid', 'metadata'],
+        table: 'security_master', date: null, orderBy: 'symbol', columns: ['symbol', 'name', 'security_type', 'sector', 'industry', 'is_cash_equivalent', 'asset_class', 'benchmark_symbol', 'is_liquid', 'metadata'],
       },
       debt_terms: {
-        table: 'debt_terms', date: null, columns: ['account_id', 'apr', 'minimum_payment', 'due_day', 'maturity_date', 'is_tax_deductible', 'notes', 'next_payment_due_date', 'last_statement_balance', 'last_statement_date', 'last_payment_amount', 'last_payment_date', 'is_overdue'],
+        table: 'debt_terms', date: null, orderBy: 'account_id', columns: ['account_id', 'apr', 'minimum_payment', 'due_day', 'maturity_date', 'is_tax_deductible', 'notes', 'next_payment_due_date', 'last_statement_balance', 'last_statement_date', 'last_payment_amount', 'last_payment_date', 'is_overdue'],
       },
     };
     if (options.dataset === 'transactions') {
@@ -1368,9 +1381,12 @@ class FinancialQueryService {
     const offset = Math.max(0, Number.parseInt(options.offset, 10) || 0);
     params.push(limit, offset);
     const result = await pool.query(
+      // The sort is not cosmetic: these results are paginated with LIMIT/OFFSET,
+      // and without a total order Postgres may return a row twice across pages
+      // and skip another entirely as concurrent writes move rows around.
       `SELECT ${requestedColumns.join(', ')} FROM ${config.table}
        ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
-       ${config.date ? `ORDER BY ${config.date} ASC` : ''}
+       ORDER BY ${config.orderBy || config.date} ASC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
