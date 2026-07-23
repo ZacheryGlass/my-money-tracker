@@ -169,6 +169,7 @@ export const transactions = {
     if (params.endDate) queryParams.append('endDate', params.endDate);
     if (params.sort) queryParams.append('sort', params.sort);
     if (params.direction) queryParams.append('direction', params.direction);
+    if (params.view) queryParams.append('view', params.view);
     if (params.limit) queryParams.append('limit', params.limit);
     if (params.offset) queryParams.append('offset', params.offset);
 

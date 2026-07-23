@@ -4,6 +4,7 @@ const express = require('express');
 const pool = require('../config/database');
 const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
+const { SPEND_ELIGIBILITY_SQL } = require('../utils/spendFilters');
 
 const router = express.Router();
 
@@ -34,6 +35,7 @@ router.get('/', async (req, res) => {
       account_id,
       startDate,
       endDate,
+      view,
       sort = 'date',
       direction = 'desc',
       limit = 50,
@@ -64,6 +66,14 @@ router.get('/', async (req, res) => {
     const conditions = ['a.is_hidden = FALSE'];
     const params = [];
     let paramIndex = 1;
+
+    // Spending-page default: restrict to spend-eligible transactions using the
+    // app-wide canonical filter (excludes transfers, credit-card payments,
+    // income/inflows and pending). Omitted/any other `view` returns the full
+    // ledger, so AccountsPage's per-account list is unaffected.
+    if (String(view).toLowerCase() === 'spend') {
+      conditions.push(SPEND_ELIGIBILITY_SQL);
+    }
 
     if (account_id) {
       const parsedAccountId = parseInt(account_id);

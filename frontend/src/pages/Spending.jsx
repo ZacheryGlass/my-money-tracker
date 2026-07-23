@@ -72,6 +72,7 @@ const COLUMNS = [
 export default function Spending() {
   const [accountList, setAccountList] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [viewMode, setViewMode] = useState('spend');
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [sorting, setSorting] = useState([{ id: 'date', desc: true }]);
@@ -82,10 +83,10 @@ export default function Spending() {
   // Only a page of transactions is loaded at a time, so sorting has to happen
   // in the database — a client-side sort would only reorder what's on screen.
   const queryParams = useMemo(() => {
-    const params = { sort: sorting[0].id, direction: sorting[0].desc ? 'desc' : 'asc' };
+    const params = { sort: sorting[0].id, direction: sorting[0].desc ? 'desc' : 'asc', view: viewMode };
     if (selectedAccountId) params.account_id = selectedAccountId;
     return params;
-  }, [selectedAccountId, sorting]);
+  }, [selectedAccountId, sorting, viewMode]);
 
   useEffect(() => {
     accountsApi.getAll()
@@ -151,8 +152,23 @@ export default function Spending() {
           <span className="text-[10px] font-bold uppercase tracking-wide text-secondary">Transactions</span>
         </div>
         <h1 className="text-3xl font-bold tracking-tighter text-primary md:text-5xl">Spending</h1>
-        <p className="mt-1 text-sm text-secondary">All transactions across your accounts</p>
+        <p className="mt-1 text-sm text-secondary">
+          {viewMode === 'spend'
+            ? 'Your spending across all accounts'
+            : 'All transactions across your accounts'}
+        </p>
       </div>
+
+      <FilterTabs
+        id="view-mode"
+        label="View"
+        options={[
+          { value: 'spend', label: 'Spending' },
+          { value: 'all', label: 'All transactions' },
+        ]}
+        value={viewMode}
+        onChange={setViewMode}
+      />
 
       <FilterTabs
         id="account-filter"
