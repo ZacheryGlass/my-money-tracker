@@ -145,8 +145,29 @@ class PlaidService {
       country_codes: [CountryCode.Us],
       language: 'en',
     };
+
+    // Items linked before a product was requested never consented to it, and
+    // plain update mode does not change that -- it re-authorizes, it does not
+    // widen scope. Re-listing a product the item already consented to is
+    // accepted by Plaid; listing one the institution does not support is a hard
+    // INVALID_FIELD, so the list is derived from the accounts actually held.
+    const additional = await this._missingConsentProducts(plaidItemId);
+    if (additional.length) request.additional_consented_products = additional;
+
     const response = await plaidClient.linkTokenCreate(request);
     return response.data.link_token;
+  }
+
+  static async _missingConsentProducts(plaidItemId) {
+    const result = await pool.query(
+      'SELECT DISTINCT type FROM accounts WHERE plaid_item_id = $1',
+      [plaidItemId]
+    );
+    const types = new Set(result.rows.map(row => row.type));
+    const products = [];
+    if (types.has('credit') || types.has('loan')) products.push('liabilities');
+    if (types.has('investment')) products.push('investments');
+    return products;
   }
 
   static async exchangePublicToken(publicToken) {
@@ -291,6 +312,10 @@ class PlaidService {
 
     if (plaidAccounts.some(pa => pa.type === 'credit' || pa.type === 'loan')) {
       results.liabilities = await this._syncLiabilities(plaidItemId, access_token);
+      // Hoisted to the top level because that is where the Settings page reads
+      // it to offer the re-link button; nested, the item would look healthy
+      // while debt_terms stayed silently empty.
+      if (results.liabilities.consentRequired) results.consentRequired = true;
     }
 
     try {
