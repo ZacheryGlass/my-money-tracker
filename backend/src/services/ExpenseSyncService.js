@@ -3,6 +3,7 @@
 const pool = require('../config/database');
 const RecurringExpense = require('../models/RecurringExpense');
 const IgnoredMerchant = require('../models/IgnoredMerchant');
+const { SPEND_ELIGIBILITY_SQL } = require('../utils/spendFilters');
 const logger = require('../config/logger');
 
 const GROUP_WINDOW_DAYS = 400;
@@ -197,9 +198,7 @@ async function fetchEligibleCharges() {
            a.display_name AS account_display, a.name AS account_name
     FROM transactions t
     JOIN accounts a ON t.account_id = a.id
-    WHERE t.amount > 0 AND t.pending = false AND a.is_hidden = FALSE
-      AND a.type IN ('depository', 'credit')
-      AND UPPER(COALESCE(t.category, '')) NOT LIKE '%TRANSFER%'
+    WHERE ${SPEND_ELIGIBILITY_SQL}
       AND t.date >= CURRENT_DATE - make_interval(days => $1)
     ORDER BY t.date ASC
   `, [GROUP_WINDOW_DAYS]);

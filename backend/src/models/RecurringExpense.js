@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const { SPEND_ELIGIBILITY_SQL } = require('../utils/spendFilters');
 
 class RecurringExpense {
   static async findAll() {
@@ -36,9 +37,7 @@ class RecurringExpense {
       JOIN accounts a ON t.account_id = a.id
       WHERE COALESCE(t.merchant_name, t.name) = $1
         AND ($3::int IS NULL OR t.date >= CURRENT_DATE - $3::int)
-        AND t.amount > 0 AND t.pending = false AND a.is_hidden = FALSE
-        AND a.type IN ('depository', 'credit')
-        AND UPPER(COALESCE(t.category, '')) NOT LIKE '%TRANSFER%'
+        AND ${SPEND_ELIGIBILITY_SQL}
       ORDER BY t.date DESC
       LIMIT $2
     `, [merchantKey, limit, days]);

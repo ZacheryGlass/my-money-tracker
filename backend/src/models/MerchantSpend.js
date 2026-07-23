@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const { SPEND_ELIGIBILITY_SQL } = require('../utils/spendFilters');
 
 // Aggregated card/bank spend by merchant over a trailing window, for the Top
 // Merchants page. Merchant identity (COALESCE(merchant_name, name)) and the
@@ -17,9 +18,7 @@ class MerchantSpend {
       FROM transactions t
       JOIN accounts a ON t.account_id = a.id
       WHERE t.date >= CURRENT_DATE - $1::int
-        AND t.amount > 0 AND t.pending = false AND a.is_hidden = FALSE
-        AND a.type IN ('depository', 'credit')
-        AND UPPER(COALESCE(t.category, '')) NOT LIKE '%TRANSFER%'
+        AND ${SPEND_ELIGIBILITY_SQL}
         AND COALESCE(t.merchant_name, t.name) NOT IN (SELECT merchant_key FROM ignored_merchants WHERE scope = 'merchants')
       GROUP BY COALESCE(t.merchant_name, t.name)
       ORDER BY total DESC, merchant_key ASC
