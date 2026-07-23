@@ -4,7 +4,11 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts';
 import { PieChart as PieIcon, Grid3X3, Layers, BarChart3, TrendingUp } from 'lucide-react';
+import {
+  useReactTable, getCoreRowModel, getSortedRowModel,
+} from '@tanstack/react-table';
 import MetricCard from '../components/MetricCard';
+import DataTable from '../components/DataTable';
 import ChartTooltip from '../components/ChartTooltip';
 import LoadingState from '../components/LoadingState';
 import ResponsiveContainer from '../components/ResponsiveContainer';
@@ -44,6 +48,7 @@ function getDateRange(rangeId) {
 
 export default function HoldingsAnalysis() {
   const isMobile = useIsMobile();
+  const [topHoldingsSorting, setTopHoldingsSorting] = useState([{ id: 'value', desc: true }]);
   const [view, setView] = useState('pie');
   const [groupBy, setGroupBy] = useState('account');
   const [dateRange, setDateRange] = useState('3m');
@@ -150,6 +155,56 @@ export default function HoldingsAnalysis() {
     if (!selectedGroup) return null;
     return groupedData.find((group) => group.name === selectedGroup) || null;
   }, [groupedData, selectedGroup]);
+
+  const topHoldings = useMemo(() => assetItems.slice(0, 10), [assetItems]);
+
+  const topHoldingsColumns = useMemo(() => [
+    {
+      accessorKey: 'name',
+      header: 'Holding',
+      meta: { cellClassName: 'min-w-0' },
+      cell: ({ row }) => (
+        <div className="min-w-0 text-primary">
+          <p className="font-semibold truncate" title={row.original.name}>{row.original.name}</p>
+          {row.original.ticker && <p className="text-caption text-tertiary">{row.original.ticker}</p>}
+        </div>
+      ),
+    },
+    // Account and Category are dropped below lg rather than squeezed.
+    {
+      accessorKey: 'account',
+      header: 'Account',
+      meta: { headerClassName: 'hidden lg:table-cell', cellClassName: 'hidden truncate lg:table-cell' },
+    },
+    {
+      accessorKey: 'categoryLabel',
+      header: 'Category',
+      meta: { headerClassName: 'hidden lg:table-cell', cellClassName: 'hidden truncate text-tertiary lg:table-cell' },
+    },
+    {
+      accessorKey: 'valueNumber',
+      id: 'value',
+      header: 'Value',
+      meta: { align: 'right', headerClassName: 'text-right', cellClassName: 'text-right font-mono text-primary' },
+      cell: ({ getValue }) => formatCurrency(getValue()),
+    },
+    {
+      accessorKey: 'valueNumber',
+      id: 'share',
+      header: 'Share',
+      meta: { align: 'right', headerClassName: 'text-right', cellClassName: 'text-right font-mono' },
+      cell: ({ getValue }) => formatPercent(totalAssets > 0 ? (getValue() / totalAssets) * 100 : 0, 1, { sign: false }),
+    },
+  ], [totalAssets]);
+
+  const topHoldingsTable = useReactTable({
+    data: topHoldings,
+    columns: topHoldingsColumns,
+    state: { sorting: topHoldingsSorting },
+    onSortingChange: setTopHoldingsSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
 
   const allocationData = useMemo(() => {
     if (accountSnaps.length === 0 || accountList.length === 0) return [];
@@ -390,35 +445,14 @@ export default function HoldingsAnalysis() {
             <div className="border-t border-border pt-4">
               <div className="flex items-center justify-between gap-3 mb-2">
                 <h3 className="text-[10px] font-bold tracking-wide uppercase text-tertiary">Top Holdings by Value</h3>
-                <span className="text-caption text-tertiary">{assetItems.slice(0, 10).length} shown</span>
+                <span className="text-caption text-tertiary">{topHoldings.length} shown</span>
               </div>
-              <div className="max-w-full overflow-hidden">
-                <table className="w-full table-fixed divide-y divide-border">
-                  <thead className="bg-surface-2">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide">Holding</th>
-                      <th className="hidden px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide lg:table-cell">Account</th>
-                      <th className="hidden px-3 py-2 text-left text-caption font-semibold text-tertiary uppercase tracking-wide lg:table-cell">Category</th>
-                      <th className="px-3 py-2 text-right text-caption font-semibold text-tertiary uppercase tracking-wide">Value</th>
-                      <th className="px-3 py-2 text-right text-caption font-semibold text-tertiary uppercase tracking-wide">Share</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {assetItems.slice(0, 10).map((item) => (
-                      <tr key={`${item.account}-${item.name}-${item.ticker || ''}`} className="hover:bg-surface-2">
-                        <td className="px-3 py-2 text-body-sm text-primary">
-                          <p className="font-semibold truncate max-w-[280px]" title={item.name}>{item.name}</p>
-                          {item.ticker && <p className="text-caption text-tertiary">{item.ticker}</p>}
-                        </td>
-                        <td className="hidden px-3 py-2 text-body-sm text-secondary lg:table-cell">{item.account}</td>
-                        <td className="hidden px-3 py-2 text-body-sm text-tertiary lg:table-cell">{item.categoryLabel}</td>
-                        <td className="px-3 py-2 text-right font-mono text-body-sm text-primary">{formatCurrency(item.valueNumber)}</td>
-                        <td className="px-3 py-2 text-right font-mono text-body-sm text-secondary">{formatPercent(totalAssets > 0 ? (item.valueNumber / totalAssets) * 100 : 0, 1, { sign: false })}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                table={topHoldingsTable}
+                bare
+                mobile="table"
+                emptyMessage="No holdings to show."
+              />
             </div>
           </div>
         )}

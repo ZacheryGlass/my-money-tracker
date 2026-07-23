@@ -318,7 +318,6 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
 
       <DataTable
         table={table}
-        columns={columns}
         emptyMessage={`No ${activeLabel.toLowerCase()} found.`}
         onRowClick={handleEdit}
         rowClassName={(holding) => (holding.is_plaid_managed ? '' : 'cursor-pointer')}

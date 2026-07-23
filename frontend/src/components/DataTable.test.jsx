@@ -22,7 +22,7 @@ function Harness({ rowCount, onRowClick }) {
 
   return (
     <>
-      <DataTable table={table} columns={columns} emptyMessage="Nothing here." onRowClick={onRowClick} />
+      <DataTable table={table} mobile="table" emptyMessage="Nothing here." onRowClick={onRowClick} />
       <DataTablePagination table={table} total={rowCount} />
     </>
   );

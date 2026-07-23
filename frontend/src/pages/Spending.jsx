@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ReceiptText, RefreshCw } from 'lucide-react';
+import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { accounts as accountsApi, transactions as transactionsApi } from '../utils/api';
 import { getAccountDisplayName } from '../utils/accountDisplay';
 import { formatTransactionCategory } from '../utils/dataLabels';
+import DataTable from '../components/DataTable';
 import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 
@@ -23,14 +25,67 @@ function Amount({ value }) {
   );
 }
 
+// Column ids double as the API's `sort` values — see SORT_COLUMNS in
+// backend/src/routes/transactions.js.
+const COLUMNS = [
+  {
+    accessorKey: 'date',
+    header: 'Date',
+    meta: { width: '7rem', cellClassName: 'whitespace-nowrap font-mono text-caption' },
+    cell: ({ getValue }) => formatDateDisplay(getValue()),
+  },
+  {
+    id: 'name',
+    accessorFn: (row) => row.merchant_name || row.name,
+    header: 'Description',
+    meta: { cellClassName: 'min-w-0' },
+    cell: ({ row, getValue }) => (
+      <div className="flex items-center gap-2">
+        <span className="truncate text-body-sm font-semibold text-primary">{getValue()}</span>
+        {row.original.pending && (
+          <span className="shrink-0 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">
+            Pending
+          </span>
+        )}
+      </div>
+    ),
+  },
+  {
+    accessorKey: 'category',
+    header: 'Category',
+    meta: { width: '11rem', cellClassName: 'truncate' },
+    cell: ({ getValue }) => formatTransactionCategory(getValue()),
+  },
+  {
+    accessorKey: 'account_name',
+    header: 'Account',
+    meta: { width: '11rem', cellClassName: 'truncate' },
+  },
+  {
+    accessorKey: 'amount',
+    header: 'Amount',
+    meta: { width: '8rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+    cell: ({ getValue }) => <Amount value={getValue()} />,
+  },
+];
+
 export default function Spending() {
   const [accountList, setAccountList] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
+  const [sorting, setSorting] = useState([{ id: 'date', desc: true }]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
+
+  // Only a page of transactions is loaded at a time, so sorting has to happen
+  // in the database — a client-side sort would only reorder what's on screen.
+  const queryParams = useMemo(() => {
+    const params = { sort: sorting[0].id, direction: sorting[0].desc ? 'desc' : 'asc' };
+    if (selectedAccountId) params.account_id = selectedAccountId;
+    return params;
+  }, [selectedAccountId, sorting]);
 
   useEffect(() => {
     accountsApi.getAll()
@@ -44,10 +99,8 @@ export default function Spending() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    const params = { limit: PAGE_SIZE, offset: 0 };
-    if (selectedAccountId) params.account_id = selectedAccountId;
 
-    transactionsApi.getAll(params)
+    transactionsApi.getAll({ ...queryParams, limit: PAGE_SIZE, offset: 0 })
       .then((result) => {
         if (cancelled) return;
         setRows(result.data || []);
@@ -64,14 +117,12 @@ export default function Spending() {
     return () => {
       cancelled = true;
     };
-  }, [selectedAccountId]);
+  }, [queryParams]);
 
   const loadMore = async () => {
     setLoadingMore(true);
     try {
-      const params = { limit: PAGE_SIZE, offset: rows.length };
-      if (selectedAccountId) params.account_id = selectedAccountId;
-      const result = await transactionsApi.getAll(params);
+      const result = await transactionsApi.getAll({ ...queryParams, limit: PAGE_SIZE, offset: rows.length });
       setRows((prev) => [...prev, ...(result.data || [])]);
       setTotal(result.pagination?.total || 0);
     } catch (err) {
@@ -80,6 +131,17 @@ export default function Spending() {
       setLoadingMore(false);
     }
   };
+
+  const table = useReactTable({
+    data: rows,
+    columns: COLUMNS,
+    state: { sorting },
+    onSortingChange: setSorting,
+    manualSorting: true,
+    enableSortingRemoval: false,
+    getRowId: (row) => String(row.id),
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   return (
     <div className="container mx-auto max-w-[1100px] space-y-6 px-4 py-6 md:py-8">
@@ -112,93 +174,22 @@ export default function Spending() {
       {loading ? (
         <LoadingState label="Loading Transactions" className="min-h-[300px]" />
       ) : (
-        <div className="card overflow-hidden">
-          <div className="flex items-center justify-between border-b border-border p-4">
-            <div className="flex items-center gap-2">
-              <ReceiptText size={15} className="text-accent" />
-              <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Transactions</span>
+        <DataTable
+          table={table}
+          breakpoint="md"
+          emptyMessage="No transactions found."
+          header={(
+            <div className="flex items-center justify-between border-b border-border p-4">
+              <div className="flex items-center gap-2">
+                <ReceiptText size={15} className="text-accent" />
+                <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Transactions</span>
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                Showing {rows.length.toLocaleString()} of {total.toLocaleString()}
+              </span>
             </div>
-            <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
-              Showing {rows.length.toLocaleString()} of {total.toLocaleString()}
-            </span>
-          </div>
-
-          <div className="hidden md:block">
-            <table className="w-full table-fixed divide-y divide-border">
-              <thead className="bg-surface-2">
-                <tr>
-                  <th className="w-28 px-5 py-3 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">Date</th>
-                  <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">Description</th>
-                  <th className="w-44 px-5 py-3 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">Category</th>
-                  <th className="w-44 px-5 py-3 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary">Account</th>
-                  <th className="w-32 px-5 py-3 text-right text-[10px] font-bold uppercase tracking-wide text-tertiary">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border bg-surface">
-                {rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-12 text-center text-sm text-tertiary">
-                      No transactions found.
-                    </td>
-                  </tr>
-                ) : (
-                  rows.map((txn) => (
-                    <tr key={txn.id} className="transition-colors hover:bg-surface-2">
-                      <td className="whitespace-nowrap px-5 py-3 font-mono text-xs text-secondary">{formatDateDisplay(txn.date)}</td>
-                      <td className="min-w-0 px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-semibold text-primary">{txn.merchant_name || txn.name}</span>
-                          {txn.pending && (
-                            <span className="shrink-0 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">
-                              Pending
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="truncate px-5 py-3 text-xs text-secondary">{formatTransactionCategory(txn.category)}</td>
-                      <td className="truncate px-5 py-3 text-xs text-secondary">{txn.account_name}</td>
-                      <td className="whitespace-nowrap px-5 py-3 text-right text-sm">
-                        <Amount value={txn.amount} />
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="divide-y divide-border md:hidden">
-            {rows.length === 0 ? (
-              <div className="p-10 text-center text-sm text-tertiary">No transactions found.</div>
-            ) : (
-              rows.map((txn) => (
-                <div key={txn.id} className="bg-surface p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-semibold text-primary">{txn.merchant_name || txn.name}</span>
-                        {txn.pending && (
-                          <span className="shrink-0 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">
-                            Pending
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-tertiary">
-                        <span>{formatDateDisplay(txn.date)}</span>
-                        <span>{formatTransactionCategory(txn.category)}</span>
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-sm">
-                      <Amount value={txn.amount} />
-                    </div>
-                  </div>
-                  <div className="mt-2 truncate text-[10px] text-secondary">{txn.account_name}</div>
-                </div>
-              ))
-            )}
-          </div>
-
-          {rows.length < total && (
+          )}
+          footer={rows.length < total && (
             <div className="border-t border-border p-3">
               <button
                 type="button"
@@ -211,7 +202,34 @@ export default function Spending() {
               </button>
             </div>
           )}
-        </div>
+          renderMobileRow={(row) => {
+            const txn = row.original;
+            return (
+              <div key={row.id} className="bg-surface p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-primary">{txn.merchant_name || txn.name}</span>
+                      {txn.pending && (
+                        <span className="shrink-0 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">
+                          Pending
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-tertiary">
+                      <span>{formatDateDisplay(txn.date)}</span>
+                      <span>{formatTransactionCategory(txn.category)}</span>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-sm">
+                    <Amount value={txn.amount} />
+                  </div>
+                </div>
+                <div className="mt-2 truncate text-[10px] text-secondary">{txn.account_name}</div>
+              </div>
+            );
+          }}
+        />
       )}
     </div>
   );

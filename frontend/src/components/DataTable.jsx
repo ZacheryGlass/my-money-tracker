@@ -1,45 +1,84 @@
 import React from 'react';
 import { flexRender } from '@tanstack/react-table';
 
-// Shared shell for TanStack tables: desktop table in a card with sortable
-// headers, optional stacked mobile rows, and pagination controls. Column
-// sizing/alignment comes from columnDef.meta: { width, align, headerClassName,
-// cellClassName }. Without renderMobileRow the whole card is hidden below lg —
-// pages provide their own mobile layout (and should hide desktop-only
-// pagination the same way).
-const DataTable = ({ table, columns, emptyMessage, onRowClick, rowClassName, renderMobileRow }) => {
+// Where the desktop table takes over from the stacked mobile rows. Full class
+// strings (never interpolated) so Tailwind's scanner keeps them.
+const BREAKPOINTS = {
+  md: { desktopOnly: 'hidden md:block', mobileOnly: 'md:hidden' },
+  lg: { desktopOnly: 'hidden lg:block', mobileOnly: 'lg:hidden' },
+};
+
+const SORT_INDICATOR = { asc: '↑', desc: '↓' };
+
+// Shared shell for TanStack tables: a card holding sortable headers, optional
+// stacked mobile rows, and optional header/footer slots. Column sizing and
+// alignment come from columnDef.meta: { width, align, headerClassName,
+// cellClassName }.
+//
+// `mobile` picks the small-screen behaviour:
+//   'rows'   renderMobileRow(row) below the breakpoint (the default whenever
+//            renderMobileRow is supplied)
+//   'table'  keep the table at every width — pair with columnVisibility to
+//            drop columns on small screens
+//   'hidden' hide the card entirely below the breakpoint (the default
+//            otherwise); the page supplies its own mobile layout
+const DataTable = ({
+  table,
+  emptyMessage,
+  onRowClick,
+  rowClassName,
+  renderMobileRow,
+  mobile = renderMobileRow ? 'rows' : 'hidden',
+  breakpoint = 'lg',
+  header,
+  footer,
+  bare = false,
+  className = '',
+}) => {
   const rows = table.getRowModel().rows;
+  const visibleColumns = table.getVisibleLeafColumns();
+  const { desktopOnly, mobileOnly } = BREAKPOINTS[breakpoint];
 
   return (
-    <div className={`card w-full min-w-0 overflow-hidden ${renderMobileRow ? '' : 'hidden lg:block'}`}>
-      <div className="hidden max-w-full overflow-hidden lg:block">
+    <div
+      className={`w-full min-w-0 overflow-hidden ${bare ? '' : 'card'} ${
+        mobile === 'hidden' ? desktopOnly : ''
+      } ${className}`}
+    >
+      {header}
+
+      <div className={`max-w-full overflow-hidden ${mobile === 'table' ? '' : desktopOnly}`}>
+        {/* table-fixed takes its widths from the header row, so meta.width
+            lands on the <th>. A <colgroup> would reserve space for columns a
+            headerClassName has hidden at this breakpoint. */}
         <table className="w-full table-fixed divide-y divide-border">
-          <colgroup>
-            {columns.map((column, index) => (
-              <col
-                key={column.id || column.accessorKey || index}
-                style={column.meta?.width ? { width: column.meta.width } : undefined}
-              />
-            ))}
-          </colgroup>
           <thead className="bg-surface-2">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
                   const meta = header.column.columnDef.meta || {};
+                  const canSort = header.column.getCanSort();
+                  const sorted = header.column.getIsSorted();
+                  const toggleSort = header.column.getToggleSortingHandler();
                   return (
                     <th
                       key={header.id}
+                      style={meta.width ? { width: meta.width } : undefined}
+                      aria-sort={sorted ? (sorted === 'asc' ? 'ascending' : 'descending') : undefined}
+                      tabIndex={canSort ? 0 : undefined}
                       className={`px-3 py-2 text-left text-caption font-semibold uppercase tracking-wide text-tertiary transition-colors hover:bg-surface-3 ${
-                        header.column.getCanSort() ? 'cursor-pointer' : ''
+                        canSort ? 'cursor-pointer' : ''
                       } ${meta.headerClassName || ''}`}
-                      onClick={header.column.getToggleSortingHandler()}
+                      onClick={toggleSort}
+                      onKeyDown={canSort ? (event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        toggleSort(event);
+                      } : undefined}
                     >
                       <div className={`flex items-center gap-1 ${meta.align === 'right' ? 'justify-end' : ''}`}>
                         {flexRender(header.column.columnDef.header, header.getContext())}
-                        {header.column.getIsSorted() && (
-                          <span className="text-accent">{header.column.getIsSorted() === 'asc' ? '↑' : '↓'}</span>
-                        )}
+                        {sorted && <span className="text-accent">{SORT_INDICATOR[sorted]}</span>}
                       </div>
                     </th>
                   );
@@ -50,7 +89,7 @@ const DataTable = ({ table, columns, emptyMessage, onRowClick, rowClassName, ren
           <tbody className="divide-y divide-border bg-surface">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-3 py-10 text-center text-body-sm text-tertiary">
+                <td colSpan={visibleColumns.length} className="px-3 py-10 text-center text-body-sm text-tertiary">
                   {emptyMessage}
                 </td>
               </tr>
@@ -81,8 +120,8 @@ const DataTable = ({ table, columns, emptyMessage, onRowClick, rowClassName, ren
         </table>
       </div>
 
-      {renderMobileRow && (
-        <div className="divide-y divide-border lg:hidden">
+      {mobile === 'rows' && renderMobileRow && (
+        <div className={`divide-y divide-border ${mobileOnly}`}>
           {rows.length === 0 ? (
             <div className="px-3 py-8 text-center text-body-sm text-tertiary">{emptyMessage}</div>
           ) : (
@@ -90,6 +129,8 @@ const DataTable = ({ table, columns, emptyMessage, onRowClick, rowClassName, ren
           )}
         </div>
       )}
+
+      {footer}
     </div>
   );
 };

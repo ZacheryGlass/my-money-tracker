@@ -8,7 +8,11 @@ import { Briefcase, TrendingUp, Edit2, Trash2, Check, X, Award, Target, Calendar
 import { salary as salaryAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { CHART_COLORS, GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
+import {
+  useReactTable, getCoreRowModel, getSortedRowModel,
+} from '@tanstack/react-table';
 import ChartTooltip from '../components/ChartTooltip';
+import DataTable from '../components/DataTable';
 import LoadingState from '../components/LoadingState';
 import ResponsiveContainer from '../components/ResponsiveContainer';
 import useTransientMessage from '../hooks/useTransientMessage';
@@ -23,6 +27,7 @@ const SalaryHistory = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
   const [deletingRecord, setDeletingRecord] = useState(null);
+  const [sorting, setSorting] = useState([{ id: 'effective_date', desc: true }]);
   const [formData, setFormData] = useState({
     effective_date: '', title: '', salary_amount: '', psu: '', rsu: '',
     total_comp: '', change_amount: '', change_percent: '',
@@ -112,6 +117,91 @@ const SalaryHistory = () => {
       setDeletingRecord(null);
     }
   };
+
+  const historyColumns = useMemo(() => [
+    {
+      accessorKey: 'effective_date',
+      header: 'Date',
+      meta: { cellClassName: 'whitespace-nowrap font-mono text-caption' },
+      cell: ({ getValue }) => formatDateDisplay(getValue()),
+    },
+    {
+      accessorKey: 'title',
+      header: 'Title',
+      meta: { cellClassName: 'truncate' },
+      cell: ({ getValue }) => <span className="font-semibold text-primary">{getValue()}</span>,
+    },
+    {
+      id: 'salary_amount',
+      // Postgres numerics arrive as strings; coerce so sorting is numeric.
+      accessorFn: (row) => parseFloat(row.salary_amount) || 0,
+      header: 'Base Salary',
+      meta: { headerClassName: 'hidden lg:table-cell', cellClassName: 'hidden whitespace-nowrap font-mono text-primary lg:table-cell' },
+      cell: ({ getValue }) => formatCurrency(getValue()),
+    },
+    {
+      id: 'equity',
+      accessorFn: (row) => (parseFloat(row.psu) || 0) + (parseFloat(row.rsu) || 0),
+      header: 'Equity/Bonus',
+      meta: { headerClassName: 'hidden lg:table-cell', cellClassName: 'hidden whitespace-nowrap font-mono lg:table-cell' },
+      cell: ({ getValue }) => (getValue() > 0 ? formatCurrency(getValue()) : <span className="opacity-30">—</span>),
+    },
+    {
+      id: 'total_comp',
+      accessorFn: (row) => parseFloat(row.total_comp) || 0,
+      header: 'Total Comp',
+      meta: { cellClassName: 'whitespace-nowrap font-mono font-bold text-accent' },
+      cell: ({ getValue }) => formatCurrency(getValue()),
+    },
+    {
+      id: 'change_amount',
+      accessorFn: (row) => parseFloat(row.change_amount) || 0,
+      header: 'Change',
+      meta: { headerClassName: 'hidden lg:table-cell', cellClassName: 'hidden lg:table-cell' },
+      cell: ({ row, getValue }) => (getValue() ? (
+        <div className="flex flex-col">
+          <span className="text-caption font-bold text-gain">+{formatCurrency(getValue())}</span>
+          <span className="text-[10px] font-bold text-gain opacity-70">({(parseFloat(row.original.change_percent) * 100).toFixed(1)}%)</span>
+        </div>
+      ) : <span className="text-tertiary opacity-30">—</span>),
+    },
+    {
+      id: 'actions',
+      header: 'Actions',
+      enableSorting: false,
+      meta: { width: '90px', align: 'right', headerClassName: 'text-right' },
+      cell: ({ row }) => (
+        <div className="flex justify-end gap-1">
+          <button
+            onClick={() => handleEdit(row.original)}
+            className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors"
+            aria-label={`Edit salary record from ${formatDateDisplay(row.original.effective_date)}`}
+            title="Edit record"
+          >
+            <Edit2 size={14} />
+          </button>
+          <button
+            onClick={() => setDeletingRecord(row.original)}
+            className="p-2 border border-border bg-surface-2 text-loss hover:bg-loss/10 rounded transition-colors"
+            aria-label={`Delete salary record from ${formatDateDisplay(row.original.effective_date)}`}
+            title="Delete record"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      ),
+    },
+  ], []);
+
+  const historyTable = useReactTable({
+    data: records,
+    columns: historyColumns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getRowId: (row) => String(row.id),
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
 
   const { current, careerGrowth, lastRaise, chartData, peakComp, milestones, yoyRows, compMix } = useMemo(() => {
     if (records.length === 0) {
@@ -392,68 +482,11 @@ const SalaryHistory = () => {
               <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-tertiary">Career History</h2>
             </div>
             
-            <div className="card overflow-hidden">
-              <div className="max-w-full overflow-hidden">
-                <table className="w-full table-fixed divide-y divide-border">
-                  <thead className="bg-surface-2">
-                    <tr>
-                      {['Date', 'Title', 'Base Salary', 'Equity/Bonus', 'Total Comp', 'Change', 'Actions'].map((h, index) => (
-                        <th key={h} className={`px-2 py-4 text-left text-[10px] font-bold uppercase tracking-wide text-tertiary sm:px-5 ${[2, 3, 5].includes(index) ? 'hidden lg:table-cell' : ''}`}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border bg-surface">
-                    {records.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="px-5 py-12 text-center text-tertiary text-sm font-medium">No records found. Add your first salary record to start tracking.</td>
-                      </tr>
-                    ) : (
-                      [...records].sort((a, b) => new Date(b.effective_date) - new Date(a.effective_date)).map((r) => (
-                        <tr key={r.id} className="hover:bg-surface-2 transition-colors group">
-                          <td className="px-2 py-4 text-xs font-mono text-secondary sm:px-5">{formatDateDisplay(r.effective_date)}</td>
-                          <td className="px-2 py-4 sm:px-5">
-                            <div className="text-sm font-bold text-primary">{r.title}</div>
-                          </td>
-                          <td className="hidden px-5 py-4 text-sm font-mono text-primary lg:table-cell">{formatCurrency(r.salary_amount)}</td>
-                          <td className="hidden px-5 py-4 text-xs font-mono text-secondary lg:table-cell">
-                            {r.psu > 0 || r.rsu > 0 ? formatCurrency((parseFloat(r.psu) || 0) + (parseFloat(r.rsu) || 0)) : <span className="opacity-30">—</span>}
-                          </td>
-                          <td className="px-2 py-4 text-sm font-mono font-bold text-accent sm:px-5">{formatCurrency(r.total_comp)}</td>
-                          <td className="hidden px-5 py-4 lg:table-cell">
-                            {r.change_amount ? (
-                              <div className="flex flex-col">
-                                <span className="text-xs font-bold text-gain">+{formatCurrency(r.change_amount)}</span>
-                                <span className="text-[10px] font-bold text-gain opacity-70">({(parseFloat(r.change_percent) * 100).toFixed(1)}%)</span>
-                              </div>
-                            ) : <span className="text-tertiary opacity-30">—</span>}
-                          </td>
-                          <td className="px-2 py-4 text-right sm:px-5">
-                            <div className="flex justify-end gap-1">
-                              <button
-                                onClick={() => handleEdit(r)}
-                                className="p-2 border border-border bg-surface-2 text-accent hover:bg-accent/10 rounded transition-colors"
-                                aria-label={`Edit salary record from ${formatDateDisplay(r.effective_date)}`}
-                                title="Edit record"
-                              >
-                                <Edit2 size={14} />
-                              </button>
-                              <button
-                                onClick={() => setDeletingRecord(r)}
-                                className="p-2 border border-border bg-surface-2 text-loss hover:bg-loss/10 rounded transition-colors"
-                                aria-label={`Delete salary record from ${formatDateDisplay(r.effective_date)}`}
-                                title="Delete record"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <DataTable
+              table={historyTable}
+              mobile="table"
+              emptyMessage="No records found. Add your first salary record to start tracking."
+            />
           </div>
           
           <div className="flex items-center justify-center gap-8 text-[10px] text-tertiary uppercase tracking-wide font-bold opacity-60">

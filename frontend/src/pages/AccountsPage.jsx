@@ -492,7 +492,6 @@ const AccountsPage = () => {
 
       <DataTable
         table={listTable}
-        columns={listColumns}
         emptyMessage="No accounts match the selected filters."
         onRowClick={(account) => setSelectedAccountId(account.id)}
       />
@@ -617,7 +616,7 @@ const AccountsPage = () => {
                   <Wallet className="text-accent w-4 h-4" />
                   <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Underlying Assets ({accountHoldings.length})</h2>
                 </div>
-                <DataTable table={detailTable} columns={detailColumns} emptyMessage="No holdings found." />
+                <DataTable table={detailTable} emptyMessage="No holdings found." />
                 
                 {/* Mobile Asset Cards */}
                 <div className="lg:hidden space-y-3">
@@ -675,7 +674,7 @@ const AccountsPage = () => {
                 ) : (
                   <>
                     <div className="hidden lg:block">
-                      <DataTable table={txnTable} columns={txnColumns} emptyMessage="No transactions found." />
+                      <DataTable table={txnTable} emptyMessage="No transactions found." />
                       <DataTablePagination table={txnTable} total={accountTransactions.length} />
                     </div>
 

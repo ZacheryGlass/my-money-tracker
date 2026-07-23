@@ -17,16 +17,39 @@ function isValidDate(dateString) {
   return date instanceof Date && !isNaN(date);
 }
 
-// GET /api/transactions - List transactions with filtering and pagination
+// Sortable columns, keyed by the id the client sends. Whitelisted because the
+// expression is interpolated into the ORDER BY clause.
+const SORT_COLUMNS = {
+  date: 't.date',
+  name: 'COALESCE(NULLIF(TRIM(t.merchant_name), \'\'), t.name)',
+  category: 't.category',
+  account_name: 'COALESCE(NULLIF(TRIM(a.display_name), \'\'), a.name)',
+  amount: 't.amount'
+};
+
+// GET /api/transactions - List transactions with filtering, sorting and pagination
 router.get('/', async (req, res) => {
   try {
     const {
       account_id,
       startDate,
       endDate,
+      sort = 'date',
+      direction = 'desc',
       limit = 50,
       offset = 0
     } = req.query;
+
+    const sortColumn = SORT_COLUMNS[sort];
+    if (!sortColumn) {
+      return res.status(400).json({
+        error: `Invalid sort parameter. Must be one of: ${Object.keys(SORT_COLUMNS).join(', ')}.`
+      });
+    }
+    const sortDirection = String(direction).toLowerCase();
+    if (sortDirection !== 'asc' && sortDirection !== 'desc') {
+      return res.status(400).json({ error: 'Invalid direction parameter. Must be asc or desc.' });
+    }
 
     const parsedLimit = parseInt(limit);
     const parsedOffset = parseInt(offset);
@@ -90,7 +113,7 @@ router.get('/', async (req, res) => {
        FROM transactions t
        JOIN accounts a ON t.account_id = a.id
        ${whereClause}
-       ORDER BY t.date DESC, t.id DESC
+       ORDER BY ${sortColumn} ${sortDirection === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, t.id DESC
        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
       [...params, parsedLimit, parsedOffset]
     );
