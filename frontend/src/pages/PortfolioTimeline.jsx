@@ -82,6 +82,9 @@ const PortfolioTimeline = () => {
       const livePortfolioPromise = shouldAppendLivePoint
         ? dashboardAPI.getPortfolio().catch(() => null)
         : Promise.resolve(null);
+      // limit: 10000 (the endpoint's max) fetches the whole range in one request.
+      // That ceiling is ~27 years of daily snapshots — unreachable for a single
+      // user; revisit if snapshots ever become intraday.
       const response = await historyAPI.getPortfolio({ startDate, endDate, limit: 10000, withCount: false });
       let allData = response.data || [];
 

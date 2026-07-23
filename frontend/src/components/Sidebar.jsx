@@ -229,6 +229,8 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
           className={`fixed left-0 top-0 h-full z-50 transition-transform duration-200 ease-out ${
             mobileOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
+          aria-hidden={!mobileOpen}
+          inert={!mobileOpen}
         >
           {sidebarContent}
         </div>
