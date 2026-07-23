@@ -38,6 +38,63 @@ function deriveTaxTreatment(subtype, accountType) {
   return TAX_TREATMENT_BY_SUBTYPE[key] || 'taxable';
 }
 
+// debt_terms.apr is a FRACTION (0.2349), not a percentage: runScenario uses it
+// directly as a growth rate and renders it as apr * 100. Plaid reports
+// percentages (23.49). Every APR path below must divide by 100.
+function toAprFraction(percentage) {
+  const value = Number(percentage);
+  return Number.isFinite(value) ? value / 100 : null;
+}
+
+function dayOfMonth(dateString) {
+  if (!dateString) return null;
+  const day = Number(String(dateString).slice(8, 10));
+  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
+}
+
+// Flattens one Plaid liability object onto the debt_terms columns. `kind` is the
+// key it arrived under: credit, mortgage or student. Exported for testing.
+function mapLiabilityToDebtTerms(liability, kind) {
+  const common = {
+    nextPaymentDueDate: liability.next_payment_due_date || null,
+    lastPaymentAmount: liability.last_payment_amount ?? null,
+    lastPaymentDate: liability.last_payment_date || null,
+    lastStatementBalance: liability.last_statement_balance ?? null,
+    lastStatementDate: liability.last_statement_issue_date || null,
+    isOverdue: liability.is_overdue ?? null,
+    dueDay: dayOfMonth(liability.next_payment_due_date),
+    maturityDate: null,
+  };
+
+  if (kind === 'credit') {
+    const aprs = liability.aprs || [];
+    // Cards carry several APRs (purchase, cash advance, balance transfer,
+    // promotional). Purchase is the one that applies to ordinary spending.
+    const apr = aprs.find(a => a.apr_type === 'purchase_apr') || aprs[0] || null;
+    return {
+      ...common,
+      apr: apr ? toAprFraction(apr.apr_percentage) : null,
+      minimumPayment: liability.minimum_payment_amount ?? null,
+    };
+  }
+
+  if (kind === 'mortgage') {
+    return {
+      ...common,
+      apr: toAprFraction(liability.interest_rate?.percentage),
+      minimumPayment: liability.next_monthly_payment ?? null,
+      maturityDate: liability.maturity_date || null,
+    };
+  }
+
+  return {
+    ...common,
+    apr: toAprFraction(liability.interest_rate_percentage),
+    minimumPayment: liability.minimum_payment_amount ?? null,
+    maturityDate: liability.expected_payoff_date || null,
+  };
+}
+
 const ensurePlaidConfigured = () => {
   if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SECRET) {
     const error = new Error(
@@ -216,6 +273,10 @@ class PlaidService {
 
       await this._upsertHolding(accountId, null, holdingName, null, value);
       results.balances++;
+    }
+
+    if (plaidAccounts.some(pa => pa.type === 'credit' || pa.type === 'loan')) {
+      results.liabilities = await this._syncLiabilities(plaidItemId, access_token);
     }
 
     try {
@@ -420,6 +481,67 @@ class PlaidService {
       [accountId, ...currentIdentifiers.map(id => id.toUpperCase())]
     );
     return result.rowCount;
+  }
+
+  // Liabilities are opt-in per institution and unavailable for many loan types
+  // (M1's margin loan returns nothing at all). A miss here is normal, so the
+  // whole step is isolated and never fails the sync.
+  static async _syncLiabilities(plaidItemId, accessToken) {
+    let liabilities;
+    try {
+      const response = await plaidClient.liabilitiesGet({ access_token: accessToken });
+      liabilities = response.data.liabilities || {};
+    } catch (err) {
+      const errorCode = err.response?.data?.error_code;
+      const expected = ['PRODUCTS_NOT_SUPPORTED', 'PRODUCT_NOT_READY', 'NO_LIABILITY_ACCOUNTS'];
+      if (expected.includes(errorCode)) {
+        logger.info({ plaidItemId, errorCode }, 'Liabilities not available for this item');
+      } else if (errorCode === 'ADDITIONAL_CONSENT_REQUIRED') {
+        logger.info({ plaidItemId }, 'Additional consent required for liabilities — user must re-link');
+      } else {
+        logger.error({ plaidItemId, err }, 'Failed to sync liabilities');
+      }
+      return { updated: 0 };
+    }
+
+    let updated = 0;
+    for (const kind of ['credit', 'mortgage', 'student']) {
+      for (const liability of liabilities[kind] || []) {
+        const accountId = await this._getAccountIdByPlaidAccountId(liability.account_id);
+        if (!accountId) continue;
+        await this._upsertDebtTerms(accountId, mapLiabilityToDebtTerms(liability, kind));
+        updated++;
+      }
+    }
+
+    return { updated };
+  }
+
+  // Only the Plaid-owned columns are overwritten: is_tax_deductible and notes
+  // are hand-maintained, and maturity_date is only supplied for mortgages and
+  // student loans, so a NULL must not clear a manually entered one.
+  static async _upsertDebtTerms(accountId, terms) {
+    await pool.query(
+      `INSERT INTO debt_terms (account_id, apr, minimum_payment, due_day, maturity_date,
+       next_payment_due_date, last_statement_balance, last_statement_date,
+       last_payment_amount, last_payment_date, is_overdue, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
+       ON CONFLICT (account_id) DO UPDATE
+       SET apr = COALESCE(EXCLUDED.apr, debt_terms.apr),
+           minimum_payment = COALESCE(EXCLUDED.minimum_payment, debt_terms.minimum_payment),
+           due_day = COALESCE(EXCLUDED.due_day, debt_terms.due_day),
+           maturity_date = COALESCE(EXCLUDED.maturity_date, debt_terms.maturity_date),
+           next_payment_due_date = EXCLUDED.next_payment_due_date,
+           last_statement_balance = EXCLUDED.last_statement_balance,
+           last_statement_date = EXCLUDED.last_statement_date,
+           last_payment_amount = EXCLUDED.last_payment_amount,
+           last_payment_date = EXCLUDED.last_payment_date,
+           is_overdue = EXCLUDED.is_overdue,
+           updated_at = CURRENT_TIMESTAMP`,
+      [accountId, terms.apr, terms.minimumPayment, terms.dueDay, terms.maturityDate,
+       terms.nextPaymentDueDate, terms.lastStatementBalance, terms.lastStatementDate,
+       terms.lastPaymentAmount, terms.lastPaymentDate, terms.isOverdue]
+    );
   }
 
   static async _syncTransactions(plaidItemId, accessToken) {
@@ -661,3 +783,4 @@ class PlaidService {
 
 module.exports = PlaidService;
 module.exports.deriveTaxTreatment = deriveTaxTreatment;
+module.exports.mapLiabilityToDebtTerms = mapLiabilityToDebtTerms;
