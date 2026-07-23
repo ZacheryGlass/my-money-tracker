@@ -33,12 +33,22 @@ require.cache[pgModulePath] = {
 
 const request = require('supertest');
 const app = require('../src/server');
+const { SPEND_ELIGIBILITY_SQL } = require('../src/utils/spendFilters');
 
 // Captures the ORDER BY of the data query; the count query has none.
 function captureOrderBy(sink) {
   return async (sql) => {
     if (/COUNT\(\*\)/.test(sql)) return { rows: [{ total: '2' }] };
     sink.orderBy = sql.match(/ORDER BY (.*)/)[1].trim();
+    return { rows: [] };
+  };
+}
+
+// Captures the full SQL of the data query (the non-count SELECT).
+function captureSql(sink) {
+  return async (sql) => {
+    if (/COUNT\(\*\)/.test(sql)) return { rows: [{ total: '2' }] };
+    sink.sql = sql;
     return { rows: [] };
   };
 }
@@ -87,4 +97,32 @@ test('GET /api/transactions rejects an unknown sort direction', async () => {
 
   assert.equal(response.status, 400);
   assert.match(response.body.error, /Invalid direction parameter/);
+});
+
+test('GET /api/transactions?view=spend applies the canonical spend filter', async () => {
+  const sink = {};
+  queryHandler = captureSql(sink);
+
+  const response = await request(app)
+    .get('/api/transactions')
+    .query({ view: 'spend' });
+
+  assert.equal(response.status, 200);
+  assert.ok(
+    sink.sql.includes(SPEND_ELIGIBILITY_SQL),
+    'data query should AND in SPEND_ELIGIBILITY_SQL when view=spend'
+  );
+});
+
+test('GET /api/transactions omits the spend filter by default', async () => {
+  const sink = {};
+  queryHandler = captureSql(sink);
+
+  const response = await request(app).get('/api/transactions');
+
+  assert.equal(response.status, 200);
+  assert.ok(
+    !sink.sql.includes(SPEND_ELIGIBILITY_SQL),
+    'default (no view) should return the full ledger'
+  );
 });

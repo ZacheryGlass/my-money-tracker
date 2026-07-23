@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ReceiptText, RefreshCw } from 'lucide-react';
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
@@ -88,6 +88,14 @@ export default function Spending() {
     return params;
   }, [selectedAccountId, sorting, viewMode]);
 
+  // loadMore resolves asynchronously; if the view/account/sort changed while a
+  // page was in flight, this ref lets us drop the stale response instead of
+  // appending it onto the freshly-reset list (mirrors the effect's cancelled flag).
+  const queryParamsRef = useRef(queryParams);
+  useEffect(() => {
+    queryParamsRef.current = queryParams;
+  }, [queryParams]);
+
   useEffect(() => {
     accountsApi.getAll()
       .then((data) => setAccountList(
@@ -99,6 +107,7 @@ export default function Spending() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadingMore(false);
     setError(null);
 
     transactionsApi.getAll({ ...queryParams, limit: PAGE_SIZE, offset: 0 })
@@ -121,12 +130,16 @@ export default function Spending() {
   }, [queryParams]);
 
   const loadMore = async () => {
+    const requestParams = queryParams;
     setLoadingMore(true);
     try {
-      const result = await transactionsApi.getAll({ ...queryParams, limit: PAGE_SIZE, offset: rows.length });
+      const result = await transactionsApi.getAll({ ...requestParams, limit: PAGE_SIZE, offset: rows.length });
+      // Drop the page if the view/account/sort switched while it was in flight.
+      if (queryParamsRef.current !== requestParams) return;
       setRows((prev) => [...prev, ...(result.data || [])]);
       setTotal(result.pagination?.total || 0);
     } catch (err) {
+      if (queryParamsRef.current !== requestParams) return;
       setError(err.response?.data?.error || 'Failed to load more transactions');
     } finally {
       setLoadingMore(false);

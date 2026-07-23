@@ -8,9 +8,11 @@ const CREDIT_CARD_PAYMENT_CATEGORY = 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT';
 
 // The single definition of "a transaction that counts as spend at a merchant".
 // Top Merchants (MerchantSpend), the charge list under a tracked expense
-// (RecurringExpense.chargesForMerchant) and the expense sync
-// (ExpenseSyncService.fetchEligibleCharges) all apply it, so a merchant's total
-// matches the charges shown underneath it.
+// (RecurringExpense.chargesForMerchant), the expense sync
+// (ExpenseSyncService.fetchEligibleCharges) and the Spending page ledger
+// (routes/transactions.js, applied when `view=spend`) all apply it, so a
+// merchant's total matches the charges shown underneath it and the ledger
+// reconciles with Top Merchants.
 //
 // This governs the Spending pages only. The MCP/analysis layer reaches the same
 // conclusion by a different route -- FinancialQueryService sums rows whose
