@@ -103,11 +103,13 @@ class EthTransfer {
     return result.rows;
   }
 
-  // The self/external split depends on the current wallet set, so it is
-  // recomputed wholesale on every sync and on wallet add/remove. COALESCE
-  // guards NULL to_address (contract creations): NULL IN (...) is NULL, which
-  // would violate the NOT NULL column and abort the statement.
-  static async reclassifyOwnCounterparties() {
+  // Counterparty classification depends on the current wallet and label sets,
+  // so it is recomputed wholesale on every sync, wallet add/remove, and label
+  // change. Two sequential statements: own first, then exchange reading the
+  // fresh counterparty_is_own so own-precedence is explicit. COALESCE guards
+  // NULL to_address (contract creations): NULL IN (...) is NULL, which would
+  // violate the NOT NULL column and abort the statement.
+  static async reclassifyCounterparties() {
     await pool.query(
       `UPDATE eth_transfers t SET counterparty_is_own =
          COALESCE(
@@ -115,6 +117,16 @@ class EthTransfer {
              IN (SELECT address FROM eth_wallets),
            FALSE
          )
+       FROM eth_wallets w
+       WHERE t.wallet_id = w.id`
+    );
+    await pool.query(
+      `UPDATE eth_transfers t SET counterparty_exchange =
+         CASE WHEN t.counterparty_is_own THEN NULL
+              ELSE (SELECT l.name FROM eth_address_labels l
+                    WHERE l.address = CASE WHEN t.from_address = w.address
+                                           THEN t.to_address ELSE t.from_address END)
+         END
        FROM eth_wallets w
        WHERE t.wallet_id = w.id`
     );

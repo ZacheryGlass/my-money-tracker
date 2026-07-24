@@ -122,12 +122,25 @@ test('contract creation (empty to) yields a gas row with a NULL counterparty', (
 test('reclassify SQL defaults a NULL counterparty to false', async () => {
   const EthTransfer = require('../src/models/EthTransfer');
   queries.length = 0;
-  await EthTransfer.reclassifyOwnCounterparties();
+  await EthTransfer.reclassifyCounterparties();
+  assert.equal(queries.length, 2);
   const sql = queries[0].text.replace(/\s+/g, ' ');
   // counterparty_is_own is NOT NULL and `NULL IN (...)` is NULL, so the
   // expression must be wrapped or one contract-creation row aborts the
   // statement -- and with it every sync, add, and remove.
   assert.match(sql, /COALESCE\(.*IN \(SELECT address FROM eth_wallets\).*,\s*FALSE\s*\)/);
+});
+
+test('reclassify sets exchange labels with own-precedence in SQL', async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.reclassifyCounterparties();
+  const sql = queries[1].text.replace(/\s+/g, ' ');
+  assert.match(sql, /SET counterparty_exchange/);
+  // Own must beat exchange: a tracked wallet that is also labeled stays a
+  // self-transfer, encoded directly in the statement.
+  assert.match(sql, /CASE WHEN t\.counterparty_is_own THEN NULL/);
+  assert.match(sql, /FROM eth_address_labels/);
 });
 
 test('addWallet rejects malformed addresses', async () => {

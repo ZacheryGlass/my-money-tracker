@@ -160,7 +160,7 @@ class EthWalletService {
         internal: maxBlock(internal),
         token: maxBlock(token),
       });
-      await EthTransfer.reclassifyOwnCounterparties();
+      await EthTransfer.reclassifyCounterparties();
       const holdings = await this.refreshHoldings(walletId);
       const mirror = await EthTransactionMirrorService.rebuildForWallet(walletId);
       await TransactionClassificationService.backfill();
@@ -253,11 +253,7 @@ class EthWalletService {
     // rebuilt too. Non-fatal: the wallet exists either way, and the first
     // sync re-derives all of this.
     try {
-      await serialized(async () => {
-        await EthTransfer.reclassifyOwnCounterparties();
-        await EthTransactionMirrorService.rebuildAll();
-        await TransactionClassificationService.backfill();
-      });
+      await this.refreshClassifications();
     } catch (err) {
       logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh after wallet add failed');
     }
@@ -362,15 +358,23 @@ class EthWalletService {
     // Non-fatal: the wallet is already gone; a failure here must not report
     // the disconnect itself as failed.
     try {
-      await serialized(async () => {
-        await EthTransfer.reclassifyOwnCounterparties();
-        await EthTransactionMirrorService.rebuildAll();
-        await TransactionClassificationService.backfill();
-      });
+      await this.refreshClassifications();
     } catch (err) {
       logger.warn({ walletId, err }, 'Derived-data refresh after wallet removal failed');
     }
     logger.info({ walletId, removeData }, 'ETH wallet disconnected');
+  }
+
+  // Classification changes (wallet add/remove, address-label change) flip
+  // self/exchange/external on existing rows and their mirrored ledger rows.
+  // Unlike refreshAllDerived this never touches Etherscan or holdings --
+  // labels affect classification only.
+  static refreshClassifications() {
+    return serialized(async () => {
+      await EthTransfer.reclassifyCounterparties();
+      await EthTransactionMirrorService.rebuildAll();
+      await TransactionClassificationService.backfill();
+    });
   }
 
   // Ignore-list changes affect holdings and mirrored ledger rows for every
