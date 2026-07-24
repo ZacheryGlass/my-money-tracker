@@ -315,6 +315,46 @@ export const plaid = {
   },
 };
 
+// Ethereum wallet API
+export const eth = {
+  addWallet: async (address, label) => {
+    const response = await api.post('/api/eth/wallets', { address, label });
+    return response.data;
+  },
+  getWallets: async () => {
+    const response = await api.get('/api/eth/wallets');
+    return response.data;
+  },
+  updateWallet: async (id, { label } = {}) => {
+    const response = await api.patch(`/api/eth/wallets/${id}`, { label });
+    return response.data;
+  },
+  syncWallet: async (id) => {
+    const response = await api.post(`/api/eth/wallets/${id}/sync`);
+    return response.data;
+  },
+  removeWallet: async (id, { removeData = false } = {}) => {
+    const response = await api.delete(`/api/eth/wallets/${id}${removeData ? '?removeData=true' : ''}`);
+    return response.data;
+  },
+  getTransfers: async (id, params = {}) => {
+    const response = await api.get(`/api/eth/wallets/${id}/transfers`, { params });
+    return response.data;
+  },
+  getIgnoredTokens: async () => {
+    const response = await api.get('/api/eth/ignored-tokens');
+    return response.data;
+  },
+  ignoreToken: async (contractAddress, symbol, note) => {
+    const response = await api.post('/api/eth/ignored-tokens', { contract_address: contractAddress, symbol, note });
+    return response.data;
+  },
+  unignoreToken: async (contractAddress) => {
+    const response = await api.delete(`/api/eth/ignored-tokens/${contractAddress}`);
+    return response.data;
+  },
+};
+
 // Analytics API
 export const analytics = {
   getBenchmarkHistory: async (params = {}) => {

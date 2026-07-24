@@ -186,6 +186,9 @@ class EthWalletService {
       error.code = 'INVALID_ADDRESS';
       throw error;
     }
+    // Fail fast: without an API key the wallet could be created but never
+    // synced, which would just strand an empty account.
+    EtherscanService.ensureConfigured();
     const normalized = address.trim().toLowerCase();
 
     const existing = await EthWallet.findByAddress(normalized);
