@@ -6,7 +6,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { AnimatePresence, motion as Motion } from 'framer-motion';
-import { ArrowLeft, Link2, Wallet, Receipt, X, Activity, PenLine, ExternalLink, EyeOff, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Link2, Wallet, Receipt, X, Activity, PenLine, ExternalLink, EyeOff, RefreshCw, Tag } from 'lucide-react';
 import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi, eth as ethAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
@@ -96,6 +96,7 @@ const TRANSFER_PAGE_SIZE = 100;
 const TRANSFER_TYPE_OPTIONS = [
   { value: '', label: 'All' },
   { value: 'external', label: 'External' },
+  { value: 'exchange', label: 'Exchange' },
   { value: 'self', label: 'Self' },
   { value: 'gas', label: 'Gas' },
   { value: 'token', label: 'Tokens' },
@@ -104,6 +105,7 @@ const TRANSFER_TYPE_OPTIONS = [
 const TRANSFER_CHIP_STYLES = {
   Self: 'bg-accent/10 text-accent border-accent/20',
   External: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  Exchange: 'bg-teal-500/10 text-teal-400 border-teal-500/20',
   Gas: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   Token: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
 };
@@ -113,6 +115,7 @@ const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${addr
 const transferChipLabel = (transfer) => {
   if (transfer.transfer_type === 'gas') return 'Gas';
   if (transfer.counterparty_is_own) return 'Self';
+  if (transfer.counterparty_exchange) return 'Exchange';
   return transfer.transfer_type === 'token' ? 'Token' : 'External';
 };
 
@@ -136,6 +139,10 @@ const OnChainActivity = ({ walletId }) => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
   const [ignoringContract, setIgnoringContract] = useState(null);
+  const [labelingId, setLabelingId] = useState(null);
+  const [labelName, setLabelName] = useState('');
+  const [savingLabel, setSavingLabel] = useState(false);
+  const [labelNames, setLabelNames] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
   // Guards Load More responses that arrive after the filter changed.
   const typeFilterRef = useRef(typeFilter);
@@ -198,6 +205,37 @@ const OnChainActivity = ({ walletId }) => {
     }
   };
 
+  // Known label names feed the inline form's datalist for one-tap reuse.
+  useEffect(() => {
+    let cancelled = false;
+    ethAPI.getAddressLabels()
+      .then((result) => {
+        if (cancelled) return;
+        const names = [...new Set((result.labels || []).map((label) => label.name))];
+        setLabelNames(names);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  const handleLabelAddress = async (event, counterparty) => {
+    event.preventDefault();
+    const name = labelName.trim();
+    if (!name || savingLabel) return;
+    setSavingLabel(true);
+    setError(null);
+    try {
+      await ethAPI.labelAddress(counterparty, name);
+      setLabelingId(null);
+      setLabelName('');
+      setRefreshKey((key) => key + 1);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to label address');
+    } finally {
+      setSavingLabel(false);
+    }
+  };
+
   return (
     <section>
       <div className="flex items-center justify-between mb-4">
@@ -220,6 +258,9 @@ const OnChainActivity = ({ walletId }) => {
         value={typeFilter}
         onChange={setTypeFilter}
       />
+      <datalist id="eth-label-names">
+        {labelNames.map((name) => <option key={name} value={name} />)}
+      </datalist>
 
       {error && (
         <div className="mb-3 flex items-center gap-2 border border-loss/20 bg-loss-bg p-2 text-body-sm text-loss">
@@ -244,18 +285,22 @@ const OnChainActivity = ({ walletId }) => {
               const counterparty = transfer.transfer_type === 'gas'
                 ? null
                 : outbound ? transfer.to_address : transfer.from_address;
+              const exchangeName = !transfer.counterparty_is_own ? transfer.counterparty_exchange : null;
+              const labelable = transfer.transfer_type !== 'gas'
+                && !transfer.counterparty_is_own && !exchangeName && counterparty;
               return (
-                <div key={transfer.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div key={transfer.id} className="px-4 py-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-center gap-3">
                     <span className={`inline-flex shrink-0 items-center px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide border ${TRANSFER_CHIP_STYLES[chip]}`}>
                       {chip}
                     </span>
                     <div className="min-w-0">
                       <div className="flex min-w-0 items-center gap-2">
-                        <span className="truncate text-sm font-bold text-primary">
+                        <span className="truncate text-sm font-bold text-primary" title={counterparty || undefined}>
                           {transfer.transfer_type === 'gas'
                             ? 'Gas fee'
-                            : `${outbound ? 'To' : 'From'} ${shortEthAddress(counterparty)}`}
+                            : `${outbound ? 'To' : 'From'} ${exchangeName || shortEthAddress(counterparty)}`}
                         </span>
                         {transfer.is_error && (
                           <span className="inline-flex shrink-0 items-center px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide border border-loss/20 bg-loss/10 text-loss">
@@ -283,6 +328,19 @@ const OnChainActivity = ({ walletId }) => {
                     <span className={`font-mono text-sm font-bold ${outbound ? 'text-loss' : 'text-gain'}`}>
                       {outbound ? '-' : '+'}{formatTransferQuantity(transfer)}
                     </span>
+                    {labelable && (
+                      <button
+                        onClick={() => {
+                          setLabelingId(labelingId === transfer.id ? null : transfer.id);
+                          setLabelName('');
+                        }}
+                        title="Label this address (e.g. an exchange deposit address)"
+                        className="inline-flex h-7 items-center justify-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-teal-500/30 hover:text-teal-400"
+                      >
+                        <Tag size={10} />
+                        Label
+                      </button>
+                    )}
                     {transfer.transfer_type === 'token' && transfer.token_contract && (
                       <button
                         onClick={() => handleIgnoreToken(transfer)}
@@ -297,6 +355,39 @@ const OnChainActivity = ({ walletId }) => {
                       </button>
                     )}
                   </div>
+                </div>
+                {labelingId === transfer.id && (
+                  <form
+                    onSubmit={(event) => handleLabelAddress(event, counterparty)}
+                    className="mt-2 flex items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={labelName}
+                      onChange={(event) => setLabelName(event.target.value)}
+                      list="eth-label-names"
+                      maxLength={64}
+                      placeholder="e.g. Coinbase"
+                      autoFocus
+                      className="h-8 w-44 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+                    />
+                    <button
+                      type="submit"
+                      disabled={savingLabel || !labelName.trim()}
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
+                    >
+                      {savingLabel && <RefreshCw size={10} className="animate-spin" />}
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLabelingId(null); setLabelName(''); }}
+                      className="inline-flex h-8 items-center justify-center rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                )}
                 </div>
               );
             })}

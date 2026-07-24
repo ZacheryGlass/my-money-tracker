@@ -349,6 +349,18 @@ export const eth = {
     const response = await api.delete(`/api/eth/ignored-tokens/${contractAddress}`);
     return response.data;
   },
+  getAddressLabels: async () => {
+    const response = await api.get('/api/eth/address-labels');
+    return response.data;
+  },
+  labelAddress: async (address, name, note) => {
+    const response = await api.post('/api/eth/address-labels', { address, name, note });
+    return response.data;
+  },
+  unlabelAddress: async (address) => {
+    const response = await api.delete(`/api/eth/address-labels/${address}`);
+    return response.data;
+  },
 };
 
 // Analytics API

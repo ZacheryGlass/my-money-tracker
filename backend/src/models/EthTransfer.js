@@ -54,7 +54,9 @@ class EthTransfer {
     if (type === 'self') {
       where += " AND t.transfer_type <> 'gas' AND t.counterparty_is_own = TRUE";
     } else if (type === 'external') {
-      where += " AND t.transfer_type <> 'gas' AND t.counterparty_is_own = FALSE";
+      where += " AND t.transfer_type <> 'gas' AND t.counterparty_is_own = FALSE AND t.counterparty_exchange IS NULL";
+    } else if (type === 'exchange') {
+      where += " AND t.transfer_type <> 'gas' AND t.counterparty_exchange IS NOT NULL";
     } else if (type === 'gas') {
       where += " AND t.transfer_type = 'gas'";
     } else if (type === 'token') {
