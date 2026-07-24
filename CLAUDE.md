@@ -79,11 +79,11 @@ cd frontend && npm run lint     # eslint
 - **Chart theme** (`frontend/src/utils/chartTheme.js`): `CHART_COLORS`, `GRID_STYLE`, `AXIS_STYLE`, `TOOLTIP_STYLE`, `areaGradient` — all charts use these
 - **Design tokens**: CSS variables in `index.css` (canvas/surface hierarchy, ink/body/muted text, primary action blue, gain/loss semantics, hairline borders) consumed by Tailwind config. Component classes: `.card`, `.font-money`. Square panels with 1px borders, 4px radius on buttons/inputs only.
 - **Scheduled jobs**: Plaid sync 7:30, expense sync 7:45, ETH wallet sync 7:50, price updates 8:00, benchmark prices (SPY/QQQ) 8:30, snapshots 9:00 (all UTC). Controlled by `RUN_SCHEDULED_JOBS` env var
-- **Ethereum wallets**: Etherscan V2 integration mirrors the Plaid shape (`services/EthWalletService.js`, `routes/eth.js`, `jobs/ethSyncJob.js`). Raw transfers land in `eth_transfers` (self/external derived from the tracked-wallet set), balances become a `crypto` account with an ETH holding + NULL-ticker token holdings, and activity is mirrored into `transactions` via `eth_transfer_id` with `CRYPTO_*` categories. Token symbols never enter `price_cache`.
+- **Ethereum wallets**: Etherscan V2 integration mirrors the Plaid shape (`services/EthWalletService.js`, `routes/eth.js`, `jobs/ethSyncJob.js`). Raw transfers land in `eth_transfers` (counterparty classified self/exchange/external: self from the tracked-wallet set, exchange from `eth_address_labels` — user labels + builtin exchange hot wallets seeded in migration 026, own beats exchange), balances become a `crypto` account with an ETH holding + NULL-ticker token holdings, and activity is mirrored into `transactions` via `eth_transfer_id` with `CRYPTO_*` categories (`CRYPTO_EXCHANGE_DEPOSIT`/`_WITHDRAWAL` classify as internal transfers). Token symbols never enter `price_cache`.
 
 ## Database
 
-Tables: `accounts`, `holdings`, `price_cache`, `ticker_snapshots`, `account_snapshots`, `users`, `eth_wallets`, `eth_transfers`, `eth_ignored_tokens`. Migrations in `backend/migrations/`.
+Tables: `accounts`, `holdings`, `price_cache`, `ticker_snapshots`, `account_snapshots`, `users`, `eth_wallets`, `eth_transfers`, `eth_ignored_tokens`, `eth_address_labels`. Migrations in `backend/migrations/`.
 
 ## Environment Variables
 
