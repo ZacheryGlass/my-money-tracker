@@ -43,8 +43,18 @@ const PlaidBadge = () => (
   </span>
 );
 
+const EthWalletBadge = () => (
+  <span
+    className="inline-flex h-5 w-5 items-center justify-center bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0"
+    title="Ethereum wallet account"
+    aria-label="Ethereum wallet account"
+  >
+    <Wallet size={10} />
+  </span>
+);
+
 const AccountConnectionPill = ({ account, compact = false }) => {
-  const isLinked = Boolean(account.plaid_item_id);
+  const isLinked = Boolean(account.plaid_item_id || account.eth_wallet_id);
   const className = isLinked
     ? 'border-accent/20 bg-accent-muted text-accent'
     : 'border-border bg-surface-3 text-tertiary';
@@ -203,8 +213,8 @@ const AccountsPage = () => {
     return holdings.reduce((sum, h) => sum + (parseFloat(h.current_value) || 0), 0);
   }, [holdings]);
 
-  const plaidCount = useMemo(() => {
-    return accounts.filter((a) => a.plaid_item_id).length;
+  const linkedCount = useMemo(() => {
+    return accounts.filter((a) => a.plaid_item_id || a.eth_wallet_id).length;
   }, [accounts]);
 
   const selectedAccount = useMemo(() => {
@@ -455,7 +465,7 @@ const AccountsPage = () => {
 
         <SummaryStats stats={[
           { label: 'Active', value: activeAccountCount },
-          { label: 'Linked', value: plaidCount, valueClassName: 'font-money font-semibold text-accent' },
+          { label: 'Linked', value: linkedCount, valueClassName: 'font-money font-semibold text-accent' },
         ]} />
       </div>
 
@@ -566,6 +576,7 @@ const AccountsPage = () => {
             <div className="flex items-center gap-3 mb-2">
               <TypeBadge type={selectedAccount.type} />
               {selectedAccount.plaid_item_id && <PlaidBadge />}
+              {selectedAccount.eth_wallet_id && <EthWalletBadge />}
             </div>
             <h1 className="text-3xl md:text-5xl font-bold text-primary tracking-tighter leading-none mb-2">
               {displayAccountName(selectedAccount)}

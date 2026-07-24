@@ -17,6 +17,17 @@ const apiMocks = vi.hoisted(() => ({
     syncItem: vi.fn(),
     removeItem: vi.fn(),
   },
+  eth: {
+    addWallet: vi.fn(),
+    getWallets: vi.fn(),
+    updateWallet: vi.fn(),
+    syncWallet: vi.fn(),
+    removeWallet: vi.fn(),
+    getTransfers: vi.fn(),
+    getIgnoredTokens: vi.fn(),
+    ignoreToken: vi.fn(),
+    unignoreToken: vi.fn(),
+  },
   holdings: {
     create: vi.fn(),
   },
@@ -32,6 +43,7 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock('../utils/api', () => ({
   accounts: apiMocks.accounts,
   plaid: apiMocks.plaid,
+  eth: apiMocks.eth,
   holdings: apiMocks.holdings,
   exportData: apiMocks.exportData,
   history: apiMocks.history,
@@ -51,6 +63,8 @@ describe('Settings display names', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMocks.plaid.getItems.mockResolvedValue({ items: [] });
+    apiMocks.eth.getWallets.mockResolvedValue({ wallets: [] });
+    apiMocks.eth.getIgnoredTokens.mockResolvedValue({ tokens: [] });
     apiMocks.accounts.getAll.mockResolvedValue({
       accounts: [
         {

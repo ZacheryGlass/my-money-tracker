@@ -50,8 +50,11 @@ router.get('/wallets', async (req, res) => {
     const wallets = await EthWallet.findAll();
     const withAccounts = await Promise.all(
       wallets.map(async (wallet) => {
-        const account = await EthWallet.getAccountForWallet(wallet.id);
-        return { ...wallet, account: account || null };
+        const [account, ethQuantity] = await Promise.all([
+          EthWallet.getAccountForWallet(wallet.id),
+          EthWallet.getEthQuantity(wallet.id),
+        ]);
+        return { ...wallet, account: account || null, eth_quantity: ethQuantity };
       })
     );
     res.status(200).json({ wallets: withAccounts });

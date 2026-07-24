@@ -136,6 +136,17 @@ class EthWallet {
     }
   }
 
+  static async getEthQuantity(id) {
+    const result = await pool.query(
+      `SELECT h.quantity
+       FROM holdings h
+       JOIN accounts a ON a.id = h.account_id
+       WHERE a.eth_wallet_id = $1 AND UPPER(h.ticker) = 'ETH'`,
+      [id]
+    );
+    return result.rows[0]?.quantity ?? null;
+  }
+
   static async getAccountForWallet(id) {
     const result = await pool.query(
       `SELECT *,

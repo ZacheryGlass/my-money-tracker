@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt } from 'lucide-react';
-import { plaid as plaidAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI } from '../utils/api';
+import { plaid as plaidAPI, eth as ethAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
@@ -17,8 +17,13 @@ const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'data-tools', label: 'Data Tools' },
   { id: 'institutions', label: 'Institutions' },
+  { id: 'ethereum', label: 'Ethereum' },
   { id: 'accounts', label: 'Accounts' },
 ];
+
+const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '');
 
 const MANUAL_ENTRY_TYPES = {
   asset: {
@@ -235,6 +240,17 @@ const Settings = () => {
   const [exportEndDate, setExportEndDate] = useState('');
   const [exporting, setExporting] = useState(null);
   const [mobileEditingAccountId, setMobileEditingAccountId] = useState(null);
+  const [ethWallets, setEthWallets] = useState([]);
+  const [ignoredTokens, setIgnoredTokens] = useState([]);
+  const [walletAddress, setWalletAddress] = useState('');
+  const [walletLabel, setWalletLabel] = useState('');
+  const [addingWallet, setAddingWallet] = useState(false);
+  const [ethSyncingId, setEthSyncingId] = useState(null);
+  const [disconnectingWallet, setDisconnectingWallet] = useState(null);
+  const [removeDataOnWalletDisconnect, setRemoveDataOnWalletDisconnect] = useState(true);
+  const [ignoreContract, setIgnoreContract] = useState('');
+  const [ignoreSymbol, setIgnoreSymbol] = useState('');
+  const [updatingIgnoreList, setUpdatingIgnoreList] = useState(false);
   const [activeTab, setActiveTab] = useState(() =>
     SETTINGS_TABS.some((t) => t.id === location.state?.tab) ? location.state.tab : 'appearance'
   );
@@ -242,6 +258,10 @@ const Settings = () => {
   const institutionSummary = useMemo(
     () => buildInstitutionSummary(items, consentItems),
     [items, consentItems]
+  );
+  const ethAttentionCount = useMemo(
+    () => ethWallets.filter((wallet) => wallet.error_code).length,
+    [ethWallets]
   );
   const manualEntryAccounts = useMemo(() => {
     if (!manualEntryType) return [];
@@ -252,11 +272,15 @@ const Settings = () => {
 
   const fetchItems = useCallback(async () => {
     try {
-      const [plaidData, accountsData] = await Promise.all([
+      const [plaidData, accountsData, ethData, ignoredData] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
+        ethAPI.getWallets(),
+        ethAPI.getIgnoredTokens(),
       ]);
       const loadedItems = plaidData.items || [];
+      setEthWallets(ethData.wallets || []);
+      setIgnoredTokens(ignoredData.tokens || []);
       setItems(loadedItems);
       setConsentItems(new Set(
         loadedItems
@@ -338,6 +362,97 @@ const Settings = () => {
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to disconnect account');
+    }
+  };
+
+  const handleAddWallet = async (event) => {
+    event.preventDefault();
+    const address = walletAddress.trim();
+    if (!ETH_ADDRESS_RE.test(address)) {
+      setError('Enter a valid Ethereum address (0x followed by 40 hex characters)');
+      return;
+    }
+    setAddingWallet(true);
+    setError(null);
+    try {
+      const result = await ethAPI.addWallet(address, walletLabel.trim() || undefined);
+      if (result.syncError) {
+        setError(`Wallet added, but the first sync failed: ${result.syncError}. Use Sync to retry.`);
+      } else {
+        showSuccess('Wallet added and synced');
+      }
+      setWalletAddress('');
+      setWalletLabel('');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to add wallet');
+    } finally {
+      setAddingWallet(false);
+    }
+  };
+
+  const handleEthSync = async (id) => {
+    setEthSyncingId(id);
+    setError(null);
+    try {
+      await ethAPI.syncWallet(id);
+      showSuccess('Wallet synced successfully');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to sync wallet');
+    } finally {
+      setEthSyncingId(null);
+    }
+  };
+
+  const handleWalletDisconnectConfirm = async () => {
+    const id = disconnectingWallet.id;
+    const removeData = removeDataOnWalletDisconnect;
+    setDisconnectingWallet(null);
+    try {
+      await ethAPI.removeWallet(id, { removeData });
+      showSuccess(removeData
+        ? 'Wallet disconnected and data removed.'
+        : 'Wallet disconnected. The account and its holdings were kept.');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to disconnect wallet');
+    }
+  };
+
+  const handleIgnoreToken = async (event) => {
+    event.preventDefault();
+    const contract = ignoreContract.trim();
+    if (!ETH_ADDRESS_RE.test(contract)) {
+      setError('Enter the token contract address (0x followed by 40 hex characters)');
+      return;
+    }
+    setUpdatingIgnoreList(true);
+    setError(null);
+    try {
+      await ethAPI.ignoreToken(contract, ignoreSymbol.trim() || undefined);
+      showSuccess('Token ignored');
+      setIgnoreContract('');
+      setIgnoreSymbol('');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to ignore token');
+    } finally {
+      setUpdatingIgnoreList(false);
+    }
+  };
+
+  const handleUnignoreToken = async (contractAddress) => {
+    setUpdatingIgnoreList(true);
+    setError(null);
+    try {
+      await ethAPI.unignoreToken(contractAddress);
+      showSuccess('Token no longer ignored');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to unignore token');
+    } finally {
+      setUpdatingIgnoreList(false);
     }
   };
 
@@ -510,14 +625,19 @@ const Settings = () => {
         value={activeTab}
         onChange={setActiveTab}
         options={SETTINGS_TABS.map((t) => {
-          const attention = t.id === 'institutions' && institutionSummary.attentionCount > 0;
+          const attentionCount = t.id === 'institutions'
+            ? institutionSummary.attentionCount
+            : t.id === 'ethereum'
+              ? ethAttentionCount
+              : 0;
+          const attention = attentionCount > 0;
           return {
             value: t.id,
             label: t.label,
-            selectLabel: attention ? `${t.label} (${institutionSummary.attentionCount})` : t.label,
+            selectLabel: attention ? `${t.label} (${attentionCount})` : t.label,
             badge: attention && (
               <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-loss px-1 font-mono text-[10px] font-bold leading-none text-white">
-                {institutionSummary.attentionCount}
+                {attentionCount}
               </span>
             ),
           };
@@ -881,6 +1001,210 @@ const Settings = () => {
       </>
       )}
 
+      {activeTab === 'ethereum' && (
+      <>
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Ethereum Wallets</h2>
+          <p className="mt-1 text-xs text-secondary">Track any Ethereum address via Etherscan: ETH and token balances, transfers between your own wallets, external transfers, and gas fees.</p>
+        </div>
+
+        <form onSubmit={handleAddWallet} className="card mb-4 p-4">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] sm:items-end">
+            <label className="min-w-0 text-caption text-tertiary">
+              Address
+              <input
+                type="text"
+                value={walletAddress}
+                onChange={(event) => setWalletAddress(event.target.value)}
+                placeholder="0x…"
+                spellCheck={false}
+                autoComplete="off"
+                className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 font-mono text-body-sm text-primary"
+                disabled={addingWallet}
+              />
+            </label>
+            <label className="min-w-0 text-caption text-tertiary">
+              Label (optional)
+              <input
+                type="text"
+                value={walletLabel}
+                onChange={(event) => setWalletLabel(event.target.value)}
+                maxLength={100}
+                placeholder="Cold storage"
+                className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                disabled={addingWallet}
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={addingWallet}
+              className="inline-flex h-10 items-center justify-center gap-2 bg-accent px-4 text-button font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-40"
+            >
+              {addingWallet ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+              Track Wallet
+            </button>
+          </div>
+          {addingWallet && (
+            <p className="mt-3 text-caption text-tertiary">Fetching on-chain history from Etherscan. The first sync of a busy wallet can take a while.</p>
+          )}
+        </form>
+
+        {ethWallets.length === 0 ? (
+          <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
+            <Wallet size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
+            <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Wallets Tracked</h3>
+            <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed">
+              Paste an Ethereum address above to pull its balance and full transfer history. Transfers between your own tracked wallets are recognized automatically.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {ethWallets.map((wallet) => (
+              <Motion.div layout key={wallet.id} className="card overflow-hidden border-border">
+                <div className="p-5 md:p-6">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="w-12 h-12 rounded bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 shadow-sm">
+                        <Wallet size={24} className="text-accent" />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="text-base font-bold text-primary truncate leading-tight">
+                          {wallet.label || (wallet.account ? getAccountDisplayName(wallet.account) : shortEthAddress(wallet.address))}
+                        </h3>
+                        <div className="flex flex-wrap items-center gap-4 mt-1">
+                          <span className="font-mono text-[10px] text-tertiary" title={wallet.address}>
+                            {shortEthAddress(wallet.address)}
+                          </span>
+                          {wallet.eth_quantity != null && (
+                            <span className="font-mono text-[10px] font-bold text-secondary">
+                              {parseFloat(wallet.eth_quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })} ETH
+                            </span>
+                          )}
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                            <Clock size={12} />
+                            {formatRelativeTime(wallet.last_synced_at)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={`https://etherscan.io/address/${wallet.address}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all"
+                      >
+                        Etherscan
+                      </a>
+                      <button
+                        onClick={() => handleEthSync(wallet.id)}
+                        disabled={ethSyncingId === wallet.id}
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all disabled:opacity-50"
+                      >
+                        <RefreshCw size={14} className={ethSyncingId === wallet.id ? 'animate-spin' : ''} />
+                        Sync
+                      </button>
+                      <button
+                        onClick={() => { setRemoveDataOnWalletDisconnect(true); setDisconnectingWallet(wallet); }}
+                        className="p-2.5 rounded text-tertiary hover:text-loss hover:bg-loss/10 border border-transparent transition-all"
+                        title="Disconnect Wallet"
+                      >
+                        <Unlink size={18} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {wallet.error_code && (
+                    <div className="mt-5 p-4 rounded border text-xs leading-relaxed bg-loss/5 border-loss/20 text-loss">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                        <p>{wallet.error_message || `Wallet sync reported an error: ${wallet.error_code}`}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </Motion.div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Ignored Tokens</h2>
+          <p className="mt-1 text-xs text-secondary">Scam and airdrop tokens you cannot send stay in your wallet forever. Ignoring a token removes it from holdings and activity everywhere.</p>
+        </div>
+
+        <div className="card overflow-hidden">
+          <form onSubmit={handleIgnoreToken} className="border-b border-border p-4">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] sm:items-end">
+              <label className="min-w-0 text-caption text-tertiary">
+                Token contract address
+                <input
+                  type="text"
+                  value={ignoreContract}
+                  onChange={(event) => setIgnoreContract(event.target.value)}
+                  placeholder="0x…"
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 font-mono text-body-sm text-primary"
+                  disabled={updatingIgnoreList}
+                />
+              </label>
+              <label className="min-w-0 text-caption text-tertiary">
+                Symbol (optional)
+                <input
+                  type="text"
+                  value={ignoreSymbol}
+                  onChange={(event) => setIgnoreSymbol(event.target.value)}
+                  maxLength={64}
+                  placeholder="SCAM"
+                  className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                  disabled={updatingIgnoreList}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={updatingIgnoreList}
+                className="inline-flex h-10 items-center justify-center gap-2 bg-surface-3 border border-border px-4 text-button font-semibold text-secondary transition-colors hover:border-loss/30 hover:text-loss disabled:opacity-40"
+              >
+                {updatingIgnoreList ? <RefreshCw size={14} className="animate-spin" /> : <EyeOff size={14} />}
+                Ignore Token
+              </button>
+            </div>
+          </form>
+
+          {ignoredTokens.length === 0 ? (
+            <div className="p-6 text-center text-sm text-secondary">No tokens are ignored.</div>
+          ) : (
+            <div className="divide-y divide-border">
+              {ignoredTokens.map((token) => (
+                <div key={token.contract_address} className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <span className="block text-body-sm font-semibold text-primary">{token.symbol || 'Unknown token'}</span>
+                    <span className="block truncate font-mono text-[10px] text-tertiary" title={token.contract_address}>
+                      {token.contract_address}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleUnignoreToken(token.contract_address)}
+                    disabled={updatingIgnoreList}
+                    className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+                  >
+                    <Undo2 size={14} />
+                    Unignore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+      </>
+      )}
+
       {activeTab === 'accounts' && (
       <>
       <section className="mb-8">
@@ -1058,6 +1382,69 @@ const Settings = () => {
                   className="flex-1 py-4 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all"
                 >
                   Confirm Delete
+                </button>
+              </div>
+            </Motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Wallet Disconnect Confirm Modal */}
+      <AnimatePresence>
+        {disconnectingWallet && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setDisconnectingWallet(null)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative max-h-[100dvh] w-full max-w-lg overflow-y-auto border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
+              <div className="p-5 pb-3 text-center sm:p-8 sm:pb-4">
+                <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Unlink size={28} />
+                </div>
+                <h2 className="text-2xl font-bold text-primary mb-2 tracking-tight">Disconnect Wallet</h2>
+                <p className="text-sm text-secondary leading-relaxed">
+                  You are about to stop tracking <span className="font-mono text-primary font-bold">{shortEthAddress(disconnectingWallet.address)}</span>. How should we handle existing data?
+                </p>
+              </div>
+
+              <div className="space-y-3 p-5 sm:p-8">
+                <button
+                  onClick={() => setRemoveDataOnWalletDisconnect(true)}
+                  className={`w-full flex items-start gap-4 p-4 rounded border text-left transition-all ${removeDataOnWalletDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
+                >
+                  <div className={`mt-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${removeDataOnWalletDisconnect ? 'border-accent' : 'border-tertiary'}`}>
+                    {removeDataOnWalletDisconnect && <div className="w-2 h-2 rounded-full bg-accent" />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-primary">Full Purge (Recommended)</p>
+                    <p className="text-[11px] text-secondary mt-0.5">Delete the account, holdings, transfer history, and historical data for this wallet.</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setRemoveDataOnWalletDisconnect(false)}
+                  className={`w-full flex items-start gap-4 p-4 rounded border text-left transition-all ${!removeDataOnWalletDisconnect ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
+                >
+                  <div className={`mt-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${!removeDataOnWalletDisconnect ? 'border-accent' : 'border-tertiary'}`}>
+                    {!removeDataOnWalletDisconnect && <div className="w-2 h-2 rounded-full bg-accent" />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-primary">Unlink & Keep Data</p>
+                    <p className="text-[11px] text-secondary mt-0.5">Stop syncing. The account and its current holdings become manual entries; on-chain transfer history is removed.</p>
+                  </div>
+                </button>
+              </div>
+
+              <div className="sticky bottom-0 flex gap-3 bg-surface p-5 pt-0 sm:static sm:p-8 sm:pt-0">
+                <button
+                  onClick={() => setDisconnectingWallet(null)}
+                  className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleWalletDisconnectConfirm}
+                  className="flex-1 py-4 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all"
+                >
+                  Confirm Disconnect
                 </button>
               </div>
             </Motion.div>
