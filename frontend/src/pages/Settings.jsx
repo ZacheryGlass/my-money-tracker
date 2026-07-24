@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt } from 'lucide-react';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag } from 'lucide-react';
 import { plaid as plaidAPI, eth as ethAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
@@ -253,6 +253,10 @@ const Settings = () => {
   const [ignoreContract, setIgnoreContract] = useState('');
   const [ignoreSymbol, setIgnoreSymbol] = useState('');
   const [updatingIgnoreList, setUpdatingIgnoreList] = useState(false);
+  const [addressLabels, setAddressLabels] = useState([]);
+  const [labelAddressInput, setLabelAddressInput] = useState('');
+  const [labelNameInput, setLabelNameInput] = useState('');
+  const [updatingLabels, setUpdatingLabels] = useState(false);
   const [activeTab, setActiveTab] = useState(() =>
     SETTINGS_TABS.some((t) => t.id === location.state?.tab) ? location.state.tab : 'appearance'
   );
@@ -276,15 +280,17 @@ const Settings = () => {
     try {
       // Ethereum data is fetched alongside but must not fail the whole page:
       // a wallet-side error should degrade only the Ethereum tab.
-      const [plaidData, accountsData, ethResult, ignoredResult] = await Promise.all([
+      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
         ethAPI.getWallets().catch(() => null),
         ethAPI.getIgnoredTokens().catch(() => null),
+        ethAPI.getAddressLabels().catch(() => null),
       ]);
       const loadedItems = plaidData.items || [];
       setEthWallets(ethResult?.wallets || []);
       setIgnoredTokens(ignoredResult?.tokens || []);
+      setAddressLabels(labelsResult?.labels || []);
       setItems(loadedItems);
       setConsentItems(new Set(
         loadedItems
@@ -467,6 +473,47 @@ const Settings = () => {
       setError(err.response?.data?.error || 'Failed to unignore token');
     } finally {
       setUpdatingIgnoreList(false);
+    }
+  };
+
+  const handleLabelAddress = async (event) => {
+    event.preventDefault();
+    const address = labelAddressInput.trim();
+    const name = labelNameInput.trim();
+    if (!ETH_ADDRESS_RE.test(address)) {
+      setError('Enter the counterparty address (0x followed by 40 hex characters)');
+      return;
+    }
+    if (!name) {
+      setError('Enter a name for the address (e.g. Coinbase)');
+      return;
+    }
+    setUpdatingLabels(true);
+    setError(null);
+    try {
+      await ethAPI.labelAddress(address, name);
+      showSuccess('Address labeled');
+      setLabelAddressInput('');
+      setLabelNameInput('');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to label address');
+    } finally {
+      setUpdatingLabels(false);
+    }
+  };
+
+  const handleUnlabelAddress = async (address) => {
+    setUpdatingLabels(true);
+    setError(null);
+    try {
+      await ethAPI.unlabelAddress(address);
+      showSuccess('Address label removed');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to remove address label');
+    } finally {
+      setUpdatingLabels(false);
     }
   };
 
@@ -1116,6 +1163,87 @@ const Settings = () => {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Labeled Addresses</h2>
+          <p className="mt-1 text-xs text-secondary">Transfers to or from a labeled address count as exchange deposits and withdrawals instead of external activity. Withdrawals from major exchanges&apos; shared hot wallets are recognized automatically; deposits go to a personal address the exchange assigned you, so label that one by hand.</p>
+        </div>
+
+        <div className="card overflow-hidden">
+          <form onSubmit={handleLabelAddress} className="border-b border-border p-4">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] sm:items-end">
+              <label className="min-w-0 text-caption text-tertiary">
+                Address
+                <input
+                  type="text"
+                  value={labelAddressInput}
+                  onChange={(event) => setLabelAddressInput(event.target.value)}
+                  placeholder="0x…"
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 font-mono text-body-sm text-primary"
+                  disabled={updatingLabels}
+                />
+              </label>
+              <label className="min-w-0 text-caption text-tertiary">
+                Name
+                <input
+                  type="text"
+                  value={labelNameInput}
+                  onChange={(event) => setLabelNameInput(event.target.value)}
+                  maxLength={64}
+                  placeholder="Coinbase"
+                  className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                  disabled={updatingLabels}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={updatingLabels}
+                className="inline-flex h-10 items-center justify-center gap-2 bg-surface-3 border border-border px-4 text-button font-semibold text-secondary transition-colors hover:border-accent hover:text-accent disabled:opacity-40"
+              >
+                {updatingLabels ? <RefreshCw size={14} className="animate-spin" /> : <Tag size={14} />}
+                Label Address
+              </button>
+            </div>
+          </form>
+
+          {addressLabels.length === 0 ? (
+            <div className="p-6 text-center text-sm text-secondary">No addresses are labeled.</div>
+          ) : (
+            <div className="divide-y divide-border">
+              {addressLabels.map((label) => (
+                <div key={label.address} className="flex items-center justify-between gap-4 px-4 py-3">
+                  <div className="min-w-0">
+                    <span className="flex items-center gap-2 text-body-sm font-semibold text-primary">
+                      {label.name}
+                      {label.source === 'builtin' && (
+                        <span className="inline-flex shrink-0 items-center px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide rounded-full border border-border bg-surface-3 text-tertiary" title={label.note || undefined}>
+                          Built-in
+                        </span>
+                      )}
+                    </span>
+                    <span className="block truncate font-mono text-[10px] text-tertiary" title={label.address}>
+                      {label.address}
+                    </span>
+                  </div>
+                  {label.source !== 'builtin' && (
+                    <button
+                      onClick={() => handleUnlabelAddress(label.address)}
+                      disabled={updatingLabels}
+                      className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+                    >
+                      <Undo2 size={14} />
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="mb-8">

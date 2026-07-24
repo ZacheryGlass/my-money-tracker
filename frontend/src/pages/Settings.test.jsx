@@ -26,6 +26,9 @@ const apiMocks = vi.hoisted(() => ({
     getIgnoredTokens: vi.fn(),
     ignoreToken: vi.fn(),
     unignoreToken: vi.fn(),
+    getAddressLabels: vi.fn(),
+    labelAddress: vi.fn(),
+    unlabelAddress: vi.fn(),
   },
   holdings: {
     create: vi.fn(),
@@ -64,6 +67,7 @@ describe('Settings display names', () => {
     apiMocks.plaid.getItems.mockResolvedValue({ items: [] });
     apiMocks.eth.getWallets.mockResolvedValue({ wallets: [] });
     apiMocks.eth.getIgnoredTokens.mockResolvedValue({ tokens: [] });
+    apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
     apiMocks.accounts.getAll.mockResolvedValue({
       accounts: [
         {
@@ -108,6 +112,23 @@ describe('Settings display names', () => {
     await waitFor(() => {
       expect(apiMocks.accounts.updateDisplayName).toHaveBeenCalledWith(7, 'Checking');
     });
+  });
+
+  it('renders builtin labels without a remove button and user labels with one', async () => {
+    apiMocks.eth.getAddressLabels.mockResolvedValue({
+      labels: [
+        { address: '0x1111111111111111111111111111111111111111', name: 'Coinbase', source: 'builtin', note: 'Etherscan tag: Coinbase 1' },
+        { address: '0x2222222222222222222222222222222222222222', name: 'My Deposit', source: 'user', note: null },
+      ],
+    });
+    renderSettings();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Ethereum' }));
+
+    await screen.findByText('Labeled Addresses');
+    expect(await screen.findByText('Built-in')).toBeInTheDocument();
+    // Exactly one Remove button: the user row's. The builtin row has none.
+    expect(screen.getAllByRole('button', { name: /remove/i })).toHaveLength(1);
+    expect(screen.getByText('My Deposit')).toBeInTheDocument();
   });
 
   it('loads all accounts and toggles account visibility', async () => {
