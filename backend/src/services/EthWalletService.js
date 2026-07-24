@@ -1,11 +1,33 @@
 'use strict';
 
+const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
+const PriceService = require('./PriceService');
 const EthWallet = require('../models/EthWallet');
 const EthTransfer = require('../models/EthTransfer');
 const logger = require('../config/logger');
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
+
+// holdings.quantity is DECIMAL(20,8): 12 integer digits, 8 fractional.
+// Scam-token airdrops mint absurd quantities that would overflow the column
+// and break the whole sync, so quantities are clamped; the ignore list is the
+// real remedy for those tokens.
+const MAX_QUANTITY = '999999999999.99999999';
+
+function unitsToDecimalString(value, decimals) {
+  const v = BigInt(value);
+  if (v <= 0n) return '0';
+  const base = 10n ** BigInt(decimals);
+  const whole = v / base;
+  if (whole.toString().length > 12) return MAX_QUANTITY;
+  const frac = (v % base).toString().padStart(Number(decimals), '0').slice(0, 8);
+  return frac ? `${whole}.${frac}` : whole.toString();
+}
+
+function shortAddress(address) {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
 
 // Sync resumes this many blocks before the stored cursor so a chain reorg
 // near the tip is healed by the delete-then-reinsert ingest.
@@ -121,11 +143,13 @@ class EthWalletService {
         token: maxBlock(token),
       });
       await EthTransfer.reclassifyOwnCounterparties();
+      const holdings = await this.refreshHoldings(walletId);
       await EthWallet.clearError(walletId);
       await EthWallet.updateSyncTime(walletId);
 
       const results = {
         inserted,
+        holdings,
         fetched: { normal: normal.length, internal: internal.length, token: token.length },
       };
       logger.info({ walletId, address: wallet.address, results }, 'ETH wallet sync completed');
@@ -172,11 +196,107 @@ class EthWalletService {
     }
 
     const wallet = await EthWallet.create(normalized, label);
+
+    // The account's stable name is derived from the address (unique by
+    // construction); the user-facing label rides on display_name like every
+    // other renamed account.
+    const accountResult = await pool.query(
+      `INSERT INTO accounts (name, type, display_name, eth_wallet_id)
+       VALUES ($1, 'crypto', $2, $3)
+       RETURNING *`,
+      [`Ethereum ${shortAddress(normalized)}`, label?.trim() || null, wallet.id]
+    );
+
     // A new own-address can turn previously-external transfers into
     // self-transfers on other wallets.
     await EthTransfer.reclassifyOwnCounterparties();
     logger.info({ walletId: wallet.id, address: normalized }, 'ETH wallet added');
-    return wallet;
+    return { wallet, account: accountResult.rows[0] };
+  }
+
+  // Rebuilds the wallet account's holdings: an ETH position priced later by
+  // the regular price job (ticker ETH -> price_cache), plus one row per
+  // non-ignored token. Token symbols never become tickers -- a scam token
+  // named "AAPL" must not inherit Apple's stock price -- so tokens are
+  // NULL-ticker holdings valued via manual_value at sync time.
+  static async refreshHoldings(walletId) {
+    const wallet = await EthWallet.findById(walletId);
+    if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
+    const account = await EthWallet.getAccountForWallet(walletId);
+    if (!account) return { skipped: true };
+
+    const wei = await EtherscanService.getEthBalance(wallet.address);
+    const desired = [{
+      ticker: 'ETH',
+      name: 'Ethereum',
+      quantity: unitsToDecimalString(wei, 18),
+      manual_value: null,
+    }];
+
+    const deltas = await EthTransfer.tokenBalanceDeltas(walletId);
+    const held = deltas.filter((d) => BigInt(d.balance_units) > 0n);
+
+    let prices = {};
+    if (held.length) {
+      try {
+        const contracts = held.map((d) => d.token_contract).join(',');
+        prices = await PriceService.fetchCoinGeckoJson(
+          `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${encodeURIComponent(contracts)}&vs_currencies=usd`
+        );
+      } catch (err) {
+        logger.warn({ walletId, err }, 'Token price lookup failed; token holdings stay unvalued');
+        prices = {};
+      }
+    }
+
+    for (const delta of held) {
+      const decimals = delta.token_decimals != null ? Number(delta.token_decimals) : 18;
+      const quantity = unitsToDecimalString(delta.balance_units, decimals);
+      const usd = Number(prices[delta.token_contract]?.usd);
+      const manualValue = Number.isFinite(usd)
+        ? Math.round(usd * Number(quantity) * 100) / 100
+        : null;
+      desired.push({
+        ticker: null,
+        name: `${delta.token_symbol || 'TOKEN'} ${shortAddress(delta.token_contract)}`,
+        quantity,
+        manual_value: manualValue,
+      });
+    }
+
+    for (const holding of desired) {
+      const matchClause = holding.ticker
+        ? 'account_id = $1 AND UPPER(ticker) = UPPER($2)'
+        : 'account_id = $1 AND ticker IS NULL AND name = $2';
+      const matchParams = holding.ticker ? [account.id, holding.ticker] : [account.id, holding.name];
+      const existing = await pool.query(`SELECT id FROM holdings WHERE ${matchClause}`, matchParams);
+      if (existing.rows.length > 0) {
+        await pool.query(
+          `UPDATE holdings SET name = $1, quantity = $2, manual_value = $3, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $4`,
+          [holding.name, holding.quantity, holding.manual_value, existing.rows[0].id]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO holdings (account_id, ticker, name, quantity, manual_value)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [account.id, holding.ticker, holding.name, holding.quantity, holding.manual_value]
+        );
+      }
+    }
+
+    // The account exists solely for this wallet, so anything the sync did not
+    // produce (sold-out positions, newly-ignored tokens) is stale.
+    const identifiers = desired.map((h) => (h.ticker || h.name).toUpperCase());
+    const placeholders = identifiers.map((_, i) => `$${i + 2}`).join(', ');
+    await pool.query(
+      `DELETE FROM holdings
+       WHERE account_id = $1
+       AND COALESCE(UPPER(ticker), UPPER(name)) NOT IN (${placeholders})`,
+      [account.id, ...identifiers]
+    );
+
+    return { eth: desired[0].quantity, tokens: held.length };
   }
 
   static async removeWallet(walletId, { removeData = false } = {}) {

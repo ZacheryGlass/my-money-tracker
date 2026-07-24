@@ -15,7 +15,7 @@ const EFFECTIVE_ACCOUNT_NAME_SQL = "COALESCE(NULLIF(TRIM(a.display_name), ''), a
 const ACCOUNT_RETURN_SELECT = `a.id, a.name, a.display_name,
                  ${EFFECTIVE_ACCOUNT_NAME_SQL} AS effective_name,
                  a.is_hidden,
-                 a.type, a.subtype, a.tax_treatment, a.plaid_item_id`;
+                 a.type, a.subtype, a.tax_treatment, a.plaid_item_id, a.eth_wallet_id`;
 const VALID_TAX_TREATMENTS = ['taxable', 'traditional', 'roth', 'hsa'];
 
 // POST /api/accounts - Create a new manual account
@@ -176,12 +176,15 @@ router.delete('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     const id = parseInt(req.params.id);
-    const account = await client.query('SELECT id, name, plaid_item_id FROM accounts WHERE id = $1', [id]);
+    const account = await client.query('SELECT id, name, plaid_item_id, eth_wallet_id FROM accounts WHERE id = $1', [id]);
     if (account.rows.length === 0) {
       return res.status(404).json({ error: 'Account not found' });
     }
     if (account.rows[0].plaid_item_id) {
       return res.status(400).json({ error: 'Cannot delete a Plaid-linked account. Disconnect the Plaid connection first.' });
+    }
+    if (account.rows[0].eth_wallet_id) {
+      return res.status(400).json({ error: 'Cannot delete a wallet-linked account. Disconnect the Ethereum wallet first.' });
     }
 
     await client.query('BEGIN');
