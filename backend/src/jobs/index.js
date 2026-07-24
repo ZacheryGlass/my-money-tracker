@@ -4,6 +4,7 @@ const cron = require('node-cron');
 const PriceUpdateJob = require('./priceUpdateJob');
 const SnapshotJob = require('./snapshotJob');
 const PlaidSyncJob = require('./plaidSyncJob');
+const EthSyncJob = require('./ethSyncJob');
 const BenchmarkUpdateJob = require('./benchmarkUpdateJob');
 const ExpenseSyncJob = require('./expenseSyncJob');
 const JobLog = require('../models/JobLog');
@@ -11,6 +12,7 @@ const logger = require('../config/logger');
 
 // Store scheduled task references
 let plaidSyncTask = null;
+let ethSyncTask = null;
 let priceUpdateTask = null;
 let snapshotTask = null;
 let benchmarkUpdateTask = null;
@@ -36,6 +38,19 @@ function initializeJobs() {
       await ExpenseSyncJob.run();
     } catch (error) {
       logger.error({ err: error }, '[scheduler] Expense sync failed');
+    }
+  }, {
+    timezone: 'Etc/UTC'
+  });
+
+  // Schedule ETH wallet sync at 7:50 AM UTC daily (before price update so the
+  // ETH price and 9:00 snapshots see fresh quantities)
+  ethSyncTask = cron.schedule('50 7 * * *', async () => {
+    logger.info('[scheduler] Running scheduled ETH wallet sync...');
+    try {
+      await EthSyncJob.run();
+    } catch (error) {
+      logger.error({ err: error }, '[scheduler] ETH wallet sync failed');
     }
   }, {
     timezone: 'Etc/UTC'
@@ -85,6 +100,10 @@ function stopJobs() {
     plaidSyncTask.stop();
     plaidSyncTask.destroy();
   }
+  if (ethSyncTask) {
+    ethSyncTask.stop();
+    ethSyncTask.destroy();
+  }
   if (priceUpdateTask) {
     priceUpdateTask.stop();
     priceUpdateTask.destroy();
@@ -105,8 +124,9 @@ function stopJobs() {
 }
 
 async function getJobStatus() {
-  const [latestPlaidSync, latestPriceUpdate, latestSnapshot, latestBenchmarkUpdate, latestExpenseSync] = await Promise.all([
+  const [latestPlaidSync, latestEthSync, latestPriceUpdate, latestSnapshot, latestBenchmarkUpdate, latestExpenseSync] = await Promise.all([
     JobLog.getLatest(PlaidSyncJob.JOB_NAME),
+    JobLog.getLatest(EthSyncJob.JOB_NAME),
     JobLog.getLatest(PriceUpdateJob.JOB_NAME),
     JobLog.getLatest(SnapshotJob.JOB_NAME),
     JobLog.getLatest(BenchmarkUpdateJob.JOB_NAME),
@@ -126,6 +146,12 @@ async function getJobStatus() {
         timezone: 'Etc/UTC',
         description: 'Matches recurring expenses to transaction merchants and refreshes derived costs',
         lastRun: latestExpenseSync || null
+      },
+      'eth-sync': {
+        schedule: '50 7 * * *',
+        timezone: 'Etc/UTC',
+        description: 'Syncs transfers and balances for tracked Ethereum wallets via Etherscan',
+        lastRun: latestEthSync || null
       },
       'price-update': {
         schedule: '0 8 * * *',
@@ -154,6 +180,7 @@ module.exports = {
   stopJobs,
   getJobStatus,
   PlaidSyncJob,
+  EthSyncJob,
   PriceUpdateJob,
   SnapshotJob,
   BenchmarkUpdateJob,

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const requireUser = require('../middleware/auth');
-const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, PlaidSyncJob, ExpenseSyncJob } = require('../jobs');
+const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, PlaidSyncJob, EthSyncJob, ExpenseSyncJob } = require('../jobs');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
@@ -129,6 +129,27 @@ router.post('/trigger/plaid-sync', async (req, res, next) => {
     const result = await PlaidSyncJob.run();
     res.json({
       message: 'Plaid sync job completed',
+      result
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/jobs/trigger/eth-sync - Manually trigger ETH wallet sync for every wallet
+router.post('/trigger/eth-sync', async (req, res, next) => {
+  try {
+    const isRunning = await JobLog.isRunning(EthSyncJob.JOB_NAME);
+    if (isRunning) {
+      return res.status(409).json({
+        error: 'Job already running',
+        message: 'An ETH wallet sync job is currently in progress'
+      });
+    }
+
+    const result = await EthSyncJob.run();
+    res.json({
+      message: 'ETH wallet sync job completed',
       result
     });
   } catch (error) {
