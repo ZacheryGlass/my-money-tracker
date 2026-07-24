@@ -6,8 +6,8 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { AnimatePresence, motion as Motion } from 'framer-motion';
-import { ArrowLeft, Link2, Wallet, Receipt, X, Activity, PenLine } from 'lucide-react';
-import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi } from '../utils/api';
+import { ArrowLeft, Link2, Wallet, Receipt, X, Activity, PenLine, ExternalLink, EyeOff, RefreshCw } from 'lucide-react';
+import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, transactions as transactionsApi, eth as ethAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import DataTable, { DataTablePagination } from '../components/DataTable';
@@ -90,6 +90,249 @@ const AccountStatusPills = ({ account, inactive }) => (
     {inactive && <InactivePill />}
   </div>
 );
+
+const TRANSFER_PAGE_SIZE = 100;
+
+const TRANSFER_TYPE_OPTIONS = [
+  { value: '', label: 'All' },
+  { value: 'external', label: 'External' },
+  { value: 'self', label: 'Self' },
+  { value: 'gas', label: 'Gas' },
+  { value: 'token', label: 'Tokens' },
+];
+
+const TRANSFER_CHIP_STYLES = {
+  Self: 'bg-accent/10 text-accent border-accent/20',
+  External: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  Gas: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  Token: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+};
+
+const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'unknown');
+
+const transferChipLabel = (transfer) => {
+  if (transfer.transfer_type === 'gas') return 'Gas';
+  if (transfer.counterparty_is_own) return 'Self';
+  return transfer.transfer_type === 'token' ? 'Token' : 'External';
+};
+
+const formatTransferQuantity = (transfer) => {
+  const decimals = transfer.transfer_type === 'token'
+    ? (transfer.token_decimals != null ? Number(transfer.token_decimals) : 18)
+    : 18;
+  const quantity = Number(transfer.value_wei) / 10 ** decimals;
+  const symbol = transfer.transfer_type === 'token' ? (transfer.token_symbol || 'TOKEN') : 'ETH';
+  return `${quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${symbol}`;
+};
+
+// Dedicated on-chain ledger for wallet-linked accounts, fed by the raw
+// eth_transfers feed rather than the mirrored transactions table.
+const OnChainActivity = ({ walletId }) => {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [walletAddress, setWalletAddress] = useState(null);
+  const [typeFilter, setTypeFilter] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState(null);
+  const [ignoringContract, setIgnoringContract] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchWallet = async () => {
+      try {
+        const data = await ethAPI.getWallets();
+        if (cancelled) return;
+        const wallet = (data.wallets || []).find((w) => w.id === walletId);
+        setWalletAddress(wallet?.address || null);
+      } catch {
+        if (!cancelled) setWalletAddress(null);
+      }
+    };
+    fetchWallet();
+    return () => { cancelled = true; };
+  }, [walletId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchTransfers = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await ethAPI.getTransfers(walletId, {
+          type: typeFilter || undefined,
+          limit: TRANSFER_PAGE_SIZE,
+          offset: 0,
+        });
+        if (cancelled) return;
+        setRows(result.data || []);
+        setTotal(result.pagination?.total || 0);
+      } catch (err) {
+        if (!cancelled) setError(err.response?.data?.error || 'Failed to load on-chain activity');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    fetchTransfers();
+    return () => { cancelled = true; };
+  }, [walletId, typeFilter, refreshKey]);
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const result = await ethAPI.getTransfers(walletId, {
+        type: typeFilter || undefined,
+        limit: TRANSFER_PAGE_SIZE,
+        offset: rows.length,
+      });
+      setRows((prev) => [...prev, ...(result.data || [])]);
+      setTotal(result.pagination?.total || 0);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load more transfers');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const handleIgnoreToken = async (transfer) => {
+    setIgnoringContract(transfer.token_contract);
+    setError(null);
+    try {
+      await ethAPI.ignoreToken(transfer.token_contract, transfer.token_symbol || undefined);
+      setRefreshKey((key) => key + 1);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to ignore token');
+    } finally {
+      setIgnoringContract(null);
+    }
+  };
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Activity className="text-accent w-4 h-4" />
+          <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">On-chain Activity</h2>
+        </div>
+        {total > 0 && (
+          <span className="text-[10px] font-bold text-accent px-2 py-0.5 rounded bg-accent/10 border border-accent/20">
+            {total} Total
+          </span>
+        )}
+      </div>
+
+      <FilterTabs
+        id="eth-transfer-type"
+        label="Transfer type"
+        className="mb-3"
+        options={TRANSFER_TYPE_OPTIONS}
+        value={typeFilter}
+        onChange={setTypeFilter}
+      />
+
+      {error && (
+        <div className="mb-3 flex items-center gap-2 border border-loss/20 bg-loss-bg p-2 text-body-sm text-loss">
+          <X size={16} />
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <LoadingState label="Fetching on-chain activity" className="py-12 card" />
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 gap-2 card opacity-50">
+          <Activity size={32} className="text-tertiary" />
+          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">No transfers found</p>
+        </div>
+      ) : (
+        <>
+          <div className="card divide-y divide-border overflow-hidden">
+            {rows.map((transfer) => {
+              const incoming = walletAddress ? transfer.to_address === walletAddress : false;
+              const outbound = transfer.transfer_type === 'gas' || !incoming;
+              const chip = transferChipLabel(transfer);
+              const counterparty = transfer.transfer_type === 'gas'
+                ? null
+                : outbound ? transfer.to_address : transfer.from_address;
+              return (
+                <div key={transfer.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className={`inline-flex shrink-0 items-center px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide border ${TRANSFER_CHIP_STYLES[chip]}`}>
+                      {chip}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-bold text-primary">
+                          {transfer.transfer_type === 'gas'
+                            ? 'Gas fee'
+                            : `${outbound ? 'To' : 'From'} ${shortEthAddress(counterparty)}`}
+                        </span>
+                        {transfer.is_error && (
+                          <span className="inline-flex shrink-0 items-center px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide border border-loss/20 bg-loss/10 text-loss">
+                            Failed
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-3 text-[10px] text-tertiary">
+                        <span className="font-mono">{formatDateDisplay(transfer.block_time)}</span>
+                        <a
+                          href={`https://etherscan.io/tx/${transfer.tx_hash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 font-mono hover:text-accent transition-colors"
+                          title={transfer.tx_hash}
+                        >
+                          {`${transfer.tx_hash.slice(0, 10)}…`}
+                          <ExternalLink size={10} />
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-3 sm:justify-end">
+                    <span className={`font-mono text-sm font-bold ${outbound ? 'text-loss' : 'text-gain'}`}>
+                      {outbound ? '-' : '+'}{formatTransferQuantity(transfer)}
+                    </span>
+                    {transfer.transfer_type === 'token' && transfer.token_contract && (
+                      <button
+                        onClick={() => handleIgnoreToken(transfer)}
+                        disabled={ignoringContract === transfer.token_contract}
+                        title="Ignore this token everywhere"
+                        className="inline-flex h-7 items-center justify-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-loss/30 hover:text-loss disabled:opacity-40"
+                      >
+                        {ignoringContract === transfer.token_contract
+                          ? <RefreshCw size={10} className="animate-spin" />
+                          : <EyeOff size={10} />}
+                        Ignore
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 flex items-center justify-between px-1">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
+              Showing {rows.length} of {total}
+            </span>
+            {rows.length < total && (
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-50"
+              >
+                {loadingMore && <RefreshCw size={12} className="animate-spin" />}
+                Load More
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+};
 
 const AccountsPage = () => {
   const [accounts, setAccounts] = useState([]);
@@ -714,6 +957,10 @@ const AccountsPage = () => {
                 )}
               </div>
             </section>
+
+            {selectedAccount.eth_wallet_id && (
+              <OnChainActivity walletId={selectedAccount.eth_wallet_id} />
+            )}
           </div>
         </div>
       </Motion.div>
