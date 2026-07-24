@@ -242,8 +242,10 @@ const Settings = () => {
   const [mobileEditingAccountId, setMobileEditingAccountId] = useState(null);
   const [ethWallets, setEthWallets] = useState([]);
   const [ignoredTokens, setIgnoredTokens] = useState([]);
+  const [cryptoModalOpen, setCryptoModalOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
   const [walletLabel, setWalletLabel] = useState('');
+  const [walletFormError, setWalletFormError] = useState(null);
   const [addingWallet, setAddingWallet] = useState(false);
   const [ethSyncingId, setEthSyncingId] = useState(null);
   const [disconnectingWallet, setDisconnectingWallet] = useState(null);
@@ -367,25 +369,33 @@ const Settings = () => {
     }
   };
 
+  const openCryptoModal = () => {
+    setWalletAddress('');
+    setWalletLabel('');
+    setWalletFormError(null);
+    setCryptoModalOpen(true);
+  };
+
   const handleAddWallet = async (event) => {
     event.preventDefault();
     const address = walletAddress.trim();
     if (!ETH_ADDRESS_RE.test(address)) {
-      setError('Enter a valid Ethereum address (0x followed by 40 hex characters)');
+      setWalletFormError('Enter a valid Ethereum address (0x followed by 40 hex characters)');
       return;
     }
     setAddingWallet(true);
-    setError(null);
+    setWalletFormError(null);
     try {
       await ethAPI.addWallet(address, walletLabel.trim() || undefined);
       // The first sync runs in the background; its result surfaces on the
       // wallet card (balance, last-synced, or an error badge).
       showSuccess('Wallet added. Syncing on-chain history in the background.');
+      setCryptoModalOpen(false);
       setWalletAddress('');
       setWalletLabel('');
       await fetchItems();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to add wallet');
+      setWalletFormError(err.response?.data?.error || 'Failed to add wallet');
     } finally {
       setAddingWallet(false);
     }
@@ -592,8 +602,15 @@ const Settings = () => {
           <p className="text-sm text-secondary">Manage data tools, institution connections, display names, and visibility</p>
         </div>
 
-        <div className="flex items-center gap-4 [&>button]:w-full sm:[&>button]:w-auto">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center [&>button]:w-full sm:[&>button]:w-auto">
           <PlaidLinkButton onSuccess={handlePlaidSuccess} onError={setError} disabled={connecting} />
+          <button
+            onClick={openCryptoModal}
+            className="flex items-center justify-center gap-2 px-6 py-4 rounded text-sm font-bold text-purple-300 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 hover:text-purple-200 transition-all"
+          >
+            <Wallet size={18} />
+            Connect Crypto
+          </button>
         </div>
       </div>
 
@@ -1009,52 +1026,20 @@ const Settings = () => {
           <p className="mt-1 text-xs text-secondary">Track any Ethereum address via Etherscan: ETH and token balances, transfers between your own wallets, external transfers, and gas fees.</p>
         </div>
 
-        <form onSubmit={handleAddWallet} className="card mb-4 p-4">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] sm:items-end">
-            <label className="min-w-0 text-caption text-tertiary">
-              Address
-              <input
-                type="text"
-                value={walletAddress}
-                onChange={(event) => setWalletAddress(event.target.value)}
-                placeholder="0x…"
-                spellCheck={false}
-                autoComplete="off"
-                className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 font-mono text-body-sm text-primary"
-                disabled={addingWallet}
-              />
-            </label>
-            <label className="min-w-0 text-caption text-tertiary">
-              Label (optional)
-              <input
-                type="text"
-                value={walletLabel}
-                onChange={(event) => setWalletLabel(event.target.value)}
-                maxLength={100}
-                placeholder="Cold storage"
-                className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
-                disabled={addingWallet}
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={addingWallet}
-              className="inline-flex h-10 items-center justify-center gap-2 bg-accent px-4 text-button font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-40"
-            >
-              {addingWallet ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
-              Track Wallet
-            </button>
-          </div>
-          <p className="mt-3 text-caption text-tertiary">The first sync runs in the background; a busy wallet can take a few minutes to appear complete. Use Sync to refresh.</p>
-        </form>
-
         {ethWallets.length === 0 ? (
           <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
             <Wallet size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
             <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Wallets Tracked</h3>
-            <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed">
-              Paste an Ethereum address above to pull its balance and full transfer history. Transfers between your own tracked wallets are recognized automatically.
+            <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed mb-5">
+              Use <span className="font-semibold text-primary">Connect Crypto</span> to add an Ethereum address and pull its balance and full transfer history. Transfers between your own tracked wallets are recognized automatically.
             </p>
+            <button
+              onClick={openCryptoModal}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 hover:text-purple-200 transition-all"
+            >
+              <Wallet size={14} />
+              Connect Crypto
+            </button>
           </div>
         ) : (
           <div className="space-y-4">
@@ -1388,6 +1373,87 @@ const Settings = () => {
                   Confirm Delete
                 </button>
               </div>
+            </Motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Connect Crypto Modal */}
+      <AnimatePresence>
+        {cryptoModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => !addingWallet && setCryptoModalOpen(false)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative max-h-[100dvh] w-full max-w-lg overflow-y-auto border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
+              <form onSubmit={handleAddWallet}>
+                <div className="p-5 pb-3 text-center sm:p-8 sm:pb-4">
+                  <div className="w-16 h-16 bg-purple-500/10 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Wallet size={28} />
+                  </div>
+                  <h2 className="text-2xl font-bold text-primary mb-2 tracking-tight">Connect Crypto Wallet</h2>
+                  <p className="text-sm text-secondary leading-relaxed">
+                    Paste an Ethereum address to track its balance and full transfer history via Etherscan.
+                  </p>
+                </div>
+
+                <div className="space-y-4 p-5 sm:p-8 sm:pt-2">
+                  <label className="block text-caption text-tertiary">
+                    Address
+                    <input
+                      type="text"
+                      value={walletAddress}
+                      onChange={(event) => setWalletAddress(event.target.value)}
+                      placeholder="0x…"
+                      spellCheck={false}
+                      autoComplete="off"
+                      autoFocus
+                      className="mt-1 block h-11 w-full min-w-0 rounded border border-input-border bg-surface-2 px-3 font-mono text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+                      disabled={addingWallet}
+                    />
+                  </label>
+                  <label className="block text-caption text-tertiary">
+                    Label (optional)
+                    <input
+                      type="text"
+                      value={walletLabel}
+                      onChange={(event) => setWalletLabel(event.target.value)}
+                      maxLength={100}
+                      placeholder="Cold storage"
+                      className="mt-1 block h-11 w-full min-w-0 rounded border border-input-border bg-surface-2 px-3 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+                      disabled={addingWallet}
+                    />
+                  </label>
+
+                  {walletFormError && (
+                    <div className="flex items-start gap-2 rounded border border-loss/20 bg-loss/5 p-3 text-caption text-loss">
+                      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                      <span>{walletFormError}</span>
+                    </div>
+                  )}
+
+                  <p className="text-caption text-tertiary">
+                    The first sync runs in the background; a busy wallet can take a few minutes to appear complete. Use Sync on the wallet card to refresh.
+                  </p>
+                </div>
+
+                <div className="sticky bottom-0 flex gap-3 bg-surface p-5 pt-0 sm:static sm:p-8 sm:pt-0">
+                  <button
+                    type="button"
+                    onClick={() => setCryptoModalOpen(false)}
+                    disabled={addingWallet}
+                    className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={addingWallet}
+                    className="flex-1 inline-flex items-center justify-center gap-2 py-4 bg-purple-500/20 text-purple-200 border border-purple-500/40 rounded text-xs font-bold uppercase tracking-wider hover:bg-purple-500/30 transition-all disabled:opacity-40"
+                  >
+                    {addingWallet ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+                    Track Wallet
+                  </button>
+                </div>
+              </form>
             </Motion.div>
           </div>
         )}
