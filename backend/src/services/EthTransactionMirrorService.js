@@ -144,7 +144,8 @@ class EthTransactionMirrorService {
       });
       await pool.query(
         `INSERT INTO transactions (eth_transfer_id, date, name, amount, category, account_id, currency_code, pending)
-         VALUES ${placeholders.join(', ')}`,
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (eth_transfer_id) WHERE eth_transfer_id IS NOT NULL DO NOTHING`,
         values
       );
     }

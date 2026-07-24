@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -137,22 +137,9 @@ const OnChainActivity = ({ walletId }) => {
   const [error, setError] = useState(null);
   const [ignoringContract, setIgnoringContract] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchWallet = async () => {
-      try {
-        const data = await ethAPI.getWallets();
-        if (cancelled) return;
-        const wallet = (data.wallets || []).find((w) => w.id === walletId);
-        setWalletAddress(wallet?.address || null);
-      } catch {
-        if (!cancelled) setWalletAddress(null);
-      }
-    };
-    fetchWallet();
-    return () => { cancelled = true; };
-  }, [walletId]);
+  // Guards Load More responses that arrive after the filter changed.
+  const typeFilterRef = useRef(typeFilter);
+  useEffect(() => { typeFilterRef.current = typeFilter; }, [typeFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,6 +155,7 @@ const OnChainActivity = ({ walletId }) => {
         if (cancelled) return;
         setRows(result.data || []);
         setTotal(result.pagination?.total || 0);
+        setWalletAddress(result.wallet_address || null);
       } catch (err) {
         if (!cancelled) setError(err.response?.data?.error || 'Failed to load on-chain activity');
       } finally {
@@ -179,13 +167,15 @@ const OnChainActivity = ({ walletId }) => {
   }, [walletId, typeFilter, refreshKey]);
 
   const loadMore = async () => {
+    const filterAtCall = typeFilter;
     setLoadingMore(true);
     try {
       const result = await ethAPI.getTransfers(walletId, {
-        type: typeFilter || undefined,
+        type: filterAtCall || undefined,
         limit: TRANSFER_PAGE_SIZE,
         offset: rows.length,
       });
+      if (typeFilterRef.current !== filterAtCall) return;
       setRows((prev) => [...prev, ...(result.data || [])]);
       setTotal(result.pagination?.total || 0);
     } catch (err) {
@@ -249,8 +239,7 @@ const OnChainActivity = ({ walletId }) => {
         <>
           <div className="card divide-y divide-border overflow-hidden">
             {rows.map((transfer) => {
-              const incoming = walletAddress ? transfer.to_address === walletAddress : false;
-              const outbound = transfer.transfer_type === 'gas' || !incoming;
+              const outbound = transfer.transfer_type === 'gas' || transfer.from_address === walletAddress;
               const chip = transferChipLabel(transfer);
               const counterparty = transfer.transfer_type === 'gas'
                 ? null

@@ -44,6 +44,13 @@ router.post('/', validateHolding, async (req, res) => {
   try {
     const { account_id, ticker, name, quantity, manual_value, category, notes, location } = req.body;
 
+    // Wallet accounts are rebuilt wholesale by the ETH sync; a manual holding
+    // added there would be silently deleted on the next sync.
+    const targetAccount = await pool.query('SELECT eth_wallet_id FROM accounts WHERE id = $1', [account_id]);
+    if (targetAccount.rows[0]?.eth_wallet_id) {
+      return res.status(403).json({ error: 'This account is managed by an Ethereum wallet sync; holdings cannot be added manually' });
+    }
+
     const holding = await Holding.create(
       account_id,
       ticker,
@@ -80,6 +87,9 @@ router.put('/:id', validateHolding, async (req, res) => {
     }
     if (existing.is_plaid_managed) {
       return res.status(403).json({ error: 'This holding is managed by Plaid and cannot be manually edited' });
+    }
+    if (existing.account_eth_wallet_id) {
+      return res.status(403).json({ error: 'This holding is managed by an Ethereum wallet sync and cannot be manually edited' });
     }
 
     const holding = await Holding.update(
@@ -118,6 +128,9 @@ router.delete('/:id', async (req, res) => {
     }
     if (existing.is_plaid_managed) {
       return res.status(403).json({ error: 'This holding is managed by Plaid and cannot be manually deleted' });
+    }
+    if (existing.account_eth_wallet_id) {
+      return res.status(403).json({ error: 'This holding is managed by an Ethereum wallet sync and cannot be manually deleted' });
     }
 
     const result = await Holding.delete(id);

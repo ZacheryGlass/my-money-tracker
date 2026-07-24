@@ -44,6 +44,10 @@ const LinkedPill = () => (
   </span>
 );
 
+// Plaid-managed holdings and holdings inside Ethereum-wallet accounts are
+// both rebuilt by their syncs; manual edits would be silently clobbered.
+const isSyncManaged = (holding) => Boolean(holding.is_plaid_managed || holding.account_eth_wallet_id);
+
 const BalancesPage = ({ tab = 'assets', onTabChange }) => {
   const [holdings, setHoldings] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -81,7 +85,7 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
     }
   };
 
-  const handleEdit = (holding) => { if (holding.is_plaid_managed) return; setEditingHolding(holding); setIsFormOpen(true); };
+  const handleEdit = (holding) => { if (isSyncManaged(holding)) return; setEditingHolding(holding); setIsFormOpen(true); };
 
   const handleSave = async (data) => {
     if (editingHolding) { await holdingsAPI.update(editingHolding.id, data); showSuccess('Holding updated'); }
@@ -186,7 +190,7 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="truncate font-semibold text-primary" title={row.original.name}>{row.original.name}</span>
-            {row.original.is_plaid_managed && <LinkedPill />}
+            {isSyncManaged(row.original) && <LinkedPill />}
           </div>
           <p className="text-caption text-tertiary truncate">
             {tab === 'assets'
@@ -320,12 +324,12 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
         table={table}
         emptyMessage={`No ${activeLabel.toLowerCase()} found.`}
         onRowClick={handleEdit}
-        rowClassName={(holding) => (holding.is_plaid_managed ? '' : 'cursor-pointer')}
+        rowClassName={(holding) => (isSyncManaged(holding) ? '' : 'cursor-pointer')}
         renderMobileRow={(row) => {
           const account = accountsMap.get(row.original.account_id);
           const value = isLiabilities ? Math.abs(getHoldingValue(row.original)) : getHoldingValue(row.original);
           return (
-            <div key={row.id} className={`p-3 ${row.original.is_plaid_managed ? '' : 'cursor-pointer hover:bg-surface-2'}`} onClick={() => handleEdit(row.original)}>
+            <div key={row.id} className={`p-3 ${isSyncManaged(row.original) ? '' : 'cursor-pointer hover:bg-surface-2'}`} onClick={() => handleEdit(row.original)}>
               <div className="flex items-start justify-between">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-body-sm font-semibold text-primary">{row.original.name}</p>
@@ -345,7 +349,7 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
 
       <DataTablePagination table={table} total={filteredData.length} />
 
-      <HoldingForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSave} onDelete={handleDelete} holding={editingHolding} accounts={accounts} />
+      <HoldingForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSave} onDelete={handleDelete} holding={editingHolding} accounts={accounts.filter((account) => !account.eth_wallet_id)} />
     </div>
   );
 };

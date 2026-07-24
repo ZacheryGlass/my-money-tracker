@@ -3,16 +3,6 @@
 const pool = require('../config/database');
 
 class EthWallet {
-  static async create(address, label) {
-    const result = await pool.query(
-      `INSERT INTO eth_wallets (address, label)
-       VALUES ($1, $2)
-       RETURNING *`,
-      [address, label || null]
-    );
-    return result.rows[0];
-  }
-
   static async findAll() {
     const result = await pool.query(
       'SELECT * FROM eth_wallets ORDER BY created_at DESC'
@@ -32,17 +22,6 @@ class EthWallet {
     const result = await pool.query(
       'SELECT * FROM eth_wallets WHERE address = $1',
       [address.toLowerCase()]
-    );
-    return result.rows[0];
-  }
-
-  static async updateLabel(id, label) {
-    const result = await pool.query(
-      `UPDATE eth_wallets
-       SET label = $2, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1
-       RETURNING *`,
-      [id, label || null]
     );
     return result.rows[0];
   }

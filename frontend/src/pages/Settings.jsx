@@ -272,15 +272,17 @@ const Settings = () => {
 
   const fetchItems = useCallback(async () => {
     try {
-      const [plaidData, accountsData, ethData, ignoredData] = await Promise.all([
+      // Ethereum data is fetched alongside but must not fail the whole page:
+      // a wallet-side error should degrade only the Ethereum tab.
+      const [plaidData, accountsData, ethResult, ignoredResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
-        ethAPI.getWallets(),
-        ethAPI.getIgnoredTokens(),
+        ethAPI.getWallets().catch(() => null),
+        ethAPI.getIgnoredTokens().catch(() => null),
       ]);
       const loadedItems = plaidData.items || [];
-      setEthWallets(ethData.wallets || []);
-      setIgnoredTokens(ignoredData.tokens || []);
+      setEthWallets(ethResult?.wallets || []);
+      setIgnoredTokens(ignoredResult?.tokens || []);
       setItems(loadedItems);
       setConsentItems(new Set(
         loadedItems
@@ -375,12 +377,10 @@ const Settings = () => {
     setAddingWallet(true);
     setError(null);
     try {
-      const result = await ethAPI.addWallet(address, walletLabel.trim() || undefined);
-      if (result.syncError) {
-        setError(`Wallet added, but the first sync failed: ${result.syncError}. Use Sync to retry.`);
-      } else {
-        showSuccess('Wallet added and synced');
-      }
+      await ethAPI.addWallet(address, walletLabel.trim() || undefined);
+      // The first sync runs in the background; its result surfaces on the
+      // wallet card (balance, last-synced, or an error badge).
+      showSuccess('Wallet added. Syncing on-chain history in the background.');
       setWalletAddress('');
       setWalletLabel('');
       await fetchItems();
@@ -1045,9 +1045,7 @@ const Settings = () => {
               Track Wallet
             </button>
           </div>
-          {addingWallet && (
-            <p className="mt-3 text-caption text-tertiary">Fetching on-chain history from Etherscan. The first sync of a busy wallet can take a while.</p>
-          )}
+          <p className="mt-3 text-caption text-tertiary">The first sync runs in the background; a busy wallet can take a few minutes to appear complete. Use Sync to refresh.</p>
         </form>
 
         {ethWallets.length === 0 ? (
@@ -1245,6 +1243,12 @@ const Settings = () => {
                             Plaid
                           </span>
                         )}
+                        {account.eth_wallet_id && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                            <Wallet size={10} />
+                            Wallet
+                          </span>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-tertiary">
                         <span>{account.type}</span>
@@ -1325,7 +1329,7 @@ const Settings = () => {
                         Clear
                       </button>
                     )}
-                    {!account.plaid_item_id && (
+                    {!account.plaid_item_id && !account.eth_wallet_id && (
                       <button
                         onClick={() => setDeletingAccount(account)}
                         disabled={deletingAccountId === account.id}

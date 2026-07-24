@@ -66,7 +66,7 @@ class EthTransfer {
               COUNT(*) OVER() AS total_count
        FROM eth_transfers t
        ${where}
-       ORDER BY t.block_number DESC, t.transfer_type, t.ordinal
+       ORDER BY t.block_number DESC, t.id DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -104,12 +104,17 @@ class EthTransfer {
   }
 
   // The self/external split depends on the current wallet set, so it is
-  // recomputed wholesale on every sync and on wallet add/remove.
+  // recomputed wholesale on every sync and on wallet add/remove. COALESCE
+  // guards NULL to_address (contract creations): NULL IN (...) is NULL, which
+  // would violate the NOT NULL column and abort the statement.
   static async reclassifyOwnCounterparties() {
     await pool.query(
       `UPDATE eth_transfers t SET counterparty_is_own =
-         (CASE WHEN t.from_address = w.address THEN t.to_address ELSE t.from_address END)
-           IN (SELECT address FROM eth_wallets)
+         COALESCE(
+           (CASE WHEN t.from_address = w.address THEN t.to_address ELSE t.from_address END)
+             IN (SELECT address FROM eth_wallets),
+           FALSE
+         )
        FROM eth_wallets w
        WHERE t.wallet_id = w.id`
     );

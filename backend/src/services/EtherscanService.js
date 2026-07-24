@@ -56,7 +56,13 @@ class EtherscanService {
       address,
       tag: 'latest',
     });
-    return String(result);
+    // A malformed response must not silently zero the ETH holding.
+    if (typeof result !== 'string' || !/^\d+$/.test(result)) {
+      const error = new Error(`Etherscan returned an invalid balance: ${JSON.stringify(result)}`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    return result;
   }
 
   // Walks blocks in ascending order. The cursor advances to the last block of
@@ -78,22 +84,39 @@ class EtherscanService {
         sort: 'asc',
       });
       if (!Array.isArray(rows) || rows.length === 0) break;
+      // The dedupe logic depends on ascending order; do not trust the API.
+      rows.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber));
 
       while (all.length && Number(all[all.length - 1].blockNumber) >= cursor) {
         all.pop();
       }
-      all.push(...rows);
-      if (rows.length < PAGE_SIZE) break;
 
       const lastBlock = Number(rows[rows.length - 1].blockNumber);
-      if (lastBlock === cursor) {
-        // A single block with more rows than one page; cannot subdivide
-        // further, so step past it rather than loop forever.
-        logger.warn({ action, address, block: cursor }, 'Etherscan page-sized block, skipping past it');
-        cursor = lastBlock + 1;
-      } else {
-        cursor = lastBlock;
+      if (rows.length >= PAGE_SIZE && lastBlock === cursor) {
+        // A single block with more rows than one page. Refetch just that
+        // block at Etherscan's maximum window so its rows are not lost, then
+        // step past it.
+        const blockRows = await this._request({
+          module: 'account',
+          action,
+          address,
+          startblock: cursor,
+          endblock: cursor,
+          page: 1,
+          offset: 10000,
+          sort: 'asc',
+        });
+        all.push(...(Array.isArray(blockRows) ? blockRows : []));
+        if (Array.isArray(blockRows) && blockRows.length >= 10000) {
+          logger.warn({ action, address, block: cursor }, 'Etherscan block exceeds 10k rows; excess rows dropped');
+        }
+        cursor += 1;
+        continue;
       }
+
+      all.push(...rows);
+      if (rows.length < PAGE_SIZE) break;
+      cursor = lastBlock;
     }
 
     return all;

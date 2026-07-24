@@ -32,8 +32,20 @@ function shortAddress(address) {
 }
 
 // Sync resumes this many blocks before the stored cursor so a chain reorg
-// near the tip is healed by the delete-then-reinsert ingest.
-const REORG_OVERLAP_BLOCKS = 12;
+// near the tip is healed by the delete-then-reinsert ingest. Sized past
+// Ethereum's finality window (~2 epochs = 64 blocks).
+const REORG_OVERLAP_BLOCKS = 64;
+
+// transactions/holdings rebuilds are delete-then-insert, so concurrent runs
+// (cron job, manual sync, sync-on-add, ignore-list refresh) would corrupt
+// derived data. All such work funnels through this in-process queue.
+let derivedQueue = Promise.resolve();
+
+function serialized(fn) {
+  const run = derivedQueue.then(fn, fn);
+  derivedQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
 
 function toTimestamp(unixSeconds) {
   return new Date(Number(unixSeconds) * 1000);
@@ -114,7 +126,11 @@ class EthWalletService {
     return rows;
   }
 
-  static async syncWallet(walletId) {
+  static syncWallet(walletId) {
+    return serialized(() => this._syncWallet(walletId));
+  }
+
+  static async _syncWallet(walletId) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     EtherscanService.ensureConfigured();
@@ -203,26 +219,51 @@ class EthWalletService {
       throw error;
     }
 
-    const wallet = await EthWallet.create(normalized, label);
-
-    // The account's stable name is derived from the address (unique by
-    // construction); the user-facing label rides on display_name like every
-    // other renamed account.
-    const accountResult = await pool.query(
-      `INSERT INTO accounts (name, type, display_name, eth_wallet_id)
-       VALUES ($1, 'crypto', $2, $3)
-       RETURNING *`,
-      [`Ethereum ${shortAddress(normalized)}`, label?.trim() || null, wallet.id]
-    );
+    // Wallet and account are created atomically: a wallet without its account
+    // would make every holdings/mirror refresh silently skip it. The account's
+    // stable name is derived from the address (unique by construction); the
+    // user-facing label rides on display_name like every other renamed account.
+    const client = await pool.connect();
+    let wallet;
+    let account;
+    try {
+      await client.query('BEGIN');
+      const walletResult = await client.query(
+        'INSERT INTO eth_wallets (address, label) VALUES ($1, $2) RETURNING *',
+        [normalized, label?.trim() || null]
+      );
+      wallet = walletResult.rows[0];
+      const accountResult = await client.query(
+        `INSERT INTO accounts (name, type, display_name, eth_wallet_id)
+         VALUES ($1, 'crypto', $2, $3)
+         RETURNING *`,
+        [`Ethereum ${shortAddress(normalized)}`, label?.trim() || null, wallet.id]
+      );
+      account = accountResult.rows[0];
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
 
     // A new own-address can turn previously-external transfers into
     // self-transfers on other wallets, so their mirrored ledger rows must be
-    // rebuilt too.
-    await EthTransfer.reclassifyOwnCounterparties();
-    await EthTransactionMirrorService.rebuildAll();
-    await TransactionClassificationService.backfill();
+    // rebuilt too. Non-fatal: the wallet exists either way, and the first
+    // sync re-derives all of this.
+    try {
+      await serialized(async () => {
+        await EthTransfer.reclassifyOwnCounterparties();
+        await EthTransactionMirrorService.rebuildAll();
+        await TransactionClassificationService.backfill();
+      });
+    } catch (err) {
+      logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh after wallet add failed');
+    }
+
     logger.info({ walletId: wallet.id, address: normalized }, 'ETH wallet added');
-    return { wallet, account: accountResult.rows[0] };
+    return { wallet, account };
   }
 
   // Rebuilds the wallet account's holdings: an ETH position priced later by
@@ -264,8 +305,10 @@ class EthWalletService {
       const decimals = delta.token_decimals != null ? Number(delta.token_decimals) : 18;
       const quantity = unitsToDecimalString(delta.balance_units, decimals);
       const usd = Number(prices[delta.token_contract]?.usd);
+      // Clamped like the mirror's toAmount: manual_value is DECIMAL(15,2) and
+      // one absurd scam-token valuation must not abort the whole sync.
       const manualValue = Number.isFinite(usd)
-        ? Math.round(usd * Number(quantity) * 100) / 100
+        ? Math.min(Math.round(usd * Number(quantity) * 100) / 100, 9999999999999.99)
         : null;
       desired.push({
         ticker: null,
@@ -315,25 +358,36 @@ class EthWalletService {
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
     await EthWallet.delete(walletId, { removeData });
-    await EthTransfer.reclassifyOwnCounterparties();
-    await EthTransactionMirrorService.rebuildAll();
-    await TransactionClassificationService.backfill();
+
+    // Non-fatal: the wallet is already gone; a failure here must not report
+    // the disconnect itself as failed.
+    try {
+      await serialized(async () => {
+        await EthTransfer.reclassifyOwnCounterparties();
+        await EthTransactionMirrorService.rebuildAll();
+        await TransactionClassificationService.backfill();
+      });
+    } catch (err) {
+      logger.warn({ walletId, err }, 'Derived-data refresh after wallet removal failed');
+    }
     logger.info({ walletId, removeData }, 'ETH wallet disconnected');
   }
 
   // Ignore-list changes affect holdings and mirrored ledger rows for every
   // wallet; re-derive both without hitting Etherscan feeds again.
-  static async refreshAllDerived() {
-    const wallets = await EthWallet.findAll();
-    for (const wallet of wallets) {
-      try {
-        await this.refreshHoldings(wallet.id);
-        await EthTransactionMirrorService.rebuildForWallet(wallet.id);
-      } catch (err) {
-        logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh failed');
+  static refreshAllDerived() {
+    return serialized(async () => {
+      const wallets = await EthWallet.findAll();
+      for (const wallet of wallets) {
+        try {
+          await this.refreshHoldings(wallet.id);
+          await EthTransactionMirrorService.rebuildForWallet(wallet.id);
+        } catch (err) {
+          logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh failed');
+        }
       }
-    }
-    await TransactionClassificationService.backfill();
+      await TransactionClassificationService.backfill();
+    });
   }
 }
 

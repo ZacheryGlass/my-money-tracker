@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = 'postgresql://test:test@localhost/test';
 
+const queries = [];
 const pgModulePath = require.resolve('pg');
 require.cache[pgModulePath] = {
   id: pgModulePath,
@@ -13,7 +14,10 @@ require.cache[pgModulePath] = {
   loaded: true,
   exports: {
     Pool: class FakePool {
-      async query() { return { rows: [] }; }
+      async query(text, params) {
+        queries.push({ text, params });
+        return { rows: [] };
+      }
       connect() { throw new Error('Unexpected connect'); }
       on() {}
     },
@@ -101,6 +105,29 @@ test('assigns sequential ordinals within one tx hash per feed', () => {
   assert.deepEqual(tokenRows.map((r) => r.ordinal), [0]);
   assert.equal(tokenRows[0].token_contract, '0xtoken000000000000000000000000000000000001');
   assert.equal(tokenRows[0].token_decimals, 18);
+});
+
+test('contract creation (empty to) yields a gas row with a NULL counterparty', () => {
+  // Etherscan reports to:"" for contract creations. A NULL to_address must
+  // survive: the reclassify UPDATE writes a NOT NULL boolean, so an
+  // unguarded NULL there would abort every future sync.
+  const rows = EthWalletService.normalizeFeeds(WALLET, {
+    normal: [normalTx({ to: '', value: '0', gasUsed: '500000' })],
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].transfer_type, 'gas');
+  assert.equal(rows[0].to_address, null);
+});
+
+test('reclassify SQL defaults a NULL counterparty to false', async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.reclassifyOwnCounterparties();
+  const sql = queries[0].text.replace(/\s+/g, ' ');
+  // counterparty_is_own is NOT NULL and `NULL IN (...)` is NULL, so the
+  // expression must be wrapped or one contract-creation row aborts the
+  // statement -- and with it every sync, add, and remove.
+  assert.match(sql, /COALESCE\(.*IN \(SELECT address FROM eth_wallets\).*,\s*FALSE\s*\)/);
 });
 
 test('addWallet rejects malformed addresses', async () => {

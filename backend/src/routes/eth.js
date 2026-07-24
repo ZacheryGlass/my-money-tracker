@@ -19,27 +19,31 @@ function statusFor(error) {
   return 500;
 }
 
+function parseId(raw) {
+  const id = Number.parseInt(raw, 10);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 router.post('/wallets', async (req, res) => {
-  let created = null;
   try {
     const { address, label } = req.body || {};
     if (!address) {
       return res.status(400).json({ error: 'address is required' });
     }
 
-    created = await EthWalletService.addWallet(address, label);
-    const sync = await EthWalletService.syncWallet(created.wallet.id);
-    const wallet = await EthWallet.findById(created.wallet.id);
+    const { wallet, account } = await EthWalletService.addWallet(address, label);
 
-    res.status(201).json({ wallet, account: created.account, sync });
+    // First sync of a busy wallet can outlive proxy timeouts (and the axios
+    // interceptor would retry the POST, hitting DUPLICATE_WALLET), so it runs
+    // in the background; failures land on the wallet's error_code for the
+    // Settings badge and Sync retry.
+    EthWalletService.syncWallet(wallet.id).catch((err) => {
+      logger.error({ walletId: wallet.id, err }, 'Initial ETH wallet sync failed');
+    });
+
+    res.status(201).json({ wallet, account, syncStarted: true });
   } catch (error) {
     logger.error({ err: error }, 'Add ETH wallet error');
-    if (created) {
-      // The wallet was created but its first sync failed; keep it with the
-      // error recorded so the user can retry from Settings.
-      const wallet = await EthWallet.findById(created.wallet.id).catch(() => created.wallet);
-      return res.status(201).json({ wallet, account: created.account, syncError: error.message });
-    }
     const status = statusFor(error);
     res.status(status).json({ error: status === 500 ? 'Failed to add wallet' : error.message });
   }
@@ -64,24 +68,12 @@ router.get('/wallets', async (req, res) => {
   }
 });
 
-router.patch('/wallets/:id', async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const wallet = await EthWallet.findById(id);
-    if (!wallet) {
-      return res.status(404).json({ error: 'Wallet not found' });
-    }
-    const updated = await EthWallet.updateLabel(id, req.body?.label);
-    res.status(200).json({ wallet: updated });
-  } catch (error) {
-    logger.error({ err: error, walletId: req.params.id }, 'Update ETH wallet error');
-    res.status(500).json({ error: 'Failed to update wallet' });
-  }
-});
-
 router.post('/wallets/:id/sync', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseId(req.params.id);
+    if (!id) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
     const wallet = await EthWallet.findById(id);
     if (!wallet) {
       return res.status(404).json({ error: 'Wallet not found' });
@@ -102,7 +94,10 @@ router.post('/wallets/:id/sync', async (req, res) => {
 
 router.delete('/wallets/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseId(req.params.id);
+    if (!id) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
     const wallet = await EthWallet.findById(id);
     if (!wallet) {
       return res.status(404).json({ error: 'Wallet not found' });
@@ -119,13 +114,16 @@ router.delete('/wallets/:id', async (req, res) => {
 
 router.get('/wallets/:id/transfers', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseId(req.params.id);
+    if (!id) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
     const wallet = await EthWallet.findById(id);
     if (!wallet) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
 
-    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const { transfers, total } = await EthTransfer.findByWallet(id, {
       type: req.query.type,
@@ -133,7 +131,7 @@ router.get('/wallets/:id/transfers', async (req, res) => {
       offset,
     });
 
-    res.status(200).json({ data: transfers, pagination: { total, limit, offset } });
+    res.status(200).json({ data: transfers, wallet_address: wallet.address, pagination: { total, limit, offset } });
   } catch (error) {
     logger.error({ err: error, walletId: req.params.id }, 'Get ETH transfers error');
     res.status(500).json({ error: 'Failed to retrieve transfers' });

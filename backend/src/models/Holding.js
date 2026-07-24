@@ -19,7 +19,7 @@ class Holding {
       ? 'LEFT JOIN price_cache pc ON UPPER(h.ticker) = UPPER(pc.ticker)'
       : '';
     const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type${priceSelect}
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type${priceSelect}
       FROM holdings h
       JOIN accounts a ON h.account_id = a.id
       ${priceJoin}
@@ -31,7 +31,7 @@ class Holding {
 
   static async findById(id) {
     const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.id = $1`,
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.id = $1`,
       [id]
     );
     return result.rows[0];
@@ -39,7 +39,7 @@ class Holding {
 
   static async findByAccountId(accountId) {
     const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.account_id = $1 ORDER BY h.updated_at DESC`,
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.account_id = $1 ORDER BY h.updated_at DESC`,
       [accountId]
     );
     return result.rows;

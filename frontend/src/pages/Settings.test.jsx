@@ -20,7 +20,6 @@ const apiMocks = vi.hoisted(() => ({
   eth: {
     addWallet: vi.fn(),
     getWallets: vi.fn(),
-    updateWallet: vi.fn(),
     syncWallet: vi.fn(),
     removeWallet: vi.fn(),
     getTransfers: vi.fn(),

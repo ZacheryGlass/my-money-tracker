@@ -325,10 +325,6 @@ export const eth = {
     const response = await api.get('/api/eth/wallets');
     return response.data;
   },
-  updateWallet: async (id, { label } = {}) => {
-    const response = await api.patch(`/api/eth/wallets/${id}`, { label });
-    return response.data;
-  },
   syncWallet: async (id) => {
     const response = await api.post(`/api/eth/wallets/${id}/sync`);
     return response.data;
