@@ -5,6 +5,7 @@ const requireUser = require('../middleware/auth');
 const EthWallet = require('../models/EthWallet');
 const EthTransfer = require('../models/EthTransfer');
 const EthIgnoredToken = require('../models/EthIgnoredToken');
+const EthAddressLabel = require('../models/EthAddressLabel');
 const EthWalletService = require('../services/EthWalletService');
 const logger = require('../config/logger');
 
@@ -175,6 +176,56 @@ router.delete('/ignored-tokens/:contract', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Unignore token error');
     res.status(500).json({ error: 'Failed to unignore token' });
+  }
+});
+
+router.get('/address-labels', async (req, res) => {
+  try {
+    const labels = await EthAddressLabel.findAll();
+    res.status(200).json({ labels });
+  } catch (error) {
+    logger.error({ err: error }, 'Get address labels error');
+    res.status(500).json({ error: 'Failed to retrieve address labels' });
+  }
+});
+
+router.post('/address-labels', async (req, res) => {
+  try {
+    const { address, name, note } = req.body || {};
+    if (!address || !/^0x[0-9a-f]{40}$/i.test(address.trim())) {
+      return res.status(400).json({ error: 'address must be a 0x-prefixed 40-hex-character address' });
+    }
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName || trimmedName.length > 64) {
+      return res.status(400).json({ error: 'name is required (max 64 characters)' });
+    }
+
+    const label = await EthAddressLabel.upsert(address.trim(), trimmedName, note);
+    await EthWalletService.refreshClassifications();
+    res.status(201).json({ label });
+  } catch (error) {
+    logger.error({ err: error }, 'Label address error');
+    res.status(500).json({ error: 'Failed to label address' });
+  }
+});
+
+router.delete('/address-labels/:address', async (req, res) => {
+  try {
+    const label = await EthAddressLabel.delete(req.params.address);
+    if (!label) {
+      // Distinguish "builtin, refused" from "no such label": deleting a
+      // builtin would only resurrect it when the seed migration re-runs.
+      const existing = await EthAddressLabel.findByAddress(req.params.address);
+      if (existing) {
+        return res.status(409).json({ error: "Built-in labels can't be removed; relabel the address to rename it" });
+      }
+      return res.status(404).json({ error: 'Address label not found' });
+    }
+    await EthWalletService.refreshClassifications();
+    res.status(200).json({ message: 'Address label removed' });
+  } catch (error) {
+    logger.error({ err: error }, 'Unlabel address error');
+    res.status(500).json({ error: 'Failed to remove address label' });
   }
 });
 

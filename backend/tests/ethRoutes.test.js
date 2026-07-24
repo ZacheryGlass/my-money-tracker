@@ -67,3 +67,23 @@ test('POST /api/eth/ignored-tokens validates the contract address', async () => 
 
   assert.equal(response.status, 400);
 });
+
+test('POST /api/eth/address-labels validates the address', async () => {
+  const response = await request(app)
+    .post('/api/eth/address-labels')
+    .send({ address: '0x123', name: 'Coinbase' })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /0x-prefixed/);
+});
+
+test('POST /api/eth/address-labels requires a name', async () => {
+  const response = await request(app)
+    .post('/api/eth/address-labels')
+    .send({ address: '0x1111111111111111111111111111111111111111' })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /name is required/);
+});
