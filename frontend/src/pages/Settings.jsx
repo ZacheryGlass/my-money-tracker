@@ -378,6 +378,7 @@ const Settings = () => {
 
   const handleAddWallet = async (event) => {
     event.preventDefault();
+    if (addingWallet) return;
     const address = walletAddress.trim();
     if (!ETH_ADDRESS_RE.test(address)) {
       setWalletFormError('Enter a valid Ethereum address (0x followed by 40 hex characters)');
@@ -396,6 +397,9 @@ const Settings = () => {
       await fetchItems();
     } catch (err) {
       setWalletFormError(err.response?.data?.error || 'Failed to add wallet');
+      // A retried POST can land on DUPLICATE_WALLET after the first attempt
+      // actually succeeded; refresh so the list reflects the existing wallet.
+      if (err.response?.status === 409) await fetchItems();
     } finally {
       setAddingWallet(false);
     }
@@ -1382,14 +1386,14 @@ const Settings = () => {
       <AnimatePresence>
         {cryptoModalOpen && (
           <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => !addingWallet && setCryptoModalOpen(false)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative max-h-[100dvh] w-full max-w-lg overflow-y-auto border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setCryptoModalOpen(false)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} role="dialog" aria-modal="true" aria-labelledby="crypto-modal-title" className="relative max-h-[100dvh] w-full max-w-lg overflow-y-auto border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
               <form onSubmit={handleAddWallet}>
                 <div className="p-5 pb-3 text-center sm:p-8 sm:pb-4">
                   <div className="w-16 h-16 bg-purple-500/10 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-6">
                     <Wallet size={28} />
                   </div>
-                  <h2 className="text-2xl font-bold text-primary mb-2 tracking-tight">Connect Crypto Wallet</h2>
+                  <h2 id="crypto-modal-title" className="text-2xl font-bold text-primary mb-2 tracking-tight">Connect Crypto Wallet</h2>
                   <p className="text-sm text-secondary leading-relaxed">
                     Paste an Ethereum address to track its balance and full transfer history via Etherscan.
                   </p>
@@ -1424,7 +1428,7 @@ const Settings = () => {
                   </label>
 
                   {walletFormError && (
-                    <div className="flex items-start gap-2 rounded border border-loss/20 bg-loss/5 p-3 text-caption text-loss">
+                    <div role="alert" className="flex items-start gap-2 rounded border border-loss/20 bg-loss/5 p-3 text-caption text-loss">
                       <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                       <span>{walletFormError}</span>
                     </div>
@@ -1439,8 +1443,7 @@ const Settings = () => {
                   <button
                     type="button"
                     onClick={() => setCryptoModalOpen(false)}
-                    disabled={addingWallet}
-                    className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all disabled:opacity-40"
+                    className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all"
                   >
                     Cancel
                   </button>
