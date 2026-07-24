@@ -20,24 +20,32 @@ class EthTransfer {
       'block_time', 'from_address', 'to_address', 'value_wei',
       'token_contract', 'token_symbol', 'token_decimals', 'is_error',
     ];
-    const values = [];
-    const placeholders = rows.map((row, i) => {
-      const base = i * cols.length;
-      values.push(
-        row.wallet_id, row.tx_hash, row.ordinal, row.transfer_type,
-        row.block_number, row.block_time, row.from_address, row.to_address,
-        row.value_wei, row.token_contract, row.token_symbol,
-        row.token_decimals, row.is_error
+    // Chunked to stay far under Postgres' 65535-parameter cap on first syncs
+    // of busy wallets.
+    const CHUNK = 500;
+    let inserted = 0;
+    for (let start = 0; start < rows.length; start += CHUNK) {
+      const chunk = rows.slice(start, start + CHUNK);
+      const values = [];
+      const placeholders = chunk.map((row, i) => {
+        const base = i * cols.length;
+        values.push(
+          row.wallet_id, row.tx_hash, row.ordinal, row.transfer_type,
+          row.block_number, row.block_time, row.from_address, row.to_address,
+          row.value_wei, row.token_contract, row.token_symbol,
+          row.token_decimals, row.is_error
+        );
+        return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`;
+      });
+      const result = await pool.query(
+        `INSERT INTO eth_transfers (${cols.join(', ')})
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (wallet_id, transfer_type, tx_hash, ordinal) DO NOTHING`,
+        values
       );
-      return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`;
-    });
-    const result = await pool.query(
-      `INSERT INTO eth_transfers (${cols.join(', ')})
-       VALUES ${placeholders.join(', ')}
-       ON CONFLICT (wallet_id, transfer_type, tx_hash, ordinal) DO NOTHING`,
-      values
-    );
-    return result.rowCount;
+      inserted += result.rowCount;
+    }
+    return inserted;
   }
 
   static async findByWallet(walletId, { type, limit = 100, offset = 0 } = {}) {
