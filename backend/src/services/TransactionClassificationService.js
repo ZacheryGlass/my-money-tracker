@@ -23,6 +23,13 @@ const CATEGORY_DIRECTIONS = {
   'margin expense': 'fee',
   'miscellaneous fee': 'fee',
   BANK_FEES: 'fee',
+  // Mirrored Ethereum wallet activity (EthTransactionMirrorService). Without
+  // these entries the amount-sign fallback below would count on-chain
+  // transfers as income/spending in the MCP analysis layer.
+  CRYPTO_SELF_TRANSFER: 'internal_transfer',
+  CRYPTO_EXTERNAL: 'other',
+  CRYPTO_GAS_FEE: 'fee',
+  CRYPTO_TOKEN: 'other',
 };
 
 // Plaid's detailed category resolves cases the primary category gets wrong.

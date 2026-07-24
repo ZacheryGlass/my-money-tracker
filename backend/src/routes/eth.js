@@ -150,17 +150,6 @@ router.get('/ignored-tokens', async (req, res) => {
   }
 });
 
-async function refreshAllWalletHoldings() {
-  const wallets = await EthWallet.findAll();
-  for (const wallet of wallets) {
-    try {
-      await EthWalletService.refreshHoldings(wallet.id);
-    } catch (err) {
-      logger.warn({ walletId: wallet.id, err }, 'Holdings refresh after ignore-list change failed');
-    }
-  }
-}
-
 router.post('/ignored-tokens', async (req, res) => {
   try {
     const { contract_address, symbol, note } = req.body || {};
@@ -169,7 +158,7 @@ router.post('/ignored-tokens', async (req, res) => {
     }
 
     const token = await EthIgnoredToken.upsert(contract_address.trim(), symbol, note);
-    await refreshAllWalletHoldings();
+    await EthWalletService.refreshAllDerived();
     res.status(201).json({ token });
   } catch (error) {
     logger.error({ err: error }, 'Ignore token error');
@@ -183,7 +172,7 @@ router.delete('/ignored-tokens/:contract', async (req, res) => {
     if (!token) {
       return res.status(404).json({ error: 'Ignored token not found' });
     }
-    await refreshAllWalletHoldings();
+    await EthWalletService.refreshAllDerived();
     res.status(200).json({ message: 'Token unignored' });
   } catch (error) {
     logger.error({ err: error }, 'Unignore token error');

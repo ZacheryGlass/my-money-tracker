@@ -2,7 +2,9 @@
 
 const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
+const EthTransactionMirrorService = require('./EthTransactionMirrorService');
 const PriceService = require('./PriceService');
+const TransactionClassificationService = require('./TransactionClassificationService');
 const EthWallet = require('../models/EthWallet');
 const EthTransfer = require('../models/EthTransfer');
 const logger = require('../config/logger');
@@ -144,12 +146,15 @@ class EthWalletService {
       });
       await EthTransfer.reclassifyOwnCounterparties();
       const holdings = await this.refreshHoldings(walletId);
+      const mirror = await EthTransactionMirrorService.rebuildForWallet(walletId);
+      await TransactionClassificationService.backfill();
       await EthWallet.clearError(walletId);
       await EthWallet.updateSyncTime(walletId);
 
       const results = {
         inserted,
         holdings,
+        mirror,
         fetched: { normal: normal.length, internal: internal.length, token: token.length },
       };
       logger.info({ walletId, address: wallet.address, results }, 'ETH wallet sync completed');
@@ -211,8 +216,11 @@ class EthWalletService {
     );
 
     // A new own-address can turn previously-external transfers into
-    // self-transfers on other wallets.
+    // self-transfers on other wallets, so their mirrored ledger rows must be
+    // rebuilt too.
     await EthTransfer.reclassifyOwnCounterparties();
+    await EthTransactionMirrorService.rebuildAll();
+    await TransactionClassificationService.backfill();
     logger.info({ walletId: wallet.id, address: normalized }, 'ETH wallet added');
     return { wallet, account: accountResult.rows[0] };
   }
@@ -308,7 +316,24 @@ class EthWalletService {
 
     await EthWallet.delete(walletId, { removeData });
     await EthTransfer.reclassifyOwnCounterparties();
+    await EthTransactionMirrorService.rebuildAll();
+    await TransactionClassificationService.backfill();
     logger.info({ walletId, removeData }, 'ETH wallet disconnected');
+  }
+
+  // Ignore-list changes affect holdings and mirrored ledger rows for every
+  // wallet; re-derive both without hitting Etherscan feeds again.
+  static async refreshAllDerived() {
+    const wallets = await EthWallet.findAll();
+    for (const wallet of wallets) {
+      try {
+        await this.refreshHoldings(wallet.id);
+        await EthTransactionMirrorService.rebuildForWallet(wallet.id);
+      } catch (err) {
+        logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh failed');
+      }
+    }
+    await TransactionClassificationService.backfill();
   }
 }
 

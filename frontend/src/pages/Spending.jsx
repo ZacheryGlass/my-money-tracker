@@ -13,7 +13,7 @@ const PAGE_SIZE = 100;
 
 // Only these account types carry transactions (Plaid syncs transactions for
 // bank and credit card accounts, not investments/property).
-const TRANSACTION_ACCOUNT_TYPES = new Set(['depository', 'credit']);
+const TRANSACTION_ACCOUNT_TYPES = new Set(['depository', 'credit', 'crypto']);
 
 function Amount({ value }) {
   const amount = parseFloat(value) || 0;
