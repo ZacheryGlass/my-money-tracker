@@ -24,6 +24,11 @@ require.cache[pgModulePath] = {
 const request = require('supertest');
 const app = require('../src/server');
 
+// Requiring the server runs dotenv, which repopulates ETHERSCAN_API_KEY from a
+// real .env if one is present. Clear it again so the "not configured" path is
+// actually exercised regardless of the developer's local environment.
+delete process.env.ETHERSCAN_API_KEY;
+
 test('POST /api/eth/wallets without an address returns 400', async () => {
   const response = await request(app)
     .post('/api/eth/wallets')
