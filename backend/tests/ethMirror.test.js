@@ -35,6 +35,7 @@ function transfer(overrides = {}) {
     value_wei: '2000000000000000000', // 2 ETH
     is_error: false,
     counterparty_is_own: false,
+    counterparty_exchange: null,
     token_contract: null,
     token_symbol: null,
     token_decimals: null,
@@ -100,11 +101,54 @@ test('ignored tokens are dropped; unpriced tokens mirror at $0', () => {
   assert.equal(priced.amount, 10);
 });
 
+test('outgoing ETH to a labeled exchange mirrors as a deposit named after it', () => {
+  const row = buildMirrorRow(
+    transfer({ counterparty_exchange: 'Coinbase' }),
+    WALLET,
+    { ethPrice: 3000 }
+  );
+  assert.equal(row.category, 'CRYPTO_EXCHANGE_DEPOSIT');
+  assert.equal(row.amount, 6000);
+  assert.equal(row.name, 'ETH → Coinbase');
+});
+
+test('incoming token from a labeled exchange mirrors as a withdrawal', () => {
+  const row = buildMirrorRow(
+    transfer({
+      transfer_type: 'token',
+      from_address: OTHER,
+      to_address: WALLET,
+      counterparty_exchange: 'Kraken',
+      token_contract: '0xcccccccccccccccccccccccccccccccccccccccc',
+      token_symbol: 'USDC',
+      token_decimals: 6,
+      value_wei: '250000000', // 250 USDC
+    }),
+    WALLET,
+    { tokenPrices: { '0xcccccccccccccccccccccccccccccccccccccccc': { usd: 1 } } }
+  );
+  assert.equal(row.category, 'CRYPTO_EXCHANGE_WITHDRAWAL');
+  assert.equal(row.amount, -250);
+  assert.equal(row.name, 'USDC ← Kraken');
+});
+
+test('own counterparty beats an exchange label', () => {
+  const row = buildMirrorRow(
+    transfer({ counterparty_is_own: true, counterparty_exchange: 'Coinbase' }),
+    WALLET,
+    { ethPrice: 3000 }
+  );
+  assert.equal(row.category, 'CRYPTO_SELF_TRANSFER');
+  assert.match(row.name, /^ETH → 0xbbbb/);
+});
+
 test('mirror categories map onto safe classification directions', () => {
   assert.equal(CATEGORY_DIRECTIONS.CRYPTO_SELF_TRANSFER, 'internal_transfer');
   assert.equal(CATEGORY_DIRECTIONS.CRYPTO_GAS_FEE, 'fee');
   assert.equal(CATEGORY_DIRECTIONS.CRYPTO_EXTERNAL, 'other');
   assert.equal(CATEGORY_DIRECTIONS.CRYPTO_TOKEN, 'other');
+  assert.equal(CATEGORY_DIRECTIONS.CRYPTO_EXCHANGE_DEPOSIT, 'internal_transfer');
+  assert.equal(CATEGORY_DIRECTIONS.CRYPTO_EXCHANGE_WITHDRAWAL, 'internal_transfer');
 
   // The amount-sign fallback must never see these rows as spending/income.
   const classified = classify({ category: 'CRYPTO_GAS_FEE', amount: 12.5 });
@@ -112,4 +156,7 @@ test('mirror categories map onto safe classification directions', () => {
   const self = classify({ category: 'CRYPTO_SELF_TRANSFER', amount: -400 });
   assert.equal(self.direction, 'internal_transfer');
   assert.equal(self.isInternalTransfer, true);
+  const deposit = classify({ category: 'CRYPTO_EXCHANGE_DEPOSIT', amount: 500 });
+  assert.equal(deposit.direction, 'internal_transfer');
+  assert.equal(deposit.isInternalTransfer, true);
 });

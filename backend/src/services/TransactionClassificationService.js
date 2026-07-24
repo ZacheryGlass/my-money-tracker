@@ -30,6 +30,10 @@ const CATEGORY_DIRECTIONS = {
   CRYPTO_EXTERNAL: 'other',
   CRYPTO_GAS_FEE: 'fee',
   CRYPTO_TOKEN: 'other',
+  // Exchange deposits/withdrawals move money between the user's own venues,
+  // like self-transfers -- never income or spending.
+  CRYPTO_EXCHANGE_DEPOSIT: 'internal_transfer',
+  CRYPTO_EXCHANGE_WITHDRAWAL: 'internal_transfer',
 };
 
 // Plaid's detailed category resolves cases the primary category gets wrong.

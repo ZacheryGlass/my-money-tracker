@@ -26,6 +26,10 @@ function toAmount(value) {
 function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {}, ignoredContracts = new Set() } = {}) {
   const wallet = walletAddress.toLowerCase();
   const outgoing = transfer.from_address === wallet;
+  // Own beats exchange (reclassify also encodes this, belt and suspenders):
+  // a tracked wallet that happens to be labeled stays a self-transfer.
+  const exchange = transfer.counterparty_is_own ? null : transfer.counterparty_exchange || null;
+  const exchangeCategory = outgoing ? 'CRYPTO_EXCHANGE_DEPOSIT' : 'CRYPTO_EXCHANGE_WITHDRAWAL';
 
   if (transfer.transfer_type === 'gas') {
     const eth = Number(transfer.value_wei) / 1e18;
@@ -48,10 +52,12 @@ function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {
     const usd = Number.isFinite(price) ? quantity * price : 0;
     const symbol = transfer.token_symbol || 'TOKEN';
     return {
-      category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER' : 'CRYPTO_TOKEN',
+      category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER'
+        : exchange ? exchangeCategory
+        : 'CRYPTO_TOKEN',
       name: outgoing
-        ? `${symbol} → ${shortAddress(transfer.to_address)}`
-        : `${symbol} ← ${shortAddress(transfer.from_address)}`,
+        ? `${symbol} → ${exchange || shortAddress(transfer.to_address)}`
+        : `${symbol} ← ${exchange || shortAddress(transfer.from_address)}`,
       amount: toAmount(outgoing ? usd : -usd),
     };
   }
@@ -59,10 +65,12 @@ function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {
   const eth = Number(transfer.value_wei) / 1e18;
   const usd = eth * ethPrice;
   return {
-    category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER' : 'CRYPTO_EXTERNAL',
+    category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER'
+      : exchange ? exchangeCategory
+      : 'CRYPTO_EXTERNAL',
     name: outgoing
-      ? `ETH → ${shortAddress(transfer.to_address)}`
-      : `ETH ← ${shortAddress(transfer.from_address)}`,
+      ? `ETH → ${exchange || shortAddress(transfer.to_address)}`
+      : `ETH ← ${exchange || shortAddress(transfer.from_address)}`,
     amount: toAmount(outgoing ? usd : -usd),
   };
 }
