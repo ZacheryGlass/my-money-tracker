@@ -54,6 +54,17 @@ for (const job of ADMIN_ONLY_TRIGGERS) {
   });
 }
 
+// job_logs rows are shared across users and their `details` carry cross-user
+// output: the expense sync records every user's matched merchant names and
+// costs, the price update every user's tickers.
+for (const path of ['/api/jobs/status', '/api/jobs/health', '/api/jobs/history']) {
+  test(`GET ${path} is 403 for a non-admin`, async () => {
+    asUser(2, 'alice');
+    const response = await request(app).get(path);
+    assert.equal(response.status, 403);
+  });
+}
+
 test('POST /api/jobs/trigger/price-update stays open to any authenticated user', async () => {
   // price_cache is shared global market data and the Dashboard refresh button
   // calls this for everyone, so it is deliberately not admin-gated.

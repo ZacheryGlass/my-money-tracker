@@ -15,10 +15,15 @@ router.use(requireUser);
 // price-update is deliberately left to any authenticated user: price_cache is
 // shared global market data by design, and the Dashboard refresh button
 // (Dashboard.jsx handleRefresh) calls it for everyone.
+// The read endpoints are admin-only for the same reason: job_logs rows are
+// shared across users and their `details` carry cross-user output -- the
+// expense sync records every user's matched merchant names and costs, the
+// price update every user's tickers. Nothing in the UI calls these; the Server
+// tab gets job status through /api/admin/overview instead.
 const requireAdmin = requireUser.requireAdmin;
 
 // GET /api/jobs/status - Get job configuration and status
-router.get('/status', async (req, res, next) => {
+router.get('/status', requireAdmin, async (req, res, next) => {
   try {
     const status = await getJobStatus();
     res.json(status);
@@ -28,7 +33,7 @@ router.get('/status', async (req, res, next) => {
 });
 
 // GET /api/jobs/health - Health check for jobs
-router.get('/health', async (req, res, next) => {
+router.get('/health', requireAdmin, async (req, res, next) => {
   try {
     const latestRun = await JobLog.getLatest(PriceUpdateJob.JOB_NAME);
 
@@ -71,7 +76,7 @@ router.get('/health', async (req, res, next) => {
 });
 
 // GET /api/jobs/history - Get job execution history
-router.get('/history', async (req, res, next) => {
+router.get('/history', requireAdmin, async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const history = await JobLog.getHistory(PriceUpdateJob.JOB_NAME, limit);
@@ -81,23 +86,40 @@ router.get('/history', async (req, res, next) => {
   }
 });
 
+// Each job re-checks JobLog.isRunning itself, and the scheduler can start in
+// the gap after the check below -- in which case the job returns
+// { skipped: 'concurrent_execution' } rather than throwing. Reporting that as
+// a 200 told the caller the run finished when nothing ran (the Server tab
+// shows a success toast on any 200), so a self-skip becomes a 409 too. Other
+// skip reasons (no_items, no_wallets) really are successful no-ops.
+async function runTrigger(res, { job, label, project }) {
+  const busy = () => res.status(409).json({
+    error: 'Job already running',
+    message: `${label} is currently in progress`
+  });
+
+  if (await JobLog.isRunning(job.JOB_NAME)) return busy();
+
+  const result = await job.run();
+  if (result?.skipped && result.reason === 'concurrent_execution') return busy();
+
+  return res.json({
+    message: `${label} completed`,
+    result: project ? project(result) : result
+  });
+}
+
 // POST /api/jobs/trigger/price-update - Manually trigger price update
 router.post('/trigger/price-update', async (req, res, next) => {
   try {
-    // Check if already running
-    const isRunning = await JobLog.isRunning(PriceUpdateJob.JOB_NAME);
-    if (isRunning) {
-      return res.status(409).json({
-        error: 'Job already running',
-        message: 'A price update job is currently in progress'
-      });
-    }
-
-    // Run the job
-    const result = await PriceUpdateJob.run();
-    res.json({
-      message: 'Price update job completed',
-      result
+    // Counts only. This is the one trigger any user may call, and the job's
+    // `results` array is built from Holding.findAllForJobs() -- returning it
+    // would hand the caller every other user's ticker inventory. The full
+    // detail stays in the job log, which is admin-only.
+    await runTrigger(res, {
+      job: PriceUpdateJob,
+      label: 'Price update job',
+      project: ({ processed, succeeded, failed }) => ({ processed, succeeded, failed })
     });
   } catch (error) {
     next(error);
@@ -107,19 +129,7 @@ router.post('/trigger/price-update', async (req, res, next) => {
 // POST /api/jobs/trigger/benchmark-update - Manually trigger benchmark price update
 router.post('/trigger/benchmark-update', requireAdmin, async (req, res, next) => {
   try {
-    const isRunning = await JobLog.isRunning(BenchmarkUpdateJob.JOB_NAME);
-    if (isRunning) {
-      return res.status(409).json({
-        error: 'Job already running',
-        message: 'A benchmark update job is currently in progress'
-      });
-    }
-
-    const result = await BenchmarkUpdateJob.run();
-    res.json({
-      message: 'Benchmark update job completed',
-      result
-    });
+    await runTrigger(res, { job: BenchmarkUpdateJob, label: 'Benchmark update job' });
   } catch (error) {
     next(error);
   }
@@ -128,19 +138,7 @@ router.post('/trigger/benchmark-update', requireAdmin, async (req, res, next) =>
 // POST /api/jobs/trigger/plaid-sync - Manually trigger Plaid sync for every item
 router.post('/trigger/plaid-sync', requireAdmin, async (req, res, next) => {
   try {
-    const isRunning = await JobLog.isRunning(PlaidSyncJob.JOB_NAME);
-    if (isRunning) {
-      return res.status(409).json({
-        error: 'Job already running',
-        message: 'A Plaid sync job is currently in progress'
-      });
-    }
-
-    const result = await PlaidSyncJob.run();
-    res.json({
-      message: 'Plaid sync job completed',
-      result
-    });
+    await runTrigger(res, { job: PlaidSyncJob, label: 'Plaid sync job' });
   } catch (error) {
     next(error);
   }
@@ -149,19 +147,7 @@ router.post('/trigger/plaid-sync', requireAdmin, async (req, res, next) => {
 // POST /api/jobs/trigger/eth-sync - Manually trigger ETH wallet sync for every wallet
 router.post('/trigger/eth-sync', requireAdmin, async (req, res, next) => {
   try {
-    const isRunning = await JobLog.isRunning(EthSyncJob.JOB_NAME);
-    if (isRunning) {
-      return res.status(409).json({
-        error: 'Job already running',
-        message: 'An ETH wallet sync job is currently in progress'
-      });
-    }
-
-    const result = await EthSyncJob.run();
-    res.json({
-      message: 'ETH wallet sync job completed',
-      result
-    });
+    await runTrigger(res, { job: EthSyncJob, label: 'ETH wallet sync job' });
   } catch (error) {
     next(error);
   }
@@ -171,23 +157,11 @@ router.post('/trigger/eth-sync', requireAdmin, async (req, res, next) => {
 // investment cash flow derivation, tax lot rebuild and expense matching
 router.post('/trigger/expense-sync', requireAdmin, async (req, res, next) => {
   try {
-    const isRunning = await JobLog.isRunning(ExpenseSyncJob.JOB_NAME);
-    if (isRunning) {
-      return res.status(409).json({
-        error: 'Job already running',
-        message: 'An expense sync job is currently in progress'
-      });
-    }
-
     // Runs the same job the scheduler runs, rather than a subset: a manual run
     // that skipped the cash-flow derivation and tax-lot rebuild left those
-    // stale, and writing no JobLog row meant the concurrency guard above could
-    // never see a manual run in progress.
-    const result = await ExpenseSyncJob.run();
-    res.json({
-      message: 'Expense sync job completed',
-      result
-    });
+    // stale, and writing no JobLog row meant the concurrency guard could never
+    // see a manual run in progress.
+    await runTrigger(res, { job: ExpenseSyncJob, label: 'Expense sync job' });
   } catch (error) {
     next(error);
   }
@@ -196,21 +170,7 @@ router.post('/trigger/expense-sync', requireAdmin, async (req, res, next) => {
 // POST /api/jobs/trigger/snapshot - Manually trigger snapshot creation
 router.post('/trigger/snapshot', requireAdmin, async (req, res, next) => {
   try {
-    // Check if already running
-    const isRunning = await JobLog.isRunning(SnapshotJob.JOB_NAME);
-    if (isRunning) {
-      return res.status(409).json({
-        error: 'Job already running',
-        message: 'A snapshot creation job is currently in progress'
-      });
-    }
-
-    // Run the job
-    const result = await SnapshotJob.run();
-    res.json({
-      message: 'Snapshot creation job completed',
-      result
-    });
+    await runTrigger(res, { job: SnapshotJob, label: 'Snapshot creation job' });
   } catch (error) {
     next(error);
   }
