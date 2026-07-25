@@ -4,6 +4,7 @@ const axios = require('axios');
 const YahooFinance = require('yahoo-finance2').default;
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const PriceCache = require('../models/PriceCache');
+const SecretsService = require('./SecretsService');
 const logger = require('../config/logger');
 
 let coinGeckoIdMapCache = null;
@@ -43,8 +44,9 @@ class PriceService {
         }
       };
 
-      if (process.env.CG_API_KEY) {
-        config.headers['x-cg-api-key'] = process.env.CG_API_KEY;
+      const apiKey = await SecretsService.getAppSetting('cg_api_key');
+      if (apiKey) {
+        config.headers['x-cg-api-key'] = apiKey;
       }
 
       const response = await axios(url, config);
@@ -88,13 +90,18 @@ class PriceService {
   // Get price from CoinMarketCap
   static async getCoinMarketCapPrice(ticker) {
     try {
-      if (!process.env.CMC_PRO_API_KEY) {
+      const apiKey = await SecretsService.getAppSetting('cmc_api_key');
+      if (!apiKey) {
         logger.warn('CoinMarketCap: API key missing');
         return null;
       }
 
-      const url = `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${ticker.toUpperCase()}&CMC_PRO_API_KEY=${process.env.CMC_PRO_API_KEY}`;
-      const response = await axios.get(url, { timeout: 5000 });
+      // Key goes in the header, not the query string, so it stays out of logged URLs.
+      const url = `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${encodeURIComponent(ticker.toUpperCase())}`;
+      const response = await axios.get(url, {
+        timeout: 5000,
+        headers: { 'X-CMC_PRO_API_KEY': apiKey, accept: 'application/json' }
+      });
       const price = parseFloat(response.data['data'][ticker.toUpperCase()]['quote']['USD']['price']);
 
       logger.debug({ ticker, price, source: 'coinmarketcap' }, 'Price fetched');
