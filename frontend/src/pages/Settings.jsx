@@ -235,9 +235,12 @@ function AppearanceOptions({ options, value, onChange, ariaLabel, previewFont = 
   );
 }
 
-const Settings = () => {
+const Settings = ({ user }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  // Authorization comes from the identity /api/me already returned, not from
+  // whether an admin-only request happened to succeed.
+  const isAdmin = Boolean(user?.isAdmin);
   const {
     preferences: appearance,
     setTheme,
@@ -310,6 +313,11 @@ const Settings = () => {
     try {
       // Ethereum data is fetched alongside but must not fail the whole page:
       // a wallet-side error should degrade only the Ethereum tab.
+      //
+      // The admin overview is requested only when /api/me already said this
+      // user is an admin: probing it and reading the 403 made every non-admin
+      // fire a request that could only fail, and tied the Server tab's
+      // visibility to whether a five-query aggregate happened to succeed.
       const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, keysResult, adminResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
@@ -317,7 +325,7 @@ const Settings = () => {
         ethAPI.getIgnoredTokens().catch(() => null),
         ethAPI.getAddressLabels().catch(() => null),
         keysAPI.getAll().catch(() => null),
-        adminAPI.getOverview().catch(() => null),
+        isAdmin ? adminAPI.getOverview().catch(() => null) : Promise.resolve(null),
       ]);
       const loadedItems = plaidData.items || [];
       setEthWallets(ethResult?.wallets || []);
@@ -342,7 +350,7 @@ const Settings = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
@@ -599,7 +607,10 @@ const Settings = () => {
     try {
       await adminAPI.triggerJob(JOB_TRIGGER_NAMES[statusKey] || statusKey);
       showSuccess('Job completed');
-      setAdminOverview((await adminAPI.getOverview().catch(() => null)) || null);
+      // Keep the previous overview if the refresh fails: clearing it used to
+      // unmount the tab the user is standing on and leave a blank page.
+      const refreshed = await adminAPI.getOverview().catch(() => null);
+      if (refreshed) setAdminOverview(refreshed);
     } catch (err) {
       setError(err.response?.data?.error || 'Job trigger failed');
     } finally {
@@ -782,7 +793,7 @@ const Settings = () => {
         className="mb-6"
         value={activeTab}
         onChange={setActiveTab}
-        options={(adminOverview ? [...SETTINGS_TABS, SERVER_TAB] : SETTINGS_TABS).map((t) => {
+        options={(isAdmin ? [...SETTINGS_TABS, SERVER_TAB] : SETTINGS_TABS).map((t) => {
           const attentionCount = t.id === 'institutions'
             ? institutionSummary.attentionCount
             : t.id === 'ethereum'
@@ -1480,6 +1491,12 @@ const Settings = () => {
       </section>
 
       </>
+      )}
+
+      {activeTab === 'server' && isAdmin && !adminOverview && (
+        <section className="card p-4 text-body-sm text-secondary">
+          Server details could not be loaded. Reload the page to try again.
+        </section>
       )}
 
       {activeTab === 'server' && adminOverview && (

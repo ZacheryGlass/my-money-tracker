@@ -67,9 +67,11 @@ vi.mock('react-plaid-link', () => ({
 }));
 
 describe('Settings display names', () => {
-  const renderSettings = () => render(
+  // Admin-ness comes from the identity App already fetched via /api/me, not
+  // from probing the admin API.
+  const renderSettings = (user = { id: 2, username: 'alice', isAdmin: false }) => render(
     <MemoryRouter initialEntries={['/settings']}>
-      <Settings />
+      <Settings user={user} />
     </MemoryRouter>
   );
 
@@ -208,10 +210,11 @@ describe('Settings display names', () => {
     expect(inputs.every((input) => input.disabled)).toBe(true);
   });
 
-  it('hides the Server tab for non-admins', async () => {
+  it('hides the Server tab for non-admins and never probes the admin API', async () => {
     renderSettings();
     await screen.findByRole('tab', { name: 'API Keys' });
     expect(screen.queryByRole('tab', { name: 'Server' })).not.toBeInTheDocument();
+    expect(apiMocks.admin.getOverview).not.toHaveBeenCalled();
   });
 
   it('renders the Server tab for the admin with env, users, jobs, and health', async () => {
@@ -222,7 +225,8 @@ describe('Settings display names', () => {
         cmc_api_key: { source: 'none', masked: null },
       },
       env: [
-        { name: 'SECRETS_ENCRYPTION_KEY', set: true, valid: true, masked: '••••AB==' },
+        // No last-4 for the key-encryption key: the server reports set/valid only.
+        { name: 'SECRETS_ENCRYPTION_KEY', set: true, valid: true, masked: null },
         { name: 'MCP_API_KEY', set: true, masked: '••••abcd' },
         { name: 'DATABASE_URL', set: true, host: 'db.example.com' },
         { name: 'ALLOWED_PRINCIPALS', set: true, value: 'a@x.com,b@y.com' },
@@ -232,7 +236,7 @@ describe('Settings display names', () => {
         { id: 2, username: 'alice', display_name: null, is_admin: false, emails: ['b@y.com'], account_count: 1, wallet_count: 0, plaid_item_count: 0, configured_keys: [] },
       ],
       jobs: { jobs: { 'price-update': { schedule: '0 8 * * *', timezone: 'Etc/UTC', description: '', lastRun: null } } },
-      health: { dbReachable: true, encryptionConfigured: true, latestPriceFetchedAt: null, migrationCount: 30 },
+      health: { dbReachable: true, encryptionConfigured: true, latestPriceFetchedAt: null, migrationCount: 31 },
     });
     // The shared-key card reads live statuses from /api/keys (admins get
     // appSettings there), so the masked value comes from this mock.
@@ -248,7 +252,7 @@ describe('Settings display names', () => {
         cmc_api_key: { source: 'none', masked: null },
       },
     });
-    renderSettings();
+    renderSettings({ id: 1, username: 'zachery', isAdmin: true });
     fireEvent.click(await screen.findByRole('tab', { name: 'Server' }));
 
     await screen.findByText('Market Data Keys');
@@ -265,6 +269,30 @@ describe('Settings display names', () => {
     await waitFor(() => {
       expect(apiMocks.admin.triggerJob).toHaveBeenCalledWith('price-update');
     });
+  });
+
+  it('keeps the Server tab rendered when the post-trigger refresh fails', async () => {
+    apiMocks.admin.getOverview.mockResolvedValueOnce({
+      encryptionConfigured: true,
+      appSettings: { cg_api_key: { source: 'none', masked: null }, cmc_api_key: { source: 'none', masked: null } },
+      env: [{ name: 'MCP_API_KEY', set: true, masked: '••••abcd' }],
+      users: [{ id: 1, username: 'zachery', display_name: null, is_admin: true, emails: [], account_count: 0, wallet_count: 0, plaid_item_count: 0, configured_keys: [] }],
+      jobs: { jobs: { 'price-update': { schedule: '0 8 * * *', timezone: 'Etc/UTC', description: '', lastRun: null } } },
+      health: { dbReachable: true, encryptionConfigured: true, latestPriceFetchedAt: null, migrationCount: 31 },
+    });
+    // The refresh after the trigger fails; the tab must survive it.
+    apiMocks.admin.getOverview.mockRejectedValueOnce(new Error('network'));
+    apiMocks.admin.triggerJob.mockResolvedValue({});
+
+    renderSettings({ id: 1, username: 'zachery', isAdmin: true });
+    fireEvent.click(await screen.findByRole('tab', { name: 'Server' }));
+    await screen.findByText('Market Data Keys');
+
+    fireEvent.click(screen.getByRole('button', { name: /run now/i }));
+
+    await waitFor(() => expect(apiMocks.admin.triggerJob).toHaveBeenCalled());
+    expect(screen.getByRole('tab', { name: 'Server' })).toBeInTheDocument();
+    expect(screen.getByText('Market Data Keys')).toBeInTheDocument();
   });
 
   it('loads all accounts and toggles account visibility', async () => {

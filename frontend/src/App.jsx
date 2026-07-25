@@ -95,7 +95,7 @@ function App() {
         {currentPage === 'top-merchants' && <TopMerchants />}
         {currentPage === 'salary-history' && <SalaryHistory />}
         {currentPage === 'monthly-expenses' && <MonthlyExpenses />}
-        {currentPage === 'settings' && <Settings />}
+        {currentPage === 'settings' && <Settings user={user} />}
       </div>
     );
   };
