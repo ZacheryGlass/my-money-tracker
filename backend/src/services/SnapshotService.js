@@ -10,7 +10,7 @@ class SnapshotService {
   static async createTickerSnapshots(date) {
     // Fetch all holdings and prices
     const [holdings, prices] = await Promise.all([
-      Holding.findAll(),
+      Holding.findAllForJobs(),
       PriceCache.getLatestPrices()
     ]);
 

@@ -8,7 +8,7 @@ const logger = require('../config/logger');
 const JOB_NAME = 'plaid-sync';
 
 async function run() {
-  const items = await PlaidItem.findAll();
+  const items = await PlaidItem.findAllForJobs();
   if (items.length === 0) {
     logger.info({ job: JOB_NAME }, 'No Plaid items to sync, skipping');
     return { skipped: true, reason: 'no_items' };

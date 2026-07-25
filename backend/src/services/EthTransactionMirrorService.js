@@ -163,7 +163,7 @@ class EthTransactionMirrorService {
   }
 
   static async rebuildAll() {
-    const wallets = await EthWallet.findAll();
+    const wallets = await EthWallet.findAllForJobs();
     const results = [];
     for (const wallet of wallets) {
       try {

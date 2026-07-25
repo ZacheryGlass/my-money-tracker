@@ -190,7 +190,7 @@ class EthWalletService {
   }
 
   static async syncAllWallets() {
-    const wallets = await EthWallet.findAll();
+    const wallets = await EthWallet.findAllForJobs();
     const summary = { processed: 0, succeeded: 0, failed: 0, results: [] };
 
     for (const wallet of wallets) {
@@ -392,7 +392,7 @@ class EthWalletService {
 
   // Classification changes (wallet add/remove, address-label change) flip
   // self/exchange/external on existing rows and their mirrored ledger rows.
-  // Unlike refreshAllDerived this never touches Etherscan or holdings --
+  // Unlike refreshDerivedForUser this never touches Etherscan or holdings --
   // labels affect classification only.
   static refreshClassifications() {
     return serialized(async () => {
@@ -402,11 +402,13 @@ class EthWalletService {
     });
   }
 
-  // Ignore-list changes affect holdings and mirrored ledger rows for every
-  // wallet; re-derive both without hitting Etherscan feeds again.
-  static refreshAllDerived() {
+  // Ignore lists are per-user, so this re-derives only the owner's wallets.
+  // Fanning out over every wallet would spend other owners' Etherscan and
+  // CoinGecko quota (refreshHoldings resolves the wallet owner's key) and
+  // rewrite their holdings rows on an edit they never made.
+  static refreshDerivedForUser(userId) {
     return serialized(async () => {
-      const wallets = await EthWallet.findAll();
+      const wallets = await EthWallet.findAllByUser(userId);
       for (const wallet of wallets) {
         try {
           await this.refreshHoldings(wallet.id);

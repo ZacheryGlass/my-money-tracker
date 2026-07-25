@@ -3,8 +3,9 @@
 const pool = require('../config/database');
 
 class EthWallet {
-  // Unscoped: the nightly sync job iterates every user's wallets.
-  static async findAll() {
+  // Every user's wallets. Named for its only legitimate use so that a
+  // per-user caller reaching for it is visible in review; use findAllByUser.
+  static async findAllForJobs() {
     const result = await pool.query(
       'SELECT * FROM eth_wallets ORDER BY created_at DESC'
     );

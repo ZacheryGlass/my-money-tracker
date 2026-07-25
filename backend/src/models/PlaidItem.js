@@ -13,8 +13,9 @@ class PlaidItem {
     return result.rows[0];
   }
 
-  // Unscoped: the nightly sync job iterates every user's items.
-  static async findAll() {
+  // Every user's items. Named for its only legitimate use so that a per-user
+  // caller reaching for it is visible in review; use findAllByUser.
+  static async findAllForJobs() {
     const result = await pool.query(
       'SELECT * FROM plaid_items ORDER BY created_at DESC'
     );

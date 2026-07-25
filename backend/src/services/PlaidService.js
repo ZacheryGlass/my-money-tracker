@@ -368,7 +368,7 @@ class PlaidService {
   }
 
   static async syncAllItems() {
-    const items = await PlaidItem.findAll();
+    const items = await PlaidItem.findAllForJobs();
     const summary = { processed: 0, succeeded: 0, failed: 0, results: [] };
 
     for (const item of items) {

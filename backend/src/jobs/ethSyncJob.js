@@ -8,7 +8,7 @@ const logger = require('../config/logger');
 const JOB_NAME = 'eth-sync';
 
 async function run() {
-  const wallets = await EthWallet.findAll();
+  const wallets = await EthWallet.findAllForJobs();
   if (wallets.length === 0) {
     logger.info({ job: JOB_NAME }, 'No ETH wallets to sync, skipping');
     return { skipped: true, reason: 'no_wallets' };

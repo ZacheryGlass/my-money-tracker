@@ -157,7 +157,7 @@ router.post('/ignored-tokens', async (req, res) => {
     }
 
     const token = await EthIgnoredToken.upsert(req.user.id, contract_address.trim(), symbol, note);
-    await EthWalletService.refreshAllDerived();
+    await EthWalletService.refreshDerivedForUser(req.user.id);
     res.status(201).json({ token });
   } catch (error) {
     logger.error({ err: error }, 'Ignore token error');
@@ -171,7 +171,7 @@ router.delete('/ignored-tokens/:contract', async (req, res) => {
     if (!token) {
       return res.status(404).json({ error: 'Ignored token not found' });
     }
-    await EthWalletService.refreshAllDerived();
+    await EthWalletService.refreshDerivedForUser(req.user.id);
     res.status(200).json({ message: 'Token unignored' });
   } catch (error) {
     logger.error({ err: error }, 'Unignore token error');

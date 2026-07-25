@@ -2,14 +2,30 @@ const pool = require('../config/database');
 
 const ACCOUNT_DISPLAY_SELECT = "COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) as account_name, a.name as account_source_name, a.display_name as account_display_name";
 
+// Ownership scoping is fail-closed: a caller that forgets the userId gets an
+// error, not every user's rows. The two legitimate cross-user callers (price
+// updates and snapshots) say so at the call site via findAllForJobs.
+function requireUserId(userId, method) {
+  if (userId == null) {
+    throw new Error(`Holding.${method} requires a userId; use findAllForJobs for cross-user reads`);
+  }
+}
+
 class Holding {
   // withPrices joins price_cache to compute current_value. Callers that recompute
   // value themselves (e.g. DashboardService) pass withPrices: false to skip the
   // join — the UPPER(...)=UPPER(...) predicate can't use the price_cache index.
-  //
-  // userId scopes to one user's accounts; jobs and snapshot services omit it
-  // deliberately (they operate on every user's data).
-  static async findAll({ userId = null, includeHidden = true, withPrices = true } = {}) {
+  static async findAll({ userId, includeHidden = true, withPrices = true } = {}) {
+    requireUserId(userId, 'findAll');
+    return this._selectAll({ userId, includeHidden, withPrices });
+  }
+
+  // Every user's holdings, for the global price-update and snapshot jobs only.
+  static async findAllForJobs({ includeHidden = true, withPrices = true } = {}) {
+    return this._selectAll({ userId: null, includeHidden, withPrices });
+  }
+
+  static async _selectAll({ userId, includeHidden, withPrices }) {
     const where = [];
     const params = [];
     if (userId != null) {
@@ -40,13 +56,10 @@ class Holding {
     return result.rows;
   }
 
-  static async findById(id, userId = null) {
-    const params = [id];
-    let where = 'WHERE h.id = $1';
-    if (userId != null) {
-      params.push(userId);
-      where += ` AND a.user_id = $${params.length}`;
-    }
+  static async findById(id, userId) {
+    requireUserId(userId, 'findById');
+    const params = [id, userId];
+    const where = 'WHERE h.id = $1 AND a.user_id = $2';
     const result = await pool.query(
       `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id ${where}`,
       params
@@ -54,13 +67,10 @@ class Holding {
     return result.rows[0];
   }
 
-  static async findByAccountId(accountId, userId = null) {
-    const params = [accountId];
-    let where = 'WHERE h.account_id = $1';
-    if (userId != null) {
-      params.push(userId);
-      where += ` AND a.user_id = $${params.length}`;
-    }
+  static async findByAccountId(accountId, userId) {
+    requireUserId(userId, 'findByAccountId');
+    const params = [accountId, userId];
+    const where = 'WHERE h.account_id = $1 AND a.user_id = $2';
     const result = await pool.query(
       `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id ${where} ORDER BY h.updated_at DESC`,
       params

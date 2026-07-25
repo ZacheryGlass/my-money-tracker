@@ -21,7 +21,7 @@ async function run() {
   logger.info({ job: JOB_NAME, logId: jobLog.id }, 'Created job log entry');
 
   try {
-    const holdings = await Holding.findAll();
+    const holdings = await Holding.findAllForJobs();
     const holdingsWithTickers = holdings.filter(h => h.ticker && parseFloat(h.quantity || 0) > 0);
 
     const assetTypeMap = {};
