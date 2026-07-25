@@ -52,9 +52,22 @@ test('delete only removes the caller\'s rows, never builtins', async () => {
   assert.match(text.replace(/\s+/g, ' '), /WHERE user_id = \$1 AND address = \$2/);
 });
 
-test('findByAddress lowercases and returns null on miss', async () => {
+test('findByAddress prefers the user row over a builtin', async () => {
   queries.length = 0;
-  const row = await EthAddressLabel.findByAddress(MIXED_CASE);
+  const row = await EthAddressLabel.findByAddress(1, MIXED_CASE);
   assert.equal(row, null);
-  assert.equal(queries[0].params[0], MIXED_CASE.toLowerCase());
+  const { text, params } = queries[0];
+  assert.deepEqual(params, [MIXED_CASE.toLowerCase(), 1]);
+  const sql = text.replace(/\s+/g, ' ');
+  assert.match(sql, /user_id = \$2 OR user_id IS NULL/);
+  assert.match(sql, /ORDER BY user_id NULLS LAST/);
+});
+
+test('findAllForUser shadows builtins with the user\'s own rows', async () => {
+  queries.length = 0;
+  await EthAddressLabel.findAllForUser(1);
+  const sql = queries[0].text.replace(/\s+/g, ' ');
+  assert.match(sql, /DISTINCT ON \(address\)/);
+  assert.match(sql, /user_id = \$1 OR user_id IS NULL/);
+  assert.match(sql, /ORDER BY address, user_id NULLS LAST/);
 });

@@ -8,16 +8,12 @@ const CHAIN_ID = 1;
 // Free tier allows 5 req/s; space calls 250 ms apart (4 req/s) to stay under.
 const REQUEST_SPACING_MS = 250;
 
-function isConfigured() {
-  return Boolean(process.env.ETHERSCAN_API_KEY);
-}
-
-function apiKey() {
-  return process.env.ETHERSCAN_API_KEY;
-}
-
+// Keys are per-user, resolved via SecretsService (DB value, env fallback) by
+// EthWalletService and threaded through EtherscanService per request.
+//
 // All Etherscan calls funnel through this serializer so concurrent syncs
-// cannot exceed the rate limit.
+// cannot exceed the rate limit. It is deliberately global across users: the
+// budget is conservative enough to share.
 let queue = Promise.resolve();
 
 function throttled(fn) {
@@ -28,4 +24,4 @@ function throttled(fn) {
   return run;
 }
 
-module.exports = { BASE_URL, CHAIN_ID, isConfigured, apiKey, throttled };
+module.exports = { BASE_URL, CHAIN_ID, throttled };

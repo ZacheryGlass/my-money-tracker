@@ -32,7 +32,7 @@ router.post('/wallets', async (req, res) => {
       return res.status(400).json({ error: 'address is required' });
     }
 
-    const { wallet, account } = await EthWalletService.addWallet(address, label);
+    const { wallet, account } = await EthWalletService.addWallet(req.user.id, address, label);
 
     // First sync of a busy wallet can outlive proxy timeouts (and the axios
     // interceptor would retry the POST, hitting DUPLICATE_WALLET), so it runs
@@ -52,7 +52,7 @@ router.post('/wallets', async (req, res) => {
 
 router.get('/wallets', async (req, res) => {
   try {
-    const wallets = await EthWallet.findAll();
+    const wallets = await EthWallet.findAllByUser(req.user.id);
     const withAccounts = await Promise.all(
       wallets.map(async (wallet) => {
         const [account, ethQuantity] = await Promise.all([
@@ -75,7 +75,7 @@ router.post('/wallets/:id/sync', async (req, res) => {
     if (!id) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
-    const wallet = await EthWallet.findById(id);
+    const wallet = await EthWallet.findByIdForUser(id, req.user.id);
     if (!wallet) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
@@ -99,7 +99,7 @@ router.delete('/wallets/:id', async (req, res) => {
     if (!id) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
-    const wallet = await EthWallet.findById(id);
+    const wallet = await EthWallet.findByIdForUser(id, req.user.id);
     if (!wallet) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
@@ -119,7 +119,7 @@ router.get('/wallets/:id/transfers', async (req, res) => {
     if (!id) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
-    const wallet = await EthWallet.findById(id);
+    const wallet = await EthWallet.findByIdForUser(id, req.user.id);
     if (!wallet) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
@@ -181,7 +181,7 @@ router.delete('/ignored-tokens/:contract', async (req, res) => {
 
 router.get('/address-labels', async (req, res) => {
   try {
-    const labels = await EthAddressLabel.findAll();
+    const labels = await EthAddressLabel.findAllForUser(req.user.id);
     res.status(200).json({ labels });
   } catch (error) {
     logger.error({ err: error }, 'Get address labels error');
@@ -215,7 +215,7 @@ router.delete('/address-labels/:address', async (req, res) => {
     if (!label) {
       // Distinguish "builtin, refused" from "no such label": deleting a
       // builtin would only resurrect it when the seed migration re-runs.
-      const existing = await EthAddressLabel.findByAddress(req.params.address);
+      const existing = await EthAddressLabel.findByAddress(req.user.id, req.params.address);
       if (existing) {
         return res.status(409).json({ error: "Built-in labels can't be removed; relabel the address to rename it" });
       }

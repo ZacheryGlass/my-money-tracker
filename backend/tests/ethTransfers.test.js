@@ -128,10 +128,20 @@ test('reclassify SQL defaults a NULL counterparty to false', async () => {
   // counterparty_is_own is NOT NULL and `NULL IN (...)` is NULL, so the
   // expression must be wrapped or one contract-creation row aborts the
   // statement -- and with it every sync, add, and remove.
-  assert.match(sql, /COALESCE\(.*IN \(SELECT address FROM eth_wallets\).*,\s*FALSE\s*\)/);
+  assert.match(sql, /COALESCE\(.*IN \(SELECT w2\.address FROM eth_wallets w2.*,\s*FALSE\s*\)/);
 });
 
-test('reclassify sets exchange labels with own-precedence in SQL', async () => {
+test('reclassify scopes the own-wallet set to the transfer owner', async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.reclassifyCounterparties();
+  const sql = queries[0].text.replace(/\s+/g, ' ');
+  // Without this, user A's wallet address would classify as a self-transfer
+  // counterparty on user B's transfers -- hiding B's real income/spending.
+  assert.match(sql, /WHERE w2\.user_id = w\.user_id/);
+});
+
+test('reclassify sets exchange labels with owner scope and own-precedence', async () => {
   const EthTransfer = require('../src/models/EthTransfer');
   queries.length = 0;
   await EthTransfer.reclassifyCounterparties();
@@ -140,16 +150,19 @@ test('reclassify sets exchange labels with own-precedence in SQL', async () => {
   // Own must beat exchange: a tracked wallet that is also labeled stays a
   // self-transfer, encoded directly in the statement.
   assert.match(sql, /CASE WHEN t\.counterparty_is_own THEN NULL/);
-  assert.match(sql, /FROM eth_address_labels/);
+  // Labels apply per owner; builtins (user_id NULL) apply to everyone, with
+  // the user's own label shadowing the builtin.
+  assert.match(sql, /l\.user_id = w\.user_id OR l\.user_id IS NULL/);
+  assert.match(sql, /ORDER BY l\.user_id NULLS LAST LIMIT 1/);
 });
 
 test('addWallet rejects malformed addresses', async () => {
   await assert.rejects(
-    () => EthWalletService.addWallet('not-an-address'),
+    () => EthWalletService.addWallet(1, 'not-an-address'),
     (err) => err.code === 'INVALID_ADDRESS'
   );
   await assert.rejects(
-    () => EthWalletService.addWallet('0x123'),
+    () => EthWalletService.addWallet(1, '0x123'),
     (err) => err.code === 'INVALID_ADDRESS'
   );
 });

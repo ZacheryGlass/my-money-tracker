@@ -3,17 +3,29 @@
 const pool = require('../config/database');
 
 class EthAddressLabel {
-  static async findAll() {
+  // The user's own rows plus the shared builtins, with a user row shadowing
+  // the builtin for the same address.
+  static async findAllForUser(userId) {
     const result = await pool.query(
-      'SELECT * FROM eth_address_labels ORDER BY name, address'
+      `SELECT * FROM (
+         SELECT DISTINCT ON (address) *
+         FROM eth_address_labels
+         WHERE user_id = $1 OR user_id IS NULL
+         ORDER BY address, user_id NULLS LAST
+       ) labels
+       ORDER BY name, address`,
+      [userId]
     );
     return result.rows;
   }
 
-  static async findByAddress(address) {
+  static async findByAddress(userId, address) {
     const result = await pool.query(
-      'SELECT * FROM eth_address_labels WHERE address = $1',
-      [address.toLowerCase()]
+      `SELECT * FROM eth_address_labels
+       WHERE address = $1 AND (user_id = $2 OR user_id IS NULL)
+       ORDER BY user_id NULLS LAST
+       LIMIT 1`,
+      [address.toLowerCase(), userId]
     );
     return result.rows[0] || null;
   }

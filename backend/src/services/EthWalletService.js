@@ -2,6 +2,7 @@
 
 const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
+const SecretsService = require('./SecretsService');
 const EthTransactionMirrorService = require('./EthTransactionMirrorService');
 const PriceService = require('./PriceService');
 const TransactionClassificationService = require('./TransactionClassificationService');
@@ -133,7 +134,14 @@ class EthWalletService {
   static async _syncWallet(walletId) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
-    EtherscanService.ensureConfigured();
+    // Credentials belong to the wallet's owner (the nightly job has no
+    // request context). Missing key -> ETHERSCAN_NOT_CONFIGURED.
+    const apiKey = await SecretsService.getUserKey(wallet.user_id, 'etherscan');
+    if (!apiKey) {
+      const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
+      error.code = 'ETHERSCAN_NOT_CONFIGURED';
+      throw error;
+    }
 
     try {
       const resume = {
@@ -142,9 +150,9 @@ class EthWalletService {
         token: Math.max(0, Number(wallet.last_block_token) - REORG_OVERLAP_BLOCKS),
       };
 
-      const normal = await EtherscanService.fetchNormalTxs(wallet.address, resume.normal);
-      const internal = await EtherscanService.fetchInternalTxs(wallet.address, resume.internal);
-      const token = await EtherscanService.fetchTokenTxs(wallet.address, resume.token);
+      const normal = await EtherscanService.fetchNormalTxs(wallet.address, resume.normal, apiKey);
+      const internal = await EtherscanService.fetchInternalTxs(wallet.address, resume.internal, apiKey);
+      const token = await EtherscanService.fetchTokenTxs(wallet.address, resume.token, apiKey);
 
       const rows = this.normalizeFeeds(wallet.address, { normal, internal, token })
         .map((row) => ({ ...row, wallet_id: walletId }));
@@ -192,6 +200,12 @@ class EthWalletService {
         summary.succeeded++;
         summary.results.push({ walletId: wallet.id, address: wallet.address, ...result });
       } catch (err) {
+        if (err.code === 'ETHERSCAN_NOT_CONFIGURED') {
+          summary.skipped = (summary.skipped || 0) + 1;
+          summary.results.push({ walletId: wallet.id, address: wallet.address, skipped: 'not_configured' });
+          logger.warn({ walletId: wallet.id, userId: wallet.user_id }, 'Skipping ETH wallet: owner has no Etherscan key');
+          continue;
+        }
         summary.failed++;
         summary.results.push({ walletId: wallet.id, address: wallet.address, error: err.message });
         logger.error({ walletId: wallet.id, err }, 'Failed to sync ETH wallet');
@@ -201,7 +215,7 @@ class EthWalletService {
     return summary;
   }
 
-  static async addWallet(address, label) {
+  static async addWallet(userId, address, label) {
     if (typeof address !== 'string' || !ADDRESS_RE.test(address.trim())) {
       const error = new Error('address must be a 0x-prefixed 40-hex-character Ethereum address');
       error.code = 'INVALID_ADDRESS';
@@ -209,10 +223,15 @@ class EthWalletService {
     }
     // Fail fast: without an API key the wallet could be created but never
     // synced, which would just strand an empty account.
-    EtherscanService.ensureConfigured();
+    const apiKey = await SecretsService.getUserKey(userId, 'etherscan');
+    if (!apiKey) {
+      const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
+      error.code = 'ETHERSCAN_NOT_CONFIGURED';
+      throw error;
+    }
     const normalized = address.trim().toLowerCase();
 
-    const existing = await EthWallet.findByAddress(normalized);
+    const existing = await EthWallet.findByAddress(normalized, userId);
     if (existing) {
       const error = new Error('That address is already tracked');
       error.code = 'DUPLICATE_WALLET';
@@ -229,15 +248,15 @@ class EthWalletService {
     try {
       await client.query('BEGIN');
       const walletResult = await client.query(
-        'INSERT INTO eth_wallets (address, label) VALUES ($1, $2) RETURNING *',
-        [normalized, label?.trim() || null]
+        'INSERT INTO eth_wallets (address, label, user_id) VALUES ($1, $2, $3) RETURNING *',
+        [normalized, label?.trim() || null, userId]
       );
       wallet = walletResult.rows[0];
       const accountResult = await client.query(
-        `INSERT INTO accounts (name, type, display_name, eth_wallet_id)
-         VALUES ($1, 'crypto', $2, $3)
+        `INSERT INTO accounts (name, type, display_name, eth_wallet_id, user_id)
+         VALUES ($1, 'crypto', $2, $3, $4)
          RETURNING *`,
-        [`Ethereum ${shortAddress(normalized)}`, label?.trim() || null, wallet.id]
+        [`Ethereum ${shortAddress(normalized)}`, label?.trim() || null, wallet.id, userId]
       );
       account = accountResult.rows[0];
       await client.query('COMMIT');
@@ -273,7 +292,13 @@ class EthWalletService {
     const account = await EthWallet.getAccountForWallet(walletId);
     if (!account) return { skipped: true };
 
-    const wei = await EtherscanService.getEthBalance(wallet.address);
+    const apiKey = await SecretsService.getUserKey(wallet.user_id, 'etherscan');
+    if (!apiKey) {
+      const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
+      error.code = 'ETHERSCAN_NOT_CONFIGURED';
+      throw error;
+    }
+    const wei = await EtherscanService.getEthBalance(wallet.address, apiKey);
     const desired = [{
       ticker: 'ETH',
       name: 'Ethereum',

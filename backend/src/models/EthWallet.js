@@ -3,9 +3,18 @@
 const pool = require('../config/database');
 
 class EthWallet {
+  // Unscoped: the nightly sync job iterates every user's wallets.
   static async findAll() {
     const result = await pool.query(
       'SELECT * FROM eth_wallets ORDER BY created_at DESC'
+    );
+    return result.rows;
+  }
+
+  static async findAllByUser(userId) {
+    const result = await pool.query(
+      'SELECT * FROM eth_wallets WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
     );
     return result.rows;
   }
@@ -18,10 +27,18 @@ class EthWallet {
     return result.rows[0];
   }
 
-  static async findByAddress(address) {
+  static async findByIdForUser(id, userId) {
     const result = await pool.query(
-      'SELECT * FROM eth_wallets WHERE address = $1',
-      [address.toLowerCase()]
+      'SELECT * FROM eth_wallets WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    return result.rows[0];
+  }
+
+  static async findByAddress(address, userId) {
+    const result = await pool.query(
+      'SELECT * FROM eth_wallets WHERE address = $1 AND user_id = $2',
+      [address.toLowerCase(), userId]
     );
     return result.rows[0];
   }

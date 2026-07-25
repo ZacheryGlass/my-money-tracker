@@ -9,22 +9,20 @@ const logger = require('../config/logger');
 const PAGE_SIZE = 1000;
 
 class EtherscanService {
-  static ensureConfigured() {
-    if (!etherscan.isConfigured()) {
-      const error = new Error('Etherscan is not configured. Set ETHERSCAN_API_KEY.');
+  // Keys are per-user (Settings -> API Keys, env fallback), resolved by the
+  // caller and threaded through every fetch.
+  static async _request(params, { apiKey, attempt = 0 }) {
+    if (!apiKey) {
+      const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
       throw error;
     }
-  }
-
-  static async _request(params, { attempt = 0 } = {}) {
-    this.ensureConfigured();
     const response = await etherscan.throttled(() =>
       axios.get(etherscan.BASE_URL, {
         timeout: 15000,
         params: {
           chainid: etherscan.CHAIN_ID,
-          apikey: etherscan.apiKey(),
+          apikey: apiKey,
           ...params,
         },
       })
@@ -40,7 +38,7 @@ class EtherscanService {
     if (typeof result === 'string' && result.includes('rate limit') && attempt === 0) {
       logger.warn({ params: { module: params.module, action: params.action } }, 'Etherscan rate limited, retrying once');
       await new Promise((resolve) => setTimeout(resolve, 1100));
-      return this._request(params, { attempt: 1 });
+      return this._request(params, { apiKey, attempt: 1 });
     }
 
     const error = new Error(`Etherscan error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());
@@ -49,13 +47,13 @@ class EtherscanService {
   }
 
   // Current balance in wei, as a string (values exceed Number precision).
-  static async getEthBalance(address) {
+  static async getEthBalance(address, apiKey) {
     const result = await this._request({
       module: 'account',
       action: 'balance',
       address,
       tag: 'latest',
-    });
+    }, { apiKey });
     // A malformed response must not silently zero the ETH holding.
     if (typeof result !== 'string' || !/^\d+$/.test(result)) {
       const error = new Error(`Etherscan returned an invalid balance: ${JSON.stringify(result)}`);
@@ -68,7 +66,7 @@ class EtherscanService {
   // Walks blocks in ascending order. The cursor advances to the last block of
   // each full page WITHOUT +1: a block can be split across the page boundary,
   // so that block is refetched whole and its partial rows are dropped first.
-  static async _fetchPaged(action, address, startBlock) {
+  static async _fetchPaged(action, address, startBlock, apiKey) {
     const all = [];
     let cursor = startBlock;
 
@@ -82,7 +80,7 @@ class EtherscanService {
         page: 1,
         offset: PAGE_SIZE,
         sort: 'asc',
-      });
+      }, { apiKey });
       if (!Array.isArray(rows) || rows.length === 0) break;
       // The dedupe logic depends on ascending order; do not trust the API.
       rows.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber));
@@ -105,7 +103,7 @@ class EtherscanService {
           page: 1,
           offset: 10000,
           sort: 'asc',
-        });
+        }, { apiKey });
         all.push(...(Array.isArray(blockRows) ? blockRows : []));
         if (Array.isArray(blockRows) && blockRows.length >= 10000) {
           logger.warn({ action, address, block: cursor }, 'Etherscan block exceeds 10k rows; excess rows dropped');
@@ -122,16 +120,16 @@ class EtherscanService {
     return all;
   }
 
-  static fetchNormalTxs(address, startBlock = 0) {
-    return this._fetchPaged('txlist', address, startBlock);
+  static fetchNormalTxs(address, startBlock = 0, apiKey) {
+    return this._fetchPaged('txlist', address, startBlock, apiKey);
   }
 
-  static fetchInternalTxs(address, startBlock = 0) {
-    return this._fetchPaged('txlistinternal', address, startBlock);
+  static fetchInternalTxs(address, startBlock = 0, apiKey) {
+    return this._fetchPaged('txlistinternal', address, startBlock, apiKey);
   }
 
-  static fetchTokenTxs(address, startBlock = 0) {
-    return this._fetchPaged('tokentx', address, startBlock);
+  static fetchTokenTxs(address, startBlock = 0, apiKey) {
+    return this._fetchPaged('tokentx', address, startBlock, apiKey);
   }
 }
 

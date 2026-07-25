@@ -56,7 +56,7 @@ test('POST /api/eth/wallets without ETHERSCAN_API_KEY returns 503', async () => 
     .set('Content-Type', 'application/json');
 
   assert.equal(response.status, 503);
-  assert.match(response.body.error, /ETHERSCAN_API_KEY/);
+  assert.match(response.body.error, /Etherscan is not configured/);
 });
 
 test('POST /api/eth/ignored-tokens validates the contract address', async () => {

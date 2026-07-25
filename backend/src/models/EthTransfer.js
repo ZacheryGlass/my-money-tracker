@@ -98,25 +98,29 @@ class EthTransfer {
          AND t.transfer_type = 'token'
          AND t.is_error = FALSE
          AND t.token_contract IS NOT NULL
-         AND t.token_contract NOT IN (SELECT contract_address FROM eth_ignored_tokens)
+         AND t.token_contract NOT IN (SELECT contract_address FROM eth_ignored_tokens WHERE user_id = w.user_id)
        GROUP BY t.token_contract`,
       [walletId]
     );
     return result.rows;
   }
 
-  // Counterparty classification depends on the current wallet and label sets,
-  // so it is recomputed wholesale on every sync, wallet add/remove, and label
-  // change. Two sequential statements: own first, then exchange reading the
-  // fresh counterparty_is_own so own-precedence is explicit. COALESCE guards
-  // NULL to_address (contract creations): NULL IN (...) is NULL, which would
+  // Counterparty classification depends on the wallet owner's wallet and
+  // label sets, so it is recomputed wholesale on every sync, wallet
+  // add/remove, and label change. Everything is scoped to the OWNER of the
+  // transfer's wallet: user A's address must never classify as "own" on user
+  // B's transfers, and labels apply per user (builtins, user_id NULL, apply
+  // to everyone, with the user's own label winning). Two sequential
+  // statements: own first, then exchange reading the fresh
+  // counterparty_is_own so own-precedence is explicit. COALESCE guards NULL
+  // to_address (contract creations): NULL IN (...) is NULL, which would
   // violate the NOT NULL column and abort the statement.
   static async reclassifyCounterparties() {
     await pool.query(
       `UPDATE eth_transfers t SET counterparty_is_own =
          COALESCE(
            (CASE WHEN t.from_address = w.address THEN t.to_address ELSE t.from_address END)
-             IN (SELECT address FROM eth_wallets),
+             IN (SELECT w2.address FROM eth_wallets w2 WHERE w2.user_id = w.user_id),
            FALSE
          )
        FROM eth_wallets w
@@ -127,7 +131,10 @@ class EthTransfer {
          CASE WHEN t.counterparty_is_own THEN NULL
               ELSE (SELECT l.name FROM eth_address_labels l
                     WHERE l.address = CASE WHEN t.from_address = w.address
-                                           THEN t.to_address ELSE t.from_address END)
+                                           THEN t.to_address ELSE t.from_address END
+                      AND (l.user_id = w.user_id OR l.user_id IS NULL)
+                    ORDER BY l.user_id NULLS LAST
+                    LIMIT 1)
          END
        FROM eth_wallets w
        WHERE t.wallet_id = w.id`

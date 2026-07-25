@@ -3,7 +3,6 @@
 const JobLog = require('../models/JobLog');
 const EthWalletService = require('../services/EthWalletService');
 const EthWallet = require('../models/EthWallet');
-const etherscan = require('../config/etherscan');
 const logger = require('../config/logger');
 
 const JOB_NAME = 'eth-sync';
@@ -14,10 +13,8 @@ async function run() {
     logger.info({ job: JOB_NAME }, 'No ETH wallets to sync, skipping');
     return { skipped: true, reason: 'no_wallets' };
   }
-  if (!etherscan.isConfigured()) {
-    logger.warn({ job: JOB_NAME }, 'ETHERSCAN_API_KEY not set, skipping');
-    return { skipped: true, reason: 'not_configured' };
-  }
+  // Keys are per-user now: syncAllWallets skips wallets whose owner has no
+  // Etherscan key, so there is no global configured/not-configured gate.
 
   logger.info({ job: JOB_NAME }, 'Starting ETH wallet sync job');
 

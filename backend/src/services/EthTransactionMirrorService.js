@@ -101,7 +101,7 @@ class EthTransactionMirrorService {
 
     const [transfersResult, ignoredResult] = await Promise.all([
       pool.query('SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id', [walletId]),
-      pool.query('SELECT contract_address FROM eth_ignored_tokens'),
+      pool.query('SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1', [wallet.user_id]),
     ]);
     const transfers = transfersResult.rows;
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
