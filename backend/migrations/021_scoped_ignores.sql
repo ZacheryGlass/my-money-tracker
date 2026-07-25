@@ -10,10 +10,11 @@ ALTER TABLE ignored_merchants
 -- must NOT drop-and-revert it (this file re-runs every boot).
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM information_schema.key_column_usage
-                 WHERE table_name = 'ignored_merchants'
-                   AND constraint_name = 'ignored_merchants_pkey'
-                   AND column_name = 'scope') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                 WHERE c.conrelid = 'ignored_merchants'::regclass
+                   AND c.contype = 'p'
+                   AND a.attname = 'scope') THEN
     ALTER TABLE ignored_merchants DROP CONSTRAINT IF EXISTS ignored_merchants_pkey;
     ALTER TABLE ignored_merchants ADD PRIMARY KEY (merchant_key, scope);
   END IF;

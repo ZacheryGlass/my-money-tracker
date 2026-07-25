@@ -57,12 +57,17 @@ BEGIN
 END $$;
 
 -- 3. PK swaps, guarded on whether user_id is already part of the PK.
+-- Guards resolve the table through ::regclass rather than matching
+-- information_schema by bare table_name: a same-named table in another schema
+-- (a restore, a staging schema) would otherwise answer for this one and either
+-- skip a required swap or re-run the drop/add on every boot.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM information_schema.key_column_usage
-                 WHERE table_name = 'ignored_merchants'
-                   AND constraint_name = 'ignored_merchants_pkey'
-                   AND column_name = 'user_id') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                 WHERE c.conrelid = 'ignored_merchants'::regclass
+                   AND c.contype = 'p'
+                   AND a.attname = 'user_id') THEN
     ALTER TABLE ignored_merchants DROP CONSTRAINT IF EXISTS ignored_merchants_pkey;
     ALTER TABLE ignored_merchants ADD PRIMARY KEY (user_id, merchant_key, scope);
   END IF;
@@ -70,10 +75,11 @@ END $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM information_schema.key_column_usage
-                 WHERE table_name = 'eth_ignored_tokens'
-                   AND constraint_name = 'eth_ignored_tokens_pkey'
-                   AND column_name = 'user_id') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                 WHERE c.conrelid = 'eth_ignored_tokens'::regclass
+                   AND c.contype = 'p'
+                   AND a.attname = 'user_id') THEN
     ALTER TABLE eth_ignored_tokens DROP CONSTRAINT IF EXISTS eth_ignored_tokens_pkey;
     ALTER TABLE eth_ignored_tokens ADD PRIMARY KEY (user_id, contract_address);
   END IF;
@@ -90,10 +96,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recurring_expenses_user_merchant_key
 ALTER TABLE eth_address_labels ADD COLUMN IF NOT EXISTS id SERIAL;
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.key_column_usage
-             WHERE table_name = 'eth_address_labels'
-               AND constraint_name = 'eth_address_labels_pkey'
-               AND column_name = 'address') THEN
+  IF EXISTS (SELECT 1 FROM pg_constraint c
+             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+             WHERE c.conrelid = 'eth_address_labels'::regclass
+               AND c.contype = 'p'
+               AND a.attname = 'address') THEN
     ALTER TABLE eth_address_labels DROP CONSTRAINT eth_address_labels_pkey;
     ALTER TABLE eth_address_labels ADD PRIMARY KEY (id);
   END IF;
