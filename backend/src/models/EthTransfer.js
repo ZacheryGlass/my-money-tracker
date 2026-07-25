@@ -154,10 +154,17 @@ class EthTransfer {
   // Rows carry their own wallet_address because a merged feed spans addresses,
   // and direction (did I send or receive?) is meaningless without knowing which
   // of the user's addresses the row belongs to.
+  //
+  // Ignored tokens are filtered here as well as in tokenBalanceDeltas and the
+  // ledger mirror: the feed is where the Ignore button lives, so leaving them in
+  // means the row the user just ignored survives the refetch and the button
+  // reads as broken. Gas and ETH rows carry no contract and always pass.
   static async findForUser(userId, { walletId = null, type, limit = 100, offset = 0 } = {}) {
     if (!userId) throw new Error('EthTransfer.findForUser requires a userId');
     const params = [userId];
-    let where = 'WHERE w.user_id = $1';
+    let where = `WHERE w.user_id = $1
+       AND (t.token_contract IS NULL
+            OR t.token_contract NOT IN (SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1))`;
     if (walletId != null) {
       params.push(walletId);
       where += ` AND t.wallet_id = $${params.length}`;

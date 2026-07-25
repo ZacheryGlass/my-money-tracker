@@ -57,6 +57,23 @@ test('GET /api/eth/transfers spans every wallet the user owns', async () => {
   assert.ok(sink.sql.includes('w.address AS wallet_address'));
 });
 
+test('GET /api/eth/transfers hides ignored tokens but keeps ETH and gas rows', async () => {
+  const sink = {};
+  queryHandler = captureFeed(sink);
+
+  const response = await request(app).get('/api/eth/transfers');
+
+  assert.equal(response.status, 200);
+  // The Ignore button lives on this feed, so an unfiltered feed re-serves the
+  // row the user just ignored and the button reads as doing nothing.
+  assert.match(
+    sink.sql,
+    /t\.token_contract NOT IN \(SELECT contract_address FROM eth_ignored_tokens WHERE user_id = \$1\)/
+  );
+  // ETH and gas rows carry no contract; NOT IN would drop them all on a NULL.
+  assert.match(sink.sql, /t\.token_contract IS NULL\s+OR/);
+});
+
 test('GET /api/eth/transfers?wallet_id= narrows to that wallet', async () => {
   const sink = {};
   queryHandler = captureFeed(sink);

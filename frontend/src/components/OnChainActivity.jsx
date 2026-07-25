@@ -58,7 +58,12 @@ const formatTransferQuantity = (transfer) => {
 // `walletId` narrows to one wallet; omit it for the merged feed across every
 // wallet. `walletNames` maps wallet id -> label, used to tag rows in the
 // merged feed where a row's address alone doesn't say which wallet it is.
-const OnChainActivity = ({ walletId = null, walletNames }) => {
+//
+// `onDataChanged` fires after a mutation that re-derives server-side data the
+// parent also renders -- ignoring a token deletes its holding row, labelling an
+// address rewrites the mirrored transactions. Refreshing only this feed would
+// leave the holdings and totals around it showing what the user just removed.
+const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [typeFilter, setTypeFilter] = useState('');
@@ -126,6 +131,7 @@ const OnChainActivity = ({ walletId = null, walletNames }) => {
     try {
       await ethAPI.ignoreToken(transfer.token_contract, transfer.token_symbol || undefined);
       setRefreshKey((key) => key + 1);
+      onDataChanged?.();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to ignore token');
     } finally {
@@ -164,6 +170,7 @@ const OnChainActivity = ({ walletId = null, walletNames }) => {
       setLabelingId(null);
       setLabelName('');
       setRefreshKey((key) => key + 1);
+      onDataChanged?.();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to label address');
     } finally {

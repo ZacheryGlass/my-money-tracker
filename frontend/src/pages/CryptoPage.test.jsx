@@ -142,6 +142,41 @@ describe('CryptoPage', () => {
     expect(screen.getByText(/^-1 ETH$/)).toBeInTheDocument();
   });
 
+  it('reloads holdings after ignoring a token, so the totals drop with the row', async () => {
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '2' }],
+    });
+    apiMocks.eth.getTransfers.mockResolvedValue({
+      data: [{
+        id: 21, wallet_id: 1, wallet_address: '0xaaaa000000000000000000000000000000000001',
+        transfer_type: 'token', tx_hash: '0xspam00000', block_time: '2026-07-01T00:00:00Z',
+        from_address: '0xdddd000000000000000000000000000000000004',
+        to_address: '0xaaaa000000000000000000000000000000000001',
+        value_wei: '1000000', is_error: false,
+        token_contract: '0xbad0000000000000000000000000000000000bad',
+        token_symbol: 'SCAM', token_decimals: 6,
+        counterparty_is_own: false, counterparty_exchange: null,
+      }],
+      pagination: { total: 1 },
+    });
+    apiMocks.eth.ignoreToken.mockResolvedValue({ token: {} });
+
+    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+
+    await screen.findByText('On-chain Activity');
+    const callsBefore = apiMocks.holdings.getAll.mock.calls.length;
+
+    fireEvent.click(screen.getByTitle(/ignore/i));
+
+    await vi.waitFor(() => {
+      expect(apiMocks.eth.ignoreToken).toHaveBeenCalledWith('0xbad0000000000000000000000000000000000bad', 'SCAM');
+      // Ignoring deletes the token's holding row server-side. Without a parent
+      // refetch the Holdings tab and Total Value keep counting what was removed.
+      expect(apiMocks.holdings.getAll.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+  });
+
   it('shows a sentence-length wallet label whole in the wallet picker', async () => {
     const LONG = 'Use to store EOS ERC20 tokens before mainnet. Sent remainder to BinanceUS';
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });

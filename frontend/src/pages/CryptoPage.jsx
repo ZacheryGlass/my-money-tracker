@@ -552,6 +552,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
                 key={`${selectedWalletId ?? 'all'}:${syncNonce}`}
                 walletId={selectedWalletId}
                 walletNames={selectedWalletId == null ? walletNames : undefined}
+                onDataChanged={fetchData}
               />
             </section>
           ))}
