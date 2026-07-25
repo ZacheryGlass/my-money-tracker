@@ -26,10 +26,10 @@ function ageInHours(value) {
 }
 
 class DashboardService {
-  static async getCurrentPortfolio() {
-    // Fetch all holdings and prices
+  static async getCurrentPortfolio(userId) {
+    // Fetch the user's holdings and the shared price cache
     const [holdings, prices] = await Promise.all([
-      Holding.findAll({ includeHidden: false, withPrices: false }),
+      Holding.findAll({ userId, includeHidden: false, withPrices: false }),
       PriceCache.getLatestPrices()
     ]);
 
@@ -92,7 +92,7 @@ class DashboardService {
       .filter((item) => item.type === 'liability')
       .reduce((sum, item) => sum + Math.abs(item.value), 0);
 
-    const freshness = await this.getFreshness(latestFetchedAt);
+    const freshness = await this.getFreshness(userId, latestFetchedAt);
 
     return {
       items,
@@ -107,13 +107,21 @@ class DashboardService {
     };
   }
 
-  static async getFreshness(latestPriceFetchedAt = null) {
+  static async getFreshness(userId, latestPriceFetchedAt = null) {
     const [snapshotResult, plaidResult] = await Promise.all([
-      pool.query('SELECT MAX(snapshot_date) AS latest_snapshot_date FROM account_snapshots'),
+      pool.query(
+        `SELECT MAX(acs.snapshot_date) AS latest_snapshot_date
+         FROM account_snapshots acs
+         JOIN accounts a ON a.id = acs.account_id
+         WHERE a.user_id = $1`,
+        [userId]
+      ),
       pool.query(
         `SELECT id, institution_name, error_code, error_message, last_synced_at
          FROM plaid_items
-         ORDER BY institution_name NULLS LAST, id`
+         WHERE user_id = $1
+         ORDER BY institution_name NULLS LAST, id`,
+        [userId]
       )
     ]);
 

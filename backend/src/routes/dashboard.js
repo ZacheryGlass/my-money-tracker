@@ -13,7 +13,7 @@ router.use(requireUser);
 // GET /api/dashboard - Get portfolio summary
 router.get('/', async (req, res) => {
   try {
-    const portfolio = await DashboardService.getCurrentPortfolio();
+    const portfolio = await DashboardService.getCurrentPortfolio(req.user.id);
     res.status(200).json(portfolio);
   } catch (error) {
     logger.error({ err: error }, 'Get dashboard error');

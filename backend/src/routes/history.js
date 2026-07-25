@@ -45,9 +45,9 @@ router.get('/tickers', async (req, res) => {
     }
 
     // Build the WHERE clause dynamically based on filters
-    const conditions = ['a.is_hidden = FALSE'];
-    const params = [];
-    let paramIndex = 1;
+    const conditions = ['a.is_hidden = FALSE', 'a.user_id = $1'];
+    const params = [req.user.id];
+    let paramIndex = 2;
 
     if (ticker) {
       conditions.push(`ts.ticker = $${paramIndex}`);
@@ -172,9 +172,9 @@ router.get('/accounts', async (req, res) => {
     }
 
     // Build the WHERE clause dynamically based on filters
-    const conditions = ['a.is_hidden = FALSE'];
-    const params = [];
-    let paramIndex = 1;
+    const conditions = ['a.is_hidden = FALSE', 'a.user_id = $1'];
+    const params = [req.user.id];
+    let paramIndex = 2;
 
     if (account_id) {
       const parsedAccountId = parseInt(account_id);
@@ -288,9 +288,9 @@ router.get('/portfolio', async (req, res) => {
     }
 
     // Build the WHERE clause dynamically based on filters
-    const conditions = ['a.is_hidden = FALSE'];
-    const params = [];
-    let paramIndex = 1;
+    const conditions = ['a.is_hidden = FALSE', 'a.user_id = $1'];
+    const params = [req.user.id];
+    let paramIndex = 2;
 
     if (startDate) {
       if (!isValidDate(startDate)) {

@@ -63,9 +63,9 @@ router.get('/', async (req, res) => {
       return res.status(400).json({ error: 'Invalid offset parameter. Must be a non-negative number.' });
     }
 
-    const conditions = ['a.is_hidden = FALSE'];
-    const params = [];
-    let paramIndex = 1;
+    const conditions = ['a.is_hidden = FALSE', 'a.user_id = $1'];
+    const params = [req.user.id];
+    let paramIndex = 2;
 
     // Spending-page default: restrict to spend-eligible transactions using the
     // app-wide canonical filter (excludes transfers, credit-card payments,

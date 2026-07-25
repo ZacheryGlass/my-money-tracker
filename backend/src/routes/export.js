@@ -49,9 +49,9 @@ router.get('/holdings', async (req, res) => {
         h.notes
       FROM holdings h
       JOIN accounts a ON h.account_id = a.id
-      WHERE a.is_hidden = FALSE
+      WHERE a.is_hidden = FALSE AND a.user_id = $1
       ORDER BY account, h.name
-    `);
+    `, [req.user.id]);
 
     const headers = ['account', 'ticker', 'name', 'quantity', 'manual_value', 'category', 'location', 'notes'];
     const csv = arrayToCSV(result.rows, headers);
@@ -82,7 +82,7 @@ router.get('/history', async (req, res) => {
           acs.total_value
         FROM account_snapshots acs
         JOIN accounts a ON acs.account_id = a.id
-        WHERE a.is_hidden = FALSE
+        WHERE a.is_hidden = FALSE AND a.user_id = $1
         ORDER BY snapshot_date DESC, account_name
       `;
       headers = ['snapshot_date', 'account_name', 'total_value'];
@@ -94,7 +94,7 @@ router.get('/history', async (req, res) => {
           SUM(acs.total_value) as total_value
         FROM account_snapshots acs
         JOIN accounts a ON acs.account_id = a.id
-        WHERE a.is_hidden = FALSE
+        WHERE a.is_hidden = FALSE AND a.user_id = $1
         GROUP BY acs.snapshot_date
         ORDER BY acs.snapshot_date DESC
       `;
@@ -111,14 +111,14 @@ router.get('/history', async (req, res) => {
           ts.value
         FROM ticker_snapshots ts
         JOIN accounts a ON ts.account_id = a.id
-        WHERE a.is_hidden = FALSE
+        WHERE a.is_hidden = FALSE AND a.user_id = $1
         ORDER BY snapshot_date DESC, account_name, ticker
       `;
       headers = ['snapshot_date', 'account_name', 'ticker', 'name', 'value'];
       filename = 'ticker_history';
     }
 
-    const result = await pool.query(query);
+    const result = await pool.query(query, [req.user.id]);
 
     if (format === 'json') {
       res.setHeader('Content-Type', 'application/json');
