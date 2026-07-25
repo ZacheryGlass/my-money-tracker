@@ -141,7 +141,7 @@ router.get('/wallets/:id/transfers', async (req, res) => {
 
 router.get('/ignored-tokens', async (req, res) => {
   try {
-    const tokens = await EthIgnoredToken.findAll();
+    const tokens = await EthIgnoredToken.findAll(req.user.id);
     res.status(200).json({ tokens });
   } catch (error) {
     logger.error({ err: error }, 'Get ignored tokens error');
@@ -156,7 +156,7 @@ router.post('/ignored-tokens', async (req, res) => {
       return res.status(400).json({ error: 'contract_address must be a 0x-prefixed 40-hex-character address' });
     }
 
-    const token = await EthIgnoredToken.upsert(contract_address.trim(), symbol, note);
+    const token = await EthIgnoredToken.upsert(req.user.id, contract_address.trim(), symbol, note);
     await EthWalletService.refreshAllDerived();
     res.status(201).json({ token });
   } catch (error) {
@@ -167,7 +167,7 @@ router.post('/ignored-tokens', async (req, res) => {
 
 router.delete('/ignored-tokens/:contract', async (req, res) => {
   try {
-    const token = await EthIgnoredToken.delete(req.params.contract);
+    const token = await EthIgnoredToken.delete(req.user.id, req.params.contract);
     if (!token) {
       return res.status(404).json({ error: 'Ignored token not found' });
     }
@@ -200,7 +200,7 @@ router.post('/address-labels', async (req, res) => {
       return res.status(400).json({ error: 'name is required (max 64 characters)' });
     }
 
-    const label = await EthAddressLabel.upsert(address.trim(), trimmedName, note);
+    const label = await EthAddressLabel.upsert(req.user.id, address.trim(), trimmedName, note);
     await EthWalletService.refreshClassifications();
     res.status(201).json({ label });
   } catch (error) {
@@ -211,7 +211,7 @@ router.post('/address-labels', async (req, res) => {
 
 router.delete('/address-labels/:address', async (req, res) => {
   try {
-    const label = await EthAddressLabel.delete(req.params.address);
+    const label = await EthAddressLabel.delete(req.user.id, req.params.address);
     if (!label) {
       // Distinguish "builtin, refused" from "no such label": deleting a
       // builtin would only resurrect it when the seed migration re-runs.

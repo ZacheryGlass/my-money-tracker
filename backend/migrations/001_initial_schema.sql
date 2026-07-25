@@ -65,13 +65,6 @@ CREATE TABLE IF NOT EXISTS account_snapshots (
 CREATE INDEX IF NOT EXISTS idx_account_snapshots_date ON account_snapshots(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_account_snapshots_account ON account_snapshots(account_id);
 
--- Seed initial accounts
-INSERT INTO accounts (name, type) VALUES
-  ('Crypto', 'investment'),
-  ('HSA', 'investment'),
-  ('Taxable', 'investment'),
-  ('401k', 'investment'),
-  ('Roth IRA', 'investment'),
-  ('Real Estate', 'property'),
-  ('Liability', 'loan')
-ON CONFLICT (name) DO NOTHING;
+-- The initial-accounts seed moved to 029_user_scoping_enforce.sql: it needs
+-- accounts.user_id and the per-user unique constraint, and its old
+-- ON CONFLICT (name) target no longer exists once 029 swaps the constraint.

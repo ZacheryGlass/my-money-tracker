@@ -29,25 +29,27 @@ const EthAddressLabel = require('../src/models/EthAddressLabel');
 
 const MIXED_CASE = '0xAbCd000000000000000000000000000000000001';
 
-test('upsert lowercases the address and forces source to user', async () => {
+test('upsert lowercases the address and writes a user-owned row', async () => {
   queries.length = 0;
-  await EthAddressLabel.upsert(MIXED_CASE, 'Coinbase', null);
+  await EthAddressLabel.upsert(1, MIXED_CASE, 'Coinbase', null);
   const { text, params } = queries[0];
-  assert.equal(params[0], MIXED_CASE.toLowerCase());
-  assert.equal(params[1], 'Coinbase');
-  // Both the insert values and the conflict update must land on 'user' so a
-  // user edit of a builtin row survives the seed migration re-running.
+  assert.equal(params[0], 1);
+  assert.equal(params[1], MIXED_CASE.toLowerCase());
+  assert.equal(params[2], 'Coinbase');
+  // User rows are separate from builtins (user_id NULL): the arbiter is the
+  // partial per-user unique index, so builtins never get clobbered.
   const sql = text.replace(/\s+/g, ' ');
-  assert.match(sql, /VALUES \(\$1, \$2, 'user', \$3\)/);
-  assert.match(sql, /DO UPDATE SET .*source = 'user'/);
+  assert.match(sql, /VALUES \(\$1, \$2, \$3, 'user', \$4\)/);
+  assert.match(sql, /ON CONFLICT \(user_id, address\) WHERE user_id IS NOT NULL/);
 });
 
-test('delete only removes user rows, never builtins', async () => {
+test('delete only removes the caller\'s rows, never builtins', async () => {
   queries.length = 0;
-  await EthAddressLabel.delete(MIXED_CASE);
+  await EthAddressLabel.delete(1, MIXED_CASE);
   const { text, params } = queries[0];
-  assert.equal(params[0], MIXED_CASE.toLowerCase());
-  assert.match(text.replace(/\s+/g, ' '), /WHERE address = \$1 AND source = 'user'/);
+  assert.deepEqual(params, [1, MIXED_CASE.toLowerCase()]);
+  // Builtins have user_id NULL, which never matches the equality predicate.
+  assert.match(text.replace(/\s+/g, ' '), /WHERE user_id = \$1 AND address = \$2/);
 });
 
 test('findByAddress lowercases and returns null on miss', async () => {

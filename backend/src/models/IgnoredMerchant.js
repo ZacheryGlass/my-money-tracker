@@ -14,7 +14,7 @@ class IgnoredMerchant {
     await pool.query(
       `INSERT INTO ignored_merchants (user_id, merchant_key, scope, name, last_cost)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (merchant_key, scope) DO UPDATE SET name = EXCLUDED.name, last_cost = EXCLUDED.last_cost`,
+       ON CONFLICT (user_id, merchant_key, scope) DO UPDATE SET name = EXCLUDED.name, last_cost = EXCLUDED.last_cost`,
       [userId, merchantKey, scope, name, lastCost]
     );
   }

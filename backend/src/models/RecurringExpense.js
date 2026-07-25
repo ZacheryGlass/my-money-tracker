@@ -94,7 +94,7 @@ class RecurringExpense {
         (user_id, name, cost, is_fixed_rate, pay_account, company, merchant_key, account_id,
          due_day, last_charge_date, charge_interval_days, is_auto_tracked)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE)
-       ON CONFLICT (merchant_key) WHERE merchant_key IS NOT NULL DO NOTHING
+       ON CONFLICT (user_id, merchant_key) WHERE merchant_key IS NOT NULL DO NOTHING
        RETURNING *`,
       [userId, data.name, data.cost, data.is_fixed_rate, data.pay_account, data.company,
         data.merchant_key, data.account_id, data.due_day, data.last_charge_date, data.charge_interval_days]
