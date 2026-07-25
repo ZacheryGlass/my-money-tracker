@@ -87,6 +87,34 @@ test('POST /api/eth/address-labels requires a name', async () => {
     .send({ address: '0x1111111111111111111111111111111111111111' })
     .set('Content-Type', 'application/json');
 
+  // No kind means 'exchange', which still demands a deliberately typed name.
   assert.equal(response.status, 400);
   assert.match(response.body.error, /name is required/);
 });
+
+test('POST /api/eth/address-labels rejects an unknown kind', async () => {
+  const response = await request(app)
+    .post('/api/eth/address-labels')
+    .send({ address: '0x1111111111111111111111111111111111111111', name: 'X', kind: 'bogus' })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /kind must be/);
+});
+
+// The triage queue's two one-click verdicts carry no name. Their labels never
+// reach classification as text, so a short-address fallback is enough -- only
+// 'exchange' names must be typed, because that name IS the assertion that
+// turns real spending into an internal transfer.
+for (const kind of ['external', 'own']) {
+  test(`POST /api/eth/address-labels accepts kind='${kind}' with no name`, async () => {
+    const response = await request(app)
+      .post('/api/eth/address-labels')
+      .send({ address: '0x1111111111111111111111111111111111111111', kind })
+      .set('Content-Type', 'application/json');
+
+    // The fake pool has no rows to return, so this cannot reach 201 -- passing
+    // validation is the whole assertion, matching the other route tests here.
+    assert.notEqual(response.status, 400);
+  });
+}

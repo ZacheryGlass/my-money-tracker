@@ -32,15 +32,21 @@ class EthAddressLabel {
 
   // A user's label is a separate row from any builtin for the same address
   // (the builtin keeps user_id NULL); reads shadow builtins with user rows.
-  static async upsert(userId, address, name, note) {
+  //
+  // kind is set outright rather than COALESCEd: the per-user unique index means
+  // one verdict per address, so re-labeling is how you change your mind, and
+  // every caller resolves kind to a concrete value before getting here. A
+  // rename must therefore resend the kind -- which the API does automatically.
+  static async upsert(userId, address, name, note, kind = 'exchange') {
     const result = await pool.query(
-      `INSERT INTO eth_address_labels (user_id, address, name, source, note)
-       VALUES ($1, $2, $3, 'user', $4)
+      `INSERT INTO eth_address_labels (user_id, address, name, source, note, kind)
+       VALUES ($1, $2, $3, 'user', $4, $5)
        ON CONFLICT (user_id, address) WHERE user_id IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name,
+                     kind = EXCLUDED.kind,
                      note = COALESCE(EXCLUDED.note, eth_address_labels.note)
        RETURNING *`,
-      [userId, address.toLowerCase(), name, note || null]
+      [userId, address.toLowerCase(), name, note || null, kind]
     );
     return result.rows[0];
   }

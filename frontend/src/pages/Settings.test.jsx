@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import Settings from './Settings';
@@ -29,6 +29,7 @@ const apiMocks = vi.hoisted(() => ({
     getAddressLabels: vi.fn(),
     labelAddress: vi.fn(),
     unlabelAddress: vi.fn(),
+    getUnreviewedCounterparties: vi.fn(),
   },
   keys: {
     getAll: vi.fn(),
@@ -81,6 +82,12 @@ describe('Settings display names', () => {
     apiMocks.eth.getWallets.mockResolvedValue({ wallets: [] });
     apiMocks.eth.getIgnoredTokens.mockResolvedValue({ tokens: [] });
     apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
+    // Every call in fetchItems' Promise.all needs a default here: an undefined
+    // mock throws synchronously while the array is being built, and fetchItems'
+    // try/catch swallows that into an error banner with no data rendered.
+    apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
+      data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 },
+    });
     apiMocks.admin.getOverview.mockRejectedValue({ response: { status: 403 } });
     apiMocks.keys.getAll.mockResolvedValue({
       encryptionConfigured: true,
@@ -153,8 +160,176 @@ describe('Settings display names', () => {
     await screen.findByText('Labeled Addresses');
     expect(await screen.findByText('Built-in')).toBeInTheDocument();
     // Exactly one Remove button: the user row's. The builtin row has none.
-    expect(screen.getAllByRole('button', { name: /remove/i })).toHaveLength(1);
+    // Scoped to this section so a button added elsewhere on the tab can't trip it.
+    const labeled = within(screen.getByRole('region', { name: /labeled addresses/i }));
+    expect(labeled.getAllByRole('button', { name: /remove/i })).toHaveLength(1);
     expect(screen.getByText('My Deposit')).toBeInTheDocument();
+  });
+
+  describe('unknown counterparty triage', () => {
+    const WALLET = { id: 1, address: '0xaaaa000000000000000000000000000000000001', account: null, error_code: null };
+    const MATERIAL = {
+      address: '0xbbbb000000000000000000000000000000000002',
+      transfer_count: 3,
+      sent_count: 3,
+      usd_volume: 12403,
+      material: true,
+      first_seen: '2026-02-11T04:15:00Z',
+      last_seen: '2026-07-19T22:03:00Z',
+      token_symbols: [],
+      sole_token_contract: null,
+    };
+    const dust = (suffix) => ({
+      ...MATERIAL,
+      address: `0xdddd00000000000000000000000000000000000${suffix}`,
+      transfer_count: 1,
+      sent_count: 0,
+      usd_volume: 0,
+      material: false,
+    });
+
+    const openEthTab = async (queue = { data: [MATERIAL], summary: { count: 1, dust_count: 0, usd_volume: 12403 } }) => {
+      apiMocks.eth.getWallets.mockResolvedValue({ wallets: [WALLET] });
+      apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue(queue);
+      renderSettings();
+      // Loose match: the attention badge appends its count to the tab's
+      // accessible name whenever there is anything to review.
+      fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
+      await screen.findByText('Needs Review');
+    };
+
+    it('renders an unreviewed counterparty with its volume and a You sent pill', async () => {
+      await openEthTab();
+      expect(screen.getByText('0xbbbb…0002')).toBeInTheDocument();
+      expect(screen.getByText('3 transfers')).toBeInTheDocument();
+      expect(screen.getByText('You sent')).toBeInTheDocument();
+    });
+
+    it('marks a counterparty as an outside party in one click', async () => {
+      apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
+      await openEthTab();
+
+      fireEvent.click(screen.getByRole('button', { name: /outside party — 0xbbbb/i }));
+      await waitFor(() => {
+        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(MATERIAL.address, null, { kind: 'external' });
+      });
+      // The full refetch is what drops the queue row and moves the badge.
+      await waitFor(() => expect(apiMocks.eth.getUnreviewedCounterparties).toHaveBeenCalledTimes(2));
+    });
+
+    it('offers a one-click chip for an exchange the user has already named', async () => {
+      apiMocks.eth.getAddressLabels.mockResolvedValue({
+        labels: [
+          { address: '0x2222222222222222222222222222222222222222', name: 'Coinbase', source: 'user', kind: 'exchange' },
+          // Builtins are far too numerous to surface as chips.
+          { address: '0x3333333333333333333333333333333333333333', name: 'Kraken', source: 'builtin', kind: 'exchange' },
+        ],
+      });
+      apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
+      await openEthTab();
+
+      expect(screen.queryByRole('button', { name: /^Kraken — 0xbbbb/i })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /^Coinbase — 0xbbbb/i }));
+      await waitFor(() => {
+        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(MATERIAL.address, 'Coinbase', { kind: 'exchange' });
+      });
+    });
+
+    it('requires a second click to act on "It\'s mine", then splits track from label', async () => {
+      apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
+      apiMocks.eth.addWallet.mockResolvedValue({});
+      await openEthTab();
+
+      // Opening the panel must not itself be a verdict -- tracking creates an
+      // account and runs a full sync, so it has to confirm.
+      fireEvent.click(screen.getByRole('button', { name: /it's mine — 0xbbbb/i }));
+      expect(apiMocks.eth.labelAddress).not.toHaveBeenCalled();
+      expect(apiMocks.eth.addWallet).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole('button', { name: /mine, don't track it — 0xbbbb/i }));
+      await waitFor(() => {
+        // An empty optional name goes as null, so the backend falls back to the
+        // short address rather than storing a blank label.
+        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(MATERIAL.address, null, { kind: 'own' });
+      });
+      expect(apiMocks.eth.addWallet).not.toHaveBeenCalled();
+    });
+
+    it('routes "Track as a wallet" through addWallet, not labelAddress', async () => {
+      apiMocks.eth.addWallet.mockResolvedValue({});
+      await openEthTab();
+
+      fireEvent.click(screen.getByRole('button', { name: /it's mine — 0xbbbb/i }));
+      fireEvent.click(screen.getByRole('button', { name: /track as a wallet — 0xbbbb/i }));
+      await waitFor(() => expect(apiMocks.eth.addWallet).toHaveBeenCalledWith(MATERIAL.address, null));
+      expect(apiMocks.eth.labelAddress).not.toHaveBeenCalled();
+    });
+
+    it('counts only material counterparties and wallet errors in the tab badge', async () => {
+      // 1 errored wallet + 1 material + 3 dust must read 2, not 5. A badge that
+      // cannot reach zero gets ignored, taking sync errors down with it.
+      apiMocks.eth.getWallets.mockResolvedValue({
+        wallets: [WALLET, { ...WALLET, id: 2, address: '0xaaaa000000000000000000000000000000000003', error_code: 'RATE_LIMIT' }],
+      });
+      apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
+        data: [MATERIAL, dust('4'), dust('5'), dust('6')],
+        summary: { count: 1, dust_count: 3, usd_volume: 12403 },
+      });
+      renderSettings();
+
+      const tab = await screen.findByRole('tab', { name: /Ethereum/ });
+      await waitFor(() => expect(within(tab).getByText('2')).toBeInTheDocument());
+    });
+
+    it('collapses low-value counterparties behind a disclosure', async () => {
+      await openEthTab({
+        data: [MATERIAL, dust('4'), dust('5')],
+        summary: { count: 1, dust_count: 2, usd_volume: 12403 },
+      });
+
+      expect(screen.queryByText('0xdddd…0004')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /2 low-value counterparties/i }));
+      expect(screen.getByText('0xdddd…0004')).toBeInTheDocument();
+    });
+
+    it('keeps own labels in the main list and collapses outside parties', async () => {
+      apiMocks.eth.getAddressLabels.mockResolvedValue({
+        labels: [
+          { address: '0x4444444444444444444444444444444444444444', name: 'Ledger', source: 'user', kind: 'own' },
+          { address: '0x5555555555555555555555555555555555555555', name: 'Some stranger', source: 'user', kind: 'external' },
+        ],
+      });
+      await openEthTab();
+
+      expect(screen.getByText('Ledger')).toBeInTheDocument();
+      expect(screen.getByText('Yours')).toBeInTheDocument();
+      expect(screen.queryByText('Some stranger')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /1 reviewed as outside parties/i }));
+      expect(screen.getByText('Some stranger')).toBeInTheDocument();
+    });
+
+    it('offers ignoring the token when a counterparty only ever sent one', async () => {
+      apiMocks.eth.ignoreToken.mockResolvedValue({});
+      await openEthTab({
+        data: [{ ...MATERIAL, token_symbols: ['SCAM'], sole_token_contract: '0xc0ffee' }],
+        summary: { count: 1, dust_count: 0, usd_volume: 0 },
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /ignore scam — 0xbbbb/i }));
+      await waitFor(() => expect(apiMocks.eth.ignoreToken).toHaveBeenCalledWith('0xc0ffee', 'SCAM'));
+    });
+
+    it('hides the queue when its fetch fails rather than claiming all clear', async () => {
+      apiMocks.eth.getWallets.mockResolvedValue({ wallets: [WALLET] });
+      apiMocks.eth.getUnreviewedCounterparties.mockRejectedValue(new Error('boom'));
+      renderSettings();
+      fireEvent.click(await screen.findByRole('tab', { name: 'Ethereum' }));
+
+      await screen.findByText('Labeled Addresses');
+      expect(screen.queryByText('Needs Review')).toBeNull();
+      // One endpoint failing must not surface a page-level error.
+      expect(screen.queryByText(/failed to load/i)).toBeNull();
+    });
   });
 
   it('renders API key statuses and saves a key', async () => {

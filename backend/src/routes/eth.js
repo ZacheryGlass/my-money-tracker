@@ -25,6 +25,14 @@ function parseId(raw) {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+// 'exchange' asserts the counterparty is a venue the user controls funds at, so
+// its transfers become internal transfers. 'own' is the user's own untracked
+// address (same effect via the own set, no account created). 'external' records
+// "reviewed, genuinely a third party" and changes no classification at all.
+const LABEL_KINDS = new Set(['exchange', 'external', 'own']);
+
+const shortAddress = (address) => `${address.slice(0, 6)}…${address.slice(-4)}`;
+
 router.post('/wallets', async (req, res) => {
   try {
     const { address, label } = req.body || {};
@@ -195,17 +203,61 @@ router.post('/address-labels', async (req, res) => {
     if (!address || !/^0x[0-9a-f]{40}$/i.test(address.trim())) {
       return res.status(400).json({ error: 'address must be a 0x-prefixed 40-hex-character address' });
     }
-    const trimmedName = typeof name === 'string' ? name.trim() : '';
-    if (!trimmedName || trimmedName.length > 64) {
-      return res.status(400).json({ error: 'name is required (max 64 characters)' });
+    // Omitting kind keeps the pre-031 behavior, so existing clients are unaffected.
+    const kind = req.body?.kind === undefined ? 'exchange' : String(req.body.kind).trim().toLowerCase();
+    if (!LABEL_KINDS.has(kind)) {
+      return res.status(400).json({ error: "kind must be 'exchange', 'external', or 'own'" });
     }
 
-    const label = await EthAddressLabel.upsert(req.user.id, address.trim(), trimmedName, note);
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (trimmedName.length > 64) {
+      return res.status(400).json({ error: 'name is required (max 64 characters)' });
+    }
+    // Asymmetric on purpose. An 'exchange' name becomes counterparty_exchange:
+    // it is both the user-facing text in the ledger AND the assertion that
+    // turns real spending into an internal transfer, so it must be typed
+    // deliberately. The other kinds never surface their name in classification,
+    // so a short-address fallback is enough to triage in one tap.
+    if (kind === 'exchange' && !trimmedName) {
+      return res.status(400).json({ error: 'name is required (max 64 characters)' });
+    }
+    const normalized = address.trim().toLowerCase();
+    const labelName = trimmedName || shortAddress(normalized);
+
+    const label = await EthAddressLabel.upsert(req.user.id, normalized, labelName, note, kind);
     await EthWalletService.refreshClassificationsForUser(req.user.id);
     res.status(201).json({ label });
   } catch (error) {
     logger.error({ err: error }, 'Label address error');
     res.status(500).json({ error: 'Failed to label address' });
+  }
+});
+
+// The triage queue: addresses the user has transacted with but never given a
+// verdict on. Query params are clamped rather than 400'd, matching the transfers
+// route -- junk input degrades to the default instead of failing the page.
+router.get('/counterparties/unreviewed', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const rawMin = Number.parseFloat(req.query.min_usd);
+    const minUsd = Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : 1;
+    const includeDust = req.query.include_dust === 'true';
+
+    const { counterparties, total, materialCount, dustCount, materialUsd } =
+      await EthTransfer.unreviewedCounterparties(req.user.id, { limit, offset, minUsd, includeDust });
+
+    res.status(200).json({
+      data: counterparties,
+      // summary.count is the attention badge: material counterparties only, so
+      // it can actually reach zero. A badge that never clears gets ignored,
+      // which would also destroy its value for wallet sync errors.
+      summary: { count: materialCount, dust_count: dustCount, usd_volume: materialUsd, min_usd: minUsd },
+      pagination: { total, limit, offset },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Get unreviewed counterparties error');
+    res.status(500).json({ error: 'Failed to retrieve unreviewed counterparties' });
   }
 });
 
@@ -217,7 +269,9 @@ router.delete('/address-labels/:address', async (req, res) => {
       // builtin would only resurrect it when the seed migration re-runs.
       const existing = await EthAddressLabel.findByAddress(req.user.id, req.params.address);
       if (existing) {
-        return res.status(409).json({ error: "Built-in labels can't be removed; relabel the address to rename it" });
+        return res.status(409).json({
+          error: "Built-in labels can't be removed. Relabel the address to rename it, or mark it as an outside party to stop treating it as an exchange.",
+        });
       }
       return res.status(404).json({ error: 'Address label not found' });
     }

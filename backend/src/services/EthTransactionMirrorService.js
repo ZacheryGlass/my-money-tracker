@@ -10,6 +10,16 @@ function shortAddress(address) {
   return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'unknown';
 }
 
+// Every address-label write runs refreshClassifications -> rebuildAll, which
+// calls CoinGecko once per wallet. The triage queue makes rapid sequential
+// labeling the normal workflow, so without this a handful of clicks will
+// rate-limit a free-tier key. Token prices do not depend on labels, so reusing
+// a recent response across back-to-back rebuilds is safe; the nightly sync
+// benefits too. Keyed by the exact contract set, since that is what the URL is.
+const TOKEN_PRICE_TTL_MS = 5 * 60 * 1000;
+const TOKEN_PRICE_CACHE_MAX = 32;
+const tokenPriceCache = new Map();
+
 // transactions.amount is DECIMAL(15,2); clamp so one absurd scam-token price
 // cannot fail the whole rebuild.
 function toAmount(value) {
@@ -23,7 +33,7 @@ function toAmount(value) {
 //
 // USD values use the CURRENT ETH/token price, not the price on the transfer
 // date -- good enough for an activity ledger, not for tax reporting.
-function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {}, ignoredContracts = new Set() } = {}) {
+function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {}, ignoredContracts = new Set(), priorAmounts = {} } = {}) {
   const wallet = walletAddress.toLowerCase();
   const outgoing = transfer.from_address === wallet;
   // Own beats exchange (reclassify also encodes this, belt and suspenders):
@@ -49,7 +59,13 @@ function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {
     const decimals = transfer.token_decimals != null ? Number(transfer.token_decimals) : 18;
     const quantity = Number(transfer.value_wei) / 10 ** decimals;
     const price = Number(tokenPrices[contract]?.usd);
-    const usd = Number.isFinite(price) ? quantity * price : 0;
+    // No price this round -- a rate-limited or unlisted token. Reuse whatever
+    // this row was worth on the last successful rebuild: a stale amount beats a
+    // fabricated $0, which would silently erase the token side of the ledger
+    // until the next healthy sync. Falls back to 0 for genuinely new rows.
+    const amount = Number.isFinite(price)
+      ? toAmount(outgoing ? quantity * price : -(quantity * price))
+      : Number(priorAmounts[transfer.id] ?? 0);
     const symbol = transfer.token_symbol || 'TOKEN';
     return {
       category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER'
@@ -58,7 +74,7 @@ function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {
       name: outgoing
         ? `${symbol} → ${exchange || shortAddress(transfer.to_address)}`
         : `${symbol} ← ${exchange || shortAddress(transfer.from_address)}`,
-      amount: toAmount(outgoing ? usd : -usd),
+      amount,
     };
   }
 
@@ -92,6 +108,28 @@ class EthTransactionMirrorService {
     return 0;
   }
 
+  // Cached CoinGecko token lookup. On failure returns {} rather than throwing:
+  // the caller then falls back to each row's previous amount, so a transient
+  // rate-limit degrades to stale numbers instead of zeroing the ledger.
+  static async _getTokenPrices(contracts, walletId) {
+    if (!contracts.length) return {};
+    const key = [...contracts].sort().join(',');
+    const cached = tokenPriceCache.get(key);
+    if (cached && Date.now() - cached.at < TOKEN_PRICE_TTL_MS) return cached.prices;
+
+    try {
+      const prices = await PriceService.fetchCoinGeckoJson(
+        `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${encodeURIComponent(key)}&vs_currencies=usd`
+      );
+      if (tokenPriceCache.size >= TOKEN_PRICE_CACHE_MAX) tokenPriceCache.clear();
+      tokenPriceCache.set(key, { at: Date.now(), prices });
+      return prices;
+    } catch (err) {
+      logger.warn({ walletId, err }, 'Token price lookup failed; token rows keep their previous amounts');
+      return {};
+    }
+  }
+
   // Deterministic full rebuild of the wallet account's mirrored ledger rows.
   static async rebuildForWallet(walletId) {
     const wallet = await EthWallet.findById(walletId);
@@ -113,21 +151,22 @@ class EthTransactionMirrorService {
         .filter((t) => t.transfer_type === 'token' && t.token_contract && !ignoredContracts.has(t.token_contract))
         .map((t) => t.token_contract)
     )];
-    let tokenPrices = {};
-    if (contracts.length) {
-      try {
-        tokenPrices = await PriceService.fetchCoinGeckoJson(
-          `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${encodeURIComponent(contracts.join(','))}&vs_currencies=usd`
-        );
-      } catch (err) {
-        logger.warn({ walletId, err }, 'Token price lookup failed; token rows mirror at $0');
-        tokenPrices = {};
-      }
-    }
+    const tokenPrices = await this._getTokenPrices(contracts, walletId);
+
+    // Read the amounts this rebuild is about to overwrite, so a token whose
+    // price is unavailable can keep its last known value instead of dropping
+    // to $0. Must run before the DELETE below.
+    const priorResult = await pool.query(
+      'SELECT eth_transfer_id, amount FROM transactions WHERE account_id = $1 AND eth_transfer_id IS NOT NULL',
+      [account.id]
+    );
+    const priorAmounts = Object.fromEntries(
+      priorResult.rows.map((row) => [row.eth_transfer_id, row.amount])
+    );
 
     const rows = [];
     for (const transfer of transfers) {
-      const body = buildMirrorRow(transfer, wallet.address, { ethPrice, tokenPrices, ignoredContracts });
+      const body = buildMirrorRow(transfer, wallet.address, { ethPrice, tokenPrices, ignoredContracts, priorAmounts });
       if (!body) continue;
       rows.push({
         eth_transfer_id: transfer.id,

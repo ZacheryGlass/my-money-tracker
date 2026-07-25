@@ -27,6 +27,12 @@ require.cache[pgModulePath] = {
 
 const EthWalletService = require('../src/services/EthWalletService');
 
+// These SQL statements carry long explanatory comments that quote the very
+// predicates the assertions below look for ("no OR l.user_id IS NULL fallback",
+// "no kind predicate here"). Strip comments before collapsing whitespace, or a
+// doesNotMatch assertion fails on the prose rather than the code.
+const sqlOf = (query) => query.text.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
+
 const WALLET = '0xAbCd000000000000000000000000000000000001';
 const OTHER = '0x1111111111111111111111111111111111111111';
 
@@ -124,18 +130,40 @@ test('reclassify SQL defaults a NULL counterparty to false', async () => {
   queries.length = 0;
   await EthTransfer.reclassifyCounterparties();
   assert.equal(queries.length, 2);
-  const sql = queries[0].text.replace(/\s+/g, ' ');
+  const sql = sqlOf(queries[0]);
   // counterparty_is_own is NOT NULL and `NULL IN (...)` is NULL, so the
   // expression must be wrapped or one contract-creation row aborts the
   // statement -- and with it every sync, add, and remove.
-  assert.match(sql, /COALESCE\(.*IN \(SELECT w2\.address FROM eth_wallets w2.*,\s*FALSE\s*\)/);
+  assert.match(sql, /COALESCE\(.*IN \(.*SELECT w2\.address FROM eth_wallets w2.*,\s*FALSE\s*\)/);
+});
+
+test("reclassify folds kind='own' labels into the own set", async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.reclassifyCounterparties();
+  const sql = sqlOf(queries[0]);
+  // 'own' hooks into the FIRST statement, not the exchange pass -- that is what
+  // gives it own-precedence for free and keeps counterparty_exchange NULL.
+  assert.match(sql, /UNION .*SELECT l\.address FROM eth_address_labels l WHERE l\.user_id = w\.user_id AND l\.kind = 'own'/);
+});
+
+test("reclassify scopes kind='own' labels strictly to the owner", async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.reclassifyCounterparties();
+  const sql = sqlOf(queries[0]);
+  // Unlike the builtin exchange labels, an 'own' label must never fall back to
+  // user_id IS NULL: a global "this address is yours" row is nonsense and would
+  // mark one user's address as self-owned on every other user's transfers.
+  const ownClause = sql.slice(sql.indexOf('UNION'), sql.indexOf('), FALSE'));
+  assert.doesNotMatch(ownClause, /IS NULL/);
 });
 
 test('reclassify scopes the own-wallet set to the transfer owner', async () => {
   const EthTransfer = require('../src/models/EthTransfer');
   queries.length = 0;
   await EthTransfer.reclassifyCounterparties();
-  const sql = queries[0].text.replace(/\s+/g, ' ');
+  const sql = sqlOf(queries[0]);
   // Without this, user A's wallet address would classify as a self-transfer
   // counterparty on user B's transfers -- hiding B's real income/spending.
   assert.match(sql, /WHERE w2\.user_id = w\.user_id/);
@@ -157,7 +185,7 @@ test('reclassify sets exchange labels with owner scope and own-precedence', asyn
   const EthTransfer = require('../src/models/EthTransfer');
   queries.length = 0;
   await EthTransfer.reclassifyCounterparties();
-  const sql = queries[1].text.replace(/\s+/g, ' ');
+  const sql = sqlOf(queries[1]);
   assert.match(sql, /SET counterparty_exchange/);
   // Own must beat exchange: a tracked wallet that is also labeled stays a
   // self-transfer, encoded directly in the statement.
@@ -166,6 +194,59 @@ test('reclassify sets exchange labels with owner scope and own-precedence', asyn
   // the user's own label shadowing the builtin.
   assert.match(sql, /l\.user_id = w\.user_id OR l\.user_id IS NULL/);
   assert.match(sql, /ORDER BY l\.user_id NULLS LAST LIMIT 1/);
+});
+
+test('reclassify tests label kind on the winning row, not in the WHERE', async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.reclassifyCounterparties();
+  const sql = sqlOf(queries[1]);
+  // THE regression test for this feature. `kind` must be applied to whichever
+  // row wins precedence, AFTER the ORDER BY resolves it.
+  assert.match(sql, /SELECT CASE WHEN l\.kind = 'exchange' THEN l\.name ELSE NULL END/);
+  // Moving the kind test into the WHERE looks equivalent and is not: it filters
+  // a user's 'external' override out of the candidate set, so the builtin
+  // 'exchange' row becomes the only match and wins -- silently inverting the
+  // user's intent in exactly the case this column was added to express.
+  const subquery = sql.slice(sql.indexOf('WHERE l.address'), sql.indexOf('ORDER BY l.user_id'));
+  assert.doesNotMatch(subquery, /l\.kind/);
+});
+
+test('unreviewed counterparties treat any label kind as reviewed', async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.unreviewedCounterparties(7, { limit: 25, offset: 0, minUsd: 1 });
+  const sql = sqlOf(queries[0]);
+
+  // "Reviewed" is the anti-join, with NO kind predicate. counterparty_exchange
+  // IS NULL is not a substitute: after migration 032 it also matches
+  // reviewed-external rows, so the queue would never drain.
+  const antiJoin = sql.slice(sql.indexOf('NOT EXISTS'), sql.indexOf('grouped AS'));
+  assert.match(antiJoin, /FROM eth_address_labels lab/);
+  assert.doesNotMatch(antiJoin, /lab\.kind/);
+  assert.match(antiJoin, /lab\.user_id = \$1 OR lab\.user_id IS NULL/);
+
+  assert.deepEqual(queries[0].params, [7, 1, false, 25, 0]);
+});
+
+test('unreviewed counterparties exclude gas, failures, own, and ignored tokens', async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.unreviewedCounterparties(7);
+  const sql = sqlOf(queries[0]);
+  // A gas row's counterparty is whatever contract was called, never a payee;
+  // failed transfers moved no value and have no mirror row to reclassify.
+  assert.match(sql, /t\.transfer_type <> 'gas'/);
+  assert.match(sql, /t\.is_error = FALSE/);
+  assert.match(sql, /t\.counterparty_is_own = FALSE/);
+  // Ignored tokens are already-declared noise; reusing that signal keeps
+  // airdrop spam out of the queue for free.
+  assert.match(sql, /NOT IN \(SELECT contract_address FROM eth_ignored_tokens WHERE user_id = \$1\)/);
+  // USD comes from the mirrored ledger row, which is the only place token
+  // prices exist -- they are never persisted anywhere else.
+  assert.match(sql, /LEFT JOIN transactions tx ON tx\.eth_transfer_id = t\.id/);
+  // Outbound transfers are always material: you cannot receive an airdrop you sent.
+  assert.match(sql, /usd_volume >= \$2::float8 OR g\.sent_count > 0/);
 });
 
 test('addWallet rejects malformed addresses', async () => {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag } from 'lucide-react';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, ChevronDown, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag } from 'lucide-react';
 import { plaid as plaidAPI, eth as ethAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI, keys as keysAPI, admin as adminAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
@@ -11,7 +11,7 @@ import HoldingForm from '../components/HoldingForm';
 import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
-import { formatRelativeTime } from '../utils/format';
+import { formatRelativeTime, formatCompactCurrency, formatDateDisplay } from '../utils/format';
 
 const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance' },
@@ -218,6 +218,190 @@ const buildInstitutionSummary = (items, consentItems) => {
   };
 };
 
+const TRIAGE_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all disabled:opacity-40';
+
+// One unreviewed counterparty. Defined at module scope, not inside Settings:
+// a component redefined every render remounts, which would close the open
+// naming panel on each keystroke.
+function CounterpartyRow({ counterparty, suggestions, busy, onTriage, onTrackAsWallet, onIgnoreToken }) {
+  const [panel, setPanel] = useState(null); // 'exchange' | 'mine' | null
+  const [name, setName] = useState('');
+  const short = shortEthAddress(counterparty.address);
+  const openPanel = (next) => { setPanel((prev) => (prev === next ? null : next)); setName(''); };
+  const symbol = counterparty.token_symbols?.[0];
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="font-mono text-body-sm font-semibold text-primary" title={counterparty.address}>{short}</span>
+            <a
+              href={`https://etherscan.io/address/${counterparty.address}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] text-tertiary transition-colors hover:text-accent"
+            >
+              Etherscan
+            </a>
+            {counterparty.sent_count > 0 && (
+              // The single most decision-relevant fact on the row: you cannot
+              // receive a scam airdrop that you sent.
+              <span className="inline-flex shrink-0 items-center rounded-full border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent">
+                You sent
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-3 text-[10px] text-tertiary">
+            <span className="font-mono">
+              {counterparty.transfer_count} transfer{counterparty.transfer_count === 1 ? '' : 's'}
+            </span>
+            {/* Unpriced is not the same as worthless -- never render this as $0. */}
+            <span className="font-mono">
+              {Number(counterparty.usd_volume) > 0
+                ? formatCompactCurrency(Number(counterparty.usd_volume))
+                : 'No USD value'}
+            </span>
+            {counterparty.token_symbols?.length > 0 && (
+              <span className="font-mono">{counterparty.token_symbols.slice(0, 3).join(' · ')}</span>
+            )}
+            <span>{formatDateDisplay(counterparty.first_seen)} → {formatRelativeTime(counterparty.last_seen)}</span>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {!panel && suggestions.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              disabled={busy}
+              aria-label={`${suggestion} — ${short}`}
+              onClick={() => onTriage(counterparty.address, 'exchange', suggestion)}
+              className="inline-flex h-7 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-2 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
+            >
+              <Tag size={10} /> {suggestion}
+            </button>
+          ))}
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={`${suggestions.length ? 'Other exchange' : "It's an exchange"} — ${short}`}
+            onClick={() => openPanel('exchange')}
+            className={`${TRIAGE_ACTION_CLASS} hover:border-teal-500/30 hover:text-teal-400`}
+          >
+            <Tag size={10} /> {suggestions.length ? 'Other exchange' : "It's an exchange"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={`It's mine — ${short}`}
+            onClick={() => openPanel('mine')}
+            className={`${TRIAGE_ACTION_CLASS} hover:border-accent hover:text-accent`}
+          >
+            <Wallet size={10} /> It&apos;s mine
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={`Outside party — ${short}`}
+            onClick={() => onTriage(counterparty.address, 'external')}
+            className={`${TRIAGE_ACTION_CLASS} hover:border-accent hover:text-accent`}
+          >
+            {busy ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />} Outside party
+          </button>
+          {counterparty.sole_token_contract && (
+            // Airdrop spam arrives from many addresses but one contract, so
+            // ignoring the token clears a whole class at once.
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Ignore ${symbol || 'token'} — ${short}`}
+              onClick={() => onIgnoreToken(counterparty)}
+              className={`${TRIAGE_ACTION_CLASS} hover:border-loss/30 hover:text-loss`}
+            >
+              <EyeOff size={10} /> Ignore {symbol || 'token'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {panel === 'exchange' && (
+        <form
+          className="mt-3 flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (name.trim()) onTriage(counterparty.address, 'exchange', name.trim());
+          }}
+        >
+          <input
+            type="text"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            list="settings-eth-label-names"
+            maxLength={64}
+            placeholder="e.g. Coinbase"
+            aria-label={`Exchange name for ${short}`}
+            className="h-8 w-44 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+          />
+          <button
+            type="submit"
+            disabled={busy || !name.trim()}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[9px] font-bold uppercase tracking-wide text-teal-400 disabled:opacity-40"
+          >
+            {busy && <RefreshCw size={10} className="animate-spin" />} Save
+          </button>
+          <button type="button" onClick={() => setPanel(null)} className={TRIAGE_ACTION_CLASS}>Cancel</button>
+        </form>
+      )}
+
+      {panel === 'mine' && (
+        // "Mine" means two different things, and the split matters: tracking
+        // keeps the value in net worth, the label only stops the transfer
+        // counting as spending. This panel is also the confirmation step for
+        // tracking, which is far heavier than the other verdicts (creates an
+        // account, full Etherscan sync, can fail on rate limits).
+        <div className="mt-3 space-y-2 border-t border-border pt-3">
+          <input
+            type="text"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={64}
+            placeholder="Optional name, e.g. Ledger cold storage"
+            aria-label={`Name for ${short}`}
+            className="h-8 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent sm:w-72"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Track as a wallet — ${short}`}
+              onClick={() => onTrackAsWallet(counterparty.address, name.trim())}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-3 text-[9px] font-bold uppercase tracking-wide text-accent transition-all hover:bg-accent/20 disabled:opacity-40"
+            >
+              {busy ? <RefreshCw size={10} className="animate-spin" /> : <Plus size={10} />} Track as a wallet
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Mine, don't track it — ${short}`}
+              onClick={() => onTriage(counterparty.address, 'own', name.trim())}
+              className={`${TRIAGE_ACTION_CLASS} h-8 px-3 hover:border-accent hover:text-accent`}
+            >
+              Mine, don&apos;t track it
+            </button>
+            <button type="button" onClick={() => setPanel(null)} className={`${TRIAGE_ACTION_CLASS} h-8 px-3`}>Cancel</button>
+          </div>
+          <p className="text-[10px] leading-relaxed text-tertiary">
+            Tracking creates an account, pulls the full history, and counts the balance toward net worth.
+            Labelling it only stops its transfers counting as spending — use that for addresses on another
+            chain, ones already counted elsewhere, or ones you would rather not sync.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AppearanceOptions({ options, value, onChange, ariaLabel, previewFont = false }) {
   return (
     <div
@@ -296,6 +480,12 @@ const Settings = ({ user }) => {
   const [labelAddressInput, setLabelAddressInput] = useState('');
   const [labelNameInput, setLabelNameInput] = useState('');
   const [updatingLabels, setUpdatingLabels] = useState(false);
+  // null = not loaded or the fetch failed; [] = loaded and genuinely empty.
+  // The distinction matters: never claim "all clear" on a failed request.
+  const [counterpartyData, setCounterpartyData] = useState(null);
+  const [triagingAddress, setTriagingAddress] = useState(null);
+  const [showDustCounterparties, setShowDustCounterparties] = useState(false);
+  const [showExternalLabels, setShowExternalLabels] = useState(false);
   const [keyStatuses, setKeyStatuses] = useState(null);
   const [keyInputs, setKeyInputs] = useState({});
   const [savingKeyService, setSavingKeyService] = useState(null);
@@ -309,10 +499,49 @@ const Settings = ({ user }) => {
     () => buildInstitutionSummary(items, consentItems),
     [items, consentItems]
   );
+  const [materialCounterparties, dustCounterparties] = useMemo(() => {
+    const rows = counterpartyData?.data || [];
+    return [rows.filter((cp) => cp.material), rows.filter((cp) => !cp.material)];
+  }, [counterpartyData]);
+
+  // Material only, deliberately. A badge that cannot reach zero -- because a
+  // single airdrop wave parked 40 dust counterparties behind it -- teaches the
+  // user to ignore the badge, which also destroys its value for wallet sync
+  // errors, the genuinely urgent case it already carries.
   const ethAttentionCount = useMemo(
-    () => ethWallets.filter((wallet) => wallet.error_code).length,
-    [ethWallets]
+    () => ethWallets.filter((wallet) => wallet.error_code).length + (counterpartyData?.summary?.count || 0),
+    [ethWallets, counterpartyData]
   );
+
+  // Chips for one-tap "same exchange as last time". User rows only: the
+  // builtins number in the dozens and would drown the list.
+  const exchangeNameSuggestions = useMemo(() => {
+    const names = [];
+    for (const label of addressLabels) {
+      if (label.source !== 'user' || (label.kind && label.kind !== 'exchange')) continue;
+      if (!names.includes(label.name)) names.push(label.name);
+    }
+    return names.slice(0, 3);
+  }, [addressLabels]);
+
+  // Typeahead keeps every exchange name, builtins included.
+  const exchangeNameOptions = useMemo(
+    () => [...new Set(addressLabels.filter((l) => !l.kind || l.kind === 'exchange').map((l) => l.name))],
+    [addressLabels]
+  );
+
+  // Rows written before migration 031 have no kind and meant "exchange".
+  // 'own' rows stay in the main list -- a cold-storage address is worth seeing.
+  // 'external' rows are dismissals and get collapsed; after one airdrop wave
+  // they would otherwise bury the handful of labels the user actually cares about.
+  const [primaryLabels, externalLabels] = useMemo(() => {
+    const primary = [];
+    const external = [];
+    for (const label of addressLabels) {
+      (label.kind === 'external' ? external : primary).push(label);
+    }
+    return [primary, external];
+  }, [addressLabels]);
   const manualEntryAccounts = useMemo(() => {
     if (!manualEntryType) return [];
     const allowedTypes = MANUAL_ENTRY_TYPES[manualEntryType].accountTypes;
@@ -324,18 +553,20 @@ const Settings = ({ user }) => {
     try {
       // Ethereum data is fetched alongside but must not fail the whole page:
       // a wallet-side error should degrade only the Ethereum tab.
-      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, keysResult] = await Promise.all([
+      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, counterpartyResult, keysResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
         ethAPI.getWallets().catch(() => null),
         ethAPI.getIgnoredTokens().catch(() => null),
         ethAPI.getAddressLabels().catch(() => null),
+        ethAPI.getUnreviewedCounterparties().catch(() => null),
         keysAPI.getAll().catch(() => null),
       ]);
       const loadedItems = plaidData.items || [];
       setEthWallets(ethResult?.wallets || []);
       setIgnoredTokens(ignoredResult?.tokens || []);
       setAddressLabels(labelsResult?.labels || []);
+      setCounterpartyData(counterpartyResult || null);
       setKeyStatuses(keysResult || null);
       setItems(loadedItems);
       setConsentItems(new Set(
@@ -576,6 +807,98 @@ const Settings = ({ user }) => {
       setError(err.response?.data?.error || 'Failed to remove address label');
     } finally {
       setUpdatingLabels(false);
+    }
+  };
+
+  // Triage verdicts. All three are label writes and all three are reversible
+  // with one click from the Labeled Addresses list below, so none of them
+  // confirms -- matching handleUnlabelAddress. The full refetch is mandatory:
+  // one action drops a queue row, adds a label row, and moves the tab badge.
+  const handleTriageCounterparty = async (address, kind, name) => {
+    if (triagingAddress) return;
+    setTriagingAddress(address);
+    setError(null);
+    try {
+      await ethAPI.labelAddress(address, name || null, { kind });
+      showSuccess(
+        kind === 'exchange' ? `Labeled ${shortEthAddress(address)} as ${name}`
+          : kind === 'own' ? `${shortEthAddress(address)} marked as yours`
+          : `${shortEthAddress(address)} marked as an outside party`
+      );
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to review counterparty');
+    } finally {
+      setTriagingAddress(null);
+    }
+  };
+
+  // The heavy verdict: creates an account, pulls full history, and counts the
+  // balance toward net worth. Reuses the normal add-wallet path, which already
+  // reclassifies every existing transfer against the new own-address.
+  const handleTrackCounterpartyAsWallet = async (address, label) => {
+    if (triagingAddress) return;
+    setTriagingAddress(address);
+    setError(null);
+    try {
+      await ethAPI.addWallet(address, label || null);
+      showSuccess(`Now tracking ${shortEthAddress(address)} as a wallet`);
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to track that address as a wallet');
+    } finally {
+      setTriagingAddress(null);
+    }
+  };
+
+  // Shared by the main list and the collapsed outside-party group. A label with
+  // no kind predates migration 031 and meant "exchange", which needs no pill.
+  const renderAddressLabelRow = (label) => {
+    const pill = label.source === 'builtin' ? 'Built-in'
+      : label.kind === 'own' ? 'Yours'
+      : label.kind === 'external' ? 'Outside party'
+      : null;
+    return (
+      <div key={label.address} className="flex items-center justify-between gap-4 px-4 py-3">
+        <div className="min-w-0">
+          <span className="flex items-center gap-2 text-body-sm font-semibold text-primary">
+            {label.name}
+            {pill && (
+              <span className="inline-flex shrink-0 items-center px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide rounded-full border border-border bg-surface-3 text-tertiary" title={label.note || undefined}>
+                {pill}
+              </span>
+            )}
+          </span>
+          <span className="block truncate font-mono text-[10px] text-tertiary" title={label.address}>
+            {label.address}
+          </span>
+        </div>
+        {label.source !== 'builtin' && (
+          <button
+            onClick={() => handleUnlabelAddress(label.address)}
+            disabled={updatingLabels}
+            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+          >
+            <Undo2 size={14} />
+            Remove
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const handleIgnoreCounterpartyToken = async (counterparty) => {
+    if (triagingAddress) return;
+    setTriagingAddress(counterparty.address);
+    setError(null);
+    try {
+      await ethAPI.ignoreToken(counterparty.sole_token_contract, counterparty.token_symbols?.[0] || undefined);
+      showSuccess('Token ignored');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to ignore token');
+    } finally {
+      setTriagingAddress(null);
     }
   };
 
@@ -1286,10 +1609,81 @@ const Settings = ({ user }) => {
         )}
       </section>
 
-      <section className="mb-8">
+      {ethWallets.length > 0 && counterpartyData && (
+        <section className="mb-8" aria-labelledby="eth-review-heading">
+          <div className="mb-3 px-2">
+            <h2 id="eth-review-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Needs Review</h2>
+            <p className="mt-1 text-xs text-secondary">
+              Addresses you have transacted with but never given a verdict on. Until you do, their transfers
+              count as external activity — so a hot wallet an exchange rotated to, or one of your own
+              addresses, quietly reads as real spending. Marking an address as an exchange or as yours takes
+              its transfers out of spending, which is only right if that money is still counted somewhere
+              else: a linked account, or a wallet tracked here.
+            </p>
+          </div>
+
+          <datalist id="settings-eth-label-names">
+            {exchangeNameOptions.map((name) => <option key={name} value={name} />)}
+          </datalist>
+
+          <div className="card overflow-hidden">
+            {materialCounterparties.length === 0 && dustCounterparties.length === 0 ? (
+              <div className="p-6 text-center text-sm text-secondary">Every counterparty has been reviewed.</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {materialCounterparties.map((counterparty) => (
+                  <CounterpartyRow
+                    key={counterparty.address}
+                    counterparty={counterparty}
+                    suggestions={exchangeNameSuggestions}
+                    busy={triagingAddress === counterparty.address}
+                    onTriage={handleTriageCounterparty}
+                    onTrackAsWallet={handleTrackCounterpartyAsWallet}
+                    onIgnoreToken={handleIgnoreCounterpartyToken}
+                  />
+                ))}
+              </div>
+            )}
+
+            {dustCounterparties.length > 0 && (
+              // Collapsed rather than paginated: the distribution is bimodal
+              // (a few real counterparties, a long tail of $0 inbound-only
+              // airdrop senders), and pagination would interleave the two.
+              <>
+                <button
+                  type="button"
+                  aria-expanded={showDustCounterparties}
+                  onClick={() => setShowDustCounterparties((open) => !open)}
+                  className="flex w-full items-center justify-between gap-2 border-t border-border px-4 py-3 text-caption text-tertiary transition-colors hover:text-primary"
+                >
+                  <span>{dustCounterparties.length} low-value counterparties</span>
+                  <ChevronDown size={14} className={showDustCounterparties ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                </button>
+                {showDustCounterparties && (
+                  <div className="divide-y divide-border">
+                    {dustCounterparties.map((counterparty) => (
+                      <CounterpartyRow
+                        key={counterparty.address}
+                        counterparty={counterparty}
+                        suggestions={exchangeNameSuggestions}
+                        busy={triagingAddress === counterparty.address}
+                        onTriage={handleTriageCounterparty}
+                        onTrackAsWallet={handleTrackCounterpartyAsWallet}
+                        onIgnoreToken={handleIgnoreCounterpartyToken}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </section>
+      )}
+
+      <section className="mb-8" aria-labelledby="eth-labeled-addresses-heading">
         <div className="mb-3 px-2">
-          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Labeled Addresses</h2>
-          <p className="mt-1 text-xs text-secondary">Transfers to or from a labeled address count as exchange deposits and withdrawals instead of external activity. Withdrawals from major exchanges&apos; shared hot wallets are recognized automatically; deposits go to a personal address the exchange assigned you, so label that one by hand.</p>
+          <h2 id="eth-labeled-addresses-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Labeled Addresses</h2>
+          <p className="mt-1 text-xs text-secondary">Transfers to or from an exchange address, or one marked as yours, count as internal movements instead of external activity. Major exchanges&apos; shared hot wallets are recognized automatically; a deposit address the exchange assigned you has to be labeled by hand. Removing a label puts the address back in Needs Review.</p>
         </div>
 
         <div className="card overflow-hidden">
@@ -1335,34 +1729,30 @@ const Settings = ({ user }) => {
             <div className="p-6 text-center text-sm text-secondary">No addresses are labeled.</div>
           ) : (
             <div className="divide-y divide-border">
-              {addressLabels.map((label) => (
-                <div key={label.address} className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="min-w-0">
-                    <span className="flex items-center gap-2 text-body-sm font-semibold text-primary">
-                      {label.name}
-                      {label.source === 'builtin' && (
-                        <span className="inline-flex shrink-0 items-center px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide rounded-full border border-border bg-surface-3 text-tertiary" title={label.note || undefined}>
-                          Built-in
-                        </span>
-                      )}
-                    </span>
-                    <span className="block truncate font-mono text-[10px] text-tertiary" title={label.address}>
-                      {label.address}
-                    </span>
-                  </div>
-                  {label.source !== 'builtin' && (
-                    <button
-                      onClick={() => handleUnlabelAddress(label.address)}
-                      disabled={updatingLabels}
-                      className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
-                    >
-                      <Undo2 size={14} />
-                      Remove
-                    </button>
-                  )}
-                </div>
-              ))}
+              {primaryLabels.map(renderAddressLabelRow)}
             </div>
+          )}
+
+          {externalLabels.length > 0 && (
+            // Every dismissal is a permanent row, so one airdrop wave would
+            // otherwise bury the handful of exchanges the user actually cares
+            // about under dozens of "not an exchange" entries.
+            <>
+              <button
+                type="button"
+                aria-expanded={showExternalLabels}
+                onClick={() => setShowExternalLabels((open) => !open)}
+                className="flex w-full items-center justify-between gap-2 border-t border-border px-4 py-3 text-caption text-tertiary transition-colors hover:text-primary"
+              >
+                <span>{externalLabels.length} reviewed as outside parties</span>
+                <ChevronDown size={14} className={showExternalLabels ? 'rotate-180 transition-transform' : 'transition-transform'} />
+              </button>
+              {showExternalLabels && (
+                <div className="divide-y divide-border">
+                  {externalLabels.map(renderAddressLabelRow)}
+                </div>
+              )}
+            </>
           )}
         </div>
       </section>

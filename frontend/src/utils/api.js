@@ -353,12 +353,22 @@ export const eth = {
     const response = await api.get('/api/eth/address-labels');
     return response.data;
   },
-  labelAddress: async (address, name, note) => {
-    const response = await api.post('/api/eth/address-labels', { address, name, note });
+  // kind: 'exchange' (default) | 'external' | 'own'. A name is required only
+  // for 'exchange', where it becomes the counterparty text in the ledger.
+  labelAddress: async (address, name, { note, kind } = {}) => {
+    const response = await api.post('/api/eth/address-labels', { address, name, note, kind });
     return response.data;
   },
   unlabelAddress: async (address) => {
     const response = await api.delete(`/api/eth/address-labels/${address}`);
+    return response.data;
+  },
+  // The triage queue: addresses transacted with but never given a verdict.
+  // Dust is fetched too and split client-side behind a disclosure -- the
+  // attention badge reads summary.count, which stays material-only, so one
+  // request serves both without a second round-trip when the user expands.
+  getUnreviewedCounterparties: async () => {
+    const response = await api.get('/api/eth/counterparties/unreviewed', { params: { include_dust: 'true' } });
     return response.data;
   },
 };

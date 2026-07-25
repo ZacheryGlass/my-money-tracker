@@ -5,6 +5,7 @@ const DashboardService = require('./DashboardService');
 const Holding = require('../models/Holding');
 const SalaryHistory = require('../models/SalaryHistory');
 const RecurringExpense = require('../models/RecurringExpense');
+const EthTransfer = require('../models/EthTransfer');
 const {
   calculateReturns,
   correlationAndBeta,
@@ -1332,6 +1333,20 @@ class FinancialQueryService {
         code: 'expiring_plaid_consent',
         count: counts.expiring_plaid_consents,
         detail: 'Plaid consent expires within 30 days; the item must be re-linked or syncing stops.',
+      });
+    }
+
+    // Warning, not info: an unreviewed counterparty that is really a rotated
+    // exchange hot wallet (or the user's own address) is currently counted as
+    // an external transfer rather than an internal one, which distorts cash
+    // flow. Dust is excluded by the shared materiality rule in EthTransfer.
+    const ethCounterparties = await EthTransfer.unreviewedCounterpartySummary(userId);
+    if (ethCounterparties.materialCount) {
+      issues.push({
+        severity: 'warning',
+        code: 'unreviewed_eth_counterparties',
+        count: ethCounterparties.materialCount,
+        detail: 'On-chain transfers to or from addresses that have never been reviewed. Review them under Settings -> Ethereum; if one is a rotated exchange hot wallet or your own address, its transfers are currently counted as external instead of internal.',
       });
     }
 

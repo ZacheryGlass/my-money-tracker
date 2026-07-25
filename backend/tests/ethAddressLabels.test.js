@@ -36,11 +36,26 @@ test('upsert lowercases the address and writes a user-owned row', async () => {
   assert.equal(params[0], 1);
   assert.equal(params[1], MIXED_CASE.toLowerCase());
   assert.equal(params[2], 'Coinbase');
+  // Callers that predate the kind column still mean "exchange".
+  assert.equal(params[4], 'exchange');
   // User rows are separate from builtins (user_id NULL): the arbiter is the
   // partial per-user unique index, so builtins never get clobbered.
   const sql = text.replace(/\s+/g, ' ');
-  assert.match(sql, /VALUES \(\$1, \$2, \$3, 'user', \$4\)/);
+  assert.match(sql, /VALUES \(\$1, \$2, \$3, 'user', \$4, \$5\)/);
   assert.match(sql, /ON CONFLICT \(user_id, address\) WHERE user_id IS NOT NULL/);
+});
+
+test('upsert writes kind outright so re-labeling changes the verdict', async () => {
+  queries.length = 0;
+  await EthAddressLabel.upsert(1, MIXED_CASE, 'My cold wallet', null, 'own');
+  const { text, params } = queries[0];
+  assert.equal(params[4], 'own');
+  const sql = text.replace(/\s+/g, ' ');
+  // kind is set, not COALESCEd: one verdict per (user, address) is enforced by
+  // the partial unique index, so re-labeling IS how you change your mind.
+  assert.match(sql, /DO UPDATE SET name = EXCLUDED\.name, kind = EXCLUDED\.kind/);
+  // note keeps its COALESCE -- a re-label with no note must not erase one.
+  assert.match(sql, /note = COALESCE\(EXCLUDED\.note, eth_address_labels\.note\)/);
 });
 
 test('delete only removes the caller\'s rows, never builtins', async () => {
