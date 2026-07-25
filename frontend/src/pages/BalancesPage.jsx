@@ -6,7 +6,7 @@ import { Link2, Check, X } from 'lucide-react';
 import { holdings as holdingsAPI, accounts as accountsAPI } from '../utils/api';
 import { formatCurrency, formatDateAxis } from '../utils/format';
 import DataTable, { DataTablePagination } from '../components/DataTable';
-import FilterTabs from '../components/FilterTabs';
+import PageTabs from '../components/PageTabs';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
 import SummaryStats from '../components/SummaryStats';
@@ -275,10 +275,9 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
         ]} />
       </div>
 
-      <FilterTabs
-        id="balances-group"
+      <PageTabs
         label="Balances"
-        className="mb-3"
+        className="-mx-4 mb-4"
         options={TABS.map((t) => ({ value: t.id, label: t.label }))}
         value={tab}
         onChange={(id) => onTabChange?.(id)}

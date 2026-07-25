@@ -29,6 +29,8 @@ const navItems = [
   { id: 'liabilities', label: 'Liabilities', path: '/liabilities' },
   { id: 'accounts', label: 'Accounts', path: '/accounts' },
   { id: 'crypto', label: 'Crypto', path: '/crypto' },
+  { id: 'crypto-holdings', label: 'Crypto Holdings', path: '/crypto/holdings' },
+  { id: 'crypto-transactions', label: 'Crypto Transactions', path: '/crypto/transactions' },
   { id: 'ticker-history', label: 'Ticker History', path: '/ticker-history' },
   { id: 'account-history', label: 'Account History', path: '/account-history' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', path: '/portfolio-timeline' },
@@ -47,6 +49,21 @@ const pagesByPath = Object.fromEntries(navItems.map((item) => [item.path, item.i
 // sidebar shows a single "Balances" entry that lands on the assets tab.
 const BALANCES_TABS = new Set(['assets', 'cash', 'liabilities']);
 pagePaths.balances = pagePaths.assets;
+
+// Crypto's sub-tabs. Unlike balances these need no pagePaths alias: 'crypto' is
+// itself a registered nav item, and it is the tab the page lands on.
+const CRYPTO_TABS = new Set(['crypto', 'crypto-holdings', 'crypto-transactions']);
+
+// The remount key and the sidebar highlight both work in collapsed ids: every
+// tab of a multi-tab page must map to its one sidebar entry. Miss it on the key
+// and switching tabs remounts the page and refires its whole data fetch; miss
+// it on the sidebar and the entry de-highlights on every sub-tab. One helper so
+// the two can never disagree.
+function collapsePageId(page) {
+  if (BALANCES_TABS.has(page)) return 'balances';
+  if (CRYPTO_TABS.has(page)) return 'crypto';
+  return page;
+}
 
 function normalizePath(pathname) {
   return pathname.replace(/\/+$/, '') || '/';
@@ -86,11 +103,13 @@ function App() {
       return <NotFound />;
     }
     return (
-      <div key={BALANCES_TABS.has(currentPage) ? 'balances' : currentPage} className="w-full">
+      <div key={collapsePageId(currentPage)} className="w-full">
         {currentPage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
         {BALANCES_TABS.has(currentPage) && <BalancesPage tab={currentPage} onTabChange={handleNavigate} />}
         {currentPage === 'accounts' && <AccountsPage />}
-        {currentPage === 'crypto' && <CryptoPage onNavigate={handleNavigate} />}
+        {CRYPTO_TABS.has(currentPage) && (
+          <CryptoPage tab={currentPage} onTabChange={handleNavigate} onNavigate={handleNavigate} />
+        )}
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}
@@ -107,7 +126,7 @@ function App() {
   return (
     <div className="flex min-h-screen bg-base font-sans">
       <Sidebar
-        currentPage={BALANCES_TABS.has(currentPage) ? 'balances' : currentPage}
+        currentPage={collapsePageId(currentPage)}
         onNavigate={handleNavigate}
         user={user}
         onLogout={handleLogout}

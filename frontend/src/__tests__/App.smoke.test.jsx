@@ -22,10 +22,13 @@ vi.mock('../utils/api', () => ({
   default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }));
 
-// Stub the dashboard page so the smoke test exercises the app shell without
-// mocking every dashboard API response shape.
+// Stub the pages so the smoke test exercises the app shell without mocking
+// every page's API response shape.
 vi.mock('../components/Dashboard', () => ({
   default: () => <div>Dashboard stub</div>,
+}));
+vi.mock('../pages/CryptoPage', () => ({
+  default: ({ tab }) => <div>Crypto stub: {tab}</div>,
 }));
 
 describe('App smoke test', () => {
@@ -41,5 +44,22 @@ describe('App smoke test', () => {
     // The app fetches the identity for the sidebar (collapsed in jsdom,
     // so the username itself is not visible).
     expect(me).toHaveBeenCalled();
+  });
+
+  // The only automated guard on collapsePageId: a sub-tab path must resolve to
+  // the page AND keep the one sidebar entry highlighted. Get the collapse wrong
+  // and every tab click remounts the page and refires its whole data fetch.
+  it('routes a crypto sub-tab to the page with the sidebar entry still active', async () => {
+    render(
+      <MemoryRouter initialEntries={['/crypto/holdings']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Crypto stub: crypto-holdings')).toBeInTheDocument();
+    // jsdom's matchMedia stub collapses the sidebar, so the label is a title
+    // attribute and the active state is the accent background, not aria.
+    const cryptoNav = screen.getByTitle('Crypto');
+    expect(cryptoNav.className).toContain('bg-[#3994BC26]');
   });
 });
