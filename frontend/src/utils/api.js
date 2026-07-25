@@ -363,6 +363,23 @@ export const eth = {
   },
 };
 
+// API key management (Settings -> API Keys). Responses carry masked
+// statuses only; plaintext secrets never round-trip to the client.
+export const keys = {
+  getAll: async () => {
+    const response = await api.get('/api/keys');
+    return response.data;
+  },
+  set: async (service, value) => {
+    const response = await api.put(`/api/keys/${service}`, { value });
+    return response.data;
+  },
+  clear: async (service) => {
+    const response = await api.delete(`/api/keys/${service}`);
+    return response.data;
+  },
+};
+
 // Analytics API
 export const analytics = {
   getBenchmarkHistory: async (params = {}) => {

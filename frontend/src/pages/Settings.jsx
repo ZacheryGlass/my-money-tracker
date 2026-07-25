@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag } from 'lucide-react';
-import { plaid as plaidAPI, eth as ethAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI } from '../utils/api';
+import { plaid as plaidAPI, eth as ethAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI, keys as keysAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
@@ -18,7 +18,20 @@ const SETTINGS_TABS = [
   { id: 'data-tools', label: 'Data Tools' },
   { id: 'institutions', label: 'Institutions' },
   { id: 'ethereum', label: 'Ethereum' },
+  { id: 'api-keys', label: 'API Keys' },
   { id: 'accounts', label: 'Accounts' },
+];
+
+// Rows on the API Keys tab. Plaid/Etherscan pull the signed-in user's own
+// financial data; the price keys are shared app-wide (prices are global).
+const USER_KEY_ROWS = [
+  { service: 'plaid_client_id', label: 'Plaid Client ID' },
+  { service: 'plaid_secret', label: 'Plaid Secret' },
+  { service: 'etherscan', label: 'Etherscan API Key' },
+];
+const APP_KEY_ROWS = [
+  { service: 'cg_api_key', label: 'CoinGecko API Key' },
+  { service: 'cmc_api_key', label: 'CoinMarketCap API Key' },
 ];
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -257,6 +270,9 @@ const Settings = () => {
   const [labelAddressInput, setLabelAddressInput] = useState('');
   const [labelNameInput, setLabelNameInput] = useState('');
   const [updatingLabels, setUpdatingLabels] = useState(false);
+  const [keyStatuses, setKeyStatuses] = useState(null);
+  const [keyInputs, setKeyInputs] = useState({});
+  const [savingKeyService, setSavingKeyService] = useState(null);
   const [activeTab, setActiveTab] = useState(() =>
     SETTINGS_TABS.some((t) => t.id === location.state?.tab) ? location.state.tab : 'appearance'
   );
@@ -280,17 +296,19 @@ const Settings = () => {
     try {
       // Ethereum data is fetched alongside but must not fail the whole page:
       // a wallet-side error should degrade only the Ethereum tab.
-      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult] = await Promise.all([
+      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, keysResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
         ethAPI.getWallets().catch(() => null),
         ethAPI.getIgnoredTokens().catch(() => null),
         ethAPI.getAddressLabels().catch(() => null),
+        keysAPI.getAll().catch(() => null),
       ]);
       const loadedItems = plaidData.items || [];
       setEthWallets(ethResult?.wallets || []);
       setIgnoredTokens(ignoredResult?.tokens || []);
       setAddressLabels(labelsResult?.labels || []);
+      setKeyStatuses(keysResult || null);
       setItems(loadedItems);
       setConsentItems(new Set(
         loadedItems
@@ -514,6 +532,47 @@ const Settings = () => {
       setError(err.response?.data?.error || 'Failed to remove address label');
     } finally {
       setUpdatingLabels(false);
+    }
+  };
+
+  const refreshKeyStatuses = async () => {
+    try {
+      setKeyStatuses(await keysAPI.getAll());
+    } catch {
+      setKeyStatuses(null);
+    }
+  };
+
+  const handleSaveKey = async (event, service) => {
+    event.preventDefault();
+    const value = (keyInputs[service] || '').trim();
+    if (!value || savingKeyService) return;
+    setSavingKeyService(service);
+    setError(null);
+    try {
+      await keysAPI.set(service, value);
+      showSuccess('API key saved');
+      setKeyInputs((prev) => ({ ...prev, [service]: '' }));
+      await refreshKeyStatuses();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save API key');
+    } finally {
+      setSavingKeyService(null);
+    }
+  };
+
+  const handleClearKey = async (service) => {
+    if (savingKeyService) return;
+    setSavingKeyService(service);
+    setError(null);
+    try {
+      await keysAPI.clear(service);
+      showSuccess('API key removed');
+      await refreshKeyStatuses();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to remove API key');
+    } finally {
+      setSavingKeyService(null);
     }
   };
 
@@ -1315,6 +1374,129 @@ const Settings = () => {
               ))}
             </div>
           )}
+        </div>
+      </section>
+      </>
+      )}
+
+      {activeTab === 'api-keys' && (
+      <>
+      {keyStatuses && !keyStatuses.encryptionConfigured && (
+        <div className="mb-4 flex items-start gap-2 border border-loss/20 bg-loss/5 p-3 text-body-sm text-loss">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <span>
+            The server is missing SECRETS_ENCRYPTION_KEY, so keys cannot be stored here yet.
+            Integrations keep using the server&apos;s environment variables.
+          </span>
+        </div>
+      )}
+      {!keyStatuses && (
+        <div className="mb-4 border border-border bg-surface-2 p-3 text-body-sm text-secondary">
+          Key status is unavailable right now. Try reloading the page.
+        </div>
+      )}
+
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Your Keys</h2>
+          <p className="mt-1 text-xs text-secondary">Credentials for pulling your own financial data. Stored encrypted; only the last four characters are ever shown. When unset, the server&apos;s environment value (if any) is used.</p>
+        </div>
+        <div className="card divide-y divide-border overflow-hidden">
+          {USER_KEY_ROWS.map(({ service, label }) => {
+            const status = keyStatuses?.userKeys?.[service];
+            return (
+              <form key={service} onSubmit={(event) => handleSaveKey(event, service)} className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-[minmax(140px,0.8fr)_minmax(110px,0.5fr)_minmax(0,1.4fr)_auto] sm:items-center">
+                <span className="text-body-sm font-semibold text-primary">{label}</span>
+                <span className="font-mono text-caption text-tertiary">
+                  {status?.source === 'db' ? status.masked
+                    : status?.source === 'env' ? 'Using server default'
+                    : 'Not set'}
+                </span>
+                <input
+                  type="password"
+                  value={keyInputs[service] || ''}
+                  onChange={(event) => setKeyInputs((prev) => ({ ...prev, [service]: event.target.value }))}
+                  placeholder={status?.source === 'db' ? 'Replace key…' : 'Paste key…'}
+                  autoComplete="off"
+                  className="h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 font-mono text-body-sm text-primary"
+                  disabled={keyStatuses?.encryptionConfigured === false || savingKeyService !== null}
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={keyStatuses?.encryptionConfigured === false || savingKeyService !== null || !(keyInputs[service] || '').trim()}
+                    className="inline-flex h-10 items-center justify-center gap-2 border border-border bg-surface-3 px-4 text-button font-semibold text-secondary transition-colors hover:border-accent hover:text-accent disabled:opacity-40"
+                  >
+                    {savingKeyService === service ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save
+                  </button>
+                  {status?.source === 'db' && (
+                    <button
+                      type="button"
+                      onClick={() => handleClearKey(service)}
+                      disabled={savingKeyService !== null}
+                      className="inline-flex h-10 items-center justify-center gap-2 border border-border bg-surface-3 px-3 text-button font-semibold text-secondary transition-colors hover:border-loss/30 hover:text-loss disabled:opacity-40"
+                    >
+                      <Trash2 size={14} />
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </form>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Shared Price Keys</h2>
+          <p className="mt-1 text-xs text-secondary">Market prices are shared by every user, so these keys are app-wide. Both are optional: without them, price lookups fall back to keyless sources.</p>
+        </div>
+        <div className="card divide-y divide-border overflow-hidden">
+          {APP_KEY_ROWS.map(({ service, label }) => {
+            const status = keyStatuses?.appSettings?.[service];
+            return (
+              <form key={service} onSubmit={(event) => handleSaveKey(event, service)} className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-[minmax(140px,0.8fr)_minmax(110px,0.5fr)_minmax(0,1.4fr)_auto] sm:items-center">
+                <span className="text-body-sm font-semibold text-primary">{label}</span>
+                <span className="font-mono text-caption text-tertiary">
+                  {status?.source === 'db' ? status.masked
+                    : status?.source === 'env' ? 'Using server default'
+                    : 'Not set'}
+                </span>
+                <input
+                  type="password"
+                  value={keyInputs[service] || ''}
+                  onChange={(event) => setKeyInputs((prev) => ({ ...prev, [service]: event.target.value }))}
+                  placeholder={status?.source === 'db' ? 'Replace key…' : 'Paste key…'}
+                  autoComplete="off"
+                  className="h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 font-mono text-body-sm text-primary"
+                  disabled={keyStatuses?.encryptionConfigured === false || savingKeyService !== null}
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={keyStatuses?.encryptionConfigured === false || savingKeyService !== null || !(keyInputs[service] || '').trim()}
+                    className="inline-flex h-10 items-center justify-center gap-2 border border-border bg-surface-3 px-4 text-button font-semibold text-secondary transition-colors hover:border-accent hover:text-accent disabled:opacity-40"
+                  >
+                    {savingKeyService === service ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save
+                  </button>
+                  {status?.source === 'db' && (
+                    <button
+                      type="button"
+                      onClick={() => handleClearKey(service)}
+                      disabled={savingKeyService !== null}
+                      className="inline-flex h-10 items-center justify-center gap-2 border border-border bg-surface-3 px-3 text-button font-semibold text-secondary transition-colors hover:border-loss/30 hover:text-loss disabled:opacity-40"
+                    >
+                      <Trash2 size={14} />
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </form>
+            );
+          })}
         </div>
       </section>
       </>

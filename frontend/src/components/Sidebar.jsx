@@ -176,7 +176,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
           {(showExpanded || isMobile) && (
             <div className="flex flex-col min-w-0">
               <span className="text-body-sm font-semibold text-primary truncate">
-                {user?.username}
+                {user?.displayName || user?.username}
               </span>
               <span className="text-caption text-tertiary">
                 Settings

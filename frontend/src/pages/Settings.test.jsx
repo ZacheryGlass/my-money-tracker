@@ -30,6 +30,11 @@ const apiMocks = vi.hoisted(() => ({
     labelAddress: vi.fn(),
     unlabelAddress: vi.fn(),
   },
+  keys: {
+    getAll: vi.fn(),
+    set: vi.fn(),
+    clear: vi.fn(),
+  },
   holdings: {
     create: vi.fn(),
   },
@@ -46,6 +51,7 @@ vi.mock('../utils/api', () => ({
   accounts: apiMocks.accounts,
   plaid: apiMocks.plaid,
   eth: apiMocks.eth,
+  keys: apiMocks.keys,
   holdings: apiMocks.holdings,
   exportData: apiMocks.exportData,
   history: apiMocks.history,
@@ -68,6 +74,18 @@ describe('Settings display names', () => {
     apiMocks.eth.getWallets.mockResolvedValue({ wallets: [] });
     apiMocks.eth.getIgnoredTokens.mockResolvedValue({ tokens: [] });
     apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
+    apiMocks.keys.getAll.mockResolvedValue({
+      encryptionConfigured: true,
+      userKeys: {
+        plaid_client_id: { source: 'none', masked: null },
+        plaid_secret: { source: 'none', masked: null },
+        etherscan: { source: 'none', masked: null },
+      },
+      appSettings: {
+        cg_api_key: { source: 'none', masked: null },
+        cmc_api_key: { source: 'none', masked: null },
+      },
+    });
     apiMocks.accounts.getAll.mockResolvedValue({
       accounts: [
         {
@@ -129,6 +147,59 @@ describe('Settings display names', () => {
     // Exactly one Remove button: the user row's. The builtin row has none.
     expect(screen.getAllByRole('button', { name: /remove/i })).toHaveLength(1);
     expect(screen.getByText('My Deposit')).toBeInTheDocument();
+  });
+
+  it('renders API key statuses and saves a key', async () => {
+    apiMocks.keys.getAll.mockResolvedValue({
+      encryptionConfigured: true,
+      userKeys: {
+        plaid_client_id: { source: 'none', masked: null },
+        plaid_secret: { source: 'env', masked: null },
+        etherscan: { source: 'db', masked: '••••1234' },
+      },
+      appSettings: {
+        cg_api_key: { source: 'none', masked: null },
+        cmc_api_key: { source: 'none', masked: null },
+      },
+    });
+    apiMocks.keys.set.mockResolvedValue({ service: 'etherscan', source: 'db', masked: '••••abcd' });
+    renderSettings();
+    fireEvent.click(await screen.findByRole('tab', { name: 'API Keys' }));
+
+    await screen.findByText('Your Keys');
+    expect(screen.getByText('••••1234')).toBeInTheDocument();
+    expect(screen.getByText('Using server default')).toBeInTheDocument();
+    // Only the stored (db) key row offers Clear.
+    expect(screen.getAllByRole('button', { name: /clear/i })).toHaveLength(1);
+
+    const input = screen.getByPlaceholderText('Replace key…');
+    fireEvent.change(input, { target: { value: 'new-key-value' } });
+    fireEvent.click(input.closest('form').querySelector('button[type="submit"]'));
+
+    await waitFor(() => {
+      expect(apiMocks.keys.set).toHaveBeenCalledWith('etherscan', 'new-key-value');
+    });
+  });
+
+  it('disables key inputs and explains when encryption is unconfigured', async () => {
+    apiMocks.keys.getAll.mockResolvedValue({
+      encryptionConfigured: false,
+      userKeys: {
+        plaid_client_id: { source: 'env', masked: null },
+        plaid_secret: { source: 'env', masked: null },
+        etherscan: { source: 'none', masked: null },
+      },
+      appSettings: {
+        cg_api_key: { source: 'none', masked: null },
+        cmc_api_key: { source: 'none', masked: null },
+      },
+    });
+    renderSettings();
+    fireEvent.click(await screen.findByRole('tab', { name: 'API Keys' }));
+
+    await screen.findByText(/missing SECRETS_ENCRYPTION_KEY/);
+    const inputs = screen.getAllByPlaceholderText('Paste key…');
+    expect(inputs.every((input) => input.disabled)).toBe(true);
   });
 
   it('loads all accounts and toggles account visibility', async () => {
