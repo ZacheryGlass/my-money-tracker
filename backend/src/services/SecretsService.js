@@ -20,6 +20,12 @@ const ENV_FALLBACKS = {
   cmc_api_key: 'CMC_PRO_API_KEY',
 };
 
+// Shared by the value and status paths so the two cannot drift: status must
+// read (and decrypt) exactly what resolution reads, or it reports a key the
+// app cannot actually use.
+const USER_KEY_SELECT = 'SELECT encrypted_value, last4 FROM user_api_keys WHERE user_id = $1 AND service = $2';
+const APP_SETTING_SELECT = 'SELECT encrypted_value, last4 FROM app_settings WHERE key = $1';
+
 // Price jobs resolve per ticker; keep a short cache so they cost one query.
 //
 // Single-instance assumption: this cache and the identity cache in
@@ -75,11 +81,7 @@ class SecretsService {
     const cached = cache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-    const row = await readRow(
-      'SELECT encrypted_value, last4 FROM user_api_keys WHERE user_id = $1 AND service = $2',
-      [userId, service],
-      service
-    );
+    const row = await readRow(USER_KEY_SELECT, [userId, service], service);
     const value = row ? row.value : envValue(service);
     cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
     return value;
@@ -90,11 +92,7 @@ class SecretsService {
   // encryption-key change the UI showed a stored key while every read had
   // silently fallen back to env (or null), with no signal to re-enter it.
   static async getUserKeyStatus(userId, service) {
-    const row = await readRow(
-      'SELECT encrypted_value, last4 FROM user_api_keys WHERE user_id = $1 AND service = $2',
-      [userId, service],
-      service
-    );
+    const row = await readRow(USER_KEY_SELECT, [userId, service], service);
     if (row) {
       return { source: 'db', masked: secretCrypto.mask(row.last4) };
     }
@@ -133,22 +131,14 @@ class SecretsService {
     const cached = cache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-    const row = await readRow(
-      'SELECT encrypted_value, last4 FROM app_settings WHERE key = $1',
-      [name],
-      name
-    );
+    const row = await readRow(APP_SETTING_SELECT, [name], name);
     const value = row ? row.value : envValue(name);
     cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
     return value;
   }
 
   static async getAppSettingStatus(name) {
-    const row = await readRow(
-      'SELECT encrypted_value, last4 FROM app_settings WHERE key = $1',
-      [name],
-      name
-    );
+    const row = await readRow(APP_SETTING_SELECT, [name], name);
     if (row) {
       return { source: 'db', masked: secretCrypto.mask(row.last4) };
     }

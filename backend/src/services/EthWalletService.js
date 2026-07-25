@@ -168,7 +168,7 @@ class EthWalletService {
         internal: maxBlock(internal),
         token: maxBlock(token),
       });
-      await EthTransfer.reclassifyCounterparties();
+      await EthTransfer.reclassifyCounterparties(wallet.user_id);
       const holdings = await this.refreshHoldings(walletId);
       const mirror = await EthTransactionMirrorService.rebuildForWallet(walletId);
       await TransactionClassificationService.backfill();
@@ -272,7 +272,7 @@ class EthWalletService {
     // rebuilt too. Non-fatal: the wallet exists either way, and the first
     // sync re-derives all of this.
     try {
-      await this.refreshClassifications();
+      await this.refreshClassificationsForUser(userId);
     } catch (err) {
       logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh after wallet add failed');
     }
@@ -383,7 +383,7 @@ class EthWalletService {
     // Non-fatal: the wallet is already gone; a failure here must not report
     // the disconnect itself as failed.
     try {
-      await this.refreshClassifications();
+      await this.refreshClassificationsForUser(wallet.user_id);
     } catch (err) {
       logger.warn({ walletId, err }, 'Derived-data refresh after wallet removal failed');
     }
@@ -394,10 +394,22 @@ class EthWalletService {
   // self/exchange/external on existing rows and their mirrored ledger rows.
   // Unlike refreshDerivedForUser this never touches Etherscan or holdings --
   // labels affect classification only.
-  static refreshClassifications() {
+  //
+  // Scoped to the owner: wallets and labels only ever classify against their
+  // own user's addresses, so rebuilding every user's rows was wasted work on an
+  // edit they never made. The final backfill stays global -- it is an
+  // account-keyed derivation over transactions, not an eth-wallet read.
+  static refreshClassificationsForUser(userId) {
     return serialized(async () => {
-      await EthTransfer.reclassifyCounterparties();
-      await EthTransactionMirrorService.rebuildAll();
+      await EthTransfer.reclassifyCounterparties(userId);
+      const wallets = await EthWallet.findAllByUser(userId);
+      for (const wallet of wallets) {
+        try {
+          await EthTransactionMirrorService.rebuildForWallet(wallet.id);
+        } catch (err) {
+          logger.warn({ walletId: wallet.id, err }, 'Mirror rebuild failed during classification refresh');
+        }
+      }
       await TransactionClassificationService.backfill();
     });
   }

@@ -115,7 +115,13 @@ class EthTransfer {
   // counterparty_is_own so own-precedence is explicit. COALESCE guards NULL
   // to_address (contract creations): NULL IN (...) is NULL, which would
   // violate the NOT NULL column and abort the statement.
-  static async reclassifyCounterparties() {
+  // A userId restricts the rewrite to that owner's transfers. Classification
+  // already only ever consults the wallet owner's own addresses and labels, so
+  // scoping changes no result -- it just stops one user's wallet or label edit
+  // from rewriting every other user's rows.
+  static async reclassifyCounterparties(userId = null) {
+    const params = userId == null ? [] : [userId];
+    const ownerFilter = userId == null ? '' : ' AND w.user_id = $1';
     await pool.query(
       `UPDATE eth_transfers t SET counterparty_is_own =
          COALESCE(
@@ -124,7 +130,8 @@ class EthTransfer {
            FALSE
          )
        FROM eth_wallets w
-       WHERE t.wallet_id = w.id`
+       WHERE t.wallet_id = w.id${ownerFilter}`,
+      params
     );
     await pool.query(
       `UPDATE eth_transfers t SET counterparty_exchange =
@@ -137,7 +144,8 @@ class EthTransfer {
                     LIMIT 1)
          END
        FROM eth_wallets w
-       WHERE t.wallet_id = w.id`
+       WHERE t.wallet_id = w.id${ownerFilter}`,
+      params
     );
   }
 }

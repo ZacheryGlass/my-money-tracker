@@ -98,4 +98,4 @@ Frontend `.env`: `VITE_API_URL` (empty = same origin)
 ## Open Work
 
 - **Azure deployment** (GitHub issues #22-25): PostgreSQL, App Service, Static Web Apps, SSL/domain — all deferred
-- **Testing**: minimal (6 backend smoke tests, 1 frontend smoke test) — expand coverage
+- **Testing**: 196 backend (node:test + supertest, fake pg Pool via require.cache) and 24 frontend (vitest) — broad on scoping/secrets/admin, thin on charts and analytics

@@ -162,19 +162,6 @@ class EthTransactionMirrorService {
     return { mirrored: rows.length };
   }
 
-  static async rebuildAll() {
-    const wallets = await EthWallet.findAllForJobs();
-    const results = [];
-    for (const wallet of wallets) {
-      try {
-        results.push({ walletId: wallet.id, ...(await this.rebuildForWallet(wallet.id)) });
-      } catch (err) {
-        logger.error({ walletId: wallet.id, err }, 'Failed to rebuild ETH transaction mirror');
-        results.push({ walletId: wallet.id, error: err.message });
-      }
-    }
-    return results;
-  }
 }
 
 module.exports = EthTransactionMirrorService;

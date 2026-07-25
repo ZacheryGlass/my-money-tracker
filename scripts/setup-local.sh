@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Bootstrap local dev environment: DB + user + .env files + deps + migrations + seed.
+# Bootstrap local dev environment: DB + role + .env files + deps + migrations.
+# Migrations seed user 1; there is no separate seed step and no local login.
 # Re-runnable: skips work that's already done.
 #
 # Usage:

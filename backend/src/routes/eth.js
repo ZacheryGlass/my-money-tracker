@@ -201,7 +201,7 @@ router.post('/address-labels', async (req, res) => {
     }
 
     const label = await EthAddressLabel.upsert(req.user.id, address.trim(), trimmedName, note);
-    await EthWalletService.refreshClassifications();
+    await EthWalletService.refreshClassificationsForUser(req.user.id);
     res.status(201).json({ label });
   } catch (error) {
     logger.error({ err: error }, 'Label address error');
@@ -221,7 +221,7 @@ router.delete('/address-labels/:address', async (req, res) => {
       }
       return res.status(404).json({ error: 'Address label not found' });
     }
-    await EthWalletService.refreshClassifications();
+    await EthWalletService.refreshClassificationsForUser(req.user.id);
     res.status(200).json({ message: 'Address label removed' });
   } catch (error) {
     logger.error({ err: error }, 'Unlabel address error');

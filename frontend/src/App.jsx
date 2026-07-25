@@ -52,7 +52,8 @@ function normalizePath(pathname) {
 
 function App() {
   // Login happens upstream (Azure Easy Auth); by the time this app loads the
-  // user is already authenticated. /api/me only supplies the display name.
+  // user is already authenticated. /api/me supplies the display name and the
+  // isAdmin flag that decides whether Settings offers the Server tab.
   const [user, setUser] = useState(null);
   const location = useLocation();
   const navigate = useNavigate();

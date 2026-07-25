@@ -66,7 +66,6 @@ test('Holding reads refuse to run unscoped', async () => {
   await assert.rejects(() => Holding.findAll({}), /requires a userId/);
   await assert.rejects(() => Holding.findAll({ includeHidden: false }), /requires a userId/);
   await assert.rejects(() => Holding.findById(1), /requires a userId/);
-  await assert.rejects(() => Holding.findByAccountId(1), /requires a userId/);
 });
 
 test('Holding.findAllForJobs is the explicit cross-user entry point', async () => {

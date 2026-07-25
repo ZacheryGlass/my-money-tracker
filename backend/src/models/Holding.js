@@ -67,17 +67,6 @@ class Holding {
     return result.rows[0];
   }
 
-  static async findByAccountId(accountId, userId) {
-    requireUserId(userId, 'findByAccountId');
-    const params = [accountId, userId];
-    const where = 'WHERE h.account_id = $1 AND a.user_id = $2';
-    const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id ${where} ORDER BY h.updated_at DESC`,
-      params
-    );
-    return result.rows;
-  }
-
   static async create(accountId, ticker, name, quantity, manualValue, category, notes, location) {
     const result = await pool.query(
       'INSERT INTO holdings (account_id, ticker, name, quantity, manual_value, category, notes, location) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',

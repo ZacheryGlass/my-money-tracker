@@ -6,7 +6,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(200);
 -- block auto-provisioned rows.
 ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
 
--- Stable owner row on fresh databases (previously seeded only by scripts/seed.js).
+-- Stable owner row on fresh databases (previously seeded by a standalone
+-- password-auth seed script, since deleted).
 INSERT INTO users (id, username, display_name) VALUES (1, 'zachery', 'Zachery')
 ON CONFLICT (id) DO NOTHING;
 SELECT setval('users_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM users), 1));

@@ -141,6 +141,18 @@ test('reclassify scopes the own-wallet set to the transfer owner', async () => {
   assert.match(sql, /WHERE w2\.user_id = w\.user_id/);
 });
 
+test('reclassify restricts both statements to one owner when given a userId', async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.reclassifyCounterparties(7);
+  assert.equal(queries.length, 2);
+  // A wallet or label edit by one user must not rewrite everyone else's rows.
+  for (const query of queries) {
+    assert.match(query.text.replace(/\s+/g, ' '), /WHERE t\.wallet_id = w\.id AND w\.user_id = \$1/);
+    assert.deepEqual(query.params, [7]);
+  }
+});
+
 test('reclassify sets exchange labels with owner scope and own-precedence', async () => {
   const EthTransfer = require('../src/models/EthTransfer');
   queries.length = 0;

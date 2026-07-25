@@ -313,26 +313,19 @@ const Settings = ({ user }) => {
     try {
       // Ethereum data is fetched alongside but must not fail the whole page:
       // a wallet-side error should degrade only the Ethereum tab.
-      //
-      // The admin overview is requested only when /api/me already said this
-      // user is an admin: probing it and reading the 403 made every non-admin
-      // fire a request that could only fail, and tied the Server tab's
-      // visibility to whether a five-query aggregate happened to succeed.
-      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, keysResult, adminResult] = await Promise.all([
+      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, keysResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
         ethAPI.getWallets().catch(() => null),
         ethAPI.getIgnoredTokens().catch(() => null),
         ethAPI.getAddressLabels().catch(() => null),
         keysAPI.getAll().catch(() => null),
-        isAdmin ? adminAPI.getOverview().catch(() => null) : Promise.resolve(null),
       ]);
       const loadedItems = plaidData.items || [];
       setEthWallets(ethResult?.wallets || []);
       setIgnoredTokens(ignoredResult?.tokens || []);
       setAddressLabels(labelsResult?.labels || []);
       setKeyStatuses(keysResult || null);
-      setAdminOverview(adminResult || null);
       setItems(loadedItems);
       setConsentItems(new Set(
         loadedItems
@@ -350,9 +343,25 @@ const Settings = ({ user }) => {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }, []);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
+
+  // Loaded separately from the page data: the identity arrives after mount, so
+  // folding this into fetchItems would refetch everything a second time when
+  // isAdmin flips. Requested only for admins -- probing it and reading the 403
+  // made every non-admin fire a request that could only fail.
+  useEffect(() => {
+    if (!isAdmin) {
+      setAdminOverview(null);
+      return undefined;
+    }
+    let cancelled = false;
+    adminAPI.getOverview()
+      .catch(() => null)
+      .then((data) => { if (!cancelled) setAdminOverview(data || null); });
+    return () => { cancelled = true; };
+  }, [isAdmin]);
 
   const handlePlaidSuccess = async (publicToken, metadata) => {
     setConnecting(true);

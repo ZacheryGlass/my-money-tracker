@@ -8,7 +8,7 @@ A modern web application for personal portfolio tracking, replacing the legacy G
 - **Automated Price Updates**: Daily scheduled jobs fetch cryptocurrency prices with automatic fallback between providers
 - **Historical Snapshots**: Automatic daily snapshots of holdings and account values
 - **Dashboard**: Consolidated view of all assets and liabilities with sorting and filtering
-- **Authentication**: JWT-based authentication for secure API access
+- **Authentication**: Google sign-in via Azure Easy Auth, allowlisted accounts, fully isolated per-user data
 - **AI Access**: Read-only financial MCP endpoint with semantic analysis tools
 
 ## Tech Stack
@@ -17,7 +17,7 @@ A modern web application for personal portfolio tracking, replacing the legacy G
 - Node.js + Express
 - PostgreSQL database
 - node-cron for scheduled jobs
-- JWT authentication with bcrypt
+- Azure Easy Auth (Google) upstream; AES-256-GCM encrypted per-user API keys
 
 **Frontend:**
 - React with Vite
@@ -87,9 +87,9 @@ Frontend will be available at `http://localhost:5173`
 
 ## API Endpoints
 
-### Authentication
-- `POST /api/auth/login` - Login with credentials, returns JWT token
-- `GET /api/auth/me` - Get current user info (requires auth)
+### Identity
+- `GET /api/me` - Current user (id, username, isAdmin). Sign-in itself is handled
+  upstream by Azure Easy Auth; the app never sees credentials.
 
 ### Holdings (all require authentication)
 - `GET /api/holdings` - List all holdings
@@ -130,7 +130,7 @@ VITE_API_URL=http://localhost:3000
 
 The application uses PostgreSQL with the following main tables:
 
-- **users**: Authentication credentials
+- **users** / **user_identities**: accounts and the sign-in emails that map to them
 - **accounts**: Investment accounts (Crypto, HSA, Taxable, 401k, Roth IRA, Real Estate, Liability)
 - **holdings**: Current investment positions
 - **price_cache**: Latest prices for tickers
@@ -161,11 +161,10 @@ See [GitHub Issues](https://github.com/ZacheryGlass/my-money-tracker/issues) for
 
 ## Important Notes
 
-- Single-user system (for personal use)
+- Multi-user: an allowlisted email auto-provisions a user on first sign-in; data is fully isolated per user
 - All scheduled jobs use America/Mexico_City timezone
 - Snapshots are created daily to track portfolio growth over time
 - Price updates use a waterfall strategy: Coinbase → CoinGecko → CoinMarketCap
-- Passwords should be changed immediately after initial seed
 
 ## License
 

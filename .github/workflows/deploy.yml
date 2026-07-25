@@ -29,7 +29,7 @@ jobs:
           npm ci --prefix frontend
           npm run build --prefix frontend
 
-      # Installs linux-x64 binaries (bcrypt) matching the App Service runtime.
+      # Resolves any platform-specific binaries against the App Service runtime.
       - name: Install backend production deps
         run: npm ci --omit=dev --prefix backend
 
