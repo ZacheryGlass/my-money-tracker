@@ -52,15 +52,12 @@ cp .env.example .env
 # Edit .env with your configuration
 # Required:
 # - DATABASE_URL: PostgreSQL connection string
-# - JWT_SECRET: Secret key for JWT tokens
-# - CMC_PRO_API_KEY: CoinMarketCap API key (optional)
-# - CG_API_KEY: CoinGecko API key (optional)
+# - SECRETS_ENCRYPTION_KEY: openssl rand -base64 32 (enables API keys in Settings)
+# - CMC_PRO_API_KEY: CoinMarketCap API key (optional; also settable in Settings)
+# - CG_API_KEY: CoinGecko API key (optional; also settable in Settings)
 
-# Run migrations to create database schema
+# Run migrations to create database schema (also seeds user 1)
 npm run migrate
-
-# Seed initial user (default: username=zachery, password=password)
-npm run seed
 
 # Start development server (with hot reload)
 npm run dev
@@ -117,7 +114,8 @@ workflow, security guidance, and semantic-data requirements.
 PORT=3000
 NODE_ENV=development
 DATABASE_URL=postgresql://user:password@localhost:5432/my_money
-JWT_SECRET=your-secret-key
+SECRETS_ENCRYPTION_KEY=base64-32-bytes
+DEV_AUTH_USER_ID=1
 CMC_PRO_API_KEY=your-coinmarketcap-key
 CG_API_KEY=your-coingecko-key
 TZ=America/Mexico_City

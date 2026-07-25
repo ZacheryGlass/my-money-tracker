@@ -81,7 +81,7 @@ Tables: `accounts`, `holdings`, `price_cache`, `ticker_snapshots`, `account_snap
 
 ## Environment Variables
 
-Backend `.env`: `DATABASE_URL`, `JWT_SECRET`, `INITIAL_PASSWORD`, `CMC_PRO_API_KEY`, `CG_API_KEY`, `PORT`, `NODE_ENV`, `RUN_SCHEDULED_JOBS`
+Backend `.env`: `DATABASE_URL`, `SECRETS_ENCRYPTION_KEY`, `CMC_PRO_API_KEY`, `CG_API_KEY`, `PORT`, `NODE_ENV`, `RUN_SCHEDULED_JOBS`, `DEV_AUTH_USER_ID`/`DEV_AUTH_USERNAME`. See CLAUDE.md for the full list.
 
 Frontend `.env`: `VITE_API_URL`
 

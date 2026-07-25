@@ -7,7 +7,7 @@
 ## Quick Start
 
 ```bash
-# First time: bootstrap DB, .env files, deps, migrations, seed user
+# First time: bootstrap DB, .env files, deps, migrations (migrations seed user 1)
 ./scripts/setup-local.sh    # run in Git Bash (not WSL)
 
 # Start both servers (double-click or run from any terminal)

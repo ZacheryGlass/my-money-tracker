@@ -5,7 +5,6 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 process.env.NODE_ENV = 'test';
-process.env.JWT_SECRET = 'test-secret';
 process.env.DATABASE_URL = 'postgresql://test:test@localhost/test';
 
 const app = require('../src/server');

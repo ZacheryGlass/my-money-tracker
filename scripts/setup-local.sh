@@ -84,6 +84,9 @@ if [[ ! -f backend/.env ]]; then
 PORT=3000
 NODE_ENV=development
 DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@$PG_HOST:$PG_PORT/$DB_NAME
+DEV_AUTH_USER_ID=1
+DEV_AUTH_USERNAME=zachery
+SECRETS_ENCRYPTION_KEY=$(openssl rand -base64 32)
 CMC_PRO_API_KEY=
 CG_API_KEY=
 EOF
@@ -107,9 +110,6 @@ echo "==> Installing frontend deps"
 echo "==> Running migrations"
 (cd backend && npm run migrate)
 
-echo "==> Seeding initial user"
-(cd backend && npm run seed)
-
 cat <<EOF
 
 Setup complete. To start the app:
@@ -117,7 +117,7 @@ Setup complete. To start the app:
   Terminal 1:  cd backend  && npm run dev
   Terminal 2:  cd frontend && npm run dev
 
-Then open http://localhost:5173 and log in:
-  username: zachery
-  password: password
+Then open http://localhost:5173/private/ — there is no login locally; the
+dev identity is stubbed from DEV_AUTH_USER_ID in backend/.env. Add your
+Plaid and Etherscan keys under Settings -> API Keys.
 EOF

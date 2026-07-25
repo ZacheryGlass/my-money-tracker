@@ -85,7 +85,7 @@ az webapp config appsettings set -g $RG -n $APP_NAME --settings \
   WEBSITE_NODE_DEFAULT_VERSION=~20 \
   SCM_DO_BUILD_DURING_DEPLOYMENT=true \
   DATABASE_URL="postgresql://${PG_ADMIN}:${PG_PASSWORD}@${PG_SERVER}.postgres.database.azure.com:5432/${DB_NAME}?sslmode=require" \
-  JWT_SECRET="$(openssl rand -hex 48)" \
+  SECRETS_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   CMC_PRO_API_KEY="<your-key>" \
   CG_API_KEY="<your-key>" \
   TZ="America/Mexico_City" \
