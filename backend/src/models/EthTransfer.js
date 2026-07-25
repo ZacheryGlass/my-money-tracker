@@ -2,6 +2,12 @@
 
 const pool = require('../config/database');
 
+// Dollar floor below which a receive-only counterparty is treated as dust.
+// Single-sourced because three callers default it -- the route, the badge, and
+// the data-health issue -- and if they disagreed the warning count and the
+// badge would silently differ.
+const DEFAULT_MIN_USD = 1;
+
 // One row per distinct address the user has transacted with that carries NO
 // label row of any kind -- the triage queue's population. Shared verbatim by
 // the paginated list and the badge summary so the two can never disagree about
@@ -58,18 +64,16 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
       counterparty AS address,
       COUNT(*)::int AS transfer_count,
       (COUNT(*) FILTER (WHERE outgoing))::int AS sent_count,
-      (COUNT(*) FILTER (WHERE NOT outgoing))::int AS received_count,
       COALESCE(SUM(ABS(amount)), 0)::float8 AS usd_volume,
-      COALESCE(SUM(amount), 0)::float8 AS net_usd,
       MIN(block_time) AS first_seen,
       MAX(block_time) AS last_seen,
-      ARRAY_AGG(DISTINCT wallet_address) AS wallet_addresses,
       ARRAY_AGG(DISTINCT token_symbol) FILTER (WHERE token_symbol IS NOT NULL) AS token_symbols,
       -- Non-null only when every transfer with this counterparty is the same
-      -- token, which is what makes "ignore this token" a safe one-click action.
+      -- token. Note this says nothing about whether the user holds that token
+      -- elsewhere, so ignoring it is NOT safe without confirmation -- the ignore
+      -- list is user-global and drops the position from every wallet.
       (CASE WHEN COUNT(DISTINCT token_contract) = 1 AND COUNT(*) FILTER (WHERE token_contract IS NULL) = 0
-            THEN MIN(token_contract) END) AS sole_token_contract,
-      (ARRAY_AGG(tx_hash ORDER BY block_time DESC, id DESC))[1] AS last_tx_hash
+            THEN MIN(token_contract) END) AS sole_token_contract
     FROM unlabeled
     GROUP BY counterparty
   ),
@@ -187,10 +191,16 @@ class EthTransfer {
   }
 
   // The triage queue: counterparties the user has never given a verdict on.
-  // Ordered by unclassified dollars first -- the biggest number is literally
-  // the most misclassified money -- with a deterministic address tiebreak so
-  // pagination is stable.
-  static async unreviewedCounterparties(userId, { limit = 50, offset = 0, minUsd = 1, includeDust = false } = {}) {
+  //
+  // material DESC leads the sort and is NOT redundant with usd_volume DESC: a
+  // counterparty is material when it is above the dollar threshold OR the user
+  // sent to it, so an outbound transfer of an unpriced token is material at
+  // $0.00 and would otherwise sort beneath every airdrop worth a cent. With a
+  // page limit that pushes it off the page entirely, leaving a badge counting
+  // rows the user cannot see or act on -- and outbound transfers are the
+  // highest-stakes rows in the queue. Then dollars, then a deterministic
+  // address tiebreak so paging is stable.
+  static async unreviewedCounterparties(userId, { limit = 50, offset = 0, minUsd = DEFAULT_MIN_USD, includeDust = false } = {}) {
     const result = await pool.query(
       `${UNREVIEWED_COUNTERPARTIES_CTE}
        SELECT r.*,
@@ -200,7 +210,7 @@ class EthTransfer {
               (SELECT COALESCE(SUM(usd_volume), 0) FROM ranked WHERE material)::float8 AS material_usd
        FROM ranked r
        WHERE $3::boolean OR r.material
-       ORDER BY r.usd_volume DESC, r.transfer_count DESC, r.last_seen DESC, r.address ASC
+       ORDER BY r.material DESC, r.usd_volume DESC, r.transfer_count DESC, r.last_seen DESC, r.address ASC
        LIMIT $4 OFFSET $5`,
       [userId, minUsd, includeDust, limit, offset]
     );
@@ -226,15 +236,20 @@ class EthTransfer {
         materialUsd: Number(first.material_usd),
       };
     }
-    // Empty page: the window function produced no row to read counts off, so
-    // the totals still have to come from a summary pass (offset past the end
-    // must not report zero unreviewed counterparties).
+    // An empty FIRST page genuinely means zero, so answer without a second
+    // pass -- a drained queue is the steady state and re-running the whole CTE
+    // on every Settings load to learn "still zero" is pure waste. Only a page
+    // past the end needs the summary, since the window function has no row to
+    // read the totals off and must not report zero unreviewed counterparties.
+    if (offset === 0) {
+      return { counterparties, total: 0, materialCount: 0, dustCount: 0, materialUsd: 0 };
+    }
     const summary = await this.unreviewedCounterpartySummary(userId, { minUsd });
     return { counterparties, total: summary.materialCount + (includeDust ? summary.dustCount : 0), ...summary };
   }
 
   // Scalar counts for the attention badge and data-health, without pagination.
-  static async unreviewedCounterpartySummary(userId, { minUsd = 1 } = {}) {
+  static async unreviewedCounterpartySummary(userId, { minUsd = DEFAULT_MIN_USD } = {}) {
     const result = await pool.query(
       `${UNREVIEWED_COUNTERPARTIES_CTE}
        SELECT (COUNT(*) FILTER (WHERE material))::int AS material_count,
@@ -323,3 +338,5 @@ class EthTransfer {
 }
 
 module.exports = EthTransfer;
+// Exported so the route and the data-health check share one threshold.
+module.exports.DEFAULT_MIN_USD = DEFAULT_MIN_USD;

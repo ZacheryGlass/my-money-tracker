@@ -205,13 +205,20 @@ const OnChainActivity = ({ walletId }) => {
     }
   };
 
-  // Known label names feed the inline form's datalist for one-tap reuse.
+  // Known exchange names feed the inline form's datalist for one-tap reuse.
+  // Exchange kinds only: this form labels exchanges, and the triage queue's
+  // one-click verdicts mint 'external'/'own' rows whose names default to a bare
+  // 0x1234…abcd, which would otherwise fill the typeahead with noise.
   useEffect(() => {
     let cancelled = false;
     ethAPI.getAddressLabels()
       .then((result) => {
         if (cancelled) return;
-        const names = [...new Set((result.labels || []).map((label) => label.name))];
+        const names = [...new Set(
+          (result.labels || [])
+            .filter((label) => !label.kind || label.kind === 'exchange')
+            .map((label) => label.name)
+        )];
         setLabelNames(names);
       })
       .catch(() => {});

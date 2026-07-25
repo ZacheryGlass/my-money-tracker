@@ -308,25 +308,36 @@ describe('Settings display names', () => {
       expect(screen.getByText('Some stranger')).toBeInTheDocument();
     });
 
-    it('offers ignoring the token when a counterparty only ever sent one', async () => {
+    it('confirms before ignoring a token, since the ignore list is user-global', async () => {
       apiMocks.eth.ignoreToken.mockResolvedValue({});
       await openEthTab({
         data: [{ ...MATERIAL, token_symbols: ['SCAM'], sole_token_contract: '0xc0ffee' }],
         summary: { count: 1, dust_count: 0, usd_volume: 0 },
       });
 
-      fireEvent.click(screen.getByRole('button', { name: /ignore scam — 0xbbbb/i }));
+      // sole_token_contract only proves THIS counterparty deals in one token.
+      // Ignoring drops the position from every wallet, so if the same token was
+      // also acquired legitimately, one stray click would delete a real holding.
+      fireEvent.click(screen.getByRole('button', { name: /^ignore scam — 0xbbbb/i }));
+      expect(apiMocks.eth.ignoreToken).not.toHaveBeenCalled();
+      expect(screen.getByText(/removes it from holdings and activity in/i)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /ignore scam everywhere — 0xbbbb/i }));
       await waitFor(() => expect(apiMocks.eth.ignoreToken).toHaveBeenCalledWith('0xc0ffee', 'SCAM'));
     });
 
-    it('hides the queue when its fetch fails rather than claiming all clear', async () => {
+    it('shows a retry state when the queue fetch fails rather than claiming all clear', async () => {
       apiMocks.eth.getWallets.mockResolvedValue({ wallets: [WALLET] });
       apiMocks.eth.getUnreviewedCounterparties.mockRejectedValue(new Error('boom'));
       renderSettings();
-      fireEvent.click(await screen.findByRole('tab', { name: 'Ethereum' }));
+      fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
 
-      await screen.findByText('Labeled Addresses');
-      expect(screen.queryByText('Needs Review')).toBeNull();
+      await screen.findByText('Needs Review');
+      // Rendering "every counterparty has been reviewed" here would be the same
+      // silence this section exists to break.
+      expect(screen.queryByText(/every counterparty has been reviewed/i)).toBeNull();
+      expect(screen.getByText(/couldn't load the review queue/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
       // One endpoint failing must not surface a page-level error.
       expect(screen.queryByText(/failed to load/i)).toBeNull();
     });

@@ -5,18 +5,19 @@ const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const PriceService = require('./PriceService');
 const PriceCache = require('../models/PriceCache');
+const { shortAddress } = require('../utils/ethAddress');
 
-function shortAddress(address) {
-  return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'unknown';
-}
-
-// Every address-label write runs refreshClassifications -> rebuildAll, which
-// calls CoinGecko once per wallet. The triage queue makes rapid sequential
+// Every address-label write runs refreshClassificationsForUser, which rebuilds
+// each of that owner's wallets and so calls CoinGecko once per wallet. The
+// triage queue makes rapid sequential
 // labeling the normal workflow, so without this a handful of clicks will
 // rate-limit a free-tier key. Token prices do not depend on labels, so reusing
 // a recent response across back-to-back rebuilds is safe; the nightly sync
 // benefits too. Keyed by the exact contract set, since that is what the URL is.
 const TOKEN_PRICE_TTL_MS = 5 * 60 * 1000;
+// Failures expire sooner so a transient rate-limit does not keep the ledger on
+// stale amounts for the full window once the API recovers.
+const TOKEN_PRICE_FAILURE_TTL_MS = 30 * 1000;
 const TOKEN_PRICE_CACHE_MAX = 32;
 const tokenPriceCache = new Map();
 
@@ -115,19 +116,34 @@ class EthTransactionMirrorService {
     if (!contracts.length) return {};
     const key = [...contracts].sort().join(',');
     const cached = tokenPriceCache.get(key);
-    if (cached && Date.now() - cached.at < TOKEN_PRICE_TTL_MS) return cached.prices;
+    if (cached && Date.now() - cached.at < cached.ttl) return cached.prices;
 
     try {
       const prices = await PriceService.fetchCoinGeckoJson(
         `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${encodeURIComponent(key)}&vs_currencies=usd`
       );
-      if (tokenPriceCache.size >= TOKEN_PRICE_CACHE_MAX) tokenPriceCache.clear();
-      tokenPriceCache.set(key, { at: Date.now(), prices });
+      this._cacheTokenPrices(key, prices);
       return prices;
     } catch (err) {
       logger.warn({ walletId, err }, 'Token price lookup failed; token rows keep their previous amounts');
+      // Cache the failure too, on a shorter TTL. Without this a rate-limit
+      // storm re-hits CoinGecko on every wallet of every rebuild -- exactly the
+      // scenario the cache exists to prevent, since the failure arrives fastest
+      // and so recurs most often.
+      this._cacheTokenPrices(key, {}, TOKEN_PRICE_FAILURE_TTL_MS);
       return {};
     }
+  }
+
+  static _cacheTokenPrices(key, prices, ttl = TOKEN_PRICE_TTL_MS) {
+    // Evict the oldest single entry rather than clearing the map: Map preserves
+    // insertion order, so the first key is the least recently written. Clearing
+    // would throw away entries written moments ago and re-trigger the very
+    // fetches this cache is meant to avoid.
+    if (tokenPriceCache.size >= TOKEN_PRICE_CACHE_MAX) {
+      tokenPriceCache.delete(tokenPriceCache.keys().next().value);
+    }
+    tokenPriceCache.set(key, { at: Date.now(), prices, ttl });
   }
 
   // Deterministic full rebuild of the wallet account's mirrored ledger rows.

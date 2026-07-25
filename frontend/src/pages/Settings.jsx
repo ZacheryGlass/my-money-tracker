@@ -223,7 +223,11 @@ const TRIAGE_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border
 // One unreviewed counterparty. Defined at module scope, not inside Settings:
 // a component redefined every render remounts, which would close the open
 // naming panel on each keystroke.
-function CounterpartyRow({ counterparty, suggestions, busy, onTriage, onTrackAsWallet, onIgnoreToken }) {
+// busy disables EVERY row while any verdict is in flight -- the handlers take
+// one at a time, so leaving other rows clickable produced silent no-ops in the
+// exact rapid-triage workflow this feature is built around. active spins only
+// the row actually being worked on.
+function CounterpartyRow({ counterparty, suggestions, busy, active, onTriage, onTrackAsWallet, onIgnoreToken }) {
   const [panel, setPanel] = useState(null); // 'exchange' | 'mine' | null
   const [name, setName] = useState('');
   const short = shortEthAddress(counterparty.address);
@@ -307,16 +311,20 @@ function CounterpartyRow({ counterparty, suggestions, busy, onTriage, onTrackAsW
             onClick={() => onTriage(counterparty.address, 'external')}
             className={`${TRIAGE_ACTION_CLASS} hover:border-accent hover:text-accent`}
           >
-            {busy ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />} Outside party
+            {active ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />} Outside party
           </button>
           {counterparty.sole_token_contract && (
             // Airdrop spam arrives from many addresses but one contract, so
-            // ignoring the token clears a whole class at once.
+            // ignoring the token clears a whole class at once. Confirmed, not
+            // one-click: sole_token_contract only says THIS counterparty deals
+            // in one token, while the ignore list is user-global -- if the same
+            // token was also acquired legitimately elsewhere, ignoring it
+            // deletes that real holding and drops net worth with no undo.
             <button
               type="button"
               disabled={busy}
               aria-label={`Ignore ${symbol || 'token'} — ${short}`}
-              onClick={() => onIgnoreToken(counterparty)}
+              onClick={() => openPanel('ignore')}
               className={`${TRIAGE_ACTION_CLASS} hover:border-loss/30 hover:text-loss`}
             >
               <EyeOff size={10} /> Ignore {symbol || 'token'}
@@ -348,7 +356,7 @@ function CounterpartyRow({ counterparty, suggestions, busy, onTriage, onTrackAsW
             disabled={busy || !name.trim()}
             className="inline-flex h-8 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[9px] font-bold uppercase tracking-wide text-teal-400 disabled:opacity-40"
           >
-            {busy && <RefreshCw size={10} className="animate-spin" />} Save
+            {active && <RefreshCw size={10} className="animate-spin" />} Save
           </button>
           <button type="button" onClick={() => setPanel(null)} className={TRIAGE_ACTION_CLASS}>Cancel</button>
         </form>
@@ -378,7 +386,7 @@ function CounterpartyRow({ counterparty, suggestions, busy, onTriage, onTrackAsW
               onClick={() => onTrackAsWallet(counterparty.address, name.trim())}
               className="inline-flex h-8 items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-3 text-[9px] font-bold uppercase tracking-wide text-accent transition-all hover:bg-accent/20 disabled:opacity-40"
             >
-              {busy ? <RefreshCw size={10} className="animate-spin" /> : <Plus size={10} />} Track as a wallet
+              {active ? <RefreshCw size={10} className="animate-spin" /> : <Plus size={10} />} Track as a wallet
             </button>
             <button
               type="button"
@@ -396,6 +404,27 @@ function CounterpartyRow({ counterparty, suggestions, busy, onTriage, onTrackAsW
             Labelling it only stops its transfers counting as spending — use that for addresses on another
             chain, ones already counted elsewhere, or ones you would rather not sync.
           </p>
+        </div>
+      )}
+
+      {panel === 'ignore' && (
+        <div className="mt-3 space-y-2 border-t border-border pt-3">
+          <p className="text-[10px] leading-relaxed text-tertiary">
+            Ignoring {symbol || 'this token'} removes it from holdings and activity in <strong>every</strong> wallet,
+            not just this counterparty. If you also hold it legitimately, that position disappears too.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Ignore ${symbol || 'token'} everywhere — ${short}`}
+              onClick={() => onIgnoreToken(counterparty)}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-loss/30 bg-loss-bg px-3 text-[9px] font-bold uppercase tracking-wide text-loss transition-all disabled:opacity-40"
+            >
+              {active ? <RefreshCw size={10} className="animate-spin" /> : <EyeOff size={10} />} Ignore everywhere
+            </button>
+            <button type="button" onClick={() => setPanel(null)} className={`${TRIAGE_ACTION_CLASS} h-8 px-3`}>Cancel</button>
+          </div>
         </div>
       )}
     </div>
@@ -1609,7 +1638,7 @@ const Settings = ({ user }) => {
         )}
       </section>
 
-      {ethWallets.length > 0 && counterpartyData && (
+      {ethWallets.length > 0 && (
         <section className="mb-8" aria-labelledby="eth-review-heading">
           <div className="mb-3 px-2">
             <h2 id="eth-review-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Needs Review</h2>
@@ -1627,7 +1656,24 @@ const Settings = ({ user }) => {
           </datalist>
 
           <div className="card overflow-hidden">
-            {materialCounterparties.length === 0 && dustCounterparties.length === 0 ? (
+            {!counterpartyData ? (
+              // Loaded-and-empty and failed-to-load must not look alike. Showing
+              // "all reviewed" after a failed request is the same silence this
+              // whole section exists to break, and the badge drops too.
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-secondary">
+                <span className="flex items-center gap-2 text-loss">
+                  <AlertTriangle size={14} />
+                  Couldn&apos;t load the review queue.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => fetchItems()}
+                  className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent"
+                >
+                  <RefreshCw size={10} /> Retry
+                </button>
+              </div>
+            ) : materialCounterparties.length === 0 && dustCounterparties.length === 0 ? (
               <div className="p-6 text-center text-sm text-secondary">Every counterparty has been reviewed.</div>
             ) : (
               <div className="divide-y divide-border">
@@ -1636,7 +1682,8 @@ const Settings = ({ user }) => {
                     key={counterparty.address}
                     counterparty={counterparty}
                     suggestions={exchangeNameSuggestions}
-                    busy={triagingAddress === counterparty.address}
+                    busy={Boolean(triagingAddress)}
+                    active={triagingAddress === counterparty.address}
                     onTriage={handleTriageCounterparty}
                     onTrackAsWallet={handleTrackCounterpartyAsWallet}
                     onIgnoreToken={handleIgnoreCounterpartyToken}
@@ -1656,7 +1703,9 @@ const Settings = ({ user }) => {
                   onClick={() => setShowDustCounterparties((open) => !open)}
                   className="flex w-full items-center justify-between gap-2 border-t border-border px-4 py-3 text-caption text-tertiary transition-colors hover:text-primary"
                 >
-                  <span>{dustCounterparties.length} low-value counterparties</span>
+                  {/* The server's count, not the page's: the response is capped,
+                      so the rendered array can be smaller than the real total. */}
+                  <span>{counterpartyData?.summary?.dust_count ?? dustCounterparties.length} low-value counterparties</span>
                   <ChevronDown size={14} className={showDustCounterparties ? 'rotate-180 transition-transform' : 'transition-transform'} />
                 </button>
                 {showDustCounterparties && (
@@ -1666,7 +1715,8 @@ const Settings = ({ user }) => {
                         key={counterparty.address}
                         counterparty={counterparty}
                         suggestions={exchangeNameSuggestions}
-                        busy={triagingAddress === counterparty.address}
+                        busy={Boolean(triagingAddress)}
+                        active={triagingAddress === counterparty.address}
                         onTriage={handleTriageCounterparty}
                         onTrackAsWallet={handleTrackCounterpartyAsWallet}
                         onIgnoreToken={handleIgnoreCounterpartyToken}

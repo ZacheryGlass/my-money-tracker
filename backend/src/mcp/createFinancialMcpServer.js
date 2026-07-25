@@ -228,7 +228,7 @@ function createFinancialMcpServer(userId) {
 
   register(server, 'finance_get_data_health', {
     title: 'Assess financial data freshness and analytical coverage',
-    description: 'Reports stale snapshots, stale prices, Plaid synchronization issues, missing prices, unclassified transactions, missing investment cash flows, absent benchmark history, and missing tax lots. Use this before high-stakes or historical analysis, or whenever another tool returns a coverage warning. It helps distinguish a real financial result from a data ingestion or classification problem.',
+    description: 'Reports stale snapshots, stale prices, Plaid synchronization issues, missing prices, unclassified transactions, missing investment cash flows, absent benchmark history, missing tax lots, and unreviewed on-chain counterparties. Use this before high-stakes or historical analysis, or whenever another tool returns a coverage warning. It helps distinguish a real financial result from a data ingestion or classification problem.',
     inputSchema: {},
   }, () => FinancialQueryService.getDataHealth({ userId }));
 

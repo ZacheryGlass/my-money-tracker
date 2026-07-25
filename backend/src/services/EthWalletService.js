@@ -9,6 +9,7 @@ const TransactionClassificationService = require('./TransactionClassificationSer
 const EthWallet = require('../models/EthWallet');
 const EthTransfer = require('../models/EthTransfer');
 const logger = require('../config/logger');
+const { shortAddress } = require('../utils/ethAddress');
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 
@@ -26,10 +27,6 @@ function unitsToDecimalString(value, decimals) {
   if (whole.toString().length > 12) return MAX_QUANTITY;
   const frac = (v % base).toString().padStart(Number(decimals), '0').slice(0, 8);
   return frac ? `${whole}.${frac}` : whole.toString();
-}
-
-function shortAddress(address) {
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 // Sync resumes this many blocks before the stored cursor so a chain reorg
@@ -265,7 +262,16 @@ class EthWalletService {
       const reattached = await client.query(
         `UPDATE accounts
             SET eth_wallet_id = $1,
-                display_name = COALESCE($2, display_name)
+                display_name = COALESCE($2, display_name),
+                type = 'crypto',
+                -- Un-hide deliberately. Hiding the leftover account is the
+                -- natural response to a disconnect, and adopting it while
+                -- hidden would exclude the wallet from net worth, holdings,
+                -- history and exports -- every consumer filters
+                -- is_hidden = FALSE -- with no error anywhere. Re-adding an
+                -- address is an explicit "track this again"; a reappearing row
+                -- is trivially re-hidden, a silently missing balance is not.
+                is_hidden = FALSE
           WHERE user_id = $3 AND name = $4 AND eth_wallet_id IS NULL
           RETURNING *`,
         [wallet.id, trimmedLabel, userId, accountName]
@@ -284,11 +290,23 @@ class EthWalletService {
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
-      // Only reachable when a LIVE account already holds this name -- i.e. two
-      // distinct addresses sharing the same 6-and-4 abbreviation. Vanishingly
-      // rare, but a bare 500 gives the user nothing to act on.
+      // Branch on the constraint, not just the code: the transaction's FIRST
+      // statement inserts into eth_wallets, and the duplicate-address
+      // pre-check above runs outside the transaction, so a double-submit or an
+      // interceptor retry can race it. Reporting that as a name conflict would
+      // send the user chasing an account rename for what is really "you
+      // already track this address".
+      if (err.code === '23505' && err.constraint === 'eth_wallets_user_id_address_key') {
+        const duplicate = new Error('That address is already tracked');
+        duplicate.code = 'DUPLICATE_WALLET';
+        throw duplicate;
+      }
       if (err.code === '23505') {
-        const conflict = new Error(`An account named "${accountName}" already exists. Rename it under Settings -> Accounts, then add this wallet again.`);
+        // A live account already holds this name -- two distinct addresses
+        // sharing a 6-and-4 abbreviation. Vanishingly rare, and there is no
+        // API that renames an account, so the message must not tell the user
+        // to go rename one; only display_name is editable.
+        const conflict = new Error(`Another account is already named "${accountName}", so this address can't be added automatically.`);
         conflict.code = 'ACCOUNT_NAME_CONFLICT';
         throw conflict;
       }

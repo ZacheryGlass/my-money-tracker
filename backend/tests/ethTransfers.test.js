@@ -249,6 +249,19 @@ test('unreviewed counterparties exclude gas, failures, own, and ignored tokens',
   assert.match(sql, /usd_volume >= \$2::float8 OR g\.sent_count > 0/);
 });
 
+test('unreviewed counterparties sort material rows above dust', async () => {
+  const EthTransfer = require('../src/models/EthTransfer');
+  queries.length = 0;
+  await EthTransfer.unreviewedCounterparties(7, { includeDust: true });
+  const sql = sqlOf(queries[0]);
+  // material DESC must lead. Materiality is "above the dollar floor OR the user
+  // sent to it", so an outbound transfer of an unpriced token is material at
+  // $0.00; ordering by dollars alone buries it under every one-cent airdrop and
+  // a page limit then pushes it off entirely -- leaving the badge counting rows
+  // the user cannot see, which is the failure the badge exists to prevent.
+  assert.match(sql, /ORDER BY r\.material DESC, r\.usd_volume DESC/);
+});
+
 test('addWallet rejects malformed addresses', async () => {
   await assert.rejects(
     () => EthWalletService.addWallet(1, 'not-an-address'),

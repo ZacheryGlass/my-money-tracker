@@ -8,6 +8,7 @@ const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
 const EthWalletService = require('../services/EthWalletService');
 const logger = require('../config/logger');
+const { shortAddress } = require('../utils/ethAddress');
 
 const router = express.Router();
 
@@ -31,8 +32,6 @@ function parseId(raw) {
 // address (same effect via the own set, no account created). 'external' records
 // "reviewed, genuinely a third party" and changes no classification at all.
 const LABEL_KINDS = new Set(['exchange', 'external', 'own']);
-
-const shortAddress = (address) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
 router.post('/wallets', async (req, res) => {
   try {
@@ -204,22 +203,35 @@ router.post('/address-labels', async (req, res) => {
     if (!address || !/^0x[0-9a-f]{40}$/i.test(address.trim())) {
       return res.status(400).json({ error: 'address must be a 0x-prefixed 40-hex-character address' });
     }
-    // Omitting kind keeps the pre-031 behavior, so existing clients are unaffected.
-    const kind = req.body?.kind === undefined ? 'exchange' : String(req.body.kind).trim().toLowerCase();
-    if (!LABEL_KINDS.has(kind)) {
-      return res.status(400).json({ error: "kind must be 'exchange', 'external', or 'own'" });
+    // Omitted kind passes NULL, which preserves an existing row's verdict and
+    // only defaults to 'exchange' on insert. A rename must never re-vote: a
+    // caller that sends just {address, name} for an address already marked
+    // 'own' would otherwise flip it to 'exchange' and turn a self-transfer
+    // into a phantom exchange deposit. Explicit non-strings are rejected
+    // rather than coerced, so ["own"] does not slip past the allowlist.
+    let kind = null;
+    if (req.body?.kind !== undefined) {
+      if (typeof req.body.kind !== 'string') {
+        return res.status(400).json({ error: "kind must be 'exchange', 'external', or 'own'" });
+      }
+      kind = req.body.kind.trim().toLowerCase();
+      if (!LABEL_KINDS.has(kind)) {
+        return res.status(400).json({ error: "kind must be 'exchange', 'external', or 'own'" });
+      }
     }
 
     const trimmedName = typeof name === 'string' ? name.trim() : '';
     if (trimmedName.length > 64) {
-      return res.status(400).json({ error: 'name is required (max 64 characters)' });
+      return res.status(400).json({ error: 'name must be 64 characters or fewer' });
     }
     // Asymmetric on purpose. An 'exchange' name becomes counterparty_exchange:
     // it is both the user-facing text in the ledger AND the assertion that
     // turns real spending into an internal transfer, so it must be typed
-    // deliberately. The other kinds never surface their name in classification,
-    // so a short-address fallback is enough to triage in one tap.
-    if (kind === 'exchange' && !trimmedName) {
+    // deliberately. The other kinds never surface their name in
+    // classification, so a short-address fallback is enough to triage in one
+    // tap. An omitted kind is held to the same bar as 'exchange', since on a
+    // fresh row that is what it becomes.
+    if (kind !== 'external' && kind !== 'own' && !trimmedName) {
       return res.status(400).json({ error: 'name is required (max 64 characters)' });
     }
     const normalized = address.trim().toLowerCase();
@@ -242,7 +254,7 @@ router.get('/counterparties/unreviewed', async (req, res) => {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
     const rawMin = Number.parseFloat(req.query.min_usd);
-    const minUsd = Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : 1;
+    const minUsd = Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : EthTransfer.DEFAULT_MIN_USD;
     const includeDust = req.query.include_dust === 'true';
 
     const { counterparties, total, materialCount, dustCount, materialUsd } =

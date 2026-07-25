@@ -33,17 +33,20 @@ class EthAddressLabel {
   // A user's label is a separate row from any builtin for the same address
   // (the builtin keeps user_id NULL); reads shadow builtins with user rows.
   //
-  // kind is set outright rather than COALESCEd: the per-user unique index means
-  // one verdict per address, so re-labeling is how you change your mind, and
-  // every caller resolves kind to a concrete value before getting here. A
-  // rename must therefore resend the kind -- which the API does automatically.
-  static async upsert(userId, address, name, note, kind = 'exchange') {
+  // A NULL kind means "don't change the verdict" -- it defaults to 'exchange'
+  // only when inserting a brand-new row. This is load-bearing, not defensive:
+  // renaming a label is a plain re-upsert with no kind, and a caller that
+  // predates the column (or simply omits it) must NOT silently re-vote. Writing
+  // kind outright would let renaming an 'own' address flip it to 'exchange',
+  // dropping it out of the own set and turning a self-transfer into a phantom
+  // exchange deposit -- real spending erased from cash flow.
+  static async upsert(userId, address, name, note, kind = null) {
     const result = await pool.query(
       `INSERT INTO eth_address_labels (user_id, address, name, source, note, kind)
-       VALUES ($1, $2, $3, 'user', $4, $5)
+       VALUES ($1, $2, $3, 'user', $4, COALESCE($5, 'exchange'))
        ON CONFLICT (user_id, address) WHERE user_id IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name,
-                     kind = EXCLUDED.kind,
+                     kind = COALESCE($5, eth_address_labels.kind),
                      note = COALESCE(EXCLUDED.note, eth_address_labels.note)
        RETURNING *`,
       [userId, address.toLowerCase(), name, note || null, kind]

@@ -105,11 +105,48 @@ test('addWallet turns a live account name collision into a 409, not a 500', asyn
   // re-attach UPDATE cannot claim it. routes/eth.js maps this code to 409.
   reset([
     { match: 'UPDATE accounts', rows: [] },
-    { match: 'INSERT INTO accounts', throws: Object.assign(new Error('duplicate key value'), { code: '23505' }) },
+    {
+      match: 'INSERT INTO accounts',
+      throws: Object.assign(new Error('duplicate key value'), { code: '23505', constraint: 'accounts_user_id_name_key' }),
+    },
   ]);
 
   await assert.rejects(
     () => EthWalletService.addWallet(1, ADDRESS, null),
-    (err) => err.code === 'ACCOUNT_NAME_CONFLICT' && /already exists/.test(err.message)
+    (err) => err.code === 'ACCOUNT_NAME_CONFLICT'
+      // No API renames an account, so the message must not tell the user to.
+      && !/[Rr]ename it/.test(err.message)
   );
+});
+
+test('a raced duplicate address reports DUPLICATE_WALLET, not a name conflict', async () => {
+  // The duplicate-address pre-check runs outside the transaction and the axios
+  // interceptor retries 5xx once, so a double-submit can reach the eth_wallets
+  // INSERT. Reporting that as a name conflict would send the user chasing an
+  // account rename for what is really "you already track this address".
+  // Set directly rather than via reset(), which seeds a SUCCESSFUL wallet
+  // insert that would shadow this one.
+  queries.length = 0;
+  clientResponses = [
+    {
+      match: 'INSERT INTO eth_wallets',
+      throws: Object.assign(new Error('duplicate key value'), { code: '23505', constraint: 'eth_wallets_user_id_address_key' }),
+    },
+  ];
+
+  await assert.rejects(
+    () => EthWalletService.addWallet(1, ADDRESS, null),
+    (err) => err.code === 'DUPLICATE_WALLET'
+  );
+});
+
+test('re-attaching un-hides the adopted account', async () => {
+  // A hidden account is filtered out of net worth, holdings, history and
+  // exports, so adopting one while hidden would leave the wallet syncing
+  // green while its balance silently vanishes from every total.
+  reset([{ match: 'UPDATE accounts', rows: [{ id: 9 }] }]);
+  await EthWalletService.addWallet(1, ADDRESS, null);
+
+  const update = clientQueries().find((q) => q.text.includes('UPDATE accounts'));
+  assert.match(update.text.replace(/\s+/g, ' '), /is_hidden = FALSE/);
 });
