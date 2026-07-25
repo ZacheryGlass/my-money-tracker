@@ -333,8 +333,11 @@ export const eth = {
     const response = await api.delete(`/api/eth/wallets/${id}${removeData ? '?removeData=true' : ''}`);
     return response.data;
   },
-  getTransfers: async (id, params = {}) => {
-    const response = await api.get(`/api/eth/wallets/${id}/transfers`, { params });
+  // Omit walletId for the merged feed across every wallet.
+  getTransfers: async ({ walletId, ...params } = {}) => {
+    const response = await api.get('/api/eth/transfers', {
+      params: { ...params, ...(walletId != null ? { wallet_id: walletId } : {}) },
+    });
     return response.data;
   },
   getIgnoredTokens: async () => {

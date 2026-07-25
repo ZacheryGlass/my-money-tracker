@@ -2,8 +2,9 @@ import React from 'react';
 
 // Single-choice control that renders as an underline tab strip on desktop and
 // as a labeled dropdown on mobile. `options` is [{ value, label, badge?,
-// selectLabel? }] — `badge` is an element shown on the desktop tab, and
-// `selectLabel` is its text fallback for the dropdown (options are text-only).
+// selectLabel?, title? }] — `badge` is an element shown on the desktop tab,
+// `selectLabel` is its text fallback for the dropdown (options are text-only),
+// and `title` is hover text for labels that had to be truncated to fit.
 // `actions` is an optional element pinned to the right on both layouts.
 // In the strip, the -mb-px overlap lives on the scroll wrapper, not the
 // buttons: putting it on the buttons inside an overflow-x-auto container
@@ -37,6 +38,7 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
             type="button"
             role="tab"
             aria-selected={value === option.value}
+            title={option.title}
             onClick={() => onChange(option.value)}
             className={`whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
               value === option.value

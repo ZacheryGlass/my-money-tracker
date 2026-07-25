@@ -5,6 +5,8 @@ import { formatDateDisplay } from '../utils/format';
 import FilterTabs from './FilterTabs';
 import LoadingState from './LoadingState';
 
+export const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'unknown');
+
 export const EthWalletBadge = () => (
   <span
     className="inline-flex h-5 w-5 items-center justify-center bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0"
@@ -34,8 +36,6 @@ const TRANSFER_CHIP_STYLES = {
   Token: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
 };
 
-const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'unknown');
-
 const transferChipLabel = (transfer) => {
   if (transfer.transfer_type === 'gas') return 'Gas';
   if (transfer.counterparty_is_own) return 'Self';
@@ -54,10 +54,13 @@ const formatTransferQuantity = (transfer) => {
 
 // Dedicated on-chain ledger for wallet-linked accounts, fed by the raw
 // eth_transfers feed rather than the mirrored transactions table.
-const OnChainActivity = ({ walletId }) => {
+//
+// `walletId` narrows to one wallet; omit it for the merged feed across every
+// wallet. `walletNames` maps wallet id -> label, used to tag rows in the
+// merged feed where a row's address alone doesn't say which wallet it is.
+const OnChainActivity = ({ walletId = null, walletNames }) => {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
-  const [walletAddress, setWalletAddress] = useState(null);
   const [typeFilter, setTypeFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -78,7 +81,8 @@ const OnChainActivity = ({ walletId }) => {
       setLoading(true);
       setError(null);
       try {
-        const result = await ethAPI.getTransfers(walletId, {
+        const result = await ethAPI.getTransfers({
+          walletId,
           type: typeFilter || undefined,
           limit: TRANSFER_PAGE_SIZE,
           offset: 0,
@@ -86,7 +90,6 @@ const OnChainActivity = ({ walletId }) => {
         if (cancelled) return;
         setRows(result.data || []);
         setTotal(result.pagination?.total || 0);
-        setWalletAddress(result.wallet_address || null);
       } catch (err) {
         if (!cancelled) setError(err.response?.data?.error || 'Failed to load on-chain activity');
       } finally {
@@ -101,7 +104,8 @@ const OnChainActivity = ({ walletId }) => {
     const filterAtCall = typeFilter;
     setLoadingMore(true);
     try {
-      const result = await ethAPI.getTransfers(walletId, {
+      const result = await ethAPI.getTransfers({
+        walletId,
         type: filterAtCall || undefined,
         limit: TRANSFER_PAGE_SIZE,
         offset: rows.length,
@@ -211,7 +215,12 @@ const OnChainActivity = ({ walletId }) => {
         <>
           <div className="card divide-y divide-border overflow-hidden">
             {rows.map((transfer) => {
-              const outbound = transfer.transfer_type === 'gas' || transfer.from_address === walletAddress;
+              // Per row, not per feed: a merged feed spans addresses, so asking
+              // "did I send this?" against one wallet's address would invert the
+              // direction of every row belonging to a different wallet.
+              const outbound = transfer.transfer_type === 'gas'
+                || transfer.from_address === transfer.wallet_address;
+              const walletName = walletNames?.get(transfer.wallet_id);
               const chip = transferChipLabel(transfer);
               const counterparty = transfer.transfer_type === 'gas'
                 ? null
@@ -241,6 +250,15 @@ const OnChainActivity = ({ walletId }) => {
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-3 text-[10px] text-tertiary">
                         <span className="font-mono">{formatDateDisplay(transfer.block_time)}</span>
+                        {walletName && (
+                          <span
+                            className="inline-flex max-w-[14rem] items-center gap-1 truncate text-purple-400"
+                            title={walletName}
+                          >
+                            <Wallet size={10} className="shrink-0" />
+                            {walletName}
+                          </span>
+                        )}
                         <a
                           href={`https://etherscan.io/tx/${transfer.tx_hash}`}
                           target="_blank"

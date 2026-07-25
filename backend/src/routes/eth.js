@@ -121,28 +121,34 @@ router.delete('/wallets/:id', async (req, res) => {
   }
 });
 
-router.get('/wallets/:id/transfers', async (req, res) => {
+// The on-chain activity feed. Covers every wallet the user owns by default;
+// `wallet_id` narrows it to one. Each row carries its own wallet_address, so a
+// merged feed can still say which address sent or received.
+router.get('/transfers', async (req, res) => {
   try {
-    const id = parseId(req.params.id);
-    if (!id) {
-      return res.status(404).json({ error: 'Wallet not found' });
-    }
-    const wallet = await EthWallet.findByIdForUser(id, req.user.id);
-    if (!wallet) {
-      return res.status(404).json({ error: 'Wallet not found' });
+    let walletId = null;
+    if (req.query.wallet_id !== undefined) {
+      walletId = parseId(req.query.wallet_id);
+      // Verified against the caller before querying: an unowned or unparseable
+      // id must 404 rather than silently widening the feed to every wallet.
+      const wallet = walletId && await EthWallet.findByIdForUser(walletId, req.user.id);
+      if (!wallet) {
+        return res.status(404).json({ error: 'Wallet not found' });
+      }
     }
 
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
-    const { transfers, total } = await EthTransfer.findByWallet(id, {
+    const { transfers, total } = await EthTransfer.findForUser(req.user.id, {
+      walletId,
       type: req.query.type,
       limit,
       offset,
     });
 
-    res.status(200).json({ data: transfers, wallet_address: wallet.address, pagination: { total, limit, offset } });
+    res.status(200).json({ data: transfers, pagination: { total, limit, offset } });
   } catch (error) {
-    logger.error({ err: error, walletId: req.params.id }, 'Get ETH transfers error');
+    logger.error({ err: error, walletId: req.query.wallet_id }, 'Get ETH transfers error');
     res.status(500).json({ error: 'Failed to retrieve transfers' });
   }
 });

@@ -8,6 +8,17 @@ const pool = require('../config/database');
 // badge would silently differ.
 const DEFAULT_MIN_USD = 1;
 
+// The transfer-type facets the activity feed offers. Expects `eth_transfers`
+// aliased `t`. A 'gas' row's counterparty is whatever contract was called, so
+// every counterparty-based facet excludes it.
+const TRANSFER_TYPE_FILTERS = {
+  self: "t.transfer_type <> 'gas' AND t.counterparty_is_own = TRUE",
+  external: "t.transfer_type <> 'gas' AND t.counterparty_is_own = FALSE AND t.counterparty_exchange IS NULL",
+  exchange: "t.transfer_type <> 'gas' AND t.counterparty_exchange IS NOT NULL",
+  gas: "t.transfer_type = 'gas'",
+  token: "t.transfer_type = 'token'",
+};
+
 // One row per distinct address the user has transacted with that carries NO
 // label row of any kind -- the triage queue's population. Shared verbatim by
 // the paginated list and the badge summary so the two can never disagree about
@@ -133,26 +144,37 @@ class EthTransfer {
     return inserted;
   }
 
-  static async findByWallet(walletId, { type, limit = 100, offset = 0 } = {}) {
-    const params = [walletId];
-    let where = 'WHERE t.wallet_id = $1';
-    if (type === 'self') {
-      where += " AND t.transfer_type <> 'gas' AND t.counterparty_is_own = TRUE";
-    } else if (type === 'external') {
-      where += " AND t.transfer_type <> 'gas' AND t.counterparty_is_own = FALSE AND t.counterparty_exchange IS NULL";
-    } else if (type === 'exchange') {
-      where += " AND t.transfer_type <> 'gas' AND t.counterparty_exchange IS NOT NULL";
-    } else if (type === 'gas') {
-      where += " AND t.transfer_type = 'gas'";
-    } else if (type === 'token') {
-      where += " AND t.transfer_type = 'token'";
+  // One feed, whether it covers every wallet the user owns or just one, so the
+  // two can never disagree about what a transfer type means.
+  //
+  // Always joined to eth_wallets and filtered on user_id -- a feed keyed on a
+  // wallet id alone would serve another user's transfers to anyone who could
+  // guess an id. walletId narrows within the user's own set; it never widens.
+  //
+  // Rows carry their own wallet_address because a merged feed spans addresses,
+  // and direction (did I send or receive?) is meaningless without knowing which
+  // of the user's addresses the row belongs to.
+  static async findForUser(userId, { walletId = null, type, limit = 100, offset = 0 } = {}) {
+    if (!userId) throw new Error('EthTransfer.findForUser requires a userId');
+    const params = [userId];
+    let where = 'WHERE w.user_id = $1';
+    if (walletId != null) {
+      params.push(walletId);
+      where += ` AND t.wallet_id = $${params.length}`;
+    }
+    if (TRANSFER_TYPE_FILTERS[type]) {
+      where += ` AND ${TRANSFER_TYPE_FILTERS[type]}`;
     }
     params.push(limit, offset);
     const result = await pool.query(
       `SELECT t.*,
+              w.address AS wallet_address,
               COUNT(*) OVER() AS total_count
        FROM eth_transfers t
+       JOIN eth_wallets w ON w.id = t.wallet_id
        ${where}
+       -- block_number is chain-global, so it orders a merged feed correctly;
+       -- id breaks ties within a block deterministically so paging is stable.
        ORDER BY t.block_number DESC, t.id DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params

@@ -16,7 +16,7 @@ import FilterTabs from '../components/FilterTabs';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
 import MetricCard from '../components/MetricCard';
-import OnChainActivity, { EthWalletBadge } from '../components/OnChainActivity';
+import OnChainActivity, { EthWalletBadge, shortEthAddress } from '../components/OnChainActivity';
 import SummaryStats from '../components/SummaryStats';
 import useTransientMessage from '../hooks/useTransientMessage';
 
@@ -27,6 +27,13 @@ const isSyncManaged = (holding) => Boolean(holding.is_plaid_managed || holding.a
 
 const formatEthQuantity = (quantity) =>
   Number(quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+
+// Wallet labels double as notes-to-self ("Use to store EOS ERC20 tokens before
+// mainnet. Sent remainder to BinanceUS"), which would blow out a tab strip.
+// Truncate for the tab and keep the full text as hover title.
+const TAB_LABEL_MAX = 22;
+const truncateLabel = (text) =>
+  (text.length > TAB_LABEL_MAX ? `${text.slice(0, TAB_LABEL_MAX - 1).trimEnd()}…` : text);
 
 const CryptoPage = ({ onNavigate }) => {
   const [wallets, setWallets] = useState([]);
@@ -109,15 +116,23 @@ const CryptoPage = ({ onNavigate }) => {
     return timestamps.sort().at(-1);
   }, [wallets]);
 
-  // Default the on-chain feed to the first wallet once wallets load.
-  const activeWalletId = selectedWalletId ?? wallets[0]?.id ?? null;
-  const activeWallet = wallets.find((wallet) => wallet.id === activeWalletId) || null;
+  // '' is the All-wallets feed and the default -- with several addresses, the
+  // question is almost always "what happened across my wallets".
+  const activeWallet = wallets.find((wallet) => wallet.id === selectedWalletId) || null;
 
   const walletLabel = (wallet) => {
     if (wallet.label) return wallet.label;
     if (wallet.account) return displayAccountName(wallet.account);
-    return wallet.address ? `${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}` : `Wallet ${wallet.id}`;
+    return shortEthAddress(wallet.address);
   };
+
+  const walletNames = useMemo(
+    () => new Map(wallets.map((wallet) => [wallet.id, walletLabel(wallet)])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [wallets, accountDisplayNames]
+  );
+
+  const erroredWallets = useMemo(() => wallets.filter((wallet) => wallet.error_code), [wallets]);
 
   const handleSync = async (walletId) => {
     if (syncingWalletId) return;
@@ -355,51 +370,59 @@ const CryptoPage = ({ onNavigate }) => {
             <DataTablePagination table={table} total={cryptoHoldings.length} />
           </section>
 
-          {wallets.length > 0 && activeWalletId != null && (
+          {wallets.length > 0 && (
             <section>
-              {wallets.length > 1 && (
-                <FilterTabs
-                  id="crypto-wallet"
-                  label="Wallet"
-                  className="mb-4"
-                  options={wallets.map((wallet) => ({ value: String(wallet.id), label: walletLabel(wallet) }))}
-                  value={String(activeWalletId)}
-                  onChange={(value) => setSelectedWalletId(parseInt(value))}
-                  actions={(
-                    <button
-                      onClick={() => handleSync(activeWalletId)}
-                      disabled={syncingWalletId != null}
-                      className="inline-flex h-8 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-50"
-                    >
-                      <RefreshCw size={12} className={syncingWalletId === activeWalletId ? 'animate-spin' : ''} />
-                      Sync
-                    </button>
-                  )}
-                />
-              )}
-              {wallets.length === 1 && (
-                <div className="mb-4 flex items-center justify-end">
+              <FilterTabs
+                id="crypto-wallet"
+                label="Wallet"
+                className="mb-4"
+                options={[
+                  { value: '', label: `All wallets (${wallets.length})` },
+                  ...wallets.map((wallet) => {
+                    const name = walletLabel(wallet);
+                    return {
+                      value: String(wallet.id),
+                      label: truncateLabel(name),
+                      selectLabel: name,
+                      title: `${name} · ${wallet.address}`,
+                    };
+                  }),
+                ]}
+                value={selectedWalletId == null ? '' : String(selectedWalletId)}
+                onChange={(value) => setSelectedWalletId(value === '' ? null : parseInt(value))}
+                actions={(
                   <button
-                    onClick={() => handleSync(activeWalletId)}
-                    disabled={syncingWalletId != null}
+                    onClick={() => handleSync(selectedWalletId)}
+                    disabled={syncingWalletId != null || selectedWalletId == null}
+                    title={selectedWalletId == null ? 'Select a wallet to sync it' : undefined}
                     className="inline-flex h-8 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-50"
                   >
-                    <RefreshCw size={12} className={syncingWalletId === activeWalletId ? 'animate-spin' : ''} />
+                    <RefreshCw size={12} className={syncingWalletId != null ? 'animate-spin' : ''} />
                     Sync
                   </button>
-                </div>
-              )}
+                )}
+              />
 
-              {activeWallet?.error_code && (
-                <div className="mb-4 p-4 rounded border text-xs leading-relaxed bg-loss/5 border-loss/20 text-loss">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                    <p>{activeWallet.error_message || `Wallet sync reported an error: ${activeWallet.error_code}`}</p>
+              {/* In the merged feed no single wallet is selected, so surface
+                  every errored wallet rather than staying silent about them. */}
+              {(selectedWalletId == null ? erroredWallets : [activeWallet].filter((w) => w?.error_code))
+                .map((wallet) => (
+                  <div key={wallet.id} className="mb-4 p-4 rounded border text-xs leading-relaxed bg-loss/5 border-loss/20 text-loss">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                      <p>
+                        <span className="font-semibold">{walletLabel(wallet)}: </span>
+                        {wallet.error_message || `Wallet sync reported an error: ${wallet.error_code}`}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              )}
+                ))}
 
-              <OnChainActivity key={activeWalletId} walletId={activeWalletId} />
+              <OnChainActivity
+                key={selectedWalletId ?? 'all'}
+                walletId={selectedWalletId}
+                walletNames={selectedWalletId == null ? walletNames : undefined}
+              />
             </section>
           )}
         </div>
