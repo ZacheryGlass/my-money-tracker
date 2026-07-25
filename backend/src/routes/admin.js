@@ -37,12 +37,14 @@ function buildEnvOverview() {
   }
   return [
     {
+      // No last-4 for this one, unlike the API keys below: it is the key that
+      // decrypts every stored secret, and set/valid already answers the only
+      // question the Server tab asks. Masking it would leak key material into
+      // browser memory and devtools for no diagnostic gain.
       name: 'SECRETS_ENCRYPTION_KEY',
       set: Boolean(process.env.SECRETS_ENCRYPTION_KEY),
       valid: secretCrypto.isConfigured(),
-      masked: process.env.SECRETS_ENCRYPTION_KEY
-        ? secretCrypto.mask(process.env.SECRETS_ENCRYPTION_KEY.slice(-4))
-        : null,
+      masked: null,
     },
     maskedEnv('MCP_API_KEY'),
     { name: 'DATABASE_URL', set: Boolean(process.env.DATABASE_URL), host: databaseHost },

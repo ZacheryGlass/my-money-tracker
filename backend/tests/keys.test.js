@@ -29,6 +29,7 @@ require.cache[pgModulePath] = {
 const request = require('supertest');
 const app = require('../src/server');
 const SecretsService = require('../src/services/SecretsService');
+const secretCrypto = require('../src/utils/secretCrypto');
 
 const TEST_KEY = crypto.randomBytes(32).toString('base64');
 
@@ -106,8 +107,8 @@ test('GET flags a missing encryption key but still answers', async () => {
 
 test('PUT routes user services to user_api_keys and app keys to app_settings', async () => {
   queryHandler = async (text) => (
-    text.startsWith('SELECT last4')
-      ? { rows: [{ last4: '1234' }] }
+    text.startsWith('SELECT encrypted_value, last4')
+      ? { rows: [{ encrypted_value: secretCrypto.encrypt('abcd1234'), last4: '1234' }] }
       : { rows: [] }
   );
 
@@ -128,6 +129,22 @@ test('PUT routes user services to user_api_keys and app keys to app_settings', a
   assert.equal(appPut.status, 200);
   assert.ok(queries.some((q) => q.text.includes('INSERT INTO app_settings')));
   assert.ok(!queries.some((q) => q.text.includes('user_api_keys')));
+});
+
+test('a stored key that no longer decrypts is not reported as configured', async () => {
+  // Simulates a rotated SECRETS_ENCRYPTION_KEY: the row and its last4 survive,
+  // but the ciphertext is unreadable, so resolution falls back to env/none.
+  // Reporting 'db' here would show a key in the UI that nothing can use.
+  queryHandler = async (text) => (
+    text.startsWith('SELECT encrypted_value, last4')
+      ? { rows: [{ encrypted_value: 'v1:00:00:deadbeef', last4: '1234' }] }
+      : { rows: [] }
+  );
+
+  const response = await request(app).get('/api/keys');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.userKeys.etherscan, { source: 'none', masked: null });
 });
 
 test('DELETE falls back to env status after removal', async () => {

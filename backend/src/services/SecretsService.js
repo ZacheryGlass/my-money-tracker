@@ -21,6 +21,14 @@ const ENV_FALLBACKS = {
 };
 
 // Price jobs resolve per ticker; keep a short cache so they cost one query.
+//
+// Single-instance assumption: this cache and the identity cache in
+// middleware/auth.js are per-process, and writes only invalidate the instance
+// that served them. On a scaled-out App Service plan (or during an
+// overlapping-restart deploy) another worker can keep using a key for up to
+// this TTL after it is cleared. Cross-instance invalidation would need a
+// shared channel (Redis, or Postgres LISTEN/NOTIFY); until the app runs on
+// more than one instance the bounded staleness is the accepted trade.
 const CACHE_TTL_MS = 60 * 1000;
 const cache = new Map(); // cacheKey -> { value, expiresAt }
 
@@ -77,15 +85,18 @@ class SecretsService {
     return value;
   }
 
+  // Goes through readRow so the status reflects what resolution would actually
+  // return. Reporting 'db' on the mere existence of a row meant that after an
+  // encryption-key change the UI showed a stored key while every read had
+  // silently fallen back to env (or null), with no signal to re-enter it.
   static async getUserKeyStatus(userId, service) {
-    const result = secretCrypto.isConfigured()
-      ? await pool.query(
-          'SELECT last4 FROM user_api_keys WHERE user_id = $1 AND service = $2',
-          [userId, service]
-        )
-      : { rows: [] };
-    if (result.rows.length) {
-      return { source: 'db', masked: secretCrypto.mask(result.rows[0].last4) };
+    const row = await readRow(
+      'SELECT encrypted_value, last4 FROM user_api_keys WHERE user_id = $1 AND service = $2',
+      [userId, service],
+      service
+    );
+    if (row) {
+      return { source: 'db', masked: secretCrypto.mask(row.last4) };
     }
     return envValue(service)
       ? { source: 'env', masked: null }
@@ -133,11 +144,13 @@ class SecretsService {
   }
 
   static async getAppSettingStatus(name) {
-    const result = secretCrypto.isConfigured()
-      ? await pool.query('SELECT last4 FROM app_settings WHERE key = $1', [name])
-      : { rows: [] };
-    if (result.rows.length) {
-      return { source: 'db', masked: secretCrypto.mask(result.rows[0].last4) };
+    const row = await readRow(
+      'SELECT encrypted_value, last4 FROM app_settings WHERE key = $1',
+      [name],
+      name
+    );
+    if (row) {
+      return { source: 'db', masked: secretCrypto.mask(row.last4) };
     }
     return envValue(name)
       ? { source: 'env', masked: null }
