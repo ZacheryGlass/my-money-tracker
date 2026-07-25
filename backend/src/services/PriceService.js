@@ -112,41 +112,46 @@ class PriceService {
     }
   }
 
-  // Build CoinGecko ID mapping with caching
+  // Returns a SYMBOL -> CoinGecko id map for the requested tickers.
+  //
+  // The cache holds the FULL symbol->id list, not the filtered result. Caching
+  // the filtered map meant the first ticker to reach the CoinGecko fallback
+  // (fetchPrice calls this with a single ticker) cached a map containing only
+  // itself; for the next six hours every other ticker hit that cache, found no
+  // id, and skipped CoinGecko entirely -- silently falling through to
+  // CoinMarketCap. Symbols are not unique on CoinGecko; last match wins, as
+  // before.
   static async buildCoinGeckoIdMap(tickersToFind) {
     const now = Date.now();
 
-    // Return cached map if still valid
-    if (coinGeckoIdMapCache && (now - coinGeckoIdMapCacheTime) < COINGECKO_CACHE_TTL) {
-      logger.debug('Using cached CoinGecko ticker->ID map');
-      return coinGeckoIdMapCache;
-    }
+    if (!coinGeckoIdMapCache || (now - coinGeckoIdMapCacheTime) >= COINGECKO_CACHE_TTL) {
+      try {
+        logger.info('CoinGecko ID map cache empty or expired, fetching full coin list');
+        const url = 'https://api.coingecko.com/api/v3/coins/list?include_platform=false';
+        const fullCoinList = await this.fetchCoinGeckoJson(url);
 
-    try {
-      logger.info('CoinGecko ID map cache empty or expired, fetching full coin list');
-      const url = 'https://api.coingecko.com/api/v3/coins/list?include_platform=false';
-      const fullCoinList = await this.fetchCoinGeckoJson(url);
-
-      const filteredMap = {};
-      const tickerSet = new Set(tickersToFind.map(t => t.toUpperCase()));
-
-      for (let i = 0; i < fullCoinList.length; i++) {
-        const coin = fullCoinList[i];
-        const symbol = (coin.symbol || '').toUpperCase();
-        if (tickerSet.has(symbol)) {
-          filteredMap[symbol] = coin.id;
+        const symbolToId = {};
+        for (const coin of fullCoinList) {
+          const symbol = (coin.symbol || '').toUpperCase();
+          if (symbol) symbolToId[symbol] = coin.id;
         }
+
+        coinGeckoIdMapCache = symbolToId;
+        coinGeckoIdMapCacheTime = now;
+      } catch (error) {
+        logger.error({ err: error }, 'Error building CoinGecko ID map');
+        return {};
       }
-
-      // Cache the map
-      coinGeckoIdMapCache = filteredMap;
-      coinGeckoIdMapCacheTime = now;
-
-      return filteredMap;
-    } catch (error) {
-      logger.error({ err: error }, 'Error building CoinGecko ID map');
-      return {};
+    } else {
+      logger.debug('Using cached CoinGecko ticker->ID map');
     }
+
+    const requested = {};
+    for (const ticker of tickersToFind) {
+      const symbol = String(ticker || '').toUpperCase();
+      if (coinGeckoIdMapCache[symbol]) requested[symbol] = coinGeckoIdMapCache[symbol];
+    }
+    return requested;
   }
 
   static async getYahooFinancePrice(ticker, isCrypto = false) {
