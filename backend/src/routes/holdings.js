@@ -17,7 +17,7 @@ router.use(requireUser);
 // GET /api/holdings - List all holdings
 router.get('/', async (req, res) => {
   try {
-    const holdings = await Holding.findAll({ includeHidden: false });
+    const holdings = await Holding.findAll({ userId: req.user.id, includeHidden: false });
     res.status(200).json({ holdings });
   } catch (error) {
     logger.error({ err: error }, 'Get holdings error');
@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
 // GET /api/holdings/:id - Get single holding
 router.get('/:id', async (req, res) => {
   try {
-    const holding = await Holding.findById(parseInt(req.params.id));
+    const holding = await Holding.findById(parseInt(req.params.id), req.user.id);
     if (!holding) {
       return res.status(404).json({ error: 'Holding not found' });
     }
@@ -45,9 +45,16 @@ router.post('/', validateHolding, async (req, res) => {
     const { account_id, ticker, name, quantity, manual_value, category, notes, location } = req.body;
 
     // Wallet accounts are rebuilt wholesale by the ETH sync; a manual holding
-    // added there would be silently deleted on the next sync.
-    const targetAccount = await pool.query('SELECT eth_wallet_id FROM accounts WHERE id = $1', [account_id]);
-    if (targetAccount.rows[0]?.eth_wallet_id) {
+    // added there would be silently deleted on the next sync. The ownership
+    // filter also blocks creating holdings inside another user's account.
+    const targetAccount = await pool.query(
+      'SELECT eth_wallet_id FROM accounts WHERE id = $1 AND user_id = $2',
+      [account_id, req.user.id]
+    );
+    if (targetAccount.rows.length === 0) {
+      return res.status(400).json({ error: 'Referenced account does not exist' });
+    }
+    if (targetAccount.rows[0].eth_wallet_id) {
       return res.status(403).json({ error: 'This account is managed by an Ethereum wallet sync; holdings cannot be added manually' });
     }
 
@@ -81,7 +88,7 @@ router.put('/:id', validateHolding, async (req, res) => {
     const { account_id, ticker, name, quantity, manual_value, category, notes, location } = req.body;
     const id = parseInt(req.params.id);
 
-    const existing = await Holding.findById(id);
+    const existing = await Holding.findById(id, req.user.id);
     if (!existing) {
       return res.status(404).json({ error: 'Holding not found' });
     }
@@ -90,6 +97,18 @@ router.put('/:id', validateHolding, async (req, res) => {
     }
     if (existing.account_eth_wallet_id) {
       return res.status(403).json({ error: 'This holding is managed by an Ethereum wallet sync and cannot be manually edited' });
+    }
+
+    // The update can move the holding to a different account; that target
+    // must also belong to the caller.
+    if (account_id !== existing.account_id) {
+      const targetAccount = await pool.query(
+        'SELECT id FROM accounts WHERE id = $1 AND user_id = $2',
+        [account_id, req.user.id]
+      );
+      if (targetAccount.rows.length === 0) {
+        return res.status(400).json({ error: 'Referenced account does not exist' });
+      }
     }
 
     const holding = await Holding.update(
@@ -122,7 +141,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
-    const existing = await Holding.findById(id);
+    const existing = await Holding.findById(id, req.user.id);
     if (!existing) {
       return res.status(404).json({ error: 'Holding not found' });
     }
@@ -150,8 +169,8 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
       return res.status(400).json({ error: 'No CSV data provided' });
     }
 
-    // Get all accounts for mapping
-    const accountsResult = await pool.query('SELECT id, name FROM accounts');
+    // Get the caller's accounts for mapping
+    const accountsResult = await pool.query('SELECT id, name FROM accounts WHERE user_id = $1', [req.user.id]);
     const accountsMap = new Map(accountsResult.rows.map(a => [a.name.toLowerCase(), a.id]));
 
     // Parse CSV
@@ -387,7 +406,16 @@ router.post('/bulk-import/confirm', express.json(), async (req, res) => {
     const imported = [];
     const failed = [];
 
+    // The preview payload round-trips through the client; re-verify every
+    // account id against the caller before inserting.
+    const ownedResult = await pool.query('SELECT id FROM accounts WHERE user_id = $1', [req.user.id]);
+    const ownedIds = new Set(ownedResult.rows.map((r) => r.id));
+
     for (const row of rows) {
+      if (!ownedIds.has(row.account_id)) {
+        failed.push({ data: row, error: 'Referenced account does not exist' });
+        continue;
+      }
       try {
         const holding = await Holding.create(
           row.account_id,

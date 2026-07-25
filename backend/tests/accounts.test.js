@@ -41,11 +41,12 @@ beforeEach(() => {
 });
 
 test('GET /api/accounts returns raw and effective account names', async () => {
-  queryHandler = async (sql) => {
+  queryHandler = async (sql, params) => {
     assert.match(sql, /display_name/);
     assert.match(sql, /effective_name/);
     assert.match(sql, /is_hidden/);
-    assert.match(sql, /WHERE a\.is_hidden = FALSE/);
+    assert.match(sql, /WHERE a\.user_id = \$1 AND a\.is_hidden = FALSE/);
+    assert.deepEqual(params, [1]);
     return {
       rows: [
         {
@@ -74,7 +75,8 @@ test('GET /api/accounts returns raw and effective account names', async () => {
 
 test('GET /api/accounts can include hidden accounts for settings', async () => {
   queryHandler = async (sql) => {
-    assert.doesNotMatch(sql, /WHERE a\.is_hidden = FALSE/);
+    assert.match(sql, /WHERE a\.user_id = \$1/);
+    assert.doesNotMatch(sql, /is_hidden = FALSE/);
     return {
       rows: [
         {
@@ -101,7 +103,8 @@ test('GET /api/accounts can include hidden accounts for settings', async () => {
 test('PATCH /api/accounts/:id/display-name saves a trimmed display name', async () => {
   queryHandler = async (sql, params) => {
     assert.match(sql, /UPDATE accounts/);
-    assert.deepEqual(params, ['Checking', 7]);
+    assert.match(sql, /AND a\.user_id = \$3/);
+    assert.deepEqual(params, ['Checking', 7, 1]);
     return {
       rows: [
         {
@@ -128,7 +131,7 @@ test('PATCH /api/accounts/:id/display-name saves a trimmed display name', async 
 
 test('PATCH /api/accounts/:id/display-name clears blank display names', async () => {
   queryHandler = async (_sql, params) => {
-    assert.deepEqual(params, [null, 7]);
+    assert.deepEqual(params, [null, 7, 1]);
     return {
       rows: [
         {
@@ -175,7 +178,8 @@ test('PATCH /api/accounts/:id/visibility hides an account', async () => {
   queryHandler = async (sql, params) => {
     assert.match(sql, /UPDATE accounts/);
     assert.match(sql, /is_hidden/);
-    assert.deepEqual(params, [true, 7]);
+    assert.match(sql, /AND a\.user_id = \$3/);
+    assert.deepEqual(params, [true, 7, 1]);
     return {
       rows: [
         {
@@ -205,4 +209,16 @@ test('PATCH /api/accounts/:id/visibility rejects invalid payloads', async () => 
     .send({ is_hidden: 'true' });
 
   assert.equal(response.status, 400);
+});
+
+test('mutations on an account the caller does not own return 404', async () => {
+  // The ownership predicate makes a foreign id indistinguishable from a
+  // missing one: the UPDATE matches zero rows.
+  queryHandler = async () => ({ rows: [] });
+
+  const response = await request(app)
+    .patch('/api/accounts/42/visibility')
+    .send({ is_hidden: true });
+
+  assert.equal(response.status, 404);
 });

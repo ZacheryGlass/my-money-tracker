@@ -29,8 +29,8 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: `type must be one of: ${VALID_ACCOUNT_TYPES.join(', ')}` });
     }
     const result = await pool.query(
-      'INSERT INTO accounts (name, type) VALUES ($1, $2) RETURNING *',
-      [name.trim(), type]
+      'INSERT INTO accounts (name, type, user_id) VALUES ($1, $2, $3) RETURNING *',
+      [name.trim(), type, req.user.id]
     );
     res.status(201).json({ account: result.rows[0] });
   } catch (error) {
@@ -46,15 +46,16 @@ router.post('/', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const includeHidden = req.query.include_hidden === 'true';
-    const hiddenFilter = includeHidden ? '' : 'WHERE a.is_hidden = FALSE';
+    const hiddenFilter = includeHidden ? '' : 'AND a.is_hidden = FALSE';
     const result = await pool.query(
       `SELECT ${ACCOUNT_RETURN_SELECT},
               COUNT(h.id)::int AS holdings_count
        FROM accounts a
        LEFT JOIN holdings h ON h.account_id = a.id
-       ${hiddenFilter}
+       WHERE a.user_id = $1 ${hiddenFilter}
        GROUP BY a.id
-       ORDER BY a.type DESC, effective_name ASC`
+       ORDER BY a.type DESC, effective_name ASC`,
+      [req.user.id]
     );
     res.status(200).json({ accounts: result.rows });
   } catch (error) {
@@ -88,9 +89,9 @@ router.patch('/:id/display-name', async (req, res) => {
     const result = await pool.query(
       `UPDATE accounts a
        SET display_name = $1
-       WHERE a.id = $2
+       WHERE a.id = $2 AND a.user_id = $3
        RETURNING ${ACCOUNT_RETURN_SELECT}`,
-      [normalizedName, id]
+      [normalizedName, id, req.user.id]
     );
 
     if (result.rows.length === 0) {
@@ -124,9 +125,9 @@ router.patch('/:id/tax-treatment', async (req, res) => {
     const result = await pool.query(
       `UPDATE accounts a
        SET tax_treatment = $1
-       WHERE a.id = $2
+       WHERE a.id = $2 AND a.user_id = $3
        RETURNING ${ACCOUNT_RETURN_SELECT}`,
-      [taxTreatment, id]
+      [taxTreatment, id, req.user.id]
     );
 
     if (result.rows.length === 0) {
@@ -155,9 +156,9 @@ router.patch('/:id/visibility', async (req, res) => {
     const result = await pool.query(
       `UPDATE accounts a
        SET is_hidden = $1
-       WHERE a.id = $2
+       WHERE a.id = $2 AND a.user_id = $3
        RETURNING ${ACCOUNT_RETURN_SELECT}`,
-      [req.body.is_hidden, id]
+      [req.body.is_hidden, id, req.user.id]
     );
 
     if (result.rows.length === 0) {
@@ -176,7 +177,10 @@ router.delete('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     const id = parseInt(req.params.id);
-    const account = await client.query('SELECT id, name, plaid_item_id, eth_wallet_id FROM accounts WHERE id = $1', [id]);
+    const account = await client.query(
+      'SELECT id, name, plaid_item_id, eth_wallet_id FROM accounts WHERE id = $1 AND user_id = $2',
+      [id, req.user.id]
+    );
     if (account.rows.length === 0) {
       return res.status(404).json({ error: 'Account not found' });
     }
@@ -219,8 +223,8 @@ router.post('/migrate', async (req, res) => {
     }
 
     const [source, target] = await Promise.all([
-      client.query('SELECT id, name FROM accounts WHERE id = $1', [sourceAccountId]),
-      client.query('SELECT id, name FROM accounts WHERE id = $1', [targetAccountId]),
+      client.query('SELECT id, name FROM accounts WHERE id = $1 AND user_id = $2', [sourceAccountId, req.user.id]),
+      client.query('SELECT id, name FROM accounts WHERE id = $1 AND user_id = $2', [targetAccountId, req.user.id]),
     ]);
     if (source.rows.length === 0) return res.status(404).json({ error: 'Source account not found' });
     if (target.rows.length === 0) return res.status(404).json({ error: 'Target account not found' });

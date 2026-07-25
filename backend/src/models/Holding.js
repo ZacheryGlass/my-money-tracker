@@ -6,8 +6,18 @@ class Holding {
   // withPrices joins price_cache to compute current_value. Callers that recompute
   // value themselves (e.g. DashboardService) pass withPrices: false to skip the
   // join — the UPPER(...)=UPPER(...) predicate can't use the price_cache index.
-  static async findAll({ includeHidden = true, withPrices = true } = {}) {
-    const hiddenFilter = includeHidden ? '' : 'WHERE a.is_hidden = FALSE';
+  //
+  // userId scopes to one user's accounts; jobs and snapshot services omit it
+  // deliberately (they operate on every user's data).
+  static async findAll({ userId = null, includeHidden = true, withPrices = true } = {}) {
+    const where = [];
+    const params = [];
+    if (userId != null) {
+      params.push(userId);
+      where.push(`a.user_id = $${params.length}`);
+    }
+    if (!includeHidden) where.push('a.is_hidden = FALSE');
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const priceSelect = withPrices
       ? `,
         CASE
@@ -23,24 +33,37 @@ class Holding {
       FROM holdings h
       JOIN accounts a ON h.account_id = a.id
       ${priceJoin}
-      ${hiddenFilter}
-      ORDER BY h.updated_at DESC`
+      ${whereClause}
+      ORDER BY h.updated_at DESC`,
+      params
     );
     return result.rows;
   }
 
-  static async findById(id) {
+  static async findById(id, userId = null) {
+    const params = [id];
+    let where = 'WHERE h.id = $1';
+    if (userId != null) {
+      params.push(userId);
+      where += ` AND a.user_id = $${params.length}`;
+    }
     const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.id = $1`,
-      [id]
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id ${where}`,
+      params
     );
     return result.rows[0];
   }
 
-  static async findByAccountId(accountId) {
+  static async findByAccountId(accountId, userId = null) {
+    const params = [accountId];
+    let where = 'WHERE h.account_id = $1';
+    if (userId != null) {
+      params.push(userId);
+      where += ` AND a.user_id = $${params.length}`;
+    }
     const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id WHERE h.account_id = $1 ORDER BY h.updated_at DESC`,
-      [accountId]
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id ${where} ORDER BY h.updated_at DESC`,
+      params
     );
     return result.rows;
   }
