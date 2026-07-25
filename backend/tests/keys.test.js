@@ -131,10 +131,11 @@ test('PUT routes user services to user_api_keys and app keys to app_settings', a
   assert.ok(!queries.some((q) => q.text.includes('user_api_keys')));
 });
 
-test('a stored key that no longer decrypts is not reported as configured', async () => {
+test('a stored key that no longer decrypts reports db_unreadable, not db or none', async () => {
   // Simulates a rotated SECRETS_ENCRYPTION_KEY: the row and its last4 survive,
-  // but the ciphertext is unreadable, so resolution falls back to env/none.
-  // Reporting 'db' here would show a key in the UI that nothing can use.
+  // but the ciphertext is unreadable. Reporting 'db' would show a key nothing
+  // can use; reporting 'none' would hide the row -- and with it the Clear
+  // button that is the only way to remove it from the UI.
   queryHandler = async (text) => (
     text.startsWith('SELECT encrypted_value, last4')
       ? { rows: [{ encrypted_value: 'v1:00:00:deadbeef', last4: '1234' }] }
@@ -144,7 +145,19 @@ test('a stored key that no longer decrypts is not reported as configured', async
   const response = await request(app).get('/api/keys');
 
   assert.equal(response.status, 200);
-  assert.deepEqual(response.body.userKeys.etherscan, { source: 'none', masked: null });
+  assert.deepEqual(response.body.userKeys.etherscan, { source: 'db_unreadable', masked: '••••1234' });
+});
+
+test('an unreadable stored key still falls back to the env value for resolution', async () => {
+  process.env.ETHERSCAN_API_KEY = 'env-fallback-value';
+  queryHandler = async (text) => (
+    text.startsWith('SELECT encrypted_value, last4')
+      ? { rows: [{ encrypted_value: 'v1:00:00:deadbeef', last4: '1234' }] }
+      : { rows: [] }
+  );
+
+  const value = await SecretsService.getUserKey(1, 'etherscan');
+  assert.equal(value, 'env-fallback-value');
 });
 
 test('DELETE falls back to env status after removal', async () => {

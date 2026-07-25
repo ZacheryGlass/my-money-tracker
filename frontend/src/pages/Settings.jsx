@@ -46,6 +46,17 @@ const APP_KEY_ROWS = [
   { service: 'cmc_api_key', label: 'CoinMarketCap API Key' },
 ];
 
+// 'db_unreadable' is a stored row whose ciphertext no longer decrypts (the
+// server's encryption key changed). It must not read as a working key, and it
+// must still offer Clear -- that row is otherwise unreachable from the UI.
+const isStoredKey = (status) => status?.source === 'db' || status?.source === 'db_unreadable';
+const keyStatusLabel = (status) => {
+  if (status?.source === 'db') return status.masked;
+  if (status?.source === 'db_unreadable') return `${status.masked} · unreadable`;
+  if (status?.source === 'env') return 'Using server default';
+  return 'Not set';
+};
+
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '');
@@ -1459,15 +1470,13 @@ const Settings = ({ user }) => {
               <form key={service} onSubmit={(event) => handleSaveKey(event, service)} className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-[minmax(140px,0.8fr)_minmax(110px,0.5fr)_minmax(0,1.4fr)_auto] sm:items-center">
                 <span className="text-body-sm font-semibold text-primary">{label}</span>
                 <span className="font-mono text-caption text-tertiary">
-                  {status?.source === 'db' ? status.masked
-                    : status?.source === 'env' ? 'Using server default'
-                    : 'Not set'}
+                  {keyStatusLabel(status)}
                 </span>
                 <input
                   type="password"
                   value={keyInputs[service] || ''}
                   onChange={(event) => setKeyInputs((prev) => ({ ...prev, [service]: event.target.value }))}
-                  placeholder={status?.source === 'db' ? 'Replace key…' : 'Paste key…'}
+                  placeholder={isStoredKey(status) ? 'Replace key…' : 'Paste key…'}
                   autoComplete="off"
                   className="h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 font-mono text-body-sm text-primary"
                   disabled={keyStatuses?.encryptionConfigured === false || savingKeyService !== null}
@@ -1481,7 +1490,7 @@ const Settings = ({ user }) => {
                     {savingKeyService === service ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
                     Save
                   </button>
-                  {status?.source === 'db' && (
+                  {isStoredKey(status) && (
                     <button
                       type="button"
                       onClick={() => handleClearKey(service)}
@@ -1522,15 +1531,13 @@ const Settings = ({ user }) => {
               <form key={service} onSubmit={(event) => handleSaveKey(event, service)} className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-[minmax(140px,0.8fr)_minmax(110px,0.5fr)_minmax(0,1.4fr)_auto] sm:items-center">
                 <span className="text-body-sm font-semibold text-primary">{label}</span>
                 <span className="font-mono text-caption text-tertiary">
-                  {status?.source === 'db' ? status.masked
-                    : status?.source === 'env' ? 'Using server default'
-                    : 'Not set'}
+                  {keyStatusLabel(status)}
                 </span>
                 <input
                   type="password"
                   value={keyInputs[service] || ''}
                   onChange={(event) => setKeyInputs((prev) => ({ ...prev, [service]: event.target.value }))}
-                  placeholder={status?.source === 'db' ? 'Replace key…' : 'Paste key…'}
+                  placeholder={isStoredKey(status) ? 'Replace key…' : 'Paste key…'}
                   autoComplete="off"
                   className="h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 font-mono text-body-sm text-primary"
                   disabled={keyStatuses?.encryptionConfigured === false || savingKeyService !== null}
@@ -1544,7 +1551,7 @@ const Settings = ({ user }) => {
                     {savingKeyService === service ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
                     Save
                   </button>
-                  {status?.source === 'db' && (
+                  {isStoredKey(status) && (
                     <button
                       type="button"
                       onClick={() => handleClearKey(service)}

@@ -64,7 +64,10 @@ async function readRow(sql, params, name) {
     return { value: secretCrypto.decrypt(row.encrypted_value), last4: row.last4 };
   } catch (err) {
     logger.warn({ err, name }, 'Stored secret failed to decrypt; falling back to env');
-    return null;
+    // Distinct from "no row at all": the row still exists and can be cleared
+    // or overwritten. Collapsing the two hid the stored value from the UI, and
+    // with it the Clear button that is the only way to remove it.
+    return { value: null, last4: row.last4, undecryptable: true };
   }
 }
 
@@ -82,7 +85,7 @@ class SecretsService {
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
     const row = await readRow(USER_KEY_SELECT, [userId, service], service);
-    const value = row ? row.value : envValue(service);
+    const value = row?.value ?? envValue(service);
     cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
     return value;
   }
@@ -93,6 +96,9 @@ class SecretsService {
   // silently fallen back to env (or null), with no signal to re-enter it.
   static async getUserKeyStatus(userId, service) {
     const row = await readRow(USER_KEY_SELECT, [userId, service], service);
+    if (row?.undecryptable) {
+      return { source: 'db_unreadable', masked: secretCrypto.mask(row.last4) };
+    }
     if (row) {
       return { source: 'db', masked: secretCrypto.mask(row.last4) };
     }
@@ -132,13 +138,16 @@ class SecretsService {
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
     const row = await readRow(APP_SETTING_SELECT, [name], name);
-    const value = row ? row.value : envValue(name);
+    const value = row?.value ?? envValue(name);
     cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
     return value;
   }
 
   static async getAppSettingStatus(name) {
     const row = await readRow(APP_SETTING_SELECT, [name], name);
+    if (row?.undecryptable) {
+      return { source: 'db_unreadable', masked: secretCrypto.mask(row.last4) };
+    }
     if (row) {
       return { source: 'db', masked: secretCrypto.mask(row.last4) };
     }

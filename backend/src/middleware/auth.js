@@ -34,25 +34,31 @@ function allowedPrincipals() {
     .filter(Boolean);
 }
 
-const devEnsuredIds = new Set();
-async function ensureDevUser(id, username) {
-  if (devEnsuredIds.has(id)) return;
-  try {
-    await pool.query(
-      'INSERT INTO users (id, username) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
-      [id, username]
-    );
-    await pool.query(
-      "SELECT setval('users_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM users), 1))"
-    );
-    // Only mark it done once it actually succeeded: recording the id up front
-    // meant one transient DB error (Postgres still starting) suppressed the
-    // bootstrap for the rest of the process, and later writes hit foreign-key
-    // violations against a users row that was never created.
-    devEnsuredIds.add(id);
-  } catch {
-    // Best effort: unit tests run with a throwing fake pool and no schema.
+// Memoizes the in-flight attempt, not just the completed one. Caching the id
+// up front meant a single transient DB error (Postgres still starting)
+// suppressed the bootstrap for the rest of the process, and later writes hit
+// foreign-key violations against a users row that was never created; caching
+// only on success would instead let every request in a page load -- a dozen
+// parallel calls -- issue its own pair of queries. A failed attempt is
+// dropped so the next request retries.
+const devEnsured = new Map(); // id -> Promise
+function ensureDevUser(id, username) {
+  if (!devEnsured.has(id)) {
+    const attempt = (async () => {
+      await pool.query(
+        'INSERT INTO users (id, username) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
+        [id, username]
+      );
+      await pool.query(
+        "SELECT setval('users_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM users), 1))"
+      );
+    })().catch(() => {
+      // Best effort: unit tests run with a throwing fake pool and no schema.
+      devEnsured.delete(id);
+    });
+    devEnsured.set(id, attempt);
   }
+  return devEnsured.get(id);
 }
 
 async function requireUser(req, res, next) {
@@ -129,7 +135,7 @@ function requireAdmin(req, res, next) {
 // Test hook: clears the in-process caches between scenarios.
 requireUser._clearCache = () => {
   identityCache.clear();
-  devEnsuredIds.clear();
+  devEnsured.clear();
 };
 
 requireUser.requireAdmin = requireAdmin;
