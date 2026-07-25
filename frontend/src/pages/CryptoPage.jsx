@@ -15,8 +15,8 @@ import DataTable, { DataTablePagination } from '../components/DataTable';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
 import MetricCard from '../components/MetricCard';
+import FilterTabs from '../components/FilterTabs';
 import OnChainActivity, { EthWalletBadge, shortEthAddress } from '../components/OnChainActivity';
-import PageTabs from '../components/PageTabs';
 import SummaryStats from '../components/SummaryStats';
 import useTransientMessage from '../hooks/useTransientMessage';
 
@@ -364,9 +364,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
           transient (useTransientMessage clears after 3s); above the strip they
           would jump the tab bar vertically as they come and go. */}
       {!isEmpty && tabOptions.length >= 2 && (
-        <PageTabs
-          label="Crypto section"
-          className="-mx-3 mb-6 sm:-mx-4"
+        <FilterTabs
+          id="crypto-section"
+          label="Section"
+          className="mb-6"
           options={tabOptions}
           value={activeTab}
           onChange={(id) => onTabChange?.(id)}

@@ -139,7 +139,8 @@ describe('CryptoPage', () => {
     // Row is tagged with its own wallet and signed against that wallet's
     // address. Matched by exact title, which only the row chip carries.
     expect(screen.getByTitle('Ledger Nano S')).toBeInTheDocument();
-    expect(screen.getByText(/^-1 ETH$/)).toBeInTheDocument();
+    // Desktop row and mobile card render together, CSS-hidden.
+    expect(screen.getAllByText(/^-1 ETH$/).length).toBeGreaterThan(0);
   });
 
   it('reloads holdings after ignoring a token, so the totals drop with the row', async () => {
