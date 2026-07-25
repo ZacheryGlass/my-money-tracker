@@ -8,6 +8,7 @@ process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = 'postgresql://test:test@localhost/test';
 
 const app = require('../src/server');
+const FinancialQueryService = require('../src/services/FinancialQueryService');
 
 function mcpRequest(body, key) {
   const req = request(app)
@@ -102,4 +103,15 @@ test('POST /mcp advertises the complete read-only financial toolset', async () =
     assert.equal(tool.annotations.readOnlyHint, true);
     assert.equal(tool.annotations.destructiveHint, false);
   }
+});
+
+test('FinancialQueryService public methods throw without a userId', async () => {
+  await assert.rejects(
+    () => FinancialQueryService.getDataHealth(),
+    { message: 'FinancialQueryService requires a userId' }
+  );
+  await assert.rejects(
+    () => FinancialQueryService.getOverview({ asOf: '2026-01-01' }),
+    { message: 'FinancialQueryService requires a userId' }
+  );
 });

@@ -43,7 +43,7 @@ function register(server, name, config, handler) {
   });
 }
 
-function createFinancialMcpServer() {
+function createFinancialMcpServer(userId) {
   const server = new McpServer({
     name: 'my-money-tracker',
     version: '1.0.0',
@@ -55,7 +55,7 @@ function createFinancialMcpServer() {
     inputSchema: {
       include_hidden: z.boolean().default(false).describe('Include accounts hidden from normal financial calculations.'),
     },
-  }, ({ include_hidden: includeHidden }) => FinancialQueryService.getContext({ includeHidden }));
+  }, ({ include_hidden: includeHidden }) => FinancialQueryService.getContext({ userId, includeHidden }));
 
   register(server, 'finance_get_overview', {
     title: 'Get a net-worth and account overview',
@@ -64,7 +64,7 @@ function createFinancialMcpServer() {
       as_of: date.optional().describe('Historical as-of date. Omit for live values.'),
       include_hidden: z.boolean().default(false),
     },
-  }, ({ as_of: asOf, include_hidden: includeHidden }) => FinancialQueryService.getOverview({ asOf, includeHidden }));
+  }, ({ as_of: asOf, include_hidden: includeHidden }) => FinancialQueryService.getOverview({ userId, asOf, includeHidden }));
 
   register(server, 'finance_query_positions', {
     title: 'Query and group financial positions',
@@ -82,6 +82,7 @@ function createFinancialMcpServer() {
       offset: z.number().int().min(0).default(0),
     },
   }, (input) => FinancialQueryService.queryPositions({
+    userId,
     asOf: input.as_of,
     includeHidden: input.include_hidden,
     ticker: input.ticker,
@@ -114,6 +115,7 @@ function createFinancialMcpServer() {
       offset: z.number().int().min(0).default(0),
     },
   }, (input) => FinancialQueryService.queryTransactions({
+    userId,
     startDate: input.start_date,
     endDate: input.end_date,
     accountIds: input.account_ids,
@@ -142,6 +144,7 @@ function createFinancialMcpServer() {
       ticker: z.string().max(40).optional(),
     },
   }, (input) => FinancialQueryService.getTimeSeries({
+    userId,
     metric: input.metric,
     startDate: input.start_date,
     endDate: input.end_date,
@@ -162,6 +165,7 @@ function createFinancialMcpServer() {
       driver_limit: z.number().int().min(1).max(100).default(20),
     },
   }, (input) => FinancialQueryService.comparePeriods({
+    userId,
     periodA: input.period_a,
     periodB: input.period_b,
     metrics: input.metrics,
@@ -183,6 +187,7 @@ function createFinancialMcpServer() {
       include_tax_lots: z.boolean().default(false),
     },
   }, (input) => FinancialQueryService.analyzeInvestments({
+    userId,
     scopeType: input.scope_type,
     accountId: input.account_id,
     ticker: input.ticker,
@@ -200,7 +205,7 @@ function createFinancialMcpServer() {
       start_date: date.optional(),
       end_date: date.optional(),
     },
-  }, (input) => FinancialQueryService.analyzeCashFlow({ startDate: input.start_date, endDate: input.end_date }));
+  }, (input) => FinancialQueryService.analyzeCashFlow({ userId, startDate: input.start_date, endDate: input.end_date }));
 
   register(server, 'finance_run_scenario', {
     title: 'Run an explicit financial scenario',
@@ -213,6 +218,7 @@ function createFinancialMcpServer() {
       end_date: date.optional(),
     },
   }, (input) => FinancialQueryService.runScenario({
+    userId,
     scenarioType: input.scenario_type,
     horizonYears: input.horizon_years,
     assumptions: input.assumptions,
@@ -224,7 +230,7 @@ function createFinancialMcpServer() {
     title: 'Assess financial data freshness and analytical coverage',
     description: 'Reports stale snapshots, stale prices, Plaid synchronization issues, missing prices, unclassified transactions, missing investment cash flows, absent benchmark history, and missing tax lots. Use this before high-stakes or historical analysis, or whenever another tool returns a coverage warning. It helps distinguish a real financial result from a data ingestion or classification problem.',
     inputSchema: {},
-  }, () => FinancialQueryService.getDataHealth());
+  }, () => FinancialQueryService.getDataHealth({ userId }));
 
   register(server, 'finance_export_dataset', {
     title: 'Export a bounded financial dataset',
@@ -238,6 +244,7 @@ function createFinancialMcpServer() {
       offset: z.number().int().min(0).default(0),
     },
   }, (input) => FinancialQueryService.exportDataset({
+    userId,
     dataset: input.dataset,
     columns: input.columns,
     startDate: input.start_date,

@@ -51,7 +51,7 @@ router.use((req, res, next) => {
 });
 
 router.post('/', async (req, res) => {
-  const server = createFinancialMcpServer();
+  const server = createFinancialMcpServer(req.user.id);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

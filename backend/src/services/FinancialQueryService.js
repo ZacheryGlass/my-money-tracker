@@ -30,6 +30,13 @@ const MAX_PAGE_SIZE = 1000;
 // hidden-account and cash-equivalent filters) and must be changed together.
 const TAX_LOT_COVERAGE_TOLERANCE = 0.999;
 
+// Every public entry point must be scoped to one user; a missing scope throws
+// loudly instead of silently querying across all users.
+function requireUserId(userId) {
+  if (!Number.isInteger(userId) || userId < 1) throw new Error('FinancialQueryService requires a userId');
+  return userId;
+}
+
 function isoDate(value) {
   if (!value) return null;
   return new Date(value).toISOString().slice(0, 10);
@@ -205,34 +212,47 @@ function toolMeta(extra = {}) {
 }
 
 class FinancialQueryService {
-  static async getContext({ includeHidden = false } = {}) {
-    const hiddenFilter = includeHidden ? '' : 'WHERE is_hidden = FALSE';
+  static async getContext({ userId, includeHidden = false } = {}) {
+    requireUserId(userId);
+    const hiddenFilter = includeHidden ? '' : 'AND is_hidden = FALSE';
     const [accounts, snapshotRange, transactionRange, semanticCounts] = await Promise.all([
       pool.query(
         `SELECT id, COALESCE(NULLIF(TRIM(display_name), ''), name) AS name,
                 type, subtype, tax_treatment,
                 balance_current, balance_available, balance_limit, is_hidden
-         FROM accounts ${hiddenFilter}
-         ORDER BY type, name`
+         FROM accounts
+         WHERE user_id = $1 ${hiddenFilter}
+         ORDER BY type, name`,
+        [userId]
       ),
       pool.query(
-        `SELECT MIN(snapshot_date) AS earliest, MAX(snapshot_date) AS latest,
-                COUNT(DISTINCT snapshot_date)::int AS dates
-         FROM account_snapshots`
+        `SELECT MIN(acs.snapshot_date) AS earliest, MAX(acs.snapshot_date) AS latest,
+                COUNT(DISTINCT acs.snapshot_date)::int AS dates
+         FROM account_snapshots acs
+         JOIN accounts a ON a.id = acs.account_id
+         WHERE a.user_id = $1`,
+        [userId]
       ),
       pool.query(
         `SELECT MIN(t.date) AS earliest, MAX(t.date) AS latest, COUNT(*)::int AS records
          FROM transactions t
          JOIN accounts a ON a.id = t.account_id
-         ${includeHidden ? '' : 'WHERE a.is_hidden = FALSE'}`
+         WHERE a.user_id = $1 ${includeHidden ? '' : 'AND a.is_hidden = FALSE'}`,
+        [userId]
       ),
       pool.query(
         `SELECT
-          (SELECT COUNT(*)::int FROM investment_cash_flows) AS investment_cash_flows,
+          (SELECT COUNT(*)::int FROM investment_cash_flows icf
+           JOIN accounts a ON a.id = icf.account_id WHERE a.user_id = $1) AS investment_cash_flows,
           (SELECT COUNT(*)::int FROM benchmark_prices) AS benchmark_prices,
-          (SELECT COUNT(*)::int FROM tax_lots) AS tax_lots,
-          (SELECT COUNT(*)::int FROM debt_terms) AS debt_terms,
-          (SELECT COUNT(*)::int FROM transaction_classifications) AS transaction_classifications`
+          (SELECT COUNT(*)::int FROM tax_lots tl
+           JOIN accounts a ON a.id = tl.account_id WHERE a.user_id = $1) AS tax_lots,
+          (SELECT COUNT(*)::int FROM debt_terms dt
+           JOIN accounts a ON a.id = dt.account_id WHERE a.user_id = $1) AS debt_terms,
+          (SELECT COUNT(*)::int FROM transaction_classifications tc
+           JOIN transactions t ON t.id = tc.transaction_id
+           JOIN accounts a ON a.id = t.account_id WHERE a.user_id = $1) AS transaction_classifications`,
+        [userId]
       ),
     ]);
 
@@ -283,9 +303,10 @@ class FinancialQueryService {
     };
   }
 
-  static async getOverview({ asOf = null, includeHidden = false } = {}) {
+  static async getOverview({ userId, asOf = null, includeHidden = false } = {}) {
+    requireUserId(userId);
     if (!asOf) {
-      const portfolio = await DashboardService.getCurrentPortfolio();
+      const portfolio = await DashboardService.getCurrentPortfolio(userId);
       const accounts = new Map();
       for (const item of portfolio.items) {
         const current = accounts.get(item.account_id) || {
@@ -311,7 +332,7 @@ class FinancialQueryService {
       };
     }
 
-    const params = [asOf];
+    const params = [asOf, userId];
     const hiddenFilter = includeHidden ? '' : 'AND a.is_hidden = FALSE';
     const result = await pool.query(
       `SELECT DISTINCT ON (a.id)
@@ -322,7 +343,7 @@ class FinancialQueryService {
               acs.total_value
        FROM accounts a
        JOIN account_snapshots acs ON acs.account_id = a.id
-       WHERE acs.snapshot_date <= $1 ${hiddenFilter}
+       WHERE acs.snapshot_date <= $1 AND a.user_id = $2 ${hiddenFilter}
        ORDER BY a.id, acs.snapshot_date DESC`,
       params
     );
@@ -356,6 +377,7 @@ class FinancialQueryService {
 
   static async queryPositions(options = {}) {
     const {
+      userId,
       asOf = null,
       includeHidden = false,
       ticker = null,
@@ -367,6 +389,7 @@ class FinancialQueryService {
       limit = DEFAULT_PAGE_SIZE,
       offset = 0,
     } = options;
+    requireUserId(userId);
     let rows;
 
     if (asOf) {
@@ -384,13 +407,13 @@ class FinancialQueryService {
                 NULL::date AS institution_price_as_of
          FROM ticker_snapshots ts
          JOIN accounts a ON a.id = ts.account_id
-         WHERE ts.snapshot_date <= $1 ${includeHidden ? '' : 'AND a.is_hidden = FALSE'}
+         WHERE ts.snapshot_date <= $1 AND a.user_id = $2 ${includeHidden ? '' : 'AND a.is_hidden = FALSE'}
          ORDER BY ts.account_id, COALESCE(ts.ticker, ts.name), ts.snapshot_date DESC`,
-        [asOf]
+        [asOf, userId]
       );
       rows = result.rows;
     } else {
-      rows = await Holding.findAll({ includeHidden });
+      rows = await Holding.findAll({ userId, includeHidden });
     }
 
     const accountIdSet = new Set(normalizeAccountIds(accountIds));
@@ -476,6 +499,7 @@ class FinancialQueryService {
       conditions.push(condition.replace('?', `$${params.length}`));
     };
 
+    add('a.user_id = ?', requireUserId(options.userId));
     add('t.date >= ?', options.startDate || defaultStartDate());
     if (options.endDate) add('t.date <= ?', options.endDate);
     if (!options.includeHidden) conditions.push('a.is_hidden = FALSE');
@@ -519,6 +543,7 @@ class FinancialQueryService {
   }
 
   static async queryTransactions(options = {}) {
+    requireUserId(options.userId);
     const resultMode = options.resultMode || 'rows';
     const effectiveOptions = resultMode === 'recurring' && !options.startDate
       ? { ...options, startDate: defaultStartDate(400) }
@@ -573,6 +598,7 @@ class FinancialQueryService {
   }
 
   static async getTimeSeries(options = {}) {
+    const userId = requireUserId(options.userId);
     const metric = options.metric || 'net_worth';
     const interval = options.interval || 'month';
     const truncMap = { day: 'day', week: 'week', month: 'month', quarter: 'quarter', year: 'year' };
@@ -583,7 +609,7 @@ class FinancialQueryService {
     let rows;
 
     if (['net_worth', 'total_assets', 'total_liabilities', 'account_value'].includes(metric)) {
-      const params = [startDate, endDate];
+      const params = [startDate, endDate, userId];
       let accountFilter = '';
       if (accountIds.length) {
         params.push(accountIds);
@@ -600,6 +626,7 @@ class FinancialQueryService {
            FROM account_snapshots acs
            JOIN accounts a ON a.id = acs.account_id
            WHERE a.is_hidden = FALSE
+             AND a.user_id = $3
              AND acs.snapshot_date BETWEEN $1 AND $2
              ${accountFilter}
            GROUP BY acs.snapshot_date
@@ -613,7 +640,7 @@ class FinancialQueryService {
       );
       rows = result.rows;
     } else if (metric === 'holding_value') {
-      const params = [startDate, endDate];
+      const params = [startDate, endDate, userId];
       let filter = '';
       if (options.ticker) {
         params.push(options.ticker.toUpperCase());
@@ -624,7 +651,7 @@ class FinancialQueryService {
            SELECT ts.snapshot_date, SUM(ts.value) AS value
            FROM ticker_snapshots ts
            JOIN accounts a ON a.id = ts.account_id
-           WHERE a.is_hidden = FALSE AND ts.snapshot_date BETWEEN $1 AND $2 ${filter}
+           WHERE a.is_hidden = FALSE AND a.user_id = $3 AND ts.snapshot_date BETWEEN $1 AND $2 ${filter}
            GROUP BY ts.snapshot_date
          )
          SELECT DATE_TRUNC('${trunc}', snapshot_date)::date AS date,
@@ -635,6 +662,7 @@ class FinancialQueryService {
       rows = result.rows;
     } else if (['spending', 'income', 'net_cash_flow', 'savings_rate'].includes(metric)) {
       const transactions = await this.fetchTransactionRows({
+        userId,
         startDate,
         endDate,
         accountIds,
@@ -656,18 +684,19 @@ class FinancialQueryService {
       const result = await pool.query(
         `SELECT effective_date AS date, ${column} AS value
          FROM salary_history
-         WHERE effective_date BETWEEN $1 AND $2
+         WHERE user_id = $3 AND effective_date BETWEEN $1 AND $2
          ORDER BY effective_date`,
-        [startDate, endDate]
+        [startDate, endDate, userId]
       );
       rows = result.rows;
     } else if (metric === 'recurring_commitments') {
       const result = await pool.query(
         `SELECT reh.effective_date AS date, SUM(reh.cost) AS value
          FROM recurring_expense_history reh
-         WHERE reh.effective_date BETWEEN $1 AND $2
+         JOIN recurring_expenses re ON re.id = reh.recurring_expense_id
+         WHERE re.user_id = $3 AND reh.effective_date BETWEEN $1 AND $2
          GROUP BY reh.effective_date ORDER BY reh.effective_date`,
-        [startDate, endDate]
+        [startDate, endDate, userId]
       );
       rows = result.rows;
     } else {
@@ -688,14 +717,15 @@ class FinancialQueryService {
   }
 
   static async comparePeriods(options = {}) {
+    const userId = requireUserId(options.userId);
     const periodA = options.periodA;
     const periodB = options.periodB;
     if (!periodA?.start || !periodA?.end || !periodB?.start || !periodB?.end) {
       throw new Error('Both periods require start and end dates.');
     }
     const [rowsA, rowsB] = await Promise.all([
-      this.fetchTransactionRows({ startDate: periodA.start, endDate: periodA.end, includePending: false }),
-      this.fetchTransactionRows({ startDate: periodB.start, endDate: periodB.end, includePending: false }),
+      this.fetchTransactionRows({ userId, startDate: periodA.start, endDate: periodA.end, includePending: false }),
+      this.fetchTransactionRows({ userId, startDate: periodB.start, endDate: periodB.end, includePending: false }),
     ]);
     const summaryA = summarizeTransactions(rowsA);
     const summaryB = summarizeTransactions(rowsB);
@@ -736,19 +766,20 @@ class FinancialQueryService {
     };
   }
 
-  static async getInvestmentSeries({ scopeType = 'portfolio', accountId = null, ticker = null, startDate, endDate }) {
+  static async getInvestmentSeries({ userId, scopeType = 'portfolio', accountId = null, ticker = null, startDate, endDate }) {
+    requireUserId(userId);
     if (scopeType === 'ticker') {
       const result = await pool.query(
         `SELECT ts.snapshot_date AS date, SUM(ts.value) AS value
          FROM ticker_snapshots ts JOIN accounts a ON a.id = ts.account_id
-         WHERE a.is_hidden = FALSE AND UPPER(ts.ticker) = UPPER($1)
+         WHERE a.is_hidden = FALSE AND a.user_id = $4 AND UPPER(ts.ticker) = UPPER($1)
            AND ts.snapshot_date BETWEEN $2 AND $3
          GROUP BY ts.snapshot_date ORDER BY ts.snapshot_date`,
-        [ticker, startDate, endDate]
+        [ticker, startDate, endDate, userId]
       );
       return result.rows.map((row) => ({ date: isoDate(row.date), value: toNumber(row.value) }));
     }
-    const params = [startDate, endDate];
+    const params = [startDate, endDate, userId];
     let accountFilter = '';
     if (scopeType === 'account') {
       params.push(accountId);
@@ -757,7 +788,7 @@ class FinancialQueryService {
     const result = await pool.query(
       `SELECT acs.snapshot_date AS date, SUM(acs.total_value) AS value
        FROM account_snapshots acs JOIN accounts a ON a.id = acs.account_id
-       WHERE a.is_hidden = FALSE AND a.type IN ('investment', 'crypto')
+       WHERE a.is_hidden = FALSE AND a.user_id = $3 AND a.type IN ('investment', 'crypto')
          AND acs.snapshot_date BETWEEN $1 AND $2 ${accountFilter}
        GROUP BY acs.snapshot_date ORDER BY acs.snapshot_date`,
       params
@@ -766,12 +797,14 @@ class FinancialQueryService {
   }
 
   static async analyzeInvestments(options = {}) {
+    const userId = requireUserId(options.userId);
     const startDate = options.startDate || defaultStartDate(365);
     const endDate = options.endDate || new Date().toISOString().slice(0, 10);
     const scopeType = options.scopeType || 'portfolio';
     if (scopeType === 'account' && !options.accountId) throw new Error('account_id is required for account scope.');
     if (scopeType === 'ticker' && !options.ticker) throw new Error('ticker is required for ticker scope.');
     const series = await this.getInvestmentSeries({
+      userId,
       scopeType,
       accountId: options.accountId,
       ticker: options.ticker,
@@ -791,17 +824,18 @@ class FinancialQueryService {
     if (scopeType === 'ticker') {
       warnings.push('Ticker-level external cash flows are not stored, so ticker returns assume there were none.');
     } else {
-      const flowParams = [startDate, endDate];
+      const flowParams = [startDate, endDate, userId];
       let flowFilter = '';
       if (scopeType === 'account') {
         flowParams.push(options.accountId);
-        flowFilter = `AND account_id = $${flowParams.length}`;
+        flowFilter = `AND icf.account_id = $${flowParams.length}`;
       }
       const flowResult = await pool.query(
-        `SELECT flow_date, amount, flow_type, is_external
-         FROM investment_cash_flows
-         WHERE flow_date BETWEEN $1 AND $2 ${flowFilter}
-         ORDER BY flow_date`,
+        `SELECT icf.flow_date, icf.amount, icf.flow_type, icf.is_external
+         FROM investment_cash_flows icf
+         JOIN accounts a ON a.id = icf.account_id
+         WHERE icf.flow_date BETWEEN $1 AND $2 AND a.user_id = $3 ${flowFilter}
+         ORDER BY icf.flow_date`,
         flowParams
       );
       externalFlows = flowResult.rows.filter((row) => row.is_external);
@@ -868,7 +902,7 @@ class FinancialQueryService {
     }
 
     if (options.includeAttribution) {
-      const attributionParams = [startDate, endDate];
+      const attributionParams = [startDate, endDate, userId];
       let attributionFilter = '';
       if (scopeType === 'account') {
         attributionParams.push(options.accountId);
@@ -883,7 +917,7 @@ class FinancialQueryService {
                   (ARRAY_AGG(ts.value ORDER BY ts.snapshot_date ASC))[1] AS start_value,
                   (ARRAY_AGG(ts.value ORDER BY ts.snapshot_date DESC))[1] AS end_value
            FROM ticker_snapshots ts JOIN accounts a ON a.id = ts.account_id
-           WHERE a.is_hidden = FALSE AND ts.snapshot_date BETWEEN $1 AND $2 ${attributionFilter}
+           WHERE a.is_hidden = FALSE AND a.user_id = $3 AND ts.snapshot_date BETWEEN $1 AND $2 ${attributionFilter}
            GROUP BY ts.account_id, COALESCE(ts.ticker, ts.name)
          )
          SELECT position, SUM(start_value) AS start_value, SUM(end_value) AS end_value
@@ -900,8 +934,8 @@ class FinancialQueryService {
     }
 
     if (options.includeTaxLots) {
-      const taxParams = [];
-      const taxConditions = ['tl.remaining_quantity > 0'];
+      const taxParams = [userId];
+      const taxConditions = ['tl.remaining_quantity > 0', 'a.user_id = $1'];
       if (scopeType === 'account') {
         taxParams.push(options.accountId);
         taxConditions.push(`tl.account_id = $${taxParams.length}`);
@@ -915,6 +949,7 @@ class FinancialQueryService {
                 (tl.remaining_quantity * pc.price_usd) AS market_value,
                 (tl.remaining_quantity * pc.price_usd - tl.cost_basis) AS unrealized_gain
          FROM tax_lots tl
+         JOIN accounts a ON a.id = tl.account_id
          LEFT JOIN price_cache pc ON UPPER(pc.ticker) = UPPER(tl.symbol)
          WHERE ${taxConditions.join(' AND ')}
          ORDER BY unrealized_gain ASC NULLS LAST`,
@@ -940,10 +975,11 @@ class FinancialQueryService {
       // Money market funds hold their $1 basis by construction, so flagging them
       // as missing cost basis is permanent noise rather than an actionable gap.
       const coverageConditions = [
+        'a.user_id = $1',
         'a.is_hidden = FALSE', "a.type = 'investment'", 'h.ticker IS NOT NULL', 'h.quantity > 0',
         'COALESCE(sm.is_cash_equivalent, FALSE) = FALSE',
       ];
-      const coverageParams = [];
+      const coverageParams = [userId];
       if (scopeType === 'account') {
         coverageParams.push(options.accountId);
         coverageConditions.push(`h.account_id = $${coverageParams.length}`);
@@ -1019,12 +1055,13 @@ class FinancialQueryService {
   }
 
   static async analyzeCashFlow(options = {}) {
+    const userId = requireUserId(options.userId);
     const startDate = options.startDate || defaultStartDate(365);
     const endDate = options.endDate || new Date().toISOString().slice(0, 10);
-    const rows = await this.fetchTransactionRows({ startDate, endDate, includePending: false });
+    const rows = await this.fetchTransactionRows({ userId, startDate, endDate, includePending: false });
     const summary = summarizeTransactions(rows);
     const months = Math.max(1, (new Date(endDate) - new Date(startDate)) / (30.44 * 24 * 60 * 60 * 1000));
-    const overview = await this.getOverview();
+    const overview = await this.getOverview({ userId });
     const liquidAssets = overview.accounts
       .filter((account) => LIQUID_TYPES.has(account.accountType))
       .reduce((sum, account) => sum + Math.max(0, account.value), 0);
@@ -1032,7 +1069,7 @@ class FinancialQueryService {
     const monthlySpending = summary.spending / months;
     const [recurring, savedRecurring] = await Promise.all([
       Promise.resolve(recurringCandidates(rows)),
-      RecurringExpense.findAll(),
+      RecurringExpense.findAll(userId),
     ]);
     const categoryDrivers = groupTransactions(rows, 'category');
     const merchantDrivers = groupTransactions(rows, 'merchant');
@@ -1042,7 +1079,7 @@ class FinancialQueryService {
       .filter((row) => row.isOneTime || row.amount >= Math.max(averageSpend * 4, 500))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 20);
-    const salaries = await SalaryHistory.findAll();
+    const salaries = await SalaryHistory.findAll(userId);
 
     return {
       meta: toolMeta({ startDate, endDate }),
@@ -1084,10 +1121,11 @@ class FinancialQueryService {
   }
 
   static async runScenario(options = {}) {
+    const userId = requireUserId(options.userId);
     const scenarioType = options.scenarioType;
     const assumptions = options.assumptions || {};
     const horizonYears = Math.max(0.1, toNumber(options.horizonYears, 10));
-    const overview = await this.getOverview();
+    const overview = await this.getOverview({ userId });
     const warnings = ['Scenario results are mathematical projections, not predictions or financial advice.'];
 
     if (scenarioType === 'goal_projection') {
@@ -1177,7 +1215,7 @@ class FinancialQueryService {
     }
 
     if (scenarioType === 'income_loss') {
-      const cashFlow = await this.analyzeCashFlow({ startDate: options.startDate, endDate: options.endDate });
+      const cashFlow = await this.analyzeCashFlow({ userId, startDate: options.startDate, endDate: options.endDate });
       const monthlyExpense = toNumber(assumptions.monthly_expenses, cashFlow.summary.averageMonthlyEssentialSpending || cashFlow.summary.averageMonthlySpending);
       const liquidAssets = toNumber(assumptions.liquid_assets, cashFlow.summary.liquidAssets);
       return {
@@ -1198,7 +1236,9 @@ class FinancialQueryService {
            SELECT total_value FROM account_snapshots
            WHERE account_id = dt.account_id ORDER BY snapshot_date DESC LIMIT 1
          ) latest ON TRUE
-         ORDER BY dt.apr DESC NULLS LAST`
+         WHERE a.user_id = $1
+         ORDER BY dt.apr DESC NULLS LAST`,
+        [userId]
       );
       const extraCash = toNumber(assumptions.extra_cash, 0);
       const investmentReturn = toNumber(assumptions.expected_annual_return, 0.06);
@@ -1225,18 +1265,19 @@ class FinancialQueryService {
     throw new Error(`Unsupported scenario type: ${scenarioType}`);
   }
 
-  static async getDataHealth() {
-    const portfolio = await DashboardService.getCurrentPortfolio();
+  static async getDataHealth({ userId } = {}) {
+    requireUserId(userId);
+    const portfolio = await DashboardService.getCurrentPortfolio(userId);
     const result = await pool.query(
       `SELECT
         (SELECT COUNT(*)::int FROM holdings h
          JOIN accounts a ON a.id = h.account_id
          LEFT JOIN price_cache pc ON UPPER(pc.ticker) = UPPER(h.ticker)
-         WHERE a.is_hidden = FALSE AND h.ticker IS NOT NULL AND h.quantity > 0 AND pc.ticker IS NULL) AS missing_prices,
+         WHERE a.user_id = $1 AND a.is_hidden = FALSE AND h.ticker IS NOT NULL AND h.quantity > 0 AND pc.ticker IS NULL) AS missing_prices,
         (SELECT COUNT(*)::int FROM transactions t
          JOIN accounts a ON a.id = t.account_id
          LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
-         WHERE a.is_hidden = FALSE AND tc.transaction_id IS NULL) AS unclassified_transactions,
+         WHERE a.user_id = $1 AND a.is_hidden = FALSE AND tc.transaction_id IS NULL) AS unclassified_transactions,
         (SELECT COUNT(*)::int FROM (
            SELECT h.id
            FROM holdings h
@@ -1244,7 +1285,7 @@ class FinancialQueryService {
            LEFT JOIN security_master sm ON UPPER(sm.symbol) = UPPER(h.ticker)
            LEFT JOIN tax_lots tl ON tl.account_id = h.account_id AND UPPER(tl.symbol) = UPPER(h.ticker)
                 AND tl.remaining_quantity > 0
-           WHERE a.is_hidden = FALSE AND a.type = 'investment' AND h.ticker IS NOT NULL AND h.quantity > 0
+           WHERE a.user_id = $1 AND a.is_hidden = FALSE AND a.type = 'investment' AND h.ticker IS NOT NULL AND h.quantity > 0
              -- Money market funds hold their $1 basis by construction; counting
              -- them as missing basis is permanent noise, not an actionable gap.
              AND COALESCE(sm.is_cash_equivalent, FALSE) = FALSE
@@ -1258,12 +1299,18 @@ class FinancialQueryService {
            HAVING COALESCE(SUM(tl.remaining_quantity), 0) < h.quantity * ${TAX_LOT_COVERAGE_TOLERANCE}
          ) incomplete) AS positions_without_cost_basis,
         (SELECT COUNT(*)::int FROM benchmark_prices) AS benchmark_observations,
-        (SELECT COUNT(*)::int FROM investment_cash_flows WHERE is_external) AS recorded_investment_flows,
+        (SELECT COUNT(*)::int FROM investment_cash_flows icf
+         JOIN accounts a ON a.id = icf.account_id
+         WHERE icf.is_external AND a.user_id = $1) AS recorded_investment_flows,
         (SELECT COUNT(*)::int FROM plaid_items
-         WHERE consent_expiration IS NOT NULL
+         WHERE user_id = $1
+           AND consent_expiration IS NOT NULL
            AND consent_expiration < CURRENT_TIMESTAMP + INTERVAL '30 days') AS expiring_plaid_consents,
-        (SELECT MAX(date) FROM transactions) AS latest_transaction_date,
-        (SELECT MAX(snapshot_date) FROM account_snapshots) AS latest_snapshot_date`
+        (SELECT MAX(t.date) FROM transactions t
+         JOIN accounts a ON a.id = t.account_id WHERE a.user_id = $1) AS latest_transaction_date,
+        (SELECT MAX(acs.snapshot_date) FROM account_snapshots acs
+         JOIN accounts a ON a.id = acs.account_id WHERE a.user_id = $1) AS latest_snapshot_date`,
+      [userId]
     );
     const counts = result.rows[0];
     const issues = [];
@@ -1303,33 +1350,36 @@ class FinancialQueryService {
   }
 
   static async exportDataset(options = {}) {
+    const userId = requireUserId(options.userId);
+    // scope: 'account' filters through the owning account, 'user' through the
+    // table's own user_id; benchmark_prices and security_master are global.
     const datasets = {
       account_snapshots: {
-        table: 'account_snapshots', date: 'snapshot_date', orderBy: 'snapshot_date, id', columns: ['id', 'snapshot_date', 'account_id', 'total_value'],
+        table: 'account_snapshots', scope: 'account', date: 'snapshot_date', orderBy: 'snapshot_date, id', columns: ['id', 'snapshot_date', 'account_id', 'total_value'],
       },
       holding_snapshots: {
-        table: 'ticker_snapshots', date: 'snapshot_date', orderBy: 'snapshot_date, id', columns: ['id', 'snapshot_date', 'account_id', 'ticker', 'name', 'value', 'quantity', 'price_usd'],
+        table: 'ticker_snapshots', scope: 'account', date: 'snapshot_date', orderBy: 'snapshot_date, id', columns: ['id', 'snapshot_date', 'account_id', 'ticker', 'name', 'value', 'quantity', 'price_usd'],
       },
       salary_history: {
-        table: 'salary_history', date: 'effective_date', orderBy: 'effective_date, id', columns: ['id', 'effective_date', 'title', 'salary_amount', 'psu', 'rsu', 'total_comp', 'change_amount', 'change_percent'],
+        table: 'salary_history', scope: 'user', date: 'effective_date', orderBy: 'effective_date, id', columns: ['id', 'effective_date', 'title', 'salary_amount', 'psu', 'rsu', 'total_comp', 'change_amount', 'change_percent'],
       },
       recurring_expenses: {
-        table: 'recurring_expenses', date: null, orderBy: 'id', columns: ['id', 'name', 'cost', 'is_fixed_rate', 'pay_account', 'company', 'merchant_key', 'due_day', 'last_charge_date', 'tag'],
+        table: 'recurring_expenses', scope: 'user', date: null, orderBy: 'id', columns: ['id', 'name', 'cost', 'is_fixed_rate', 'pay_account', 'company', 'merchant_key', 'due_day', 'last_charge_date', 'tag'],
       },
       benchmark_prices: {
-        table: 'benchmark_prices', date: 'price_date', orderBy: 'price_date, symbol', columns: ['symbol', 'price_date', 'adjusted_close', 'total_return_index', 'source'],
+        table: 'benchmark_prices', scope: null, date: 'price_date', orderBy: 'price_date, symbol', columns: ['symbol', 'price_date', 'adjusted_close', 'total_return_index', 'source'],
       },
       investment_cash_flows: {
-        table: 'investment_cash_flows', date: 'flow_date', orderBy: 'flow_date, id', columns: ['id', 'account_id', 'flow_date', 'amount', 'flow_type', 'is_external', 'transaction_id', 'notes'],
+        table: 'investment_cash_flows', scope: 'account', date: 'flow_date', orderBy: 'flow_date, id', columns: ['id', 'account_id', 'flow_date', 'amount', 'flow_type', 'is_external', 'transaction_id', 'notes'],
       },
       tax_lots: {
-        table: 'tax_lots', date: 'acquired_date', orderBy: 'acquired_date, id', columns: ['id', 'account_id', 'symbol', 'acquired_date', 'quantity', 'remaining_quantity', 'cost_basis', 'source_trade_id'],
+        table: 'tax_lots', scope: 'account', date: 'acquired_date', orderBy: 'acquired_date, id', columns: ['id', 'account_id', 'symbol', 'acquired_date', 'quantity', 'remaining_quantity', 'cost_basis', 'source_trade_id'],
       },
       securities: {
-        table: 'security_master', date: null, orderBy: 'symbol', columns: ['symbol', 'name', 'security_type', 'sector', 'industry', 'is_cash_equivalent', 'asset_class', 'benchmark_symbol', 'is_liquid', 'metadata'],
+        table: 'security_master', scope: null, date: null, orderBy: 'symbol', columns: ['symbol', 'name', 'security_type', 'sector', 'industry', 'is_cash_equivalent', 'asset_class', 'benchmark_symbol', 'is_liquid', 'metadata'],
       },
       debt_terms: {
-        table: 'debt_terms', date: null, orderBy: 'account_id', columns: ['account_id', 'apr', 'minimum_payment', 'due_day', 'maturity_date', 'is_tax_deductible', 'notes', 'next_payment_due_date', 'last_statement_balance', 'last_statement_date', 'last_payment_amount', 'last_payment_date', 'is_overdue'],
+        table: 'debt_terms', scope: 'account', date: null, orderBy: 'account_id', columns: ['account_id', 'apr', 'minimum_payment', 'due_day', 'maturity_date', 'is_tax_deductible', 'notes', 'next_payment_due_date', 'last_statement_balance', 'last_statement_date', 'last_payment_amount', 'last_payment_date', 'is_overdue'],
       },
     };
     if (options.dataset === 'transactions') {
@@ -1369,6 +1419,15 @@ class FinancialQueryService {
     if (!requestedColumns.length) throw new Error('No valid columns were requested.');
     const params = [];
     const conditions = [];
+    if (config.scope === 'user') {
+      params.push(userId);
+      conditions.push(`user_id = $${params.length}`);
+    } else if (config.scope === 'account') {
+      // An IN subquery instead of a JOIN: exported columns are unqualified, so
+      // joining accounts would make columns like id and name ambiguous.
+      params.push(userId);
+      conditions.push(`account_id IN (SELECT id FROM accounts WHERE user_id = $${params.length})`);
+    }
     if (config.date && options.startDate) {
       params.push(options.startDate);
       conditions.push(`${config.date} >= $${params.length}`);
@@ -1397,8 +1456,9 @@ class FinancialQueryService {
     };
   }
 
-  static async getIncomeObligations() {
-    const [salary, recurring] = await Promise.all([SalaryHistory.findAll(), RecurringExpense.findAll()]);
+  static async getIncomeObligations({ userId } = {}) {
+    requireUserId(userId);
+    const [salary, recurring] = await Promise.all([SalaryHistory.findAll(userId), RecurringExpense.findAll(userId)]);
     const monthlyRecurring = recurring.reduce((sum, expense) => sum + toNumber(expense.cost), 0);
     const latestSalary = salary[0];
     return {
