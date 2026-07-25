@@ -243,25 +243,55 @@ class EthWalletService {
     // stable name is derived from the address (unique by construction); the
     // user-facing label rides on display_name like every other renamed account.
     const client = await pool.connect();
+    const accountName = `Ethereum ${shortAddress(normalized)}`;
+    const trimmedLabel = label?.trim() || null;
     let wallet;
     let account;
     try {
       await client.query('BEGIN');
       const walletResult = await client.query(
         'INSERT INTO eth_wallets (address, label, user_id) VALUES ($1, $2, $3) RETURNING *',
-        [normalized, label?.trim() || null, userId]
+        [normalized, trimmedLabel, userId]
       );
       wallet = walletResult.rows[0];
-      const accountResult = await client.query(
-        `INSERT INTO accounts (name, type, display_name, eth_wallet_id, user_id)
-         VALUES ($1, 'crypto', $2, $3, $4)
-         RETURNING *`,
-        [`Ethereum ${shortAddress(normalized)}`, label?.trim() || null, wallet.id, userId]
+
+      // Disconnecting a wallet with removeData=false detaches its account
+      // (eth_wallet_id -> NULL) but keeps the row, name included. Re-adding the
+      // same address must re-attach that account rather than insert a second
+      // one: the name is unique per user, so inserting would violate
+      // accounts_user_id_name_key, and re-attaching is what "keep data" was for
+      // -- the account's snapshots, history, and display_name all survive.
+      // Matching on name is exactly as precise as the constraint being avoided.
+      const reattached = await client.query(
+        `UPDATE accounts
+            SET eth_wallet_id = $1,
+                display_name = COALESCE($2, display_name)
+          WHERE user_id = $3 AND name = $4 AND eth_wallet_id IS NULL
+          RETURNING *`,
+        [wallet.id, trimmedLabel, userId, accountName]
       );
-      account = accountResult.rows[0];
+      if (reattached.rows.length) {
+        account = reattached.rows[0];
+      } else {
+        const accountResult = await client.query(
+          `INSERT INTO accounts (name, type, display_name, eth_wallet_id, user_id)
+           VALUES ($1, 'crypto', $2, $3, $4)
+           RETURNING *`,
+          [accountName, trimmedLabel, wallet.id, userId]
+        );
+        account = accountResult.rows[0];
+      }
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
+      // Only reachable when a LIVE account already holds this name -- i.e. two
+      // distinct addresses sharing the same 6-and-4 abbreviation. Vanishingly
+      // rare, but a bare 500 gives the user nothing to act on.
+      if (err.code === '23505') {
+        const conflict = new Error(`An account named "${accountName}" already exists. Rename it under Settings -> Accounts, then add this wallet again.`);
+        conflict.code = 'ACCOUNT_NAME_CONFLICT';
+        throw conflict;
+      }
       throw err;
     } finally {
       client.release();

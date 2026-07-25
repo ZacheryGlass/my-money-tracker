@@ -17,6 +17,7 @@ function statusFor(error) {
   if (error.code === 'ETHERSCAN_NOT_CONFIGURED') return 503;
   if (error.code === 'INVALID_ADDRESS') return 400;
   if (error.code === 'DUPLICATE_WALLET') return 409;
+  if (error.code === 'ACCOUNT_NAME_CONFLICT') return 409;
   return 500;
 }
 
