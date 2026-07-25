@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../utils/api';
 import { formatDateDisplay } from '../utils/format';
+import DataTable from './DataTable';
 import FilterTabs from './FilterTabs';
 import LoadingState from './LoadingState';
 
@@ -171,18 +173,198 @@ const OnChainActivity = ({ walletId = null, walletNames }) => {
     }
   };
 
+  // Direction, counterparty and label-ability are derived once per row rather
+  // than inside each cell. Direction is per row, not per feed: a merged feed
+  // spans addresses, so asking "did I send this?" against a single wallet's
+  // address would invert the sign of every row belonging to a different wallet.
+  const enrichedRows = useMemo(() => rows.map((transfer) => {
+    const outbound = transfer.transfer_type === 'gas'
+      || transfer.from_address === transfer.wallet_address;
+    const counterparty = transfer.transfer_type === 'gas'
+      ? null
+      : outbound ? transfer.to_address : transfer.from_address;
+    const exchangeName = !transfer.counterparty_is_own ? transfer.counterparty_exchange : null;
+    return {
+      ...transfer,
+      outbound,
+      counterparty,
+      exchangeName,
+      chip: transferChipLabel(transfer),
+      walletName: walletNames?.get(transfer.wallet_id),
+      quantity: formatTransferQuantity(transfer),
+      description: transfer.transfer_type === 'gas'
+        ? 'Gas fee'
+        : `${outbound ? 'To' : 'From'} ${exchangeName || shortEthAddress(counterparty)}`,
+      labelable: transfer.transfer_type !== 'gas'
+        && !transfer.counterparty_is_own && !exchangeName && counterparty,
+    };
+  }), [rows, walletNames]);
+
+  // Only the merged feed needs a wallet column; with one wallet selected every
+  // row would repeat the same name.
+  const showWalletColumn = Boolean(walletNames);
+
+  const columns = useMemo(() => [
+    {
+      id: 'date',
+      accessorFn: (row) => row.block_time,
+      header: 'Date',
+      meta: { width: '7rem', cellClassName: 'whitespace-nowrap font-mono text-caption' },
+      cell: ({ getValue }) => formatDateDisplay(getValue()),
+    },
+    {
+      id: 'description',
+      accessorFn: (row) => row.description,
+      header: 'Description',
+      meta: { cellClassName: 'min-w-0' },
+      cell: ({ row }) => (
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className="truncate text-body-sm font-semibold text-primary"
+            title={row.original.counterparty || undefined}
+          >
+            {row.original.description}
+          </span>
+          {row.original.is_error && (
+            <span className="shrink-0 border border-loss/20 bg-loss/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-loss">
+              Failed
+            </span>
+          )}
+          <a
+            href={`https://etherscan.io/tx/${row.original.tx_hash}`}
+            target="_blank"
+            rel="noreferrer"
+            title={row.original.tx_hash}
+            className="shrink-0 text-tertiary transition-colors hover:text-accent"
+          >
+            <ExternalLink size={11} />
+          </a>
+        </div>
+      ),
+    },
+    {
+      id: 'type',
+      accessorFn: (row) => row.chip,
+      header: 'Type',
+      meta: { width: '7rem' },
+      cell: ({ row }) => (
+        <span className={`inline-flex items-center border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${TRANSFER_CHIP_STYLES[row.original.chip]}`}>
+          {row.original.chip}
+        </span>
+      ),
+    },
+    ...(showWalletColumn ? [{
+      id: 'wallet',
+      accessorFn: (row) => row.walletName || '',
+      header: 'Wallet',
+      meta: { width: '11rem' },
+      // flex (block-level) so the cell's fixed width bounds it and the inner
+      // span ellipsizes; an inline-flex sizes to its content and the label just
+      // gets chopped mid-word against the next column.
+      cell: ({ row }) => (row.original.walletName ? (
+        <span className="flex items-center gap-1 text-purple-400" title={row.original.walletName}>
+          <Wallet size={10} className="shrink-0" />
+          <span className="truncate">{row.original.walletName}</span>
+        </span>
+      ) : <span className="text-tertiary">—</span>),
+    }] : []),
+    {
+      id: 'amount',
+      accessorFn: (row) => row.quantity,
+      header: 'Amount',
+      meta: { width: '11rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+      cell: ({ row }) => (
+        <span className={`font-money font-bold ${row.original.outbound ? 'text-loss' : 'text-gain'}`}>
+          {row.original.outbound ? '-' : '+'}{row.original.quantity}
+        </span>
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      meta: { width: '13rem', align: 'right', headerClassName: 'text-right', cellClassName: 'text-right' },
+      cell: ({ row }) => {
+        const transfer = row.original;
+        if (labelingId === transfer.id) {
+          return (
+            <form
+              onSubmit={(event) => handleLabelAddress(event, transfer.counterparty)}
+              className="flex items-center justify-end gap-1.5"
+            >
+              <input
+                type="text"
+                value={labelName}
+                onChange={(event) => setLabelName(event.target.value)}
+                list="eth-label-names"
+                maxLength={64}
+                placeholder="e.g. Coinbase"
+                autoFocus
+                className="h-7 w-28 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+              />
+              <button
+                type="submit"
+                disabled={savingLabel || !labelName.trim()}
+                className="inline-flex h-7 items-center gap-1 rounded border border-teal-500/30 bg-teal-500/10 px-2 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
+              >
+                {savingLabel && <RefreshCw size={10} className="animate-spin" />}
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => { setLabelingId(null); setLabelName(''); }}
+                className="inline-flex h-7 items-center rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary"
+              >
+                <X size={10} />
+              </button>
+            </form>
+          );
+        }
+        return (
+          <div className="flex items-center justify-end gap-1.5">
+            {transfer.labelable && (
+              <button
+                onClick={() => { setLabelingId(transfer.id); setLabelName(''); }}
+                title="Label this address (e.g. an exchange deposit address)"
+                className="inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-teal-500/30 hover:text-teal-400"
+              >
+                <Tag size={10} />
+                Label
+              </button>
+            )}
+            {transfer.transfer_type === 'token' && transfer.token_contract && (
+              <button
+                onClick={() => handleIgnoreToken(transfer)}
+                disabled={ignoringContract === transfer.token_contract}
+                title="Ignore this token everywhere"
+                className="inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-loss/30 hover:text-loss disabled:opacity-40"
+              >
+                {ignoringContract === transfer.token_contract
+                  ? <RefreshCw size={10} className="animate-spin" />
+                  : <EyeOff size={10} />}
+                Ignore
+              </button>
+            )}
+          </div>
+        );
+      },
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [showWalletColumn, labelingId, labelName, savingLabel, ignoringContract]);
+
+  const table = useReactTable({
+    data: enrichedRows,
+    columns,
+    // The feed arrives block-ordered from the API and pages in via Load More;
+    // sorting a partial page client-side would reorder only what is loaded.
+    enableSorting: false,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <section>
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Activity className="text-accent w-4 h-4" />
-          <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">On-chain Activity</h2>
-        </div>
-        {total > 0 && (
-          <span className="text-[10px] font-bold text-accent px-2 py-0.5 rounded bg-accent/10 border border-accent/20">
-            {total} Total
-          </span>
-        )}
+      <div className="flex items-center gap-2 mb-4">
+        <Activity className="text-accent w-4 h-4" />
+        <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">On-chain Activity</h2>
       </div>
 
       <FilterTabs
@@ -205,159 +387,66 @@ const OnChainActivity = ({ walletId = null, walletNames }) => {
       )}
 
       {loading ? (
-        <LoadingState label="Fetching on-chain activity" className="py-12 card" />
-      ) : rows.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 gap-2 card opacity-50">
-          <Activity size={32} className="text-tertiary" />
-          <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">No transfers found</p>
-        </div>
+        <LoadingState label="Fetching on-chain activity" className="min-h-[300px]" />
       ) : (
-        <>
-          <div className="card divide-y divide-border overflow-hidden">
-            {rows.map((transfer) => {
-              // Per row, not per feed: a merged feed spans addresses, so asking
-              // "did I send this?" against one wallet's address would invert the
-              // direction of every row belonging to a different wallet.
-              const outbound = transfer.transfer_type === 'gas'
-                || transfer.from_address === transfer.wallet_address;
-              const walletName = walletNames?.get(transfer.wallet_id);
-              const chip = transferChipLabel(transfer);
-              const counterparty = transfer.transfer_type === 'gas'
-                ? null
-                : outbound ? transfer.to_address : transfer.from_address;
-              const exchangeName = !transfer.counterparty_is_own ? transfer.counterparty_exchange : null;
-              const labelable = transfer.transfer_type !== 'gas'
-                && !transfer.counterparty_is_own && !exchangeName && counterparty;
-              return (
-                <div key={transfer.id} className="px-4 py-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className={`inline-flex shrink-0 items-center px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide border ${TRANSFER_CHIP_STYLES[chip]}`}>
-                      {chip}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="truncate text-sm font-bold text-primary" title={counterparty || undefined}>
-                          {transfer.transfer_type === 'gas'
-                            ? 'Gas fee'
-                            : `${outbound ? 'To' : 'From'} ${exchangeName || shortEthAddress(counterparty)}`}
-                        </span>
-                        {transfer.is_error && (
-                          <span className="inline-flex shrink-0 items-center px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide border border-loss/20 bg-loss/10 text-loss">
-                            Failed
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-3 text-[10px] text-tertiary">
-                        <span className="font-mono">{formatDateDisplay(transfer.block_time)}</span>
-                        {walletName && (
-                          <span
-                            className="inline-flex max-w-[14rem] items-center gap-1 truncate text-purple-400"
-                            title={walletName}
-                          >
-                            <Wallet size={10} className="shrink-0" />
-                            {walletName}
-                          </span>
-                        )}
-                        <a
-                          href={`https://etherscan.io/tx/${transfer.tx_hash}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 font-mono hover:text-accent transition-colors"
-                          title={transfer.tx_hash}
-                        >
-                          {`${transfer.tx_hash.slice(0, 10)}…`}
-                          <ExternalLink size={10} />
-                        </a>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex shrink-0 items-center gap-3 sm:justify-end">
-                    <span className={`font-mono text-sm font-bold ${outbound ? 'text-loss' : 'text-gain'}`}>
-                      {outbound ? '-' : '+'}{formatTransferQuantity(transfer)}
-                    </span>
-                    {labelable && (
-                      <button
-                        onClick={() => {
-                          setLabelingId(labelingId === transfer.id ? null : transfer.id);
-                          setLabelName('');
-                        }}
-                        title="Label this address (e.g. an exchange deposit address)"
-                        className="inline-flex h-7 items-center justify-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-teal-500/30 hover:text-teal-400"
-                      >
-                        <Tag size={10} />
-                        Label
-                      </button>
-                    )}
-                    {transfer.transfer_type === 'token' && transfer.token_contract && (
-                      <button
-                        onClick={() => handleIgnoreToken(transfer)}
-                        disabled={ignoringContract === transfer.token_contract}
-                        title="Ignore this token everywhere"
-                        className="inline-flex h-7 items-center justify-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-loss/30 hover:text-loss disabled:opacity-40"
-                      >
-                        {ignoringContract === transfer.token_contract
-                          ? <RefreshCw size={10} className="animate-spin" />
-                          : <EyeOff size={10} />}
-                        Ignore
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {labelingId === transfer.id && (
-                  <form
-                    onSubmit={(event) => handleLabelAddress(event, counterparty)}
-                    className="mt-2 flex items-center gap-2"
-                  >
-                    <input
-                      type="text"
-                      value={labelName}
-                      onChange={(event) => setLabelName(event.target.value)}
-                      list="eth-label-names"
-                      maxLength={64}
-                      placeholder="e.g. Coinbase"
-                      autoFocus
-                      className="h-8 w-44 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
-                    />
-                    <button
-                      type="submit"
-                      disabled={savingLabel || !labelName.trim()}
-                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
-                    >
-                      {savingLabel && <RefreshCw size={10} className="animate-spin" />}
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setLabelingId(null); setLabelName(''); }}
-                      className="inline-flex h-8 items-center justify-center rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary"
-                    >
-                      Cancel
-                    </button>
-                  </form>
-                )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-3 flex items-center justify-between px-1">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
-              Showing {rows.length} of {total}
-            </span>
-            {rows.length < total && (
+        <DataTable
+          table={table}
+          breakpoint="md"
+          emptyMessage="No transfers found."
+          header={rows.length > 0 && (
+            <div className="flex items-center justify-between border-b border-border p-4">
+              <div className="flex items-center gap-2">
+                <Activity size={15} className="text-accent" />
+                <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">Transfers</span>
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                Showing {rows.length.toLocaleString()} of {total.toLocaleString()}
+              </span>
+            </div>
+          )}
+          footer={rows.length < total && (
+            <div className="border-t border-border p-3">
               <button
+                type="button"
                 onClick={loadMore}
                 disabled={loadingMore}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-50"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded border border-border bg-surface-2 text-xs font-bold uppercase tracking-wider text-secondary transition-colors hover:text-primary disabled:opacity-50"
               >
-                {loadingMore && <RefreshCw size={12} className="animate-spin" />}
+                {loadingMore && <RefreshCw size={14} className="animate-spin" />}
                 Load More
               </button>
-            )}
-          </div>
-        </>
+            </div>
+          )}
+          renderMobileRow={(row) => {
+            const transfer = row.original;
+            return (
+              <div key={row.id} className="bg-surface p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-primary">{transfer.description}</span>
+                      {transfer.is_error && (
+                        <span className="shrink-0 border border-loss/20 bg-loss/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-loss">
+                          Failed
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-tertiary">
+                      <span>{formatDateDisplay(transfer.block_time)}</span>
+                      <span>{transfer.chip}</span>
+                    </div>
+                  </div>
+                  <div className={`shrink-0 font-money text-sm font-bold ${transfer.outbound ? 'text-loss' : 'text-gain'}`}>
+                    {transfer.outbound ? '-' : '+'}{transfer.quantity}
+                  </div>
+                </div>
+                {transfer.walletName && (
+                  <div className="mt-2 truncate text-[10px] text-purple-400">{transfer.walletName}</div>
+                )}
+              </div>
+            );
+          }}
+        />
       )}
     </section>
   );
