@@ -21,21 +21,26 @@ function isAppKey(service) {
   return SecretsService.APP_KEYS.includes(service);
 }
 
-async function buildStatuses(userId) {
+// Shared app-wide keys are the admin's concern (Settings -> Server tab);
+// non-admins only ever see their own key statuses.
+async function buildStatuses(userId, isAdmin) {
   const userKeys = {};
   for (const service of SecretsService.USER_SERVICES) {
     userKeys[service] = await SecretsService.getUserKeyStatus(userId, service);
   }
-  const appSettings = {};
-  for (const key of SecretsService.APP_KEYS) {
-    appSettings[key] = await SecretsService.getAppSettingStatus(key);
+  const statuses = { encryptionConfigured: secretCrypto.isConfigured(), userKeys };
+  if (isAdmin) {
+    statuses.appSettings = {};
+    for (const key of SecretsService.APP_KEYS) {
+      statuses.appSettings[key] = await SecretsService.getAppSettingStatus(key);
+    }
   }
-  return { encryptionConfigured: secretCrypto.isConfigured(), userKeys, appSettings };
+  return statuses;
 }
 
 router.get('/', async (req, res) => {
   try {
-    res.status(200).json(await buildStatuses(req.user.id));
+    res.status(200).json(await buildStatuses(req.user.id, req.user.isAdmin));
   } catch (error) {
     logger.error({ err: error }, 'Get key statuses error');
     res.status(500).json({ error: 'Failed to retrieve key statuses' });
@@ -47,6 +52,9 @@ router.put('/:service', async (req, res) => {
   try {
     if (!isUserService(service) && !isAppKey(service)) {
       return res.status(400).json({ error: 'Unknown service' });
+    }
+    if (isAppKey(service) && !req.user.isAdmin) {
+      return res.status(403).json({ error: 'Only the admin can change shared keys' });
     }
     const { value } = req.body || {};
     if (typeof value !== 'string' || !value.trim() || value.trim().length > 512) {
@@ -71,6 +79,9 @@ router.delete('/:service', async (req, res) => {
   try {
     if (!isUserService(service) && !isAppKey(service)) {
       return res.status(400).json({ error: 'Unknown service' });
+    }
+    if (isAppKey(service) && !req.user.isAdmin) {
+      return res.status(403).json({ error: 'Only the admin can change shared keys' });
     }
 
     const status = isUserService(service)

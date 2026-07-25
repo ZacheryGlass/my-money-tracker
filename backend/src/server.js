@@ -23,6 +23,7 @@ const ethRoutes = require('./routes/eth');
 const transactionsRoutes = require('./routes/transactions');
 const analyticsRoutes = require('./routes/analytics');
 const keysRoutes = require('./routes/keys');
+const adminRoutes = require('./routes/admin');
 const mcpRoutes = require('./routes/mcp');
 
 // Jobs
@@ -107,6 +108,7 @@ app.use('/api/eth', ethRoutes);
 app.use('/api/transactions', transactionsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/keys', keysRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/mcp', mcpRoutes);
 
 // Public landing page (excluded from Easy Auth in the Azure config).
