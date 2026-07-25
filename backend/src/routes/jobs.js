@@ -2,12 +2,20 @@ const express = require('express');
 const router = express.Router();
 const requireUser = require('../middleware/auth');
 const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, PlaidSyncJob, EthSyncJob, ExpenseSyncJob } = require('../jobs');
-const ExpenseSyncService = require('../services/ExpenseSyncService');
-const TransactionClassificationService = require('../services/TransactionClassificationService');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
 router.use(requireUser);
+
+// Every job below price-update operates on EVERY user's data: the Plaid and
+// ETH syncs resolve each item/wallet owner's own API credentials, and the
+// snapshot/expense jobs write rows for all users. Triggering them is therefore
+// admin-only -- hiding the Run Now buttons in the Server tab is not a control.
+//
+// price-update is deliberately left to any authenticated user: price_cache is
+// shared global market data by design, and the Dashboard refresh button
+// (Dashboard.jsx handleRefresh) calls it for everyone.
+const requireAdmin = requireUser.requireAdmin;
 
 // GET /api/jobs/status - Get job configuration and status
 router.get('/status', async (req, res, next) => {
@@ -97,7 +105,7 @@ router.post('/trigger/price-update', async (req, res, next) => {
 });
 
 // POST /api/jobs/trigger/benchmark-update - Manually trigger benchmark price update
-router.post('/trigger/benchmark-update', async (req, res, next) => {
+router.post('/trigger/benchmark-update', requireAdmin, async (req, res, next) => {
   try {
     const isRunning = await JobLog.isRunning(BenchmarkUpdateJob.JOB_NAME);
     if (isRunning) {
@@ -118,7 +126,7 @@ router.post('/trigger/benchmark-update', async (req, res, next) => {
 });
 
 // POST /api/jobs/trigger/plaid-sync - Manually trigger Plaid sync for every item
-router.post('/trigger/plaid-sync', async (req, res, next) => {
+router.post('/trigger/plaid-sync', requireAdmin, async (req, res, next) => {
   try {
     const isRunning = await JobLog.isRunning(PlaidSyncJob.JOB_NAME);
     if (isRunning) {
@@ -139,7 +147,7 @@ router.post('/trigger/plaid-sync', async (req, res, next) => {
 });
 
 // POST /api/jobs/trigger/eth-sync - Manually trigger ETH wallet sync for every wallet
-router.post('/trigger/eth-sync', async (req, res, next) => {
+router.post('/trigger/eth-sync', requireAdmin, async (req, res, next) => {
   try {
     const isRunning = await JobLog.isRunning(EthSyncJob.JOB_NAME);
     if (isRunning) {
@@ -161,7 +169,7 @@ router.post('/trigger/eth-sync', async (req, res, next) => {
 
 // POST /api/jobs/trigger/expense-sync - Manually trigger classification,
 // investment cash flow derivation, tax lot rebuild and expense matching
-router.post('/trigger/expense-sync', async (req, res, next) => {
+router.post('/trigger/expense-sync', requireAdmin, async (req, res, next) => {
   try {
     const isRunning = await JobLog.isRunning(ExpenseSyncJob.JOB_NAME);
     if (isRunning) {
@@ -171,11 +179,11 @@ router.post('/trigger/expense-sync', async (req, res, next) => {
       });
     }
 
-    // The derived-data backfills are account-keyed and user-agnostic; the
-    // expense matching itself stays scoped to the caller. The nightly job
-    // iterates every user instead.
-    await TransactionClassificationService.backfill();
-    const result = await ExpenseSyncService.run(req.user.id);
+    // Runs the same job the scheduler runs, rather than a subset: a manual run
+    // that skipped the cash-flow derivation and tax-lot rebuild left those
+    // stale, and writing no JobLog row meant the concurrency guard above could
+    // never see a manual run in progress.
+    const result = await ExpenseSyncJob.run();
     res.json({
       message: 'Expense sync job completed',
       result
@@ -186,7 +194,7 @@ router.post('/trigger/expense-sync', async (req, res, next) => {
 });
 
 // POST /api/jobs/trigger/snapshot - Manually trigger snapshot creation
-router.post('/trigger/snapshot', async (req, res, next) => {
+router.post('/trigger/snapshot', requireAdmin, async (req, res, next) => {
   try {
     // Check if already running
     const isRunning = await JobLog.isRunning(SnapshotJob.JOB_NAME);
