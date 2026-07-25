@@ -227,7 +227,7 @@ const TRIAGE_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border
 // one at a time, so leaving other rows clickable produced silent no-ops in the
 // exact rapid-triage workflow this feature is built around. active spins only
 // the row actually being worked on.
-function CounterpartyRow({ counterparty, suggestions, busy, active, onTriage, onTrackAsWallet, onIgnoreToken }) {
+function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackAsWallet, onIgnoreToken }) {
   const [panel, setPanel] = useState(null); // 'exchange' | 'mine' | null
   const [name, setName] = useState('');
   const short = shortEthAddress(counterparty.address);
@@ -274,29 +274,14 @@ function CounterpartyRow({ counterparty, suggestions, busy, active, onTriage, on
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {/* "Label as", not the bare name: a chip reading just BITTREX on
-              every row looks like an applied label, and the queue appeared
-              bulk-labeled the moment the user named their first exchange. */}
-          {!panel && suggestions.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              disabled={busy}
-              aria-label={`Label as ${suggestion} — ${short}`}
-              onClick={() => onTriage(counterparty.address, 'exchange', suggestion)}
-              className="inline-flex h-7 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-2 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
-            >
-              <Tag size={10} /> Label as {suggestion}
-            </button>
-          ))}
           <button
             type="button"
             disabled={busy}
-            aria-label={`${suggestions.length ? 'Other exchange' : "It's an exchange"} — ${short}`}
+            aria-label={`It's an exchange — ${short}`}
             onClick={() => openPanel('exchange')}
             className={`${TRIAGE_ACTION_CLASS} hover:border-teal-500/30 hover:text-teal-400`}
           >
-            <Tag size={10} /> {suggestions.length ? 'Other exchange' : "It's an exchange"}
+            <Tag size={10} /> It&apos;s an exchange
           </button>
           <button
             type="button"
@@ -544,17 +529,6 @@ const Settings = ({ user }) => {
     () => ethWallets.filter((wallet) => wallet.error_code).length + (counterpartyData?.summary?.count || 0),
     [ethWallets, counterpartyData]
   );
-
-  // Chips for one-tap "same exchange as last time". User rows only: the
-  // builtins number in the dozens and would drown the list.
-  const exchangeNameSuggestions = useMemo(() => {
-    const names = [];
-    for (const label of addressLabels) {
-      if (label.source !== 'user' || (label.kind && label.kind !== 'exchange')) continue;
-      if (!names.includes(label.name)) names.push(label.name);
-    }
-    return names.slice(0, 3);
-  }, [addressLabels]);
 
   // Typeahead keeps every exchange name, builtins included.
   const exchangeNameOptions = useMemo(
@@ -1684,7 +1658,6 @@ const Settings = ({ user }) => {
                   <CounterpartyRow
                     key={counterparty.address}
                     counterparty={counterparty}
-                    suggestions={exchangeNameSuggestions}
                     busy={Boolean(triagingAddress)}
                     active={triagingAddress === counterparty.address}
                     onTriage={handleTriageCounterparty}
@@ -1717,7 +1690,6 @@ const Settings = ({ user }) => {
                       <CounterpartyRow
                         key={counterparty.address}
                         counterparty={counterparty}
-                        suggestions={exchangeNameSuggestions}
                         busy={Boolean(triagingAddress)}
                         active={triagingAddress === counterparty.address}
                         onTriage={handleTriageCounterparty}

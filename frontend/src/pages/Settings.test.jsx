@@ -217,24 +217,6 @@ describe('Settings display names', () => {
       await waitFor(() => expect(apiMocks.eth.getUnreviewedCounterparties).toHaveBeenCalledTimes(2));
     });
 
-    it('offers a one-click chip for an exchange the user has already named', async () => {
-      apiMocks.eth.getAddressLabels.mockResolvedValue({
-        labels: [
-          { address: '0x2222222222222222222222222222222222222222', name: 'Coinbase', source: 'user', kind: 'exchange' },
-          // Builtins are far too numerous to surface as chips.
-          { address: '0x3333333333333333333333333333333333333333', name: 'Kraken', source: 'builtin', kind: 'exchange' },
-        ],
-      });
-      apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
-      await openEthTab();
-
-      expect(screen.queryByRole('button', { name: /label as Kraken — 0xbbbb/i })).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: /label as Coinbase — 0xbbbb/i }));
-      await waitFor(() => {
-        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(MATERIAL.address, 'Coinbase', { kind: 'exchange' });
-      });
-    });
-
     it('requires a second click to act on "It\'s mine", then splits track from label', async () => {
       apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
       apiMocks.eth.addWallet.mockResolvedValue({});
