@@ -274,16 +274,19 @@ function CounterpartyRow({ counterparty, suggestions, busy, active, onTriage, on
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* "Label as", not the bare name: a chip reading just BITTREX on
+              every row looks like an applied label, and the queue appeared
+              bulk-labeled the moment the user named their first exchange. */}
           {!panel && suggestions.map((suggestion) => (
             <button
               key={suggestion}
               type="button"
               disabled={busy}
-              aria-label={`${suggestion} — ${short}`}
+              aria-label={`Label as ${suggestion} — ${short}`}
               onClick={() => onTriage(counterparty.address, 'exchange', suggestion)}
               className="inline-flex h-7 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-2 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
             >
-              <Tag size={10} /> {suggestion}
+              <Tag size={10} /> Label as {suggestion}
             </button>
           ))}
           <button

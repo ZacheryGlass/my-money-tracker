@@ -228,8 +228,8 @@ describe('Settings display names', () => {
       apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
       await openEthTab();
 
-      expect(screen.queryByRole('button', { name: /^Kraken — 0xbbbb/i })).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: /^Coinbase — 0xbbbb/i }));
+      expect(screen.queryByRole('button', { name: /label as Kraken — 0xbbbb/i })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /label as Coinbase — 0xbbbb/i }));
       await waitFor(() => {
         expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(MATERIAL.address, 'Coinbase', { kind: 'exchange' });
       });
