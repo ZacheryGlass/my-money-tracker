@@ -1,6 +1,6 @@
 'use strict';
 
-const plaidClient = require('../config/plaid');
+const { getPlaidClientForUser } = require('../config/plaid');
 const { Products, CountryCode } = require('plaid');
 const pool = require('../config/database');
 const PlaidItem = require('../models/PlaidItem');
@@ -110,19 +110,9 @@ function mapLiabilityToDebtTerms(liability, kind) {
   };
 }
 
-const ensurePlaidConfigured = () => {
-  if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SECRET) {
-    const error = new Error(
-      'Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to backend/.env, then restart the backend.'
-    );
-    error.code = 'PLAID_NOT_CONFIGURED';
-    throw error;
-  }
-};
-
 class PlaidService {
   static async createLinkToken(userId) {
-    ensurePlaidConfigured();
+    const plaidClient = await getPlaidClientForUser(userId);
     const request = {
       user: { client_user_id: String(userId) },
       client_name: 'My Money Tracker',
@@ -136,9 +126,9 @@ class PlaidService {
   }
 
   static async createUpdateLinkToken(userId, plaidItemId) {
-    ensurePlaidConfigured();
+    const plaidClient = await getPlaidClientForUser(userId);
     const item = await PlaidItem.findById(plaidItemId);
-    if (!item) throw new Error(`PlaidItem ${plaidItemId} not found`);
+    if (!item || item.user_id !== userId) throw new Error(`PlaidItem ${plaidItemId} not found`);
     const request = {
       user: { client_user_id: String(userId) },
       client_name: 'My Money Tracker',
@@ -194,7 +184,8 @@ class PlaidService {
     return products;
   }
 
-  static async exchangePublicToken(publicToken) {
+  static async exchangePublicToken(publicToken, userId) {
+    const plaidClient = await getPlaidClientForUser(userId);
     const exchangeResponse = await plaidClient.itemPublicTokenExchange({
       public_token: publicToken,
     });
@@ -216,7 +207,7 @@ class PlaidService {
       logger.warn({ err }, 'Failed to fetch institution info');
     }
 
-    const plaidItem = await PlaidItem.create(item_id, access_token, institutionId, institutionName);
+    const plaidItem = await PlaidItem.create(userId, item_id, access_token, institutionId, institutionName);
     return plaidItem;
   }
 
@@ -226,6 +217,9 @@ class PlaidService {
 
     const { access_token, institution_name } = item;
     const prefix = institution_name || 'Linked';
+    // Credentials belong to the item's owner, not the caller: the nightly job
+    // has no request context.
+    const plaidClient = await getPlaidClientForUser(item.user_id);
 
     let accountsResponse;
     try {
@@ -248,7 +242,7 @@ class PlaidService {
 
     for (const pa of plaidAccounts) {
       const accountName = `${prefix} - ${pa.official_name || pa.name}`;
-      const dbAccount = await this._upsertAccount(accountName, plaidItemId, pa);
+      const dbAccount = await this._upsertAccount(accountName, plaidItemId, pa, item.user_id);
       syncedAccountIds.push(dbAccount.id);
       results.accounts++;
     }
@@ -335,7 +329,7 @@ class PlaidService {
     }
 
     if (plaidAccounts.some(pa => pa.type === 'credit' || pa.type === 'loan')) {
-      results.liabilities = await this._syncLiabilities(plaidItemId, access_token);
+      results.liabilities = await this._syncLiabilities(plaidClient, plaidItemId, access_token);
       // Hoisted to the top level because that is where the Settings page reads
       // it to offer the re-link button; nested, the item would look healthy
       // while debt_terms stayed silently empty.
@@ -343,7 +337,7 @@ class PlaidService {
     }
 
     try {
-      const txnResult = await this._syncTransactions(plaidItemId, access_token);
+      const txnResult = await this._syncTransactions(plaidClient, plaidItemId, access_token);
       results.transactions = txnResult;
     } catch (err) {
       const errorCode = err.response?.data?.error_code;
@@ -356,7 +350,7 @@ class PlaidService {
 
     if (investmentAccountIds.length > 0) {
       try {
-        const invTxnResult = await this._syncInvestmentTransactions(plaidItemId, access_token);
+        const invTxnResult = await this._syncInvestmentTransactions(plaidClient, plaidItemId, access_token);
         results.investmentTransactions = invTxnResult;
       } catch (err) {
         const errorCode = err.response?.data?.error_code;
@@ -384,6 +378,12 @@ class PlaidService {
         summary.succeeded++;
         summary.results.push({ itemId: item.id, institution: item.institution_name, ...result });
       } catch (err) {
+        if (err.code === 'PLAID_NOT_CONFIGURED') {
+          summary.skipped = (summary.skipped || 0) + 1;
+          summary.results.push({ itemId: item.id, institution: item.institution_name, skipped: 'not_configured' });
+          logger.warn({ itemId: item.id, userId: item.user_id }, 'Skipping Plaid item: owner has no Plaid credentials');
+          continue;
+        }
         summary.failed++;
         summary.results.push({ itemId: item.id, institution: item.institution_name, error: err.message });
         logger.error({ itemId: item.id, err }, 'Failed to sync Plaid item');
@@ -398,6 +398,7 @@ class PlaidService {
     if (!item) throw new Error(`PlaidItem ${plaidItemId} not found`);
 
     try {
+      const plaidClient = await getPlaidClientForUser(item.user_id);
       await plaidClient.itemRemove({ access_token: item.access_token });
     } catch (err) {
       logger.warn({ plaidItemId, err }, 'Failed to revoke access token at Plaid');
@@ -419,7 +420,7 @@ class PlaidService {
     return TYPE_MAP[accountType] || 'other';
   }
 
-  static async _upsertAccount(name, plaidItemId, pa) {
+  static async _upsertAccount(name, plaidItemId, pa, userId) {
     const plaidAccountId = pa.account_id;
     const dbType = this._mapPlaidType(pa.type);
     const balances = pa.balances || {};
@@ -454,8 +455,8 @@ class PlaidService {
     }
 
     const reclaimable = await pool.query(
-      'SELECT id FROM accounts WHERE name = $1 AND plaid_account_id IS NULL',
-      [name]
+      'SELECT id FROM accounts WHERE name = $1 AND plaid_account_id IS NULL AND user_id = $2',
+      [name, userId]
     );
     if (reclaimable.rows.length > 0) {
       const result = await pool.query(
@@ -467,16 +468,16 @@ class PlaidService {
     }
 
     const nameConflict = await pool.query(
-      'SELECT id FROM accounts WHERE name = $1',
-      [name]
+      'SELECT id FROM accounts WHERE name = $1 AND user_id = $2',
+      [name, userId]
     );
     const finalName = nameConflict.rows.length > 0 ? `${name} (Plaid)` : name;
 
     const result = await pool.query(
       `INSERT INTO accounts (subtype, mask, balance_available, balance_current, balance_limit,
-       tax_treatment, name, type, plaid_item_id, plaid_account_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [...detail, finalName, dbType, plaidItemId, plaidAccountId]
+       tax_treatment, name, type, plaid_item_id, plaid_account_id, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [...detail, finalName, dbType, plaidItemId, plaidAccountId, userId]
     );
     return result.rows[0];
   }
@@ -549,7 +550,7 @@ class PlaidService {
   // Liabilities are opt-in per institution and unavailable for many loan types
   // (M1's margin loan returns nothing at all). A miss here is normal, so the
   // whole step is isolated and never fails the sync.
-  static async _syncLiabilities(plaidItemId, accessToken) {
+  static async _syncLiabilities(plaidClient, plaidItemId, accessToken) {
     let updated = 0;
     try {
       const response = await plaidClient.liabilitiesGet({ access_token: accessToken });
@@ -621,7 +622,7 @@ class PlaidService {
     );
   }
 
-  static async _syncTransactions(plaidItemId, accessToken) {
+  static async _syncTransactions(plaidClient, plaidItemId, accessToken) {
     const cursorResult = await pool.query(
       'SELECT transactions_cursor FROM plaid_items WHERE id = $1',
       [plaidItemId]
@@ -684,7 +685,7 @@ class PlaidService {
     return { added, modified, removed };
   }
 
-  static async _syncInvestmentTransactions(plaidItemId, accessToken) {
+  static async _syncInvestmentTransactions(plaidClient, plaidItemId, accessToken) {
     const endDate = new Date().toISOString().split('T')[0];
     const startDate = '2000-01-01';
     let added = 0;

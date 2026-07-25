@@ -1,18 +1,55 @@
 'use strict';
 
+const crypto = require('crypto');
 const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
+const SecretsService = require('../services/SecretsService');
 
-const configuration = new Configuration({
-  basePath: PlaidEnvironments[process.env.PLAID_ENV || 'sandbox'],
-  baseOptions: {
-    headers: {
-      'PLAID-CLIENT-ID': process.env.PLAID_CLIENT_ID,
-      'PLAID-SECRET': process.env.PLAID_SECRET,
-      'Plaid-Version': '2020-09-14',
+// Plaid credentials are per-user (Settings -> API Keys, env fallback), so the
+// old require-time singleton became a small factory. Clients are cached per
+// credential pair; PLAID_ENV stays a process-wide setting.
+
+const clientCache = new Map();
+
+function buildPlaidClient(clientId, secret) {
+  const cacheKey = `${clientId}:${crypto.createHash('sha256').update(secret).digest('hex').slice(0, 16)}`;
+  if (clientCache.has(cacheKey)) return clientCache.get(cacheKey);
+
+  const configuration = new Configuration({
+    basePath: PlaidEnvironments[process.env.PLAID_ENV || 'sandbox'],
+    baseOptions: {
+      headers: {
+        'PLAID-CLIENT-ID': clientId,
+        'PLAID-SECRET': secret,
+        'Plaid-Version': '2020-09-14',
+      },
     },
-  },
-});
+  });
+  const client = new PlaidApi(configuration);
+  clientCache.set(cacheKey, client);
+  return client;
+}
 
-const plaidClient = new PlaidApi(configuration);
+async function getPlaidCredentialsForUser(userId) {
+  const [clientId, secret] = await Promise.all([
+    SecretsService.getUserKey(userId, 'plaid_client_id'),
+    SecretsService.getUserKey(userId, 'plaid_secret'),
+  ]);
+  return { clientId, secret };
+}
 
-module.exports = plaidClient;
+async function isPlaidConfiguredFor(userId) {
+  const { clientId, secret } = await getPlaidCredentialsForUser(userId);
+  return Boolean(clientId && secret);
+}
+
+async function getPlaidClientForUser(userId) {
+  const { clientId, secret } = await getPlaidCredentialsForUser(userId);
+  if (!clientId || !secret) {
+    const error = new Error('Plaid is not configured. Add your Plaid client ID and secret under Settings -> API Keys.');
+    error.code = 'PLAID_NOT_CONFIGURED';
+    throw error;
+  }
+  return buildPlaidClient(clientId, secret);
+}
+
+module.exports = { getPlaidClientForUser, isPlaidConfiguredFor, buildPlaidClient };

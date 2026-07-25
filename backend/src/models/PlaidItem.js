@@ -3,19 +3,28 @@
 const pool = require('../config/database');
 
 class PlaidItem {
-  static async create(itemId, accessToken, institutionId, institutionName) {
+  static async create(userId, itemId, accessToken, institutionId, institutionName) {
     const result = await pool.query(
-      `INSERT INTO plaid_items (item_id, access_token, institution_id, institution_name)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO plaid_items (user_id, item_id, access_token, institution_id, institution_name)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [itemId, accessToken, institutionId, institutionName]
+      [userId, itemId, accessToken, institutionId, institutionName]
     );
     return result.rows[0];
   }
 
+  // Unscoped: the nightly sync job iterates every user's items.
   static async findAll() {
     const result = await pool.query(
       'SELECT * FROM plaid_items ORDER BY created_at DESC'
+    );
+    return result.rows;
+  }
+
+  static async findAllByUser(userId) {
+    const result = await pool.query(
+      'SELECT * FROM plaid_items WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
     );
     return result.rows;
   }
@@ -24,6 +33,14 @@ class PlaidItem {
     const result = await pool.query(
       'SELECT * FROM plaid_items WHERE id = $1',
       [id]
+    );
+    return result.rows[0];
+  }
+
+  static async findByIdForUser(id, userId) {
+    const result = await pool.query(
+      'SELECT * FROM plaid_items WHERE id = $1 AND user_id = $2',
+      [id, userId]
     );
     return result.rows[0];
   }

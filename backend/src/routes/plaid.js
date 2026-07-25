@@ -30,13 +30,16 @@ router.post('/exchange-token', async (req, res) => {
       return res.status(400).json({ error: 'public_token is required' });
     }
 
-    const item = await PlaidService.exchangePublicToken(public_token);
+    const item = await PlaidService.exchangePublicToken(public_token, req.user.id);
     const syncResult = await PlaidService.syncItem(item.id);
     const accounts = await PlaidItem.getAccountsForItem(item.id);
 
     res.status(201).json({ item, accounts, sync: syncResult });
   } catch (error) {
     logger.error({ err: error }, 'Exchange token error');
+    if (error.code === 'PLAID_NOT_CONFIGURED') {
+      return res.status(503).json({ error: error.message });
+    }
     if (error.response?.data?.error_code) {
       return res.status(400).json({
         error: error.response.data.error_message || 'Plaid token exchange failed',
@@ -49,7 +52,7 @@ router.post('/exchange-token', async (req, res) => {
 
 router.get('/items', async (req, res) => {
   try {
-    const items = await PlaidItem.findAll();
+    const items = await PlaidItem.findAllByUser(req.user.id);
     const itemsWithAccounts = await Promise.all(
       items.map(async (item) => {
         const accounts = await PlaidItem.getAccountsForItem(item.id);
@@ -66,7 +69,7 @@ router.get('/items', async (req, res) => {
 router.post('/items/:id/sync', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const item = await PlaidItem.findById(id);
+    const item = await PlaidItem.findByIdForUser(id, req.user.id);
     if (!item) {
       return res.status(404).json({ error: 'Plaid item not found' });
     }
@@ -84,7 +87,7 @@ router.post('/items/:id/sync', async (req, res) => {
 router.post('/items/:id/update-link-token', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const item = await PlaidItem.findById(id);
+    const item = await PlaidItem.findByIdForUser(id, req.user.id);
     if (!item) {
       return res.status(404).json({ error: 'Plaid item not found' });
     }
@@ -102,7 +105,7 @@ router.post('/items/:id/update-link-token', async (req, res) => {
 router.delete('/items/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const item = await PlaidItem.findById(id);
+    const item = await PlaidItem.findByIdForUser(id, req.user.id);
     if (!item) {
       return res.status(404).json({ error: 'Plaid item not found' });
     }
