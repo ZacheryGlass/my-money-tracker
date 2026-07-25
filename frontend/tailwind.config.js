@@ -26,6 +26,14 @@ export default {
           DEFAULT: 'var(--loss)',
           bg: 'var(--loss-bg)',
         },
+        crypto: {
+          DEFAULT: 'var(--crypto)',
+          hover: 'var(--crypto-hover)',
+          bg: 'var(--crypto-bg)',
+          'bg-hover': 'var(--crypto-bg-hover)',
+          'bg-strong': 'var(--crypto-bg-strong)',
+          border: 'var(--crypto-border)',
+        },
         border: {
           DEFAULT: 'var(--border)',
           hover: 'var(--border-hover)',

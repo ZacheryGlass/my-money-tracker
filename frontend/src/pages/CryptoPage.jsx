@@ -395,7 +395,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
           </p>
           <button
             onClick={() => onNavigate('settings', { tab: 'ethereum' })}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 hover:text-purple-200 transition-all"
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-crypto bg-crypto-bg border border-crypto-border hover:bg-crypto-bg-hover hover:text-crypto-hover transition-all"
           >
             <Wallet size={14} />
             Connect Crypto

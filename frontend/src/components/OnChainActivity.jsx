@@ -11,7 +11,7 @@ export const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}â€
 
 export const EthWalletBadge = () => (
   <span
-    className="inline-flex h-5 w-5 items-center justify-center bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0"
+    className="inline-flex h-5 w-5 items-center justify-center bg-crypto-bg text-crypto border border-crypto-border shrink-0"
     title="Ethereum wallet account"
     aria-label="Ethereum wallet account"
   >
@@ -35,7 +35,7 @@ const TRANSFER_CHIP_STYLES = {
   External: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
   Exchange: 'bg-teal-500/10 text-teal-400 border-teal-500/20',
   Gas: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  Token: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  Token: 'bg-crypto-bg text-crypto border-crypto-border',
 };
 
 const transferChipLabel = (transfer) => {
@@ -269,7 +269,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       // span ellipsizes; an inline-flex sizes to its content and the label just
       // gets chopped mid-word against the next column.
       cell: ({ row }) => (row.original.walletName ? (
-        <span className="flex items-center gap-1 text-purple-400" title={row.original.walletName}>
+        <span className="flex items-center gap-1 text-crypto" title={row.original.walletName}>
           <Wallet size={10} className="shrink-0" />
           <span className="truncate">{row.original.walletName}</span>
         </span>
@@ -448,7 +448,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
                   </div>
                 </div>
                 {transfer.walletName && (
-                  <div className="mt-2 truncate text-[10px] text-purple-400">{transfer.walletName}</div>
+                  <div className="mt-2 truncate text-[10px] text-crypto">{transfer.walletName}</div>
                 )}
               </div>
             );

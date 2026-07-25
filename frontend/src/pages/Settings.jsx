@@ -1107,7 +1107,7 @@ const Settings = ({ user }) => {
           <PlaidLinkButton onSuccess={handlePlaidSuccess} onError={setError} disabled={connecting} />
           <button
             onClick={openCryptoModal}
-            className="flex items-center justify-center gap-2 px-6 py-4 rounded text-sm font-bold text-purple-300 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 hover:text-purple-200 transition-all"
+            className="flex items-center justify-center gap-2 px-6 py-4 rounded text-sm font-bold text-crypto bg-crypto-bg border border-crypto-border hover:bg-crypto-bg-hover hover:text-crypto-hover transition-all"
           >
             <Wallet size={18} />
             Connect Crypto
@@ -1536,7 +1536,7 @@ const Settings = ({ user }) => {
             </p>
             <button
               onClick={openCryptoModal}
-              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 hover:text-purple-200 transition-all"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-crypto bg-crypto-bg border border-crypto-border hover:bg-crypto-bg-hover hover:text-crypto-hover transition-all"
             >
               <Wallet size={14} />
               Connect Crypto
@@ -2121,7 +2121,7 @@ const Settings = ({ user }) => {
                   key={account.id}
                   className={`p-4 md:p-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)_minmax(150px,0.45fr)_auto] gap-4 items-center ${account.is_hidden ? 'bg-surface-2' : ''}`}
                 >
-                  <div className="flex min-w-0 items-start justify-between gap-3 lg:block">
+                  <div className="flex min-w-0 items-start justify-between gap-3 lg:col-start-1 lg:row-start-1 lg:block">
                     <div className="min-w-0">
                       <div className="mb-1 flex min-w-0 items-center gap-2">
                         <span className="min-w-0 truncate text-sm font-bold text-primary">{getAccountDisplayName(account)}</span>
@@ -2138,7 +2138,7 @@ const Settings = ({ user }) => {
                           </span>
                         )}
                         {account.eth_wallet_id && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-crypto-bg text-crypto border border-crypto-border">
                             <Wallet size={10} />
                             Wallet
                           </span>
@@ -2159,15 +2159,20 @@ const Settings = ({ user }) => {
                     </button>
                   </div>
 
-                  <input
-                    type="text"
-                    value={draft}
-                    onChange={(e) => handleDisplayNameChange(account.id, e.target.value)}
-                    maxLength={100}
-                    placeholder={account.name}
-                    className={`${mobileEditingAccountId === account.id ? 'block' : 'hidden'} h-11 w-full rounded border border-border bg-surface-2 px-3 text-sm text-primary outline-none placeholder:text-tertiary focus:ring-1 focus:ring-accent lg:block`}
-                    disabled={isSaving}
-                  />
+                  {/* The input keeps its own wrapper so nodes injected next to it by
+                      password-manager extensions land inside the cell instead of
+                      becoming a grid item that shifts every column. */}
+                  <div className={`${mobileEditingAccountId === account.id ? 'block' : 'hidden'} min-w-0 lg:col-start-2 lg:row-start-1 lg:block`}>
+                    <input
+                      type="text"
+                      value={draft}
+                      onChange={(e) => handleDisplayNameChange(account.id, e.target.value)}
+                      maxLength={100}
+                      placeholder={account.name}
+                      className="h-11 w-full rounded border border-border bg-surface-2 px-3 text-sm text-primary outline-none placeholder:text-tertiary focus:ring-1 focus:ring-accent"
+                      disabled={isSaving}
+                    />
+                  </div>
 
                   <button
                     type="button"
@@ -2176,7 +2181,7 @@ const Settings = ({ user }) => {
                     aria-label={`Hide ${getAccountDisplayName(account)} from UI`}
                     onClick={() => handleVisibilityChange(account, !account.is_hidden)}
                     disabled={isSavingVisibility}
-                    className={`${mobileEditingAccountId === account.id ? 'flex' : 'hidden'} h-11 items-center justify-between gap-3 rounded border px-3 text-left transition-all disabled:opacity-50 lg:flex ${
+                    className={`${mobileEditingAccountId === account.id ? 'flex' : 'hidden'} h-11 items-center justify-between gap-3 rounded border px-3 text-left transition-all disabled:opacity-50 lg:col-start-3 lg:row-start-1 lg:flex ${
                       account.is_hidden
                         ? 'border-loss/30 bg-loss/10 text-loss'
                         : 'border-border bg-surface-2 text-secondary hover:text-primary'
@@ -2197,7 +2202,7 @@ const Settings = ({ user }) => {
                     </span>
                   </button>
 
-                  <div className={`${mobileEditingAccountId === account.id ? 'flex' : 'hidden'} items-center gap-2 lg:flex lg:justify-end`}>
+                  <div className={`${mobileEditingAccountId === account.id ? 'flex' : 'hidden'} items-center gap-2 lg:col-start-4 lg:row-start-1 lg:flex lg:justify-end`}>
                     {(isDirty || isSaving) ? (
                       <button
                         onClick={() => handleSaveDisplayName(account)}
@@ -2295,7 +2300,7 @@ const Settings = ({ user }) => {
             <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} role="dialog" aria-modal="true" aria-labelledby="crypto-modal-title" className="relative max-h-[100dvh] w-full max-w-lg overflow-y-auto border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
               <form onSubmit={handleAddWallet}>
                 <div className="p-5 pb-3 text-center sm:p-8 sm:pb-4">
-                  <div className="w-16 h-16 bg-purple-500/10 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <div className="w-16 h-16 bg-crypto-bg text-crypto rounded-full flex items-center justify-center mx-auto mb-6">
                     <Wallet size={28} />
                   </div>
                   <h2 id="crypto-modal-title" className="text-2xl font-bold text-primary mb-2 tracking-tight">Connect Crypto Wallet</h2>
@@ -2355,7 +2360,7 @@ const Settings = ({ user }) => {
                   <button
                     type="submit"
                     disabled={addingWallet}
-                    className="flex-1 inline-flex items-center justify-center gap-2 py-4 bg-purple-500/20 text-purple-200 border border-purple-500/40 rounded text-xs font-bold uppercase tracking-wider hover:bg-purple-500/30 transition-all disabled:opacity-40"
+                    className="flex-1 inline-flex items-center justify-center gap-2 py-4 bg-crypto-bg-hover text-crypto border border-crypto-border rounded text-xs font-bold uppercase tracking-wider hover:bg-crypto-bg-strong hover:text-crypto-hover transition-all disabled:opacity-40"
                   >
                     {addingWallet ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
                     Track Wallet

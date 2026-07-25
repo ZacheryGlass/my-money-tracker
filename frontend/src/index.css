@@ -35,6 +35,14 @@
     --loss: #f48771;
     --loss-bg: rgba(244, 135, 113, 0.1);
 
+    /* Semantic: crypto/wallet purple */
+    --crypto: #C9A0FF;
+    --crypto-hover: #DEC7FF;
+    --crypto-bg: rgba(168, 85, 247, 0.10);
+    --crypto-bg-hover: rgba(168, 85, 247, 0.20);
+    --crypto-bg-strong: rgba(168, 85, 247, 0.30);
+    --crypto-border: rgba(168, 85, 247, 0.30);
+
     /* Chart palette */
     --chart-1: #3994BC;
     --chart-2: #72C892;
@@ -96,6 +104,14 @@
     --gain-bg: rgba(30, 135, 75, 0.12);
     --loss: #C4361B;
     --loss-bg: rgba(196, 54, 27, 0.10);
+
+    /* Semantic: crypto/wallet purple - deepened for contrast on white */
+    --crypto: #6D28D9;
+    --crypto-hover: #57209E;
+    --crypto-bg: rgba(109, 40, 217, 0.10);
+    --crypto-bg-hover: rgba(109, 40, 217, 0.18);
+    --crypto-bg-strong: rgba(109, 40, 217, 0.26);
+    --crypto-border: rgba(109, 40, 217, 0.30);
 
     /* Chart palette - deepened for contrast on white */
     --chart-1: #1F6E92;
