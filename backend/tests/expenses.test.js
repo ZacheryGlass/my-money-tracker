@@ -76,8 +76,8 @@ test('GET /api/expenses returns rows with computed staleness and drop flags', as
 
 test('GET /api/expenses/ignored lists the expenses scope by default', async () => {
   queryHandler = async (sql, params) => {
-    assert.match(sql, /FROM ignored_merchants WHERE scope = \$1/);
-    assert.deepEqual(params, ['expenses']);
+    assert.match(sql, /FROM ignored_merchants WHERE user_id = \$1 AND scope = \$2/);
+    assert.deepEqual(params, [1, 'expenses']);
     return { rows: [{ merchant_key: 'Claude.ai', name: 'Claude.ai', last_cost: '100.00', created_at: '2026-07-20' }] };
   };
 
@@ -90,7 +90,7 @@ test('GET /api/expenses/ignored lists the expenses scope by default', async () =
 
 test('GET /api/expenses/ignored serves the merchants scope separately', async () => {
   queryHandler = async (sql, params) => {
-    assert.deepEqual(params, ['merchants']);
+    assert.deepEqual(params, [1, 'merchants']);
     return { rows: [{ merchant_key: 'Costco', name: 'Costco', last_cost: null, created_at: '2026-07-20' }] };
   };
 
@@ -175,7 +175,7 @@ test('DELETE /api/expenses/:id ignores the merchant with a snapshot', async () =
     }
     if (/INSERT INTO ignored_merchants/.test(sql)) {
       // Expense ignores land in the expenses scope only.
-      assert.deepEqual(params, ['Spotify', 'expenses', 'Spotify', '18.99']);
+      assert.deepEqual(params, [1, 'Spotify', 'expenses', 'Spotify', '18.99']);
       return { rows: [] };
     }
     throw new Error(`Unexpected query: ${sql}`);
@@ -204,7 +204,7 @@ test('DELETE /api/expenses/ignored restores an expense ignore and re-runs sync',
   queryHandler = async (sql, params) => {
     queries.push({ sql, params });
     if (/DELETE FROM ignored_merchants/.test(sql)) {
-      assert.deepEqual(params, ['City/Water & Co', 'expenses']);
+      assert.deepEqual(params, [1, 'City/Water & Co', 'expenses']);
       return { rows: [] };
     }
     // The sync runs after restore; return empty sets so it completes cleanly.
@@ -226,7 +226,7 @@ test('DELETE /api/expenses/ignored merchants scope skips the expense sync', asyn
   queryHandler = async (sql, params) => {
     queries.push(sql);
     if (/DELETE FROM ignored_merchants/.test(sql)) {
-      assert.deepEqual(params, ['Costco', 'merchants']);
+      assert.deepEqual(params, [1, 'Costco', 'merchants']);
       return { rows: [] };
     }
     throw new Error(`Unexpected query: ${sql}`);
@@ -256,7 +256,7 @@ test('DELETE /api/expenses/:id rejects a non-numeric id', async () => {
 test('PATCH /api/expenses/:id/tag saves a trimmed tag', async () => {
   queryHandler = async (sql, params) => {
     assert.match(sql, /UPDATE recurring_expenses SET tag/);
-    assert.deepEqual(params, ['Sewer & Trash', 17]);
+    assert.deepEqual(params, ['Sewer & Trash', 17, 1]);
     return { rows: [expenseRow({ id: 17, name: 'S & T', tag: 'Sewer & Trash' })] };
   };
 
@@ -270,7 +270,7 @@ test('PATCH /api/expenses/:id/tag saves a trimmed tag', async () => {
 
 test('PATCH /api/expenses/:id/tag clears the tag with null or blank', async () => {
   queryHandler = async (sql, params) => {
-    assert.deepEqual(params, [null, 17]);
+    assert.deepEqual(params, [null, 17, 1]);
     return { rows: [expenseRow({ id: 17, name: 'S & T', tag: null })] };
   };
 
@@ -300,7 +300,7 @@ test('GET /api/analytics/detected-subscriptions no longer exists', async () => {
 test('GET /api/expenses/merchants aggregates spend excluding ignored merchants', async () => {
   queryHandler = async (sql, params) => {
     assert.match(sql, /GROUP BY COALESCE\(t\.merchant_name, t\.name\)/);
-    assert.match(sql, /NOT IN \(SELECT merchant_key FROM ignored_merchants WHERE scope = 'merchants'\)/);
+    assert.match(sql, /NOT IN \(SELECT merchant_key FROM ignored_merchants WHERE scope = 'merchants' AND user_id = \$3\)/);
     assert.match(sql, /t\.date >= CURRENT_DATE - \$1::int/);
     assert.equal(params[0], 60);
     return {
@@ -337,7 +337,7 @@ test('GET /api/expenses/merchants/transactions windows the merchant charges', as
   queryHandler = async (sql, params) => {
     assert.match(sql, /COALESCE\(t\.merchant_name, t\.name\) = \$1/);
     assert.match(sql, /\$3::int IS NULL OR t\.date >= CURRENT_DATE - \$3::int/);
-    assert.deepEqual(params, ['Trader Joe\'s', 100, 90]);
+    assert.deepEqual(params, ['Trader Joe\'s', 100, 90, 1]);
     return {
       rows: [
         { id: 9, date: '2026-07-15', amount: 64.1, name: 'Trader Joes', merchant_name: 'Trader Joe\'s', category: 'FOOD_AND_DRINK', account: 'Amex' },
@@ -364,7 +364,7 @@ test('POST /api/expenses/ignored ignores the merchant scope only, leaving tracke
   queryHandler = async (sql, params) => {
     calls.push(sql);
     if (/INSERT INTO ignored_merchants/.test(sql)) {
-      assert.deepEqual(params, ['Costco', 'merchants', 'Costco', null]);
+      assert.deepEqual(params, [1, 'Costco', 'merchants', 'Costco', null]);
       return { rows: [] };
     }
     throw new Error(`Unexpected query: ${sql}`);

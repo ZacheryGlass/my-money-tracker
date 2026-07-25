@@ -8,7 +8,7 @@ const { SPEND_ELIGIBILITY_SQL } = require('../utils/spendFilters');
 // merchants-scope ignores are excluded; the expenses-scope list is a separate
 // concern (see IgnoredMerchant).
 class MerchantSpend {
-  static async topForWindow(days, limit = 50) {
+  static async topForWindow(userId, days, limit = 50) {
     const result = await pool.query(`
       SELECT COALESCE(t.merchant_name, t.name) AS merchant_key,
              SUM(t.amount)::float8 AS total,
@@ -19,12 +19,13 @@ class MerchantSpend {
       FROM transactions t
       JOIN accounts a ON t.account_id = a.id
       WHERE t.date >= CURRENT_DATE - $1::int
+        AND a.user_id = $3
         AND ${SPEND_ELIGIBILITY_SQL}
-        AND COALESCE(t.merchant_name, t.name) NOT IN (SELECT merchant_key FROM ignored_merchants WHERE scope = 'merchants')
+        AND COALESCE(t.merchant_name, t.name) NOT IN (SELECT merchant_key FROM ignored_merchants WHERE scope = 'merchants' AND user_id = $3)
       GROUP BY COALESCE(t.merchant_name, t.name)
       ORDER BY total DESC, merchant_key ASC
       LIMIT $2
-    `, [days, limit]);
+    `, [days, limit, userId]);
     return result.rows;
   }
 }

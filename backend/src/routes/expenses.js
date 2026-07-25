@@ -14,7 +14,7 @@ router.use(requireUser);
 
 router.get('/', async (req, res) => {
   try {
-    const expenses = await RecurringExpense.findAll();
+    const expenses = await RecurringExpense.findAll(req.user.id);
     res.status(200).json({ expenses });
   } catch (error) {
     logger.error({ err: error }, 'Get expenses error');
@@ -30,7 +30,7 @@ router.get('/ignored', async (req, res) => {
     if (!IgnoredMerchant.isValidScope(scope)) {
       return res.status(400).json({ error: 'Invalid scope' });
     }
-    const ignored = await IgnoredMerchant.all(scope);
+    const ignored = await IgnoredMerchant.all(req.user.id, scope);
     res.status(200).json({ ignored });
   } catch (error) {
     logger.error({ err: error }, 'Get ignored merchants error');
@@ -54,11 +54,11 @@ router.delete('/ignored', async (req, res) => {
     if (!IgnoredMerchant.isValidScope(scope)) {
       return res.status(400).json({ error: 'Invalid scope' });
     }
-    await IgnoredMerchant.remove(merchantKey, scope);
+    await IgnoredMerchant.remove(req.user.id, merchantKey, scope);
     let recreated = false;
     if (scope === 'expenses') {
       try {
-        const result = await ExpenseSyncService.run();
+        const result = await ExpenseSyncService.run(req.user.id);
         recreated = [...result.created, ...result.refreshed].some((r) => r.merchantKey === merchantKey || r.name === merchantKey);
       } catch (syncError) {
         // The un-ignore already persisted; the nightly sync will rebuild the row.
@@ -86,7 +86,7 @@ router.get('/merchants', async (req, res) => {
     if (!MERCHANT_WINDOWS.has(days)) {
       return res.status(400).json({ error: 'days must be 30, 60 or 90' });
     }
-    const merchants = await MerchantSpend.topForWindow(days);
+    const merchants = await MerchantSpend.topForWindow(req.user.id, days);
     res.status(200).json({ merchants, days });
   } catch (error) {
     logger.error({ err: error }, 'Get top merchants error');
@@ -107,7 +107,7 @@ router.get('/merchants/transactions', async (req, res) => {
     if (!MERCHANT_WINDOWS.has(days)) {
       return res.status(400).json({ error: 'days must be 30, 60 or 90' });
     }
-    const transactions = await RecurringExpense.chargesForMerchant(merchantKey, 100, days);
+    const transactions = await RecurringExpense.chargesForMerchant(req.user.id, merchantKey, 100, days);
     res.status(200).json({ transactions });
   } catch (error) {
     logger.error({ err: error }, 'Get merchant transactions error');
@@ -123,7 +123,7 @@ router.post('/ignored', async (req, res) => {
     if (typeof key !== 'string' || !key) {
       return res.status(400).json({ error: 'Missing merchant key' });
     }
-    await IgnoredMerchant.add(key, 'merchants', {
+    await IgnoredMerchant.add(req.user.id, key, 'merchants', {
       name: (typeof name === 'string' && name) || key,
     });
     res.status(200).json({ message: 'Merchant ignored', ignoredMerchant: key });
@@ -141,12 +141,12 @@ router.get('/:id/transactions', async (req, res) => {
     if (Number.isNaN(id)) {
       return res.status(400).json({ error: 'Invalid expense id' });
     }
-    const expense = await RecurringExpense.findById(id);
+    const expense = await RecurringExpense.findById(id, req.user.id);
     if (!expense) {
       return res.status(404).json({ error: 'Expense not found' });
     }
     const transactions = expense.merchant_key
-      ? await RecurringExpense.chargesForMerchant(expense.merchant_key)
+      ? await RecurringExpense.chargesForMerchant(req.user.id, expense.merchant_key)
       : [];
     res.status(200).json({ transactions });
   } catch (error) {
@@ -166,7 +166,7 @@ router.patch('/:id/tag', async (req, res) => {
       return res.status(400).json({ error: 'Tag must be a string or null' });
     }
     const trimmed = typeof tag === 'string' ? tag.trim().slice(0, 100) : null;
-    const expense = await RecurringExpense.setTag(id, trimmed || null);
+    const expense = await RecurringExpense.setTag(id, req.user.id, trimmed || null);
     if (!expense) {
       return res.status(404).json({ error: 'Expense not found' });
     }
@@ -185,13 +185,13 @@ router.delete('/:id', async (req, res) => {
     if (Number.isNaN(id)) {
       return res.status(400).json({ error: 'Invalid expense id' });
     }
-    const expense = await RecurringExpense.findById(id);
+    const expense = await RecurringExpense.findById(id, req.user.id);
     if (!expense) {
       return res.status(404).json({ error: 'Expense not found' });
     }
-    await RecurringExpense.delete(expense.id);
+    await RecurringExpense.delete(expense.id, req.user.id);
     if (expense.merchant_key) {
-      await IgnoredMerchant.add(expense.merchant_key, 'expenses', { name: expense.name, lastCost: expense.cost });
+      await IgnoredMerchant.add(req.user.id, expense.merchant_key, 'expenses', { name: expense.name, lastCost: expense.cost });
     }
     res.status(200).json({ message: 'Expense ignored', ignoredMerchant: expense.merchant_key || null });
   } catch (error) {

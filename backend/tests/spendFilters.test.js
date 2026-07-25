@@ -63,19 +63,19 @@ test('classification and the spend filter agree on the card-payment category', (
 // It cannot catch a fragment spliced somewhere inert -- the fake pool never
 // executes SQL, so only a live database can prove the rows are actually gone.
 test('Top Merchants applies the shared spend filter', async () => {
-  await MerchantSpend.topForWindow(90);
+  await MerchantSpend.topForWindow(1, 90);
   assert.equal(queries.length, 1);
   assert.ok(queries[0].text.includes(CARD_PAYMENT_CLAUSE));
 });
 
 test('tracked-expense charge list applies the shared spend filter', async () => {
-  await RecurringExpense.chargesForMerchant('Netflix');
+  await RecurringExpense.chargesForMerchant(1, 'Netflix');
   assert.equal(queries.length, 1);
   assert.ok(queries[0].text.includes(CARD_PAYMENT_CLAUSE));
 });
 
 test('expense sync applies the shared spend filter when gathering charges', async () => {
-  await ExpenseSyncService.run();
+  await ExpenseSyncService.run(1);
   // Matched on the FROM clause: run() issues several queries and two of them
   // mention merchant_key, so that substring would not identify this one.
   const chargeQueries = queries.filter((q) => q.text.includes('FROM transactions t'));

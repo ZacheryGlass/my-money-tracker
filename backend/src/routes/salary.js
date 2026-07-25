@@ -11,7 +11,7 @@ router.use(requireUser);
 
 router.get('/', async (req, res) => {
   try {
-    const records = await SalaryHistory.findAll();
+    const records = await SalaryHistory.findAll(req.user.id);
     res.status(200).json({ records });
   } catch (error) {
     logger.error({ err: error }, 'Get salary history error');
@@ -25,7 +25,7 @@ router.post('/', async (req, res) => {
     if (!effective_date || !title || salary_amount == null || total_comp == null) {
       return res.status(400).json({ error: 'Missing required fields: effective_date, title, salary_amount, total_comp' });
     }
-    const record = await SalaryHistory.create(req.body);
+    const record = await SalaryHistory.create(req.user.id, req.body);
     res.status(201).json({ record });
   } catch (error) {
     logger.error({ err: error }, 'Create salary record error');
@@ -35,7 +35,7 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const record = await SalaryHistory.update(parseInt(req.params.id), req.body);
+    const record = await SalaryHistory.update(parseInt(req.params.id), req.user.id, req.body);
     if (!record) {
       return res.status(404).json({ error: 'Salary record not found' });
     }
@@ -48,7 +48,7 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    const result = await SalaryHistory.delete(parseInt(req.params.id));
+    const result = await SalaryHistory.delete(parseInt(req.params.id), req.user.id);
     if (!result) {
       return res.status(404).json({ error: 'Salary record not found' });
     }

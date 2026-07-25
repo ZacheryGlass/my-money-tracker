@@ -10,29 +10,35 @@ class IgnoredMerchant {
     return SCOPES.has(scope);
   }
 
-  static async add(merchantKey, scope, { name = null, lastCost = null } = {}) {
+  static async add(userId, merchantKey, scope, { name = null, lastCost = null } = {}) {
     await pool.query(
-      `INSERT INTO ignored_merchants (merchant_key, scope, name, last_cost)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO ignored_merchants (user_id, merchant_key, scope, name, last_cost)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (merchant_key, scope) DO UPDATE SET name = EXCLUDED.name, last_cost = EXCLUDED.last_cost`,
-      [merchantKey, scope, name, lastCost]
+      [userId, merchantKey, scope, name, lastCost]
     );
   }
 
-  static async remove(merchantKey, scope) {
-    await pool.query('DELETE FROM ignored_merchants WHERE merchant_key = $1 AND scope = $2', [merchantKey, scope]);
+  static async remove(userId, merchantKey, scope) {
+    await pool.query(
+      'DELETE FROM ignored_merchants WHERE user_id = $1 AND merchant_key = $2 AND scope = $3',
+      [userId, merchantKey, scope]
+    );
   }
 
-  static async all(scope) {
+  static async all(userId, scope) {
     const result = await pool.query(
-      'SELECT merchant_key, name, last_cost, created_at FROM ignored_merchants WHERE scope = $1 ORDER BY created_at DESC',
-      [scope]
+      'SELECT merchant_key, name, last_cost, created_at FROM ignored_merchants WHERE user_id = $1 AND scope = $2 ORDER BY created_at DESC',
+      [userId, scope]
     );
     return result.rows;
   }
 
-  static async allKeys(scope) {
-    const result = await pool.query('SELECT merchant_key FROM ignored_merchants WHERE scope = $1', [scope]);
+  static async allKeys(userId, scope) {
+    const result = await pool.query(
+      'SELECT merchant_key FROM ignored_merchants WHERE user_id = $1 AND scope = $2',
+      [userId, scope]
+    );
     return new Set(result.rows.map((row) => row.merchant_key));
   }
 }

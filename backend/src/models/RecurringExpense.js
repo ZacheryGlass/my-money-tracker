@@ -2,7 +2,7 @@ const pool = require('../config/database');
 const { SPEND_ELIGIBILITY_SQL } = require('../utils/spendFilters');
 
 class RecurringExpense {
-  static async findAll() {
+  static async findAll(userId) {
     // is_stale: no charge seen within 1.5x the merchant's median charge
     // interval (default 30 days when cadence is unknown).
     // is_dropped: no charge within 2.0x that interval -- the page hides these
@@ -14,12 +14,15 @@ class RecurringExpense {
         AND (CURRENT_DATE - last_charge_date) > CEIL(1.5 * COALESCE(charge_interval_days, 30)))::boolean AS is_stale,
       (last_charge_date IS NOT NULL
         AND (CURRENT_DATE - last_charge_date) > CEIL(2.0 * COALESCE(charge_interval_days, 30)))::boolean AS is_dropped
-      FROM recurring_expenses ORDER BY cost DESC`);
+      FROM recurring_expenses WHERE user_id = $1 ORDER BY cost DESC`, [userId]);
     return result.rows;
   }
 
-  static async findById(id) {
-    const result = await pool.query('SELECT * FROM recurring_expenses WHERE id = $1', [id]);
+  static async findById(id, userId) {
+    const result = await pool.query(
+      'SELECT * FROM recurring_expenses WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
     return result.rows[0];
   }
 
@@ -29,7 +32,7 @@ class RecurringExpense {
   // expense, so the list reconciles with the cost shown -- newest first.
   // `days` (optional) restricts to a trailing window, for the Top Merchants
   // page where the expansion should match the selected period.
-  static async chargesForMerchant(merchantKey, limit = 36, days = null) {
+  static async chargesForMerchant(userId, merchantKey, limit = 36, days = null) {
     const result = await pool.query(`
       SELECT t.id, t.date::text AS date, t.amount::float8 AS amount,
              t.name, t.merchant_name, t.category,
@@ -37,31 +40,35 @@ class RecurringExpense {
       FROM transactions t
       JOIN accounts a ON t.account_id = a.id
       WHERE COALESCE(t.merchant_name, t.name) = $1
+        AND a.user_id = $4
         AND ($3::int IS NULL OR t.date >= CURRENT_DATE - $3::int)
         AND ${SPEND_ELIGIBILITY_SQL}
       ORDER BY t.date DESC
       LIMIT $2
-    `, [merchantKey, limit, days]);
+    `, [merchantKey, limit, days, userId]);
     return result.rows;
   }
 
-  static async setTag(id, tag) {
+  static async setTag(id, userId, tag) {
     const result = await pool.query(
-      'UPDATE recurring_expenses SET tag = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
-      [tag, id]
+      'UPDATE recurring_expenses SET tag = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3 RETURNING *',
+      [tag, id, userId]
     );
     return result.rows[0];
   }
 
-  static async delete(id) {
-    const result = await pool.query('DELETE FROM recurring_expenses WHERE id = $1 RETURNING id', [id]);
+  static async delete(id, userId) {
+    const result = await pool.query(
+      'DELETE FROM recurring_expenses WHERE id = $1 AND user_id = $2 RETURNING id',
+      [id, userId]
+    );
     return result.rows[0];
   }
 
-  static async setMerchantKey(id, merchantKey) {
+  static async setMerchantKey(id, userId, merchantKey) {
     const result = await pool.query(
-      'UPDATE recurring_expenses SET merchant_key = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
-      [merchantKey, id]
+      'UPDATE recurring_expenses SET merchant_key = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3 RETURNING *',
+      [merchantKey, id, userId]
     );
     return result.rows[0];
   }
@@ -81,15 +88,15 @@ class RecurringExpense {
 
   // Returns undefined when a concurrent run already inserted this merchant
   // (ON CONFLICT DO NOTHING), so callers must null-check.
-  static async createAutoTracked(data) {
+  static async createAutoTracked(userId, data) {
     const result = await pool.query(
       `INSERT INTO recurring_expenses
-        (name, cost, is_fixed_rate, pay_account, company, merchant_key, account_id,
+        (user_id, name, cost, is_fixed_rate, pay_account, company, merchant_key, account_id,
          due_day, last_charge_date, charge_interval_days, is_auto_tracked)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE)
        ON CONFLICT (merchant_key) WHERE merchant_key IS NOT NULL DO NOTHING
        RETURNING *`,
-      [data.name, data.cost, data.is_fixed_rate, data.pay_account, data.company,
+      [userId, data.name, data.cost, data.is_fixed_rate, data.pay_account, data.company,
         data.merchant_key, data.account_id, data.due_day, data.last_charge_date, data.charge_interval_days]
     );
     return result.rows[0];

@@ -145,9 +145,10 @@ function isMonthlyCadence(intervalDays) {
 
 // Distinctive name tokens of the user's tracked credit-card accounts (e.g.
 // "chase", "discover"), used to recognize a payment TO one of those cards.
-async function fetchCreditCardTokens() {
+async function fetchCreditCardTokens(userId) {
   const result = await pool.query(
-    "SELECT name FROM accounts WHERE type = 'credit' AND is_hidden = FALSE"
+    "SELECT name FROM accounts WHERE type = 'credit' AND is_hidden = FALSE AND user_id = $1",
+    [userId]
   );
   const set = new Set();
   for (const row of result.rows) {
@@ -197,7 +198,7 @@ function buildGroups(rows) {
   return groups;
 }
 
-async function fetchEligibleCharges() {
+async function fetchEligibleCharges(userId) {
   const result = await pool.query(`
     SELECT t.date::text AS date, t.amount::float8 AS amount, t.account_id,
            t.merchant_name, t.category,
@@ -206,18 +207,19 @@ async function fetchEligibleCharges() {
     FROM transactions t
     JOIN accounts a ON t.account_id = a.id
     WHERE ${SPEND_ELIGIBILITY_SQL}
+      AND a.user_id = $2
       AND t.date >= CURRENT_DATE - make_interval(days => $1)
     ORDER BY t.date ASC
-  `, [GROUP_WINDOW_DAYS]);
+  `, [GROUP_WINDOW_DAYS, userId]);
   return result.rows;
 }
 
-async function run() {
+async function run(userId) {
   const today = new Date().toISOString().slice(0, 10);
-  const rows = await fetchEligibleCharges();
+  const rows = await fetchEligibleCharges(userId);
   const groups = buildGroups(rows);
   const groupByKey = new Map(groups.map((g) => [g.merchantKey, g]));
-  const linkable = await RecurringExpense.findAll();
+  const linkable = await RecurringExpense.findAll(userId);
 
   const usedKeys = new Set(linkable.map((e) => e.merchant_key).filter(Boolean));
   const links = matchExpenses(
@@ -225,7 +227,7 @@ async function run() {
     groups.filter((g) => !usedKeys.has(g.merchantKey))
   );
   for (const link of links) {
-    await RecurringExpense.setMerchantKey(link.expenseId, link.merchantKey);
+    await RecurringExpense.setMerchantKey(link.expenseId, userId, link.merchantKey);
     usedKeys.add(link.merchantKey);
   }
 
@@ -259,8 +261,8 @@ async function run() {
 
   const created = [];
   const skipped = [];
-  const ignoredKeys = await IgnoredMerchant.allKeys('expenses');
-  const cardTokens = await fetchCreditCardTokens();
+  const ignoredKeys = await IgnoredMerchant.allKeys(userId, 'expenses');
+  const cardTokens = await fetchCreditCardTokens(userId);
   for (const group of groups) {
     if (usedKeys.has(group.merchantKey)) continue;
     if (ignoredKeys.has(group.merchantKey)) {
@@ -279,7 +281,7 @@ async function run() {
     // amounts are fine, so utilities and loan autopays still qualify).
     const derived = deriveFields(group.charges, today);
     if (!derived || !isMonthlyCadence(derived.intervalDays) || !derived.intervalRegular) continue;
-    const row = await RecurringExpense.createAutoTracked({
+    const row = await RecurringExpense.createAutoTracked(userId, {
       name: group.merchantKey,
       cost: derived.cost,
       is_fixed_rate: derived.isFixed,
@@ -298,7 +300,7 @@ async function run() {
     created.push({ id: row.id, name: group.merchantKey, cost: derived.cost });
   }
 
-  const summary = { matched: links, refreshed, created, skipped, groupCount: groups.length };
+  const summary = { userId, matched: links, refreshed, created, skipped, groupCount: groups.length };
   logger.info({ ...summary, refreshed: refreshed.length }, 'Expense sync completed');
   return summary;
 }

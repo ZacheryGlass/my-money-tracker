@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const requireUser = require('../middleware/auth');
 const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, PlaidSyncJob, EthSyncJob, ExpenseSyncJob } = require('../jobs');
+const ExpenseSyncService = require('../services/ExpenseSyncService');
+const TransactionClassificationService = require('../services/TransactionClassificationService');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
@@ -169,7 +171,11 @@ router.post('/trigger/expense-sync', async (req, res, next) => {
       });
     }
 
-    const result = await ExpenseSyncJob.run();
+    // The derived-data backfills are account-keyed and user-agnostic; the
+    // expense matching itself stays scoped to the caller. The nightly job
+    // iterates every user instead.
+    await TransactionClassificationService.backfill();
+    const result = await ExpenseSyncService.run(req.user.id);
     res.json({
       message: 'Expense sync job completed',
       result
