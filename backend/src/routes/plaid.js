@@ -80,6 +80,9 @@ router.post('/items/:id/sync', async (req, res) => {
     res.status(200).json({ item: { ...updatedItem, access_token: undefined }, sync: result });
   } catch (error) {
     logger.error({ err: error, itemId: req.params.id }, 'Sync Plaid item error');
+    if (error.code === 'PLAID_NOT_CONFIGURED') {
+      return res.status(503).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Failed to sync account' });
   }
 });

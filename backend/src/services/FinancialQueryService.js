@@ -1456,40 +1456,6 @@ class FinancialQueryService {
     };
   }
 
-  static async getIncomeObligations({ userId } = {}) {
-    requireUserId(userId);
-    const [salary, recurring] = await Promise.all([SalaryHistory.findAll(userId), RecurringExpense.findAll(userId)]);
-    const monthlyRecurring = recurring.reduce((sum, expense) => sum + toNumber(expense.cost), 0);
-    const latestSalary = salary[0];
-    return {
-      meta: toolMeta(),
-      summary: {
-        monthlyRecurring: round(monthlyRecurring),
-        annualRecurring: round(monthlyRecurring * 12),
-        latestAnnualSalary: latestSalary ? round(toNumber(latestSalary.salary_amount)) : null,
-        latestTotalCompensation: latestSalary ? round(toNumber(latestSalary.total_comp)) : null,
-        recurringShareOfGrossSalaryPercent: latestSalary && toNumber(latestSalary.salary_amount) > 0
-          ? round(((monthlyRecurring * 12) / toNumber(latestSalary.salary_amount)) * 100, 4)
-          : null,
-      },
-      salaryHistory: salary.map((row) => ({
-        effectiveDate: isoDate(row.effective_date),
-        title: row.title,
-        salary: round(toNumber(row.salary_amount)),
-        psu: round(toNumber(row.psu)),
-        rsu: round(toNumber(row.rsu)),
-        totalCompensation: round(toNumber(row.total_comp)),
-      })),
-      recurringExpenses: recurring.map((row) => ({
-        id: row.id,
-        name: row.name,
-        monthlyCost: round(toNumber(row.cost)),
-        fixedRate: Boolean(row.is_fixed_rate),
-        payAccount: row.pay_account,
-        company: row.company,
-      })),
-    };
-  }
 }
 
 module.exports = FinancialQueryService;

@@ -37,7 +37,6 @@ function allowedPrincipals() {
 const devEnsuredIds = new Set();
 async function ensureDevUser(id, username) {
   if (devEnsuredIds.has(id)) return;
-  devEnsuredIds.add(id);
   try {
     await pool.query(
       'INSERT INTO users (id, username) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
@@ -46,6 +45,11 @@ async function ensureDevUser(id, username) {
     await pool.query(
       "SELECT setval('users_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM users), 1))"
     );
+    // Only mark it done once it actually succeeded: recording the id up front
+    // meant one transient DB error (Postgres still starting) suppressed the
+    // bootstrap for the rest of the process, and later writes hit foreign-key
+    // violations against a users row that was never created.
+    devEnsuredIds.add(id);
   } catch {
     // Best effort: unit tests run with a throwing fake pool and no schema.
   }
