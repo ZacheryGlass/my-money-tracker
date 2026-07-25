@@ -1,6 +1,8 @@
 'use strict';
 
 const logger = require('../config/logger');
+const pool = require('../config/database');
+const User = require('../models/User');
 
 // Authentication is handled upstream by Azure App Service Authentication
 // ("Easy Auth"): the platform forces a Google sign-in before requests reach
@@ -12,8 +14,18 @@ const logger = require('../config/logger');
 // (comma-separated, case-insensitive). The check fails closed -- production
 // with no allowlist configured rejects everyone.
 //
+// An allowlisted email is resolved to a users row via user_identities; an
+// allowlisted email seen for the first time auto-provisions its user. The
+// allowlist check runs BEFORE any DB access, and resolved identities are
+// cached in-process so steady-state requests cost no query.
+//
 // Outside production (local dev, tests) there is no login at all; a fixed
-// single-user identity is attached so route handlers behave identically.
+// identity from DEV_AUTH_USER_ID/DEV_AUTH_USERNAME is attached, and a
+// matching users row is ensured best-effort so foreign keys hold when
+// simulating a second local user.
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const identityCache = new Map(); // email -> { user, expiresAt }
 
 function allowedPrincipals() {
   return (process.env.ALLOWED_PRINCIPALS || '')
@@ -22,12 +34,29 @@ function allowedPrincipals() {
     .filter(Boolean);
 }
 
-function requireUser(req, res, next) {
+const devEnsuredIds = new Set();
+async function ensureDevUser(id, username) {
+  if (devEnsuredIds.has(id)) return;
+  devEnsuredIds.add(id);
+  try {
+    await pool.query(
+      'INSERT INTO users (id, username) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
+      [id, username]
+    );
+    await pool.query(
+      "SELECT setval('users_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM users), 1))"
+    );
+  } catch {
+    // Best effort: unit tests run with a throwing fake pool and no schema.
+  }
+}
+
+async function requireUser(req, res, next) {
   if (process.env.NODE_ENV !== 'production') {
-    req.user = {
-      id: Number.parseInt(process.env.DEV_AUTH_USER_ID || '1', 10),
-      username: process.env.DEV_AUTH_USERNAME || 'zachery',
-    };
+    const id = Number.parseInt(process.env.DEV_AUTH_USER_ID || '1', 10);
+    const username = process.env.DEV_AUTH_USERNAME || 'zachery';
+    await ensureDevUser(id, username);
+    req.user = { id, username };
     return next();
   }
 
@@ -40,9 +69,11 @@ function requireUser(req, res, next) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
+  const email = principalName.toLowerCase();
+
   // 403 (not 401) so the frontend does not reload-loop trying to
   // re-authenticate an account that is signed in but not allowed.
-  if (!allowedPrincipals().includes(principalName.toLowerCase())) {
+  if (!allowedPrincipals().includes(email)) {
     logger.warn(
       { path: req.path, principal: principalName },
       'Authenticated principal not in ALLOWED_PRINCIPALS'
@@ -50,12 +81,36 @@ function requireUser(req, res, next) {
     return res.status(403).json({ error: 'Not authorized' });
   }
 
-  req.user = {
-    id: 1,
-    username: principalName,
-    principalId: req.headers['x-ms-client-principal-id'] || null,
-  };
-  return next();
+  const cached = identityCache.get(email);
+  if (cached && cached.expiresAt > Date.now()) {
+    req.user = { ...cached.user, principalId: req.headers['x-ms-client-principal-id'] || null };
+    return next();
+  }
+
+  try {
+    let user = await User.findByEmail(email);
+    if (!user) {
+      user = await User.provisionByEmail(email);
+      logger.info({ email, userId: user?.id }, 'Auto-provisioned user for allowlisted email');
+    }
+    if (!user) throw new Error('Identity provisioning returned no user');
+
+    const resolved = { id: user.id, username: user.username, displayName: user.display_name || null };
+    identityCache.set(email, { user: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
+    req.user = { ...resolved, principalId: req.headers['x-ms-client-principal-id'] || null };
+    return next();
+  } catch (err) {
+    // 503, never 401: the axios interceptor reloads the page on 401, which
+    // would loop while the database is unavailable.
+    logger.error({ err, email }, 'Identity lookup failed');
+    return res.status(503).json({ error: 'Identity lookup failed' });
+  }
 }
+
+// Test hook: clears the in-process caches between scenarios.
+requireUser._clearCache = () => {
+  identityCache.clear();
+  devEnsuredIds.clear();
+};
 
 module.exports = requireUser;
