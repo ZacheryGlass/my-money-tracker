@@ -79,7 +79,8 @@ const TickerHistory = () => {
     const loadHoldings = async () => {
       try {
         const data = await holdingsAPI.getAll();
-        const list = data.holdings || [];
+        // Crypto holdings live on the dedicated Crypto page.
+        const list = (data.holdings || []).filter((holding) => holding.account_type !== 'crypto');
         setHoldings(list);
         const optionMap = new Map();
         list.forEach((holding) => {

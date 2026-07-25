@@ -54,7 +54,6 @@ export default function HoldingsAnalysis() {
   const [dateRange, setDateRange] = useState('3m');
   const [loading, setLoading] = useState(true);
   const [portfolioItems, setPortfolioItems] = useState([]);
-  const [totalAssets, setTotalAssets] = useState(0);
   const [accountSnaps, setAccountSnaps] = useState([]);
   const [accountList, setAccountList] = useState([]);
   const [allocationMode, setAllocationMode] = useState('percent');
@@ -71,7 +70,6 @@ export default function HoldingsAnalysis() {
       ]);
 
       setPortfolioItems(dashData.items || []);
-      setTotalAssets(dashData.summary?.totalAssets || dashData.total || 0);
       setAccountSnaps(acctData.data || []);
       setAccountList(acctList.accounts || []);
 
@@ -87,7 +85,7 @@ export default function HoldingsAnalysis() {
 
   const assetItems = useMemo(() => {
     return portfolioItems
-      .filter((i) => i.type === 'asset')
+      .filter((i) => i.type === 'asset' && i.account_type !== 'crypto')
       .map((item) => ({
         ...item,
         valueNumber: Math.abs(parseFloat(item.value)) || 0,
@@ -96,6 +94,14 @@ export default function HoldingsAnalysis() {
       }))
       .sort((a, b) => b.valueNumber - a.valueNumber);
   }, [portfolioItems]);
+
+  // Crypto is excluded from this page, so the denominator must be the sum of
+  // the rows actually shown -- the server's summary.totalAssets includes
+  // crypto and would silently skew every share percentage.
+  const totalAssets = useMemo(
+    () => assetItems.reduce((sum, item) => sum + item.valueNumber, 0),
+    [assetItems]
+  );
 
   const concentration = useMemo(() => {
     const topHolding = assetItems[0] || null;
@@ -212,14 +218,18 @@ export default function HoldingsAnalysis() {
     const accountMap = {};
     for (const a of accountList) accountMap[a.id] = getAccountDisplayName(a);
 
+    // Crypto accounts live on the dedicated Crypto page.
+    const cryptoIds = new Set(accountList.filter((a) => a.type === 'crypto').map((a) => a.id));
+    const visibleSnaps = accountSnaps.filter((snap) => !cryptoIds.has(snap.account_id));
+
     const dateMap = {};
-    for (const snap of accountSnaps) {
+    for (const snap of visibleSnaps) {
       const d = snap.snapshot_date.slice(0, 10);
       if (!dateMap[d]) dateMap[d] = {};
       dateMap[d][snap.account_id] = parseFloat(snap.total_value);
     }
 
-    const accountIds = [...new Set(accountSnaps.map((s) => s.account_id))];
+    const accountIds = [...new Set(visibleSnaps.map((s) => s.account_id))];
     const dates = Object.keys(dateMap).sort();
 
     let lastKnown = {};

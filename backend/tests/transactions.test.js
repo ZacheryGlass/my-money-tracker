@@ -126,3 +126,46 @@ test('GET /api/transactions omits the spend filter by default', async () => {
     'default (no view) should return the full ledger'
   );
 });
+
+test('GET /api/transactions excludes crypto accounts by default', async () => {
+  const sink = {};
+  queryHandler = captureSql(sink);
+
+  const response = await request(app).get('/api/transactions');
+
+  assert.equal(response.status, 200);
+  assert.ok(
+    sink.sql.includes(`a.type <> 'crypto'`),
+    'default (no view, no account_id) should skip crypto accounts'
+  );
+});
+
+test('GET /api/transactions?account_id= keeps crypto accounts reachable', async () => {
+  const sink = {};
+  queryHandler = captureSql(sink);
+
+  const response = await request(app)
+    .get('/api/transactions')
+    .query({ account_id: '5' });
+
+  assert.equal(response.status, 200);
+  assert.ok(
+    !sink.sql.includes(`a.type <> 'crypto'`),
+    'an explicit account_id request is deliberate and bypasses the exclusion'
+  );
+});
+
+test('GET /api/transactions?view=spend relies on the spend filter alone', async () => {
+  const sink = {};
+  queryHandler = captureSql(sink);
+
+  const response = await request(app)
+    .get('/api/transactions')
+    .query({ view: 'spend' });
+
+  assert.equal(response.status, 200);
+  assert.ok(
+    !sink.sql.includes(`a.type <> 'crypto'`),
+    'spend view already restricts account types via SPEND_ELIGIBILITY_SQL'
+  );
+});

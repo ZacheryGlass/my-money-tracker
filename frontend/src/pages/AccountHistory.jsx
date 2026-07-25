@@ -32,7 +32,6 @@ const ACCOUNT_TYPE_LABELS = {
   depository: 'Cash',
   credit: 'Credit',
   loan: 'Loan',
-  crypto: 'Crypto',
   property: 'Property',
   other: 'Other',
 };
@@ -92,7 +91,8 @@ const AccountHistory = () => {
     const fetchAccounts = async () => {
       try {
         const data = await accountsApi.getAll();
-        setAccounts(data.accounts || []);
+        // Crypto accounts live on the dedicated Crypto page.
+        setAccounts((data.accounts || []).filter((account) => account.type !== 'crypto'));
       } catch {
         setError('Failed to load accounts');
       }
@@ -181,7 +181,7 @@ const AccountHistory = () => {
       setSelectedAccounts(rankAccountsByLatestValue(
         displayAccounts,
         accountData,
-        (account) => ['investment', 'crypto', 'property'].includes(account.type),
+        (account) => ['investment', 'property'].includes(account.type),
         6
       ));
       return;
@@ -239,7 +239,7 @@ const AccountHistory = () => {
   const presets = [
     { id: 'portfolio', label: 'Portfolio', icon: TrendingUp, detail: 'Net worth only' },
     { id: 'major', label: 'Major Accounts', icon: BarChart3, detail: 'Top balances' },
-    { id: 'investments', label: 'Investments', icon: Landmark, detail: 'Invest, crypto, property' },
+    { id: 'investments', label: 'Investments', icon: Landmark, detail: 'Investments and property' },
     { id: 'cash', label: 'Cash', icon: Wallet, detail: 'Depository accounts' },
     { id: 'liabilities', label: 'Liabilities', icon: CreditCard, detail: 'Credit and loans' },
   ];

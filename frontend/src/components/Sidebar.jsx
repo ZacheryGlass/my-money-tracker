@@ -18,6 +18,7 @@ import {
   Grid3X3,
   ReceiptText,
   Store,
+  Coins,
 } from 'lucide-react';
 import { useMediaQuery, useIsDesktop } from '../hooks/useMediaQuery';
 
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'balances', label: 'Balances', icon: Wallet },
   { id: 'accounts', label: 'Accounts', icon: Building2 },
+  { id: 'crypto', label: 'Crypto', icon: Coins },
   { id: '_separator_portfolio', section: 'PORTFOLIO' },
   { id: 'holdings-analysis', label: 'Holdings Analysis', icon: Grid3X3 },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', icon: Calendar },

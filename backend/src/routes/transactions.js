@@ -73,6 +73,11 @@ router.get('/', async (req, res) => {
     // ledger, so AccountsPage's per-account list is unaffected.
     if (String(view).toLowerCase() === 'spend') {
       conditions.push(SPEND_ELIGIBILITY_SQL);
+    } else if (!account_id) {
+      // Mirrored CRYPTO_* rows live on the Crypto page; the general
+      // all-transactions feed skips crypto accounts unless a specific
+      // account's ledger is requested.
+      conditions.push(`a.type <> 'crypto'`);
     }
 
     if (account_id) {

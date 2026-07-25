@@ -273,14 +273,24 @@ const Dashboard = ({ onNavigate }) => {
     };
   }), [accountDisplayNames, selectedItems, thirtyDayReturns]);
 
-  const assets = useMemo(() => enrichedItems
+  // Crypto detail rows live on the dedicated Crypto page; headline totals and
+  // the allocation donut still include crypto so net worth stays whole.
+  const visibleItems = useMemo(
+    () => enrichedItems.filter((item) => item.account_type !== 'crypto'),
+    [enrichedItems]
+  );
+
+  const assets = useMemo(() => visibleItems
     .filter((item) => item.type !== 'liability')
-    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)), [enrichedItems]);
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)), [visibleItems]);
   const liabilities = useMemo(() => enrichedItems
     .filter((item) => item.type === 'liability')
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)), [enrichedItems]);
+  // Concentration describes the holdings table below it, so its denominator is
+  // the visible (non-crypto) assets, not the whole-portfolio assets figure.
+  const visibleAssetsTotal = assets.reduce((sum, item) => sum + numberValue(item.value), 0);
   const topFiveValue = assets.slice(0, 5).reduce((sum, item) => sum + numberValue(item.value), 0);
-  const concentration = totals.totalAssets > 0 ? (topFiveValue / totals.totalAssets) * 100 : 0;
+  const concentration = visibleAssetsTotal > 0 ? (topFiveValue / visibleAssetsTotal) * 100 : 0;
 
   const accountDrivers = useMemo(() => {
     const starts = new Map();
@@ -291,7 +301,9 @@ const Dashboard = ({ onNavigate }) => {
       });
 
     const current = new Map();
-    selectedItems.forEach((item) => current.set(item.account_id, (current.get(item.account_id) || 0) + numberValue(item.value)));
+    selectedItems
+      .filter((item) => item.account_type !== 'crypto')
+      .forEach((item) => current.set(item.account_id, (current.get(item.account_id) || 0) + numberValue(item.value)));
     return [...current.entries()]
       .filter(([accountId]) => starts.has(accountId))
       .map(([accountId, value]) => ({
@@ -553,7 +565,7 @@ const Dashboard = ({ onNavigate }) => {
         </div>
         <div className="card overflow-hidden">
           <DashboardTable
-            items={enrichedItems}
+            items={visibleItems}
             onNavigate={onNavigate}
             assetClassFilter={assetClassFilter}
             onClearAssetClassFilter={() => setAssetClassFilter(null)}

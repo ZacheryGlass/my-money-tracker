@@ -11,6 +11,7 @@ import { Menu } from 'lucide-react';
 const Dashboard = lazyWithReload(() => import('./components/Dashboard'));
 const BalancesPage = lazyWithReload(() => import('./pages/BalancesPage'));
 const AccountsPage = lazyWithReload(() => import('./pages/AccountsPage'));
+const CryptoPage = lazyWithReload(() => import('./pages/CryptoPage'));
 const TickerHistory = lazyWithReload(() => import('./pages/TickerHistory'));
 const AccountHistory = lazyWithReload(() => import('./pages/AccountHistory'));
 const PortfolioTimeline = lazyWithReload(() => import('./pages/PortfolioTimeline'));
@@ -27,6 +28,7 @@ const navItems = [
   { id: 'cash', label: 'Cash', path: '/cash' },
   { id: 'liabilities', label: 'Liabilities', path: '/liabilities' },
   { id: 'accounts', label: 'Accounts', path: '/accounts' },
+  { id: 'crypto', label: 'Crypto', path: '/crypto' },
   { id: 'ticker-history', label: 'Ticker History', path: '/ticker-history' },
   { id: 'account-history', label: 'Account History', path: '/account-history' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', path: '/portfolio-timeline' },
@@ -88,6 +90,7 @@ function App() {
         {currentPage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
         {BALANCES_TABS.has(currentPage) && <BalancesPage tab={currentPage} onTabChange={handleNavigate} />}
         {currentPage === 'accounts' && <AccountsPage />}
+        {currentPage === 'crypto' && <CryptoPage onNavigate={handleNavigate} />}
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
         {currentPage === 'portfolio-timeline' && <PortfolioTimeline />}

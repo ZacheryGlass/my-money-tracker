@@ -15,7 +15,7 @@ import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/acco
 import { formatCategoryLabel } from '../utils/dataLabels';
 
 const TABS = [
-  { id: 'assets', label: 'Assets', types: new Set(['investment', 'crypto', 'property', 'other']) },
+  { id: 'assets', label: 'Assets', types: new Set(['investment', 'property', 'other']) },
   { id: 'cash', label: 'Cash', types: new Set(['depository']) },
   { id: 'liabilities', label: 'Liabilities', types: new Set(['credit', 'loan']) },
 ];
@@ -349,7 +349,7 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
 
       <DataTablePagination table={table} total={filteredData.length} />
 
-      <HoldingForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSave} onDelete={handleDelete} holding={editingHolding} accounts={accounts.filter((account) => !account.eth_wallet_id)} />
+      <HoldingForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSave} onDelete={handleDelete} holding={editingHolding} accounts={accounts.filter((account) => !account.eth_wallet_id && account.type !== 'crypto')} />
     </div>
   );
 };
