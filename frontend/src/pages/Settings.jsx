@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag } from 'lucide-react';
-import { plaid as plaidAPI, eth as ethAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI, keys as keysAPI } from '../utils/api';
+import { plaid as plaidAPI, eth as ethAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI, keys as keysAPI, admin as adminAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
@@ -21,6 +21,18 @@ const SETTINGS_TABS = [
   { id: 'api-keys', label: 'API Keys' },
   { id: 'accounts', label: 'Accounts' },
 ];
+// Rendered only for the admin (the overview endpoint 403s for everyone else).
+const SERVER_TAB = { id: 'server', label: 'Server' };
+
+// Mapping from job-status keys to their manual trigger route names.
+const JOB_TRIGGER_NAMES = {
+  'plaid-sync': 'plaid-sync',
+  'expense-sync': 'expense-sync',
+  'eth-sync': 'eth-sync',
+  'price-update': 'price-update',
+  'benchmark-update': 'benchmark-update',
+  'snapshot-creation': 'snapshot',
+};
 
 // Rows on the API Keys tab. Plaid/Etherscan pull the signed-in user's own
 // financial data; the price keys are shared app-wide (prices are global).
@@ -273,6 +285,8 @@ const Settings = () => {
   const [keyStatuses, setKeyStatuses] = useState(null);
   const [keyInputs, setKeyInputs] = useState({});
   const [savingKeyService, setSavingKeyService] = useState(null);
+  const [adminOverview, setAdminOverview] = useState(null);
+  const [triggeringJob, setTriggeringJob] = useState(null);
   const [activeTab, setActiveTab] = useState(() =>
     SETTINGS_TABS.some((t) => t.id === location.state?.tab) ? location.state.tab : 'appearance'
   );
@@ -296,19 +310,21 @@ const Settings = () => {
     try {
       // Ethereum data is fetched alongside but must not fail the whole page:
       // a wallet-side error should degrade only the Ethereum tab.
-      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, keysResult] = await Promise.all([
+      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, keysResult, adminResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
         ethAPI.getWallets().catch(() => null),
         ethAPI.getIgnoredTokens().catch(() => null),
         ethAPI.getAddressLabels().catch(() => null),
         keysAPI.getAll().catch(() => null),
+        adminAPI.getOverview().catch(() => null),
       ]);
       const loadedItems = plaidData.items || [];
       setEthWallets(ethResult?.wallets || []);
       setIgnoredTokens(ignoredResult?.tokens || []);
       setAddressLabels(labelsResult?.labels || []);
       setKeyStatuses(keysResult || null);
+      setAdminOverview(adminResult || null);
       setItems(loadedItems);
       setConsentItems(new Set(
         loadedItems
@@ -576,6 +592,21 @@ const Settings = () => {
     }
   };
 
+  const handleTriggerJob = async (statusKey) => {
+    if (triggeringJob) return;
+    setTriggeringJob(statusKey);
+    setError(null);
+    try {
+      await adminAPI.triggerJob(JOB_TRIGGER_NAMES[statusKey] || statusKey);
+      showSuccess('Job completed');
+      setAdminOverview((await adminAPI.getOverview().catch(() => null)) || null);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Job trigger failed');
+    } finally {
+      setTriggeringJob(null);
+    }
+  };
+
   const handleDisplayNameChange = (accountId, value) => {
     setDisplayNameDrafts((prev) => ({ ...prev, [accountId]: value }));
   };
@@ -751,7 +782,7 @@ const Settings = () => {
         className="mb-6"
         value={activeTab}
         onChange={setActiveTab}
-        options={SETTINGS_TABS.map((t) => {
+        options={(adminOverview ? [...SETTINGS_TABS, SERVER_TAB] : SETTINGS_TABS).map((t) => {
           const attentionCount = t.id === 'institutions'
             ? institutionSummary.attentionCount
             : t.id === 'ethereum'
@@ -1448,10 +1479,15 @@ const Settings = () => {
         </div>
       </section>
 
+      </>
+      )}
+
+      {activeTab === 'server' && adminOverview && (
+      <>
       <section className="mb-8">
         <div className="mb-3 px-2">
-          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Shared Price Keys</h2>
-          <p className="mt-1 text-xs text-secondary">Market prices are shared by every user, so these keys are app-wide. Both are optional: without them, price lookups fall back to keyless sources.</p>
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Market Data Keys</h2>
+          <p className="mt-1 text-xs text-secondary">App-wide keys for the shared price pipeline (only you can see or change these). Both are optional: without them, price lookups fall back to keyless sources. A value stored here overrides the server environment variable.</p>
         </div>
         <div className="card divide-y divide-border overflow-hidden">
           {APP_KEY_ROWS.map(({ service, label }) => {
@@ -1497,6 +1533,117 @@ const Settings = () => {
               </form>
             );
           })}
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Environment</h2>
+          <p className="mt-1 text-xs text-secondary">Read-only view of the server configuration. Secrets show only their last four characters; changing any of these means updating the server environment (Azure app settings or backend/.env).</p>
+        </div>
+        <div className="card divide-y divide-border overflow-hidden">
+          {adminOverview.env.map((entry) => (
+            <div key={entry.name} className="flex items-center justify-between gap-4 px-4 py-3">
+              <span className="font-mono text-body-sm text-primary">{entry.name}</span>
+              <span className="min-w-0 truncate text-right font-mono text-caption text-tertiary">
+                {entry.name === 'SECRETS_ENCRYPTION_KEY' && entry.set && !entry.valid
+                  ? 'Set but invalid (must be 32 bytes of base64)'
+                  : entry.masked ? entry.masked
+                  : entry.host ? entry.host
+                  : entry.value ? entry.value
+                  : entry.set ? 'Set' : 'Not set'}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Users</h2>
+          <p className="mt-1 text-xs text-secondary">Everyone with access (view-only). New users are added by putting their email in ALLOWED_PRINCIPALS; their account is created on first sign-in.</p>
+        </div>
+        <div className="card divide-y divide-border overflow-hidden">
+          {adminOverview.users.map((account) => (
+            <div key={account.id} className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,1fr)] sm:items-center">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-body-sm font-semibold text-primary">{account.display_name || account.username}</span>
+                {account.is_admin && (
+                  <span className="inline-flex shrink-0 items-center rounded-full border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent">
+                    Admin
+                  </span>
+                )}
+              </div>
+              <span className="min-w-0 truncate font-mono text-caption text-tertiary">
+                {(account.emails || []).join(', ') || 'no linked email'}
+              </span>
+              <span className="text-caption text-tertiary sm:text-right">
+                {account.account_count} accounts · {account.plaid_item_count} Plaid · {account.wallet_count} wallets
+                {(account.configured_keys || []).length > 0 && ` · keys: ${account.configured_keys.join(', ')}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Scheduled Jobs</h2>
+          <p className="mt-1 text-xs text-secondary">Nightly pipeline (all times UTC). Manual runs execute immediately with your permissions.</p>
+        </div>
+        <div className="card divide-y divide-border overflow-hidden">
+          {Object.entries(adminOverview.jobs?.jobs || {}).map(([name, job]) => (
+            <div key={name} className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto] sm:items-center">
+              <div className="min-w-0">
+                <span className="block text-body-sm font-semibold text-primary">{name}</span>
+                <span className="block font-mono text-[10px] text-tertiary">{job.schedule} UTC</span>
+              </div>
+              <span className="min-w-0 truncate text-caption text-tertiary">
+                {job.lastRun
+                  ? `Last run ${formatRelativeTime(job.lastRun.completed_at || job.lastRun.started_at)} — ${job.lastRun.status}`
+                  : 'Never run'}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleTriggerJob(name)}
+                disabled={triggeringJob !== null}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+              >
+                {triggeringJob === name ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                Run Now
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <div className="mb-3 px-2">
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Health</h2>
+        </div>
+        <div className="card divide-y divide-border overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-body-sm text-primary">Database</span>
+            <span className={`text-caption font-bold ${adminOverview.health.dbReachable ? 'text-gain' : 'text-loss'}`}>
+              {adminOverview.health.dbReachable ? 'Reachable' : 'Unreachable'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-body-sm text-primary">Key encryption</span>
+            <span className={`text-caption font-bold ${adminOverview.health.encryptionConfigured ? 'text-gain' : 'text-loss'}`}>
+              {adminOverview.health.encryptionConfigured ? 'Configured' : 'Not configured'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-body-sm text-primary">Latest price fetch</span>
+            <span className="font-mono text-caption text-tertiary">
+              {adminOverview.health.latestPriceFetchedAt ? formatRelativeTime(adminOverview.health.latestPriceFetchedAt) : 'never'}
+            </span>
+          </div>
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-body-sm text-primary">Migrations on disk</span>
+            <span className="font-mono text-caption text-tertiary">{adminOverview.health.migrationCount ?? 'unknown'}</span>
+          </div>
         </div>
       </section>
       </>

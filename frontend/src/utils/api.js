@@ -380,6 +380,18 @@ export const keys = {
   },
 };
 
+// Admin panel (Settings -> Server tab; admin only, 403 otherwise)
+export const admin = {
+  getOverview: async () => {
+    const response = await api.get('/api/admin/overview');
+    return response.data;
+  },
+  triggerJob: async (name) => {
+    const response = await api.post(`/api/jobs/trigger/${name}`);
+    return response.data;
+  },
+};
+
 // Analytics API
 export const analytics = {
   getBenchmarkHistory: async (params = {}) => {
