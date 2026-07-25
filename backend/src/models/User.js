@@ -5,7 +5,7 @@ const pool = require('../config/database');
 class User {
   static async findByEmail(email) {
     const result = await pool.query(
-      `SELECT u.id, u.username, u.display_name
+      `SELECT u.id, u.username, u.display_name, u.is_admin
        FROM user_identities ui
        JOIN users u ON u.id = ui.user_id
        WHERE ui.email = $1`,

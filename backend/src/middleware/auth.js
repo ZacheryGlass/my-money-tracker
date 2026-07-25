@@ -56,7 +56,8 @@ async function requireUser(req, res, next) {
     const id = Number.parseInt(process.env.DEV_AUTH_USER_ID || '1', 10);
     const username = process.env.DEV_AUTH_USERNAME || 'zachery';
     await ensureDevUser(id, username);
-    req.user = { id, username };
+    // Mirrors production: user 1 is the sole admin.
+    req.user = { id, username, isAdmin: id === 1 };
     return next();
   }
 
@@ -95,7 +96,12 @@ async function requireUser(req, res, next) {
     }
     if (!user) throw new Error('Identity provisioning returned no user');
 
-    const resolved = { id: user.id, username: user.username, displayName: user.display_name || null };
+    const resolved = {
+      id: user.id,
+      username: user.username,
+      displayName: user.display_name || null,
+      isAdmin: Boolean(user.is_admin),
+    };
     identityCache.set(email, { user: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
     req.user = { ...resolved, principalId: req.headers['x-ms-client-principal-id'] || null };
     return next();
@@ -107,10 +113,21 @@ async function requireUser(req, res, next) {
   }
 }
 
+// Admin gate for the server-configuration surface. Mount AFTER requireUser.
+// 403 (not 401) for the same reload-loop reason as the allowlist check.
+function requireAdmin(req, res, next) {
+  if (!req.user?.isAdmin) {
+    return res.status(403).json({ error: 'Not authorized' });
+  }
+  return next();
+}
+
 // Test hook: clears the in-process caches between scenarios.
 requireUser._clearCache = () => {
   identityCache.clear();
   devEnsuredIds.clear();
 };
+
+requireUser.requireAdmin = requireAdmin;
 
 module.exports = requireUser;

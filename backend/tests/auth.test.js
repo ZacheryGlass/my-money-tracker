@@ -30,7 +30,7 @@ const request = require('supertest');
 const app = require('../src/server');
 const requireUser = require('../src/middleware/auth');
 
-const ZACH_ROW = { id: 1, username: 'zachery', display_name: 'Zachery' };
+const ZACH_ROW = { id: 1, username: 'zachery', display_name: 'Zachery', is_admin: true };
 
 function identityHandler(rowsByEmail) {
   return async (text, params) => {
@@ -54,6 +54,20 @@ test('GET /api/me outside production returns the dev identity', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.user.id, 1);
   assert.equal(response.body.user.username, 'zachery');
+  assert.equal(response.body.user.isAdmin, true);
+});
+
+test('dev identity for a second user is not admin', async () => {
+  process.env.DEV_AUTH_USER_ID = '2';
+  process.env.DEV_AUTH_USERNAME = 'alice';
+  try {
+    const response = await request(app).get('/api/me');
+    assert.equal(response.body.user.id, 2);
+    assert.equal(response.body.user.isAdmin, false);
+  } finally {
+    delete process.env.DEV_AUTH_USER_ID;
+    delete process.env.DEV_AUTH_USERNAME;
+  }
 });
 
 test('GET /api/me in production without Easy Auth headers returns 401 and runs no query', async () => {
@@ -83,6 +97,7 @@ test('allowlisted principal resolves to its users row', async () => {
     assert.equal(response.body.user.id, 1);
     assert.equal(response.body.user.username, 'zachery');
     assert.equal(response.body.user.principalId, 'abc-123');
+    assert.equal(response.body.user.isAdmin, true);
   } finally {
     process.env.NODE_ENV = 'test';
     delete process.env.ALLOWED_PRINCIPALS;
