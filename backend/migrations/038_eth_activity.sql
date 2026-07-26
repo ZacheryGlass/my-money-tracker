@@ -20,8 +20,9 @@
 CREATE TABLE IF NOT EXISTS eth_activity (
   id BIGSERIAL PRIMARY KEY,
   wallet_id INT NOT NULL REFERENCES eth_wallets(id) ON DELETE CASCADE,
-  -- Ethereum mainnet until #58 adds L2s. In the key from day one so adding a
-  -- chain is an insert, not a unique-constraint swap on a populated table.
+  -- Per-chain since 039 (Arbitrum, Linea, ...). In the key from day one so
+  -- adding a chain is an insert, not a unique-constraint swap on a populated
+  -- table.
   chain_id INT NOT NULL DEFAULT 1,
   tx_hash VARCHAR(66) NOT NULL,
   block_number BIGINT NOT NULL,
@@ -58,7 +59,7 @@ CREATE TABLE IF NOT EXISTS eth_activity (
 
 -- CREATE TABLE IF NOT EXISTS skips its whole body once the table exists, so
 -- the category list lives in a guarded DO block instead of inline: widening it
--- (#58 bridges, #61 staking, a future merchant kind) is then a drop + re-add
+-- (#59 bridges, #61 staking, a future merchant kind) is then a drop + re-add
 -- here. Guarded on the constraint's DEFINITION, not just its name -- a
 -- name-only guard would skip every later widening forever. BUMP THE SENTINEL
 -- BELOW when adding a value, or the swap never runs.
@@ -126,10 +127,12 @@ END $$;
 -- re-adding the wallet re-ingests from block 0 and heals the history.
 ALTER TABLE eth_transfers ADD COLUMN IF NOT EXISTS tx_is_error BOOLEAN;
 
--- The feed's default ordering. block_number is chain-global, so it sorts a
--- merged multi-wallet feed correctly.
+-- block_number is a per-chain sequence (039), so the feed orders on
+-- block_time -- the only cross-chain order -- with block_number as tiebreak.
 CREATE INDEX IF NOT EXISTS idx_eth_activity_wallet_block
   ON eth_activity(wallet_id, block_number DESC);
+CREATE INDEX IF NOT EXISTS idx_eth_activity_wallet_time
+  ON eth_activity(wallet_id, block_time DESC);
 -- Partial: the review queue is a handful of rows against a full history.
 CREATE INDEX IF NOT EXISTS idx_eth_activity_needs_review
   ON eth_activity(wallet_id) WHERE needs_review;

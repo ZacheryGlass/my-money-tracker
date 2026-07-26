@@ -106,5 +106,6 @@ Frontend `.env`: `VITE_API_URL` (empty = same origin)
 ## Open Work
 
 - **Azure deployment** (GitHub issues #22-25): PostgreSQL, App Service, Static Web Apps, SSL/domain — all deferred
-- **Testing**: 480 backend (node:test + supertest, fake pg Pool via require.cache; the exchange-sync suite also fakes axios the same way) and 73 frontend (vitest) — broad on scoping/secrets/admin/CSV import/activity classification/multi-chain sync/exchange sync, thin on charts and analytics
+- **Testing**: 481 backend (node:test + supertest, fake pg Pool via require.cache; the exchange-sync suite also fakes axios the same way) and 73 frontend (vitest) — broad on scoping/secrets/admin/CSV import/activity classification/multi-chain sync/exchange sync, thin on charts and analytics
 - **Exchange API sync is unverified against a live key**: it was built from the providers' current docs with synthetic fixtures, and no real Kraken or Coinbase credential has ever been used against it. The Test Connection button is the intended first step when a key is added.
+- **`exchange_records` has no chain column** while the on-chain side is chain-keyed (039): a stored `tx_hash`/`address` is chain-ambiguous, so forgotten-wallet discovery (#72) needs either a promoted chain column or an extraction from `raw` (Coinbase keeps `network.name`, Kraken keeps `network` in the funding blob).

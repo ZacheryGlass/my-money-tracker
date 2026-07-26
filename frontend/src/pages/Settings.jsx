@@ -37,6 +37,7 @@ const JOB_TRIGGER_NAMES = {
   'plaid-sync': 'plaid-sync',
   'expense-sync': 'expense-sync',
   'eth-sync': 'eth-sync',
+  'exchange-sync': 'exchange-sync',
   'price-update': 'price-update',
   'benchmark-update': 'benchmark-update',
   'snapshot-creation': 'snapshot',

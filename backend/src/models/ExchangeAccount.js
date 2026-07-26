@@ -12,11 +12,9 @@ function requireUserId(method, userId) {
 }
 
 const EXCHANGES = new Set(['coinbase', 'kraken', 'other']);
-
-// Which venues the API sync knows how to talk to. 'other' is CSV-only by
-// definition -- there is no endpoint to call -- so offering it a credential
-// form would promise a sync that can never run.
-const API_EXCHANGES = new Set(['coinbase', 'kraken']);
+// Which venues the API sync can talk to is NOT a model concern: the single
+// source of truth is CONNECTORS in services/exchangeSync/index.js, which the
+// routes and ExchangeSyncService both consult via connectorFor().
 
 // Migration 040 put ciphertext on this table, so `SELECT *` is now a leak
 // waiting to happen: every route that returns an account returns whatever the
@@ -41,10 +39,6 @@ const CREDENTIAL_FLAG = 'api_key_encrypted IS NOT NULL AS api_configured';
 class ExchangeAccount {
   static get EXCHANGES() {
     return EXCHANGES;
-  }
-
-  static get API_EXCHANGES() {
-    return API_EXCHANGES;
   }
 
   static get PUBLIC_COLUMNS() {

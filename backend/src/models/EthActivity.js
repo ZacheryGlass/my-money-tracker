@@ -1,8 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
-
-const DEFAULT_CHAIN_ID = 1;
+const { DEFAULT_CHAIN_ID } = require('../config/chains');
 
 // Every read resolves the manual override over the derived verdict in ONE
 // place. An override is the user's own explanation of a transaction, so it also
@@ -116,13 +115,13 @@ class EthActivity {
        SELECT r.*, COUNT(*) OVER() AS total_count
        FROM resolved r
        ${where}
-       -- block_number is chain-global, so it orders a merged multi-wallet feed
-       -- correctly; tx_hash breaks ties within a block. Neither is unique in a
-       -- merged feed -- two of the user's own wallets both see an A->B
-       -- self-send, same block, same hash -- so id closes the ordering the way
-       -- EthTransfer.findByWallet does. A non-total ORDER BY lets LIMIT/OFFSET
-       -- repeat one row on page 2 and drop the other entirely.
-       ORDER BY r.block_number DESC, r.tx_hash DESC, r.id DESC
+       -- block_number is a PER-CHAIN sequence since 039, so time is the only
+       -- order that interleaves a multi-chain feed correctly. tx_hash then id
+       -- close the ordering -- none of the leading keys is unique in a merged
+       -- feed (two of the user's own wallets both see an A->B self-send, same
+       -- time, same hash), and a non-total ORDER BY lets LIMIT/OFFSET repeat
+       -- one row on page 2 and drop the other entirely.
+       ORDER BY r.block_time DESC, r.block_number DESC, r.tx_hash DESC, r.id DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );

@@ -85,12 +85,20 @@ router.post('/wallets', async (req, res) => {
 router.get('/wallets', async (req, res) => {
   try {
     const wallets = await EthWallet.findAllByUser(req.user.id);
+    // One batch read instead of a per-wallet query inside the map below.
+    const allChainStates = await EthWalletChain.findAllForWallets(wallets.map((w) => w.id));
+    const chainStatesByWallet = new Map();
+    for (const state of allChainStates) {
+      const list = chainStatesByWallet.get(state.wallet_id) || [];
+      list.push(state);
+      chainStatesByWallet.set(state.wallet_id, list);
+    }
     const withAccounts = await Promise.all(
       wallets.map(async (wallet) => {
-        const [account, ethQuantity, chainStates] = await Promise.all([
+        const chainStates = chainStatesByWallet.get(wallet.id) || [];
+        const [account, ethQuantity] = await Promise.all([
           EthWallet.getAccountForWallet(wallet.id),
           EthWallet.getEthQuantity(wallet.id),
-          EthWalletChain.findForWallet(wallet.id),
         ]);
         return {
           ...wallet,
@@ -264,7 +272,7 @@ router.post('/activity/override', async (req, res) => {
     }
     // Any positive integer, not just enabled chains: rows from a since-disabled
     // chain stay stored, so their corrections must stay writable.
-    const chainId = chainIdRaw === undefined || chainIdRaw === null ? 1 : Number(chainIdRaw);
+    const chainId = chainIdRaw === undefined || chainIdRaw === null ? chains.DEFAULT_CHAIN_ID : Number(chainIdRaw);
     if (!Number.isInteger(chainId) || chainId < 1) {
       return res.status(400).json({ error: 'chain_id must be a positive integer' });
     }
@@ -321,7 +329,7 @@ router.delete('/activity/override', async (req, res) => {
     if (!TX_HASH_RE.test(txHash)) {
       return res.status(400).json({ error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' });
     }
-    const chainId = req.query.chain_id === undefined ? 1 : Number(req.query.chain_id);
+    const chainId = req.query.chain_id === undefined ? chains.DEFAULT_CHAIN_ID : Number(req.query.chain_id);
     if (!Number.isInteger(chainId) || chainId < 1) {
       return res.status(400).json({ error: 'chain_id must be a positive integer' });
     }

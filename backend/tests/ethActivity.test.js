@@ -754,10 +754,12 @@ test('the activity feed orders by a unique key, so paging cannot repeat or drop 
 
   await request(app).get('/api/eth/activity');
   const { sql } = queries.find((q) => /^WITH resolved AS/.test(q.sql));
-  // Two of the user's wallets both see an A->B self-send: same block, same
-  // hash. Without the id the ORDER BY is not total and LIMIT/OFFSET can serve
-  // one of them twice and the other never.
-  assert.match(sql, /ORDER BY r\.block_number DESC, r\.tx_hash DESC, r\.id DESC/);
+  // block_time leads: block_number became a per-chain sequence in 039, so
+  // time is the only order that interleaves a multi-chain feed. Two of the
+  // user's wallets both see an A->B self-send: same time, same hash. Without
+  // the id the ORDER BY is not total and LIMIT/OFFSET can serve one of them
+  // twice and the other never.
+  assert.match(sql, /ORDER BY r\.block_time DESC, r\.block_number DESC, r\.tx_hash DESC, r\.id DESC/);
 });
 
 test('activity reads refuse to run unscoped', async () => {

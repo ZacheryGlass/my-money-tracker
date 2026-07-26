@@ -263,9 +263,11 @@ class EthTransfer {
        FROM eth_transfers t
        JOIN eth_wallets w ON w.id = t.wallet_id
        ${where}
-       -- block_number is chain-global, so it orders a merged feed correctly;
-       -- id breaks ties within a block deterministically so paging is stable.
-       ORDER BY t.block_number DESC, t.id DESC
+       -- block_number is a PER-CHAIN sequence since 039 (Arbitrum is hundreds
+       -- of millions of blocks past mainnet), so time is the only order that
+       -- interleaves a multi-chain feed correctly; block_number and id break
+       -- ties deterministically so paging is stable.
+       ORDER BY t.block_time DESC, t.block_number DESC, t.id DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );

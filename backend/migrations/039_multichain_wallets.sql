@@ -44,6 +44,11 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_eth_transfers_wallet_chain
   ON eth_transfers(wallet_id, chain_id, block_number DESC);
 
+-- The merged feed orders on block_time (block numbers are per-chain sequences,
+-- so time is the only cross-chain order).
+CREATE INDEX IF NOT EXISTS idx_eth_transfers_wallet_time
+  ON eth_transfers(wallet_id, block_time DESC);
+
 -- Per-(wallet, chain) sync state. Every cursor that used to live on
 -- eth_wallets lives here instead, the NFT cursors from #54 included -- those
 -- default to 0 like they do on the wallet row, so a newly-enabled chain

@@ -174,6 +174,13 @@ const PUBLIC_COLUMNS = [
   'last_sync_at', 'last_sync_status', 'last_sync_error', 'balance_report',
 ];
 
+// The copy above cannot drift silently: once the fake pool is installed the
+// real model is importable, and this pins the two lists to byte-equality.
+test('the fake pool projection matches ExchangeAccount.PUBLIC_COLUMNS', () => {
+  const ExchangeAccount = require('../src/models/ExchangeAccount');
+  assert.deepEqual(PUBLIC_COLUMNS, ExchangeAccount.PUBLIC_COLUMNS);
+});
+
 const pgModulePath = require.resolve('pg');
 require.cache[pgModulePath] = {
   id: pgModulePath,

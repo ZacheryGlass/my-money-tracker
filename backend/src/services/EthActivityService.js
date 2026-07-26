@@ -4,13 +4,10 @@ const pool = require('../config/database');
 const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const EthActivity = require('../models/EthActivity');
+const { DEFAULT_CHAIN_ID } = require('../config/chains');
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-// Pre-039 eth_transfers rows may predate the chain_id column in a fake-pool
-// test (the real column is NOT NULL DEFAULT 1); everything modern carries its
-// own chain_id and the builder groups on it.
-const DEFAULT_CHAIN_ID = 1;
 
 // The full category vocabulary (038's CHECK constraint carries the same list).
 // A superset by design: later issues fill in exchange_trade (#61),
@@ -62,7 +59,9 @@ function legDecimals(transfer) {
 }
 
 // Base units -> a whole-unit decimal string. Sign is carried by `direction`, so
-// this returns the magnitude.
+// this returns the magnitude. NOT EthWalletService.unitsToDecimalString: that
+// one clamps to the holdings column's DECIMAL(20,8); this is full precision,
+// for display inside legs JSONB where nothing bounds the scale.
 function formatUnits(value, decimals) {
   const abs = value < 0n ? -value : value;
   if (decimals <= 0) return abs.toString();
