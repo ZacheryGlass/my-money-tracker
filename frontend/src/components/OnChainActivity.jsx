@@ -3,6 +3,12 @@ import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../utils/api';
 import { formatDateDisplay } from '../utils/format';
+import {
+  LABEL_VERDICT_KEEP,
+  LABEL_VERDICT_OPTIONS,
+  labelVerdictKind,
+  labelVerdictNeedsName,
+} from '../utils/dataLabels';
 import DataTable from './DataTable';
 import FilterTabs from './FilterTabs';
 import LoadingState from './LoadingState';
@@ -75,8 +81,13 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
   const [ignoringContract, setIgnoringContract] = useState(null);
   const [labelingId, setLabelingId] = useState(null);
   const [labelName, setLabelName] = useState('');
+  // null = follow the default for this address (keep an existing verdict, or
+  // 'exchange' for one that has never been labeled). Set once the user picks.
+  const [labelVerdictChoice, setLabelVerdictChoice] = useState(null);
   const [savingLabel, setSavingLabel] = useState(false);
   const [labelNames, setLabelNames] = useState([]);
+  // address -> kind, for addresses that already carry a label row.
+  const [labeledKinds, setLabeledKinds] = useState(() => new Map());
   const [refreshKey, setRefreshKey] = useState(0);
   // Guards Load More responses that arrive after the filter changed.
   const typeFilterRef = useRef(typeFilter);
@@ -142,35 +153,53 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
   };
 
   // Known exchange names feed the inline form's datalist for one-tap reuse.
-  // Exchange kinds only: this form labels exchanges, and the triage queue's
-  // one-click verdicts mint 'external'/'own' rows whose names default to a bare
-  // 0x1234…abcd, which would otherwise fill the typeahead with noise.
+  // Exchange kinds only: the typeahead is for naming an exchange, and
+  // 'external'/'own' rows default their name to a bare 0x1234…abcd, which
+  // would otherwise fill it with noise.
+  //
+  // The same response also says WHICH addresses already have a verdict, which
+  // is what picks the form's default (keep vs. exchange). It cannot see the
+  // scraped pack -- findAllForUser hides those rows -- so a packed address
+  // reads as unlabeled and defaults to Exchange, which is exactly what the
+  // insert would have done anyway.
   useEffect(() => {
     let cancelled = false;
     ethAPI.getAddressLabels()
       .then((result) => {
         if (cancelled) return;
-        const names = [...new Set(
-          (result.labels || [])
+        const labels = result.labels || [];
+        setLabelNames([...new Set(
+          labels
             .filter((label) => !label.kind || label.kind === 'exchange')
             .map((label) => label.name)
-        )];
-        setLabelNames(names);
+        )]);
+        setLabeledKinds(new Map(labels.map((label) => [label.address, label.kind || 'exchange'])));
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [refreshKey]);
 
+  // The default verdict for an address: keep whatever it already says (this
+  // form is then a pure rename), or 'exchange' for one nobody has judged --
+  // which is what a label with no kind has always meant here.
+  const defaultVerdictFor = (address) => (
+    labeledKinds.has(address) ? LABEL_VERDICT_KEEP : 'exchange'
+  );
+
   const handleLabelAddress = async (event, counterparty) => {
     event.preventDefault();
+    const verdict = labelVerdictChoice || defaultVerdictFor(counterparty);
     const name = labelName.trim();
-    if (!name || savingLabel) return;
+    // External/own names never reach classification, so the server fills in a
+    // short address; only an exchange name has to be typed.
+    if (savingLabel || (!name && labelVerdictNeedsName(verdict))) return;
     setSavingLabel(true);
     setError(null);
     try {
-      await ethAPI.labelAddress(counterparty, name);
+      await ethAPI.labelAddress(counterparty, name || null, { kind: labelVerdictKind(verdict) });
       setLabelingId(null);
       setLabelName('');
+      setLabelVerdictChoice(null);
       setRefreshKey((key) => key + 1);
       onDataChanged?.();
     } catch (err) {
@@ -293,10 +322,16 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       cell: ({ row }) => {
         const transfer = row.original;
         if (labelingId === transfer.id) {
+          // The verdict is the point of this form, not a detail: without it
+          // every label written here votes 'exchange', and an address the pack
+          // got wrong could never be corrected from the screen that shows the
+          // wrong transfer. Stacked rather than inline -- the cell is 13rem.
+          const verdict = labelVerdictChoice || defaultVerdictFor(transfer.counterparty);
+          const nameRequired = labelVerdictNeedsName(verdict);
           return (
             <form
               onSubmit={(event) => handleLabelAddress(event, transfer.counterparty)}
-              className="flex items-center justify-end gap-1.5"
+              className="flex flex-col items-stretch gap-1.5"
             >
               <input
                 type="text"
@@ -304,25 +339,38 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
                 onChange={(event) => setLabelName(event.target.value)}
                 list="eth-label-names"
                 maxLength={64}
-                placeholder="e.g. Coinbase"
+                placeholder={nameRequired ? 'e.g. Coinbase' : 'Name (optional)'}
                 autoFocus
-                className="h-7 w-28 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+                aria-label="Label name"
+                className="h-7 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
               />
-              <button
-                type="submit"
-                disabled={savingLabel || !labelName.trim()}
-                className="inline-flex h-7 items-center gap-1 rounded border border-teal-500/30 bg-teal-500/10 px-2 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
+              <select
+                value={verdict}
+                onChange={(event) => setLabelVerdictChoice(event.target.value)}
+                aria-label="Counterparty verdict"
+                className="h-7 w-full min-w-0 rounded border border-input-border bg-surface-2 px-1 text-[11px] text-primary outline-none focus:ring-1 focus:ring-accent"
               >
-                {savingLabel && <RefreshCw size={10} className="animate-spin" />}
-                Save
-              </button>
-              <button
-                type="button"
-                onClick={() => { setLabelingId(null); setLabelName(''); }}
-                className="inline-flex h-7 items-center rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary"
-              >
-                <X size={10} />
-              </button>
+                {LABEL_VERDICT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <div className="flex items-center justify-end gap-1.5">
+                <button
+                  type="submit"
+                  disabled={savingLabel || (nameRequired && !labelName.trim())}
+                  className="inline-flex h-7 items-center gap-1 rounded border border-teal-500/30 bg-teal-500/10 px-2 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
+                >
+                  {savingLabel && <RefreshCw size={10} className="animate-spin" />}
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setLabelingId(null); setLabelName(''); setLabelVerdictChoice(null); }}
+                  className="inline-flex h-7 items-center rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary"
+                >
+                  <X size={10} />
+                </button>
+              </div>
             </form>
           );
         }
@@ -330,8 +378,8 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
           <div className="flex items-center justify-end gap-1.5">
             {transfer.labelable && (
               <button
-                onClick={() => { setLabelingId(transfer.id); setLabelName(''); }}
-                title="Label this address (e.g. an exchange deposit address)"
+                onClick={() => { setLabelingId(transfer.id); setLabelName(''); setLabelVerdictChoice(null); }}
+                title="Label this address and say how to treat it (exchange, outside party, or yours)"
                 className="inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-teal-500/30 hover:text-teal-400"
               >
                 <Tag size={10} />
@@ -356,7 +404,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       },
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [showWalletColumn, labelingId, labelName, savingLabel, ignoringContract]);
+  ], [showWalletColumn, labelingId, labelName, labelVerdictChoice, labeledKinds, savingLabel, ignoringContract]);
 
   const table = useReactTable({
     data: enrichedRows,

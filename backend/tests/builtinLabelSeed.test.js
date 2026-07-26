@@ -29,6 +29,7 @@ require.cache[pgModulePath] = {
 
 const EthAddressLabel = require('../src/models/EthAddressLabel');
 const EthTransfer = require('../src/models/EthTransfer');
+const { cleanName, extract, MERCHANT_NAME_RE, NAME_MAX } = require('../scripts/generate-label-seed');
 
 const migrationsDir = path.join(__dirname, '../migrations');
 const readMigration = (file) => fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
@@ -123,16 +124,37 @@ test('035 records provenance without re-stamping the pack', () => {
   assert.match(PROVENANCE_SQL, /ADD COLUMN IF NOT EXISTS confidence VARCHAR\(10\)/);
   assert.match(PROVENANCE_SQL, /CHECK \(confidence IS NULL OR confidence IN \('high', 'low'\)\)/);
 
-  // THE re-run trap. 035 runs before 036 on every boot, so a backfill of
-  // "every global row is a builtin" would relabel all 5k scraped rows as
-  // hand-verified on boot two, erasing the distinction this migration exists
-  // to record. It must be scoped to the pre-provenance default.
-  const backfill = stripComments(PROVENANCE_SQL)
+  // THE re-run trap. 035 runs before 036 on every boot, so ANY statement here
+  // that concludes "a global row is a builtin" would relabel all 5k scraped
+  // rows as hand-verified on boot two, erasing the distinction this migration
+  // exists to record. There is deliberately no such backfill: 029 runs earlier
+  // in the same boot and moves the only population one could have targeted
+  // (global rows still carrying 026's default source 'user') onto user 1.
+  const statements = stripComments(PROVENANCE_SQL)
     .split(';')
     .map((s) => s.replace(/\s+/g, ' ').trim())
-    .find((s) => s.startsWith("UPDATE eth_address_labels SET source = 'builtin'"));
-  assert.ok(backfill, 'expected a builtin backfill');
-  assert.match(backfill, /WHERE user_id IS NULL AND source = 'user'$/);
+    .filter(Boolean);
+  assert.deepEqual(
+    statements.filter((s) => /^UPDATE eth_address_labels SET source = 'builtin'/.test(s)),
+    [],
+    'a source=builtin backfill here would restamp the scraped pack on the next boot'
+  );
+  assert.match(
+    stripComments(SCOPING_SQL).replace(/\s+/g, ' '),
+    /UPDATE eth_address_labels SET user_id = 1 WHERE user_id IS NULL AND source = 'user'/,
+    "029 is what makes the backfill unnecessary; if it goes, 035's assumption goes with it"
+  );
+
+  // Whatever this file does write must be unable to reach an 'eth-labels' row:
+  // every UPDATE is scoped either to the impossible pre-026 NULL source or to
+  // rows already known to be hand-verified builtins.
+  for (const statement of statements.filter((s) => s.startsWith('UPDATE eth_address_labels'))) {
+    assert.match(
+      statement,
+      /WHERE (source IS NULL|source = 'builtin' AND confidence IS NULL)$/,
+      `unscoped update could touch the pack: ${statement}`
+    );
+  }
 });
 
 // Mirrors the second UPDATE in EthTransfer.reclassifyCounterparties: resolve the
@@ -204,6 +226,110 @@ test('the label management list hides the bulk pack but keeps overrides', async 
   const inner = sql.slice(sql.indexOf('SELECT DISTINCT ON'), sql.indexOf(') labels'));
   assert.doesNotMatch(inner, /source/);
   assert.match(inner, /ORDER BY address, user_id NULLS LAST/);
+});
+
+// --- the generator itself -------------------------------------------------
+// The extraction rules cannot be re-derived from the artifacts once the 21MB
+// dump is gone, and they are where a quiet mistake becomes a wrong verdict on
+// real money.
+
+const addr = (n) => `0x${String(n).padStart(40, '0')}`;
+
+test('merchant gateways and deployers are seeded external, custodial venues exchange', () => {
+  const { labels, stats } = extract([
+    // Paying these is SPENDING. An 'exchange' verdict rewrites the transfer as
+    // an internal transfer and the money leaves cash flow entirely, so the
+    // dataset's exchange category is overridden for them.
+    { address: addr(1), label: 'exchange', nameTag: 'Bitrefill: Payment Gateway' },
+    { address: addr(2), label: 'exchange', nameTag: 'CoinPayments.net 3' },
+    { address: addr(3), label: 'exchange', nameTag: 'MoonPay 5' },
+    { address: addr(4), label: 'exchange', nameTag: 'BitPay: Invoice' },
+    { address: addr(5), label: 'exchange', nameTag: 'Coinbase: Commerce Fee 1' },
+    { address: addr(6), label: 'exchange', nameTag: 'Transak: Wallet 1' },
+    { address: addr(7), label: 'exchange', nameTag: 'Ramp Network US 1' },
+    { address: addr(8), label: 'exchange', nameTag: 'Coinbase: Deployer 2' },
+    // Genuinely custodial platforms keep 'exchange' -- moving money to one of
+    // these really is moving your own money, and draining those from the queue
+    // is the entire point of the pack.
+    { address: addr(9), label: 'exchange', nameTag: 'Nexo 3' },
+    { address: addr(10), label: 'exchange', nameTag: 'Prime Trust 1' },
+    { address: addr(11), label: 'exchange', nameTag: 'Kraken 4' },
+  ]);
+
+  const kinds = new Map(labels.map((l) => [l.name, l.kind]));
+  for (const name of ['Bitrefill: Payment Gateway', 'CoinPayments.net 3', 'MoonPay 5', 'BitPay: Invoice',
+    'Coinbase: Commerce Fee 1', 'Transak: Wallet 1', 'Ramp Network US 1', 'Coinbase: Deployer 2']) {
+    assert.equal(kinds.get(name), 'external', `${name} must not vote 'exchange'`);
+  }
+  for (const name of ['Nexo 3', 'Prime Trust 1', 'Kraken 4']) {
+    assert.equal(kinds.get(name), 'exchange', `${name} is custodial and should stay an exchange`);
+  }
+  assert.equal(stats.merchantsToExternal, 8);
+  assert.equal(stats.ambiguousToExternal, 0, 'a demotion is not a dataset ambiguity');
+});
+
+test('a demotion is sticky across the same address under a plain venue tag', () => {
+  // The dump repeats an address once per chain with drifting name tags. One tag
+  // calling it a gateway is enough: the verdict resolves DOWN, exactly like the
+  // dex/exchange ambiguity rule, because only the 'exchange' direction can
+  // delete real spending from the ledger.
+  const forward = extract([
+    { address: addr(1), label: 'exchange', nameTag: 'Coinbase 5' },
+    { address: addr(1), label: 'exchange', nameTag: 'Coinbase: Commerce Fee 1' },
+  ]);
+  const reversed = extract([
+    { address: addr(1), label: 'exchange', nameTag: 'Coinbase: Commerce Fee 1' },
+    { address: addr(1), label: 'exchange', nameTag: 'Coinbase 5' },
+  ]);
+  for (const { labels } of [forward, reversed]) {
+    assert.equal(labels.length, 1);
+    assert.equal(labels[0].kind, 'external');
+    // The name still follows the lexicographic rule; only the kind resolves down.
+    assert.equal(labels[0].name, 'Coinbase 5');
+  }
+});
+
+test('dataset categories are read off a null-prototype map', () => {
+  // 'constructor' would otherwise resolve to Object's constructor -- a truthy
+  // function that sails past the `if (!kind)` guard and lands as a bogus kind.
+  const { labels } = extract([
+    { address: addr(1), label: 'constructor', nameTag: 'Not an exchange' },
+    { address: addr(2), label: 'toString', nameTag: 'Also not' },
+    { address: addr(3), label: '__proto__', nameTag: 'Still not' },
+    { address: addr(4), label: 'mev-bot', nameTag: 'Some bot' },
+  ]);
+  assert.deepEqual(labels, []);
+});
+
+test('names are sanitized to printable ASCII before they are ever quoted', () => {
+  // quote() only doubles single quotes. A backslash surviving to the SQL would
+  // be an escape character on a server with standard_conforming_strings off,
+  // swallowing the closing quote and corrupting the rest of the batch; a
+  // newline would split a VALUES row in two.
+  assert.equal(cleanName('Bad\\Name'), 'Bad Name');
+  assert.equal(cleanName('Two\nLines'), 'Two Lines');
+  assert.equal(cleanName('Nul\0byte'), 'Nul byte', 'a NUL would make Postgres reject the statement');
+  assert.equal(cleanName("O'Brien Exchange"), "O'Brien Exchange");
+  assert.equal(cleanName('  spaced   out  '), 'spaced out');
+  assert.equal(cleanName('échange'), 'change');
+  assert.equal(cleanName('   '), null, 'a name that sanitizes to nothing is dropped, not blanked');
+  assert.equal(cleanName(undefined), null);
+
+  // VARCHAR(64) counts characters, and the truncation is by code point, so no
+  // output can end in half of a surrogate pair -- belt and braces with the
+  // ASCII filter above, which must not be the only thing keeping that true.
+  const long = cleanName(`${'a'.repeat(80)}`);
+  assert.equal(long.length, NAME_MAX);
+  const astral = cleanName(`${'\u{1F600}'.repeat(40)}${'b'.repeat(40)}`);
+  assert.doesNotMatch(astral, /[\uD800-\uDFFF]/);
+  assert.ok(Array.from(astral).length <= NAME_MAX);
+});
+
+test('the committed pack has no merchant or deployer voting as an exchange', () => {
+  // Guards the artifacts against a regeneration that loses the demotion list.
+  const leaked = PACK.labels.filter((l) => l.kind === 'exchange' && MERCHANT_NAME_RE.test(l.name));
+  assert.deepEqual(leaked, []);
+  assert.ok(PACK.labels.some((l) => l.kind === 'external' && /deployer/i.test(l.name)));
 });
 
 test('a seeded address is still resolvable by address', async () => {

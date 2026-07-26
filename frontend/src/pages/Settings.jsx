@@ -12,6 +12,12 @@ import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
 import { formatRelativeTime, formatCompactCurrency, formatDateDisplay } from '../utils/format';
+import {
+  LABEL_VERDICT_KEEP,
+  LABEL_VERDICT_OPTIONS,
+  labelVerdictKind,
+  labelVerdictNeedsName,
+} from '../utils/dataLabels';
 
 const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance' },
@@ -496,6 +502,9 @@ const Settings = ({ user }) => {
   const [addressLabels, setAddressLabels] = useState([]);
   const [labelAddressInput, setLabelAddressInput] = useState('');
   const [labelNameInput, setLabelNameInput] = useState('');
+  // null = follow the default for the typed address. Only a deliberate pick
+  // sets it, so the default can keep tracking what the user types.
+  const [labelVerdictChoice, setLabelVerdictChoice] = useState(null);
   const [updatingLabels, setUpdatingLabels] = useState(false);
   // null = not loaded or the fetch failed; [] = loaded and genuinely empty.
   // The distinction matters: never claim "all clear" on a failed request.
@@ -535,6 +544,19 @@ const Settings = ({ user }) => {
     () => [...new Set(addressLabels.filter((l) => !l.kind || l.kind === 'exchange').map((l) => l.name))],
     [addressLabels]
   );
+
+  // The verdict the form will send: the user's pick, or -- until they make one
+  // -- keep whatever the typed address already says, falling back to 'exchange'
+  // for an address nobody has judged. Only the user's own rows and the
+  // hand-verified builtins are visible here (the scraped pack is hidden from
+  // this list), so a packed address reads as new and defaults to 'exchange',
+  // which is what the insert would have done anyway.
+  const existingLabelForInput = useMemo(() => {
+    const address = labelAddressInput.trim().toLowerCase();
+    if (!ETH_ADDRESS_RE.test(address)) return null;
+    return addressLabels.find((label) => label.address === address) || null;
+  }, [labelAddressInput, addressLabels]);
+  const labelVerdict = labelVerdictChoice || (existingLabelForInput ? LABEL_VERDICT_KEEP : 'exchange');
 
   // Rows written before migration 031 have no kind and meant "exchange".
   // 'own' rows stay in the main list -- a cold-storage address is worth seeing.
@@ -783,17 +805,22 @@ const Settings = ({ user }) => {
       setError('Enter the counterparty address (0x followed by 40 hex characters)');
       return;
     }
-    if (!name) {
+    // An exchange name is the text the ledger shows AND the claim that turns
+    // spending into an internal transfer, so it has to be typed. The other
+    // verdicts never show their name, and the server falls back to a short
+    // address.
+    if (!name && labelVerdictNeedsName(labelVerdict)) {
       setError('Enter a name for the address (e.g. Coinbase)');
       return;
     }
     setUpdatingLabels(true);
     setError(null);
     try {
-      await ethAPI.labelAddress(address, name);
+      await ethAPI.labelAddress(address, name || null, { kind: labelVerdictKind(labelVerdict) });
       showSuccess('Address labeled');
       setLabelAddressInput('');
       setLabelNameInput('');
+      setLabelVerdictChoice(null);
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to label address');
@@ -1708,12 +1735,12 @@ const Settings = ({ user }) => {
       <section className="mb-8" aria-labelledby="eth-labeled-addresses-heading">
         <div className="mb-3 px-2">
           <h2 id="eth-labeled-addresses-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Labeled Addresses</h2>
-          <p className="mt-1 text-xs text-secondary">Transfers to or from an exchange address, or one marked as yours, count as internal movements instead of external activity. Major exchanges&apos; shared hot wallets are recognized automatically; a deposit address the exchange assigned you has to be labeled by hand. Removing a label puts the address back in Needs Review.</p>
+          <p className="mt-1 text-xs text-secondary">Transfers to or from an exchange address, or one marked as yours, count as internal movements instead of external activity. Major exchanges&apos; shared hot wallets are recognized automatically; a deposit address the exchange assigned you has to be labeled by hand. If a recognized address is wrong &mdash; a shop or payment processor treated as an exchange, say &mdash; label it here with the right verdict: yours always wins over the built-in one, and past transfers are reclassified. Removing a label puts the address back in Needs Review.</p>
         </div>
 
         <div className="card overflow-hidden">
           <form onSubmit={handleLabelAddress} className="border-b border-border p-4">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] sm:items-end">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] sm:items-end">
               <label className="min-w-0 text-caption text-tertiary">
                 Address
                 <input
@@ -1728,7 +1755,7 @@ const Settings = ({ user }) => {
                 />
               </label>
               <label className="min-w-0 text-caption text-tertiary">
-                Name
+                {labelVerdictNeedsName(labelVerdict) ? 'Name' : 'Name (optional)'}
                 <input
                   type="text"
                   value={labelNameInput}
@@ -1738,6 +1765,23 @@ const Settings = ({ user }) => {
                   className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
                   disabled={updatingLabels}
                 />
+              </label>
+              {/* The verdict, not just a name. An address the built-in pack
+                  called an exchange is corrected here: 'External' or 'My own
+                  address' writes a user row that shadows the builtin and
+                  reclassifies the history behind it. */}
+              <label className="min-w-0 text-caption text-tertiary">
+                Verdict
+                <select
+                  value={labelVerdict}
+                  onChange={(event) => setLabelVerdictChoice(event.target.value)}
+                  className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                  disabled={updatingLabels}
+                >
+                  {LABEL_VERDICT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
               </label>
               <button
                 type="submit"

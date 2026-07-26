@@ -71,15 +71,19 @@ BEGIN
   END IF;
 END $$;
 
--- Backfill: a global row (user_id IS NULL) is by definition not something a
--- user typed. Scoped to source = 'user' -- the pre-provenance default -- and
--- NOT to "user_id IS NULL" alone, which is the trap this file has to dodge:
--- 036 inserts ~5k rows with user_id NULL and source 'eth-labels', and this
--- file runs BEFORE 036 on every subsequent boot. An unscoped backfill would
--- relabel the whole scraped pack as hand-verified 'builtin' on boot two,
--- permanently erasing the distinction the column was added to record.
-UPDATE eth_address_labels SET source = 'builtin'
-WHERE user_id IS NULL AND source = 'user';
+-- No backfill of source is needed, and adding one would be actively dangerous.
+-- Every global row already names its own provenance by the time this file runs:
+-- 029 seeds its hand-verified builtins with a literal source = 'builtin', 036
+-- seeds the scraped pack with a literal 'eth-labels', and 026 declared source
+-- NOT NULL DEFAULT 'user', so it is never NULL to begin with. The one
+-- pre-provenance population that could have been global-but-'user' is already
+-- gone: 029 runs earlier in the same boot and does
+--   UPDATE eth_address_labels SET user_id = 1 WHERE user_id IS NULL AND source = 'user'
+-- which is exactly that set. A "global rows are builtins" backfill here would
+-- therefore never match a row it was written for -- but it WOULD sit in front
+-- of 036 on every subsequent boot, one predicate away from relabeling the whole
+-- scraped pack as hand-verified and erasing the distinction this migration
+-- exists to record.
 
 -- 029's builtins were each checked against their Etherscan tag by hand before
 -- being written down; that is exactly the claim 'high' makes. Scoped to

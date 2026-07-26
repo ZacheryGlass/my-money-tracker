@@ -3,15 +3,15 @@
   "sourceUrl": "https://github.com/dawsbot/eth-labels",
   "sourceFile": "v1/data/json/accounts.json",
   "license": "MIT",
-  "note": "Scraped from Etherscan public name tags. Seeded into this private app only; do not redistribute as a dataset or API. Regenerate with backend/scripts/generate-label-seed.js.",
+  "note": "Scraped from Etherscan public name tags. Seeded into this private app only; do not redistribute as a dataset or API. Regenerate with backend/scripts/generate-label-seed.js. Merchant processors, fiat on-ramps and contract deployers carry kind 'external', not 'exchange': paying one is spending, and calling it an exchange would rewrite that spending as an internal transfer.",
   "rowDefaults": {
     "user_id": null,
     "source": "eth-labels",
     "confidence": "low"
   },
   "counts": {
-    "exchange": 4859,
-    "external": 270,
+    "exchange": 4745,
+    "external": 384,
     "total": 5129
   },
   "labels": [
@@ -93,7 +93,7 @@
     {
       "address": "0x003e36550908907c2a2da960fd19a419b9a774b7",
       "name": "CoinPayments.net 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x0051ef9259c7ec0644a80e866ab748a2f30841b3",
@@ -113,7 +113,7 @@
     {
       "address": "0x005ad9b93955bf76d180c66f33fe84bd0f3310b5",
       "name": "CoinPayments.net 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x0068eb681ec52dbd9944517d785727310b494575",
@@ -248,7 +248,7 @@
     {
       "address": "0x014c18ad92838e8bb62b0135a0cf3f5cdd5bd6f4",
       "name": "Coinzix: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x014dcec5d0a124ed7de2ca305cd7157502806c93",
@@ -378,7 +378,7 @@
     {
       "address": "0x02d24cab4f2c3bf6e6eb07ea07e45f96baccffe7",
       "name": "Coinbase: Commerce Fee 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x02fdc44bf226e49dceca4775afaef3360e9c4ee9",
@@ -918,7 +918,7 @@
     {
       "address": "0x0833b566dd4d3a2f55b8416e7ca7e43921510885",
       "name": "CoinPayments.net 11",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x08439901c2bb071cd0812ed329675c9657434083",
@@ -1173,7 +1173,7 @@
     {
       "address": "0x0b5c4a7fcda49e0a8661419bb55b86161a86db2a",
       "name": "MoonPay 5",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x0b5ffae844a4b21c7beeded2595f22215288173c",
@@ -1238,7 +1238,7 @@
     {
       "address": "0x0bc99404e0fca2028d7665e3b473869c6c6ff002",
       "name": "Oobit: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x0bd4475fbc4309f27a49b323625126ffefd70029",
@@ -1968,7 +1968,7 @@
     {
       "address": "0x134530e94d8c603ca627c114d2d5b206d652e895",
       "name": "OPNX: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x1349907c197731c5ed98d8442309a15107cb6bad",
@@ -2063,7 +2063,7 @@
     {
       "address": "0x1440ec793ae50fa046b95bfeca5af475b6003f9e",
       "name": "MoonPay 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x147a95fa1cceccc20b341824952106cb0ee1eded",
@@ -2123,7 +2123,7 @@
     {
       "address": "0x151b381058f91cf871e7ea1ee83c45326f61e96d",
       "name": "MoonPay 4",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x1522900b6dafac587d499a862861c0869be6e428",
@@ -2548,7 +2548,7 @@
     {
       "address": "0x18b7517cf34a3277f3db3381c3b2679cc3dc1116",
       "name": "Ultimate Champions: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x18c4bf7c470069b9d18b6a5670e457de3983c299",
@@ -2623,7 +2623,7 @@
     {
       "address": "0x19d97aa29cd33bd966d52e2bc9dfc719f2bb9ae1",
       "name": "Coinhako: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x19e460ac0a23706f156909b545de9d5072802065",
@@ -2663,7 +2663,7 @@
     {
       "address": "0x1a459813db7758b0309b7785fec854966685ce3b",
       "name": "CoinPayments.net 5",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x1a6fc5abd6d15fa3673784da167db7f80b90e472",
@@ -2708,7 +2708,7 @@
     {
       "address": "0x1aac8bc17da523b9bc7470b0c9ed47a83760acef",
       "name": "BitMart: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x1ab4973a48dc892cd9971ece8e01dcc7688f8f23",
@@ -2798,7 +2798,7 @@
     {
       "address": "0x1b930c43526b09191a74175eaa47f2a650aeb73d",
       "name": "DigiFinex: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x1b93129f05cc2e840135aab154223c75097b69bf",
@@ -3178,7 +3178,7 @@
     {
       "address": "0x1fd5daa9bb707afb8a3197def72005757f8d1e36",
       "name": "Zipmex: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x1fd6267f0d86f62d88172b998390afee2a1f54b6",
@@ -3528,7 +3528,7 @@
     {
       "address": "0x22f6cc8738308a8c92a6a71ea67832463d1fec0d",
       "name": "MoonPay 8",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x22f83e4b9cb95cb99b88e8f4f15ea598c74c2788",
@@ -3883,7 +3883,7 @@
     {
       "address": "0x26637e1362a0c9f57d317cb417a9deddfe137f2a",
       "name": "Tokenize Xchange: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x266c0a91c23b8d1e65540f7dce8f2a4941c129db",
@@ -3963,7 +3963,7 @@
     {
       "address": "0x2730ef3c0c180e7f7bcfca249c757421b208e333",
       "name": "BitPay 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x273a4db9f7cb388ec216df8c347f0529b22f4bd8",
@@ -3998,12 +3998,12 @@
     {
       "address": "0x278425b97f719bc8cfa1d8aa1bbf7520ca81610c",
       "name": "CoinPayments.net 10",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x27899fface558bde9f284ba5c8c91ec79ee60fd6",
       "name": "Transak: Wallet 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x278f4dd76bab8c09fa00417731417f733ae9bae9",
@@ -4028,7 +4028,7 @@
     {
       "address": "0x27d7f6147a8748454b88be685c2804f96bf69db1",
       "name": "Tokenize Xchange: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x27e9f4748a2eb776be193a1f7dec2bb6daafe9cf",
@@ -4058,7 +4058,7 @@
     {
       "address": "0x28218df2a8143e0d21533b3ece267d5d66000000",
       "name": "CoinEx: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x28395f207ca3a0934324f63e5b731b9f785feba0",
@@ -4708,7 +4708,7 @@
     {
       "address": "0x2e05a304d3040f1399c8c20d2a9f659ae7521058",
       "name": "Luno: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x2e0714166a5095d0730b97110a11028158f1f3b7",
@@ -4743,7 +4743,7 @@
     {
       "address": "0x2e64275a42b5b80f674902e70a59f671315a3e03",
       "name": "ZB.com: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x2e694cd6455c73ea00024d60dec6d12ba154745c",
@@ -4823,7 +4823,7 @@
     {
       "address": "0x2ee3b2df6534abc759ffe994f7b8dcdfaa02cd31",
       "name": "Bitfinex: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x2ee555c9006a9dc4674f01e0d4dfc58e013708f0",
@@ -5118,7 +5118,7 @@
     {
       "address": "0x31d3a108fac60b0d5584226d9d2aa2294c637d76",
       "name": "CoinPayments.net 6",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x31dff0cf605f9719b9171f6049150595cc1240f1",
@@ -5148,7 +5148,7 @@
     {
       "address": "0x3247f6b66f24f672eacf52080e0381fa45deb307",
       "name": "Transak 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x324cc2c9fb379ea7a0d1c0862c3b48ca28d174a4",
@@ -5383,7 +5383,7 @@
     {
       "address": "0x34e158883efc81c5d92fde785fba48db738711ee",
       "name": "BitPay: Invoice",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x34e8ed33d8c1953b33de603b014079c578e01716",
@@ -5973,7 +5973,7 @@
     {
       "address": "0x3b73d7e1266e02a68185f5221a6718db04df6301",
       "name": "DigiFinex: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x3b794929566e3ba0f25e4263e1987828b5c87161",
@@ -7098,7 +7098,7 @@
     {
       "address": "0x4685bdb11c75ade469d6aa294c332d4f60736ebb",
       "name": "CoinPayments.net 17",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x468b858c964f297fd8fce058032bf4b4911a8ad8",
@@ -7363,7 +7363,7 @@
     {
       "address": "0x48fc0b223b818b55f2a6feb3ab329ff816edd2bc",
       "name": "Bitpie: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x49022d9719cf6526cead928ca9a7e12e932f2c63",
@@ -7398,7 +7398,7 @@
     {
       "address": "0x4945ce2d1b5bd904cac839b7fdabafd19cab982b",
       "name": "Bitrefill: Payment Gateway",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x49497a4d914ae91d34ce80030fe620687bf333fd",
@@ -7608,7 +7608,7 @@
     {
       "address": "0x4b23d52eff7c67f5992c2ab6d3f69b13a6a33561",
       "name": "Coinbase: Commerce Fee 6",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x4b2cad10b86c42fb79518d0ee4905d2868a77d42",
@@ -7728,7 +7728,7 @@
     {
       "address": "0x4c2f150fc90fed3d8281114c2349f1906cde5346",
       "name": "Gemini: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x4c34ae54dc716808e94af3d1d638b8ea3a23fa9b",
@@ -7833,7 +7833,7 @@
     {
       "address": "0x4d31f0089a27e7afe56ac47c1551e09102d2834d",
       "name": "Bitrefill: Deposit Funder 4",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x4d468cf47eb6df39618dc9450be4b56a70a520c1",
@@ -8143,7 +8143,7 @@
     {
       "address": "0x506c082ae6caabba8a37bd5a8b671aeac4f68164",
       "name": "Prime Trust: Forwarder Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x506c4dc5284316c04f34b8954e9bd6df3d7c514e",
@@ -8413,7 +8413,7 @@
     {
       "address": "0x52de8d3febd3a06d3c627f59d56e6892b80dcf12",
       "name": "BitPay: Invoice 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x52ea46506b9cc5ef470c5bf89f17dc28bb35d85c",
@@ -8483,7 +8483,7 @@
     {
       "address": "0x538d72ded42a76a30f730292da939e0577f22f57",
       "name": "Bitstamp: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x539c92186f7c6cc4cbf443f26ef84c595babbca1",
@@ -8583,7 +8583,7 @@
     {
       "address": "0x546553718b1b255742566f10a34d86fc22f02b1f",
       "name": "Crypto.com: Deployer 7",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x548054687ef6c56c6d82e8269e5fd93d8b88fcb2",
@@ -8848,7 +8848,7 @@
     {
       "address": "0x5763a2a8194e9bd0b8140abccb9171f005470324",
       "name": "BitPay 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x576b81f0c21edbc920ad63feeeb2b0736b018a58",
@@ -8978,7 +8978,7 @@
     {
       "address": "0x58a5b842a629b9d134dfd348c714b7f1d8212253",
       "name": "DIFX: Deployer 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x58aaf79cb86dd730fa008973d4c4b6fee8fb4d80",
@@ -9158,7 +9158,7 @@
     {
       "address": "0x5a060db7cac8786818b752ee3cc802548d86a30c",
       "name": "CoinPayments.net 13",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x5a150733cb59bbdd5c7398a8fe7da7f97c8a213a",
@@ -9443,7 +9443,7 @@
     {
       "address": "0x5d636f90b48c9f14bd0bf9d8016d4cb0dd9e1d9f",
       "name": "Qmall Token: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x5d7f34372fa8708e09689d400a613eee67f75543",
@@ -9558,7 +9558,7 @@
     {
       "address": "0x5eb8825ca3cc1d3ac309abac112e97e90dbdc5e3",
       "name": "Coinbase: Deployer 4",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x5eca044b580a86e7ab4b2076330978d6d125a270",
@@ -9888,7 +9888,7 @@
     {
       "address": "0x61d5a4d5bd270e59e9320243e574288e2a199fed",
       "name": "Bitfinex: Deployer 7",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x61edcdf5bb737adffe5043706e7c5bb1f1a56eea",
@@ -10003,7 +10003,7 @@
     {
       "address": "0x632d17e6f450b0b89cf1d8c61e93b9e9a4b8608b",
       "name": "CoinPayments.net 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x6337949cbc4825bbd09242c811770f6f6fee9ffc",
@@ -10113,7 +10113,7 @@
     {
       "address": "0x6438beeb08cf4faba533ecde748180dd56d43513",
       "name": "Bitrefill: Deposit Funder 8",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x64440d8a6e6f949536646c363a4b734819eedbfd",
@@ -10648,7 +10648,7 @@
     {
       "address": "0x69b8f9e1f633fbb8de3e279aaf34d4eff05e61af",
       "name": "Bitrefill: Deposit Funder 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x69b90c1d460f9e263a43272564892c00eb040962",
@@ -10853,7 +10853,7 @@
     {
       "address": "0x6bd1a64227866ac25b7f9c918b3dc32d2a9cfa19",
       "name": "Nobitex: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x6be5a267b04e9f24cdc1824fd38d63c436be91ab",
@@ -10928,7 +10928,7 @@
     {
       "address": "0x6c8dd0e9cc58c07429e065178d88444b60e60b80",
       "name": "Coinbase: Commerce Fee 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x6c92e0e6a9984c0f44677f678e8fc10bebe3de64",
@@ -10963,7 +10963,7 @@
     {
       "address": "0x6cf6a8488d70b1743134d6d69950cda60325a42f",
       "name": "SideShift: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x6cf9aa65ebad7028536e353393630e2340ca6049",
@@ -11183,7 +11183,7 @@
     {
       "address": "0x6ec88a2cb932eb46dfda0280c0eadb93b6eca13b",
       "name": "Simplex: Deprecated 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x6edb9d6547befc3397801c94bb8c97d2e8087e2f",
@@ -11503,7 +11503,7 @@
     {
       "address": "0x71d7cb7f3f4731ec26e281e58d9fce443e7b3f83",
       "name": "Finxflo: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x7217d64f77041ce320c356d1a2185bcb89798a0a",
@@ -12068,7 +12068,7 @@
     {
       "address": "0x772589e99bc9c54dd40acb7d73f88ccbc9d9cf47",
       "name": "FTX: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x7727e5113d1d161373623e5f49fd568b4f543a9e",
@@ -12083,7 +12083,7 @@
     {
       "address": "0x77300c71071eca35cb673a0b7571b2907deb77c7",
       "name": "Simplex 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x77340c866ef1da13407d61120010f136fad5f91c",
@@ -12268,7 +12268,7 @@
     {
       "address": "0x79267cd876afe3e400917c1b26743630cc29f4e0",
       "name": "Bitrefill: Deposit Funder 7",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x79271651b4f1c1a49d54b3c96630c36194dc46ac",
@@ -12288,7 +12288,7 @@
     {
       "address": "0x794c629e4403ca7cee126cc19d6c7b002d0238a5",
       "name": "Arkham: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x794d28ac31bcb136294761a556b68d2634094153",
@@ -12488,7 +12488,7 @@
     {
       "address": "0x7afc12c8dd2e6591581d95586eb2c2a4905a12a9",
       "name": "MoonPay 7",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x7b0d89a97c6749f30c0f527281700f170007947b",
@@ -12763,7 +12763,7 @@
     {
       "address": "0x7de68a47a861a549dbe2bae37884fc6c84d12026",
       "name": "CoinPayments.net 4",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x7dfe9a368b6cf0c0309b763bb8d16da326e8f46e",
@@ -13093,7 +13093,7 @@
     {
       "address": "0x8216874887415e2650d12d53ff53516f04a74fd7",
       "name": "MoonPay: Withdrawals 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x821a08770c428fb15b49f562f606f209de535e80",
@@ -13323,7 +13323,7 @@
     {
       "address": "0x84ba51a3b082066482385c2e77c15b36b2888888",
       "name": "CoinEx: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x84c609976c73c38cdd36895cc998e1ac95734e4e",
@@ -13513,7 +13513,7 @@
     {
       "address": "0x86d3e894b5cdb6a80afffd35ed348868fb98dd3f",
       "name": "Coinify 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x86e284421664840cb65c5b918da59c01ed8fa666",
@@ -13643,7 +13643,7 @@
     {
       "address": "0x881d4032abe4188e2237efcd27ab435e81fc6bb1",
       "name": "Coinbase: Commerce",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x881f982575a3ecbea6fe133ddb0951303215d130",
@@ -13708,7 +13708,7 @@
     {
       "address": "0x88c633d244ee11269b33a5d29133c5e66e8951a5",
       "name": "Bitrefill 4",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x88c94d8e7d4203b185b3beb0a7b15a6b4f36b2a2",
@@ -13853,7 +13853,7 @@
     {
       "address": "0x8a37f0290ae85d08522d2a605617e76128fd0712",
       "name": "Ramp Network US 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x8a40c222996f9f3431f63bf80244c36822060f12",
@@ -13868,7 +13868,7 @@
     {
       "address": "0x8a65ac0e23f31979db06ec62af62b132a6df4741",
       "name": "ShapeShift: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x8a7242e8b4458190d34c3131fa947d7a85b72ddd",
@@ -13913,7 +13913,7 @@
     {
       "address": "0x8ae0b6bb5ea5b8ab7c9322fcb0dfcd8f7effd169",
       "name": "CoinPayments.net 12",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x8ae57a027c63fca8070d1bf38622321de8004c67",
@@ -14048,7 +14048,7 @@
     {
       "address": "0x8c8d7c46219d9205f056f28fee5950ad564d7465",
       "name": "mercuryo",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x8cad96fb23924ebc37b8cdafa8400ad856fe4a2c",
@@ -14298,7 +14298,7 @@
     {
       "address": "0x8f662404d92908324d25d7e9b814c89ae2bfad5e",
       "name": "Bitrefill 5",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x8f80c66c70cbc52009babb04c1cadf9b40109289",
@@ -14433,7 +14433,7 @@
     {
       "address": "0x90e18a6920985dbacc3d76cf27a3f2131923c720",
       "name": "Coinbase: Commerce Fee 5",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x90e63c3d53e0ea496845b7a03ec7548b70014a91",
@@ -14793,7 +14793,7 @@
     {
       "address": "0x94aa0b75a10bf4e92a00de8a115a6f61095cf663",
       "name": "Bitrefill 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x94b18793b93b524b110fead408b955422b982fa4",
@@ -14903,7 +14903,7 @@
     {
       "address": "0x95ba04c934d231c51435a266fff2b2288e1d0af3",
       "name": "Bitrefill: Deposit Funder 6",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x95d3b980d54cc9580dbfe88a7e3a6c48f27ffc47",
@@ -15238,7 +15238,7 @@
     {
       "address": "0x98db3a41bf8bf4ded2c92a84ec0705689ddeef8b",
       "name": "Ramp Network",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x98ec059dc3adfbdd63429454aeb0c990fba4a128",
@@ -15248,7 +15248,7 @@
     {
       "address": "0x98f62d5e3cc0cab1ebc5fa6acac9b66a430788f2",
       "name": "Coinbase: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x99126daf078c693d200155e2dd7a668479120745",
@@ -15658,7 +15658,7 @@
     {
       "address": "0x9d3de545f58c696946b4cf2c884fcf4f7914cb53",
       "name": "Zero Hash: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x9d4d2440513ee9b90a3d7aeb4a134732f42d1389",
@@ -16248,7 +16248,7 @@
     {
       "address": "0xa24787320ede4cc19d800bf87b41ab9539c4da9d",
       "name": "Kraken: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xa258b39954cef5cb142fd567a46cddb31a670124",
@@ -16313,7 +16313,7 @@
     {
       "address": "0xa2aa74d8542a917a51601f0105e03febbde52eed",
       "name": "CoinEx: Deployer 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xa2b47e3d5c44877cca798226b7b8118f9bfb7a56",
@@ -16433,7 +16433,7 @@
     {
       "address": "0xa381c04ebfdf07f9a63eb8dbe2ef55c0122620ab",
       "name": "Bitrefill 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xa395215984fca0c44089975408a11f86b8290857",
@@ -16493,7 +16493,7 @@
     {
       "address": "0xa3fa59c716908290ab8611b33e33cd55876aeddf",
       "name": "CoinPayments.net 16",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xa3fb85c3a2c50d8c0e1dd7fa7746f97c9e1d9591",
@@ -17698,7 +17698,7 @@
     {
       "address": "0xb02c6c40a798184d5e012fbb1dc698977671f8fc",
       "name": "Luno: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xb02f1329d6a6acef07a763258f8509c2847a0a3e",
@@ -17923,7 +17923,7 @@
     {
       "address": "0xb287eac48ab21c5fb1d3723830d60b4c797555b0",
       "name": "MoonPay 9",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xb2a48f542dc56b89b24c04076cbe565b3dc58e7b",
@@ -18228,7 +18228,7 @@
     {
       "address": "0xb5de51cb0bf61554e47a7a6b6c7f429fec925b4f",
       "name": "Bitrefill: Deposit Funder 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xb5e8c25f34a84613229babf4d0899157d74568f9",
@@ -18943,7 +18943,7 @@
     {
       "address": "0xbc8ec259e3026ae0d87bc442d034d6882ce4a35c",
       "name": "Coinbase: Commerce Fee 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xbc942e2250ec7ab83bfc4516bca4e281dbfbb393",
@@ -19133,7 +19133,7 @@
     {
       "address": "0xbe49bd130e126a917ddb5fabf7cdeb6dd9887f40",
       "name": "Bitbank: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xbe5fbcf97932ba9d05885d2b7fbba4cceb9e2836",
@@ -19363,7 +19363,7 @@
     {
       "address": "0xc08fb884576cc89957e9058ef11587c468c2952f",
       "name": "Bullish: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xc0924edefb2c0c303de2d0c21bff07ab763163b5",
@@ -19728,7 +19728,7 @@
     {
       "address": "0xc49688c286fa5fdc9f4daa0f09f35861115a16f4",
       "name": "CoinPayments.net 8",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xc4bac80fca0dc76819c2334566e25350465015d1",
@@ -19863,7 +19863,7 @@
     {
       "address": "0xc5b4a8b2414c339a471cef9663e67d57e33f41f9",
       "name": "Bitrefill: Deposit Funder 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xc5b611f502a0dcf6c3188fd494061ae29b2baa4f",
@@ -20093,7 +20093,7 @@
     {
       "address": "0xc86562c1e08cac700f0ddb33eb5a148ec1227d62",
       "name": "Fenerbahce Token: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xc867c3e11973aeef6d9d4cb3ce89c74cd8f2071c",
@@ -20243,7 +20243,7 @@
     {
       "address": "0xca15769b2b683f414bd4b95dfef405101d883a4b",
       "name": "CoinPayments.net 15",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xca32d3637af9f06a816fd9f45bcac79b5c2f61ed",
@@ -20438,7 +20438,7 @@
     {
       "address": "0xcbd17ee0703b92f858744f658c53ad26ce206dfa",
       "name": "Bitrefill: Deposit Funder 10",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xcbd6832ebc203e49e2b771897067fce3c58575ac",
@@ -20593,7 +20593,7 @@
     {
       "address": "0xcd32602db028cb3827f66cedc2c6d7c0b97a8b34",
       "name": "MAX Exchange: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xcd4dc62388365567bb85dbfa813dadac7766e683",
@@ -20718,7 +20718,7 @@
     {
       "address": "0xce352e98934499be70f641353f16a47d9e1e3abd",
       "name": "Coinbase: Commerce Fee 4",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xce3c1e1b7d2f336a3e909c9e9bdde0f831886327",
@@ -20728,12 +20728,12 @@
     {
       "address": "0xce3daebec9a5cb4904beb01c8998bbca6e96ed9f",
       "name": "CoinPayments.net 7",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xce4066e366442441d67c20cf1395229e718495c4",
       "name": "Coinbase: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xce55977e7b33e4e5534bd370ee31504fc7ac9adc",
@@ -20903,7 +20903,7 @@
     {
       "address": "0xd09f4caee8b4b2a08008b8ba86a6076c4bad1142",
       "name": "Coinbase: Deployer 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xd0acb9c61cd72e0f57b19268d70c73b77dbdd553",
@@ -20933,7 +20933,7 @@
     {
       "address": "0xd108fd0e8c8e71552a167e7a44ff1d345d233ba6",
       "name": "MoonPay 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xd10e08325c0e95d59c607a693483680fe5b755b3",
@@ -20958,7 +20958,7 @@
     {
       "address": "0xd123af31290072c03dbacedccd167c2317f3216f",
       "name": "Bitpanda: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xd1428ba554f4c8450b763a0b2040a4935c63f06c",
@@ -21243,7 +21243,7 @@
     {
       "address": "0xd42f958e1c3e2a10e5d66343c4c9a57726e5b4b6",
       "name": "MoonPay 6",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xd43990f7ab8edca4689c177e9d40c5d763999988",
@@ -22078,7 +22078,7 @@
     {
       "address": "0xdd51f01d9fc0fd084c1a4737bbfa5becb6ced9bc",
       "name": "Gemini: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xdd6b3ac983ae0427d329a705108c26d2cb8f945e",
@@ -22108,7 +22108,7 @@
     {
       "address": "0xddc50252a3080d5028d1c25261f78f023e9117d5",
       "name": "Coinjar: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xddd6992cf0afa6bbeaf179113c580b72760d4cfc",
@@ -22608,7 +22608,7 @@
     {
       "address": "0xe1b0f467bb4667bcaf77a147f784cfe1edffd6cb",
       "name": "CoinPayments.net 9",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xe1d5ecf54b597e55e47f2b5eea3b237c5dc46bd3",
@@ -23008,7 +23008,7 @@
     {
       "address": "0xe64eb20471491956338eedc0f98242bc3ad0c91b",
       "name": "WOO X: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xe65a88f487f5d26469cfd37ce7ef763d6d9be454",
@@ -23478,7 +23478,7 @@
     {
       "address": "0xeadf413c2ab5b1488430469551241cca29df65b4",
       "name": "Bitrefill: Deposit Funder 5",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xeaed6576334b003d1c5c4797d9c7bb025a20c038",
@@ -23658,7 +23658,7 @@
     {
       "address": "0xed212a4a2e82d5ee0d62f70b5dee2f5ee0f10c5d",
       "name": "Nexo: Deployer 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xed21da9b81a146e6678445401eaffbeea61a8f89",
@@ -23768,7 +23768,7 @@
     {
       "address": "0xee57141075ea3fffc41f06af2ceba23e521019a8",
       "name": "CoinBene: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xee5b5b923ffce93a870b3104b7ca09c3db80047a",
@@ -24143,7 +24143,7 @@
     {
       "address": "0xf12db6a6b8ecc2ea6245f8590135ca372abb36e1",
       "name": "Tokenize Xchange: Deployer 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xf1300cc9c2cf347f7902742fec4df9dba952fd7b",
@@ -24238,7 +24238,7 @@
     {
       "address": "0xf24c621e5108607f4ec60e9c4f91719a76c7b3c9",
       "name": "Bitso: Deployer 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xf250ee103b8e4c5b9825a270e5c70ea0c113c854",
@@ -24298,7 +24298,7 @@
     {
       "address": "0xf2a14015eaa3f9cc987f2c3b62fc93eee41aa5d0",
       "name": "BitPay 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xf2b86a4b2f4bf208aedab9ad51ebb9f777970577",
@@ -24653,7 +24653,7 @@
     {
       "address": "0xf5e410b97aabdfbd019f1428fde4e12815cabbae",
       "name": "Bitrefill: Deposit Funder 9",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xf5ec8bceb5e2ba959b0a655d7517fa6e555a211c",
@@ -24758,7 +24758,7 @@
     {
       "address": "0xf6874c88757721a02f47592140905c4336dfbc61",
       "name": "Coinbase: Coinbase Commerce 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xf695c9e5f0e017f82b8f7b968075d949263795aa",
@@ -25158,7 +25158,7 @@
     {
       "address": "0xfa54b4085811aef6acf47d51b05fda188deae28b",
       "name": "WazirX: Deployer",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xfa5ccf9fc5828b589af6f321770a7260f31b4746",
@@ -25328,7 +25328,7 @@
     {
       "address": "0xfc19e4ce0e0a27b09f2011ef0512669a0f76367a",
       "name": "Binance: Deployer 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xfc2986feab34713e659da84f3b1fa32c1da95832",
@@ -25633,7 +25633,7 @@
     {
       "address": "0xffcd95d059ba265194cec9b1fb6609bf2aa6b436",
       "name": "CoinPayments.net 14",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xffd0ecee885fcd2ebce0fec9add69bf1ed03194b",
