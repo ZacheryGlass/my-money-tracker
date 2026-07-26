@@ -356,8 +356,9 @@ export const eth = {
     const response = await api.get('/api/eth/address-labels');
     return response.data;
   },
-  // kind: 'exchange' (default) | 'external' | 'own'. A name is required only
-  // for 'exchange', where it becomes the counterparty text in the ledger.
+  // kind: 'exchange' (default) | 'external' | 'own' | 'bridge'. A name is
+  // required only for 'exchange', where it becomes the counterparty text in
+  // the ledger.
   labelAddress: async (address, name, { note, kind } = {}) => {
     const response = await api.post('/api/eth/address-labels', { address, name, note, kind });
     return response.data;

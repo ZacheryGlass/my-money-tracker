@@ -13,7 +13,7 @@ import {
   eth as ethAPI,
   crypto as cryptoAPI,
 } from '../utils/api';
-import { formatCurrency, formatRelativeTime } from '../utils/format';
+import { formatCurrency, formatRelativeTime, shortEthAddress } from '../utils/format';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 import AccountHistoryChart from '../components/AccountHistoryChart';
@@ -23,7 +23,7 @@ import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
 import MetricCard from '../components/MetricCard';
 import FilterTabs from '../components/FilterTabs';
-import OnChainActivity, { EthWalletBadge, shortEthAddress } from '../components/OnChainActivity';
+import OnChainActivity, { EthWalletBadge } from '../components/OnChainActivity';
 import SummaryStats from '../components/SummaryStats';
 import useTransientMessage from '../hooks/useTransientMessage';
 

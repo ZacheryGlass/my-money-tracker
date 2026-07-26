@@ -28,10 +28,6 @@ const NATIVE_ASSET_KEY = 'ETH';
 // of scope) and nothing else -- gas, native and internal legs are all ETH.
 const UNPRICEABLE_TRANSFER_TYPES = new Set(['nft', 'nft1155']);
 
-function nativeAssetKey() {
-  return NATIVE_ASSET_KEY;
-}
-
 function tokenAssetKey(chainId, contract) {
   if (!contract) return null;
   return `erc20:${Number(chainId ?? DEFAULT_CHAIN_ID)}:${String(contract).toLowerCase()}`;
@@ -65,7 +61,6 @@ function parseAssetKey(assetKey) {
 module.exports = {
   NATIVE_ASSET_KEY,
   UNPRICEABLE_TRANSFER_TYPES,
-  nativeAssetKey,
   tokenAssetKey,
   assetKeyForTransfer,
   parseAssetKey,

@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { formatExactUnits, formatTokenUnits } from './format';
+import { formatExactUnits, formatTokenUnits, shortEthAddress } from './format';
+
+describe('shortEthAddress', () => {
+  it('abbreviates to the first six and last four characters', () => {
+    expect(shortEthAddress('0xd8da6bf26964af9d7eed9e03e53415d37aa96045')).toBe('0xd8da…6045');
+  });
+
+  it('falls back to "unknown" unless the caller supplies its own fallback', () => {
+    expect(shortEthAddress(null)).toBe('unknown');
+    expect(shortEthAddress('', '')).toBe('');
+  });
+});
 
 // Base-unit rendering for the on-chain balance audit (#62). The audit exists to
 // surface differences a float would round away, so the display path has to be

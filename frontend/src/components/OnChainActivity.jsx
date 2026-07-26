@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../utils/api';
-import { formatDateDisplay, formatUsdAtTime } from '../utils/format';
+import { formatDateDisplay, formatUsdAtTime, shortEthAddress } from '../utils/format';
 import { explorerTxUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
@@ -13,8 +13,6 @@ import {
 import DataTable from './DataTable';
 import FilterTabs from './FilterTabs';
 import LoadingState from './LoadingState';
-
-export const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : 'unknown');
 
 export const EthWalletBadge = () => (
   <span

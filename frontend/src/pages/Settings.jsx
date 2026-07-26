@@ -11,7 +11,10 @@ import HoldingForm from '../components/HoldingForm';
 import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
-import { formatRelativeTime, formatCompactCurrency, formatDateDisplay, formatExactUnits } from '../utils/format';
+import {
+  formatRelativeTime, formatCompactCurrency, formatDateDisplay, formatExactUnits,
+  shortEthAddress as shortEthAddressOrUnknown,
+} from '../utils/format';
 import { explorerAddressUrl, explorerTxUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
@@ -122,7 +125,9 @@ const exchangeRecordAmount = (record) => {
   return amount.toLocaleString(undefined, { maximumFractionDigits: 8 });
 };
 
-const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '');
+// Settings renders addresses inside fallback chains and sentences it composes
+// itself, so a missing value must contribute nothing rather than 'unknown'.
+const shortEthAddress = (address) => shortEthAddressOrUnknown(address, '');
 
 const MANUAL_ENTRY_TYPES = {
   asset: {

@@ -122,6 +122,13 @@ export const formatUsdAtTime = (value, basis) => {
   return formatCurrency(usd, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+// The canonical 0x1234…abcd abbreviation. One copy, because three components
+// had grown their own and two of them disagreed about the empty-input
+// fallback -- which is now the parameter: 'unknown' where the address is the
+// subject of the sentence, '' where the caller composes its own fallback.
+export const shortEthAddress = (address, fallback = 'unknown') =>
+  (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : fallback);
+
 export const formatCompactCurrency = (value) => {
   const sign = value < 0 ? '-' : '';
   const abs = Math.abs(value);

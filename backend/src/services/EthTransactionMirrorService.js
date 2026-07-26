@@ -67,8 +67,6 @@ function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() 
   // internal-transfer pairing, the cross-chain LINK -- to reach this per-leg
   // pass, which is a separate change; do not infer it from the label here.
 
-
-
   if (transfer.transfer_type === 'gas') {
     // A fee is always a cost, whichever way the transaction went, and it is
     // real even when the transaction reverted. Same rule as a value leg,

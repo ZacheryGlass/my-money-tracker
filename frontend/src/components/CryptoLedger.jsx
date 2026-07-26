@@ -6,7 +6,9 @@ import {
   Wallet, X,
 } from 'lucide-react';
 import { crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
-import { formatDateDisplay, formatExactUnits, formatTokenUnits, formatUsdAtTime } from '../utils/format';
+import {
+  formatDateDisplay, formatExactUnits, formatTokenUnits, formatUsdAtTime, shortEthAddress,
+} from '../utils/format';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
 import {
@@ -22,7 +24,6 @@ import {
 import DataTable from './DataTable';
 import FilterTabs from './FilterTabs';
 import LoadingState from './LoadingState';
-import { shortEthAddress } from './OnChainActivity';
 
 const PAGE_SIZE = 100;
 // GET /api/crypto/ledger clamps `limit` to 500, and asking past it is a 400.
