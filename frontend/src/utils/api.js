@@ -374,6 +374,19 @@ export const eth = {
     const response = await api.get('/api/eth/counterparties/unreviewed', { params: { include_dust: 'true' } });
     return response.data;
   },
+  // The full balance audit: derived-from-transfers versus what the chain
+  // reports, per (wallet, chain, asset). The wallets response already carries a
+  // capped per-wallet summary, which is what the wallet card renders; this is
+  // the unabridged list for a wallet whose summary says something is off.
+  getReconciliation: async ({ walletId, status } = {}) => {
+    const response = await api.get('/api/eth/reconciliation', {
+      params: {
+        ...(walletId != null ? { wallet_id: walletId } : {}),
+        ...(status ? { status } : {}),
+      },
+    });
+    return response.data;
+  },
 };
 
 // Exchange accounts and their CSV imports (Settings -> Exchanges). On-exchange

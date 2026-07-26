@@ -5,6 +5,7 @@ const EtherscanService = require('./EtherscanService');
 const SecretsService = require('./SecretsService');
 const EthTransactionMirrorService = require('./EthTransactionMirrorService');
 const EthActivityService = require('./EthActivityService');
+const EthReconciliationService = require('./EthReconciliationService');
 const MethodSignatureService = require('./MethodSignatureService');
 const PriceService = require('./PriceService');
 const TransactionClassificationService = require('./TransactionClassificationService');
@@ -440,6 +441,23 @@ class EthWalletService {
       const activity = await EthActivityService.rebuildForWallet(walletId);
       await TransactionClassificationService.backfill();
 
+      // The balance audit (#62): does the ledger we just stored reproduce the
+      // balance the chain reports? Runs last, and non-fatally, because it is a
+      // VERDICT ON the sync rather than a step of it -- everything above has
+      // already landed, and an audit that could fail a completed sync would
+      // trade a real balance for an opinion about it. It reuses the live ETH
+      // figures refreshHoldings already fetched, so ETH costs no extra request.
+      let reconciliation = null;
+      try {
+        reconciliation = await EthReconciliationService.reconcileWallet(wallet, {
+          liveWeiByChain: holdings?.liveWeiByChain || {},
+          chainResults: perChain,
+          apiKey,
+        });
+      } catch (err) {
+        logger.warn({ walletId, err }, 'Balance reconciliation failed; the sync itself is unaffected');
+      }
+
       // Feed labels carry their chain: "nft failed" is not actionable when five
       // chains ran, and the same feed can be healthy on one chain and skipped
       // on another.
@@ -478,6 +496,7 @@ class EthWalletService {
         holdings,
         mirror,
         activity,
+        reconciliation,
         methods,
         skippedFeeds,
         unsupportedFeeds,
@@ -688,6 +707,13 @@ class EthWalletService {
     // untouched" true, and it also protects a chain whose balance call failed
     // transiently from having last night's positions deleted.
     const refreshedChainIds = [];
+    // Raw wei per chain, kept for the balance audit (#62). Passing this on is
+    // what makes reconciliation cost ZERO extra Etherscan requests for ETH: a
+    // second action=balance per chain would double the audit's price against a
+    // globally throttled key to re-read a number this function already has.
+    // Unscaled on purpose -- `desired` carries an 8-decimal clamped string, and
+    // comparing that against the chain would invent drift below 1e-8 ETH.
+    const liveWeiByChain = {};
 
     for (const chain of chains.enabledChains()) {
       if (unreadable.has(chain.id)) {
@@ -708,6 +734,7 @@ class EthWalletService {
         continue;
       }
       refreshedChainIds.push(chain.id);
+      liveWeiByChain[chain.id] = wei;
       const name = chains.ethHoldingName(chain.id);
       // Mainnet always keeps its ETH row, at zero if need be, so a mainnet-only
       // wallet looks exactly as it did before #58. An L2 earns a row once it
@@ -811,6 +838,7 @@ class EthWalletService {
       ethByChain: Object.fromEntries(
         desired.filter((h) => h.ticker === 'ETH').map((h) => [h.chain_id, h.quantity])
       ),
+      liveWeiByChain,
       tokens: held.length,
       chains: refreshedChainIds,
     };
