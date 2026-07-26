@@ -54,6 +54,13 @@ function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {
   // Failed transfers moved no value; only their gas row (above) is real.
   if (transfer.is_error) return null;
 
+  // NFTs stay out of the ledger. value_wei on these rows is a count of units,
+  // not wei and not a scaled token amount, so the branches below would read a
+  // 1-of-1 mint as 1e-18 ETH and post a bogus CRYPTO_EXTERNAL row for it. The
+  // real economics of an NFT trade are already in the ETH leg and the gas row;
+  // presenting the NFT itself is the activity layer's job (#56).
+  if (transfer.transfer_type === 'nft' || transfer.transfer_type === 'nft1155') return null;
+
   if (transfer.transfer_type === 'token') {
     const contract = transfer.token_contract;
     if (!contract || ignoredContracts.has(contract)) return null;
