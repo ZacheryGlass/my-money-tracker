@@ -30,6 +30,10 @@ vi.mock('../utils/api', () => ({
     importCsv: vi.fn(),
     getRecords: vi.fn(),
     resolveRecord: vi.fn(),
+    setCredentials: vi.fn(),
+    clearCredentials: vi.fn(),
+    testConnection: vi.fn(),
+    sync: vi.fn(),
   },
 }));
 
@@ -40,7 +44,38 @@ const ACCOUNT = {
   record_count: 1080,
   needs_review_count: 2,
   last_import_at: new Date().toISOString(),
+  // Only ever a masked status: the server never returns a stored key.
+  credentials: { configured: false, key_masked: null, secret_masked: null },
+  last_sync_at: null,
+  last_sync_status: null,
+  last_sync_error: null,
+  balance_report: null,
 };
+
+const CONNECTED = {
+  ...ACCOUNT,
+  credentials: { configured: true, key_masked: '••••WXYZ', secret_masked: '••••MzQ=' },
+  last_sync_at: new Date().toISOString(),
+};
+
+// Served by the API alongside the connector that consumes it, so the UI's
+// permission guidance cannot drift from the endpoints the code actually calls.
+const CREDENTIAL_FIELDS = {
+  kraken: {
+    keyLabel: 'API key',
+    secretLabel: 'Private key',
+    permissions: ['Query Funds', 'Query Ledger Entries', 'Query Closed Orders & Trades'],
+    help: 'Create the key with ONLY Query Funds, Query Ledger Entries and Query Closed Orders & Trades. '
+      + 'Do not grant Withdraw Funds — withdrawal destinations are readable with Query Ledger Entries alone.',
+  },
+};
+
+const listResponse = (accounts, overrides = {}) => ({
+  accounts,
+  credential_fields: CREDENTIAL_FIELDS,
+  encryption_configured: true,
+  ...overrides,
+});
 
 const FLAGGED = [
   {
@@ -79,7 +114,7 @@ const renderSettings = async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  exchangesAPI.getAll.mockResolvedValue({ accounts: [ACCOUNT] });
+  exchangesAPI.getAll.mockResolvedValue(listResponse([ACCOUNT]));
   exchangesAPI.getRecords.mockResolvedValue({ data: FLAGGED, pagination: { total: FLAGGED.length } });
   exchangesAPI.resolveRecord.mockResolvedValue({ record: { id: 11, needs_review: false } });
 });
@@ -97,9 +132,9 @@ describe('Settings -> Exchanges tab', () => {
   });
 
   it('says an account has never been imported rather than showing nothing', async () => {
-    exchangesAPI.getAll.mockResolvedValue({
-      accounts: [{ ...ACCOUNT, last_import_at: null, record_count: 0, needs_review_count: 0 }],
-    });
+    exchangesAPI.getAll.mockResolvedValue(
+      listResponse([{ ...ACCOUNT, last_import_at: null, record_count: 0, needs_review_count: 0 }])
+    );
     await renderSettings();
 
     expect(await screen.findByText('Never imported')).toBeInTheDocument();
@@ -107,7 +142,7 @@ describe('Settings -> Exchanges tab', () => {
   });
 
   it('offers an empty state when no exchange account exists yet', async () => {
-    exchangesAPI.getAll.mockResolvedValue({ accounts: [] });
+    exchangesAPI.getAll.mockResolvedValue(listResponse([]));
     await renderSettings();
 
     expect(await screen.findByText('No Exchange Accounts')).toBeInTheDocument();
@@ -122,7 +157,7 @@ describe('Settings -> Exchanges tab', () => {
     expect(await screen.findByText(/Couldn't load your exchange accounts/)).toBeInTheDocument();
     expect(screen.queryByText('No Exchange Accounts')).not.toBeInTheDocument();
 
-    exchangesAPI.getAll.mockResolvedValue({ accounts: [ACCOUNT] });
+    exchangesAPI.getAll.mockResolvedValue(listResponse([ACCOUNT]));
     fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
     expect(await screen.findByText('Kraken Spot')).toBeInTheDocument();
   });
@@ -237,7 +272,7 @@ describe('Settings -> Exchanges tab', () => {
   });
 
   it('does not offer a review queue for an account with nothing flagged', async () => {
-    exchangesAPI.getAll.mockResolvedValue({ accounts: [{ ...ACCOUNT, needs_review_count: 0 }] });
+    exchangesAPI.getAll.mockResolvedValue(listResponse([{ ...ACCOUNT, needs_review_count: 0 }]));
     await renderSettings();
 
     await screen.findByText('Kraken Spot');
@@ -258,6 +293,152 @@ describe('Settings -> Exchanges tab', () => {
     // The message is the only thing that tells the user which export to try
     // instead, so it has to survive to the screen verbatim.
     expect(await screen.findByText(/Unrecognized CSV layout/)).toBeInTheDocument();
+  });
+
+  it('tells the user to create a read-only key, naming the exact permissions', async () => {
+    await renderSettings();
+    await screen.findByText('Kraken Spot');
+
+    fireEvent.click(screen.getByLabelText('Connect Kraken Spot with an API key'));
+
+    // The permission list is the difference between a key that can read the
+    // ledger and a key that can move money.
+    expect(await screen.findByText(/Query Funds, Query Ledger Entries, Query Closed Orders & Trades/))
+      .toBeInTheDocument();
+    expect(screen.getByText(/Do not grant Withdraw Funds/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot place an order or move funds/)).toBeInTheDocument();
+  });
+
+  it('saves a key and never shows more than its last four characters', async () => {
+    exchangesAPI.setCredentials.mockResolvedValue({
+      credentials: { configured: true, key_masked: '••••WXYZ' },
+    });
+    await renderSettings();
+    await screen.findByText('Kraken Spot');
+    fireEvent.click(screen.getByLabelText('Connect Kraken Spot with an API key'));
+
+    fireEvent.change(await screen.findByLabelText('API key for Kraken Spot'), {
+      target: { value: '  KRAKEN-PUBLIC-KEY-WXYZ  ' },
+    });
+    fireEvent.change(screen.getByLabelText('Private key for Kraken Spot'), {
+      target: { value: 'c2VjcmV0LXByaXZhdGUta2V5LTEyMzQ=' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save Key/i }));
+
+    await waitFor(() => expect(exchangesAPI.setCredentials)
+      .toHaveBeenCalledWith(3, 'KRAKEN-PUBLIC-KEY-WXYZ', 'c2VjcmV0LXByaXZhdGUta2V5LTEyMzQ='));
+    // The form closes and the plaintext key leaves component state; a stored
+    // key never comes back from the server, so there is nothing to re-show.
+    await waitFor(() => expect(screen.queryByLabelText('API key for Kraken Spot')).not.toBeInTheDocument());
+  });
+
+  it('says up front when the server cannot store keys, instead of failing on save', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([ACCOUNT], { encryption_configured: false }));
+    await renderSettings();
+    await screen.findByText('Kraken Spot');
+    fireEvent.click(screen.getByLabelText('Connect Kraken Spot with an API key'));
+
+    expect(await screen.findByText(/missing SECRETS_ENCRYPTION_KEY/)).toBeInTheDocument();
+    // Learning this from a failed request after pasting a secret is worse than
+    // being told before.
+    expect(screen.getByRole('button', { name: /Save Key/i })).toBeDisabled();
+  });
+
+  it('shows the masked key and offers Sync Now once connected', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.sync.mockResolvedValue({
+      fetched: 13, imported: 11, upgraded: 0, duplicates: 0,
+      chain_details_filled: 2, needs_review: 2, backfill_pending: false, status: 'ok',
+      balance_report: { mismatch_count: 0, mismatches: [] },
+    });
+    await renderSettings();
+
+    expect(await screen.findByText('Key ••••WXYZ')).toBeInTheDocument();
+    // A connected account is not offered a second Connect button.
+    expect(screen.queryByLabelText('Connect Kraken Spot with an API key')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Sync Kraken Spot now'));
+
+    await waitFor(() => expect(exchangesAPI.sync).toHaveBeenCalledWith(3));
+    expect(await screen.findByText(/11 new/)).toBeInTheDocument();
+    expect(screen.getByText(/2 gained an on-chain address/)).toBeInTheDocument();
+    expect(screen.getByText(/2 flagged for review/)).toBeInTheDocument();
+  });
+
+  it('says a backfill is unfinished rather than letting it read as the whole history', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.sync.mockResolvedValue({
+      fetched: 1250, imported: 1250, upgraded: 0, duplicates: 0,
+      chain_details_filled: 0, needs_review: 0, backfill_pending: true, status: 'ok',
+      balance_report: { mismatch_count: 0, mismatches: [] },
+    });
+    await renderSettings();
+    fireEvent.click(await screen.findByLabelText('Sync Kraken Spot now'));
+
+    // A truncated walk looks exactly like a complete one from the outside.
+    expect(await screen.findByText(/More history is still to come/)).toBeInTheDocument();
+  });
+
+  it('surfaces a balance mismatch instead of silently trusting the import', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.sync.mockResolvedValue({
+      fetched: 13, imported: 0, upgraded: 0, duplicates: 13,
+      chain_details_filled: 0, needs_review: 0, backfill_pending: false,
+      status: 'balance_mismatch',
+      balance_report: { mismatch_count: 1, mismatches: [{ asset: 'BTC', derived: '0', live: '0.5' }] },
+    });
+    await renderSettings();
+    fireEvent.click(await screen.findByLabelText('Sync Kraken Spot now'));
+
+    expect(await screen.findByText(/do not match the balance the exchange reports/)).toBeInTheDocument();
+    expect(screen.getByText(/BTC/)).toBeInTheDocument();
+  });
+
+  it('shows a mismatch found by the nightly job without anything being pressed', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([{
+      ...CONNECTED,
+      last_sync_status: 'balance_mismatch',
+      balance_report: { mismatch_count: 1, mismatches: [{ asset: 'ETH', derived: '1', live: '2' }] },
+    }]));
+    await renderSettings();
+
+    expect(await screen.findByText(/derived balances disagree with the exchange for ETH/)).toBeInTheDocument();
+  });
+
+  it('passes the provider\'s own refusal through when a key is rejected', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.testConnection.mockRejectedValue({
+      response: { data: { error: 'Kraken error: EGeneral:Permission denied' } },
+    });
+    await renderSettings();
+
+    fireEvent.click(await screen.findByLabelText('Test connection for Kraken Spot'));
+
+    // "Connection failed" would not tell the user which permission they forgot.
+    expect(await screen.findByText(/EGeneral:Permission denied/)).toBeInTheDocument();
+  });
+
+  it('confirms a disconnect by naming what survives it', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.clearCredentials.mockResolvedValue({});
+    await renderSettings();
+
+    fireEvent.click(await screen.findByTitle('Disconnect API key'));
+    expect(exchangesAPI.clearCredentials).not.toHaveBeenCalled();
+
+    // The records are exactly the part no live connection can recover.
+    fireEvent.click(screen.getByRole('button', { name: /Remove key, keep records/i }));
+    await waitFor(() => expect(exchangesAPI.clearCredentials).toHaveBeenCalledWith(3));
+  });
+
+  it('does not offer an API connection for a venue with no connector', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([{ ...ACCOUNT, exchange: 'other' }]));
+    await renderSettings();
+    await screen.findByText('Kraken Spot');
+
+    // There is no endpoint to call, so promising a sync would be a lie.
+    expect(screen.queryByLabelText('Connect Kraken Spot with an API key')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Import CSV for Kraken Spot')).toBeInTheDocument();
   });
 
   it('asks before deleting an account and its records', async () => {

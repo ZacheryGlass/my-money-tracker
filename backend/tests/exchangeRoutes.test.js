@@ -30,20 +30,37 @@ function accountRow(overrides = {}) {
     last_import_at: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
+    api_key_last4: null,
+    api_secret_last4: null,
+    api_configured: false,
+    last_sync_at: null,
+    last_sync_status: null,
+    last_sync_error: null,
+    balance_report: null,
     ...overrides,
   };
 }
 
 // The INSERT built by ExchangeRecord.bulkInsert binds one account id followed
-// by the 13 record columns per row, with external_id eleventh among them and
-// needs_review twelfth.
-const PARAMS_PER_ROW = 14;
+// by the 14 record columns per row, with external_id eleventh among them and
+// needs_review twelfth. `source` (migration 040) is the fourteenth and is
+// provenance only -- it deliberately takes no part in the conflict key, which
+// is what lets an API row and a CSV row for the same event dedupe.
+const PARAMS_PER_ROW = 15;
 const EXTERNAL_ID_OFFSET = 11;
 const NEEDS_REVIEW_OFFSET = 12;
 
 function fakeQuery(text, params) {
   const sql = String(text).replace(/\s+/g, ' ').trim();
 
+  // Since migration 040 the table holds ciphertext, so the route-facing read
+  // projects an explicit column list and only the credential-resolving read
+  // uses SELECT *. Both are matched here, and the SELECT * one is the only
+  // place the encrypted columns appear.
+  if (/^SELECT id, user_id, name, .* FROM exchange_accounts WHERE id = \$1 AND user_id = \$2/.test(sql)) {
+    const [id, userId] = params;
+    return { rows: (id === OWNED_ACCOUNT_ID && userId === OWNER_ID) ? [accountRow()] : [] };
+  }
   if (/^SELECT \* FROM exchange_accounts WHERE id = \$1 AND user_id = \$2/.test(sql)) {
     const [id, userId] = params;
     return { rows: (id === OWNED_ACCOUNT_ID && userId === OWNER_ID) ? [accountRow()] : [] };

@@ -1,0 +1,9 @@
+Transactions
+User,Test User,00000000-0000-0000-0000-000000000000
+ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes,Sender Address,Recipient Address
+aaaaaaaa-0000-0000-0000-00000000000a,2024-03-02 10:00:00 UTC,Advanced Trade Buy,BTC,0.005,USD,$62000.00,$310.00,$311.55,$1.55,Bought 0.005 BTC on BTC-USD,,
+cccccccc-0000-0000-0000-00000000000c,2024-03-04 12:00:00 UTC,Reward Income,BTC,0.0001,USD,$62000.00,$6.20,$6.20,$0.00,,,
+dddddddd-0000-0000-0000-00000000000d,2024-03-07 15:00:00 UTC,Convert,USD,-100,USD,$1.00,$100.00,$100.00,$0.00,Converted 100 USD to 0.0016 BTC,,
+eeeeeeee-0000-0000-0000-00000000000e,2024-03-07 15:00:01 UTC,Convert,BTC,0.0016,USD,$62500.00,$100.00,$100.00,$0.00,Converted 100 USD to 0.0016 BTC,,
+bbbbbbbb-0000-0000-0000-00000000000b,2024-03-08 16:00:00 UTC,Send,BTC,-0.01,USD,$62000.00,-$620.00,-$620.00,$0.00,Sent 0.01 BTC to 0x00000000000000000000000000000000000000cc,,0x00000000000000000000000000000000000000cc
+ffffffff-0000-0000-0000-00000000000f,2024-03-09 17:00:00 UTC,Quantum Settlement,DOGE,1,USD,$0.10,$0.10,$0.10,$0.00,A transaction type this importer has never seen,,
