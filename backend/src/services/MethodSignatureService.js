@@ -15,7 +15,14 @@ const SOURCIFY_URL = 'https://api.4byte.sourcify.dev/signature-database/v1/looku
 // carries every mined collision alongside the real signatures.
 const FOURBYTE_URL = 'https://www.4byte.directory/api/v1/signatures/';
 
-const REQUEST_TIMEOUT_MS = 8000;
+// Observed latency is sub-200ms for both services; 4s is already generous.
+// The decode pass runs inside the serialized sync queue, so its worst case
+// is user-visible -- see DECODE_DEADLINE_MS below.
+const REQUEST_TIMEOUT_MS = 4000;
+// Wall-clock budget for one decode pass. The design is already "defer to the
+// next sync"; a slow provider must not hold the derived-data lock (and an
+// awaited sync request) for minutes.
+const DECODE_DEADLINE_MS = 30000;
 // Both services are free public goods with no key and no published quota.
 // Lookups are serialized and spaced rather than fired in parallel.
 const REQUEST_SPACING_MS = 200;
@@ -74,6 +81,12 @@ class MethodSignatureService {
       headers: { accept: 'application/json' },
       params: { function: selector },
     });
+    // A 200 that is not the documented envelope (CDN interstitial, HTML error
+    // page, future shape change) must count as a FAILURE, not a miss -- misses
+    // cache permanently. The envelope carries an explicit ok flag; demand it.
+    if (response.data?.ok !== true) {
+      throw new Error('Sourcify signature lookup returned an unexpected envelope');
+    }
     // openchain-compatible shape: functions come back null when unknown, and
     // the key is echoed exactly as sent (we always send lowercase).
     const candidates = response.data?.result?.function?.[selector];
@@ -93,13 +106,18 @@ class MethodSignatureService {
       headers: { accept: 'application/json' },
       params: { hex_signature: selector },
     });
-    const results = response.data?.results;
-    if (!Array.isArray(results) || results.length === 0) return null;
+    // Same contract as Sourcify above: an off-shape 200 is a failure, not a
+    // permanent miss. A real miss is the documented {count: 0, results: []}.
+    if (!response.data || typeof response.data !== 'object' || !Array.isArray(response.data.results)) {
+      throw new Error('4byte signature lookup returned an unexpected envelope');
+    }
+    const results = response.data.results.filter((r) => r && Number.isFinite(Number(r.id)));
+    if (results.length === 0) return null;
     // No verified-contract signal here, so submission order is the tiebreak:
     // a collision is mined to match an ALREADY popular selector, so it is
     // always submitted after the signature it impersonates. Lowest id wins.
     const best = results.reduce((a, b) => (Number(b.id) < Number(a.id) ? b : a));
-    return normalizeMethodName(best && best.text_signature);
+    return normalizeMethodName(best.text_signature);
   }
 
   // Sourcify first, 4byte second. Returns { name, source } to cache, or null
@@ -148,13 +166,27 @@ class MethodSignatureService {
       );
     }
 
+    const startedAt = Date.now();
     for (const selector of budget) {
+      if (Date.now() - startedAt > DECODE_DEADLINE_MS) {
+        logger.info(
+          { walletId, remaining: budget.length - summary.lookups },
+          'Method selector decode deadline reached; remaining selectors deferred'
+        );
+        break;
+      }
       if (summary.lookups > 0) await delay(REQUEST_SPACING_MS);
       summary.lookups++;
       const answer = await this._resolve(selector);
       if (!answer) continue;
-      await EthMethodSignature.cache(selector, answer.name, answer.source);
-      if (answer.name) summary.resolved++;
+      try {
+        await EthMethodSignature.cache(selector, answer.name, answer.source);
+        if (answer.name) summary.resolved++;
+      } catch (err) {
+        // One failed INSERT must not skip the rest of the budget or the
+        // applyMethodNames pass that publishes names already resolved.
+        logger.warn({ selector, err }, 'Method signature cache write failed');
+      }
     }
 
     summary.applied = await EthTransfer.applyMethodNames(walletId);

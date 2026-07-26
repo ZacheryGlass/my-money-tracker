@@ -98,16 +98,19 @@ class EthWalletService {
     });
 
     for (const raw of normal) {
-      if (raw.value !== '0') {
+      // Free at ingest: txlist already carries both. functionName is a full
+      // signature ("swapExactETHForTokens(uint256,address[],...)") when
+      // Etherscan can decode the contract and empty otherwise, which is what
+      // leaves work for the decode pass.
+      const methodId = MethodSignatureService.normalizeSelector(raw.methodId);
+      const methodName = MethodSignatureService.normalizeMethodName(raw.functionName);
+      const hasNativeLeg = raw.value !== '0';
+      if (hasNativeLeg) {
         rows.push({
           ...baseRow(raw, 'native'),
           value_wei: raw.value,
-          // Free at ingest: txlist already carries both. functionName is a
-          // full signature ("swapExactETHForTokens(uint256,address[],...)")
-          // when Etherscan can decode the contract and empty otherwise, which
-          // is what leaves work for the decode pass.
-          method_id: MethodSignatureService.normalizeSelector(raw.methodId),
-          method_name: MethodSignatureService.normalizeMethodName(raw.functionName),
+          method_id: methodId,
+          method_name: methodName,
         });
       }
       if ((raw.from || '').toLowerCase() === wallet) {
@@ -116,6 +119,14 @@ class EthWalletService {
           ...baseRow(raw, 'gas'),
           value_wei: fee.toString(),
           is_error: false,
+          // Zero-value calls -- every approve, token->token swap, ERC-20
+          // transfer -- emit no native leg, and they are the majority of the
+          // "contract interaction" population this feature names. The gas leg
+          // exists exactly once per tx the wallet SENT, which is exactly when
+          // the calldata originated here, so it carries the method instead.
+          // Invariant kept: at most one leg per tx has a method.
+          method_id: hasNativeLeg ? null : methodId,
+          method_name: hasNativeLeg ? null : methodName,
         });
       }
     }

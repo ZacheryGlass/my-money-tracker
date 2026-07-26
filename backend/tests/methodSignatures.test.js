@@ -337,3 +337,55 @@ test('the pending work list is derived from stored rows, scoped to one wallet', 
   // actually sees before it names a one-off.
   assert.match(pendingSql, /ORDER BY COUNT\(\*\) DESC/);
 });
+
+// --- review fixes: zero-value calls and envelope hardening ------------------
+
+test('a zero-value call stamps its method on the gas leg instead', () => {
+  const rows = EthWalletService.normalizeFeeds(WALLET, {
+    normal: [normalTx({ value: '0', methodId: '0x095ea7b3', functionName: 'approve(address,uint256)' })],
+  });
+  assert.equal(rows.filter((r) => r.transfer_type === 'native').length, 0);
+  const gas = rows.find((r) => r.transfer_type === 'gas');
+  assert.ok(gas, 'sender still burns gas on a zero-value call');
+  assert.equal(gas.method_id, '0x095ea7b3');
+  assert.equal(gas.method_name, 'approve(address,uint256)');
+});
+
+test('a value-bearing call keeps the method off the gas leg', () => {
+  const rows = EthWalletService.normalizeFeeds(WALLET, { normal: [normalTx()] });
+  const gas = rows.find((r) => r.transfer_type === 'gas');
+  assert.equal(gas.method_id, null);
+  assert.equal(gas.method_name, null);
+});
+
+test('an incoming zero-value call emits no legs at all', () => {
+  const rows = EthWalletService.normalizeFeeds(WALLET, {
+    normal: [normalTx({ from: OTHER, to: WALLET, value: '0' })],
+  });
+  assert.equal(rows.length, 0);
+});
+
+test('an off-shape 200 from Sourcify is a failure, not a miss', async () => {
+  httpHandler = async () => ({ data: '<html>interstitial</html>' });
+  await assert.rejects(() => MethodSignatureService.lookupSourcify(KNOWN), /unexpected envelope/);
+});
+
+test('an off-shape 200 from 4byte is a failure, not a miss', async () => {
+  httpHandler = async () => ({ data: '<html>error</html>' });
+  await assert.rejects(() => MethodSignatureService.lookupFourByte(KNOWN), /unexpected envelope/);
+});
+
+test('4byte ranking survives null entries and picks the lowest valid id', async () => {
+  httpHandler = async () => ({
+    data: { count: 3, results: [null, { id: 5, text_signature: 'later(uint256)' }, { id: 3, text_signature: 'earlier(uint256)' }] },
+  });
+  assert.equal(await MethodSignatureService.lookupFourByte(KNOWN), 'earlier(uint256)');
+});
+
+test('_resolve caches nothing when one service is off-shape and the other is down', async () => {
+  httpHandler = async (url) => {
+    if (url.includes('sourcify')) return { data: '<html>cdn</html>' };
+    throw new Error('ECONNRESET');
+  };
+  assert.equal(await MethodSignatureService._resolve(KNOWN), null);
+});

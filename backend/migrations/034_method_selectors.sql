@@ -20,9 +20,9 @@ ALTER TABLE eth_transfers ADD COLUMN IF NOT EXISTS method_name VARCHAR(200);
 -- A row exists for every selector ever looked up, INCLUDING misses (name NULL,
 -- source 'none'). That is the whole point of the table: without cached misses,
 -- the undecodable selectors -- the ones that repeat forever -- would be refetched
--- on every single sync. name is TEXT rather than VARCHAR(200) because it stores
--- the upstream signature verbatim; eth_transfers.method_name is the truncated
--- display copy.
+-- on every single sync. name is TEXT for flexibility only: values are
+-- normalized to <= 200 chars before caching, and applyMethodNames re-clamps
+-- defensively when copying into eth_transfers.method_name.
 CREATE TABLE IF NOT EXISTS eth_method_signatures (
   selector VARCHAR(10) PRIMARY KEY,
   name TEXT,
