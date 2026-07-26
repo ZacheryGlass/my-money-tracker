@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const axios = require('axios');
 const logger = require('../../config/logger');
+const scrubHttpError = require('../../utils/scrubHttpError');
 
 // Kraken Spot REST client. READ ENDPOINTS ONLY -- see ALLOWED_ENDPOINTS below.
 //
@@ -71,13 +72,15 @@ function nextNonce(state) {
   return String(nonce);
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 // Set only by tests. The counter below mirrors Kraken's real decay, so a
 // 25-page walk genuinely takes ~2.5 minutes of wall clock; a test that
 // exercises the page budget would otherwise spend all of it asleep. Off is
-// never the default, and nothing in src/ turns it off.
+// never the default, and nothing in src/ turns it off. It also short-circuits
+// the retry backoff, so a test that exercises a transport failure does not
+// spend 20 seconds asleep proving it.
 let pacingEnabled = true;
+
+const sleep = (ms) => (pacingEnabled ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 
 // Client-side mirror of Kraken's counter, so the common case never touches the
 // server-side limiter at all.
@@ -218,7 +221,9 @@ class KrakenClient {
         await sleep(RATE_LIMIT_BACKOFF_MS[attempt]);
         return this._send(state, endpoint, params, attempt + 1);
       }
-      throw err;
+      // The raw AxiosError carries the signed request on `config.headers`:
+      // API-Key and API-Sign, in the clear, on an object pino serializes whole.
+      throw scrubHttpError(err);
     }
 
     const body = response.data || {};

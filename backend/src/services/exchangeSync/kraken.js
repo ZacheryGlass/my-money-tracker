@@ -38,6 +38,16 @@ const MAX_PAGES_JOB = 200;
 // silent truncation waiting to happen.
 const FUNDING_PAGE_LIMIT = 500;
 
+// Both status endpoints document a `cursor` parameter: send `true` on the
+// first call and the response arrives WRAPPED ({withdrawal|deposit: [...],
+// next_cursor}) instead of as a bare array; send the returned next_cursor to
+// get the following page. Without the loop a first backfill spanning years
+// stops at 500 rows, and the 1h steady-state windows never re-request the
+// tx_hash/address that were missed -- silently, and forever, because the
+// ledger rows themselves import fine.
+// https://docs.kraken.com/api/docs/rest-api/get-status-recent-withdrawals
+const FUNDING_MAX_PAGES = 25;
+
 const EXCHANGE = 'kraken';
 
 // The permissions the user must tick, named exactly as Kraken's key-creation
@@ -78,16 +88,42 @@ async function fetchFundingDetails(client, { start, end }) {
   const byRefid = new Map();
   for (const endpoint of ['WithdrawStatus', 'DepositStatus']) {
     try {
-      const result = await client.request(endpoint, { start, end, limit: FUNDING_PAGE_LIMIT });
-      for (const row of fundingRows(result)) {
-        if (!row || !row.refid) continue;
-        byRefid.set(row.refid, {
-          txHash: row.txid ? String(row.txid) : null,
-          address: row.info ? String(row.info) : null,
-          method: row.method ?? null,
-          network: row.network ?? null,
-          status: row.status ?? null,
+      // `true` asks for the paginated (wrapped) form; after that the cursor is
+      // whatever the previous page returned.
+      let cursor = true;
+      let pages = 0;
+      for (; pages < FUNDING_MAX_PAGES; pages += 1) {
+        const result = await client.request(endpoint, {
+          start, end, limit: FUNDING_PAGE_LIMIT, cursor,
         });
+        const rows = fundingRows(result);
+        for (const row of rows) {
+          if (!row || !row.refid) continue;
+          byRefid.set(row.refid, {
+            txHash: row.txid ? String(row.txid) : null,
+            address: row.info ? String(row.info) : null,
+            method: row.method ?? null,
+            network: row.network ?? null,
+            status: row.status ?? null,
+          });
+        }
+
+        const next = (result && !Array.isArray(result) && result.next_cursor) ? String(result.next_cursor) : null;
+        if (!next) {
+          // A bare array back means this deployment ignores `cursor`. A FULL
+          // one is then indistinguishable from a truncated one, so it is said
+          // out loud rather than assumed complete.
+          if (Array.isArray(result) && rows.length >= FUNDING_PAGE_LIMIT) {
+            logger.warn({ endpoint, rows: rows.length, limit: FUNDING_PAGE_LIMIT },
+              'Kraken funding status returned a full page with no cursor; addresses beyond it are not read');
+          }
+          break;
+        }
+        cursor = next;
+      }
+      if (pages >= FUNDING_MAX_PAGES) {
+        logger.warn({ endpoint, pages },
+          'Kraken funding status hit the page budget; some records import without addresses this run');
       }
     } catch (err) {
       logger.warn({ err, endpoint }, 'Kraken funding status fetch failed; records import without addresses');
@@ -102,13 +138,19 @@ async function fetchFundingDetails(client, { start, end }) {
  * `end` is pinned to the moment the sync started so that rows arriving mid-walk
  * cannot shift the offset window underneath us and push an unread row past the
  * page we already fetched.
+ *
+ * `startOffset` resumes a window that a previous run left part-walked. Paging
+ * by offset across runs is only sound because the window is closed on both
+ * ends and everything inside it is settled history, so it cannot re-order.
  */
-async function fetchLedgerWindow(client, { start, end, maxPages }) {
+async function fetchLedgerWindow(client, { start, end, maxPages, startOffset = 0 }) {
   const rows = [];
   let pages = 0;
   let truncated = false;
+  let reachedOffset = startOffset;
 
-  for (let ofs = 0; ; ofs += LEDGER_PAGE_SIZE) {
+  for (let ofs = startOffset; ; ofs += LEDGER_PAGE_SIZE) {
+    reachedOffset = ofs;
     if (pages >= maxPages) { truncated = true; break; }
     const result = await client.request('Ledgers', {
       start: start > 0 ? start : undefined,
@@ -124,7 +166,10 @@ async function fetchLedgerWindow(client, { start, end, maxPages }) {
     if (page.length < LEDGER_PAGE_SIZE) break;
   }
 
-  return { rows, pages, truncated };
+  // Where the next run would carry on inside this same window: the offset of
+  // the page after the last one read.
+  const nextOffset = truncated ? reachedOffset : startOffset + rows.length;
+  return { rows, pages, truncated, nextOffset };
 }
 
 // Kraken writes fiat and crypto quantities as strings for exactness; every
@@ -224,14 +269,15 @@ const krakenConnector = {
    *
    * The cursor is a two-part resume point, not a single watermark:
    *
-   *   { newestTime, pendingStart, pendingEnd }
+   *   { newestTime, pendingStart, pendingEnd, pendingOffset }
    *
    * Ledgers returns NEWEST FIRST within a window, so a page budget truncates
    * the OLD end of that window. A single "newest time seen" watermark would
    * therefore mark a partial backfill as complete and strand every row older
    * than the budget forever. `pendingEnd` carries the unfinished window's
    * oldest reached point, and the next run resumes from there before it looks
-   * at the head again.
+   * at the head again. `pendingOffset` handles the one case where shrinking
+   * the window cannot make progress -- see the resume-point comment below.
    */
   async sync(credentials, { cursor = null, interactive = true } = {}) {
     const client = new KrakenClient(credentials);
@@ -243,8 +289,14 @@ const krakenConnector = {
       ? Math.max(0, Number(state.pendingStart) || 0)
       : Math.max(0, (Number(state.newestTime) || 0) - RESUME_OVERLAP_SECONDS);
     const end = resumingBackfill ? Math.ceil(Number(state.pendingEnd)) : unixNow();
+    const startOffset = resumingBackfill && Number.isFinite(state.pendingOffset)
+      ? Math.max(0, Number(state.pendingOffset)) : 0;
 
-    const { rows, pages, truncated } = await fetchLedgerWindow(client, { start, end, maxPages });
+    const {
+      rows, pages, truncated, nextOffset,
+    } = await fetchLedgerWindow(client, {
+      start, end, maxPages, startOffset,
+    });
 
     const times = rows.map((row) => Number(row.time)).filter((time) => Number.isFinite(time));
     const oldestFetched = times.length ? Math.min(...times) : null;
@@ -265,26 +317,34 @@ const krakenConnector = {
     // moves further down. That is worst for trades: Kraken's two legs share a
     // refid AND an identical time, so a cut between them strands the surviving
     // leg as a permanently half-known trade.
-    const resumePoint = oldestFetched === null ? null : Math.min(Math.ceil(oldestFetched), end - 1);
-    if (truncated && resumePoint !== null && resumePoint >= Math.ceil(oldestFetched)
-      && Math.ceil(oldestFetched) >= end) {
-      // Degenerate: a whole page budget's worth of rows inside one second, so
-      // rounding up cannot make progress and the clamp to end-1 skips the rest
-      // of that second. Astronomically unlikely on a personal account, but it
-      // must be said out loud rather than dropped silently.
-      logger.warn({ second: end, rows: rows.length },
-        'Kraken ledger has more rows in one second than a sync can page; some may be skipped');
+    //
+    // When a whole page budget's worth of rows sits inside the TOP second of
+    // the window, ceil(oldest) lands on `end` itself and shrinking the window
+    // cannot make progress at all. The old code clamped the resume point to
+    // end-1, which does make progress -- by silently stranding every remaining
+    // row in that second. Instead the window is kept exactly as it is and the
+    // OFFSET already reached is carried, so the next run picks up the next page
+    // of the same window. Nothing is skipped and nothing loops.
+    const ceilOldest = oldestFetched === null ? null : Math.ceil(oldestFetched);
+    const stalled = truncated && ceilOldest !== null && ceilOldest >= end;
+    if (stalled) {
+      logger.info({ second: end, offset: nextOffset },
+        'Kraken ledger has more rows in one second than one pass can page; resuming by offset');
     }
     const nextCursor = truncated && oldestFetched !== null
       ? {
         newestTime: Math.max(Number(state.newestTime) || 0, newestFetched ?? 0) || null,
         pendingStart: start,
-        pendingEnd: resumePoint,
+        pendingEnd: stalled ? end : ceilOldest,
+        // Only meaningful with an unshrunk window: once `end` moves down, the
+        // offsets it counted no longer refer to the same rows.
+        pendingOffset: stalled ? nextOffset : 0,
       }
       : {
         newestTime: Math.max(Number(state.newestTime) || 0, newestFetched ?? 0, resumingBackfill ? 0 : end) || null,
         pendingStart: null,
         pendingEnd: null,
+        pendingOffset: 0,
       };
 
     return {

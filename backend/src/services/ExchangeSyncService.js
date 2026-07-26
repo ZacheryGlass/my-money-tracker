@@ -21,6 +21,10 @@ const RELATIVE_TOLERANCE_EXPONENT = 6;
 // bloat every account row for no extra signal.
 const MAX_REPORTED_MISMATCHES = 25;
 
+// Exchange account ids with a sync running right now. See _syncResolvedAccount
+// for why this is in memory and what that assumes.
+const inFlightAccounts = new Set();
+
 function notConfigured(message) {
   const error = new Error(message);
   error.code = 'EXCHANGE_NOT_CONFIGURED';
@@ -132,12 +136,16 @@ class ExchangeSyncService {
     });
   }
 
+  /**
+   * Revoke a stored credential.
+   *
+   * Deliberately NOT gated on SECRETS_ENCRYPTION_KEY, unlike the write path.
+   * Clearing is a DELETE of ciphertext -- it decrypts nothing and encrypts
+   * nothing -- and the case that most needs it is exactly the case the gate
+   * blocked: a key that was rotated or lost, leaving a credential the user can
+   * neither use nor remove.
+   */
   static async clearCredentials(userId, exchangeAccountId) {
-    if (!secretCrypto.isConfigured()) {
-      const error = new Error('SECRETS_ENCRYPTION_KEY is not configured on the server');
-      error.code = 'SECRETS_NOT_CONFIGURED';
-      throw error;
-    }
     return ExchangeAccount.clearCredentials(exchangeAccountId, userId);
   }
 
@@ -191,6 +199,29 @@ class ExchangeSyncService {
       throw error;
     }
 
+    // Sync Now pressed while the nightly job is mid-pass would run two walks
+    // against one cursor: both read from the same resume point, both fetch the
+    // same pages, and whichever finishes last overwrites the other's cursor.
+    // Cheap to prevent and expensive to debug.
+    //
+    // In-memory on purpose. This assumes ONE app process, which is what the
+    // App Service plan runs; scaling out would need this in the database (an
+    // advisory lock or a claimed-at column), and the assumption is written
+    // down here so the day that changes it is findable.
+    if (inFlightAccounts.has(account.id)) {
+      const error = new Error('A sync for this exchange account is already running');
+      error.code = 'EXCHANGE_SYNC_IN_PROGRESS';
+      throw error;
+    }
+    inFlightAccounts.add(account.id);
+    try {
+      return await this._runSync(account, connector, { interactive });
+    } finally {
+      inFlightAccounts.delete(account.id);
+    }
+  }
+
+  static async _runSync(account, connector, { interactive }) {
     let result;
     try {
       result = await connector.sync(decryptCredentials(account), {
@@ -198,14 +229,20 @@ class ExchangeSyncService {
         interactive,
       });
     } catch (err) {
-      // The cursor is deliberately NOT passed here: a failed sync must leave
-      // the resume point exactly where it was, or the next run starts past
-      // rows nobody ever read.
-      const unconfigured = err.code === 'EXCHANGE_NOT_CONFIGURED' || err.code === 'SECRETS_NOT_CONFIGURED';
-      await ExchangeAccount.saveSyncState(account.id, {
-        status: unconfigured ? 'not_configured' : 'error',
-        error: err.message,
-      });
+      // A server-wide condition is not a fact about this account. Stamping
+      // last_sync_status='not_configured' when the SERVER has no encryption
+      // key records "this account has no key" against an account whose key is
+      // stored and fine, and it survives after the server is fixed. Nothing is
+      // written on that path at all.
+      if (err.code !== 'SECRETS_NOT_CONFIGURED') {
+        // The cursor is deliberately NOT passed here: a failed sync must leave
+        // the resume point exactly where it was, or the next run starts past
+        // rows nobody ever read.
+        await ExchangeAccount.saveSyncState(account.id, {
+          status: err.code === 'EXCHANGE_NOT_CONFIGURED' ? 'not_configured' : 'error',
+          error: err.message,
+        });
+      }
       throw err;
     }
 
@@ -216,18 +253,41 @@ class ExchangeSyncService {
     const backfilled = await ExchangeRecord.backfillChainDetails(account.id, records);
 
     const derived = await ExchangeRecord.derivedBalances(account.id, account.user_id);
-    const report = reconcile(derived, result.balances || {});
     // A truncated backfill has not read the whole history yet, so a mismatch
     // says nothing about the parser. Calling it 'balance_mismatch' here would
     // train the user to ignore the flag before it ever means anything.
     const pending = Boolean(result.stats?.backfillPending);
-    const status = pending ? 'ok' : (report.mismatch_count > 0 ? 'balance_mismatch' : 'ok');
+    // The same argument from the other side: a connector that could not
+    // enumerate every live balance is comparing against a picture with holes
+    // in it, and every unenumerated asset reads as a zero the ledger
+    // contradicts. The comparison is skipped outright rather than run and
+    // discounted -- a stored report full of phantom mismatches is worse than
+    // none.
+    const balancesIncomplete = result.balancesComplete === false;
+    const report = balancesIncomplete
+      ? {
+        checked_at: new Date().toISOString(),
+        assets_checked: 0,
+        mismatch_count: 0,
+        mismatches: [],
+        truncated: false,
+        skipped: 'live_balances_incomplete',
+      }
+      : reconcile(derived, result.balances || {});
+    const status = (pending || balancesIncomplete)
+      ? 'ok'
+      : (report.mismatch_count > 0 ? 'balance_mismatch' : 'ok');
+
+    if (balancesIncomplete) {
+      logger.warn({ exchangeAccountId: account.id, exchange: account.exchange },
+        'Live balances were incomplete; skipping reconciliation for this sync');
+    }
 
     const saved = await ExchangeAccount.saveSyncState(account.id, {
       cursor: result.cursor,
       status,
       error: null,
-      balanceReport: { ...report, backfill_pending: pending },
+      balanceReport: { ...report, backfill_pending: pending, balances_incomplete: balancesIncomplete },
     });
 
     logger.info({
@@ -242,6 +302,7 @@ class ExchangeSyncService {
       unknownTypes: result.stats?.unknownTypes ?? 0,
       mismatches: report.mismatch_count,
       backfillPending: pending,
+      balancesIncomplete,
     }, 'Exchange API sync');
 
     return {
@@ -291,7 +352,10 @@ class ExchangeSyncService {
         if (err.code === 'EXCHANGE_NOT_CONFIGURED'
           || err.code === 'EXCHANGE_CREDENTIAL_UNREADABLE'
           || err.code === 'SECRETS_NOT_CONFIGURED'
-          || err.code === 'EXCHANGE_NOT_SUPPORTED') {
+          || err.code === 'EXCHANGE_NOT_SUPPORTED'
+          // Someone pressed Sync Now on this account seconds ago; that pass is
+          // doing the work. Skipping is the correct outcome, not a failure.
+          || err.code === 'EXCHANGE_SYNC_IN_PROGRESS') {
           summary.skipped += 1;
           summary.results.push({ exchangeAccountId: account.id, skipped: err.code });
           logger.warn({ exchangeAccountId: account.id, userId: account.user_id, code: err.code },

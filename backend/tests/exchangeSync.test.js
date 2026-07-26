@@ -118,6 +118,11 @@ function fakeQuery(text, params) {
       }],
     };
   }
+  if (/^UPDATE exchange_accounts SET api_key_encrypted = NULL/.test(sql)) {
+    // clearCredentials: a DELETE of ciphertext, which needs no encryption key.
+    accountOverrides = {};
+    return { rows: [accountRow({ id: params[0], api_configured: false })] };
+  }
   if (/^UPDATE exchange_accounts SET api_key_encrypted/.test(sql)) {
     // Mirrors setCredentials: ciphertext in, last4 alongside. The row that
     // comes back is the PUBLIC projection, which is what the route serializes.
@@ -196,7 +201,31 @@ let krakenLedgerPages = null;
 let krakenLedgerHistory = null;
 let coinbaseTransactionPages = null;
 let coinbaseAccountPages = null;
+let coinbaseBrokeragePages = null;
+let krakenFundingPages = null;
 let failNextKrakenWith = null;
+let failTransport = false;
+// Real wall-clock latency, for the one test that needs two syncs genuinely
+// overlapping rather than merely issued together.
+let transportDelayMs = 0;
+
+// What axios throws when the connection dies: an AxiosError carrying the whole
+// signed request, headers and all. Reproducing it faithfully is the point --
+// the credential leak this guards against lives on `config.headers`.
+function transportFailure(url, headers, body) {
+  const error = new Error('socket hang up');
+  error.name = 'AxiosError';
+  error.code = 'ECONNRESET';
+  error.config = {
+    method: body === undefined ? 'get' : 'post', url, headers: headers ?? {}, data: body,
+  };
+  error.request = {
+    _header: [`${body === undefined ? 'GET' : 'POST'} ${url}`]
+      .concat(Object.entries(headers ?? {}).map(([name, value]) => `${name}: ${value}`))
+      .join('\r\n'),
+  };
+  throw error;
+}
 
 function krakenResponse(url, body) {
   const endpoint = url.split('/').pop();
@@ -212,8 +241,15 @@ function krakenResponse(url, body) {
   if (endpoint === 'Balance') {
     return { status: 200, data: { error: [], result: { XXBT: '0.0349000000', XETH: '0.2000000000', ZUSD: '997.2500' } } };
   }
-  if (endpoint === 'WithdrawStatus') return { status: 200, data: KRAKEN_FUNDING.WithdrawStatus };
-  if (endpoint === 'DepositStatus') return { status: 200, data: KRAKEN_FUNDING.DepositStatus };
+  if (endpoint === 'WithdrawStatus' || endpoint === 'DepositStatus') {
+    const pages = krakenFundingPages && krakenFundingPages[endpoint];
+    if (pages) {
+      const cursor = params.get('cursor');
+      const index = cursor === 'true' ? 0 : pages.findIndex((page) => page._cursor === cursor);
+      return { status: 200, data: { error: [], result: pages[index] ?? { withdrawal: [], next_cursor: null } } };
+    }
+    return { status: 200, data: KRAKEN_FUNDING[endpoint] };
+  }
   if (endpoint === 'Ledgers') {
     // A whole synthetic history that honours start/end/ofs the way Kraken
     // documents them: start EXCLUSIVE, end INCLUSIVE, newest row first.
@@ -250,7 +286,17 @@ function coinbaseResponse(url, config) {
   const path = url.replace('https://api.coinbase.com', '');
   requests.push({ kind: 'coinbase', path, params: config?.params ?? {}, headers: config?.headers ?? {} });
 
-  if (path === '/api/v3/brokerage/accounts') return { status: 200, data: COINBASE.brokerageAccounts };
+  if (path === '/api/v3/brokerage/accounts') {
+    if (coinbaseBrokeragePages) {
+      const cursor = config?.params?.cursor;
+      const index = cursor ? coinbaseBrokeragePages.findIndex((page) => page._cursor === cursor) : 0;
+      return {
+        status: 200,
+        data: coinbaseBrokeragePages[index] ?? { accounts: [], has_next: false, cursor: '' },
+      };
+    }
+    return { status: 200, data: COINBASE.brokerageAccounts };
+  }
   if (path === '/api/v3/brokerage/orders/historical/fills') return { status: 200, data: COINBASE.fills };
   if (path === '/v2/accounts') {
     if (coinbaseAccountPages) {
@@ -282,6 +328,8 @@ require.cache[axiosModulePath] = {
   exports: {
     async post(url, body, config) {
       if (url.startsWith('https://api.kraken.com')) {
+        if (failTransport) transportFailure(url, config?.headers, body);
+        if (transportDelayMs) await new Promise((resolve) => { setTimeout(resolve, transportDelayMs); });
         requests[requests.length] = undefined;
         requests.pop();
         const response = krakenResponse(url, body);
@@ -291,7 +339,10 @@ require.cache[axiosModulePath] = {
       throw new Error(`unexpected POST ${url}`);
     },
     async get(url, config) {
-      if (url.startsWith('https://api.coinbase.com')) return coinbaseResponse(url, config);
+      if (url.startsWith('https://api.coinbase.com')) {
+        if (failTransport) transportFailure(url, config?.headers, undefined);
+        return coinbaseResponse(url, config);
+      }
       throw new Error(`unexpected GET ${url}`);
     },
   },
@@ -305,6 +356,7 @@ const krakenConnector = require('../src/services/exchangeSync/kraken');
 const coinbaseConnector = require('../src/services/exchangeSync/coinbase');
 const ExchangeSyncService = require('../src/services/ExchangeSyncService');
 const { buildRecords } = require('../src/services/exchangeImport/krakenLedger');
+const { parseExchangeCsv } = require('../src/services/exchangeImport');
 
 // A throwaway P-256 key in the shape Coinbase hands out. Generated here rather
 // than committed: a PEM in a public repo reads like a leaked credential even
@@ -331,7 +383,11 @@ beforeEach(() => {
   krakenLedgerHistory = null;
   coinbaseTransactionPages = null;
   coinbaseAccountPages = null;
+  coinbaseBrokeragePages = null;
+  krakenFundingPages = null;
   failNextKrakenWith = null;
+  failTransport = false;
+  transportDelayMs = 0;
   process.env.SECRETS_ENCRYPTION_KEY = ENCRYPTION_KEY;
   asUser(undefined);
   KrakenClient._resetKeyState();
@@ -463,8 +519,13 @@ test('coinbase JWT carries the documented header and claims', () => {
   // 'cdp', not the 'coinbase-cloud' the stale C# sample on that page still uses.
   assert.equal(payload.iss, 'cdp');
   assert.equal(payload.sub, keyName);
-  assert.equal(payload.nbf, 1700000000);
+  // nbf is backdated against clock skew: with no leeway a server a second
+  // ahead of Coinbase's mints a not-yet-valid token, which arrives as the same
+  // opaque 401 a bad key does. exp still counts from the real issue time, so
+  // the token never outlives the documented 2 minutes.
+  assert.equal(payload.nbf, 1700000000 - CoinbaseClient.CLOCK_SKEW_LEEWAY_SECONDS);
   assert.equal(payload.exp, 1700000000 + 120);
+  assert.ok(payload.exp - payload.nbf <= 120 + CoinbaseClient.CLOCK_SKEW_LEEWAY_SECONDS);
   // METHOD, one space, host + path. No scheme and no query string.
   assert.equal(payload.uri, 'GET api.coinbase.com/api/v3/brokerage/accounts');
 
@@ -797,7 +858,7 @@ test('coinbase: buys, sends, rewards and conversions map to the right record typ
   assert.equal(byId.get('cb:cccccccc-0000-0000-0000-00000000000c').record_type, 'reward');
 });
 
-test('coinbase: a convert\'s two legs become one conversion keyed on the trade', async () => {
+test('coinbase: a convert\'s two legs become one conversion keyed on the outgoing leg', async () => {
   const result = await coinbaseConnector.sync(
     { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
     { cursor: null }
@@ -805,16 +866,20 @@ test('coinbase: a convert\'s two legs become one conversion keyed on the trade',
   const byId = new Map(result.records.map((record) => [record.external_id, record]));
 
   // A Convert writes two v2 transactions sharing a trade.id, one per account.
-  // Imported separately they read as two unrelated moves.
-  const conversion = byId.get('cb:t:trade-0000-0000-0000-000000000001');
+  // Imported separately they read as two unrelated moves. Folded, the record is
+  // keyed on the OUTGOING leg's transaction id -- the trade id groups the legs
+  // but cannot key the row, because the retail CSV export has no trade-id
+  // column and the two readers must agree on one id.
+  const conversion = byId.get('cb:dddddddd-0000-0000-0000-00000000000d');
   assert.equal(conversion.record_type, 'conversion');
   assert.equal(conversion.base_asset, 'USD');
   assert.equal(conversion.base_amount, '-100.00');
   assert.equal(conversion.quote_asset, 'BTC');
   assert.equal(conversion.quote_amount, '0.00160000');
-  // Neither leg survives as a record of its own, under either id.
-  assert.equal(byId.has('cb:dddddddd-0000-0000-0000-00000000000d'), false);
+  // The incoming leg does not survive as a record of its own, and neither does
+  // the abandoned trade-keyed spelling.
   assert.equal(byId.has('cb:eeeeeeee-0000-0000-0000-00000000000e'), false);
+  assert.equal(byId.has('cb:t:trade-0000-0000-0000-000000000001'), false);
 });
 
 test('coinbase: a trade\'s quote leg is signed against the base, as the CSV reader signs it', async () => {
@@ -847,7 +912,7 @@ test('coinbase: a trade\'s quote leg is signed against the base, as the CSV read
   assert.equal(sell.quote_amount, '1000.00', 'selling receives the quote');
 });
 
-test('coinbase: a widowed convert leg is replaced by the pair, not duplicated by it', async () => {
+test('coinbase: a widowed convert leg is flagged, and the outgoing one is upgradeable in place', async () => {
   const { foldConversions, recordFromTransaction, recordFromConversion } = coinbaseConnector._internals;
   const from = {
     id: 'leg-from', type: 'trade', created_at: '2024-03-07T15:00:00Z',
@@ -860,21 +925,30 @@ test('coinbase: a widowed convert leg is replaced by the pair, not duplicated by
 
   // The two legs live in two different v2 accounts sharing one page budget, so
   // a boundary between them fetches only one.
-  const orphaned = foldConversions([to]);
-  assert.equal(orphaned.pairs.length, 0);
-  const orphan = recordFromTransaction(orphaned.singles[0], { line: 1, fillsByOrder: new Map() });
+  const orphanedOut = foldConversions([from]);
+  assert.equal(orphanedOut.pairs.length, 0);
+  const outgoingOrphan = recordFromTransaction(orphanedOut.singles[0], { line: 1, fillsByOrder: new Map() });
 
   const complete = foldConversions([from, to]);
   const paired = recordFromConversion(complete.pairs[0], { line: 1 });
 
-  // Keyed on either LEG the two rows would not collide and one Convert would be
-  // counted twice, permanently -- nothing downstream can collapse them. Keyed
-  // on the TRADE id the pair upgrades the flagged orphan through the existing
-  // ON CONFLICT arm, exactly as a widowed Kraken trade leg keys its refid.
-  assert.equal(orphan.external_id, paired.external_id);
-  assert.equal(orphan.external_id, 'cb:t:trade-1');
-  assert.equal(orphan.needs_review, true);
+  // The canonical id is the OUTGOING leg's, so a lone outgoing leg lands on the
+  // id the complete pair will carry and the existing ON CONFLICT arm upgrades
+  // it in place rather than landing a second row beside it.
+  assert.equal(outgoingOrphan.external_id, paired.external_id);
+  assert.equal(paired.external_id, 'cb:leg-from');
+  assert.equal(outgoingOrphan.needs_review, true);
   assert.equal(paired.needs_review, false);
+
+  // A lone INCOMING leg cannot compute the outgoing leg's id from anything it
+  // carries, so it keys its own and is flagged. That is the knowingly accepted
+  // residual of keying on something the CSV reader can also compute: a second
+  // visible flagged half-row, never a silently doubled position.
+  const incomingOrphan = recordFromTransaction(
+    foldConversions([to]).singles[0], { line: 1, fillsByOrder: new Map() }
+  );
+  assert.equal(incomingOrphan.external_id, 'cb:leg-to');
+  assert.equal(incomingOrphan.needs_review, true);
 });
 
 test('coinbase: an account list that was cut short is not reported as a finished sync', async () => {
@@ -1099,11 +1173,23 @@ test('key writes degrade to a 503 without SECRETS_ENCRYPTION_KEY, storing nothin
   // A plaintext fallback "just this once" is how a secret ends up in a backup.
   assert.equal(queries.some((entry) => /^UPDATE exchange_accounts SET api_key_encrypted/.test(entry.sql)), false);
 
-  const clear = await request(app).delete(`/api/exchanges/${OWNED_ACCOUNT_ID}/credentials`);
-  assert.equal(clear.status, 503);
-
   const list = await request(app).get('/api/exchanges');
   assert.equal(list.body.encryption_configured, false);
+});
+
+test('a stored key can still be revoked when the encryption key is gone', async () => {
+  connectAccount();
+  // The rotated-or-lost-key case is exactly the one that most needs revoking,
+  // and gating the clear path on SECRETS_ENCRYPTION_KEY made the credential
+  // unusable AND unremovable. Clearing decrypts nothing: it NULLs ciphertext.
+  delete process.env.SECRETS_ENCRYPTION_KEY;
+
+  const clear = await request(app).delete(`/api/exchanges/${OWNED_ACCOUNT_ID}/credentials`);
+
+  assert.equal(clear.status, 200);
+  assert.equal(clear.body.credentials.configured, false);
+  const wipe = queries.find((entry) => /^UPDATE exchange_accounts SET api_key_encrypted = NULL/.test(entry.sql));
+  assert.ok(wipe, 'the ciphertext columns are actually NULLed');
 });
 
 test('a sync with no encryption key is a 503 about the server, not a 409 about the account', async () => {
@@ -1330,4 +1416,316 @@ test('both readers key the same event the same way', () => {
   // pair lands on it rather than beside it.
   const widowed = { ...row, type: 'trade' };
   assert.equal(buildRecords([widowed]).records[0].external_id, 'kraken:TTRD11-22222-TTTTTT');
+});
+
+// --- The dedupe contract: Coinbase -----------------------------------------
+
+test('a Coinbase CSV upload after an API backfill of the same period adds nothing', async () => {
+  connectAccount({
+    exchange: 'coinbase',
+    apiKey: 'organizations/o/apiKeys/k',
+    apiSecret: EC_KEY_PEM.privateKey,
+  });
+
+  const synced = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
+  assert.equal(synced.status, 200);
+  assert.equal(synced.body.imported, 5, 'six v2 transactions, five economic events');
+  assert.equal(stored.size, 5);
+
+  // The same events, now as the retail CSV export. Both readers key every row
+  // on `cb:<v2 transaction id>` -- including a Convert, which keys the OUTGOING
+  // leg's id because the CSV export has no trade-id column to key instead.
+  // Keying the API side on the trade id made this upload double every Convert
+  // under an id no ON CONFLICT could ever see.
+  const uploaded = await request(app)
+    .post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/import`)
+    .set('Content-Type', 'text/csv')
+    .send(readFixture('coinbase-retail-api-parity.csv'));
+
+  assert.equal(uploaded.status, 200);
+  assert.equal(uploaded.body.imported, 0);
+  assert.equal(uploaded.body.duplicates, 5);
+  assert.equal(stored.size, 5, 'no second copy of a single event');
+});
+
+test('both readers key a Coinbase Convert the same way', () => {
+  const { foldConversions, recordFromConversion } = coinbaseConnector._internals;
+
+  const from = {
+    id: 'cvt-out', type: 'trade', created_at: '2024-03-07T15:00:00Z',
+    amount: { amount: '-100.00', currency: 'USD' }, trade: { id: 'trade-77' },
+  };
+  const to = {
+    id: 'cvt-in', type: 'trade', created_at: '2024-03-07T15:00:00Z',
+    amount: { amount: '0.00160000', currency: 'BTC' }, trade: { id: 'trade-77' },
+  };
+  const api = recordFromConversion(foldConversions([from, to]).pairs[0], { line: 1 });
+
+  const csv = parseExchangeCsv([
+    'ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Subtotal,'
+      + 'Total (inclusive of fees and/or spread),Fees and/or Spread,Notes,Sender Address,Recipient Address',
+    'cvt-out,2024-03-07 15:00:00 UTC,Convert,USD,-100,USD,$100.00,$100.00,$0.00,Converted 100 USD to 0.0016 BTC,,',
+    'cvt-in,2024-03-07 15:00:01 UTC,Convert,BTC,0.0016,USD,$100.00,$100.00,$0.00,Converted 100 USD to 0.0016 BTC,,',
+  ].join('\n'));
+
+  assert.equal(csv.records.length, 1, 'two ledger lines, one economic event');
+  // The whole dedupe contract for a Convert in one assertion. The trade id
+  // groups the legs; it cannot key the row, because the CSV reader has no way
+  // to compute it.
+  assert.equal(api.external_id, csv.records[0].external_id);
+  assert.equal(api.external_id, 'cb:cvt-out');
+});
+
+// --- Convergence -----------------------------------------------------------
+
+test('coinbase: more wallets than the page budget still converges', async () => {
+  // The reviewer's shape. `pending` records where the UNFINISHED accounts
+  // stopped but never which ones finished, and the loop restarts at the first
+  // account every run -- so with more wallets than budget every pass re-walked
+  // the same completed accounts, reached nobody new, and left backfillPending
+  // stuck true (which suppresses balance reconciliation permanently).
+  const template = COINBASE.v2Accounts.data[0];
+  coinbaseAccountPages = [{
+    data: Array.from({ length: 120 }, (_, i) => ({ ...template, id: `wallet-${i}` })),
+    pagination: { next_uri: null },
+  }];
+
+  const walked = [];
+  let cursor = null;
+  let runs = 0;
+  let pending = true;
+  for (; runs < 12 && pending; runs += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await coinbaseConnector.sync(
+      { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+      { cursor, interactive: true }
+    );
+    requests
+      .filter((entry) => /^\/v2\/accounts\/wallet-\d+\/transactions$/.test(entry.path ?? ''))
+      .forEach((entry) => walked.push(entry.path));
+    requests.length = 0;
+    cursor = result.cursor;
+    pending = result.stats.backfillPending;
+  }
+
+  assert.equal(pending, false, `the backfill has to converge; it took ${runs} runs`);
+  assert.equal(new Set(walked).size, 120, 'every wallet is walked');
+  // ...and none of them twice: re-walking a finished account is exactly what
+  // burned the whole budget and stalled the backfill.
+  assert.equal(walked.length, 120, 'no wallet is walked twice within one generation');
+  assert.ok(cursor.since, 'the watermark advances once every wallet has been read');
+  assert.deepEqual(cursor.pending, {});
+  assert.deepEqual(cursor.done, []);
+});
+
+test('kraken: a budget boundary inside the TOP second resumes by offset, not by a clamp', async () => {
+  // ceil(oldest) lands on `end` itself, so shrinking the window cannot make
+  // progress. The old code clamped the resume point to end-1, which made
+  // progress by silently stranding every remaining row in that second.
+  const template = Object.values(KRAKEN_LEDGERS.result.ledger)[0];
+  const end = 1710093600;
+  krakenLedgerHistory = Array.from({ length: 1300 }, (_, i) => ({
+    ...template,
+    ledgerId: `LSEC${String(i).padStart(4, '0')}-0-S`,
+    refid: `RSEC-${i}`,
+    type: 'deposit',
+    // All inside (end-1, end], so every row's ceil() is `end`.
+    time: end - (i / 2000),
+  }));
+
+  const seen = new Set();
+  // A pinned window, so the degenerate second is reached deterministically
+  // rather than depending on which second the test happens to run in.
+  let cursor = { newestTime: 0, pendingStart: 0, pendingEnd: end };
+  const first = await krakenConnector.sync(
+    { apiKey: 'k', apiSecret: Buffer.alloc(32, 1).toString('base64') },
+    { cursor, interactive: true }
+  );
+  first.records.forEach((record) => seen.add(record.external_id));
+
+  assert.equal(first.stats.backfillPending, true);
+  assert.equal(first.cursor.pendingEnd, end, 'the window is kept, not clamped past the remaining rows');
+  assert.equal(first.cursor.pendingOffset, 1250, 'progress is carried as an offset into the same window');
+
+  cursor = first.cursor;
+  const second = await krakenConnector.sync(
+    { apiKey: 'k', apiSecret: Buffer.alloc(32, 1).toString('base64') },
+    { cursor, interactive: true }
+  );
+  second.records.forEach((record) => seen.add(record.external_id));
+
+  assert.equal(second.stats.backfillPending, false);
+  assert.equal(seen.size, 1300, 'not one row inside the degenerate second is stranded');
+});
+
+test('kraken: the funding status endpoints are paged, not read once and truncated', async () => {
+  // 500 rows with no cursor loop truncates a first backfill spanning years, and
+  // the 1h steady-state windows never re-request what was missed -- silently,
+  // because the ledger rows themselves import fine and only the addresses are
+  // gone.
+  krakenFundingPages = {
+    WithdrawStatus: [
+      { _cursor: undefined, withdrawal: [], next_cursor: 'w-page-2' },
+      {
+        _cursor: 'w-page-2',
+        withdrawal: KRAKEN_FUNDING.WithdrawStatus.result,
+        next_cursor: null,
+      },
+    ],
+  };
+
+  const result = await krakenConnector.sync(
+    { apiKey: 'k', apiSecret: Buffer.alloc(32, 1).toString('base64') },
+    { cursor: null }
+  );
+
+  const calls = requests.filter((entry) => entry.endpoint === 'WithdrawStatus');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].params.get('cursor'), 'true', 'the first call asks for the paginated form');
+  assert.equal(calls[1].params.get('cursor'), 'w-page-2');
+  // The address only exists on the SECOND page, so it proves the loop ran.
+  const withdrawal = result.records.find((record) => record.external_id === 'kraken:LKKKKK-11111-KKKKKK');
+  assert.equal(withdrawal.address, 'bc1qsynthetic0000000000000000000000000test');
+});
+
+// --- Credentials never reach a log -----------------------------------------
+
+test('a kraken transport failure carries no key material', async () => {
+  failTransport = true;
+  const client = new KrakenClient({
+    apiKey: 'KRAKEN-KEY-1234',
+    apiSecret: Buffer.alloc(64, 3).toString('base64'),
+  });
+
+  await assert.rejects(() => client.getBalance(), (err) => {
+    // pino's default `err` serializer copies own enumerable properties, and an
+    // AxiosError keeps the signed request on config.headers -- API-Key and
+    // API-Sign, in the clear, one logger.error away from the log stream.
+    const dump = JSON.stringify({ message: err.message, ...err });
+    assert.equal(dump.includes('KRAKEN-KEY-1234'), false);
+    assert.equal(/API-Key|API-Sign/i.test(dump), false);
+    assert.equal(err.config, undefined);
+    assert.equal(err.request, undefined);
+    // ...and what a human debugging actually needs survives.
+    assert.equal(err.code, 'ECONNRESET');
+    assert.equal(err.request_summary.url, 'https://api.kraken.com/0/private/Balance');
+    return true;
+  });
+});
+
+test('a coinbase transport failure carries no bearer token', async () => {
+  failTransport = true;
+  const client = new CoinbaseClient({
+    apiKey: 'organizations/o/apiKeys/k',
+    apiSecret: EC_KEY_PEM.privateKey,
+  });
+
+  await assert.rejects(() => client.get('/v2/accounts', { limit: 1 }), (err) => {
+    const dump = JSON.stringify({ message: err.message, ...err });
+    assert.equal(/Authorization|Bearer/i.test(dump), false);
+    assert.equal(err.config, undefined);
+    assert.equal(err.request, undefined);
+    assert.equal(err.request_summary.url, 'https://api.coinbase.com/v2/accounts');
+    return true;
+  });
+});
+
+// --- Fees, balances and statuses -------------------------------------------
+
+test('coinbase: a commission with no native_amount takes its currency from the fill', async () => {
+  const { recordFromTransaction } = coinbaseConnector._internals;
+  const fillsByOrder = new Map([['order-1', {
+    baseAsset: 'BTC', quoteAsset: 'USD', commission: '2.00', quoteAmount: null,
+  }]]);
+
+  // No native_amount, so the quote currency is unknown from the v2 row alone.
+  // The commission is "always represented in quote currency" and the fill knows
+  // which that is, so it backfills the fee asset. Left null, the fee vanishes
+  // from derivedBalances (fee_asset IS NOT NULL) and shows up as a
+  // balance_mismatch that no re-sync can clear.
+  const rescued = recordFromTransaction({
+    id: 'fee-1',
+    type: 'advanced_trade_fill',
+    created_at: '2024-03-02T10:00:00Z',
+    amount: { amount: '0.00500000', currency: 'BTC' },
+    advanced_trade_fill: { order_id: 'order-1', commission: '2.00' },
+  }, { line: 1, fillsByOrder });
+
+  assert.equal(rescued.fee_amount, '2.00');
+  assert.equal(rescued.fee_asset, 'USD');
+  assert.equal(rescued.needs_review, false);
+
+  // Nothing anywhere names the currency: the fee is kept, because it was really
+  // charged, and the row is flagged rather than stored in a shape
+  // reconciliation would silently ignore.
+  const unattributed = recordFromTransaction({
+    id: 'fee-2',
+    type: 'advanced_trade_fill',
+    created_at: '2024-03-02T10:00:00Z',
+    amount: { amount: '0.00500000', currency: 'BTC' },
+    advanced_trade_fill: { order_id: 'order-unknown', commission: '2.00' },
+  }, { line: 2, fillsByOrder });
+
+  assert.equal(unattributed.fee_amount, '2.00');
+  assert.equal(unattributed.fee_asset, null);
+  assert.equal(unattributed.needs_review, true);
+});
+
+test('coinbase: an incomplete live balance picture skips reconciliation instead of flagging', async () => {
+  connectAccount({
+    exchange: 'coinbase',
+    apiKey: 'organizations/o/apiKeys/k',
+    apiSecret: EC_KEY_PEM.privateKey,
+  });
+  // More brokerage portfolios than the account-list page budget: the balances
+  // that came back are a fraction of the truth, and every portfolio missing
+  // from them reads as a zero the ledger contradicts.
+  coinbaseBrokeragePages = Array.from({ length: 30 }, (_, page) => ({
+    _cursor: page === 0 ? undefined : `bk-${page - 1}`,
+    accounts: COINBASE.brokerageAccounts.accounts,
+    has_next: true,
+    cursor: `bk-${page}`,
+  }));
+  derivedBalances = { BTC: '999.0' };
+
+  const response = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.status, 'ok', 'half a balance picture cannot convict the parser');
+  assert.equal(response.body.balance_report.skipped, 'live_balances_incomplete');
+  assert.equal(response.body.balance_report.mismatch_count, 0);
+});
+
+test('a server without an encryption key writes no per-account sync status', async () => {
+  connectAccount();
+  delete process.env.SECRETS_ENCRYPTION_KEY;
+
+  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+  assert.equal(response.status, 503);
+
+  // 'not_configured' against THIS account records a server misconfiguration as
+  // a fact about a credential that is stored and fine -- and it outlives the
+  // fix, because nothing rewrites it until the next successful sync.
+  const save = queries.find((entry) => /^UPDATE exchange_accounts SET sync_cursor/.test(entry.sql));
+  assert.equal(save, undefined);
+});
+
+test('a second sync of the same account while one is running is refused, not doubled', async () => {
+  connectAccount();
+  // Genuine overlap: without latency the first pass finishes before the second
+  // is dispatched and the test would prove nothing.
+  transportDelayMs = 25;
+
+  const [first, second] = await Promise.all([
+    request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`),
+    request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`),
+  ]);
+
+  // Two passes on one cursor both read from the same resume point, fetch the
+  // same pages, and whichever finishes last overwrites the other's cursor.
+  const statuses = [first.status, second.status].sort();
+  assert.deepEqual(statuses, [200, 409]);
+  const refused = first.status === 409 ? first : second;
+  assert.equal(refused.body.code, 'EXCHANGE_SYNC_IN_PROGRESS');
+  assert.equal(stored.size, 11, 'the refused pass imported nothing of its own');
 });

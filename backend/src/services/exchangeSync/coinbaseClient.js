@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const axios = require('axios');
 const logger = require('../../config/logger');
+const scrubHttpError = require('../../utils/scrubHttpError');
 
 // Coinbase App / Advanced Trade REST client. READ ENDPOINTS ONLY -- every
 // request goes through get(), and there is no post/put/delete on this class.
@@ -35,6 +36,9 @@ const MIN_REQUEST_INTERVAL_MS = 360;
 // for each unique API request."
 const JWT_TTL_SECONDS = 120;
 
+// How far `nbf` is backdated against clock skew. See buildJwt.
+const CLOCK_SKEW_LEEWAY_SECONDS = 30;
+
 // Every path this app is allowed to reach. A prefix list rather than a
 // per-request judgement call: the tracker must never be able to place an order
 // or move funds, whatever the stored key is permitted to do. /v2/accounts/…
@@ -52,10 +56,12 @@ const lastRequestAt = new Map();
 
 // Set only by tests, for the same reason as the Kraken client's: a paginated
 // walk paced at the documented request ceiling spends its whole runtime
-// asleep. Off is never the default, and nothing in src/ turns it off.
+// asleep. Off is never the default, and nothing in src/ turns it off. It also
+// short-circuits the retry backoff, so a test that exercises a transport
+// failure does not spend five seconds asleep proving it.
 let pacingEnabled = true;
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms) => (pacingEnabled ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 
 function base64url(input) {
   return Buffer.from(input).toString('base64')
@@ -135,8 +141,14 @@ function parsePrivateKey(secret) {
  * ES256 JWT, per the Coinbase App auth page's own JavaScript sample.
  *
  *   header  { alg: 'ES256', typ: 'JWT', kid: <key name>, nonce: <random hex> }
- *   payload { iss: 'cdp', sub: <key name>, nbf: now, exp: now + 120,
+ *   payload { iss: 'cdp', sub: <key name>, nbf: now - 30, exp: now + 120,
  *             uri: '<METHOD> <host><path>' }
+ *
+ * `nbf` is backdated 30 seconds because it has no leeway otherwise: a server
+ * clock a second or two ahead of Coinbase's makes every token not-yet-valid,
+ * which arrives as the same opaque 401 a bad key does. `exp` still counts from
+ * the real issue time, so the token's life is shortened by the skew allowance
+ * rather than extended past the documented 2 minutes.
  *
  * Three details that are easy to get wrong and all produce the same opaque 401:
  *   - the nonce lives in the HEADER, not the claims;
@@ -161,7 +173,7 @@ function buildJwt({ keyName, privateKey, method, path, nowSeconds }) {
   const payload = {
     iss: 'cdp',
     sub: keyName,
-    nbf: issuedAt,
+    nbf: issuedAt - CLOCK_SKEW_LEEWAY_SECONDS,
     exp: issuedAt + JWT_TTL_SECONDS,
     uri: `${method} ${HOST}${path}`,
   };
@@ -228,7 +240,9 @@ class CoinbaseClient {
         await sleep(RETRY_BACKOFF_MS[attempt]);
         return this.get(path, params, attempt + 1);
       }
-      throw err;
+      // The raw AxiosError carries `Authorization: Bearer <jwt>` on
+      // config.headers, and pino's err serializer copies it verbatim.
+      throw scrubHttpError(err);
     }
 
     if (response.status >= 400) {
@@ -260,5 +274,6 @@ class CoinbaseClient {
 module.exports = CoinbaseClient;
 module.exports.HOST = HOST;
 module.exports.JWT_TTL_SECONDS = JWT_TTL_SECONDS;
+module.exports.CLOCK_SKEW_LEEWAY_SECONDS = CLOCK_SKEW_LEEWAY_SECONDS;
 module.exports._resetRateState = () => lastRequestAt.clear();
 module.exports._setPacingForTests = (enabled) => { pacingEnabled = enabled; };

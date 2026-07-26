@@ -179,24 +179,35 @@ async function pageV2(client, path, {
 // v3 accounts paginate with an explicit has_next flag; v3 fills do NOT have
 // one and terminate on an empty cursor. Sharing a helper between them is how
 // a fills loop ends up running forever.
+//
+// `truncated` is not cosmetic: these accounts ARE the live balance picture the
+// derived ledger is reconciled against, so a partial list reads every missing
+// portfolio as a zero balance and flags a perfectly healthy account. The caller
+// skips reconciliation entirely rather than trusting half a picture.
 async function pageV3Accounts(client, { maxPages = 20 } = {}) {
   const accounts = [];
   let cursor;
+  let truncated = true;
   for (let page = 0; page < maxPages; page += 1) {
     const body = await client.listBrokerageAccounts({ limit: V3_ACCOUNT_LIMIT, cursor });
     accounts.push(...body.accounts);
-    if (!body.has_next || !body.cursor) break;
+    if (!body.has_next || !body.cursor) { truncated = false; break; }
     cursor = body.cursor;
   }
-  return accounts;
+  if (truncated) {
+    logger.warn({ exchange: EXCHANGE, pages: maxPages, accounts: accounts.length },
+      'Coinbase brokerage account list hit the page budget; balance reconciliation skipped this run');
+  }
+  return { accounts, truncated };
 }
 
 async function pageV3Fills(client, { startTime, maxPages }) {
   const fills = [];
   let cursor;
   let pages = 0;
+  let truncated = false;
   for (;;) {
-    if (pages >= maxPages) break;
+    if (pages >= maxPages) { truncated = true; break; }
     const params = { limit: FILL_PAGE_LIMIT };
     if (startTime) params.start_sequence_timestamp = startTime;
     if (cursor) params.cursor = cursor;
@@ -215,6 +226,13 @@ async function pageV3Fills(client, { startTime, maxPages }) {
     // No has_next on this endpoint -- an empty cursor is the terminator.
     if (!body?.cursor || page.length === 0) break;
     cursor = body.cursor;
+  }
+  if (truncated) {
+    // Enrichment only, so this is not fatal -- but "some trades have no quote
+    // leg and no commission" is not something to leave the user to discover
+    // from a balance report.
+    logger.warn({ exchange: EXCHANGE, pages: maxPages, fills: fills.length },
+      'Coinbase fills list hit the page budget; older trades import without their quote leg or commission');
   }
   return fills;
 }
@@ -321,13 +339,26 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
     }
     const summary = fill.order_id ? fillsByOrder.get(fill.order_id) : null;
     if (summary) {
-      if (summary.quoteAsset) feeAsset = feeAsset ? summary.quoteAsset : feeAsset;
+      // The commission is "always represented in quote currency", and the
+      // quote currency is only known here from native_amount -- which a v2 row
+      // does not always carry. The fills summary knows it from product_id, so
+      // it BACKFILLS a null fee asset. (This ran backwards once: a truthy
+      // feeAsset was overwritten with the same information and a null one was
+      // left null, so the only case the rescue existed for was the one it
+      // could not reach.)
+      if (!feeAsset && summary.quoteAsset) feeAsset = summary.quoteAsset;
       if (!quoteAmount && summary.quoteAmount) {
         quoteAsset = summary.quoteAsset ?? quoteAsset;
         quoteAmount = summary.quoteAmount;
       }
     }
   }
+
+  // A fee with no asset is invisible to derivedBalances, which filters on
+  // `fee_asset IS NOT NULL`, so it would come back as a balance_mismatch that
+  // no amount of re-syncing can clear. The amount is kept (it was really
+  // charged) and the row is flagged so a human can name the currency.
+  const feeUnattributed = Boolean(feeAmount) && !feeAsset;
 
   // "Hash for onchain transactions; ONLY provided when transaction is a SEND"
   // -- and even then it is absent while the send is pending, so it is treated
@@ -350,17 +381,18 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
     fee_amount: feeAmount,
     tx_hash: typeof network.hash === 'string' && network.hash ? network.hash : null,
     address,
-    // A widowed Convert leg takes the id the complete pair will carry, so the
-    // pair upgrades this placeholder instead of landing beside it.
-    external_id: tx._unpairedConversion ? conversionIdFor(tx._unpairedConversion) : `cb:${tx.id}`,
+    // ALWAYS the v2 transaction id, including for a widowed Convert leg --
+    // see the note above foldConversions for why a Convert cannot be keyed on
+    // anything the retail CSV export does not also carry.
+    external_id: `cb:${tx.id}`,
     // An uncategorized `tx`, a `request`, or a type Coinbase adds after this
     // was written all land here: stored, visible, and flagged -- never guessed
     // into income or a deposit, and never dropped. A widowed Convert leg is
-    // flagged for a different reason: it is half an event, and the flag is what
-    // lets the complete pair upgrade it. Decided here rather than by the
-    // caller, so the id and the flag that depend on each other cannot be set
-    // apart.
-    needs_review: isUnknown || Boolean(tx._unpairedConversion),
+    // flagged for a different reason: it is half an event, and the flag is
+    // both what surfaces it for review and what lets a later, complete fetch
+    // of the SAME leg upgrade it in place. A fee whose currency nobody could
+    // determine is flagged for a third: reconciliation cannot see it.
+    needs_review: isUnknown || Boolean(tx._unpairedConversion) || feeUnattributed,
     raw: { _format: 'coinbase', _source: 'api', ...tx },
   }, { line, amountCell });
 }
@@ -370,9 +402,27 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
  *
  * A Coinbase Convert writes TWO v2 transactions of type `trade`, one in each
  * account, sharing a `trade.id`. Imported separately they read as two
- * unrelated moves and the direction is lost. The record is keyed on the
- * outgoing leg's own transaction id, which is what the retail CSV importer
- * does with a Convert pair too.
+ * unrelated moves and the direction is lost, so the pair is collapsed here --
+ * grouped by the trade id, which is the only thing that reliably says the two
+ * legs are one event.
+ *
+ * THE TRADE ID GROUPS THE LEGS; IT DOES NOT KEY THE RECORD. The retail CSV
+ * export has no trade-id column at all (ID, Timestamp, Transaction Type, Asset,
+ * Quantity Transacted, prices, Notes, addresses -- that is the whole header),
+ * so the only identifier BOTH readers can compute from their own source data is
+ * the outgoing leg's transaction id. coinbaseRetail.js emits exactly that
+ * (`from.externalId`), and so does recordFromConversion below. Keying the API
+ * side on the trade id instead made a CSV upload after an API backfill -- the
+ * advertised workflow -- insert every Convert a second time under a different
+ * id, where no ON CONFLICT can ever see it and derivedBalances counts both legs
+ * forever.
+ *
+ * The residual cost, accepted knowingly and identical on both readers: when a
+ * page budget falls between the two legs, each is imported alone, flagged
+ * needs_review, under its OWN transaction id. The outgoing one is on the
+ * canonical id and a later complete fetch upgrades it in place; the incoming
+ * one is a second flagged half-row that a human resolves or deletes. Two
+ * visible flagged rows beat one silently doubled position.
  */
 function foldConversions(transactions) {
   const byTradeId = new Map();
@@ -401,17 +451,10 @@ function foldConversions(transactions) {
   return { pairs, singles };
 }
 
-// A Convert's identity is the TRADE id, not either leg's transaction id.
-//
-// The two legs live in two different v2 accounts and the per-account walk
-// shares one page budget, so a budget boundary between them fetches only one.
-// Keyed on a leg, the orphan would land under its own id and the complete pair
-// under the other leg's -- two rows for one Convert, which nothing downstream
-// can collapse and which double-counts the position. Keyed on the trade id
-// they collide, so the complete pair upgrades the flagged orphan through the
-// existing ON CONFLICT arm. This is the same reason a widowed Kraken trade leg
-// keys its refid rather than its own ledger id.
-const conversionIdFor = (tradeId) => `cb:t:${tradeId}`;
+// A Convert's identity is the OUTGOING LEG's v2 transaction id -- the one
+// identifier the API reader and the retail CSV reader can both compute. See
+// the note above foldConversions.
+const conversionIdFor = (from) => `cb:${from.id}`;
 
 function recordFromConversion({ from, to, tradeId }, { line }) {
   return finalizeRecord({
@@ -425,9 +468,11 @@ function recordFromConversion({ from, to, tradeId }, { line }) {
     fee_amount: null,
     tx_hash: null,
     address: null,
-    external_id: conversionIdFor(tradeId),
+    external_id: conversionIdFor(from),
     needs_review: false,
-    raw: { _format: 'coinbase', _source: 'api', from, to },
+    raw: {
+      _format: 'coinbase', _source: 'api', _trade_id: tradeId, _paired_id: to.id, from, to,
+    },
   }, { line, amountCell: [from.amount?.amount ?? '', to.amount?.amount ?? ''] });
 }
 
@@ -456,15 +501,31 @@ const coinbaseConnector = {
   /**
    * One sync pass.
    *
-   * Cursor: { since: ISO timestamp, pending: { [v2AccountId]: startingAfterId } }.
+   * Cursor:
+   *
+   *   { since, headStartedAt,
+   *     pending: { [v2AccountId]: startingAfterId | true },
+   *     done: [v2AccountId] }
    *
    * The v2 transaction feed is walked newest-first per account and stopped once
    * it reaches rows older than `since`, so steady-state cost is one page per
-   * account. `pending` is what makes a first backfill CONVERGE: a history
-   * longer than the page budget would otherwise restart from the newest row
-   * every run, re-import the same first pages, and never once reach the old
+   * account. `pending` is half of what makes a first backfill CONVERGE: a
+   * history longer than the page budget would otherwise restart from the newest
+   * row every run, re-import the same first pages, and never once reach the old
    * ones. Each unfinished account keeps the id it stopped after, and `since`
    * only advances when every account has been walked to the end.
+   *
+   * `done` is the OTHER half, and it is about account count rather than history
+   * length. `pending` records where the unfinished accounts stopped but says
+   * nothing about which accounts finished, and the loop restarts at the first
+   * account every run -- so a wallet count larger than the page budget spends
+   * the entire budget re-walking accounts it already completed and never
+   * reaches the rest. More wallets than budget therefore made ZERO progress,
+   * forever, with backfillPending stuck true (which also suppresses balance
+   * reconciliation permanently). `done` carries the accounts already walked to
+   * the end IN THIS BACKFILL GENERATION; they are skipped without a request,
+   * and the whole set is cleared the moment the backfill completes so the next
+   * incremental sync visits everything again.
    */
   async sync(credentials, { cursor = null, interactive = true } = {}) {
     const client = new CoinbaseClient(credentials);
@@ -477,7 +538,7 @@ const coinbaseConnector = {
 
     // Advanced Trade balances -- the live figure the derived one is checked
     // against, and the same call the probe makes.
-    const brokerageAccounts = await pageV3Accounts(client);
+    const { accounts: brokerageAccounts, truncated: balancesTruncated } = await pageV3Accounts(client);
 
     const fills = await pageV3Fills(client, {
       startTime: watermark ? new Date(watermark).toISOString() : undefined,
@@ -492,6 +553,12 @@ const coinbaseConnector = {
     const v2Accounts = await pageV2(client, '/v2/accounts', { maxPages: 25 });
 
     const pending = (state.pending && typeof state.pending === 'object') ? state.pending : {};
+    // A generation is only in progress when a previous pass truncated, which is
+    // exactly when headStartedAt is set. Outside one, `done` means nothing and
+    // must not skip anybody.
+    const inBackfill = Boolean(state.headStartedAt);
+    const done = new Set(inBackfill && Array.isArray(state.done) ? state.done : []);
+    const nextDone = new Set();
     const nextPending = {};
     const transactions = [];
     // An account list that was itself cut short means accounts exist that have
@@ -503,6 +570,10 @@ const coinbaseConnector = {
 
     for (const account of v2Accounts.rows) {
       if (!account?.id) continue;
+      // Already walked to the end earlier in this backfill. Skipped before the
+      // budget check, because re-walking it is precisely what burned the budget
+      // and stalled the whole backfill.
+      if (done.has(account.id)) { nextDone.add(account.id); continue; }
       const carried = pending[account.id];
       // `true` means "enumerated but never started". A string is a
       // starting_after id to resume from.
@@ -532,6 +603,8 @@ const coinbaseConnector = {
       if (result.truncated) {
         truncated = true;
         nextPending[account.id] = result.resumeAfter ?? true;
+      } else {
+        nextDone.add(account.id);
       }
       transactions.push(...result.rows);
     }
@@ -580,15 +653,27 @@ const coinbaseConnector = {
       // day 3 covered when the head was only read on day 1, and any row written
       // in between falls in the band between the two and is never fetched.
       cursor: truncated
-        ? { since: state.since ?? null, headStartedAt: state.headStartedAt ?? startedAt, pending: nextPending }
-        : { since: state.headStartedAt ?? startedAt, headStartedAt: null, pending: {} },
+        ? {
+          since: state.since ?? null,
+          headStartedAt: state.headStartedAt ?? startedAt,
+          pending: nextPending,
+          done: [...nextDone],
+        }
+        : {
+          since: state.headStartedAt ?? startedAt, headStartedAt: null, pending: {}, done: [],
+        },
       balances: Object.fromEntries(sortedEntries(balances)),
+      // Half a live balance picture reads every unenumerated portfolio as zero
+      // and flags a healthy account, so the caller skips the comparison rather
+      // than running it against a partial truth.
+      balancesComplete: !balancesTruncated,
       stats: {
         rows: transactions.length,
         pages: pagesUsed,
         unknownTypes,
         adjustedFills: adjusted,
         backfillPending: truncated,
+        balancesIncomplete: balancesTruncated,
       },
     };
   },

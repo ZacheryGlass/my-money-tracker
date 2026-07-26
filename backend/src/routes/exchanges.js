@@ -40,7 +40,9 @@ function respondToSyncError(res, error, fallback) {
   if (error.code === 'EXCHANGE_NOT_SUPPORTED') {
     return res.status(400).json({ error: error.message, code: error.code });
   }
-  if (error.code === 'EXCHANGE_NOT_CONFIGURED' || error.code === 'EXCHANGE_CREDENTIAL_UNREADABLE') {
+  if (error.code === 'EXCHANGE_NOT_CONFIGURED'
+    || error.code === 'EXCHANGE_CREDENTIAL_UNREADABLE'
+    || error.code === 'EXCHANGE_SYNC_IN_PROGRESS') {
     return res.status(409).json({ error: error.message, code: error.code });
   }
   // The provider's own refusal is the only thing that tells the user which
