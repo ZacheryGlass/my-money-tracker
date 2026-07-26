@@ -102,12 +102,15 @@ class EthWalletService {
       // Units, not wei. See 033_nft_transfers.sql.
       value_wei: valueUnits,
       token_contract: (raw.contractAddress || '').toLowerCase() || null,
-      token_symbol: raw.tokenSymbol || null,
+      // Spam contracts use symbols as ad space; VARCHAR(64) is a hard limit
+      // and one oversized symbol would abort the whole insert chunk.
+      token_symbol: raw.tokenSymbol ? String(raw.tokenSymbol).slice(0, 64) : null,
       // Whole units. NULL would default to 18 in the shared unit helpers.
       token_decimals: 0,
       token_standard: tokenStandard,
-      // uint256, past Number precision -- keep it a string end to end.
-      token_id: raw.tokenID != null ? String(raw.tokenID) : null,
+      // uint256, past Number precision -- keep it a string end to end. A
+      // malformed id must not reach NUMERIC(78,0) and abort the chunk.
+      token_id: raw.tokenID != null && /^\d+$/.test(String(raw.tokenID)) ? String(raw.tokenID) : null,
       is_error: false,
     });
 
@@ -135,7 +138,7 @@ class EthWalletService {
         ...baseRow(raw, 'token'),
         value_wei: raw.value,
         token_contract: (raw.contractAddress || '').toLowerCase() || null,
-        token_symbol: raw.tokenSymbol || null,
+        token_symbol: raw.tokenSymbol ? String(raw.tokenSymbol).slice(0, 64) : null,
         token_decimals: raw.tokenDecimal != null ? Number(raw.tokenDecimal) : null,
         // tokentx is ERC-20 only; the NFT standards have their own feeds.
         token_standard: 'erc20',
@@ -153,7 +156,8 @@ class EthWalletService {
     // one row per id for a batch transfer, so a batch arrives pre-unbundled and
     // each row gets its own ordinal for free.
     for (const raw of nft1155) {
-      rows.push(nftRow(raw, 'nft1155', 'erc1155', raw.tokenValue != null ? String(raw.tokenValue) : '1'));
+      const units = raw.tokenValue != null && /^\d+$/.test(String(raw.tokenValue)) ? String(raw.tokenValue) : '1';
+      rows.push(nftRow(raw, 'nft1155', 'erc1155', units));
     }
 
     return rows;
@@ -187,8 +191,27 @@ class EthWalletService {
       const normal = await EtherscanService.fetchNormalTxs(wallet.address, resume.normal, apiKey);
       const internal = await EtherscanService.fetchInternalTxs(wallet.address, resume.internal, apiKey);
       const token = await EtherscanService.fetchTokenTxs(wallet.address, resume.token, apiKey);
-      const nft = await EtherscanService.fetchNftTxs(wallet.address, resume.nft, apiKey);
-      const nft1155 = await EtherscanService.fetch1155Txs(wallet.address, resume.nft1155, apiKey);
+      // The NFT feeds must not take down the whole sync: a wallet with zero
+      // NFT activity would still lose its balance, holdings and mirror if
+      // tokennfttx rate-limits. A failed feed contributes no rows, keeps its
+      // stored rows (its delete is skipped), and leaves its cursor alone
+      // (null -> COALESCE in updateCursors).
+      let nft = [];
+      let nftOk = true;
+      try {
+        nft = await EtherscanService.fetchNftTxs(wallet.address, resume.nft, apiKey);
+      } catch (err) {
+        nftOk = false;
+        logger.warn({ walletId, err }, 'tokennfttx fetch failed; NFT feed skipped this sync');
+      }
+      let nft1155 = [];
+      let nft1155Ok = true;
+      try {
+        nft1155 = await EtherscanService.fetch1155Txs(wallet.address, resume.nft1155, apiKey);
+      } catch (err) {
+        nft1155Ok = false;
+        logger.warn({ walletId, err }, 'token1155tx fetch failed; 1155 feed skipped this sync');
+      }
 
       const rows = this.normalizeFeeds(wallet.address, { normal, internal, token, nft, nft1155 })
         .map((row) => ({ ...row, wallet_id: walletId }));
@@ -197,16 +220,16 @@ class EthWalletService {
       await EthTransfer.deleteFromBlock(walletId, ['native', 'gas'], resume.normal);
       await EthTransfer.deleteFromBlock(walletId, ['internal'], resume.internal);
       await EthTransfer.deleteFromBlock(walletId, ['token'], resume.token);
-      await EthTransfer.deleteFromBlock(walletId, ['nft'], resume.nft);
-      await EthTransfer.deleteFromBlock(walletId, ['nft1155'], resume.nft1155);
+      if (nftOk) await EthTransfer.deleteFromBlock(walletId, ['nft'], resume.nft);
+      if (nft1155Ok) await EthTransfer.deleteFromBlock(walletId, ['nft1155'], resume.nft1155);
       const inserted = await EthTransfer.bulkInsert(rows);
 
       await EthWallet.updateCursors(walletId, {
         normal: maxBlock(normal),
         internal: maxBlock(internal),
         token: maxBlock(token),
-        nft: maxBlock(nft),
-        nft1155: maxBlock(nft1155),
+        nft: nftOk ? maxBlock(nft) : null,
+        nft1155: nft1155Ok ? maxBlock(nft1155) : null,
       });
       await EthTransfer.reclassifyCounterparties(wallet.user_id);
       const holdings = await this.refreshHoldings(walletId);

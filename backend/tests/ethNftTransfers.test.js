@@ -261,3 +261,53 @@ test('the NFT feeds hit the documented Etherscan actions', async () => {
     { action: 'token1155tx', address: WALLET, startBlock: 200 },
   ]);
 });
+
+// Review finding: an NFT feed failure must not abort the whole sync. The
+// wallet keeps its balances/holdings path, the failed feed's stored rows
+// survive (no delete), and its cursor stays put so the next sync retries.
+test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged', async (t) => {
+  const EthWallet = require('../src/models/EthWallet');
+  const SecretsService = require('../src/services/SecretsService');
+  const MirrorService = require('../src/services/EthTransactionMirrorService');
+  const TransactionClassificationService = require('../src/services/TransactionClassificationService');
+
+  const restore = [];
+  const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
+  t.after(() => { for (const [o, k, v] of restore) o[k] = v; });
+
+  stub(EthWallet, 'findById', async () => ({
+    id: 7, user_id: 1, address: '0xabc',
+    last_block_normal: 500, last_block_internal: 500, last_block_token: 500,
+    last_block_nft: 500, last_block_1155: 500,
+  }));
+  stub(SecretsService, 'getUserKey', async () => 'key');
+  stub(EtherscanService, 'fetchNormalTxs', async () => []);
+  stub(EtherscanService, 'fetchInternalTxs', async () => []);
+  stub(EtherscanService, 'fetchTokenTxs', async () => []);
+  stub(EtherscanService, 'fetchNftTxs', async () => { throw new Error('rate limit reached'); });
+  stub(EtherscanService, 'fetch1155Txs', async () => [{
+    blockNumber: '600', timeStamp: '1700000000', hash: '0x1',
+    from: '0xabc', to: '0xdef', contractAddress: '0xc0',
+    tokenSymbol: 'X', tokenID: '5', tokenValue: '2',
+  }]);
+  const deleted = [];
+  stub(EthTransfer, 'deleteFromBlock', async (walletId, types) => { deleted.push(types.join(',')); });
+  stub(EthTransfer, 'bulkInsert', async () => 1);
+  let cursors = null;
+  stub(EthWallet, 'updateCursors', async (id, c) => { cursors = c; });
+  stub(EthTransfer, 'reclassifyCounterparties', async () => {});
+  stub(EthWalletService, 'refreshHoldings', async () => ({}));
+  stub(MirrorService, 'rebuildForWallet', async () => ({}));
+  stub(TransactionClassificationService, 'backfill', async () => {});
+  stub(EthWallet, 'clearError', async () => {});
+  stub(EthWallet, 'updateSyncTime', async () => {});
+
+  const result = await EthWalletService.syncWallet(7);
+
+  assert.equal(result.fetched.nft, 0);
+  assert.equal(result.fetched.nft1155, 1);
+  assert.ok(!deleted.includes('nft'), 'failed feed must not delete its stored rows');
+  assert.ok(deleted.includes('nft1155'), 'healthy feed still refreshes its window');
+  assert.equal(cursors.nft, null, 'failed feed cursor must not advance');
+  assert.equal(cursors.nft1155, 600, 'healthy feed cursor advances normally');
+});

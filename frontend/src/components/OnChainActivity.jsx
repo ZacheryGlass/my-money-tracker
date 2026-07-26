@@ -363,7 +363,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
                 Label
               </button>
             )}
-            {transfer.transfer_type === 'token' && transfer.token_contract && (
+            {transfer.token_contract && (
               <button
                 onClick={() => handleIgnoreToken(transfer)}
                 disabled={ignoringContract === transfer.token_contract}
