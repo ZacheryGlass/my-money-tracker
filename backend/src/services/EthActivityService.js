@@ -390,7 +390,12 @@ class EthActivityService {
   // Deterministic full rebuild of one wallet's activity rows. Called after
   // every sync and every classification refresh, exactly like the ledger
   // mirror. Overrides live in their own table and are untouched here.
-  static async rebuildForWallet(walletId) {
+  //
+  // `rebuildMatches: false` is for a caller that is walking EVERY wallet of one
+  // user: the match pass is user-wide by design, so running it per wallet
+  // repeats the same full re-derivation N times. Such a caller runs it once
+  // itself, after the loop -- see EthWalletService.
+  static async rebuildForWallet(walletId, { rebuildMatches = true } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
@@ -415,7 +420,9 @@ class EthActivityService {
     // thing the issue wants surfaced -- so it has to run after the ladder, not
     // inside it. Non-fatal: a sync that fetched every transfer must not report
     // failure because a derived side table could not be refreshed.
-    const matches = await ExchangeMatchService.rebuildForUserSafely(wallet.user_id, { walletId });
+    const matches = rebuildMatches
+      ? await ExchangeMatchService.rebuildForUserSafely(wallet.user_id, { walletId })
+      : null;
 
     logger.info({ walletId, activity: written }, 'ETH activity rebuilt');
     return { activity: written, matches };

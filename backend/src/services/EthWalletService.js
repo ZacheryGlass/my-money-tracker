@@ -5,6 +5,7 @@ const EtherscanService = require('./EtherscanService');
 const SecretsService = require('./SecretsService');
 const EthTransactionMirrorService = require('./EthTransactionMirrorService');
 const EthActivityService = require('./EthActivityService');
+const ExchangeMatchService = require('./ExchangeMatchService');
 const MethodSignatureService = require('./MethodSignatureService');
 const PriceService = require('./PriceService');
 const TransactionClassificationService = require('./TransactionClassificationService');
@@ -859,11 +860,15 @@ class EthWalletService {
           // classification ladder reads -- so the activity rows heal
           // retroactively, exactly like the mirror. Overrides live in their own
           // table and are untouched by the rebuild.
-          await EthActivityService.rebuildForWallet(wallet.id);
+          await EthActivityService.rebuildForWallet(wallet.id, { rebuildMatches: false });
         } catch (err) {
           logger.warn({ walletId: wallet.id, err }, 'Activity rebuild failed during classification refresh');
         }
       }
+      // Once, after every wallet has landed. The match pass is user-wide, so
+      // running it inside the loop re-derived the same rows N times -- and the
+      // early passes ran against a half-rebuilt feed.
+      await ExchangeMatchService.rebuildForUserSafely(userId, { reason: 'classification-refresh' });
       await TransactionClassificationService.backfill();
     });
   }
@@ -893,11 +898,13 @@ class EthWalletService {
         try {
           // The ignore list filters legs out of the activity builder too, so a
           // newly-ignored spam token has to stop driving a classification.
-          await EthActivityService.rebuildForWallet(wallet.id);
+          await EthActivityService.rebuildForWallet(wallet.id, { rebuildMatches: false });
         } catch (err) {
           logger.warn({ walletId: wallet.id, err }, 'Activity rebuild failed during derived-data refresh');
         }
       }
+      // Once for the user, not once per wallet -- same reason as above.
+      await ExchangeMatchService.rebuildForUserSafely(userId, { reason: 'derived-refresh' });
       await TransactionClassificationService.backfill();
     });
   }

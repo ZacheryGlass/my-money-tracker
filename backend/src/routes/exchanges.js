@@ -233,9 +233,48 @@ router.post('/matches/verdict', async (req, res) => {
     // A verdict about something the user cannot see would be stored and then
     // invisible forever -- exactly the trap the activity override route 404s
     // for. Both sides are checked, so a foreign record id is a 404 too.
-    const exists = await ExchangeMatch.verdictTargetExists(req.user.id, target);
+    const { exists, records } = await ExchangeMatch.verdictTargetExists(req.user.id, target);
     if (!exists) {
       return res.status(404).json({ error: 'No match found for that record and transaction' });
+    }
+
+    // Shape, not just ownership. Only a transfer can be half of a movement: a
+    // trade or a reward has no counterpart to be the same money as, and the
+    // matcher would never propose one -- so confirming it stores an answer to a
+    // question that cannot be asked. The derived side enforces this in SQL
+    // (MATCHABLE_RECORD_TYPES); a manual verdict has to enforce it here.
+    const matchable = new Set(ExchangeMatch.MATCHABLE_RECORD_TYPES);
+    const anchor = records.get(target.exchangeRecordId);
+    const counter = target.counterRecordId ? records.get(target.counterRecordId) : null;
+    for (const record of [anchor, counter]) {
+      if (record && !matchable.has(record.record_type)) {
+        return res.status(400).json({
+          error: `Only ${[...matchable].join(' and ')} records can be matched; record ${record.id} is a ${record.record_type}`,
+        });
+      }
+    }
+    // And a pair runs one way: money leaves the sending venue and arrives at
+    // the receiving one. The derived pair query anchors on the WITHDRAWAL for
+    // exactly this reason -- one identity per movement instead of two orderings
+    // of the same two ids -- and a verdict stored the other way round would
+    // never line up with the match it is supposed to confirm or suppress.
+    if (counter && !(anchor?.record_type === 'withdrawal' && counter.record_type === 'deposit')) {
+      return res.status(400).json({
+        error: 'A pair runs withdrawal -> deposit: exchange_record_id must be the withdrawal and counter_record_id the deposit',
+      });
+    }
+
+    // Two confirmations claiming the same record is the same money explained
+    // twice. They sit under different unique keys, so the database takes both
+    // and selectMatches then drops one by an ordering the user never sees.
+    if (verdict === 'confirmed') {
+      const conflict = await ExchangeMatch.findConflictingConfirmation(req.user.id, target);
+      if (conflict) {
+        return res.status(409).json({
+          error: 'Another confirmed match already claims one of these records; remove that verdict first',
+          conflict,
+        });
+      }
     }
 
     const saved = await ExchangeMatch.upsertVerdict(req.user.id, {

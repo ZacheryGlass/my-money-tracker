@@ -67,7 +67,7 @@ function fakeQuery(text, params = []) {
   if (/^WITH scoped_records AS/.test(sql)) {
     return { rows: params[0] === OWNER_ID ? db.pairCandidates : [] };
   }
-  if (/^SELECT v\.id, v\.exchange_record_id/.test(sql)) {
+  if (/^SELECT v\.id, v\.exchange_record_id, v\.counter_record_id, v\.verdict/.test(sql)) {
     if (params[0] !== OWNER_ID) return { rows: [] };
     return {
       rows: [...db.verdicts.values()].map((row) => ({
@@ -103,7 +103,10 @@ function fakeQuery(text, params = []) {
     let count = 0;
     for (const row of db.activity) {
       const match = db.matches.find((m) => m.activity_id === row.id);
-      if (!match || !row.needs_review) continue;
+      if (!match) continue;
+      // Path-independent: the stamp does not depend on the row being flagged,
+      // only on it saying something other than what the match says.
+      if (!row.needs_review && row.review_reason === null && row.confidence === match.confidence) continue;
       row.needs_review = false;
       row.review_reason = null;
       row.confidence = match.confidence;
@@ -140,10 +143,28 @@ function fakeQuery(text, params = []) {
     db.labels.push({ user_id: userId, address, name, source: 'auto-match', kind: 'exchange', confidence: 'low' });
     return { rows: [{ address }] };
   }
-  if (/^SELECT COUNT\(\*\)::int AS owned/.test(sql)) {
+  if (/^SELECT er\.id, er\.record_type FROM exchange_records er/.test(sql)) {
     const [userId, ids] = params;
-    if (userId !== OWNER_ID) return { rows: [{ owned: 0 }] };
-    return { rows: [{ owned: ids.filter((id) => db.records.has(id)).length }] };
+    if (userId !== OWNER_ID) return { rows: [] };
+    return {
+      rows: ids.filter((id) => db.records.has(id))
+        .map((id) => ({ id, record_type: db.records.get(id).record_type })),
+    };
+  }
+  if (/^SELECT v\.id, v\.exchange_record_id, v\.counter_record_id, v\.wallet_id/.test(sql)) {
+    // The conflicting-confirmation probe: any OTHER confirmed verdict of this
+    // user's that already claims one of these two records.
+    const [userId, recordIds, exchangeRecordId, counterRecordId, walletId, chainId, txHash] = params;
+    if (userId !== OWNER_ID) return { rows: [] };
+    const same = (row) => row.exchange_record_id === exchangeRecordId
+      && (row.counter_record_id ?? null) === (counterRecordId ?? null)
+      && (row.wallet_id ?? null) === (walletId ?? null)
+      && (row.chain_id ?? null) === (chainId ?? null)
+      && (row.tx_hash ?? null) === (txHash ?? null);
+    const hit = [...db.verdicts.values()].find((row) => row.verdict === 'confirmed'
+      && (recordIds.includes(row.exchange_record_id) || recordIds.includes(row.counter_record_id))
+      && !same(row));
+    return { rows: hit ? [hit] : [] };
   }
   if (/^SELECT 1 FROM eth_activity a JOIN eth_wallets w/.test(sql)) {
     const [walletId, chainId, txHash, userId] = params;
@@ -155,6 +176,9 @@ function fakeQuery(text, params = []) {
   if (/^INSERT INTO exchange_match_verdicts/.test(sql)) {
     const [exchangeRecordId, walletId, chainId, txHash, counterRecordId, verdict, note, userId] = params;
     if (userId !== OWNER_ID || !db.records.has(exchangeRecordId)) return { rows: [] };
+    // The statement's own wallet gate: a wallet id is only bindable when this
+    // user owns it (WALLET_ID here; FOREIGN_WALLET_ID belongs to someone else).
+    if (walletId !== null && walletId !== WALLET_ID) return { rows: [] };
     const row = {
       id: db.verdicts.size + 1,
       exchange_record_id: exchangeRecordId,
@@ -243,6 +267,9 @@ const onChainCandidate = (overrides = {}) => ({
   chain_id: 1,
   tx_hash: TX,
   counterparty_address: VENUE,
+  // One net leg, so counterparty_address really is the other side of the
+  // transfer rather than the gas leg's to_address.
+  single_net_leg: true,
   exchange_account_name: 'Kraken',
   match_method: 'tx_hash',
   confidence: 'high',
@@ -336,6 +363,21 @@ test('a hash match teaches the venue address; a fallback match never does', asyn
   await ExchangeMatchService.rebuildForUser(OWNER_ID);
   assert.equal(db.matches.length, 1);
   assert.deepEqual(db.labels, [], 'only proof may write a label');
+});
+
+test('a hash match on a multi-leg transaction teaches nothing: that address is a router', async () => {
+  // The hash arm matches whatever the legs look like -- a hash is identity --
+  // but with several net legs counterparty_address is the GAS leg's
+  // to_address, which for a swap or a batched withdrawal is a router contract.
+  // Labelling that 'exchange' deletes every future call to it from cash flow.
+  db.activity = [activityRow()];
+  seedRecords(recordRow(500));
+  db.onChainCandidates = [onChainCandidate({ single_net_leg: false })];
+
+  await ExchangeMatchService.rebuildForUser(OWNER_ID);
+
+  assert.equal(db.matches.length, 1, 'the match itself still stands: the hash is proof');
+  assert.deepEqual(db.labels, [], 'but nothing may be learned from a router address');
 });
 
 test('an address the user has already judged is never re-labeled', async () => {
@@ -432,6 +474,49 @@ test('an on-chain leg wins the record back from an exchange-to-exchange pairing'
   assert.equal(rows.length, 1);
   assert.equal(rows[0].activity_id, 100);
   assert.equal(rows[0].counter_record_id, null);
+});
+
+test('the on-chain leg wins at EQUAL rank, on a worse delta, and against a stronger pair method', () => {
+  // Shape is its own comparator key, ahead of the method ranks. Leaving it to
+  // the ranks meant the pair won on time delta -- or simply on ids -- the
+  // moment the two carried the same rank, which is most of the time.
+  const cases = [
+    // Same method, same delta: only the shape key can decide this.
+    [{ match_method: 'amount_window', time_delta: 900 }, { match_method: 'amount_window', time_delta: 900 }],
+    // The pair is closer in time.
+    [{ match_method: 'amount_window', time_delta: 7000 }, { match_method: 'amount_window', time_delta: 5 }],
+    // The pair carries the stronger evidence of the two fallbacks.
+    [{ match_method: 'amount_window', time_delta: 7000 }, { match_method: 'address_amount', time_delta: 5 }],
+  ];
+
+  for (const [onChainOverrides, pairOverrides] of cases) {
+    const onChain = [onChainCandidate({ activity_id: 100, exchange_record_id: 600, confidence: 'medium', ...onChainOverrides })];
+    const pairs = [pairCandidate({ exchange_record_id: 600, counter_record_id: 700, ...pairOverrides })];
+    // Both input orders, because a comparator that only works one way is a
+    // comparator that does not work.
+    for (const input of [{ onChain, pairs }, { onChain: [...onChain], pairs: [...pairs] }]) {
+      const { rows } = selectMatches(input);
+      assert.equal(rows.length, 1, 'the record is claimed once');
+      assert.equal(rows[0].activity_id, 100, `on-chain must win: ${JSON.stringify(pairOverrides)}`);
+      assert.equal(rows[0].counter_record_id, null);
+    }
+  }
+});
+
+test('a pair the user confirmed still beats a derived on-chain candidate', () => {
+  // Manual is the one key above shape: the user is overruling us, whatever
+  // shape their answer took.
+  const { rows } = selectMatches({
+    onChain: [onChainCandidate({ activity_id: 100, exchange_record_id: 600 })],
+    verdicts: [{
+      exchange_record_id: 600, counter_record_id: 700, verdict: 'confirmed',
+      wallet_id: null, chain_id: null, tx_hash: null, activity_id: null,
+    }],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].counter_record_id, 700);
+  assert.equal(rows[0].match_method, 'manual');
 });
 
 // --- verdicts survive the rebuild ------------------------------------------
@@ -588,7 +673,7 @@ test('the on-chain candidate query keeps its exact-NUMERIC tolerance and its dir
 
   // Wei-scale quantities. A float comparison would both miss real matches and
   // invent fake ones, so the tolerance is a NUMERIC literal all the way down.
-  assert.match(sql, /ABS\(sr\.base_amount - sa\.leg_amount\) <= sr\.fee_amount \+ sa\.leg_amount \* \$2::numeric/);
+  assert.match(sql, /ABS\(sr\.base_amount - sa\.leg_amount\) <= sr\.base_fee_amount \+ sa\.leg_amount \* \$2::numeric/);
   assert.equal(params[1], ExchangeMatch.AMOUNT_TOLERANCE_RATE);
   assert.doesNotMatch(sql, /float|double precision/i);
 
@@ -605,6 +690,34 @@ test('the on-chain candidate query keeps its exact-NUMERIC tolerance and its dir
 
   // The override is coalesced over the derived verdict, like every other reader.
   assert.match(sql, /COALESCE\(o\.category, a\.category\) AS category/);
+});
+
+// The fee widens a BASE-ASSET window, so a fee the venue booked in another
+// currency must not be added to it. Coinbase retail writes a withdrawal fee in
+// the price currency: a $12.34 fee on a 2 ETH record turned the tolerance into
+// twelve ETHER and matched a 3.5 ETH transfer. The fake pool cannot execute
+// SQL, so this pins the guard in the statement text -- the same way every other
+// query-shaped invariant here is pinned.
+test('a fee in another currency does not widen the amount window on either arm', async () => {
+  await ExchangeMatch.onChainCandidates(OWNER_ID);
+  await ExchangeMatch.exchangePairCandidates(OWNER_ID);
+  const onChain = queries.find((q) => /^WITH scoped_activity AS/.test(q.sql)).sql;
+  const pair = queries.find((q) => /^WITH scoped_records AS/.test(q.sql)).sql;
+
+  for (const sql of [onChain, pair]) {
+    // The fee only counts when it is denominated in the asset being compared.
+    assert.match(sql, /CASE WHEN er\.fee_asset IS NULL OR UPPER\(er\.fee_asset\) = UPPER\(er\.base_asset\) THEN COALESCE\(ABS\(er\.fee_amount\), 0\) ELSE 0 END AS base_fee_amount/);
+    // And no tolerance may reach the raw column past that guard: the 0.5%
+    // relative slack is all a foreign-currency fee gets.
+    const tolerances = sql.match(/<=[^)]*fee_amount[^\n]*?\$2::numeric/g) || [];
+    assert.ok(tolerances.length > 0, 'the tolerance is still there');
+    for (const tolerance of tolerances) {
+      assert.doesNotMatch(tolerance, /(?<!base_)fee_amount/, `unguarded fee in: ${tolerance}`);
+    }
+  }
+
+  assert.match(onChain, /<= sr\.base_fee_amount \+ sa\.leg_amount \* \$2::numeric/);
+  assert.match(pair, /<= sent\.base_fee_amount \+ received\.base_fee_amount \+ sent\.base_amount \* \$2::numeric/);
 });
 
 test('the exchange-to-exchange query refuses to pair an account with itself', async () => {
@@ -629,6 +742,64 @@ test('the unmatched-flow flag is gated on the user tracking exchange transfers a
   assert.deepEqual(params[2], ['deposit', 'withdrawal']);
   assert.match(sql, /NOT EXISTS \(SELECT 1 FROM exchange_matches m WHERE m\.activity_id = a\.id\)/);
   assert.match(sql, /w\.user_id = \$1/);
+});
+
+test('every category test resolves the override, not just the candidate query', async () => {
+  // Three readers, one category. The candidate query already coalesced; the
+  // flag pass and the summary did not, so a transaction the user corrected
+  // AWAY from an exchange flow generated no candidates and was then flagged
+  // for having none -- a review nothing could satisfy.
+  await ExchangeMatch.flagUnmatchedExchangeFlows(OWNER_ID, 'because');
+  await ExchangeMatch.summaryForUser(OWNER_ID);
+  const flag = queries.find((q) => /^UPDATE eth_activity a SET needs_review = TRUE/.test(q.sql)).sql;
+  const summary = queries.find((q) => /AS unmatched_records/.test(q.sql)).sql;
+
+  for (const sql of [flag, summary]) {
+    assert.match(sql, /eth_activity_overrides o/);
+    assert.match(sql, /IN \('exchange_deposit', 'exchange_withdrawal'\)/);
+    // No reader may test the derived column on its own.
+    assert.doesNotMatch(sql, /a\.category IN \(/);
+  }
+});
+
+test('the confidence stamp does not depend on whether the row happened to be flagged', async () => {
+  // Same data, two histories: synced before the record existed (flagged, then
+  // cleared) and synced after (never flagged). Both must end up saying the
+  // match's confidence, not the ladder's.
+  const run = async (needsReview) => {
+    db.matches = [];
+    db.activity = [activityRow({ needs_review: needsReview, confidence: 'high' })];
+    seedRecords(recordRow(500));
+    db.onChainCandidates = [onChainCandidate({ match_method: 'amount_window', confidence: 'medium' })];
+    await ExchangeMatchService.rebuildForUser(OWNER_ID);
+    return db.activity[0];
+  };
+
+  const flaggedFirst = await run(true);
+  const neverFlagged = await run(false);
+  assert.equal(flaggedFirst.confidence, 'medium');
+  assert.equal(neverFlagged.confidence, 'medium', 'a match paired by a time window is not certain either way');
+  assert.equal(neverFlagged.needs_review, false);
+});
+
+test('the verdict statements gate the wallet as well as the record', async () => {
+  // exchange_match_verdicts is reached through the RECORD's account, which
+  // says nothing about the wallet id bound alongside it.
+  await ExchangeMatch.verdictsForUser(OWNER_ID);
+  const read = queries.find((q) => /^SELECT v\.id, v\.exchange_record_id, v\.counter_record_id, v\.verdict/.test(q.sql)).sql;
+  assert.match(read, /EXISTS \(SELECT 1 FROM eth_wallets w WHERE w\.id = a\.wallet_id AND w\.user_id = \$1\)/);
+
+  seedRecords(recordRow(500));
+  const foreign = await ExchangeMatch.upsertVerdict(OWNER_ID, {
+    exchangeRecordId: 500, walletId: FOREIGN_WALLET_ID, chainId: 1, txHash: TX, verdict: 'confirmed',
+  });
+  const write = queries.find((q) => /^INSERT INTO exchange_match_verdicts/.test(q.sql)).sql;
+  // Cast on BOTH uses of $2, or Postgres deduces two types for one parameter
+  // and refuses the statement.
+  assert.match(write, /SELECT er\.id, \$2::int,/);
+  assert.match(write, /EXISTS \( SELECT 1 FROM eth_wallets w WHERE w\.id = \$2::int AND w\.user_id = \$8 \)/);
+  assert.equal(foreign, null, 'the model refuses it even with the route check bypassed');
+  assert.equal(db.verdicts.size, 0);
 });
 
 // --- routes and scoping ----------------------------------------------------
@@ -696,6 +867,70 @@ test('a verdict must name exactly one shape', async () => {
   const selfPair = await request(app).post('/api/exchanges/matches/verdict')
     .send({ exchange_record_id: 500, counter_record_id: 500, verdict: 'confirmed' });
   assert.equal(selfPair.status, 400);
+});
+
+test('a verdict may only name records that could be half of a movement', async () => {
+  db.activity = [activityRow()];
+  // A trade has no counterpart to be the same money as, and the matcher would
+  // never propose it -- so confirming it stores an answer to a question that
+  // cannot be asked.
+  seedRecords(recordRow(500, { record_type: 'trade' }), recordRow(700));
+
+  const trade = await request(app).post('/api/exchanges/matches/verdict')
+    .send({ exchange_record_id: 500, wallet_id: WALLET_ID, tx_hash: TX, verdict: 'confirmed' });
+  assert.equal(trade.status, 400);
+  assert.match(trade.body.error, /trade/);
+  assert.equal(db.verdicts.size, 0);
+});
+
+test('a pair verdict has to run withdrawal -> deposit', async () => {
+  // The derived pair query anchors on the withdrawal so a movement has one
+  // identity rather than two orderings of the same two ids. A verdict stored
+  // the other way round would never line up with the match it answers.
+  seedRecords(
+    recordRow(600, { exchange_account_id: COINBASE_ACCOUNT, record_type: 'withdrawal' }),
+    recordRow(700, { record_type: 'deposit' })
+  );
+
+  const backwards = await request(app).post('/api/exchanges/matches/verdict')
+    .send({ exchange_record_id: 700, counter_record_id: 600, verdict: 'confirmed' });
+  assert.equal(backwards.status, 400);
+  assert.match(backwards.body.error, /withdrawal -> deposit/);
+
+  const rightWayRound = await request(app).post('/api/exchanges/matches/verdict')
+    .send({ exchange_record_id: 600, counter_record_id: 700, verdict: 'confirmed' });
+  assert.equal(rightWayRound.status, 201);
+});
+
+test('a second confirmation claiming the same record is refused, not silently dropped', async () => {
+  db.activity = [activityRow()];
+  seedRecords(
+    recordRow(600, { exchange_account_id: COINBASE_ACCOUNT, record_type: 'withdrawal' }),
+    recordRow(700, { record_type: 'deposit' })
+  );
+
+  const pair = await request(app).post('/api/exchanges/matches/verdict')
+    .send({ exchange_record_id: 600, counter_record_id: 700, verdict: 'confirmed' });
+  assert.equal(pair.status, 201);
+
+  // The two verdicts sit under DIFFERENT unique keys, so the database takes
+  // both and the selection pass then discards one by an ordering the user
+  // never sees. The same money cannot be explained twice.
+  const onChain = await request(app).post('/api/exchanges/matches/verdict')
+    .send({ exchange_record_id: 600, wallet_id: WALLET_ID, tx_hash: TX, verdict: 'confirmed' });
+  assert.equal(onChain.status, 409);
+  assert.match(onChain.body.error, /already claims/);
+  assert.equal(db.verdicts.size, 1);
+
+  // A REJECTION is not a claim, so it is always allowed.
+  const rejection = await request(app).post('/api/exchanges/matches/verdict')
+    .send({ exchange_record_id: 600, wallet_id: WALLET_ID, tx_hash: TX, verdict: 'rejected' });
+  assert.equal(rejection.status, 201);
+
+  // And re-answering the SAME pair is an update, not a conflict.
+  const again = await request(app).post('/api/exchanges/matches/verdict')
+    .send({ exchange_record_id: 600, counter_record_id: 700, verdict: 'confirmed', note: 'still sure' });
+  assert.equal(again.status, 201);
 });
 
 test('a verdict against something the caller cannot see is a 404, not an invisible write', async () => {

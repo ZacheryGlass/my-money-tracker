@@ -22,10 +22,35 @@ const onChainVerdictKey = (row) =>
   `oc:${row.exchange_record_id}:${row.wallet_id}:${row.chain_id}:${row.tx_hash}`;
 const pairVerdictKey = (row) => `pr:${row.exchange_record_id}:${row.counter_record_id}`;
 
+// An on-chain candidate is considered before an exchange-to-exchange one. This
+// is a KEY, not a side effect of the other keys: without it a pair of equal
+// rank (or a merely closer one) takes the record away from the real on-chain
+// leg, which is the one thing the shape rule exists to prevent.
+const shapeRank = (row) => (row.counter_record_id ? 1 : 0);
+const isManual = (row) => row.match_method === 'manual';
+
 // Total order, so two runs over the same data produce byte-identical matches.
 // Every key is either an id or an integer count of seconds -- nothing here can
 // depend on row order out of Postgres, which has none.
+//
+// Precedence, strongest first:
+//   1. manual -- the user overruling us, whatever shape their answer took.
+//   2. shape  -- an on-chain leg ALWAYS beats an exchange-pair claim on the
+//      same record: "no tracked wallet in between" is exactly what makes a pair
+//      a pair, so a record with a demonstrated on-chain leg is not one half of
+//      a venue-to-venue transfer. This costs the hash rule nothing, because the
+//      two can never collide: a pair only reaches match_method 'tx_hash' when
+//      BOTH its records carry a hash, and a record carrying a hash produces no
+//      on-chain candidate below tx_hash rank at all (the fallback arm requires
+//      tx_hash IS NULL). So the only pair a fallback on-chain candidate can
+//      outrank is itself a fallback.
+//   3. method rank -- evidence strength, tx_hash before the guesses.
+//   4. time delta, then ids, purely to make the order total.
 function compareCandidates(a, b) {
+  const manual = (isManual(a) ? 0 : 1) - (isManual(b) ? 0 : 1);
+  if (manual !== 0) return manual;
+  const shape = shapeRank(a) - shapeRank(b);
+  if (shape !== 0) return shape;
   const rank = (METHOD_RANK[a.match_method] ?? 9) - (METHOD_RANK[b.match_method] ?? 9);
   if (rank !== 0) return rank;
   const delta = Number(a.time_delta ?? 0) - Number(b.time_delta ?? 0);
@@ -47,11 +72,11 @@ function compareCandidates(a, b) {
  * unique indexes: an index would reject the second claim with an error, and the
  * correct answer is not "fail the rebuild", it is "the stronger evidence wins".
  *
- * On-chain candidates are considered before exchange-to-exchange ones of equal
- * rank purely as a consequence of the ordering (they carry the same ranks), and
- * that is the right precedence: "no tracked wallet in between" is exactly what
- * makes a pair a pair, so a record with a real on-chain leg must not be paired
- * off against another venue instead.
+ * On-chain candidates are considered before exchange-to-exchange ones because
+ * compareCandidates says so explicitly -- see the shape key there. Leaving it
+ * to the method ranks did not work: the two shapes carry the SAME ranks, so an
+ * equal-rank pair won on time delta, or on ids, and took the record away from
+ * the on-chain leg that proved a tracked wallet was in between.
  */
 function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
   const rejected = new Set();
@@ -136,7 +161,14 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
     // and everywhere. A user's own confirmation is deliberately not enough
     // either: they answered "these two rows are the same money", not "label
     // this address for every future transfer".
-    if (candidate.match_method === 'tx_hash') {
+    //
+    // Restricted further to a transaction with exactly ONE net leg. The hash
+    // arm deliberately matches whatever the legs look like -- a hash is
+    // identity -- but counterparty_address on a multi-leg row is the gas leg's
+    // to_address, which for a swap or a batched withdrawal is a ROUTER
+    // CONTRACT. Labelling that 'exchange' would delete every future
+    // interaction with that router from cash flow, globally and permanently.
+    if (candidate.match_method === 'tx_hash' && candidate.single_net_leg) {
       const address = String(candidate.counterparty_address || '').toLowerCase();
       if (HEX_ADDRESS.test(address) && address !== ZERO_ADDRESS && !learn.has(address)) {
         learn.set(address, candidate.exchange_account_name || 'Exchange');
