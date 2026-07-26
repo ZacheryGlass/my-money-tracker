@@ -575,6 +575,22 @@ const Settings = ({ user }) => {
   const [deletingExchangeId, setDeletingExchangeId] = useState(null);
   const [renamingExchangeId, setRenamingExchangeId] = useState(null);
   const [exchangeRenameValue, setExchangeRenameValue] = useState('');
+  // What each venue's credential form should ask for, and which read-only
+  // permissions to grant. Served by the API rather than hardcoded here so the
+  // guidance cannot drift from the connector that depends on it.
+  const [credentialFields, setCredentialFields] = useState({});
+  const [exchangeEncryptionConfigured, setExchangeEncryptionConfigured] = useState(true);
+  // Which account's connect form is open, plus its two (never pre-filled)
+  // inputs. A stored key never comes back from the server, so there is nothing
+  // to pre-fill with and an empty form is the honest one.
+  const [connectingExchangeId, setConnectingExchangeId] = useState(null);
+  const [credentialInputs, setCredentialInputs] = useState({ apiKey: '', apiSecret: '' });
+  const [savingCredentialsId, setSavingCredentialsId] = useState(null);
+  const [disconnectingExchangeId, setDisconnectingExchangeId] = useState(null);
+  const [testingExchangeId, setTestingExchangeId] = useState(null);
+  const [syncingExchangeId, setSyncingExchangeId] = useState(null);
+  // Per account, so one account's failure does not blank another's receipt.
+  const [exchangeSyncResults, setExchangeSyncResults] = useState({});
   const [keyStatuses, setKeyStatuses] = useState(null);
   const [keyInputs, setKeyInputs] = useState({});
   const [savingKeyService, setSavingKeyService] = useState(null);
@@ -661,6 +677,10 @@ const Settings = ({ user }) => {
       setEthWallets(ethResult?.wallets || []);
       setExchangeAccounts(exchangeResult?.accounts || []);
       setExchangeLoadFailed(!exchangeResult);
+      setCredentialFields(exchangeResult?.credential_fields || {});
+      // Only treated as unavailable on a response that actually said so: a
+      // failed request must not read as "the server cannot store keys".
+      setExchangeEncryptionConfigured(exchangeResult ? exchangeResult.encryption_configured !== false : true);
       setIgnoredTokens(ignoredResult?.tokens || []);
       setAddressLabels(labelsResult?.labels || []);
       setCounterpartyData(counterpartyResult || null);
@@ -902,6 +922,92 @@ const Settings = ({ user }) => {
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to rename exchange account');
+    }
+  };
+
+  const openConnectForm = (account) => {
+    setConnectingExchangeId(account.id);
+    // Always empty. The server never returns a stored key, so a pre-filled
+    // field could only ever be a lie about what is saved.
+    setCredentialInputs({ apiKey: '', apiSecret: '' });
+    setExchangeSyncResults((prev) => ({ ...prev, [account.id]: null }));
+  };
+
+  const handleSaveCredentials = async (account, event) => {
+    event.preventDefault();
+    if (savingCredentialsId) return;
+    const apiKey = credentialInputs.apiKey.trim();
+    const apiSecret = credentialInputs.apiSecret.trim();
+    const fields = credentialFields[account.exchange] || {};
+    if (!apiKey || !apiSecret) {
+      setExchangeSyncResults((prev) => ({
+        ...prev,
+        [account.id]: { error: `Enter both the ${fields.keyLabel || 'API key'} and the ${fields.secretLabel || 'secret'}.` },
+      }));
+      return;
+    }
+    setSavingCredentialsId(account.id);
+    try {
+      await exchangesAPI.setCredentials(account.id, apiKey, apiSecret);
+      // Cleared immediately: the plaintext key has no reason to stay in
+      // component state once the server has it.
+      setCredentialInputs({ apiKey: '', apiSecret: '' });
+      setConnectingExchangeId(null);
+      showSuccess('API key saved');
+      await fetchItems();
+    } catch (err) {
+      setExchangeSyncResults((prev) => ({
+        ...prev,
+        [account.id]: { error: err.response?.data?.error || 'Failed to save the API key' },
+      }));
+    } finally {
+      setSavingCredentialsId(null);
+    }
+  };
+
+  const handleDisconnectExchange = async (account) => {
+    setDisconnectingExchangeId(null);
+    try {
+      await exchangesAPI.clearCredentials(account.id);
+      showSuccess('API key removed; imported records were kept');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to remove the API key');
+    }
+  };
+
+  const handleTestExchangeConnection = async (account) => {
+    setTestingExchangeId(account.id);
+    setExchangeSyncResults((prev) => ({ ...prev, [account.id]: null }));
+    try {
+      const result = await exchangesAPI.testConnection(account.id);
+      setExchangeSyncResults((prev) => ({ ...prev, [account.id]: { tested: result.detail } }));
+    } catch (err) {
+      // The provider's own refusal names the permission that was forgotten, so
+      // it reaches the screen verbatim rather than as "connection failed".
+      setExchangeSyncResults((prev) => ({
+        ...prev,
+        [account.id]: { error: err.response?.data?.error || 'Could not reach the exchange' },
+      }));
+    } finally {
+      setTestingExchangeId(null);
+    }
+  };
+
+  const handleSyncExchange = async (account) => {
+    setSyncingExchangeId(account.id);
+    setExchangeSyncResults((prev) => ({ ...prev, [account.id]: null }));
+    try {
+      const result = await exchangesAPI.sync(account.id);
+      setExchangeSyncResults((prev) => ({ ...prev, [account.id]: { sync: result } }));
+      await fetchItems();
+    } catch (err) {
+      setExchangeSyncResults((prev) => ({
+        ...prev,
+        [account.id]: { error: err.response?.data?.error || 'Failed to sync from the exchange' },
+      }));
+    } finally {
+      setSyncingExchangeId(null);
     }
   };
 
@@ -2108,10 +2214,12 @@ const Settings = ({ user }) => {
           <h2 id="exchange-accounts-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Exchange Accounts</h2>
           <p className="mt-1 text-xs text-secondary">
             Trades, moves between exchanges and fiat on and off ramps never touch a tracked wallet, so no
-            on-chain source can show them. Upload an exchange&apos;s CSV export to fill that history in.
-            Coinbase, Coinbase Pro and Kraken exports are read directly; other files are matched by column
-            name, and a timestamp with no time zone in it is read as UTC. Re-uploading a fuller export is
-            safe — records are keyed by the event the exchange recorded, so nothing lands twice, and a
+            on-chain source can show them. Connect a <span className="font-semibold text-primary">read-only
+            API key</span> to a live Kraken or Coinbase account and it stays current on its own; upload a
+            CSV export for anything else — a closed account, an unsupported exchange, or history that
+            predates the key. Coinbase, Coinbase Pro and Kraken exports are read directly; other files are
+            matched by column name, and a timestamp with no time zone in it is read as UTC. The two sources
+            mix freely: records are keyed by the event the exchange recorded, so nothing lands twice, and a
             trade an earlier date-limited export could only half describe is completed rather than
             duplicated.
           </p>
@@ -2188,6 +2296,14 @@ const Settings = ({ user }) => {
               const result = exchangeImportResults[account.id];
               const importing = importingExchangeId === account.id;
               const reviewQueue = reviewQueues[account.id];
+              const fields = credentialFields[account.exchange];
+              // No connector for this venue means no endpoint to call, so the
+              // account is CSV-only and is not offered a form it cannot use.
+              const canConnect = Boolean(fields);
+              const connected = Boolean(account.credentials?.configured);
+              const syncResult = exchangeSyncResults[account.id];
+              const syncing = syncingExchangeId === account.id;
+              const testing = testingExchangeId === account.id;
               return (
                 <Motion.div layout key={account.id} className="card overflow-hidden border-border">
                   <div className="p-5 md:p-6">
@@ -2214,11 +2330,61 @@ const Settings = ({ user }) => {
                               <Clock size={12} />
                               {account.last_import_at ? formatRelativeTime(account.last_import_at) : 'Never imported'}
                             </span>
+                            {connected && (
+                              // Masked, always. The stored key never leaves the
+                              // server, so the last four characters are the
+                              // most the browser can ever be told.
+                              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-gain">
+                                <ShieldCheck size={12} />
+                                Key {account.credentials.key_masked}
+                              </span>
+                            )}
+                            {connected && account.last_sync_at && (
+                              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                                <RefreshCw size={12} />
+                                Synced {formatRelativeTime(account.last_sync_at)}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {connected && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleSyncExchange(account)}
+                              disabled={syncing}
+                              aria-label={`Sync ${account.name} now`}
+                              className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+                            >
+                              <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+                              {syncing ? 'Syncing…' : 'Sync Now'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleTestExchangeConnection(account)}
+                              disabled={testing}
+                              aria-label={`Test connection for ${account.name}`}
+                              className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+                            >
+                              <ShieldCheck size={14} />
+                              {testing ? 'Testing…' : 'Test'}
+                            </button>
+                          </>
+                        )}
+                        {canConnect && !connected && (
+                          <button
+                            type="button"
+                            onClick={() => openConnectForm(account)}
+                            aria-label={`Connect ${account.name} with an API key`}
+                            className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent"
+                          >
+                            <Link2 size={14} />
+                            Connect API Key
+                          </button>
+                        )}
                         <label className={`flex cursor-pointer items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent ${importing ? 'pointer-events-none opacity-50' : ''}`}>
                           <Upload size={14} className={importing ? 'animate-pulse' : ''} />
                           {importing ? 'Importing…' : 'Import CSV'}
@@ -2269,6 +2435,33 @@ const Settings = ({ user }) => {
                             <Pencil size={18} />
                           </button>
                         )}
+                        {connected && (disconnectingExchangeId === account.id ? (
+                          <>
+                            <button
+                              onClick={() => handleDisconnectExchange(account)}
+                              className="rounded border border-loss/30 bg-loss/10 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-loss transition-all"
+                            >
+                              {/* Naming what survives is the point: the records
+                                  are exactly the part no live connection can
+                                  ever recover once the key is gone. */}
+                              Remove key, keep records
+                            </button>
+                            <button
+                              onClick={() => setDisconnectingExchangeId(null)}
+                              className="rounded border border-border bg-surface-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => setDisconnectingExchangeId(account.id)}
+                            className="rounded border border-transparent p-2.5 text-tertiary transition-all hover:bg-surface-3 hover:text-primary"
+                            title="Disconnect API key"
+                          >
+                            <Unlink size={18} />
+                          </button>
+                        ))}
                         {deletingExchangeId === account.id ? (
                           <>
                             <button
@@ -2295,6 +2488,150 @@ const Settings = ({ user }) => {
                         )}
                       </div>
                     </div>
+
+                    {connectingExchangeId === account.id && fields && (
+                      <form
+                        onSubmit={(event) => handleSaveCredentials(account, event)}
+                        className="mt-5 rounded border border-border bg-surface-2 p-4"
+                      >
+                        {/* The permissions come from the server, alongside the
+                            connector that depends on them, so this can never
+                            tell the user to grant a set the code does not use. */}
+                        <p className="mb-3 text-xs leading-relaxed text-secondary">
+                          <span className="font-semibold text-primary">Create a read-only key.</span>{' '}
+                          {fields.help} This app only ever calls read endpoints — it cannot place an order
+                          or move funds, whatever the key allows.
+                        </p>
+                        <p className="mb-3 text-caption text-tertiary">
+                          Permissions needed: {fields.permissions.join(', ')}.
+                        </p>
+                        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+                          <label className="min-w-0 flex-1 text-caption text-tertiary">
+                            {fields.keyLabel}
+                            <input
+                              type="text"
+                              autoComplete="off"
+                              spellCheck={false}
+                              value={credentialInputs.apiKey}
+                              onChange={(event) => setCredentialInputs((prev) => ({ ...prev, apiKey: event.target.value }))}
+                              aria-label={`${fields.keyLabel} for ${account.name}`}
+                              className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-3 px-2 font-mono text-body-sm text-primary"
+                            />
+                          </label>
+                          <label className="min-w-0 flex-1 text-caption text-tertiary">
+                            {fields.secretLabel}
+                            <textarea
+                              rows={2}
+                              autoComplete="off"
+                              spellCheck={false}
+                              value={credentialInputs.apiSecret}
+                              onChange={(event) => setCredentialInputs((prev) => ({ ...prev, apiSecret: event.target.value }))}
+                              aria-label={`${fields.secretLabel} for ${account.name}`}
+                              className="mt-1 block w-full min-w-0 border border-input-border bg-surface-3 px-2 py-1.5 font-mono text-body-sm text-primary"
+                            />
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="submit"
+                              disabled={savingCredentialsId === account.id || !exchangeEncryptionConfigured}
+                              className="inline-flex h-10 items-center justify-center gap-2 border border-border bg-surface-3 px-4 text-button font-semibold text-secondary transition-colors hover:border-accent hover:text-accent disabled:opacity-40"
+                            >
+                              <Save size={14} />
+                              Save Key
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConnectingExchangeId(null)}
+                              className="rounded border border-transparent p-2.5 text-tertiary transition-all hover:text-primary"
+                              title="Cancel"
+                            >
+                              <X size={18} />
+                            </button>
+                          </div>
+                        </div>
+                        {!exchangeEncryptionConfigured && (
+                          // Said before the paste, not after: without the
+                          // encryption key the save can only ever be a 503, and
+                          // learning that from a failed request is worse.
+                          <p className="mt-3 flex items-start gap-2 text-body-sm text-loss">
+                            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                            The server is missing SECRETS_ENCRYPTION_KEY, so API keys cannot be stored yet.
+                            CSV import still works.
+                          </p>
+                        )}
+                      </form>
+                    )}
+
+                    {syncResult?.error && (
+                      <div className="mt-5 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
+                        <div className="flex items-start gap-3">
+                          <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                          <p>{syncResult.error}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {syncResult?.tested && (
+                      <div className="mt-5 rounded border border-gain/20 bg-gain/5 p-4 text-xs leading-relaxed text-gain">
+                        <div className="flex items-start gap-3">
+                          <ShieldCheck size={14} className="mt-0.5 flex-shrink-0" />
+                          <p>{syncResult.tested}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {syncResult?.sync && (
+                      <div className="mt-5 rounded border border-border bg-surface-2 p-4 text-xs leading-relaxed text-secondary">
+                        <p>
+                          Read {syncResult.sync.fetched.toLocaleString()} ledger rows:{' '}
+                          <span className="font-semibold text-primary">{syncResult.sync.imported.toLocaleString()} new</span>
+                          {syncResult.sync.upgraded > 0 && `, ${syncResult.sync.upgraded.toLocaleString()} completed from an earlier partial import`}
+                          {syncResult.sync.duplicates > 0 && `, ${syncResult.sync.duplicates.toLocaleString()} already held`}
+                          {syncResult.sync.chain_details_filled > 0 && `, ${syncResult.sync.chain_details_filled.toLocaleString()} gained an on-chain address`}
+                          {syncResult.sync.needs_review > 0 && (
+                            <span className="text-loss">, {syncResult.sync.needs_review.toLocaleString()} flagged for review</span>
+                          )}
+                          .
+                        </p>
+                        {/* A truncated walk looks exactly like a complete one
+                            from the outside. Saying so is what stops the user
+                            reading a partial history as the whole of it. */}
+                        {syncResult.sync.backfill_pending && (
+                          <p className="mt-1 text-tertiary">
+                            More history is still to come — the nightly sync will keep working backwards, or
+                            press Sync Now again.
+                          </p>
+                        )}
+                        {syncResult.sync.status === 'balance_mismatch' && (
+                          <p className="mt-1 flex items-start gap-2 text-loss">
+                            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                            {syncResult.sync.balance_report.mismatch_count} asset(s) do not match the balance the
+                            exchange reports, so some activity is missing or misread:{' '}
+                            {syncResult.sync.balance_report.mismatches.map((m) => m.asset).join(', ')}.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Persisted from the last run, so a mismatch found by the
+                        nightly job is visible without pressing anything. */}
+                    {!syncResult && account.last_sync_status === 'balance_mismatch' && (
+                      <div className="mt-5 flex items-start gap-3 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
+                        <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                        <p>
+                          The last sync&apos;s derived balances disagree with the exchange for{' '}
+                          {(account.balance_report?.mismatches || []).map((m) => m.asset).join(', ') || 'some assets'}.
+                          Some activity is missing or was misread.
+                        </p>
+                      </div>
+                    )}
+
+                    {!syncResult && account.last_sync_status === 'error' && account.last_sync_error && (
+                      <div className="mt-5 flex items-start gap-3 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
+                        <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                        <p>Last sync failed: {account.last_sync_error}</p>
+                      </div>
+                    )}
 
                     {result?.error && (
                       <div className="mt-5 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">

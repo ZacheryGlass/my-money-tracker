@@ -1,0 +1,74 @@
+{
+  "_comment": [
+    "Synthetic by rule. Shapes follow",
+    "https://docs.kraken.com/api/docs/rest-api/get-status-recent-withdrawals and",
+    "https://docs.kraken.com/api/docs/rest-api/get-status-recent-deposits .",
+    "",
+    "These endpoints are the ONLY place the destination address and the network txid appear -- the",
+    "Ledgers feed carries neither. `refid` is the join key back to the ledger row, `info` is the",
+    "destination address and `txid` is the on-chain id. The withdrawal refid below is the same one",
+    "kraken-ledgers-api.json's withdrawal row carries.",
+    "",
+    "The deposit block is deliberately the WRAPPED shape ({deposit: [...], next_cursor}) while the",
+    "withdrawal block is a bare array: Kraken documents a cursor parameter but does not publish",
+    "which shape it returns for withdrawals, so the reader accepts both and this fixture exercises",
+    "both in one test.",
+    "",
+    "The ETH address is checksummed here on purpose. exchange_records stores addresses lowercased",
+    "so an exchange withdrawal can join to the on-chain deposit it produced."
+  ],
+  "WithdrawStatus": {
+    "error": [],
+    "result": [
+      {
+        "method": "Bitcoin",
+        "network": "Bitcoin",
+        "aclass": "currency",
+        "asset": "XXBT",
+        "refid": "FTWDR0-000000000000000000000003",
+        "txid": "b7a1c3d5e7f90123456789abcdef0123456789abcdef0123456789abcdef0123",
+        "info": "bc1qsynthetic0000000000000000000000000test",
+        "amount": "0.00500000",
+        "fee": "0.00010000",
+        "time": 1709913600,
+        "status": "Success",
+        "key": "cold-wallet-1"
+      },
+      {
+        "method": "Ethereum (ERC20)",
+        "network": "Ethereum",
+        "aclass": "currency",
+        "asset": "XETH",
+        "refid": "FTWDR0-000000000000000000000004",
+        "txid": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "info": "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "amount": "0.10000000",
+        "fee": "0.00200000",
+        "time": 1710093600,
+        "status": "Success",
+        "key": "eth-wallet-1"
+      }
+    ]
+  },
+  "DepositStatus": {
+    "error": [],
+    "result": {
+      "deposit": [
+        {
+          "method": "Ethereum (ERC20)",
+          "network": "Ethereum",
+          "aclass": "currency",
+          "asset": "XETH",
+          "refid": "FTDEP0-000000000000000000000001",
+          "txid": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "info": "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "amount": "1000.0000",
+          "fee": "0.0000",
+          "time": 1709283600,
+          "status": "Success"
+        }
+      ],
+      "next_cursor": null
+    }
+  }
+}

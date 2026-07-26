@@ -21,7 +21,12 @@ class ExchangeImportService {
       throw error;
     }
     const parsed = parseExchangeCsv(csvText, { format, mapping });
-    const result = await ExchangeRecord.bulkInsert(exchangeAccountId, parsed.records);
+    // Provenance only. It does not participate in the conflict key or the
+    // upgrade guard, so an API-synced record and a CSV row describing the same
+    // event still collapse onto one record -- which is the whole point of the
+    // two sources sharing an external_id scheme.
+    const records = parsed.records.map((record) => ({ ...record, source: 'csv' }));
+    const result = await ExchangeRecord.bulkInsert(exchangeAccountId, records);
 
     // Stamped even when nothing new landed: the user asked for an import and
     // wants to see that it ran. "Last import" answers a question about their

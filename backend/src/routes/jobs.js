@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const requireUser = require('../middleware/auth');
-const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, PlaidSyncJob, EthSyncJob, ExpenseSyncJob } = require('../jobs');
+const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, PlaidSyncJob, EthSyncJob, ExchangeSyncJob, ExpenseSyncJob } = require('../jobs');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
@@ -148,6 +148,18 @@ router.post('/trigger/plaid-sync', requireAdmin, async (req, res, next) => {
 router.post('/trigger/eth-sync', requireAdmin, async (req, res, next) => {
   try {
     await runTrigger(res, { job: EthSyncJob, label: 'ETH wallet sync job' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/jobs/trigger/exchange-sync - Manually trigger the API sync for
+// every connected exchange account. Admin-only for the same reason the Plaid
+// and ETH triggers are: it runs against every user's accounts using each
+// account OWNER's credentials.
+router.post('/trigger/exchange-sync', requireAdmin, async (req, res, next) => {
+  try {
+    await runTrigger(res, { job: ExchangeSyncJob, label: 'Exchange API sync job' });
   } catch (error) {
     next(error);
   }

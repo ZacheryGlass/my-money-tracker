@@ -6,6 +6,10 @@ const logger = require('../config/logger');
 const COLUMNS = [
   'record_type', 'occurred_at', 'base_asset', 'base_amount', 'quote_asset', 'quote_amount',
   'fee_asset', 'fee_amount', 'tx_hash', 'address', 'external_id', 'needs_review', 'raw',
+  // 'csv' | 'api' | NULL for rows imported before migration 040. Provenance
+  // only: nothing keys, dedupes or votes on it, so an API row and a CSV row
+  // describing the same event still collapse onto one record.
+  'source',
 ];
 
 // Everything the upgrade rewrites: the whole record except its identity
@@ -204,6 +208,88 @@ class ExchangeRecord {
     );
 
     return { records: result.rows, total: countResult.rows[0]?.total ?? 0 };
+  }
+
+  // Fill in an on-chain hash or destination address the stored row is missing.
+  //
+  // This exists because the ON CONFLICT upgrade above is deliberately
+  // one-directional: it only fires on a review-flagged row, so a CSV import
+  // that landed FIRST (complete, unflagged, and with no address -- the Kraken
+  // ledgers export carries neither a txid nor a destination) can never be
+  // completed by the API sync that later learns both. Without this, connecting
+  // a key after a CSV upload would yield zero addresses for the entire back
+  // history, and forgotten-wallet discovery reads exactly that column.
+  //
+  // Strictly additive by construction: COALESCE can only replace a NULL, the
+  // WHERE only matches rows that have a hole, and needs_review is not in the
+  // statement at all -- so this cannot downgrade, re-flag, or contradict
+  // anything a previous import decided.
+  static async backfillChainDetails(exchangeAccountId, rows) {
+    if (!exchangeAccountId) throw new Error('ExchangeRecord.backfillChainDetails requires an exchangeAccountId');
+    const fillable = (rows || []).filter((row) => row.external_id && (row.tx_hash || row.address));
+    if (fillable.length === 0) return { filled: 0 };
+
+    let filled = 0;
+    for (let start = 0; start < fillable.length; start += CHUNK_SIZE) {
+      const chunk = fillable.slice(start, start + CHUNK_SIZE);
+      const values = [exchangeAccountId];
+      const tuples = chunk.map((row) => {
+        values.push(row.external_id, row.tx_hash ?? null, row.address ?? null);
+        return `($${values.length - 2}, $${values.length - 1}, $${values.length})`;
+      });
+      const result = await pool.query(
+        `UPDATE exchange_records er
+         SET tx_hash = COALESCE(er.tx_hash, incoming.tx_hash),
+             address = COALESCE(er.address, incoming.address)
+         FROM (VALUES ${tuples.join(', ')}) AS incoming(external_id, tx_hash, address)
+         WHERE er.exchange_account_id = $1
+           AND er.external_id = incoming.external_id
+           AND ((er.tx_hash IS NULL AND incoming.tx_hash IS NOT NULL)
+             OR (er.address IS NULL AND incoming.address IS NOT NULL))`,
+        values
+      );
+      filled += result.rowCount || 0;
+    }
+    return { filled };
+  }
+
+  // Per-asset position implied by everything stored for this account, for the
+  // post-sync reconciliation against the exchange's own balance endpoint.
+  //
+  // Summed in Postgres at NUMERIC(38,18) rather than in JS: these are
+  // wei/satoshi-scale quantities and a float sum would invent a mismatch out of
+  // rounding, flagging a healthy account for review every single night.
+  //
+  // The three legs mirror how a record is written: base and quote amounts are
+  // stored SIGNED as the exchange wrote them, and the fee is stored positive
+  // and was charged on top -- so it subtracts.
+  static async derivedBalances(exchangeAccountId, userId) {
+    if (!userId) throw new Error('ExchangeRecord.derivedBalances requires a userId');
+    const result = await pool.query(
+      `SELECT asset, SUM(delta)::text AS derived
+       FROM (
+         SELECT er.base_asset AS asset, er.base_amount AS delta
+         FROM exchange_records er
+         JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+         WHERE er.exchange_account_id = $1 AND ea.user_id = $2
+           AND er.base_asset IS NOT NULL AND er.base_amount IS NOT NULL
+         UNION ALL
+         SELECT er.quote_asset, er.quote_amount
+         FROM exchange_records er
+         JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+         WHERE er.exchange_account_id = $1 AND ea.user_id = $2
+           AND er.quote_asset IS NOT NULL AND er.quote_amount IS NOT NULL
+         UNION ALL
+         SELECT er.fee_asset, -er.fee_amount
+         FROM exchange_records er
+         JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+         WHERE er.exchange_account_id = $1 AND ea.user_id = $2
+           AND er.fee_asset IS NOT NULL AND er.fee_amount IS NOT NULL
+       ) legs
+       GROUP BY asset`,
+      [exchangeAccountId, userId]
+    );
+    return Object.fromEntries(result.rows.map((row) => [row.asset, row.derived]));
   }
 
   // Clearing the flag is what lets the review queue reach zero. Ownership is

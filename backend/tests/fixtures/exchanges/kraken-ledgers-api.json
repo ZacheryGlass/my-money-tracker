@@ -1,0 +1,163 @@
+{
+  "_comment": [
+    "Synthetic by rule -- a real Kraken ledger is personal history and this repo is public.",
+    "Shape follows https://docs.kraken.com/api/docs/rest-api/get-ledgers-info : result.ledger is a",
+    "MAP keyed by ledger id, and result.count is the total across all pages.",
+    "",
+    "The events are the SAME ones as kraken-ledgers.csv, with the same ledger ids and refids, so",
+    "the replay test can prove that a CSV upload after an API backfill produces zero duplicates.",
+    "Where the two vocabularies differ they differ here too, on purpose: the REST API has no 'earn'",
+    "type at all, so the earn/reward row is 'reward' and the two earn/allocation rows are",
+    "'transfer' with the documented spot<->staking subtypes. Both readers must still land on the",
+    "same record_type for the same event."
+  ],
+  "error": [],
+  "result": {
+    "ledger": {
+      "LAAAAA-11111-AAAAAA": {
+        "refid": "FTDEP0-000000000000000000000001",
+        "time": 1709283600.0,
+        "type": "deposit",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "ZUSD",
+        "amount": "1000.0000",
+        "fee": "0.0000",
+        "balance": "1000.0000"
+      },
+      "LBBBBB-22222-BBBBBB": {
+        "refid": "TTRD00-11111-TTTTTT",
+        "time": 1709373600.0,
+        "type": "trade",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "ZUSD",
+        "amount": "-500.0000",
+        "fee": "1.2500",
+        "balance": "498.7500"
+      },
+      "LCCCCC-33333-CCCCCC": {
+        "refid": "TTRD00-11111-TTTTTT",
+        "time": 1709373600.0,
+        "type": "trade",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "XETH",
+        "amount": "0.2000000000",
+        "fee": "0.0000000001",
+        "balance": "0.2000000000"
+      },
+      "LDDDDD-44444-DDDDDD": {
+        "refid": "STRW00-22222-SSSSSS",
+        "time": 1709463600.0,
+        "type": "staking",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "ETH2",
+        "amount": "0.0100000000",
+        "fee": "0.0000000000",
+        "balance": "0.0100000000"
+      },
+      "LEEEEE-55555-EEEEEE": {
+        "refid": "ELRW00-33333-EEEEEE",
+        "time": 1709553600.0,
+        "type": "reward",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "ADA.S",
+        "amount": "1.5000000000",
+        "fee": "0.0000000000",
+        "balance": "1.5000000000"
+      },
+      "LFFFFF-66666-FFFFFF": {
+        "refid": "ELALC0-44444-FFFFFF",
+        "time": 1709643600.0,
+        "type": "transfer",
+        "subtype": "spottostaking",
+        "aclass": "currency",
+        "asset": "SOL",
+        "amount": "-10.0000000000",
+        "fee": "0.0000000000",
+        "balance": "0.0000000000"
+      },
+      "LGGGGG-77777-GGGGGG": {
+        "refid": "ELALC0-44444-FFFFFF",
+        "time": 1709643600.0,
+        "type": "transfer",
+        "subtype": "stakingfromspot",
+        "aclass": "currency",
+        "asset": "SOL",
+        "amount": "10.0000000000",
+        "fee": "0.0000000000",
+        "balance": "10.0000000000"
+      },
+      "LHHHHH-88888-HHHHHH": {
+        "refid": "FTTRF0-000000000000000000000002",
+        "time": 1709733600.0,
+        "type": "transfer",
+        "subtype": "spottostaking",
+        "aclass": "currency",
+        "asset": "XXBT",
+        "amount": "-0.0100000000",
+        "fee": "0.0000000000",
+        "balance": "0.0400000000"
+      },
+      "LIIIII-99999-IIIIII": {
+        "refid": "TCNV00-55555-CCCCCC",
+        "time": 1709823600.0,
+        "type": "spend",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "SOL",
+        "amount": "-5.0000000000",
+        "fee": "0.0000000000",
+        "balance": "5.0000000000"
+      },
+      "LJJJJJ-00000-JJJJJJ": {
+        "refid": "TCNV00-55555-CCCCCC",
+        "time": 1709823600.0,
+        "type": "receive",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "ZUSD",
+        "amount": "500.0000",
+        "fee": "1.5000",
+        "balance": "997.2500"
+      },
+      "LKKKKK-11111-KKKKKK": {
+        "refid": "FTWDR0-000000000000000000000003",
+        "time": 1709913600.0,
+        "type": "withdrawal",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "XXBT",
+        "amount": "-0.0050000000",
+        "fee": "0.0001000000",
+        "balance": "0.0349000000"
+      },
+      "LLLLLL-22222-LLLLLL": {
+        "refid": "QREF00-66666-QQQQQQ",
+        "time": 1710003600.0,
+        "type": "quantumsettlement",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "XDG",
+        "amount": "25.0000000000",
+        "fee": "0.0000000000",
+        "balance": "25.0000000000"
+      },
+      "LMMMMM-33333-MMMMMM": {
+        "refid": "TTRD99-99999-WWWWWW",
+        "time": 1710093600.0,
+        "type": "trade",
+        "subtype": "",
+        "aclass": "currency",
+        "asset": "SOL",
+        "amount": "-2.0000000000",
+        "fee": "0.5000000000",
+        "balance": "3.0000000000"
+      }
+    },
+    "count": 13
+  }
+}

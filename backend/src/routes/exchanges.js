@@ -5,12 +5,58 @@ const requireUser = require('../middleware/auth');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeImportService = require('../services/ExchangeImportService');
+const ExchangeSyncService = require('../services/ExchangeSyncService');
 const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
+const { CREDENTIAL_FIELDS, connectorFor } = require('../services/exchangeSync');
+const secretCrypto = require('../utils/secretCrypto');
 const logger = require('../config/logger');
 
 const router = express.Router();
 
 router.use(requireUser);
+
+// A stored API key must never round-trip to the browser, so responses carry
+// only {configured, masked} built from the last four characters -- exactly the
+// contract the API Keys tab has. The encrypted columns are not even selected
+// by the account reads these routes use (ExchangeAccount.PUBLIC_COLUMNS).
+function credentialStatus(account) {
+  return {
+    configured: Boolean(account.api_configured),
+    key_masked: secretCrypto.mask(account.api_key_last4),
+    secret_masked: secretCrypto.mask(account.api_secret_last4),
+  };
+}
+
+// Every failure mode of a credential write, mapped to the status that tells
+// the user what to do about it. A 500 here reads as "the server is broken" and
+// the user retries the same paste forever.
+function respondToSyncError(res, error, fallback) {
+  if (error.code === 'EXCHANGE_ACCOUNT_NOT_FOUND') {
+    return res.status(404).json({ error: 'Exchange account not found' });
+  }
+  if (error.code === 'SECRETS_NOT_CONFIGURED') {
+    return res.status(503).json({ error: 'SECRETS_ENCRYPTION_KEY is not configured on the server' });
+  }
+  if (error.code === 'EXCHANGE_NOT_SUPPORTED') {
+    return res.status(400).json({ error: error.message, code: error.code });
+  }
+  if (error.code === 'EXCHANGE_NOT_CONFIGURED' || error.code === 'EXCHANGE_CREDENTIAL_UNREADABLE') {
+    return res.status(409).json({ error: error.message, code: error.code });
+  }
+  // The provider's own refusal is the only thing that tells the user which
+  // permission they forgot to tick, so it survives to the client verbatim.
+  if (['KRAKEN_AUTH_FAILED', 'COINBASE_AUTH_FAILED', 'COINBASE_KEY_FORMAT'].includes(error.code)) {
+    return res.status(400).json({ error: error.message, code: error.code });
+  }
+  if (['KRAKEN_RATE_LIMITED', 'COINBASE_RATE_LIMITED'].includes(error.code)) {
+    return res.status(429).json({ error: error.message, code: error.code });
+  }
+  if (['KRAKEN_API_ERROR', 'COINBASE_API_ERROR'].includes(error.code)) {
+    return res.status(502).json({ error: error.message, code: error.code });
+  }
+  logger.error({ err: error }, fallback);
+  return res.status(500).json({ error: fallback });
+}
 
 function parseId(raw) {
   const id = Number.parseInt(raw, 10);
@@ -50,7 +96,18 @@ router.get('/', async (req, res) => {
     // formats (and the import route's format/mapping overrides) are API-level
     // affordances: the Settings uploader auto-detects, but a direct API caller
     // gets to name a parser or map columns for an export no parser knows.
-    res.status(200).json({ accounts, formats: FORMATS });
+    res.status(200).json({
+      accounts: accounts.map((account) => ({ ...account, credentials: credentialStatus(account) })),
+      formats: FORMATS,
+      // What each venue's credential form should ask for and which read-only
+      // permissions to grant. Served rather than hardcoded in the UI so the
+      // guidance cannot drift from the connector that depends on it.
+      credential_fields: CREDENTIAL_FIELDS,
+      // Whether key storage is possible at all. The UI uses this to explain
+      // itself up front instead of letting the user paste a key and collect a
+      // 503.
+      encryption_configured: secretCrypto.isConfigured(),
+    });
   } catch (error) {
     logger.error({ err: error }, 'Get exchange accounts error');
     res.status(500).json({ error: 'Failed to retrieve exchange accounts' });
@@ -176,6 +233,90 @@ router.post('/:id/import', express.text({ type: 'text/csv', limit: '10mb' }), as
     }
     logger.error({ err: error, accountId: req.params.id }, 'Exchange CSV import error');
     return res.status(500).json({ error: 'Failed to import exchange records' });
+  }
+});
+
+// --- API sync -------------------------------------------------------------
+//
+// The app calls READ endpoints only. Neither connector has a code path that
+// can place an order or move funds -- the allowlists in krakenClient and
+// coinbaseClient enforce it -- and the UI tells the user to create a
+// read-only key regardless.
+
+router.put('/:id/credentials', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+
+    const { api_key: apiKey, api_secret: apiSecret } = req.body || {};
+    for (const [label, value] of [['api_key', apiKey], ['api_secret', apiSecret]]) {
+      if (typeof value !== 'string' || !value.trim()) {
+        return res.status(400).json({ error: `${label} is required` });
+      }
+      // Kraken private keys are ~88 chars; a Coinbase ECDSA PEM is ~240.
+      if (value.trim().length > 4096) {
+        return res.status(400).json({ error: `${label} is too long` });
+      }
+    }
+
+    const updated = await ExchangeSyncService.setCredentials(req.user.id, account.id, {
+      apiKey: apiKey.trim(),
+      apiSecret: apiSecret.trim(),
+    });
+    return res.status(200).json({ account: updated, credentials: credentialStatus(updated) });
+  } catch (error) {
+    return respondToSyncError(res, error, 'Failed to save exchange credentials');
+  }
+});
+
+// Disconnecting keeps every record already imported. The history is exactly
+// the part no live connection can recover once the key is gone.
+router.delete('/:id/credentials', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+
+    const updated = await ExchangeSyncService.clearCredentials(req.user.id, account.id);
+    return res.status(200).json({ account: updated, credentials: credentialStatus(updated) });
+  } catch (error) {
+    return respondToSyncError(res, error, 'Failed to remove exchange credentials');
+  }
+});
+
+// One authenticated read and nothing else -- Kraken's Balance, Coinbase's
+// accounts list. Separating "the key is stored" from "the key works" is the
+// whole point: otherwise the first evidence of a bad key is a failed sync
+// hours later, with no clue which permission was missing.
+router.post('/:id/test', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+
+    const result = await ExchangeSyncService.testConnection(req.user.id, account.id);
+    return res.status(200).json(result);
+  } catch (error) {
+    return respondToSyncError(res, error, 'Failed to test the exchange connection');
+  }
+});
+
+router.post('/:id/sync', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+    if (!connectorFor(account.exchange)) {
+      return res.status(400).json({
+        error: `There is no API sync for "${account.exchange}" accounts; use CSV import instead`,
+        code: 'EXCHANGE_NOT_SUPPORTED',
+      });
+    }
+
+    // interactive: a request is waiting, so the page budget is sized to finish
+    // inside a proxy timeout. A history longer than that budget comes back
+    // with backfill_pending set rather than being silently cut short.
+    const result = await ExchangeSyncService.syncAccount(req.user.id, account.id, { interactive: true });
+    return res.status(200).json({ ...result, account_id: account.id });
+  } catch (error) {
+    return respondToSyncError(res, error, 'Failed to sync the exchange account');
   }
 });
 

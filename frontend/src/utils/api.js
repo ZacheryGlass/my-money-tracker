@@ -414,6 +414,31 @@ export const exchanges = {
     const response = await api.patch(`/api/exchanges/${id}/records/${recordId}/resolve`);
     return response.data;
   },
+  // Read-only API credentials for one exchange account. The server stores them
+  // encrypted and answers with a masked status; a plaintext key never comes
+  // back out, so the form always starts empty rather than pre-filled.
+  setCredentials: async (id, apiKey, apiSecret) => {
+    const response = await api.put(`/api/exchanges/${id}/credentials`, {
+      api_key: apiKey,
+      api_secret: apiSecret,
+    });
+    return response.data;
+  },
+  // Disconnecting keeps every record already imported.
+  clearCredentials: async (id) => {
+    const response = await api.delete(`/api/exchanges/${id}/credentials`);
+    return response.data;
+  },
+  // One authenticated read and nothing else, so "the key is stored" and "the
+  // key works" are separable events.
+  testConnection: async (id) => {
+    const response = await api.post(`/api/exchanges/${id}/test`);
+    return response.data;
+  },
+  sync: async (id) => {
+    const response = await api.post(`/api/exchanges/${id}/sync`);
+    return response.data;
+  },
 };
 
 // API key management (Settings -> API Keys). Responses carry masked

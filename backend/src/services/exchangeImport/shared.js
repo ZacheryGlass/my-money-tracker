@@ -143,6 +143,45 @@ function addAmounts(a, b) {
   return fromScaled(toScaled(a) + toScaled(b));
 }
 
+// Exact subtraction, same precision as addAmounts.
+function subtractAmounts(a, b) {
+  return addAmounts(a ?? '0', negateAmount(b ?? '0'));
+}
+
+// -1 / 0 / 1, exact at NUMERIC(38,18). Comparing these as JS numbers is the
+// same mistake as adding them: a balance check that rounds is a balance check
+// that reports a mismatch on a healthy account, or misses a real one.
+function compareAmounts(a, b) {
+  const left = toScaled(a ?? '0');
+  const right = toScaled(b ?? '0');
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+// value * 10^places, exactly -- a decimal-point shift, not a multiplication,
+// so no precision is lost. Used to express a relative tolerance without
+// dividing.
+function scaleByPowerOfTen(value, places) {
+  if (value === null || value === undefined) return null;
+  const negative = isNegativeAmount(value);
+  const [whole = '0', fraction = ''] = absAmount(value).split('.');
+  const digits = `${whole}${fraction}`;
+  let point = whole.length + places;
+
+  let padded = digits;
+  if (point <= 0) {
+    padded = `${'0'.repeat(-point)}${digits}`;
+    point = 0;
+  } else if (point > padded.length) {
+    padded = `${padded}${'0'.repeat(point - padded.length)}`;
+  }
+  const integer = (point === 0 ? '0' : padded.slice(0, point)).replace(/^0+(?=\d)/, '');
+  const decimals = padded.slice(point).replace(/0+$/, '');
+  const text = decimals ? `${integer}.${decimals}` : integer;
+  return negative && !/^0(\.0*)?$/.test(text) ? `-${text}` : text;
+}
+
 // A string JS already anchors to UTC: an explicit Z, an explicit offset, or a
 // date-only ISO form (which the language spec defines as UTC).
 const ZONE_ANCHORED = /([zZ]|[+-]\d{2}:?\d{2})$/;
@@ -336,6 +375,14 @@ module.exports = {
   isNegativeAmount,
   negateAmount,
   absAmount,
+  // Exact at NUMERIC(38,18) precision. Exported for the API connectors, which
+  // fold several exchange-side asset codes (XETH, ETH2, ETH2.S) into one
+  // position before comparing balances -- a float sum there would manufacture
+  // a mismatch out of rounding and flag a healthy account for review.
+  addAmounts,
+  subtractAmounts,
+  compareAmounts,
+  scaleByPowerOfTen,
   parseTimestamp,
   contentId,
   makeDupCounter,
