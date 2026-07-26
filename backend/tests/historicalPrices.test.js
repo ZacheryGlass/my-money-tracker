@@ -927,32 +927,38 @@ test('the mirror and the activity row agree on what a leg was worth', () => {
   assert.equal(mirrored.amount, row.usd_value);
 });
 
-// --- the nightly job's post-loop passes (#76) --------------------------------
+// --- the nightly job's re-derive, through the pipeline -----------------------
 //
 // rebuildForWallet REPLACES the wallet's eth_activity rows, and that DELETE
 // cascades eth_activity_links away with them. So the 08:10 job must re-run the
-// two user-wide passes the sync job runs, or every bridge pair is destroyed for
-// the rest of the day and one $6,000 bridge renders as two rows summing $12,000.
+// user-wide tail the sync runs -- match, bridge AND the classification
+// backfill (the drift this job shipped with: a transactions row first created
+// by a backfilled price stayed unclassified until the next day's expense
+// sync). It must also run on the same per-user rebuild lane as everything
+// else, or its delete-then-insert rebuilds race a user-triggered sync.
 
 const historicalPriceJob = require('../src/jobs/historicalPriceJob');
 const JobLog = require('../src/models/JobLog');
 const EthWallet = require('../src/models/EthWallet');
+const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
 const EthTransactionMirrorService = require('../src/services/EthTransactionMirrorService');
 const EthActivityService = require('../src/services/EthActivityService');
 const ExchangeMatchService = require('../src/services/ExchangeMatchService');
+const TransactionClassificationService = require('../src/services/TransactionClassificationService');
 
-async function runJobWithStubs(wallets, { failMatchesFor = null } = {}) {
+async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = null } = {}) {
   const calls = [];
   const saved = {
     isRunning: JobLog.isRunning, create: JobLog.create, complete: JobLog.complete,
     fail: JobLog.fail,
     findAllForJobs: EthWallet.findAllForJobs,
     applyToWallet: AssetPriceHistory.applyToWallet,
-    backfill: HistoricalPriceService.backfillLedgerAssets,
+    ledgerAssets: HistoricalPriceService.backfillLedgerAssets,
     mirror: EthTransactionMirrorService.rebuildForWallet,
     activity: EthActivityService.rebuildForWallet,
     bridge: EthActivityService.matchBridgeTransfersForUser,
     matches: ExchangeMatchService.rebuildForUserSafely,
+    backfill: TransactionClassificationService.backfill,
   };
   JobLog.isRunning = async () => false;
   JobLog.create = async () => ({ id: 1 });
@@ -975,7 +981,23 @@ async function runJobWithStubs(wallets, { failMatchesFor = null } = {}) {
     if (userId === failMatchesFor) throw new Error('match rebuild blew up');
     return {};
   };
+  TransactionClassificationService.backfill = async () => { calls.push(['backfill']); };
   try {
+    if (holdLaneFor != null) {
+      // Occupy the user's rebuild lane the way an in-flight sync would, start
+      // the job, and prove it waits instead of racing.
+      let release;
+      const gatePromise = new Promise((resolve) => { release = resolve; });
+      const held = EthDerivedPipeline.serializedForUser(holdLaneFor, () => gatePromise);
+      const running = historicalPriceJob.run();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      const callsWhileHeld = calls.slice();
+      release();
+      await held;
+      const result = await running;
+      return { calls, callsWhileHeld, result };
+    }
     const result = await historicalPriceJob.run();
     return { calls, result };
   } finally {
@@ -985,51 +1007,74 @@ async function runJobWithStubs(wallets, { failMatchesFor = null } = {}) {
     JobLog.fail = saved.fail;
     EthWallet.findAllForJobs = saved.findAllForJobs;
     AssetPriceHistory.applyToWallet = saved.applyToWallet;
-    HistoricalPriceService.backfillLedgerAssets = saved.backfill;
+    HistoricalPriceService.backfillLedgerAssets = saved.ledgerAssets;
     EthTransactionMirrorService.rebuildForWallet = saved.mirror;
     EthActivityService.rebuildForWallet = saved.activity;
     EthActivityService.matchBridgeTransfersForUser = saved.bridge;
     ExchangeMatchService.rebuildForUserSafely = saved.matches;
+    TransactionClassificationService.backfill = saved.backfill;
   }
 }
 
-test('the nightly job re-runs the match and bridge passes once per user', async () => {
+test('the nightly job runs each user as one block: wallets, then the full tail', async () => {
   const { calls } = await runJobWithStubs([
     { id: 1, user_id: OWNER_ID },
     { id: 2, user_id: OWNER_ID },
     { id: 3, user_id: 2 },
   ]);
 
-  // Per wallet: the match rebuild is suppressed, so it does not re-derive the
-  // owner's whole match set once per wallet against a half-rebuilt feed.
-  const activity = calls.filter((c) => c[0] === 'activity');
-  assert.equal(activity.length, 3);
-  for (const call of activity) assert.equal(call[2].rebuildMatches, false);
-
-  // Per USER, after the loop: both passes, exactly once each.
-  assert.deepEqual(
-    calls.filter((c) => c[0] === 'matches').map((c) => c[1]),
-    [OWNER_ID, 2]
-  );
-  assert.deepEqual(
-    calls.filter((c) => c[0] === 'bridge').map((c) => c[1]),
-    [OWNER_ID, 2]
-  );
-  // And after every wallet has landed -- a bridge_out on one wallet pairs with
-  // a bridge_in on another, so pairing cannot be decided mid-loop.
-  const lastActivity = calls.map((c) => c[0]).lastIndexOf('activity');
-  const firstBridge = calls.map((c) => c[0]).indexOf('bridge');
-  assert.ok(firstBridge > lastActivity);
+  // The exact sequence pins everything at once: the match rebuild suppressed
+  // per wallet (never re-derived against a half-rebuilt feed), the tail once
+  // per USER after that user's last wallet (a bridge_out on one wallet pairs
+  // with a bridge_in on another, so pairing cannot be decided mid-loop), and
+  // the classification backfill present and last -- the step this job used to
+  // forget. User 2's block starts only after user 1's tail completes.
+  assert.deepEqual(calls, [
+    ['mirror', 1], ['activity', 1, { rebuildMatches: false }],
+    ['mirror', 2], ['activity', 2, { rebuildMatches: false }],
+    ['matches', OWNER_ID, { reason: 'historical-prices' }],
+    ['bridge', OWNER_ID],
+    ['backfill'],
+    ['mirror', 3], ['activity', 3, { rebuildMatches: false }],
+    ['matches', 2, { reason: 'historical-prices' }],
+    ['bridge', 2],
+    ['backfill'],
+  ]);
 });
 
-test('one user\'s failed post-loop pass does not skip the next user\'s', async () => {
+test('one user\'s failed tail does not skip the next user\'s', async () => {
   const { calls } = await runJobWithStubs(
     [{ id: 1, user_id: OWNER_ID }, { id: 2, user_id: 2 }],
     { failMatchesFor: OWNER_ID }
   );
 
-  // User 1's match pass throws, so its bridge pass is skipped -- but user 2's
-  // pair still runs. Per-user isolation, the same shape the wallet loop uses.
-  assert.deepEqual(calls.filter((c) => c[0] === 'bridge').map((c) => c[1]), [2]);
-  assert.deepEqual(calls.filter((c) => c[0] === 'matches').map((c) => c[1]), [OWNER_ID, 2]);
+  // User 1's match pass throws, so its bridge pass AND its backfill are
+  // skipped -- but user 2's full tail still runs. Per-user isolation, the same
+  // shape the wallet loop uses.
+  assert.deepEqual(calls, [
+    ['mirror', 1], ['activity', 1, { rebuildMatches: false }],
+    ['matches', OWNER_ID, { reason: 'historical-prices' }],
+    ['mirror', 2], ['activity', 2, { rebuildMatches: false }],
+    ['matches', 2, { reason: 'historical-prices' }],
+    ['bridge', 2],
+    ['backfill'],
+  ]);
+});
+
+test('the job waits for the user\'s rebuild lane instead of racing it', async () => {
+  const { calls, callsWhileHeld } = await runJobWithStubs(
+    [{ id: 1, user_id: OWNER_ID }],
+    { holdLaneFor: OWNER_ID }
+  );
+
+  // While a sync-shaped job holds the lane, the nightly re-derive must not
+  // have touched a single derived table -- before the lane it ran the same
+  // delete-then-insert rebuilds unqueued, racing whatever was in flight.
+  assert.deepEqual(callsWhileHeld, []);
+  assert.deepEqual(calls, [
+    ['mirror', 1], ['activity', 1, { rebuildMatches: false }],
+    ['matches', OWNER_ID, { reason: 'historical-prices' }],
+    ['bridge', OWNER_ID],
+    ['backfill'],
+  ]);
 });
