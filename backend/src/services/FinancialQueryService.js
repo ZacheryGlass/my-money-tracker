@@ -6,6 +6,7 @@ const Holding = require('../models/Holding');
 const SalaryHistory = require('../models/SalaryHistory');
 const RecurringExpense = require('../models/RecurringExpense');
 const EthTransfer = require('../models/EthTransfer');
+const EthReconciliation = require('../models/EthReconciliation');
 const {
   calculateReturns,
   correlationAndBeta,
@@ -1347,6 +1348,31 @@ class FinancialQueryService {
         code: 'unreviewed_eth_counterparties',
         count: ethCounterparties.materialCount,
         detail: 'On-chain transfers to or from addresses that have never been reviewed. Review them under Settings -> Ethereum; if one is a rotated exchange hot wallet or your own address, its transfers are currently counted as external instead of internal.',
+      });
+    }
+
+    // The balance audit: does the stored transfer ledger reproduce the balance
+    // the chain itself reports? A wallet sync starts at block 0, so a nonzero
+    // ETH delta is not staleness -- it is a movement that was never recorded,
+    // which makes every on-chain figure derived from that wallet suspect.
+    const reconciliation = await EthReconciliation.summaryForUser(userId);
+    if (reconciliation.nativeMismatches) {
+      issues.push({
+        severity: 'warning',
+        code: 'eth_balance_drift',
+        count: reconciliation.nativeMismatches,
+        detail: 'The ETH balance derived from stored on-chain transfers does not match what the chain reports. A transaction is missing from the ledger, so transfer history and on-chain cash flow are incomplete for that wallet. See Settings -> Ethereum.',
+      });
+    }
+    // Info, not warning: a token balance can legitimately drift without any
+    // missed transfer -- rebasing supply and fee-on-transfer contracts both
+    // change a holding with no Transfer event to record.
+    if (reconciliation.tokenMismatches) {
+      issues.push({
+        severity: 'info',
+        code: 'eth_token_balance_drift',
+        count: reconciliation.tokenMismatches,
+        detail: 'Token balances derived from stored transfers disagree with the chain. Rebasing and fee-on-transfer tokens do this legitimately; the offending contracts are named under Settings -> Ethereum and can be added to the ignore list.',
       });
     }
 

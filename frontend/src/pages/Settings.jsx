@@ -11,7 +11,7 @@ import HoldingForm from '../components/HoldingForm';
 import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
-import { formatRelativeTime, formatCompactCurrency, formatDateDisplay } from '../utils/format';
+import { formatRelativeTime, formatCompactCurrency, formatDateDisplay, formatExactUnits } from '../utils/format';
 import { explorerAddressUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
@@ -269,6 +269,115 @@ const buildInstitutionSummary = (items, consentItems) => {
     neverSynced,
   };
 };
+
+// Why an asset could not be compared this run, in the user's terms. Codes come
+// from EthReconciliationService.SKIP_REASONS; an unrecognized one falls through
+// to a generic line rather than rendering a raw enum.
+const RECONCILIATION_SKIP_TEXT = {
+  feed_gap: 'a data feed this chain could not serve',
+  chain_unavailable: 'this chain is not readable with your Etherscan key',
+  chain_error: 'this chain failed to sync',
+  never_synced: 'this chain has not synced yet',
+  lookup_budget: 'checked on a later sync',
+  // Distinct from lookup_budget: without a key no later sync can check it.
+  no_api_key: 'no Etherscan key is configured',
+  live_fetch_failed: 'the balance lookup failed',
+};
+
+// The balance audit for one wallet: does the stored transfer ledger reproduce
+// the balance the chain itself reports?
+//
+// Silence is the failure mode this exists to break, so the three outcomes look
+// deliberately different: a clean audit says so in one muted line, an ETH delta
+// is a loud alert (sync starts at block 0, so it can only mean a movement was
+// never recorded), and a token delta is stated plainly with the offending
+// contract named -- rebasing and fee-on-transfer tokens do this legitimately, so
+// alarming about them would train the user to ignore the ETH case too.
+function WalletReconciliation({ report, chainNames }) {
+  if (!report) return null;
+  const chainName = (chainId) => chainNames?.get(Number(chainId)) || `Chain ${chainId}`;
+  const nativeDrift = report.issues.filter((row) => row.status === 'mismatch' && row.asset_type === 'native');
+  const tokenDrift = report.issues.filter((row) => row.status === 'mismatch' && row.asset_type === 'token');
+  const unchecked = report.issues.filter((row) => row.status === 'skipped' || row.status === 'unavailable');
+  const clean = !nativeDrift.length && !tokenDrift.length;
+
+  // Every digit, never six. A drift under 1e-6 rendered at the default
+  // precision prints as '0' (or '-0'), so the row would claim the ledger is
+  // "0 ETH off" and then print the derived and chain figures identically --
+  // three numbers that all say nothing is wrong, on a row that exists only
+  // because something is.
+  const amount = (row) => formatExactUnits(row.delta_units, row.token_decimals ?? 18) ?? '?';
+  const symbolOf = (row) => row.token_symbol || 'tokens';
+
+  return (
+    <div className="mt-5 space-y-3">
+      {nativeDrift.length > 0 && (
+        <div className="rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="font-bold uppercase tracking-wide">Balance audit: ETH unaccounted for</p>
+              <p className="mt-1">
+                Transfer history is synced from the first block, so the ETH it adds up to should match the
+                chain exactly. It does not, which means a movement is missing from the ledger.
+              </p>
+              <ul className="mt-2 space-y-1 font-mono text-[11px]">
+                {nativeDrift.map((row) => (
+                  <li key={`${row.chain_id}-${row.asset_key}`}>
+                    {chainName(row.chain_id)}: ledger is {amount(row)} ETH off
+                    {' '}(derived {formatExactUnits(row.derived_units, 18)}, chain {formatExactUnits(row.live_units, 18)})
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tokenDrift.length > 0 && (
+        <div className="rounded border border-border bg-surface-3 p-4 text-xs leading-relaxed text-secondary">
+          <p className="font-bold uppercase tracking-wide text-primary">Token balances that do not add up</p>
+          <p className="mt-1">
+            Rebasing and fee-on-transfer tokens change a balance without a transfer to record, so this is
+            often harmless. If one of these is spam, ignore it below and it drops out of the audit.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {tokenDrift.map((row) => (
+              <li key={`${row.chain_id}-${row.asset_key}`} className="font-mono text-[11px]">
+                <span className="text-primary">{symbolOf(row)}</span>{' '}
+                {/* The contract, not just a number: "your DAI is off by 3" is
+                    unactionable when four contracts call themselves DAI. */}
+                <span title={row.asset_key}>{shortEthAddress(row.asset_key)}</span>{' '}
+                on {chainName(row.chain_id)} is {amount(row)} off
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {clean && report.assets_checked > 0 && (
+        <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
+          Balance audit: ledger matches the chain across {report.matched + report.dust} of{' '}
+          {report.assets_checked} assets &middot; {formatRelativeTime(report.checked_at)}
+        </p>
+      )}
+
+      {unchecked.length > 0 && (
+        // Stated rather than hidden. An audit that quietly omits what it could
+        // not check reads as "everything is fine", which is the one thing it
+        // must never say by accident.
+        <p className="text-[10px] text-tertiary">
+          Not checked this run:{' '}
+          {unchecked.slice(0, 4).map((row) => (
+            `${row.asset_type === 'native' ? 'ETH' : symbolOf(row)} on ${chainName(row.chain_id)} (${RECONCILIATION_SKIP_TEXT[row.skip_reason] || 'not compared'})`
+          )).join('; ')}
+          {unchecked.length > 4 ? ` and ${unchecked.length - 4} more` : ''}
+          {report.truncated ? '. More assets are listed in the audit API.' : ''}
+        </p>
+      )}
+    </div>
+  );
+}
 
 const TRIAGE_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all disabled:opacity-40';
 
@@ -618,8 +727,16 @@ const Settings = ({ user }) => {
   // single airdrop wave parked 40 dust counterparties behind it -- teaches the
   // user to ignore the badge, which also destroys its value for wallet sync
   // errors, the genuinely urgent case it already carries.
+  //
+  // A wallet whose ETH ledger does not reproduce the chain's balance counts
+  // here too, but only ONCE even when it also carries a sync error -- the two
+  // are the same wallet asking for the same look. Token drift deliberately does
+  // not count: rebasing and fee-on-transfer contracts drift with no missed
+  // transfer behind it, so badging them would pin the number above zero for
+  // anyone who ever held one.
   const ethAttentionCount = useMemo(
-    () => ethWallets.filter((wallet) => wallet.error_code).length + (counterpartyData?.summary?.count || 0),
+    () => ethWallets.filter((wallet) => wallet.error_code || wallet.reconciliation?.needs_review).length
+      + (counterpartyData?.summary?.count || 0),
     [ethWallets, counterpartyData]
   );
   // Summed from the accounts already loaded: flagged records deserve the same
@@ -1988,6 +2105,15 @@ const Settings = ({ user }) => {
                       </div>
                     </div>
                   )}
+
+                  {/* The audit rides along on the wallets response, so this
+                      needs no second request and cannot disagree with the badge
+                      above it. Chain names come from the wallet's own chain
+                      rows, which the server already labelled from the registry. */}
+                  <WalletReconciliation
+                    report={wallet.reconciliation}
+                    chainNames={new Map((wallet.chains || []).map((chain) => [Number(chain.chain_id), chain.name]))}
+                  />
                 </div>
               </Motion.div>
             ))}

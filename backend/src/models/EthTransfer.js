@@ -322,6 +322,50 @@ class EthTransfer {
     return result.rows;
   }
 
+  // Net NATIVE (ETH) balance per chain, derived from the stored ledger alone --
+  // the number the balance audit (#62) compares against what the chain reports.
+  //
+  //   inbound native + inbound internal - outbound native - outbound internal - gas
+  //
+  // Every clause here is load-bearing:
+  //   * internal traces are counted because ETH arriving FROM A CONTRACT is
+  //     visible nowhere else; a chain missing that feed cannot be reconciled at
+  //     all, which is exactly what unsupported_feeds records.
+  //   * gas is its own term rather than folded into the outbound arm. A gas
+  //     row's from_address is always the wallet and its to_address is whatever
+  //     contract was called -- so on a self-send (from = to = wallet) the
+  //     inbound arm would ADD the fee back, turning every self-transfer into a
+  //     phantom credit of exactly one transaction fee.
+  //   * failed transfers moved nothing and are excluded, but their gas leg is
+  //     NOT: a reverted transaction still burns the fee, which is precisely why
+  //     gas rows are written is_error = FALSE (038).
+  //   * NFT legs (transfer_type 'nft'/'nft1155') never appear: their value_wei
+  //     is a COUNT OF UNITS (033), so summing them here would add token-id
+  //     counts to a wei total.
+  //
+  // Exact NUMERIC(78,0) throughout, cast to text on the way out: a uint256 total
+  // exceeds Number precision, and rounding it away is rounding away the drift.
+  static async nativeBalanceDeltas(walletId) {
+    const result = await pool.query(
+      `SELECT t.chain_id,
+              (SUM(CASE WHEN t.transfer_type IN ('native', 'internal')
+                         AND t.is_error = FALSE AND t.to_address = w.address
+                        THEN t.value_wei ELSE 0 END)
+             - SUM(CASE WHEN t.transfer_type IN ('native', 'internal')
+                         AND t.is_error = FALSE AND t.from_address = w.address
+                        THEN t.value_wei ELSE 0 END)
+             - SUM(CASE WHEN t.transfer_type = 'gas' THEN t.value_wei ELSE 0 END))::text AS balance_wei
+       FROM eth_transfers t
+       JOIN eth_wallets w ON w.id = t.wallet_id
+       WHERE t.wallet_id = $1
+         AND t.transfer_type IN ('native', 'internal', 'gas')
+       GROUP BY t.chain_id
+       ORDER BY t.chain_id`,
+      [walletId]
+    );
+    return result.rows;
+  }
+
   // The triage queue: counterparties the user has never given a verdict on.
   //
   // material DESC leads the sort and is NOT redundant with usd_volume DESC: a

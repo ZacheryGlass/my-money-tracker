@@ -104,6 +104,31 @@ class EtherscanService {
     return result;
   }
 
+  // Current ERC-20 balance in the token's own base units, as a string.
+  //
+  // One request per (chain, contract), which is why the balance audit budgets
+  // these and rotates through a wallet's tokens rather than checking every one
+  // every night: the Etherscan throttle is global across users AND chains
+  // (the rate limit is per key), so a wallet holding fifty tokens on three
+  // chains would otherwise monopolise it for minutes.
+  static async getTokenBalance(address, contractAddress, apiKey, chainId = etherscan.CHAIN_ID) {
+    const result = await this._request({
+      module: 'account',
+      action: 'tokenbalance',
+      contractaddress: contractAddress,
+      address,
+      tag: 'latest',
+    }, { apiKey, chainId });
+    // Same fail-loud rule as getEthBalance: a malformed response must not be
+    // read as a zero balance, which would report the whole position as drift.
+    if (typeof result !== 'string' || !/^\d+$/.test(result)) {
+      const error = new Error(`Etherscan returned an invalid token balance: ${JSON.stringify(result)}`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    return result;
+  }
+
   // Walks blocks in ascending order. The cursor advances to the last block of
   // each full page WITHOUT +1: a block can be split across the page boundary,
   // so that block is refetched whole and its partial rows are dropped first.
