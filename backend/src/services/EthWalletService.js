@@ -3,18 +3,13 @@
 const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
 const SecretsService = require('./SecretsService');
-const EthTransactionMirrorService = require('./EthTransactionMirrorService');
-const EthActivityService = require('./EthActivityService');
-const ExchangeMatchService = require('./ExchangeMatchService');
+const EthDerivedPipeline = require('./EthDerivedPipeline');
 const EthReconciliationService = require('./EthReconciliationService');
 const MethodSignatureService = require('./MethodSignatureService');
 const PriceService = require('./PriceService');
-const HistoricalPriceService = require('./HistoricalPriceService');
-const TransactionClassificationService = require('./TransactionClassificationService');
 const EthWallet = require('../models/EthWallet');
 const EthWalletChain = require('../models/EthWalletChain');
 const EthTransfer = require('../models/EthTransfer');
-const AssetPriceHistory = require('../models/AssetPriceHistory');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
@@ -438,52 +433,25 @@ class EthWalletService {
         logger.warn({ walletId, err }, 'Method signature decode failed; selectors stay unnamed');
       }
 
-      // Derived data is rebuilt ONCE for the whole wallet, after every chain has
-      // landed. Counterparty labels are address-keyed with no chain dimension,
-      // and holdings/mirror rows span chains, so doing this per chain would
-      // rebuild the same rows N times and briefly publish a wallet whose
-      // holdings reflect only the chains synced so far.
-      await EthTransfer.reclassifyCounterparties(wallet.user_id);
-
-      // At-the-time valuation (#73), BEFORE the mirror and the activity
-      // rebuild: both of those now read eth_transfers.usd_at_time instead of
-      // fetching a current price, so a stale valuation here would be baked into
-      // both derivations. Filling the series is best-effort -- a price provider
-      // being down must not fail a sync that already has every transfer, and
-      // the rows simply stay unpriced (never $0, never today's price) until the
-      // nightly job reaches them.
+      // Everything derived from these transfers is rebuilt ONCE for the whole
+      // wallet, after every chain has landed. Counterparty labels are
+      // address-keyed with no chain dimension, and holdings/mirror rows span
+      // chains, so doing this per chain would rebuild the same rows N times
+      // and briefly publish a wallet whose holdings reflect only the chains
+      // synced so far. The step list and its ordering live in
+      // EthDerivedPipeline; any step throwing lands in the outer catch below,
+      // which badges the wallet.
       //
-      // Skipped on the nightly sync (fillPrices = false): the historical price
-      // job runs twenty minutes later against the same providers under the same
-      // rate limit, so doing it here too would just spend the budget twice. The
-      // SQL re-valuation below still runs every time -- it touches no network,
-      // and skipping it would strand the mirror on yesterday's prices.
-      let priced = null;
-      if (fillPrices) {
-        try {
-          priced = await HistoricalPriceService.ensureAssetsForWallet(walletId);
-        } catch (err) {
-          logger.warn({ walletId, err }, 'Historical price fill failed; legs keep their previous valuation');
-        }
-      }
-      const valued = await AssetPriceHistory.applyToWallet(walletId);
-
-      const holdings = await this.refreshHoldings(walletId);
-      const mirror = await EthTransactionMirrorService.rebuildForWallet(walletId);
-      // After reclassify: the ladder reads counterparty_is_own and
-      // counterparty_exchange off the freshly-classified legs.
-      const activity = await EthActivityService.rebuildForWallet(walletId);
-      // Bridge pairing is cross-CHAIN and cross-WALLET, so it runs once over
-      // the owner's whole activity set after the rebuild -- the far side of a
-      // bridge this sync just ingested may well sit on a different wallet row.
-      // Non-fatal: an unpaired leg is flagged and visible, which is strictly
-      // better than reporting a sync that landed as failed.
-      try {
-        await EthActivityService.matchBridgeTransfersForUser(wallet.user_id);
-      } catch (err) {
-        logger.warn({ walletId, err }, 'Bridge matching failed; legs stay flagged for review');
-      }
-      await TransactionClassificationService.backfill();
+      // rebuildMatches: true -- the single-wallet sync keeps the exchange-match
+      // pass embedded in the activity rebuild so its result rides on the sync
+      // response, which is why finishUser skips it here.
+      const derived = await EthDerivedPipeline.rebuildWallet(walletId, {
+        reclassifyUserId: wallet.user_id,
+        fillPrices,
+        holdings: true,
+        rebuildMatches: true,
+      });
+      await EthDerivedPipeline.finishUser(wallet.user_id, { match: false, walletId });
 
       // The balance audit (#62): does the ledger we just stored reproduce the
       // balance the chain reports? Runs last, and non-fatally, because it is a
@@ -494,7 +462,7 @@ class EthWalletService {
       let reconciliation = null;
       try {
         reconciliation = await EthReconciliationService.reconcileWallet(wallet, {
-          liveWeiByChain: holdings?.liveWeiByChain || {},
+          liveWeiByChain: derived.holdings?.liveWeiByChain || {},
           chainResults: perChain,
           apiKey,
         });
@@ -537,12 +505,12 @@ class EthWalletService {
 
       const results = {
         inserted: perChain.reduce((sum, result) => sum + result.inserted, 0),
-        holdings,
-        mirror,
-        activity,
+        holdings: derived.holdings,
+        mirror: derived.mirror,
+        activity: derived.activity,
         reconciliation,
-        prices: priced,
-        valued,
+        prices: derived.priced,
+        valued: derived.valued,
         methods,
         skippedFeeds,
         unsupportedFeeds,
@@ -926,56 +894,11 @@ class EthWalletService {
   // edit they never made. The final backfill stays global -- it is an
   // account-keyed derivation over transactions, not an eth-wallet read.
   static refreshClassificationsForUser(userId) {
-    return serialized(async () => {
-      await EthTransfer.reclassifyCounterparties(userId);
-      const wallets = await EthWallet.findAllByUser(userId);
-      for (const wallet of wallets) {
-        // Two independent derivations, so two independent catches: sharing one
-        // made an activity failure log as "Mirror rebuild failed", and a mirror
-        // failure skip the activity rebuild entirely.
-        // Re-value first, from the STORED series only -- no network. A label
-        // change cannot move a price, but a backfill that landed since the last
-        // rebuild can, and both derivations read these columns.
-        //
-        // Its OWN catch, like the two below: sharing the mirror's would let a
-        // valuation hiccup silently skip the reclassification the user's click
-        // was actually for, and log it as "Mirror rebuild failed". A stale
-        // valuation is stale dollars; a skipped rebuild is the wrong category.
-        try {
-          await AssetPriceHistory.applyToWallet(wallet.id);
-        } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Re-valuation failed during classification refresh');
-        }
-        try {
-          await EthTransactionMirrorService.rebuildForWallet(wallet.id);
-        } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Mirror rebuild failed during classification refresh');
-        }
-        try {
-          // A label change flips self/exchange/external, which is what half the
-          // classification ladder reads -- so the activity rows heal
-          // retroactively, exactly like the mirror. Overrides live in their own
-          // table and are untouched by the rebuild.
-          await EthActivityService.rebuildForWallet(wallet.id, { rebuildMatches: false });
-        } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Activity rebuild failed during classification refresh');
-        }
-      }
-      // Once, after every wallet has landed. The match pass is user-wide, so
-      // running it inside the loop re-derived the same rows N times -- and the
-      // early passes ran against a half-rebuilt feed.
-      await ExchangeMatchService.rebuildForUserSafely(userId, { reason: 'classification-refresh' });
-      // After the loop, not inside it: a bridge_out on one wallet can pair with
-      // a bridge_in on another, so pairing can only be decided once every
-      // wallet's rows are current. Labeling an address 'bridge' is exactly the
-      // edit that creates those legs, which is why this runs here at all.
-      try {
-        await EthActivityService.matchBridgeTransfersForUser(userId);
-      } catch (err) {
-        logger.warn({ userId, err }, 'Bridge matching failed during classification refresh');
-      }
-      await TransactionClassificationService.backfill();
-    });
+    return serialized(() => EthDerivedPipeline.runForUser(userId, {
+      reclassify: true,
+      context: 'classification refresh',
+      matchReason: 'classification-refresh',
+    }));
   }
 
   // Ignore lists are per-user, so this re-derives only the owner's wallets.
@@ -983,51 +906,11 @@ class EthWalletService {
   // CoinGecko quota (refreshHoldings resolves the wallet owner's key) and
   // rewrite their holdings rows on an edit they never made.
   static refreshDerivedForUser(userId) {
-    return serialized(async () => {
-      const wallets = await EthWallet.findAllByUser(userId);
-      for (const wallet of wallets) {
-        // Three independent derivations of the same source rows: holdings need
-        // a price lookup, the mirror and the activity rows do not. One catch
-        // around all three let a price outage skip both rebuilds and report
-        // every failure under the same message.
-        try {
-          await this.refreshHoldings(wallet.id);
-        } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Holdings refresh failed during derived-data refresh');
-        }
-        // Stored series only -- no network on an ignore-list click -- and its
-        // own catch, so a valuation hiccup cannot swallow the rebuild the user
-        // clicked for.
-        try {
-          await AssetPriceHistory.applyToWallet(wallet.id);
-        } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Re-valuation failed during derived-data refresh');
-        }
-        try {
-          await EthTransactionMirrorService.rebuildForWallet(wallet.id);
-        } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Mirror rebuild failed during derived-data refresh');
-        }
-        try {
-          // The ignore list filters legs out of the activity builder too, so a
-          // newly-ignored spam token has to stop driving a classification.
-          await EthActivityService.rebuildForWallet(wallet.id, { rebuildMatches: false });
-        } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Activity rebuild failed during derived-data refresh');
-        }
-      }
-      // Once for the user, not once per wallet -- same reason as above.
-      await ExchangeMatchService.rebuildForUserSafely(userId, { reason: 'derived-refresh' });
-      // Every rebuild above dropped this user's links (ON DELETE CASCADE), so
-      // re-deriving them is not an optimization -- without it an ignore-list
-      // edit silently unpairs every bridge the user has ever made.
-      try {
-        await EthActivityService.matchBridgeTransfersForUser(userId);
-      } catch (err) {
-        logger.warn({ userId, err }, 'Bridge matching failed during derived-data refresh');
-      }
-      await TransactionClassificationService.backfill();
-    });
+    return serialized(() => EthDerivedPipeline.runForUser(userId, {
+      holdings: true,
+      context: 'derived-data refresh',
+      matchReason: 'derived-refresh',
+    }));
   }
 }
 
