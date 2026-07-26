@@ -250,6 +250,90 @@ test('runForUser: a reclassify failure propagates before any wallet is touched',
 });
 
 // ---------------------------------------------------------------------------
+// The per-user queue
+// ---------------------------------------------------------------------------
+
+const gate = () => {
+  let release;
+  const promise = new Promise((resolve) => { release = resolve; });
+  return { promise, release };
+};
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test('work for one user is serialized in FIFO order', async () => {
+  const events = [];
+  const g = gate();
+  const first = EthDerivedPipeline.serializedForUser(1, async () => {
+    events.push('a-start'); await g.promise; events.push('a-end');
+  });
+  const second = EthDerivedPipeline.serializedForUser(1, async () => { events.push('b'); });
+  await tick();
+  assert.deepEqual(events, ['a-start'], 'the second job must wait for the first');
+  g.release();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ['a-start', 'a-end', 'b']);
+});
+
+test('two users run in parallel lanes', async () => {
+  const events = [];
+  const g = gate();
+  const slow = EthDerivedPipeline.serializedForUser(1, async () => {
+    events.push('u1-start'); await g.promise; events.push('u1-end');
+  });
+  await EthDerivedPipeline.serializedForUser(2, async () => { events.push('u2'); });
+  assert.deepEqual(events, ['u1-start', 'u2'], 'user 2 must not queue behind user 1');
+  g.release();
+  await slow;
+});
+
+test('a rejection reaches its caller, unblocks the lane, and leaks nowhere', async (t) => {
+  const unhandled = [];
+  const onUnhandled = (err) => unhandled.push(err);
+  process.on('unhandledRejection', onUnhandled);
+  t.after(() => process.removeListener('unhandledRejection', onUnhandled));
+
+  await assert.rejects(
+    EthDerivedPipeline.serializedForUser(1, async () => { throw new Error('lane job failed'); }),
+    /lane job failed/
+  );
+  const next = await EthDerivedPipeline.serializedForUser(1, async () => 'ran');
+  assert.equal(next, 'ran', 'a failed predecessor must not block the lane');
+  await tick();
+  assert.deepEqual(unhandled, []);
+});
+
+test('settled lanes are cleaned out of the map', async () => {
+  await EthDerivedPipeline.serializedForUser(1, async () => 'x');
+  await EthDerivedPipeline.serializedForUser(2, async () => 'y');
+  await tick();
+  assert.equal(EthDerivedPipeline.pendingQueueCount(), 0);
+});
+
+test('the global backfill chokepoint keeps two users\' backfills from overlapping', async (t) => {
+  const { stub } = harness(t);
+  const events = [];
+  const g = gate();
+  let firstEntered;
+  const entered = new Promise((resolve) => { firstEntered = resolve; });
+  stub(TransactionClassificationService, 'backfill', async () => {
+    const isFirst = events.length === 0;
+    events.push('backfill-start');
+    if (isFirst) { firstEntered(); await g.promise; }
+    events.push('backfill-end');
+  });
+
+  const first = EthDerivedPipeline.finishUser(1, { match: false });
+  await entered;
+  const second = EthDerivedPipeline.finishUser(2, { match: false });
+  await tick();
+  await tick();
+  assert.deepEqual(events, ['backfill-start'], 'the second backfill must wait for the first');
+  g.release();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ['backfill-start', 'backfill-end', 'backfill-start', 'backfill-end']);
+});
+
+// ---------------------------------------------------------------------------
 // Late binding -- the contract every harness in this suite depends on
 // ---------------------------------------------------------------------------
 

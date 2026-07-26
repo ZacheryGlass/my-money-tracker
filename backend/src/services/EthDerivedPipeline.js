@@ -38,6 +38,42 @@ const EthActivityService = require('./EthActivityService');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const TransactionClassificationService = require('./TransactionClassificationService');
 
+// --- serialization ----------------------------------------------------------
+//
+// transactions/holdings rebuilds are delete-then-insert, so two rebuilds over
+// the same user's data running concurrently (cron job, manual sync,
+// sync-on-add, ignore-list refresh) would corrupt derived data. All such work
+// funnels through a PER-USER lane: one user's two-click label write no longer
+// queues behind another user's block-0 initial sync, which cross-user blocking
+// was all the old single global chain bought beyond this. Single-process
+// assumption, like every other coordination mechanism in this codebase.
+const queues = new Map();
+
+function serializedOn(key, fn) {
+  const prev = queues.get(key) || Promise.resolve();
+  // fn runs whether the predecessor resolved or rejected -- a failed rebuild
+  // must not block its lane forever...
+  const run = prev.then(fn, fn);
+  // ...and the stored tail swallows both arms so the chain itself can never
+  // surface as an unhandled rejection. The CALLER owns run's outcome.
+  const tail = run.then(() => undefined, () => undefined);
+  queues.set(key, tail);
+  // Deleted only when no newer work superseded this tail -- the identity check
+  // is load-bearing, or finishing one job would drop a busy lane's entry and
+  // let the next enqueue start a second, concurrent chain.
+  tail.then(() => { if (queues.get(key) === tail) queues.delete(key); });
+  return run;
+}
+
+function serializedForUser(userId, fn) {
+  return serializedOn(userId == null ? 'user:null' : `user:${userId}`, fn);
+}
+
+// Test introspection: how many lanes still hold work.
+function pendingQueueCount() {
+  return queues.size;
+}
+
 // One wallet's derived rows, in canonical order, up to (not including) the
 // user-wide tail. Two fatality policies, matching the two kinds of caller:
 //
@@ -150,8 +186,11 @@ async function finishUser(userId, {
   // The final backfill stays GLOBAL -- it is an account-keyed derivation over
   // transactions, not an eth-wallet read -- and it throws: the callers that
   // treat the tail as fatal are the ones whose response promises the rebuild
-  // landed.
-  await TransactionClassificationService.backfill();
+  // landed. With per-user lanes, two users' tails could otherwise run this
+  // full-table upsert concurrently -- a lock-order deadlock candidate -- so it
+  // takes the one reserved cross-user chokepoint. No cycle: user lanes await
+  // this lane, never the reverse.
+  await serializedOn('global:backfill', () => TransactionClassificationService.backfill());
 
   return { matches };
 }
@@ -187,4 +226,6 @@ module.exports = {
   rebuildWallet,
   finishUser,
   runForUser,
+  serializedForUser,
+  pendingQueueCount,
 };

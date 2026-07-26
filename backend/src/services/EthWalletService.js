@@ -51,17 +51,6 @@ function unitsToDecimalString(value, decimals) {
 // Ethereum's finality window (~2 epochs = 64 blocks).
 const REORG_OVERLAP_BLOCKS = 64;
 
-// transactions/holdings rebuilds are delete-then-insert, so concurrent runs
-// (cron job, manual sync, sync-on-add, ignore-list refresh) would corrupt
-// derived data. All such work funnels through this in-process queue.
-let derivedQueue = Promise.resolve();
-
-function serialized(fn) {
-  const run = derivedQueue.then(fn, fn);
-  derivedQueue = run.then(() => undefined, () => undefined);
-  return run;
-}
-
 function toTimestamp(unixSeconds) {
   return new Date(Number(unixSeconds) * 1000);
 }
@@ -226,8 +215,14 @@ class EthWalletService {
   // and would spend a provider budget on exactly the assets the historical
   // price job re-walks at 8:10, twenty minutes later. Same series, same
   // providers, same rate limit, twice.
-  static syncWallet(walletId, { fillPrices = true } = {}) {
-    return serialized(() => this._syncWallet(walletId, { fillPrices }));
+  static async syncWallet(walletId, { fillPrices = true } = {}) {
+    // The rebuild lane is keyed by OWNER (EthDerivedPipeline.serializedForUser),
+    // so the wallet row is read before enqueueing just to pick the lane;
+    // _syncWallet re-reads it inside the slot for fresh state.
+    const wallet = await EthWallet.findById(walletId);
+    if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
+    return EthDerivedPipeline.serializedForUser(wallet.user_id,
+      () => this._syncWallet(walletId, { fillPrices }));
   }
 
   // One chain's ingest for one wallet: fetch each feed, replace that feed's
@@ -894,7 +889,7 @@ class EthWalletService {
   // edit they never made. The final backfill stays global -- it is an
   // account-keyed derivation over transactions, not an eth-wallet read.
   static refreshClassificationsForUser(userId) {
-    return serialized(() => EthDerivedPipeline.runForUser(userId, {
+    return EthDerivedPipeline.serializedForUser(userId, () => EthDerivedPipeline.runForUser(userId, {
       reclassify: true,
       context: 'classification refresh',
       matchReason: 'classification-refresh',
@@ -906,7 +901,7 @@ class EthWalletService {
   // CoinGecko quota (refreshHoldings resolves the wallet owner's key) and
   // rewrite their holdings rows on an edit they never made.
   static refreshDerivedForUser(userId) {
-    return serialized(() => EthDerivedPipeline.runForUser(userId, {
+    return EthDerivedPipeline.serializedForUser(userId, () => EthDerivedPipeline.runForUser(userId, {
       holdings: true,
       context: 'derived-data refresh',
       matchReason: 'derived-refresh',
