@@ -57,7 +57,13 @@ CREATE TABLE IF NOT EXISTS eth_reconciliation (
   -- Why a row is 'skipped'/'unavailable', so the UI can say something other
   -- than "unknown". See EthReconciliationService.SKIP_REASONS.
   skip_reason VARCHAR(40),
-  checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- When the asset was last actually COMPARED -- not when the row was last
+  -- written. NULLABLE, and NULL is load-bearing: a row written because the
+  -- lookup budget deferred it has never been compared, and the rotation sorts
+  -- those first. Stamping every write would give the deferred tail a LATER
+  -- timestamp than the assets just checked (each upsert is its own statement),
+  -- so the same head of the list would be re-checked nightly forever.
+  checked_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   -- The upsert target. One verdict per asset per chain per wallet: the point is
@@ -65,6 +71,14 @@ CREATE TABLE IF NOT EXISTS eth_reconciliation (
   -- would grow without bound and answer no question the latest row does not).
   UNIQUE (wallet_id, chain_id, asset_key)
 );
+
+-- checked_at started life NOT NULL DEFAULT CURRENT_TIMESTAMP; a table created
+-- by an earlier boot still carries that. Both statements are no-ops once
+-- applied, which is what makes them safe on a migration file that re-runs every
+-- boot. Existing rows keep their stamps: a skipped row's timestamp now freezes
+-- instead of advancing, so the rotation corrects itself on the next sync.
+ALTER TABLE eth_reconciliation ALTER COLUMN checked_at DROP NOT NULL;
+ALTER TABLE eth_reconciliation ALTER COLUMN checked_at DROP DEFAULT;
 
 -- Named constraints, added under a catalog guard so a re-run neither fails nor
 -- re-adds them. Spelled as DO blocks rather than ADD CONSTRAINT IF NOT EXISTS

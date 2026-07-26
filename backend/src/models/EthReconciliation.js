@@ -43,13 +43,28 @@ class EthReconciliation {
   // and a multi-row upsert would have to reconcile conflicting rows within a
   // single statement -- which Postgres refuses outright when two rows share the
   // conflict target.
+  //
+  // `checked_at` means "this asset was actually COMPARED", not "this row was
+  // written". A skipped row is written precisely BECAUSE it was not compared,
+  // and stamping it would break the rotation it exists to feed: each upsert is
+  // its own statement, so the tokens deferred by the lookup budget would end up
+  // with LATER timestamps than the ones just checked, sort last again next
+  // night, and never be audited at all. NULL is the never-compared value and
+  // leads the rotation.
   static async upsert(walletId, row) {
     const result = await pool.query(
       `INSERT INTO eth_reconciliation (
          wallet_id, chain_id, asset_key, asset_type, token_symbol, token_decimals,
          derived_units, live_units, delta_units, status, skip_reason, checked_at, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       -- $10 is cast in BOTH places it appears. Postgres deduces one type per
+       -- parameter across the whole statement, and an uncast $10 in the status
+       -- column (VARCHAR) beside a cast one in the CASE below is "inconsistent
+       -- types deduced for parameter $10" -- a hard error, not a coercion.
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text, $11,
+               CASE WHEN $10::text IN ('match', 'dust', 'mismatch', 'unavailable')
+                    THEN CURRENT_TIMESTAMP ELSE NULL END,
+               CURRENT_TIMESTAMP)
        ON CONFLICT (wallet_id, chain_id, asset_key) DO UPDATE
          SET asset_type = EXCLUDED.asset_type,
              token_symbol = EXCLUDED.token_symbol,
@@ -63,7 +78,13 @@ class EthReconciliation {
              delta_units = EXCLUDED.delta_units,
              status = EXCLUDED.status,
              skip_reason = EXCLUDED.skip_reason,
-             checked_at = CURRENT_TIMESTAMP,
+             -- Advanced only when the asset was genuinely compared this run
+             -- (or its live figure was attempted and failed, which still spent
+             -- the lookup). A 'skipped' write leaves the previous value --
+             -- NULL for a never-checked asset -- so the rotation keeps
+             -- pointing at the tail it has not reached yet.
+             checked_at = CASE WHEN EXCLUDED.status IN ('match', 'dust', 'mismatch', 'unavailable')
+                               THEN CURRENT_TIMESTAMP ELSE eth_reconciliation.checked_at END,
              updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
@@ -204,8 +225,19 @@ class EthReconciliation {
   }
 
   // Scalar counts for data-health, across every wallet the user owns.
-  static async summaryForUser(userId) {
+  //
+  // `walletId` narrows to one of the user's wallets and never widens: the
+  // reconciliation route passes it whenever the caller filtered the detail feed,
+  // so the headline counts describe the same scope as the rows underneath them
+  // rather than quietly totalling every wallet.
+  static async summaryForUser(userId, { walletId = null } = {}) {
     if (!userId) throw new Error('EthReconciliation.summaryForUser requires a userId');
+    const params = [userId];
+    let where = `WHERE w.user_id = $1 AND ${NOT_IGNORED}`;
+    if (walletId != null) {
+      params.push(walletId);
+      where += ` AND r.wallet_id = $${params.length}`;
+    }
     const result = await pool.query(
       `SELECT (COUNT(*) FILTER (WHERE r.status = 'mismatch' AND r.asset_type = 'native'))::int AS native_mismatches,
               (COUNT(*) FILTER (WHERE r.status = 'mismatch' AND r.asset_type = 'token'))::int AS token_mismatches,
@@ -214,8 +246,8 @@ class EthReconciliation {
               MAX(r.checked_at) AS checked_at
        FROM eth_reconciliation r
        JOIN eth_wallets w ON w.id = r.wallet_id
-       WHERE w.user_id = $1 AND ${NOT_IGNORED}`,
-      [userId]
+       ${where}`,
+      params
     );
     const row = result.rows[0] || {};
     return {
@@ -231,15 +263,23 @@ class EthReconciliation {
   // than one sync's budget can check. Least-recently-checked first, so a large
   // token set is covered across successive syncs instead of the same head of the
   // list being re-checked nightly while the tail is never checked at all.
-  // Never-checked assets have no row and sort first via the caller's default.
+  // Never-checked assets sort first: either they have no row at all, or they
+  // have one written by a skip, whose checked_at is still NULL (see upsert).
+  //
+  // The status rides along because the candidate filter needs last run's
+  // verdict, not just its clock: a token whose derived balance now nets to zero
+  // is only safe to retire if the chain AGREED it was zero.
   static async lastCheckedByAsset(walletId) {
     const result = await pool.query(
-      `SELECT chain_id, asset_key, checked_at
+      `SELECT chain_id, asset_key, checked_at, status
        FROM eth_reconciliation
        WHERE wallet_id = $1`,
       [walletId]
     );
-    return new Map(result.rows.map((row) => [`${row.chain_id}:${row.asset_key}`, row.checked_at]));
+    return new Map(result.rows.map((row) => [
+      `${row.chain_id}:${row.asset_key}`,
+      { checkedAt: row.checked_at || null, status: row.status },
+    ]));
   }
 }
 

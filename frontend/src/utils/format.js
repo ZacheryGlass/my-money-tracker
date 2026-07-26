@@ -78,6 +78,18 @@ export const formatTokenUnits = (units, decimals = 18, { maxFractionDigits = 6 }
   return `${negative ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}`;
 };
 
+// The same rendering at FULL precision: every digit the asset's decimals allow,
+// so truncation is impossible. This is what the balance audit's deltas use.
+// formatTokenUnits' six-digit default renders a sub-microether drift as '0',
+// which in the audit reads as "the ledger is 0 ETH off" beside two figures
+// printed identically -- the exact opposite of what a mismatch row means. And
+// because a nonzero magnitude always keeps a nonzero digit here, a bare '-0'
+// can never be printed either.
+export const formatExactUnits = (units, decimals = 18) => {
+  const scale = Number.isInteger(decimals) && decimals >= 0 ? decimals : 18;
+  return formatTokenUnits(units, scale, { maxFractionDigits: scale });
+};
+
 export const formatCompactCurrency = (value) => {
   const sign = value < 0 ? '-' : '';
   const abs = Math.abs(value);

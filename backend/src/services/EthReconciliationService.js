@@ -60,6 +60,10 @@ const SKIP_REASONS = {
   NEVER_SYNCED: 'never_synced',
   // Deferred by MAX_TOKEN_LOOKUPS; it is first in line next sync.
   LOOKUP_BUDGET: 'lookup_budget',
+  // No Etherscan key for this wallet's owner, so no live figure can be read at
+  // all. Distinct from LOOKUP_BUDGET on purpose: "checked on a later sync" is a
+  // promise, and without a key no later sync keeps it.
+  NO_API_KEY: 'no_api_key',
   // The live balance call itself failed.
   LIVE_FETCH_FAILED: 'live_fetch_failed',
 };
@@ -132,9 +136,14 @@ class EthReconciliationService {
   // Which chains this run may reconcile, and why the others may not.
   //
   // Reads the CURRENT run's per-chain results when the sync passes them, and
-  // falls back to the stored eth_wallet_chains rows otherwise -- the two carry
-  // the same three failure flavours (039), so the verdict is identical either
-  // way; the run's own results are simply fresher than what is on disk.
+  // falls back to the stored eth_wallet_chains rows otherwise. The two are NOT
+  // in parity: a result carries the run's per-feed detail, while the stored row
+  // has collapsed it into one error_code (`CHAIN_UNAVAILABLE`, `FEED_SKIPPED`,
+  // or whatever `err.code || 'SYNC_ERROR'` the chain threw). So the fallback is
+  // fail-closed -- any error_code that is not the known 'chain cannot be read'
+  // verdict skips the chain as CHAIN_ERROR rather than being ignored, because
+  // an unrecognised code means the last run left a hole of unknown shape and
+  // comparing across it manufactures drift that means nothing.
   static chainGates(chainResults, chainStates) {
     const gates = new Map();
     const stored = new Map((chainStates || []).map((state) => [Number(state.chain_id), state]));
@@ -153,6 +162,10 @@ class EthReconciliationService {
         gate.unsupportedFeeds = [...(result.unsupportedFeeds || []), ...(result.skippedFeeds || [])];
       } else if (state) {
         if (state.error_code === 'CHAIN_UNAVAILABLE') gate.skip = SKIP_REASONS.CHAIN_UNAVAILABLE;
+        // 'FEED_SKIPPED', 'SYNC_ERROR', 'CHAIN_SYNC_FAILED' and anything else a
+        // future writer stores: the chain's last run did not complete, so its
+        // ledger is incomplete by an unknown amount.
+        else if (state.error_code) gate.skip = SKIP_REASONS.CHAIN_ERROR;
         else if (!state.last_synced_at) gate.skip = SKIP_REASONS.NEVER_SYNCED;
         gate.unsupportedFeeds = state.unsupported_feeds || [];
       } else {
@@ -246,10 +259,24 @@ class EthReconciliationService {
 
     // ---- ERC-20 tokens -----------------------------------------------------
     //
-    // Only tokens with a nonzero derived balance. A NEGATIVE one is kept
+    // Tokens with a nonzero derived balance. A NEGATIVE one is kept
     // deliberately -- holdings drop those, but a ledger that says the wallet
     // sent more than it ever received is the loudest possible evidence of a
     // missed inbound transfer, and dropping it would hide the best signal here.
+    //
+    // A derived ZERO is kept too, unless a previous run already compared it and
+    // the chain AGREED it was zero. "Derived zero" is a statement by the ledger,
+    // and the ledger is the thing under test: dropping the row on the ledger's
+    // own say-so deletes last night's verdict (pruneMissing reaps anything not
+    // rewritten) exactly when the chain may still be holding the token. Once a
+    // 'match' at zero is on record, the pair agree and the row can retire --
+    // which is what makes a token genuinely sold to zero stop being audited.
+    //
+    // Remaining blind spot, named deliberately: a token the wallet holds on
+    // chain but has NEVER recorded a transfer for derives no row and has no
+    // stored verdict, so it is invisible to this audit entirely. Catching it
+    // would need an address-level token enumeration, which the feeds this sync
+    // uses do not provide.
     const candidates = tokenRows
       .filter((row) => gates.has(Number(row.chain_id)))
       .map((row) => ({
@@ -259,15 +286,22 @@ class EthReconciliationService {
         decimals: row.token_decimals != null ? Number(row.token_decimals) : DEFAULT_DECIMALS,
         derived: toBigInt(row.balance_units) ?? 0n,
       }))
-      .filter((row) => row.derived !== 0n);
+      .filter((row) => {
+        if (row.derived !== 0n) return true;
+        const prior = lastChecked.get(`${row.chainId}:${row.contract}`);
+        return prior != null && prior.status !== 'match';
+      });
 
     // Least-recently-checked first so a token set larger than the budget is
-    // covered across successive syncs. Never-checked tokens have no stored
-    // timestamp and lead; the contract breaks ties so the order is stable and a
-    // rotation cannot livelock on two tokens with identical timestamps.
+    // covered across successive syncs. Never-COMPARED tokens lead: they either
+    // have no row at all, or one written by a skip, whose checked_at the upsert
+    // deliberately leaves NULL rather than stamping (a stamped skip would sort
+    // the deferred tail behind the assets just checked and starve it forever).
+    // The contract breaks ties so the order is stable and a rotation cannot
+    // livelock on two tokens with identical timestamps.
     candidates.sort((a, b) => {
-      const aAt = lastChecked.get(`${a.chainId}:${a.contract}`);
-      const bAt = lastChecked.get(`${b.chainId}:${b.contract}`);
+      const aAt = lastChecked.get(`${a.chainId}:${a.contract}`)?.checkedAt;
+      const bAt = lastChecked.get(`${b.chainId}:${b.contract}`)?.checkedAt;
       if (!aAt && bAt) return -1;
       if (aAt && !bAt) return 1;
       if (aAt && bAt && aAt.getTime?.() !== bAt.getTime?.()) return aAt - bAt;
@@ -283,7 +317,19 @@ class EthReconciliationService {
 
       if (skip) {
         verdict = { status: 'skipped', delta: null, skipReason: skip };
-      } else if (lookups >= MAX_TOKEN_LOOKUPS || !apiKey) {
+      } else if (!apiKey) {
+        // No key at all. Not 'lookup_budget': that reason promises the asset is
+        // first in line next sync, and without a key there is no next sync that
+        // can keep the promise. Not counted as deferred either, for the same
+        // reason.
+        verdict = { status: 'skipped', delta: null, skipReason: SKIP_REASONS.NO_API_KEY };
+      } else if (toBigInt(liveWeiByChain[token.chainId]) == null) {
+        // This chain's ETH balance could not be read this run, so the key
+        // cannot reach it right now. Spending up to MAX_TOKEN_LOOKUPS throttled
+        // `tokenbalance` calls against a chain that has already proved
+        // unreadable buys nothing and starves the chains that ARE readable.
+        verdict = { status: 'unavailable', delta: null, skipReason: SKIP_REASONS.LIVE_FETCH_FAILED };
+      } else if (lookups >= MAX_TOKEN_LOOKUPS) {
         // Budget exhausted. Written down rather than left out: a silently
         // truncated audit reads as "everything checks out".
         summary.deferred += 1;

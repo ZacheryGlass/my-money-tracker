@@ -713,6 +713,12 @@ class EthWalletService {
     // globally throttled key to re-read a number this function already has.
     // Unscaled on purpose -- `desired` carries an 8-decimal clamped string, and
     // comparing that against the chain would invent drift below 1e-8 ETH.
+    //
+    // A chain gets an entry ONLY when its balance call actually came back: both
+    // paths below (`unreadable`, and a failed fetch) `continue` without writing
+    // one. The audit reads that absence as "this key could not reach this chain
+    // this run" and spends no token lookups there, so an unreachable chain
+    // cannot burn the whole per-wallet budget on calls destined to fail.
     const liveWeiByChain = {};
 
     for (const chain of chains.enabledChains()) {

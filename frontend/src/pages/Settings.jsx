@@ -11,7 +11,7 @@ import HoldingForm from '../components/HoldingForm';
 import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
-import { formatRelativeTime, formatCompactCurrency, formatDateDisplay, formatTokenUnits } from '../utils/format';
+import { formatRelativeTime, formatCompactCurrency, formatDateDisplay, formatExactUnits } from '../utils/format';
 import { explorerAddressUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
@@ -279,6 +279,8 @@ const RECONCILIATION_SKIP_TEXT = {
   chain_error: 'this chain failed to sync',
   never_synced: 'this chain has not synced yet',
   lookup_budget: 'checked on a later sync',
+  // Distinct from lookup_budget: without a key no later sync can check it.
+  no_api_key: 'no Etherscan key is configured',
   live_fetch_failed: 'the balance lookup failed',
 };
 
@@ -299,7 +301,12 @@ function WalletReconciliation({ report, chainNames }) {
   const unchecked = report.issues.filter((row) => row.status === 'skipped' || row.status === 'unavailable');
   const clean = !nativeDrift.length && !tokenDrift.length;
 
-  const amount = (row) => formatTokenUnits(row.delta_units, row.token_decimals ?? 18) ?? '?';
+  // Every digit, never six. A drift under 1e-6 rendered at the default
+  // precision prints as '0' (or '-0'), so the row would claim the ledger is
+  // "0 ETH off" and then print the derived and chain figures identically --
+  // three numbers that all say nothing is wrong, on a row that exists only
+  // because something is.
+  const amount = (row) => formatExactUnits(row.delta_units, row.token_decimals ?? 18) ?? '?';
   const symbolOf = (row) => row.token_symbol || 'tokens';
 
   return (
@@ -318,7 +325,7 @@ function WalletReconciliation({ report, chainNames }) {
                 {nativeDrift.map((row) => (
                   <li key={`${row.chain_id}-${row.asset_key}`}>
                     {chainName(row.chain_id)}: ledger is {amount(row)} ETH off
-                    {' '}(derived {formatTokenUnits(row.derived_units, 18)}, chain {formatTokenUnits(row.live_units, 18)})
+                    {' '}(derived {formatExactUnits(row.derived_units, 18)}, chain {formatExactUnits(row.live_units, 18)})
                   </li>
                 ))}
               </ul>

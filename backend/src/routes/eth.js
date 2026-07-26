@@ -423,7 +423,12 @@ router.get('/reconciliation', async (req, res) => {
       limit,
       offset,
     });
-    const summary = await EthReconciliation.summaryForUser(req.user.id);
+    // Scoped to the same wallet as `data`. A headline that totals every wallet
+    // above rows filtered to one of them is a number nobody can reconcile with
+    // what they are looking at -- and it reads as drift on the wallet on screen.
+    const summary = await EthReconciliation.summaryForUser(req.user.id, {
+      walletId: wallet.walletId,
+    });
 
     res.status(200).json({
       data: rows.map((row) => ({ ...row, chain_name: chains.chainLabel(row.chain_id) })),

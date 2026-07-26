@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatTokenUnits } from './format';
+import { formatExactUnits, formatTokenUnits } from './format';
 
 // Base-unit rendering for the on-chain balance audit (#62). The audit exists to
 // surface differences a float would round away, so the display path has to be
@@ -52,5 +52,38 @@ describe('formatTokenUnits', () => {
     expect(formatTokenUnits('')).toBe(null);
     expect(formatTokenUnits('1.5')).toBe(null);
     expect(formatTokenUnits('not a number')).toBe(null);
+  });
+});
+
+// The audit's own renderer. A mismatch row exists because two numbers differ,
+// so the one thing it may never do is print them as if they did not.
+describe('formatExactUnits', () => {
+  it('renders a sub-microether delta instead of collapsing it to zero', () => {
+    // The six-digit default would print '0' here, and the row would read
+    // "ledger is 0 ETH off (derived 1, chain 1)" -- three numbers all saying
+    // nothing is wrong, on a row raised because something is.
+    expect(formatExactUnits('1', 18)).toBe('0.000000000000000001');
+    expect(formatExactUnits('999999999999', 18)).toBe('0.000000999999999999');
+  });
+
+  it('never prints a bare -0 for a negative delta', () => {
+    expect(formatExactUnits('-1', 18)).toBe('-0.000000000000000001');
+    expect(formatExactUnits('-1', 6)).toBe('-0.000001');
+  });
+
+  it('scales by the asset decimals and keeps whole amounts readable', () => {
+    expect(formatExactUnits('250000000', 6)).toBe('250');
+    expect(formatExactUnits('1500000000000000000', 18)).toBe('1.5');
+    expect(formatExactUnits('7', 0)).toBe('7');
+  });
+
+  it('defaults a missing decimals to 18, like the backend', () => {
+    expect(formatExactUnits('1')).toBe('0.000000000000000001');
+    expect(formatExactUnits('1', null)).toBe('0.000000000000000001');
+  });
+
+  it('returns null for values it cannot read', () => {
+    expect(formatExactUnits(null, 18)).toBe(null);
+    expect(formatExactUnits('not a number', 18)).toBe(null);
   });
 });

@@ -75,6 +75,11 @@ const MIGRATION_SQL = MIGRATION.replace(/--[^\n]*/g, '');
 // Stub harness. Replaces every model call reconcileWallet makes so the tests
 // are about the judgement, not about SQL plumbing (the derivation SQL has its
 // own assertions further down).
+// `persistChecked` makes the upsert/lastCheckedByAsset stubs keep a store that
+// reproduces what the upsert SQL actually writes -- checked_at advances only for a COMPARED
+// status, and a skip keeps the previous value. That is the only way a test can
+// see the rotation as the next sync will see it; hand-feeding lastChecked
+// asserts the sort and nothing about what feeds it.
 function harness(t, {
   chainSet = '1',
   native = {},
@@ -82,6 +87,7 @@ function harness(t, {
   liveWei = {},
   liveTokens = {},
   lastChecked = new Map(),
+  persistChecked = false,
 } = {}) {
   const restore = [];
   const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
@@ -100,8 +106,28 @@ function harness(t, {
   stub(EthTransfer, 'nativeBalanceDeltas', async () =>
     Object.entries(native).map(([chainId, wei]) => ({ chain_id: Number(chainId), balance_wei: wei })));
   stub(EthTransfer, 'tokenBalanceDeltas', async () => tokens);
-  stub(EthReconciliation, 'lastCheckedByAsset', async () => lastChecked);
-  stub(EthReconciliation, 'upsert', async (walletId, row) => { calls.stored.push(row); return row; });
+  // Stored verdicts, keyed like the real table. Only used when persistChecked
+  // is on; `clock` stands in for CURRENT_TIMESTAMP and, exactly like the real
+  // one, advances between the per-asset statements.
+  const store = new Map(lastChecked);
+  let clock = 0;
+  const COMPARED = new Set(['match', 'dust', 'mismatch', 'unavailable']);
+
+  stub(EthReconciliation, 'lastCheckedByAsset', async () =>
+    (persistChecked ? new Map(store) : lastChecked));
+  stub(EthReconciliation, 'upsert', async (walletId, row) => {
+    calls.stored.push(row);
+    if (persistChecked) {
+      const key = `${row.chain_id}:${row.asset_key}`;
+      clock += 1;
+      const prior = store.get(key);
+      store.set(key, {
+        checkedAt: COMPARED.has(row.status) ? new Date(clock * 1000) : (prior?.checkedAt ?? null),
+        status: row.status,
+      });
+    }
+    return row;
+  });
   stub(EthReconciliation, 'pruneMissing', async (walletId, chainIds, keys) => {
     calls.pruned.push({ chainIds, keys });
     return 0;
@@ -296,6 +322,27 @@ test('a transiently skipped feed is as much of a hole as a permanently missing o
   // Its rows were never fetched and its cursor did not move, so the ledger is
   // incomplete rather than merely stale -- exactly the unsupported case.
   assert.equal(EthReconciliationService.feedGap(gates.get(1), 'token'), true);
+});
+
+test('the stored-state fallback skips a chain on ANY error code, not just an unavailable one', () => {
+  // eth_wallet_chains collapses the run's per-feed detail into one error_code,
+  // so the fallback cannot tell how big the hole is -- only that there is one.
+  // Ignoring codes it does not recognise would let a caller without
+  // chainResults compare an incomplete ledger and report phantom drift.
+  process.env.ETH_CHAINS = '1,42161';
+  for (const code of ['FEED_SKIPPED', 'SYNC_ERROR', 'CHAIN_SYNC_FAILED', 'ETHERSCAN_NOT_CONFIGURED']) {
+    const gates = EthReconciliationService.chainGates(null, [
+      { chain_id: 1, last_synced_at: new Date(), error_code: code, unsupported_feeds: [] },
+      { chain_id: 42161, last_synced_at: new Date(), error_code: null, unsupported_feeds: [] },
+    ]);
+    assert.equal(gates.get(1).skip, EthReconciliationService.SKIP_REASONS.CHAIN_ERROR, code);
+    assert.equal(gates.get(42161).skip, null, code);
+  }
+  const unavailable = EthReconciliationService.chainGates(null, [
+    { chain_id: 1, last_synced_at: new Date(), error_code: 'CHAIN_UNAVAILABLE', unsupported_feeds: [] },
+  ]);
+  assert.equal(unavailable.get(1).skip, EthReconciliationService.SKIP_REASONS.CHAIN_UNAVAILABLE);
+  delete process.env.ETH_CHAINS;
 });
 
 test('a chain that has never synced is skipped: there is no ledger to audit yet', () => {
@@ -498,7 +545,10 @@ test('the lookup budget rotates least-recently-checked first, so nothing starves
       { chain_id: 1, token_contract: USDC, token_symbol: 'USDC', token_decimals: 6, balance_units: '1' },
     ],
     liveTokens: { [`1:${USDC}`]: '1', [`1:${DAI}`]: '1' },
-    lastChecked: new Map([[`1:${DAI}`, newer], [`1:${USDC}`, older]]),
+    lastChecked: new Map([
+      [`1:${DAI}`, { checkedAt: newer, status: 'match' }],
+      [`1:${USDC}`, { checkedAt: older, status: 'match' }],
+    ]),
   });
 
   await EthReconciliationService.reconcileWallet(WALLET, {
@@ -510,6 +560,121 @@ test('the lookup budget rotates least-recently-checked first, so nothing starves
   // Without this a wallet holding more tokens than the budget would re-check
   // the same head of the list nightly and never reach the tail at all.
   assert.deepEqual(calls.tokenLookups.map((call) => call.contract), [USDC, DAI]);
+});
+
+test('the deferred tail is checked on the NEXT run, using the timestamps the first run wrote', async (t) => {
+  // The rotation's real test. Feeding lastChecked by hand only asserts the
+  // sort; this asserts the thing the sort depends on -- that a row written
+  // BECAUSE it was skipped does not come away with a fresher checked_at than
+  // the assets that were actually compared. Each upsert is its own statement,
+  // so a blanket CURRENT_TIMESTAMP hands the deferred tail the LATEST stamps of
+  // the run and it sorts last again, every night, forever.
+  const budget = EthReconciliationService.MAX_TOKEN_LOOKUPS;
+  const contracts = Array.from({ length: budget + 3 }, (_, i) =>
+    `0x${String(i).padStart(40, '0')}`);
+  const { calls } = harness(t, {
+    persistChecked: true,
+    native: { 1: '0' },
+    tokens: contracts.map((contract) => ({
+      chain_id: 1, token_contract: contract, token_symbol: 'SPAM', token_decimals: 0, balance_units: '1',
+    })),
+    liveTokens: Object.fromEntries(contracts.map((c) => [`1:${c}`, '1'])),
+  });
+
+  const options = {
+    liveWeiByChain: { 1: '0' },
+    chainResults: [{ chainId: 1, unavailable: false, skippedFeeds: [], unsupportedFeeds: [] }],
+    apiKey: 'key',
+  };
+  await EthReconciliationService.reconcileWallet(WALLET, options);
+  const firstRun = calls.tokenLookups.map((call) => call.contract);
+  calls.tokenLookups.length = 0;
+  await EthReconciliationService.reconcileWallet(WALLET, options);
+  const secondRun = calls.tokenLookups.map((call) => call.contract);
+
+  assert.equal(firstRun.length, budget);
+  const deferred = contracts.filter((contract) => !firstRun.includes(contract));
+  assert.equal(deferred.length, 3);
+  // The three the budget could not reach lead the next run, ahead of every
+  // token that was already compared.
+  assert.deepEqual(secondRun.slice(0, 3), deferred);
+});
+
+test('a token whose derived balance nets to zero keeps its unresolved verdict', async (t) => {
+  // "Derived zero" is a claim by the LEDGER, which is the thing under test.
+  // Dropping the row on that claim lets pruneMissing delete last night's
+  // mismatch precisely when the chain may still hold the token.
+  const { calls } = harness(t, {
+    native: { 1: '0' },
+    tokens: [
+      { chain_id: 1, token_contract: DAI, token_symbol: 'DAI', token_decimals: 18, balance_units: '0' },
+      { chain_id: 1, token_contract: USDC, token_symbol: 'USDC', token_decimals: 6, balance_units: '0' },
+    ],
+    liveTokens: { [`1:${DAI}`]: ONE_ETH.toString(), [`1:${USDC}`]: '0' },
+    lastChecked: new Map([
+      [`1:${DAI}`, { checkedAt: new Date('2026-01-01T00:00:00Z'), status: 'mismatch' }],
+      // Already compared at zero and the chain agreed: sold off, so it retires.
+      [`1:${USDC}`, { checkedAt: new Date('2026-01-01T00:00:00Z'), status: 'match' }],
+    ]),
+  });
+
+  await EthReconciliationService.reconcileWallet(WALLET, {
+    liveWeiByChain: { 1: '0' },
+    chainResults: [{ chainId: 1, unavailable: false, skippedFeeds: [], unsupportedFeeds: [] }],
+    apiKey: 'key',
+  });
+
+  assert.equal(rowFor(calls, 1, DAI).status, 'mismatch');
+  assert.equal(rowFor(calls, 1, USDC), undefined);
+  assert.deepEqual(calls.pruned[0].keys, ['1:ETH', `1:${DAI}`]);
+});
+
+test('a chain whose live balance never arrived spends no token lookups on it', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '1,42161',
+    native: { 1: '0', 42161: '0' },
+    tokens: [
+      { chain_id: 42161, token_contract: DAI, token_symbol: 'DAI', token_decimals: 18, balance_units: '1' },
+      { chain_id: 1, token_contract: USDC, token_symbol: 'USDC', token_decimals: 6, balance_units: '1' },
+    ],
+    liveTokens: { [`1:${USDC}`]: '1' },
+  });
+
+  await EthReconciliationService.reconcileWallet(WALLET, {
+    // Arbitrum's balance call failed in refreshHoldings, so it has no entry.
+    liveWeiByChain: { 1: '0' },
+    chainResults: [
+      { chainId: 1, unavailable: false, skippedFeeds: [], unsupportedFeeds: [] },
+      { chainId: 42161, unavailable: false, skippedFeeds: [], unsupportedFeeds: [] },
+    ],
+    apiKey: 'key',
+  });
+
+  // The key just proved it cannot reach Arbitrum; spending up to twenty
+  // throttled tokenbalance calls there starves the chains that ARE readable.
+  assert.deepEqual(calls.tokenLookups.map((call) => call.chainId), [1]);
+  assert.equal(rowFor(calls, 42161, DAI).status, 'unavailable');
+  assert.equal(rowFor(calls, 42161, DAI).skip_reason,
+    EthReconciliationService.SKIP_REASONS.LIVE_FETCH_FAILED);
+});
+
+test('no Etherscan key is its own skip reason, not the lookup budget', async (t) => {
+  const { calls } = harness(t, {
+    native: { 1: '0' },
+    tokens: [{ chain_id: 1, token_contract: DAI, token_symbol: 'DAI', token_decimals: 18, balance_units: '1' }],
+  });
+
+  const summary = await EthReconciliationService.reconcileWallet(WALLET, {
+    liveWeiByChain: { 1: '0' },
+    chainResults: [{ chainId: 1, unavailable: false, skippedFeeds: [], unsupportedFeeds: [] }],
+    apiKey: null,
+  });
+
+  // 'lookup_budget' renders as "checked on a later sync", which is a promise no
+  // later sync can keep while there is no key to check with.
+  assert.equal(rowFor(calls, 1, DAI).skip_reason, EthReconciliationService.SKIP_REASONS.NO_API_KEY);
+  assert.equal(summary.deferred, 0);
+  assert.equal(calls.tokenLookups.length, 0);
 });
 
 test('cleanup is scoped to the chains the run actually walked', async (t) => {
@@ -673,6 +838,51 @@ test('a stored verdict is fully replaced, live figure included, rather than half
   assert.match(sql, /live_units = EXCLUDED\.live_units/);
   assert.doesNotMatch(sql, /live_units = COALESCE/);
   assert.match(sql, /ON CONFLICT \(wallet_id, chain_id, asset_key\) DO UPDATE/);
+});
+
+test('checked_at advances only when the asset was actually compared', async () => {
+  queries.length = 0;
+  await EthReconciliation.upsert(7, {
+    chain_id: 1, asset_key: DAI, asset_type: 'token',
+    derived_units: '1', live_units: null, delta_units: null,
+    status: 'skipped', skip_reason: 'lookup_budget',
+  });
+  const sql = sqlOf(queries.at(-1));
+
+  // A row written BECAUSE the budget deferred it must not come away looking
+  // freshly checked: every upsert is its own statement, so the deferred tail
+  // would carry the run's latest timestamps, sort last again next night, and be
+  // audited never.
+  assert.match(sql, /checked_at = CASE WHEN EXCLUDED\.status IN \('match', 'dust', 'mismatch', 'unavailable'\) THEN CURRENT_TIMESTAMP ELSE eth_reconciliation\.checked_at END/);
+  assert.doesNotMatch(sql, /checked_at = CURRENT_TIMESTAMP/);
+  // ...and the same rule on the INSERT arm, so a first-ever skip stores NULL --
+  // the value the rotation reads as "never compared", which sorts first.
+  assert.match(sql, /CASE WHEN \$10::text IN \('match', 'dust', 'mismatch', 'unavailable'\) THEN CURRENT_TIMESTAMP ELSE NULL END/);
+});
+
+test('the migration makes checked_at nullable, idempotently', () => {
+  // NULL is the never-compared value the rotation depends on. The column
+  // shipped NOT NULL DEFAULT CURRENT_TIMESTAMP, and this file re-runs on every
+  // boot, so both ALTERs have to be no-ops the second time.
+  assert.match(MIGRATION_SQL, /checked_at TIMESTAMP,/);
+  assert.doesNotMatch(MIGRATION_SQL, /checked_at TIMESTAMP NOT NULL/);
+  assert.match(MIGRATION_SQL, /ALTER TABLE eth_reconciliation ALTER COLUMN checked_at DROP NOT NULL;/);
+  assert.match(MIGRATION_SQL, /ALTER TABLE eth_reconciliation ALTER COLUMN checked_at DROP DEFAULT;/);
+});
+
+test('the rotation reader carries the stored status, and the summary can be scoped to one wallet', async () => {
+  queries.length = 0;
+  await EthReconciliation.lastCheckedByAsset(7);
+  // The candidate filter needs last run's verdict, not just its clock: a
+  // derived-zero token only retires once the CHAIN agreed it was zero.
+  assert.match(sqlOf(queries.at(-1)), /SELECT chain_id, asset_key, checked_at, status/);
+
+  queries.length = 0;
+  await EthReconciliation.summaryForUser(1, { walletId: 7 });
+  // Headline counts describe the same scope as the rows under them; totalling
+  // every wallet above a wallet-filtered feed reads as drift on the wallet on
+  // screen.
+  assert.match(sqlOf(queries.at(-1)), /w\.user_id = \$1 AND[\s\S]*r\.wallet_id = \$2/);
 });
 
 // ---------------------------------------------------------------------------
