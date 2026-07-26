@@ -12,7 +12,7 @@ const EthActivity = require('../models/EthActivity');
 const EthReconciliation = require('../models/EthReconciliation');
 const AssetPriceHistory = require('../models/AssetPriceHistory');
 const EthWalletService = require('../services/EthWalletService');
-const EthActivityService = require('../services/EthActivityService');
+const { CATEGORIES } = require('../utils/ethActivityVocabulary');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
 
@@ -49,9 +49,9 @@ const LABEL_KINDS = new Set(['exchange', 'external', 'own', 'bridge']);
 // assertion that rewrites spending as an internal transfer.
 const NAME_OPTIONAL_KINDS = new Set(['external', 'own', 'bridge']);
 
-// The activity layer's category vocabulary, single-sourced from the service so
-// the route and the CHECK constraint in 038 can never drift apart.
-const ACTIVITY_CATEGORIES = new Set(EthActivityService.CATEGORIES);
+// The activity layer's category vocabulary, single-sourced from the shared
+// module so the route and the CHECK constraint in 038 can never drift apart.
+const ACTIVITY_CATEGORIES = new Set(CATEGORIES);
 
 const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
 

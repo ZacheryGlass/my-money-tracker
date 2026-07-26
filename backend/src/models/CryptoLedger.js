@@ -1,7 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
-const EthActivityService = require('../services/EthActivityService');
+const { CATEGORIES: ACTIVITY_CATEGORIES } = require('../utils/ethActivityVocabulary');
 
 // The unified crypto ledger (#63): one chronological stream over the two places
 // crypto activity is recorded -- eth_activity (on-chain, per transaction per
@@ -649,7 +649,7 @@ const UNION_SOURCE = '(SELECT * FROM onchain UNION ALL SELECT * FROM exch) r';
 // return -- an unknown ?category= is a 400, so a client offering a value the
 // server does not know is a broken filter, not a wider feed.
 const EXCHANGE_ONLY_CATEGORIES = ['fee', 'exchange_transfer'];
-const LEDGER_CATEGORIES = [...EthActivityService.CATEGORIES, ...EXCHANGE_ONLY_CATEGORIES];
+const LEDGER_CATEGORIES = [...ACTIVITY_CATEGORIES, ...EXCHANGE_ONLY_CATEGORIES];
 const LEDGER_SOURCES = ['onchain', 'exchange'];
 
 // The quarantine filter's vocabulary, spelled exactly as GET /api/eth/activity
