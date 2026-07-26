@@ -114,6 +114,30 @@ test('GET /api/eth/transfers?wallet_id= rejects an unparseable id instead of wid
   assert.equal(sink.sql, undefined);
 });
 
+test('GET /api/eth/transfers surfaces the captured method selector and name', async () => {
+  queryHandler = async (sql) => {
+    if (/FROM eth_wallets WHERE id/.test(sql)) return { rows: [] };
+    return {
+      rows: [{
+        id: 1,
+        tx_hash: '0xabc',
+        transfer_type: 'native',
+        method_id: '0x7ff36ab5',
+        method_name: 'swapExactETHForTokens(uint256,address[],address,uint256)',
+        total_count: '1',
+      }],
+    };
+  };
+
+  const response = await request(app).get('/api/eth/transfers');
+
+  assert.equal(response.status, 200);
+  // Decoding happens during sync; this route only ever reads the stored value,
+  // so serving the feed never waits on a signature service.
+  assert.equal(response.body.data[0].method_id, '0x7ff36ab5');
+  assert.match(response.body.data[0].method_name, /^swapExactETHForTokens/);
+});
+
 test('GET /api/eth/transfers applies the requested type facet', async () => {
   const sink = {};
   queryHandler = captureFeed(sink);

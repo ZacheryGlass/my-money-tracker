@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
 const SecretsService = require('./SecretsService');
 const EthTransactionMirrorService = require('./EthTransactionMirrorService');
+const MethodSignatureService = require('./MethodSignatureService');
 const PriceService = require('./PriceService');
 const TransactionClassificationService = require('./TransactionClassificationService');
 const EthWallet = require('../models/EthWallet');
@@ -89,11 +90,25 @@ class EthWalletService {
       token_symbol: null,
       token_decimals: null,
       is_error: raw.isError === '1',
+      // Only the top-level tx has calldata, so only its native leg can name a
+      // method. Internal traces, token logs and the synthesized gas leg all
+      // stay NULL -- the activity layer reads the method off the native leg.
+      method_id: null,
+      method_name: null,
     });
 
     for (const raw of normal) {
       if (raw.value !== '0') {
-        rows.push({ ...baseRow(raw, 'native'), value_wei: raw.value });
+        rows.push({
+          ...baseRow(raw, 'native'),
+          value_wei: raw.value,
+          // Free at ingest: txlist already carries both. functionName is a
+          // full signature ("swapExactETHForTokens(uint256,address[],...)")
+          // when Etherscan can decode the contract and empty otherwise, which
+          // is what leaves work for the decode pass.
+          method_id: MethodSignatureService.normalizeSelector(raw.methodId),
+          method_name: MethodSignatureService.normalizeMethodName(raw.functionName),
+        });
       }
       if ((raw.from || '').toLowerCase() === wallet) {
         const fee = BigInt(raw.gasUsed || 0) * BigInt(raw.gasPrice || 0);
@@ -160,6 +175,17 @@ class EthWalletService {
       await EthTransfer.deleteFromBlock(walletId, ['token'], resume.token);
       const inserted = await EthTransfer.bulkInsert(rows);
 
+      // Naming the selectors Etherscan could not decode. Sync-time only: the
+      // transfers route must never wait on Sourcify or 4byte. Non-fatal by
+      // design -- method_name is a cosmetic hint, so a signature service being
+      // down must not fail a sync that already has every balance and transfer.
+      let methods = null;
+      try {
+        methods = await MethodSignatureService.decodePendingForWallet(walletId);
+      } catch (err) {
+        logger.warn({ walletId, err }, 'Method signature decode failed; selectors stay unnamed');
+      }
+
       await EthWallet.updateCursors(walletId, {
         normal: maxBlock(normal),
         internal: maxBlock(internal),
@@ -176,6 +202,7 @@ class EthWalletService {
         inserted,
         holdings,
         mirror,
+        methods,
         fetched: { normal: normal.length, internal: internal.length, token: token.length },
       };
       logger.info({ walletId, address: wallet.address, results }, 'ETH wallet sync completed');
