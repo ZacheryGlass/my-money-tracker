@@ -550,6 +550,206 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     (await CryptoLedger.findForUser(2, { limit: 100, offset: 0 }))
       .rows.some((r) => r.external_id === 'THEIRS-1'));
 
+  // --- the spam quarantine, on the merged feed (#74) --------------------------
+  //
+  // The ledger is the "no transaction unexplained" screen, so a quarantine it
+  // does not honour re-surfaces exactly the noise 045 removed -- and the badge
+  // stops being able to reach zero, which is what made the queue ignorable in
+  // the first place.
+  const beforeSpam = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
+  const beforeSpamSummary = await CryptoLedger.summaryForUser(1);
+  await pool.query(
+    "UPDATE eth_activity SET spam = TRUE, spam_reason = 'unsolicited_token' WHERE tx_hash = $1",
+    [tx('2')]
+  );
+
+  const defaultFeed = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
+  ok('a quarantined row leaves the default feed',
+    defaultFeed.total === beforeSpam.total - 1
+      && !defaultFeed.rows.some((r) => r.tx_hash === tx('2')));
+  const onlySpam = await CryptoLedger.findForUser(1, { spam: 'only', limit: 200, offset: 0 });
+  ok("spam='only' is the Spam view, and every row says why it is there",
+    onlySpam.total === 1 && onlySpam.rows[0].tx_hash === tx('2')
+      && onlySpam.rows[0].spam === true
+      && onlySpam.rows[0].spam_reason === 'unsolicited_token');
+  // Masked, not cleared: a quarantined row is "not worth explaining", which is
+  // a different claim from "explained" -- and the masking is what makes the
+  // rescue below lossless.
+  ok('a quarantined row is not counted as unexplained',
+    onlySpam.rows[0].needs_review === false && onlySpam.rows[0].review_reason === null);
+  const allSpam = await CryptoLedger.findForUser(1, { spam: 'all', limit: 200, offset: 0 });
+  ok("spam='all' is the whole history again", allSpam.total === beforeSpam.total);
+
+  const spamSummary = await CryptoLedger.summaryForUser(1);
+  ok('the summary drops it from every count and reports how many it hid',
+    spamSummary.total === beforeSpamSummary.total - 1
+      && spamSummary.needs_review_count === beforeSpamSummary.needs_review_count - 1
+      && spamSummary.spam_count === 1);
+  ok('the export honours the quarantine like the feed does',
+    (await CryptoLedger.findAllForUser(1, { limit: 1000 })).every((r) => r.tx_hash !== tx('2'))
+      && (await CryptoLedger.findAllForUser(1, { spam: 'only', limit: 1000 })).length === 1);
+
+  // The one-click rescue has to restore the row AS THE LADDER LEFT IT -- flag
+  // included. A false positive that came back already marked reviewed would be
+  // a second, quieter way to lose it.
+  await pool.query(
+    `INSERT INTO eth_activity_overrides (wallet_id, chain_id, tx_hash, spam)
+     VALUES ($1, 42161, $2, FALSE)
+     ON CONFLICT (wallet_id, chain_id, tx_hash) DO UPDATE SET spam = FALSE`,
+    [walletId, tx('2')]
+  );
+  const rescued = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
+  const rescuedRow = rescued.rows.find((r) => r.tx_hash === tx('2'));
+  ok('"not spam" restores the row and uncovers the flag the ladder set',
+    rescuedRow && rescuedRow.spam === false && rescuedRow.needs_review === true
+      && rescuedRow.review_reason === 'unlabeled');
+  await pool.query('DELETE FROM eth_activity_overrides WHERE tx_hash = $1', [tx('2')]);
+  await pool.query(
+    'UPDATE eth_activity SET spam = FALSE, spam_reason = NULL WHERE tx_hash = $1', [tx('2')]
+  );
+
+  // A spam verdict inside a COLLAPSE GROUP. The two halves of a wallet-to-wallet
+  // transfer are two rows for one event, and they must agree about being
+  // hidden: a spam row that vanished while its folded twin rendered would show
+  // the same movement as both real and junk.
+  await pool.query(
+    `UPDATE eth_activity SET spam = TRUE, spam_reason = 'unsolicited_token'
+     WHERE tx_hash = $1 AND wallet_id = $2`,
+    [SELF_TX, wallet2Id]
+  );
+  const halfSpam = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
+  // ANDed, not ORed: one half saying "this is real" renders the event, because
+  // a wrong quarantine hides a real movement while a missed one only leaves a
+  // visible row unexplained.
+  ok('one quarantined half does NOT hide a collapsed transfer',
+    halfSpam.rows.some((r) => r.tx_hash === SELF_TX));
+  ok('and the Spam view does not show it either, since the event is not hidden',
+    !(await CryptoLedger.findForUser(1, { spam: 'only', limit: 200, offset: 0 }))
+      .rows.some((r) => r.tx_hash === SELF_TX));
+  await pool.query(
+    `UPDATE eth_activity SET spam = TRUE, spam_reason = 'unsolicited_token'
+     WHERE tx_hash = $1`,
+    [SELF_TX]
+  );
+  const bothSpam = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
+  const bothSpamOnly = await CryptoLedger.findForUser(1, { spam: 'only', limit: 200, offset: 0 });
+  ok('a unanimously quarantined group hides, and hides exactly ONCE',
+    !bothSpam.rows.some((r) => r.tx_hash === SELF_TX)
+      && bothSpamOnly.rows.filter((r) => r.tx_hash === SELF_TX).length === 1);
+  await pool.query(
+    'UPDATE eth_activity SET spam = FALSE, spam_reason = NULL WHERE tx_hash = $1', [SELF_TX]
+  );
+
+  // --- a linked bridge pair is ONE event (#59) --------------------------------
+  //
+  // A bridge_out on chain A and the bridge_in that completes it on chain B are
+  // one movement of the user's own money that the chains recorded twice, with
+  // different hashes and different per-chain block numbers -- so nothing else
+  // in this query merges them.
+  const BRIDGE_OUT_TX = tx('a');
+  const BRIDGE_IN_TX = tx('b');
+  const beforeBridge = await CryptoLedger.summaryForUser(1);
+  const bridgeRows = await pool.query(
+    `INSERT INTO eth_activity (wallet_id, chain_id, tx_hash, block_number, block_time, category,
+       counterparty_address, legs, fee_wei, needs_review, usd_value, usd_basis)
+     VALUES
+       ($1, 1,     $3, 19400000, '2026-05-01 10:00', 'bridge_out', $5,
+        '[{"asset":"ETH","direction":"out","amount":"3"}]'::jsonb, '500000000000000', false, 6000.00, 'exact'),
+       ($2, 42161, $4, 320000000, '2026-05-01 10:12', 'bridge_in',  $5,
+        '[{"asset":"ETH","direction":"in","amount":"2.998"}]'::jsonb, 0, false, 5996.00, 'exact')
+     RETURNING id, tx_hash`,
+    [walletId, wallet2Id, BRIDGE_OUT_TX, BRIDGE_IN_TX, addr('f')]
+  );
+  const bridgeId = (hash) => bridgeRows.rows.find((r) => r.tx_hash === hash).id;
+  await pool.query(
+    `INSERT INTO eth_activity_links (out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount)
+     VALUES ($1, $2, 'ETH', 3, 2.998, 0.002)`,
+    [bridgeId(BRIDGE_OUT_TX), bridgeId(BRIDGE_IN_TX)]
+  );
+
+  const bridged = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
+  const bridgeHost = bridged.rows.find((r) => r.tx_hash === BRIDGE_OUT_TX);
+  ok('a linked bridge pair renders as ONE row, hosted by the out side',
+    bridgeHost && !bridged.rows.some((r) => r.tx_hash === BRIDGE_IN_TX)
+      && bridgeHost.category === 'bridge_out' && bridgeHost.chain_id === 1);
+  ok('the arrival is folded in with its own coordinates, not dropped',
+    bridgeHost?.bridge_match
+      && bridgeHost.bridge_match.tx_hash === BRIDGE_IN_TX
+      && bridgeHost.bridge_match.chain_id === 42161
+      && bridgeHost.bridge_match.wallet_id === wallet2Id
+      && bridgeHost.bridge_match.legs[0].amount === '2.998');
+  // Exact strings, never JSON doubles -- the same rule the venue fold follows.
+  ok('the bridge fee and amounts arrive as exact strings',
+    bridgeHost?.bridge_match.asset === 'ETH'
+      && typeof bridgeHost.bridge_match.fee_amount === 'string'
+      && Number(bridgeHost.bridge_match.fee_amount) === 0.002);
+  // The bug in numbers: $6,000 moved, and two rows would report $11,996.
+  ok('the dollars are counted ONCE, not once per chain',
+    bridged.rows
+      .filter((r) => r.tx_hash === BRIDGE_OUT_TX || r.tx_hash === BRIDGE_IN_TX)
+      .reduce((sum, r) => sum + Number(r.usd_value || 0), 0) === 6000);
+  const afterBridge = await CryptoLedger.summaryForUser(1);
+  ok('the summary counts the pair once, and says how many pairs it folded',
+    afterBridge.total === beforeBridge.total + 1
+      && afterBridge.bridge_matched_count === 1);
+  ok('and the CSV export emits one summable line for it',
+    (await CryptoLedger.findAllForUser(1, { limit: 1000 }))
+      .filter((r) => r.tx_hash === BRIDGE_OUT_TX || r.tx_hash === BRIDGE_IN_TX).length === 1);
+  // The folded half stays addressable, or the filter DROPS the event instead of
+  // narrowing to it -- the failure the venue fold's second arm exists for.
+  ok('?category=bridge_in still finds the event through its host',
+    (await CryptoLedger.findForUser(1, { category: 'bridge_in', limit: 200, offset: 0 }))
+      .rows.some((r) => r.tx_hash === BRIDGE_OUT_TX));
+  ok('and the RECEIVING wallet finds it too',
+    (await CryptoLedger.findForUser(1, { walletId: wallet2Id, limit: 200, offset: 0 }))
+      .rows.some((r) => r.tx_hash === BRIDGE_OUT_TX));
+
+  // An UNLINKED leg is still one honest row: the ladder flagged it, and nothing
+  // here may present it as a completed transfer.
+  const LONE_BRIDGE_TX = tx('c');
+  await pool.query(
+    `INSERT INTO eth_activity (wallet_id, chain_id, tx_hash, block_number, block_time, category,
+       counterparty_address, legs, fee_wei, needs_review, review_reason, usd_value, usd_basis)
+     VALUES ($1, 1, $2, 19500000, '2026-05-02 10:00', 'bridge_out', $3,
+       '[{"asset":"ETH","direction":"out","amount":"1"}]'::jsonb, '300000000000000', true,
+       'unmatched_bridge', 2000.00, 'exact')`,
+    [walletId, LONE_BRIDGE_TX, addr('f')]
+  );
+  const withLone = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
+  const lone = withLone.rows.find((r) => r.tx_hash === LONE_BRIDGE_TX);
+  ok('an unlinked bridge leg stays a single, still-flagged row',
+    lone && lone.bridge_match === null && lone.needs_review === true);
+
+  // --- a cross-user link cannot leak ------------------------------------------
+  //
+  // eth_activity_links has no owner column (scope is inherited through
+  // eth_wallets), so nothing in the schema forbids a link naming another user's
+  // activity row. Reached by id, that would render user 2's transaction inside
+  // user 1's feed.
+  const foreignWallet = await pool.query(
+    "INSERT INTO eth_wallets (user_id, address, label) VALUES (2, $1, 'Theirs') RETURNING id",
+    [addr('e')]
+  );
+  const foreignLeg = await pool.query(
+    `INSERT INTO eth_activity (wallet_id, chain_id, tx_hash, block_number, block_time, category,
+       counterparty_address, legs, fee_wei, needs_review, usd_value, usd_basis)
+     VALUES ($1, 42161, $2, 320500000, '2026-05-02 10:10', 'bridge_in', $3,
+       '[{"asset":"ETH","direction":"in","amount":"1"}]'::jsonb, 0, true, 2000.00, 'exact')
+     RETURNING id`,
+    [foreignWallet.rows[0].id, tx('d'), addr('f')]
+  );
+  await pool.query(
+    `INSERT INTO eth_activity_links (out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount)
+     SELECT id, $2, 'ETH', 1, 1, 0 FROM eth_activity WHERE tx_hash = $1`,
+    [LONE_BRIDGE_TX, foreignLeg.rows[0].id]
+  );
+  const afterForeignLink = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
+  ok('a cross-user link folds NOTHING into the owner\'s feed',
+    afterForeignLink.rows.find((r) => r.tx_hash === LONE_BRIDGE_TX)?.bridge_match === null);
+  ok('and it does not suppress the other user\'s own row either',
+    (await CryptoLedger.findForUser(2, { limit: 200, offset: 0 }))
+      .rows.some((r) => r.tx_hash === tx('d')));
+
   await pool.end();
 
   console.log('\n--- checks ---');

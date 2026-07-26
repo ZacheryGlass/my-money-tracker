@@ -16,6 +16,10 @@ router.use(requireUser);
 
 const CATEGORIES = new Set(CryptoLedger.CATEGORIES);
 const SOURCES = new Set(CryptoLedger.SOURCES);
+// Three-valued, spelled exactly as GET /api/eth/activity spells it: the two
+// screens read the same quarantined rows, and a vocabulary that drifted would
+// 400 on one page and work on the other.
+const SPAM_FILTERS = new Set(CryptoLedger.SPAM_FILTERS);
 
 // The whole filtered ledger has to fit in memory to be serialized, so the
 // export is capped and SAYS SO in the response headers when it truncates. A
@@ -35,7 +39,22 @@ function parseId(raw) {
 //
 // Returns { error } for a rejected request, { filters } otherwise.
 async function parseFilters(req) {
-  const filters = { category: null, needsReview: null, source: null, walletId: null, exchangeAccountId: null };
+  const filters = {
+    category: null, needsReview: null, source: null, walletId: null, exchangeAccountId: null,
+    // Quarantined spam (#74) is hidden by default -- that IS the quarantine --
+    // and reachable with ?spam=only. The ledger is the flagship "no transaction
+    // unexplained" screen, so rendering the noise 045 removed as ordinary
+    // events here would undo the quarantine on the one page it matters most.
+    spam: 'exclude',
+  };
+
+  if (req.query.spam !== undefined && req.query.spam !== '') {
+    const spam = String(req.query.spam).trim().toLowerCase();
+    if (!SPAM_FILTERS.has(spam)) {
+      return { error: { status: 400, body: { error: `spam must be one of: ${[...SPAM_FILTERS].join(', ')}` } } };
+    }
+    filters.spam = spam;
+  }
 
   if (req.query.category !== undefined && req.query.category !== '') {
     const category = String(req.query.category).trim().toLowerCase();
@@ -89,6 +108,21 @@ function sourceLabel(row) {
   return row.account_name || row.exchange || 'Exchange';
 }
 
+// A folded bridge half names its chain the same way, resolved here rather than
+// on the client: the client's chain map is explorer URLs only, and a second
+// copy of the registry's names there would be a second thing to keep in step
+// with config/chains.js.
+function withBridgeLabel(row) {
+  if (!row.bridge_match) return row;
+  return {
+    ...row,
+    bridge_match: {
+      ...row.bridge_match,
+      chain_label: chains.chainLabel(row.bridge_match.chain_id ?? chains.DEFAULT_CHAIN_ID),
+    },
+  };
+}
+
 // GET /api/crypto/ledger
 //
 // The unified ledger: eth_activity and exchange_records interleaved by time,
@@ -109,7 +143,7 @@ router.get('/ledger', async (req, res) => {
     });
 
     return res.status(200).json({
-      data: rows.map((row) => ({ ...row, source_label: sourceLabel(row) })),
+      data: rows.map((row) => ({ ...withBridgeLabel(row), source_label: sourceLabel(row) })),
       pagination: { total, limit, offset },
     });
   } catch (error) {
@@ -153,6 +187,11 @@ const EXPORT_COLUMNS = [
   ['usd_fee', 'usd_fee'],
   ['usd_basis', 'usd_basis'],
   ['needs_review', 'needs_review'],
+  // Only ever populated when the caller asked for ?spam=only or ?spam=all --
+  // the export excludes the quarantine by default, exactly like the feed. It is
+  // a column rather than nothing because a quarantined row that exported as an
+  // ordinary line would be a hidden row silently re-entering the totals.
+  ['quarantined', 'quarantined'],
   ['matched_with', 'matched_with'],
   ['tx_hash', 'tx_hash'],
   ['chain_id', 'chain_id'],
@@ -217,12 +256,22 @@ function exportRow(row) {
     usd_fee: row.usd_fee ?? '',
     usd_basis: row.usd_basis || '',
     needs_review: row.needs_review ? 'yes' : 'no',
+    // The reason code, not a bare 'yes': "hidden, and nobody can say on what
+    // grounds" is the failure 045's paired CHECK exists to prevent, and an
+    // export is the one place the reason cannot be hovered for.
+    quarantined: row.spam ? (row.spam_reason || 'yes') : '',
     // Which other record this line already accounts for, and on what evidence.
     // A reader summing the ledger has to be able to see that the pair is one
     // movement and not two.
+    // A folded bridge pair reports the same way, and for the same reason: the
+    // arrival on the far chain is already accounted for by this ONE line (its
+    // assets and dollars are deliberately not added in -- it is the same money
+    // landing), so a reader summing the export has to be able to see that.
     matched_with: match
       ? deformula(`${match.account_name || match.exchange || 'exchange'} ${match.external_id || ''} (${match.match_method}${match.verdict ? `, ${match.verdict}` : ''})`.trim())
-      : '',
+      : (row.bridge_match
+        ? deformula(`${chains.chainLabel(row.bridge_match.chain_id)} ${row.bridge_match.tx_hash || ''} (bridge)`.trim())
+        : ''),
     tx_hash: row.tx_hash || '',
     chain_id: row.chain_id ?? '',
     external_id: deformula(row.external_id || ''),

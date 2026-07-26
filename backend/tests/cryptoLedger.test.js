@@ -151,17 +151,23 @@ function fakeQuery(text, params = []) {
     const [id, userId] = params;
     return { rows: id === OWNED_ACCOUNT_ID && userId === OWNER_ID ? [{ id, user_id: userId, name: 'Kraken' }] : [] };
   }
-  if (/SELECT COUNT\(\*\)::int AS total,/.test(sql) && /FROM \(SELECT \* FROM onchain UNION ALL/.test(sql)) {
+  if (/AS total, /.test(sql) && /FROM \(SELECT \* FROM onchain UNION ALL/.test(sql)) {
+    // The counts the summary query would produce. Quarantined rows are excluded
+    // from every count and reported on their own, which is the contract
+    // summaryForUser states in SQL and this fake has to mirror.
+    const visible = ledgerRows.filter((r) => !r.spam);
     return {
       rows: [{
-        total: ledgerRows.length,
-        needs_review_count: ledgerRows.filter((r) => r.needs_review).length,
-        onchain_count: ledgerRows.filter((r) => r.source === 'onchain').length,
-        exchange_count: ledgerRows.filter((r) => r.source === 'exchange').length,
+        total: visible.length,
+        needs_review_count: visible.filter((r) => r.needs_review).length,
+        onchain_count: visible.filter((r) => r.source === 'onchain').length,
+        exchange_count: visible.filter((r) => r.source === 'exchange').length,
         onchain_needs_review: 0,
         exchange_needs_review: 0,
-        matched_count: ledgerRows.filter((r) => r.exchange_match).length,
-        unpriced_count: ledgerRows.filter((r) => r.usd_basis === 'unpriced').length,
+        matched_count: visible.filter((r) => r.exchange_match).length,
+        bridge_matched_count: visible.filter((r) => r.bridge_match).length,
+        spam_count: ledgerRows.filter((r) => r.spam).length,
+        unpriced_count: visible.filter((r) => r.usd_basis === 'unpriced').length,
         carried_count: 0,
         first_at: null,
         last_at: null,
@@ -267,6 +273,138 @@ test('an owned wallet id narrows the query rather than being ignored', async () 
   assert.ok(params.includes(OWNED_WALLET_ID));
   assert.ok(params.includes('swap'));
   assert.ok(params.includes(false));
+});
+
+// --- the spam quarantine (#74) ---------------------------------------------
+
+test('an unknown spam filter is a 400, not a feed that quietly shows everything', async () => {
+  const response = await request(app).get('/api/crypto/ledger?spam=hide');
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /spam must be one of/);
+  assert.equal(lastLedgerQuery(), undefined, 'the query must not run at all');
+});
+
+test('the ledger speaks the SAME spam vocabulary as the activity feed', () => {
+  // Two readers over the same quarantined rows. A value that works on one page
+  // and 400s on the other is a filter nobody can trust.
+  assert.deepEqual(CryptoLedger.SPAM_FILTERS, ['exclude', 'only', 'all']);
+});
+
+test('quarantined rows are excluded by default, without being asked for', async () => {
+  await request(app).get('/api/crypto/ledger');
+  // The flagship "no transaction unexplained" screen must not re-surface the
+  // noise 045 removed. NOT r.spam is the default, present with no ?spam= at all.
+  assert.match(lastLedgerQuery().sql, /WHERE NOT r\.spam/);
+});
+
+test("?spam=only is the Spam view and ?spam=all lifts the filter entirely", async () => {
+  await request(app).get('/api/crypto/ledger?spam=only');
+  assert.match(lastLedgerQuery().sql, /WHERE r\.spam/);
+
+  await request(app).get('/api/crypto/ledger?spam=all');
+  assert.ok(!/r\.spam/.test(lastLedgerQuery().sql.split('FROM (SELECT')[1] || ''),
+    'all means no spam predicate at all');
+});
+
+test('the resolved verdict decides, and a quarantined row is not "unexplained"', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  // COALESCE(override, derived), exactly as EthActivity's readers resolve it.
+  assert.match(sql, /COALESCE\(o\.spam, a\.spam\) AS spam/);
+  // ...and needs_review is MASKED by it rather than stored cleared, which is
+  // what makes an un-quarantine lossless: the flag comes back with the row.
+  assert.match(sql, /o\.category IS NOT NULL OR COALESCE\(o\.spam, a\.spam\) THEN FALSE/);
+  assert.match(sql, /o\.category IS NOT NULL OR COALESCE\(o\.spam, a\.spam\) THEN NULL/);
+});
+
+test('a collapse group is quarantined only when EVERY half is', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  // BOOL_AND, opposite to needs_review's BOOL_OR, and deliberately: a missed
+  // flag leaves a visible row unexplained, while a wrong quarantine HIDES a
+  // real movement -- so one half saying "this is real" renders the event.
+  assert.match(sql, /BOOL_AND\(q\.spam\) OVER \(PARTITION BY q\.chain_id, q\.tx_hash\)/);
+});
+
+test('a venue record can never be quarantined, and never NULL either', async () => {
+  await request(app).get('/api/crypto/ledger');
+  // NULL on the exchange branch would make `NOT r.spam` drop the whole venue
+  // side of the ledger silently.
+  assert.match(lastLedgerQuery().sql, /FALSE AS spam, NULL::text AS spam_reason/);
+});
+
+test('the summary excludes the quarantine from its counts and says how many', async () => {
+  ledgerRows = [onchainRow(), onchainRow({ row_id: 11, spam: true, spam_reason: 'address_poisoning' })];
+  const response = await request(app).get('/api/crypto/ledger/summary');
+  assert.equal(response.body.summary.total, 1);
+  // Hiding rows without stating the number is the one thing a quarantine must
+  // not do -- it is indistinguishable from a sync that never fetched them.
+  assert.equal(response.body.summary.spam_count, 1);
+});
+
+test('a quarantined row exported on request says so, with its reason', async () => {
+  ledgerRows = [onchainRow({ spam: true, spam_reason: 'unsolicited_token' })];
+  const response = await request(app).get('/api/crypto/ledger/export?spam=only');
+  const [header, line] = response.text.trim().split('\n');
+  assert.equal(line.split(',')[header.split(',').indexOf('quarantined')], 'unsolicited_token');
+});
+
+// --- the bridge fold (#59) -------------------------------------------------
+
+test('a linked bridge pair folds into one row hosted by the out side', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  // Read from 044's link table, not re-derived: the matching pass already
+  // decided these two transactions are one movement.
+  assert.match(sql, /LEFT JOIN eth_activity_links lo ON lo\.out_activity_id = a\.id/);
+  assert.match(sql, /LEFT JOIN eth_activity_links li ON li\.in_activity_id = a\.id/);
+  // The IN side is suppressed only when its OUT side is in this same,
+  // user-scoped CTE -- which is what keeps a cross-user link from folding.
+  assert.match(sql, /FROM onchain_collapsed i WHERE h\.bridge_role = 'out' AND i\.bridge_role = 'in'/);
+  assert.match(sql, /h\.bridge_role IS DISTINCT FROM 'in'/);
+  // Never a join to the counterpart activity row: eth_activity_links has no
+  // owner column, so reaching through it would render another user's row.
+  assert.ok(!/JOIN eth_activity pair/.test(sql));
+});
+
+test('the folded bridge half stays addressable by wallet and by category', async () => {
+  await request(app).get('/api/crypto/ledger?category=bridge_in');
+  const { sql } = lastLedgerQuery();
+  // The in side was suppressed from its own row, so a filter that only tested
+  // the host's column would return nothing while the event is right there.
+  assert.match(sql, /OR r\.bridge_category = \$\d+/);
+  assert.match(sql, /ARRAY\[i\.wallet_id\] \|\| COALESCE\(i\.fold_wallet_ids/);
+});
+
+test('a folded bridge pair reports itself once in the export', async () => {
+  ledgerRows = [onchainRow({
+    category: 'bridge_out',
+    chain_id: 1,
+    legs: [{ asset: 'ETH', direction: 'out', amount: '3' }],
+    usd_value: '6000.00',
+    bridge_match: {
+      link_id: 4, wallet_id: 1, wallet_label: 'Main', chain_id: 42161,
+      tx_hash: TX, category: 'bridge_in', needs_review: false,
+      legs: [{ asset: 'ETH', direction: 'in', amount: '2.998' }],
+      usd_value: '5996.00', usd_basis: 'exact',
+      asset: 'ETH', out_amount: '3', in_amount: '2.998', fee_amount: '0.002',
+    },
+  })];
+  const response = await request(app).get('/api/crypto/ledger/export');
+  const lines = response.text.trim().split('\n');
+  const [header, line] = lines;
+  const cell = (name) => line.split(',')[header.split(',').indexOf(name)];
+
+  assert.equal(lines.length, 2, 'one movement, one line');
+  // The arrival is the SAME money landing, so it is not added to assets_in --
+  // the identical rule the exchange fold and the self-transfer collapse follow.
+  assert.equal(cell('assets_out'), '3 ETH');
+  assert.equal(cell('assets_in'), '');
+  // Trimmed off NUMERIC(38,18), and the far side's 5,996 is nowhere in the row.
+  assert.equal(cell('usd_value'), '6000');
+  // ...and the line SAYS what it already accounts for, so a reader summing the
+  // export can see the pair is one movement.
+  assert.match(cell('matched_with'), /Arbitrum One/);
 });
 
 // --- the query's own invariants --------------------------------------------
@@ -537,7 +675,7 @@ test('the CSV export is columns, not a rendered sentence', async () => {
   const [header, first] = response.text.trim().split('\n');
   // Assets in and out get their own columns: "0.5 ETH -> 1,832.4 USDC" reads
   // well and cannot be summed, which is the whole point of a spreadsheet.
-  assert.equal(header, 'date,source,location,category,counterparty,assets_in,assets_out,fee_amount,fee_asset,usd_value,usd_fee,usd_basis,needs_review,matched_with,tx_hash,chain_id,external_id,note');
+  assert.equal(header, 'date,source,location,category,counterparty,assets_in,assets_out,fee_amount,fee_asset,usd_value,usd_fee,usd_basis,needs_review,quarantined,matched_with,tx_hash,chain_id,external_id,note');
   assert.match(first, /1832\.4 USDC/);
   assert.match(first, /0\.5 ETH/);
   assert.match(first, /Arbitrum One/);

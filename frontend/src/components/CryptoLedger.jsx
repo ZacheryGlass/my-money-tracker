@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, DollarSign, Download,
-  ExternalLink, Landmark, Link2, Pencil, RefreshCw, Tag, Undo2, Wallet, X,
+  ExternalLink, Landmark, Link2, Pencil, RefreshCw, ShieldAlert, Tag, Undo2,
+  Wallet, X,
 } from 'lucide-react';
 import { crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
 import { formatDateDisplay, formatExactUnits, formatTokenUnits, formatUsdAtTime } from '../utils/format';
@@ -16,6 +17,7 @@ import {
   formatLedgerCategory,
   labelVerdictKind,
   labelVerdictNeedsName,
+  spamReasonLabel,
 } from '../utils/dataLabels';
 import DataTable from './DataTable';
 import FilterTabs from './FilterTabs';
@@ -39,6 +41,21 @@ const STATUS_OPTIONS = [
   { value: '', label: 'All' },
   { value: 'true', label: 'Needs Review' },
   { value: 'false', label: 'Explained' },
+];
+
+// The spam quarantine (#74), three-valued exactly like GET /api/crypto/ledger's
+// ?spam=. The default HIDES quarantined rows -- that is what a quarantine is,
+// and this screen is the one that promises no transaction goes unexplained, so
+// rendering scam airdrops here as ordinary events would re-surface precisely
+// the noise the quarantine removed.
+//
+// "Quarantined" and "Not spam" are the words Settings' own quarantine section
+// uses; the rescue button on a spam row here calls the same endpoint, so the
+// two surfaces cannot drift into two different vocabularies for one verdict.
+const SPAM_OPTIONS = [
+  { value: '', label: 'Hidden' },
+  { value: 'only', label: 'Quarantined' },
+  { value: 'all', label: 'Include' },
 ];
 
 // Tone by what the category MEANS for the portfolio, not one colour per value:
@@ -186,6 +203,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
   const [source, setSource] = useState('');
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
+  const [spam, setSpam] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
@@ -197,8 +215,11 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
     ...(source ? { source } : {}),
     ...(category ? { category } : {}),
     ...(status ? { needsReview: status } : {}),
+    // Omitted when empty, so the server's own default ('exclude') is what
+    // answers -- the client never has to restate it.
+    ...(spam ? { spam } : {}),
     ...(walletId != null ? { walletId } : {}),
-  }), [source, category, status, walletId]);
+  }), [source, category, status, spam, walletId]);
 
   // Guards a Load More response that arrives after the filters moved on.
   const filtersRef = useRef(filters);
@@ -316,6 +337,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
     source: source || undefined,
     category: category || undefined,
     needs_review: status || undefined,
+    spam: spam || undefined,
     wallet_id: walletId ?? undefined,
   });
 
@@ -372,6 +394,30 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
               <Chip className="border-accent/20 bg-accent/10 text-accent" title={entry.override_note || 'Category set by hand'}>
                 <Pencil size={9} />
                 Corrected
+              </Chip>
+            )}
+            {/* Only ever visible in the Quarantined/Include views -- the
+                default feed has no spam rows in it at all. The reason rides on
+                the chip because a row hidden on grounds nobody can state is
+                the failure a quarantine cannot have. */}
+            {entry.spam && (
+              <Chip
+                className="border-loss/20 bg-loss/10 text-loss"
+                title={spamReasonLabel(entry.spam_reason).detail}
+              >
+                <ShieldAlert size={9} />
+                {spamReasonLabel(entry.spam_reason).title}
+              </Chip>
+            )}
+            {/* One movement the chains recorded twice, on two chains with two
+                hashes. Shown once, hosted by the side that sent. */}
+            {entry.bridge_match && (
+              <Chip
+                className="border-teal-500/20 bg-teal-500/10 text-teal-400"
+                title={`Completed on ${entry.bridge_match.chain_label || 'the far chain'}; one movement, shown once`}
+              >
+                <Link2 size={9} />
+                Bridged
               </Chip>
             )}
             {entry.exchange_match && (
@@ -531,7 +577,10 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
               // venues wrote, folded halves included, so it deliberately does
               // not add up with the event total beside it -- it is the number
               // that reconciles with Settings' per-account record_count.
-              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange records${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched pairs shown once` : ''}${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} unpriced` : ''}`
+              // The quarantine says how much it swallowed, always: hiding rows
+              // without stating the number is indistinguishable from a sync
+              // that never fetched them. The Spam tab is where they are.
+              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange records${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched pairs shown once` : ''}${summary.bridge_matched_count ? ` · ${summary.bridge_matched_count.toLocaleString()} bridged pairs shown once` : ''}${summary.spam_count ? ` · ${summary.spam_count.toLocaleString()} quarantined` : ''}${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} unpriced` : ''}`
               : 'Loading…'}
             {rangeText ? ` · ${rangeText}` : ''}
           </p>
@@ -575,6 +624,13 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
           options={STATUS_OPTIONS}
           value={status}
           onChange={(next) => { setStatus(next); setExpandedId(null); }}
+        />
+        <FilterTabs
+          id="crypto-ledger-spam"
+          label="Spam"
+          options={SPAM_OPTIONS}
+          value={spam}
+          onChange={(next) => { setSpam(next); setExpandedId(null); }}
         />
       </div>
 
@@ -633,6 +689,21 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
         </div>
       )}
 
+      {/* What the Spam view IS, said once at the top: these rows were kept out
+          of Needs Review, nothing about them was deleted, and any of them can
+          be restored from its own row. Without this the view reads as a list of
+          problems rather than a list of things already dealt with. */}
+      {spam === 'only' && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 border border-border bg-surface-3 p-2 text-body-sm text-secondary">
+          <ShieldAlert size={14} className="shrink-0 text-tertiary" />
+          <span>
+            Quarantined: address-poisoning attempts, dust and scam airdrops, kept out of Needs Review.
+            Nothing was deleted — these keep their amounts and still count toward the balance checks.
+            Open a row and choose &quot;Not spam&quot; to restore it; the choice sticks through every future sync.
+          </span>
+        </div>
+      )}
+
       {error && (
         <div className="mb-3 flex items-center gap-2 border border-loss/20 bg-loss-bg p-2 text-body-sm text-loss">
           <X size={16} />
@@ -646,7 +717,9 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
         <DataTable
           table={table}
           breakpoint="md"
-          emptyMessage="No ledger entries match these filters."
+          emptyMessage={spam === 'only'
+            ? 'Nothing has been quarantined.'
+            : 'No ledger entries match these filters.'}
           onRowClick={toggleRow}
           rowClassName={() => 'cursor-pointer'}
           // ONE mount, never two. DataTable keeps the desktop table and the
@@ -770,6 +843,13 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
     category,
     note: note.trim() || undefined,
   }));
+
+  // The one-click un-quarantine, against the endpoint Settings' quarantine
+  // section already owns. `false` is explicit: the API refuses anything but a
+  // boolean, because a coerced 'false' would quarantine the row being rescued.
+  const rescueFromSpam = () => run('spam', () => ethAPI.setActivitySpam(
+    row.wallet_id, row.tx_hash, false, { chainId: row.chain_id }
+  ));
 
   const revertOverride = () => run('revert', () => ethAPI.clearActivityOverride({
     walletId: row.wallet_id,
@@ -998,6 +1078,37 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
         </div>
       )}
 
+      {/* The far half of a cross-chain bridge (#59). Two chains recorded one
+          movement of the user's own money as two unrelated transactions; the
+          sending side hosts and the arrival is stated here rather than dropped,
+          with its own hash so it stays checkable on its own explorer. */}
+      {row.bridge_match && (
+        <div className="border border-teal-500/20 bg-teal-500/5 p-2">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-teal-400">
+            Bridged to {row.bridge_match.chain_label || 'another chain'} · one movement, shown once
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-secondary">
+            <span className="font-money">{describeLegs(row.bridge_match.legs)}</span>
+            {row.bridge_match.fee_amount && Number.parseFloat(row.bridge_match.fee_amount) !== 0 && (
+              <span className="text-tertiary">
+                · bridge fee {row.bridge_match.fee_amount} {row.bridge_match.asset}
+              </span>
+            )}
+            {row.bridge_match.tx_hash && (
+              <a
+                href={explorerTxUrl(row.bridge_match.tx_hash, row.bridge_match.chain_id)}
+                target="_blank"
+                rel="noreferrer"
+                title={row.bridge_match.tx_hash}
+                className="font-mono text-caption text-accent hover:underline"
+              >
+                {shortEthAddress(row.bridge_match.tx_hash)}
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
       {onChain && legs !== null && legs.length > 0 && (
         <div>
           <p className="text-[9px] font-bold uppercase tracking-wide text-tertiary">Transfer legs</p>
@@ -1060,6 +1171,25 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
               >
                 {saving === 'revert' ? <RefreshCw size={10} className="animate-spin" /> : <Undo2 size={10} />}
                 Revert
+              </button>
+            )}
+            {/* The rescue, on the row that shows the mistake. It posts the SAME
+                verdict Settings' quarantine section posts (POST
+                /api/eth/activity/spam with spam:false), so there is one
+                endpoint, one wording and one stored answer -- a second rescue
+                path with its own semantics is how two screens start disagreeing
+                about whether a transaction is real. Nothing is deleted either
+                way; this only decides which view the row appears in. */}
+            {row.spam && (
+              <button
+                type="button"
+                onClick={rescueFromSpam}
+                disabled={saving != null}
+                title="Restore this transaction to the ledger; the choice sticks through every future sync"
+                className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-2.5 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+              >
+                {saving === 'spam' ? <RefreshCw size={10} className="animate-spin" /> : <Undo2 size={10} />}
+                Not spam
               </button>
             )}
             {row.labelable && !labelOpen && (

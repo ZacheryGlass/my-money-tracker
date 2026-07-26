@@ -64,7 +64,12 @@ BEGIN
     ALTER TABLE eth_address_labels DROP CONSTRAINT IF EXISTS eth_address_labels_source_check;
     ALTER TABLE eth_address_labels
       ADD CONSTRAINT eth_address_labels_source_check
-      CHECK (source IN ('user', 'builtin', 'eth-labels', 'builtin-bridge'));
+      -- The UNION of every source, 041's 'auto-match' included: that migration
+      -- owns this same constraint under its own sentinel, and two narrower
+      -- lists take turns dropping and re-adding each other's -- failing on the
+      -- second boot, once the rows the other list forbids exist. See the note
+      -- in 041. Add a source in BOTH lists.
+      CHECK (source IN ('user', 'builtin', 'eth-labels', 'auto-match', 'builtin-bridge'));
   END IF;
 END $$;
 

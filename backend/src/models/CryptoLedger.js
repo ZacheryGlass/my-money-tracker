@@ -146,6 +146,14 @@ const matchJson = (em, er, ea, mv) => `jsonb_build_object(
 // folded into an explained activity row would otherwise vanish from the review
 // queue while still being unexplained -- the exact failure "no transaction
 // unexplained" exists to prevent.
+//
+// The spam quarantine (045) is resolved here the same way and with the same
+// masking rule EthActivity's RESOLVED_COLUMNS uses: COALESCE(override, derived),
+// and a quarantined row's needs_review is MASKED rather than cleared. Masking is
+// what makes an un-quarantine lossless -- a false positive comes back to the
+// queue instead of arriving silently marked reviewed -- and it is why a wave of
+// scam airdrops cannot move this ledger's badge. A quarantined row is not
+// "unexplained"; it is "not worth explaining", which is a different claim.
 const ONCHAIN_RAW_CTE = `
   onchain_raw AS (
     SELECT
@@ -153,10 +161,17 @@ const ONCHAIN_RAW_CTE = `
       a.id AS row_id,
       a.block_time AS occurred_at,
       COALESCE(o.category, a.category)::text AS category,
-      ((CASE WHEN o.category IS NOT NULL THEN FALSE ELSE a.needs_review END)
+      ((CASE WHEN o.category IS NOT NULL OR COALESCE(o.spam, a.spam) THEN FALSE
+             ELSE a.needs_review END)
         OR COALESCE(mer.needs_review, FALSE)) AS needs_review,
       FALSE AS record_needs_review,
-      (CASE WHEN o.category IS NOT NULL THEN NULL ELSE a.review_reason END)::text AS review_reason,
+      (CASE WHEN o.category IS NOT NULL OR COALESCE(o.spam, a.spam) THEN NULL
+            ELSE a.review_reason END)::text AS review_reason,
+      COALESCE(o.spam, a.spam) AS spam,
+      -- WHICH heuristic fired, kept even when the user overrode it: "we thought
+      -- this was poisoning and you disagreed" is the only way the verdict is
+      -- auditable.
+      a.spam_reason::text AS spam_reason,
       a.wallet_id,
       a.chain_id,
       a.tx_hash::text AS tx_hash,
@@ -220,7 +235,24 @@ const ONCHAIN_RAW_CTE = `
       EXISTS (
         SELECT 1 FROM jsonb_array_elements(COALESCE(a.legs, '[]'::jsonb)) l
         WHERE l->>'direction' = 'out'
-      ) AS has_out_leg
+      ) AS has_out_leg,
+      -- The cross-chain pairing (#59), in the shape EthActivity's reader
+      -- already exposes. Only the LINK's own columns are read here -- never the
+      -- counterpart activity row -- because eth_activity_links carries no
+      -- owner: scope is inherited through eth_activity -> eth_wallets, and a
+      -- join straight to the counterpart would reach a row this caller may not own. The
+      -- fold below instead pairs two rows that are BOTH already inside this
+      -- user-scoped CTE, which is the only way both ends are guaranteed theirs.
+      COALESCE(lo.id, li.id) AS bridge_link_id,
+      -- Which half this row is. lo first: a row is the out side of at most one
+      -- link and the in side of at most one (both columns are UNIQUE), and a
+      -- single row cannot be both in practice -- the matcher pairs a bridge_out
+      -- with a bridge_in and a row carries one category.
+      (CASE WHEN lo.id IS NOT NULL THEN 'out' WHEN li.id IS NOT NULL THEN 'in' END)::text AS bridge_role,
+      lo.asset::text AS bridge_asset,
+      lo.out_amount AS bridge_out_amount,
+      lo.in_amount AS bridge_in_amount,
+      lo.fee_amount AS bridge_fee_amount
     FROM eth_activity a
     JOIN eth_wallets w ON w.id = a.wallet_id
     LEFT JOIN eth_activity_overrides o
@@ -256,6 +288,9 @@ const ONCHAIN_RAW_CTE = `
       ORDER BY v.exchange_record_id
       LIMIT 1
     ) rv ON TRUE
+    -- Both link columns are UNIQUE (044), so neither join can fan a row out.
+    LEFT JOIN eth_activity_links lo ON lo.out_activity_id = a.id
+    LEFT JOIN eth_activity_links li ON li.in_activity_id = a.id
     WHERE w.user_id = $1
   )`;
 
@@ -282,8 +317,18 @@ const ONCHAIN_RAW_CTE = `
 // needs_review is ORed across the group for the same reason the exchange fold
 // ORs it: a flagged receiving row folded into an explained sending row would
 // leave the review queue while still being unexplained.
+//
+// spam is ANDed across the group, not ORed, and that asymmetry with
+// needs_review is the point. The two flags fail in opposite directions: a
+// missed flag leaves a row unexplained (recoverable -- it is still on screen),
+// while a wrongly-applied quarantine HIDES a real movement. So the group is
+// quarantined only when EVERY member is, which means one hand-rescued half
+// (`spam=false` on the receiving wallet's row) brings the whole event back
+// rather than leaving a spam row invisible beside a rendered twin. It cannot go
+// the other way either: a group can never be hidden while one of its members
+// says it is real.
 const ONCHAIN_CTE = `
-  onchain AS (
+  onchain_collapsed AS (
     SELECT
       r.source, r.row_id, r.occurred_at, r.category,
       (r.needs_review OR r.group_needs_review) AS needs_review,
@@ -305,14 +350,19 @@ const ONCHAIN_CTE = `
       -- a self-transfer would vanish when narrowed to the RECEIVING wallet --
       -- the filter dropping the event instead of narrowing to it, which is the
       -- same failure the exchange fold's second filter arm exists to prevent.
-      fold.wallet_ids AS fold_wallet_ids
+      fold.wallet_ids AS fold_wallet_ids,
+      r.group_spam AS spam,
+      r.spam_reason,
+      r.bridge_link_id, r.bridge_role, r.bridge_asset,
+      r.bridge_out_amount, r.bridge_in_amount, r.bridge_fee_amount
     FROM (
       SELECT q.*,
         ROW_NUMBER() OVER (
           PARTITION BY q.chain_id, q.tx_hash
           ORDER BY q.has_out_leg DESC, q.fee_wei DESC NULLS LAST, q.wallet_id
         ) AS rn,
-        BOOL_OR(q.needs_review) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_needs_review
+        BOOL_OR(q.needs_review) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_needs_review,
+        BOOL_AND(q.spam) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_spam
       FROM onchain_raw q
     ) r
     LEFT JOIN LATERAL (
@@ -332,6 +382,117 @@ const ONCHAIN_CTE = `
         AND f.row_id <> r.row_id
     ) fold ON TRUE
     WHERE r.rn = 1
+  )`;
+
+// One BRIDGE, one ledger event (#59).
+//
+// A bridge_out on chain A and the bridge_in that completes it on chain B are
+// one movement of the user's own money that the chains recorded as two
+// unrelated transactions -- different hashes, different per-chain block
+// numbers, so neither the (chain, tx_hash) collapse above nor anything else
+// merges them. `eth_activity_links` is where 044's matching pass already
+// decided they are the same movement, exactly as `exchange_matches` is where
+// #61 decided a venue record and a transaction are; this reads that verdict, it
+// does not re-derive one.
+//
+// The OUT side HOSTS, matching the self-transfer collapse (the sender's row is
+// the one that describes the movement and paid the gas) and the exchange fold
+// (the on-chain side hosts the venue record). The in side folds into
+// `bridge_match` with its own coordinates, so nothing is dropped -- it is
+// stated, on the row that accounts for it.
+//
+// BOTH ENDS ARE SCOPED, and that is the whole reason this pairs two rows of
+// `onchain_collapsed` rather than joining eth_activity_links -> eth_activity.
+// The link table carries no owner (044 inherits scope through eth_wallets on
+// purpose), so nothing in the schema stops a link row from naming another
+// user's activity. Reached that way, user 2's transaction would render inside
+// user 1's feed. Here an invisible counterpart simply produces no fold: the
+// link is ignored and BOTH halves stay single rows in their owners' feeds --
+// which is also the correct rendering for an unlinked bridge leg, still flagged
+// per the ladder.
+//
+// needs_review ORs across the pair (a flagged half folded into an explained
+// host would leave the queue while still being unexplained) and spam ANDs
+// across it, for the reasons the collapse above gives.
+const ONCHAIN_BRIDGE_CTE = `
+  onchain AS (
+    SELECT
+      h.source, h.row_id, h.occurred_at, h.category,
+      (h.needs_review OR COALESCE(b.needs_review, FALSE)) AS needs_review,
+      h.record_needs_review, h.review_reason,
+      h.wallet_id, h.chain_id, h.tx_hash, h.block_number,
+      h.counterparty_address, h.counterparty_name, h.method_id, h.method_name,
+      h.legs, h.fee_wei, h.confidence,
+      -- The host's dollars only. The in side is the SAME money arriving, so
+      -- adding it would count one bridged 3 ETH as 6 -- the identical failure
+      -- the wallet-to-wallet collapse was written to fix, and the reason the
+      -- summary and the CSV export both count this pair once.
+      h.usd_value, h.usd_fee, h.usd_basis,
+      h.derived_category, h.override_category, h.override_note, h.is_overridden,
+      h.wallet_address, h.wallet_label,
+      h.exchange_account_id, h.exchange, h.account_name, h.record_type,
+      h.base_asset, h.base_amount, h.quote_asset, h.quote_amount,
+      h.fee_asset, h.fee_amount, h.external_id, h.record_address, h.record_source,
+      h.exchange_match,
+      h.rejected_verdict, h.rejected_record_id, h.rejected_counter_record_id,
+      h.match_category, h.match_account_id,
+      h.self_match,
+      -- The receiving wallet stays addressable by the wallet filter, like the
+      -- self-transfer fold's: the far leg belongs to the movement, so narrowing
+      -- to its wallet must find the event rather than drop it.
+      (CASE WHEN b.row_id IS NULL THEN h.fold_wallet_ids
+            ELSE COALESCE(h.fold_wallet_ids, ARRAY[]::int[]) || b.fold_wallet_ids
+       END) AS fold_wallet_ids,
+      (h.spam AND COALESCE(b.spam, TRUE)) AS spam,
+      h.spam_reason,
+      CASE WHEN b.row_id IS NULL THEN NULL ELSE jsonb_build_object(
+        'link_id', h.bridge_link_id,
+        'wallet_id', b.wallet_id,
+        'wallet_label', b.wallet_label,
+        'wallet_address', b.wallet_address,
+        'chain_id', b.chain_id,
+        'tx_hash', b.tx_hash,
+        'occurred_at', b.occurred_at,
+        'category', b.category,
+        'legs', b.legs,
+        'needs_review', b.needs_review,
+        -- ::text on every NUMERIC, for the reason matchJson gives: node-pg
+        -- parses jsonb with JSON.parse, so a JSON number would arrive as a
+        -- double and a bridged amount would lose digits.
+        'usd_value', b.usd_value::text,
+        'usd_basis', b.usd_basis,
+        'asset', h.bridge_asset,
+        'out_amount', h.bridge_out_amount::text,
+        'in_amount', h.bridge_in_amount::text,
+        -- What the bridge took, in units of the asset. The gas on each side is
+        -- on its own row's fee_wei and is NOT part of this.
+        'fee_amount', h.bridge_fee_amount::text
+      ) END AS bridge_match,
+      -- The folded half's own category, so ?category=bridge_in still finds the
+      -- event through its host instead of returning nothing -- the same rule
+      -- match_category follows for a folded venue record.
+      b.category::text AS bridge_category
+    FROM onchain_collapsed h
+    LEFT JOIN LATERAL (
+      SELECT i.row_id, i.wallet_id, i.wallet_label, i.wallet_address,
+             i.chain_id, i.tx_hash, i.occurred_at, i.category, i.legs,
+             i.needs_review, i.spam, i.usd_value, i.usd_basis,
+             ARRAY[i.wallet_id] || COALESCE(i.fold_wallet_ids, ARRAY[]::int[]) AS fold_wallet_ids
+      FROM onchain_collapsed i
+      WHERE h.bridge_role = 'out'
+        AND i.bridge_role = 'in'
+        AND i.bridge_link_id = h.bridge_link_id
+      LIMIT 1
+    ) b ON TRUE
+    -- The in side is suppressed ONLY when its out side is actually in this
+    -- feed. IS DISTINCT FROM, not =: bridge_role is NULL on every ordinary row
+    -- and a bare NOT (NULL = 'in' AND ...) is NULL, which WHERE discards --
+    -- i.e. it would drop the entire non-bridge ledger.
+    WHERE h.bridge_role IS DISTINCT FROM 'in'
+       OR NOT EXISTS (
+         SELECT 1 FROM onchain_collapsed o2
+         WHERE o2.bridge_link_id = h.bridge_link_id AND o2.bridge_role = 'out'
+       )
   )`;
 
 // What counts as "the venue quoted this in dollars". Stablecoins are included
@@ -428,7 +589,17 @@ const EXCHANGE_CTE = `
       ${recordCategory('cer')}::text AS match_category,
       cea.id AS match_account_id,
       NULL::jsonb AS self_match,
-      NULL::int[] AS fold_wallet_ids
+      NULL::int[] AS fold_wallet_ids,
+      -- A venue record is never quarantined. The spam heuristics (045) read
+      -- on-chain legs -- a poisoned lookalike address, an unsolicited token --
+      -- and an exchange writes none of those: every row in this branch is
+      -- something the user's own account did. FALSE rather than NULL because
+      -- the default filter is NOT r.spam, and a NULL there would silently
+      -- delete the entire venue side of the ledger.
+      FALSE AS spam,
+      NULL::text AS spam_reason,
+      NULL::jsonb AS bridge_match,
+      NULL::text AS bridge_category
     FROM exchange_records er
     JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
     -- The venue-to-venue pair this record is the primary of, if any.
@@ -457,7 +628,7 @@ const EXCHANGE_CTE = `
       AND NOT EXISTS (SELECT 1 FROM matched_records mm WHERE mm.record_id = er.id)
   )`;
 
-const LEDGER_CTE = `WITH ${MATCHED_CTE},\n${ONCHAIN_RAW_CTE},\n${ONCHAIN_CTE},\n${EXCHANGE_CTE}`;
+const LEDGER_CTE = `WITH ${MATCHED_CTE},\n${ONCHAIN_RAW_CTE},\n${ONCHAIN_CTE},\n${ONCHAIN_BRIDGE_CTE},\n${EXCHANGE_CTE}`;
 
 const UNION_SOURCE = '(SELECT * FROM onchain UNION ALL SELECT * FROM exch) r';
 
@@ -470,6 +641,12 @@ const UNION_SOURCE = '(SELECT * FROM onchain UNION ALL SELECT * FROM exch) r';
 const EXCHANGE_ONLY_CATEGORIES = ['fee', 'exchange_transfer'];
 const LEDGER_CATEGORIES = [...EthActivityService.CATEGORIES, ...EXCHANGE_ONLY_CATEGORIES];
 const LEDGER_SOURCES = ['onchain', 'exchange'];
+
+// The quarantine filter's vocabulary, spelled exactly as GET /api/eth/activity
+// spells it (#74) -- the ledger is a second reader over the same rows, and two
+// screens that disagree about whether the value is 'exclude' or 'hide' is a
+// filter that 400s on one page and works on the other.
+const LEDGER_SPAM_FILTERS = ['exclude', 'only', 'all'];
 
 // Base units -> a whole-unit decimal string, exactly. fee_wei is NUMERIC(78,0)
 // and arrives as a string; Number() would round a value that has more
@@ -669,6 +846,17 @@ function toLedgerRow(row) {
     self_match: Array.isArray(row.self_match)
       ? row.self_match.map((half) => ({ ...half, legs: withBaseUnits(half.legs) }))
       : null,
+    // The far side of a cross-chain bridge (#59), folded in. The pair is ONE
+    // movement of the user's own money that two chains each recorded, so it
+    // renders once -- with the arrival stated here rather than dropped.
+    bridge_match: row.bridge_match
+      ? { ...row.bridge_match, legs: withBaseUnits(row.bridge_match.legs) }
+      : null,
+    // The quarantine verdict (045), resolved override-over-derived. Rides on
+    // the row so the Spam view can say WHY each row is hidden -- a row hidden
+    // for reasons nobody can state is the failure a quarantine cannot have.
+    spam: row.spam === true,
+    spam_reason: row.spam_reason ?? null,
   };
 }
 
@@ -681,8 +869,18 @@ function toLedgerRow(row) {
 // narrowing to it, which is the exact failure "no transaction unexplained"
 // exists to prevent. It is also the normal case, not a corner one: the venue
 // files a "withdrawal" for the transaction the wallet files as a deposit.
-function buildFilters({ category, needsReview, source, walletId, exchangeAccountId }, params) {
+function buildFilters({ category, needsReview, source, walletId, exchangeAccountId, spam = 'exclude' }, params) {
   const clauses = [];
+  // The quarantine (#74), mirroring GET /api/eth/activity's contract exactly:
+  // 'exclude' (the default) is what a quarantine IS, 'only' is the Spam view,
+  // 'all' is the full history. Hiding by default is only honest because the
+  // summary reports how many were hidden -- see summaryForUser's spam_count.
+  //
+  // The ledger is the "no transaction unexplained" screen, so rendering
+  // quarantined rows as ordinary events here would re-surface precisely the
+  // noise 045 removed, and undo the badge's ability to reach zero with it.
+  if (spam === 'only') clauses.push('r.spam');
+  else if (spam !== 'all') clauses.push('NOT r.spam');
   if (source) {
     params.push(source);
     clauses.push(`(r.source = $${params.length}
@@ -690,7 +888,13 @@ function buildFilters({ category, needsReview, source, walletId, exchangeAccount
   }
   if (category) {
     params.push(category);
-    clauses.push(`(r.category = $${params.length} OR r.match_category = $${params.length})`);
+    // The bridge arm for the same reason as the venue one: the in side was
+    // suppressed from its own row, so a filter that only tested the host's
+    // column would make ?category=bridge_in return nothing at all while the
+    // event is right there under bridge_out.
+    clauses.push(`(r.category = $${params.length}
+      OR r.match_category = $${params.length}
+      OR r.bridge_category = $${params.length})`);
   }
   if (needsReview !== null && needsReview !== undefined) {
     // Already ORed across the pair inside each branch, so this needs no second
@@ -721,6 +925,10 @@ class CryptoLedger {
 
   static get SOURCES() {
     return LEDGER_SOURCES;
+  }
+
+  static get SPAM_FILTERS() {
+    return LEDGER_SPAM_FILTERS;
   }
 
   static async findForUser(userId, filters = {}) {
@@ -797,31 +1005,46 @@ class CryptoLedger {
   // `unpriced_count` is the honesty counter for the USD column: a row with no
   // price is NOT worth zero, and a total that quietly omitted it would be a
   // number nobody could reconcile.
+  //
+  // Every count here EXCLUDES quarantined rows, matching the feed's default and
+  // EthActivity.summaryForUser's contract: a badge a spam wave can move is a
+  // badge that gets ignored, and it takes the real flags with it. `spam_count`
+  // is the honesty counter for the quarantine, exactly as unpriced_count is for
+  // the dollars -- hiding rows without saying how many is the one thing a
+  // quarantine must not do.
   static async summaryForUser(userId) {
     if (!userId) throw new Error('CryptoLedger.summaryForUser requires a userId');
     const result = await pool.query(
       `${LEDGER_CTE}
        SELECT
-         COUNT(*)::int AS total,
-         (COUNT(*) FILTER (WHERE r.needs_review))::int AS needs_review_count,
-         (COUNT(*) FILTER (WHERE r.source = 'onchain'))::int AS onchain_count,
+         COUNT(*) FILTER (WHERE NOT r.spam)::int AS total,
+         (COUNT(*) FILTER (WHERE r.needs_review AND NOT r.spam))::int AS needs_review_count,
+         (COUNT(*) FILTER (WHERE r.source = 'onchain' AND NOT r.spam))::int AS onchain_count,
          -- Records, not rows: a folded record is still a record the venue
          -- wrote, and this number sits next to Settings' per-account
          -- record_count where the two disagreeing reads as a lost import.
          (COUNT(*) FILTER (WHERE r.source = 'exchange')
            + COUNT(*) FILTER (WHERE r.exchange_match IS NOT NULL))::int AS exchange_count,
-         (COUNT(*) FILTER (WHERE r.needs_review AND r.source = 'onchain'))::int AS onchain_needs_review,
+         (COUNT(*) FILTER (WHERE r.needs_review AND r.source = 'onchain' AND NOT r.spam))::int AS onchain_needs_review,
          (COUNT(*) FILTER (WHERE r.needs_review AND r.source = 'exchange'))::int AS exchange_needs_review,
          (COUNT(*) FILTER (WHERE r.exchange_match IS NOT NULL))::int AS matched_count,
+         -- How much the default view is hiding. A quarantine that never says
+         -- how much it swallowed is indistinguishable from a sync that never
+         -- fetched anything.
+         (COUNT(*) FILTER (WHERE r.spam))::int AS spam_count,
+         -- Bridge pairs rendered once, beside matched_count for the same
+         -- reason: a reader adding up the events has to see which lines already
+         -- account for two records.
+         (COUNT(*) FILTER (WHERE r.bridge_match IS NOT NULL AND NOT r.spam))::int AS bridge_matched_count,
          -- ON-CHAIN only. 043 values eth_transfers, and the unpriced
          -- enumeration this counter sits beside enumerates on-chain assets --
          -- so counting a crypto/crypto venue trade here would make the number
          -- permanently non-zero against a banner that can never name it, which
          -- is the "badge that cannot reach zero" failure again.
-         (COUNT(*) FILTER (WHERE r.usd_basis = 'unpriced' AND r.source = 'onchain'))::int AS unpriced_count,
-         (COUNT(*) FILTER (WHERE r.usd_basis = 'carried'))::int AS carried_count,
-         MIN(r.occurred_at) AS first_at,
-         MAX(r.occurred_at) AS last_at
+         (COUNT(*) FILTER (WHERE r.usd_basis = 'unpriced' AND r.source = 'onchain' AND NOT r.spam))::int AS unpriced_count,
+         (COUNT(*) FILTER (WHERE r.usd_basis = 'carried' AND NOT r.spam))::int AS carried_count,
+         MIN(r.occurred_at) FILTER (WHERE NOT r.spam) AS first_at,
+         MAX(r.occurred_at) FILTER (WHERE NOT r.spam) AS last_at
        FROM ${UNION_SOURCE}`,
       [userId]
     );
@@ -834,6 +1057,8 @@ class CryptoLedger {
       onchain_needs_review: Number(row.onchain_needs_review) || 0,
       exchange_needs_review: Number(row.exchange_needs_review) || 0,
       matched_count: Number(row.matched_count) || 0,
+      bridge_matched_count: Number(row.bridge_matched_count) || 0,
+      spam_count: Number(row.spam_count) || 0,
       unpriced_count: Number(row.unpriced_count) || 0,
       carried_count: Number(row.carried_count) || 0,
       first_at: row.first_at || null,

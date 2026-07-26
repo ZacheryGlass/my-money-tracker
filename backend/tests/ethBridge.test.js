@@ -922,7 +922,16 @@ test('both CHECK swaps are guarded on the DEFINITION, with a bumped sentinel', (
   assert.match(SEED_SQL, /conname = 'eth_address_labels_kind_check'\s*\n\s*AND pg_get_constraintdef\(oid\) LIKE '%bridge%'/);
   assert.match(SEED_SQL, /CHECK \(kind IN \('exchange', 'external', 'own', 'bridge'\)\)/);
   assert.match(SEED_SQL, /conname = 'eth_address_labels_source_check'\s*\n\s*AND pg_get_constraintdef\(oid\) LIKE '%builtin-bridge%'/);
-  assert.match(SEED_SQL, /CHECK \(source IN \('user', 'builtin', 'eth-labels', 'builtin-bridge'\)\)/);
+  // The UNION of every source, 041's 'auto-match' included. 041 owns this same
+  // constraint under its own sentinel, so two narrower lists take turns
+  // dropping and re-adding each other's -- and once the bridge rows exist,
+  // 041's re-add fails the CHECK, which broke the SECOND boot of every
+  // database while a fresh one looked perfectly applied.
+  assert.match(SEED_SQL, /CHECK \(source IN \('user', 'builtin', 'eth-labels', 'auto-match', 'builtin-bridge'\)\)/);
+  const matchesSql = fs.readFileSync(
+    path.join(__dirname, '..', 'migrations', '041_exchange_matches.sql'), 'utf8'
+  );
+  assert.match(matchesSql, /CHECK \(source IN \('user', 'builtin', 'eth-labels', 'auto-match', 'builtin-bridge'\)\)/);
 
   // 038 already carries bridge_out/bridge_in in the category CHECK, so this
   // migration must NOT touch it.

@@ -218,6 +218,15 @@ CREATE INDEX IF NOT EXISTS idx_eth_activity_exchange_flows
 -- inserts ONLY when the address has no label of any kind, user or global. A
 -- user's explicit verdict always wins because it is never overwritten, and a
 -- builtin's is never outranked because the presence of one stops the write.
+--
+-- TWO MIGRATIONS OWN THIS ONE CONSTRAINT: 044 widens it for 'builtin-bridge'
+-- and this one for 'auto-match'. Each guards on its OWN sentinel, so the two
+-- definitions must be the same UNION of every value or they fight: a list here
+-- without 'builtin-bridge' fails its own sentinel check after 044 has run,
+-- drops 044's constraint, and re-adds a narrower one that 044's already-seeded
+-- bridge rows violate -- which took down the SECOND boot of every database
+-- (migrations re-run every time) while looking perfectly applied on the first.
+-- Add a source in BOTH lists.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
@@ -227,6 +236,6 @@ BEGIN
     ALTER TABLE eth_address_labels DROP CONSTRAINT IF EXISTS eth_address_labels_source_check;
     ALTER TABLE eth_address_labels
       ADD CONSTRAINT eth_address_labels_source_check
-      CHECK (source IN ('user', 'builtin', 'eth-labels', 'auto-match'));
+      CHECK (source IN ('user', 'builtin', 'eth-labels', 'auto-match', 'builtin-bridge'));
   END IF;
 END $$;

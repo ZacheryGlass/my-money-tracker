@@ -9,6 +9,7 @@ const apiMocks = vi.hoisted(() => ({
     getTransfers: vi.fn(),
     setActivityOverride: vi.fn(),
     clearActivityOverride: vi.fn(),
+    setActivitySpam: vi.fn(),
     labelAddress: vi.fn(),
     getReconciliation: vi.fn(),
     getUnpricedAssets: vi.fn(),
@@ -734,6 +735,129 @@ describe('CryptoLedger', () => {
     // The healthy account is not counted; a warning that never clears gets
     // ignored, exactly like a badge that cannot reach zero.
     expect(await screen.findByText(/2 exchange accounts have not finished syncing/)).toBeInTheDocument();
+  });
+
+  // --- the spam quarantine (#74) --------------------------------------------
+
+  it('asks for the quarantine only when the Spam view is chosen', async () => {
+    render(<CryptoLedger />);
+    await vi.waitFor(() => expect(apiMocks.crypto.getLedger).toHaveBeenCalled());
+
+    // The default sends NO spam param at all: the server's own default
+    // ('exclude') answers, so the client never restates the contract.
+    expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
+      expect.not.objectContaining({ spam: expect.anything() })
+    );
+
+    fireEvent.click(screen.getAllByRole('tab', { name: 'Quarantined' })[0]);
+    await vi.waitFor(() => {
+      expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
+        expect.objectContaining({ spam: 'only', offset: 0 })
+      );
+    });
+    // The view says what it is: kept out of Needs Review, nothing deleted.
+    expect(screen.getByText(/Nothing was deleted/)).toBeInTheDocument();
+  });
+
+  it('says how many rows the quarantine is hiding', async () => {
+    // A quarantine that never states how much it swallowed is
+    // indistinguishable from a sync that never fetched anything.
+    apiMocks.crypto.getLedgerSummary.mockResolvedValue({
+      summary: {
+        total: 12, needs_review_count: 0, onchain_count: 8, exchange_count: 4,
+        matched_count: 0, spam_count: 37, first_at: null, last_at: null,
+      },
+    });
+
+    render(<CryptoLedger />);
+
+    expect(await screen.findByText(/37 quarantined/)).toBeInTheDocument();
+  });
+
+  it('names the reason a row was quarantined and rescues it in one click', async () => {
+    setLedger([onchain({
+      category: 'receive',
+      spam: true,
+      spam_reason: 'address_poisoning',
+      needs_review: false,
+      legs: [{ asset: 'ETH', direction: 'in', amount: '0', units: '0', decimals: 0 }],
+    })]);
+    apiMocks.eth.setActivitySpam.mockResolvedValue({ override: {} });
+
+    render(<CryptoLedger />);
+    // The reason is on the row, not only in a tooltip somewhere else: a row
+    // hidden on grounds nobody can state is what a quarantine must never be.
+    expect((await screen.findAllByText('Lookalike address')).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getAllByText('+ 0 ETH')[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /not spam/i }))[0]);
+
+    await vi.waitFor(() => {
+      // The SAME endpoint Settings' quarantine section posts to, with an
+      // explicit boolean -- a coerced 'false' would quarantine the row being
+      // rescued.
+      expect(apiMocks.eth.setActivitySpam).toHaveBeenCalledWith(1, TX, false, { chainId: 42161 });
+      expect(apiMocks.crypto.getLedger.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  it('offers no rescue on a row that was never quarantined', async () => {
+    setLedger([onchain()]);
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USDC'))[0]);
+    expect(screen.queryByRole('button', { name: /not spam/i })).toBeNull();
+  });
+
+  // --- the bridge fold (#59) ------------------------------------------------
+
+  it('renders a linked bridge pair as one event, with the far side stated', async () => {
+    // Two chains recorded ONE movement of the user's own money. Rendering both
+    // legs doubles the dollars and asks for two explanations of one thing.
+    setLedger([onchain({
+      category: 'bridge_out',
+      chain_id: 1,
+      legs: [{ asset: 'ETH', direction: 'out', amount: '3', units: '3', decimals: 0 }],
+      usd_value: '6000.00',
+      bridge_match: {
+        link_id: 4, wallet_id: 2, wallet_label: 'Second', chain_id: 42161,
+        chain_label: 'Arbitrum One', tx_hash: TX2, category: 'bridge_in',
+        needs_review: false, usd_value: '5996.00', usd_basis: 'exact',
+        asset: 'ETH', out_amount: '3', in_amount: '2.998', fee_amount: '0.002',
+        legs: [{ asset: 'ETH', direction: 'in', amount: '2.998', units: '2998', decimals: 3 }],
+      },
+    })]);
+
+    render(<CryptoLedger />);
+
+    expect(await screen.findByText('Showing 1 of 1')).toBeInTheDocument();
+    expect(screen.getAllByText('Bridged').length).toBeGreaterThan(0);
+    // The out side hosts, so the row's own dollars are the mover's -- $6,000,
+    // not $11,996.
+    expect(screen.getAllByText('$6,000.00').length).toBeGreaterThan(0);
+    expect(screen.queryByText('$5,996.00')).toBeNull();
+
+    fireEvent.click(screen.getAllByText('− 3 ETH')[0]);
+    // The arrival is stated rather than dropped, with what the bridge took.
+    expect((await screen.findAllByText(/Bridged to Arbitrum One/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('+ 2.998 ETH').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/bridge fee 0.002 ETH/).length).toBeGreaterThan(0);
+  });
+
+  it('leaves an unlinked bridge leg as its own flagged row', async () => {
+    // Nothing may present a half-finished bridge as a completed transfer.
+    setLedger([onchain({
+      category: 'bridge_out',
+      needs_review: true,
+      review_reason: 'unmatched_bridge',
+      bridge_match: null,
+      legs: [{ asset: 'ETH', direction: 'out', amount: '1', units: '1', decimals: 0 }],
+    })]);
+
+    render(<CryptoLedger />);
+
+    expect(await screen.findByText('Showing 1 of 1')).toBeInTheDocument();
+    expect(screen.queryByText('Bridged')).toBeNull();
+    expect(screen.getAllByText('Review').length).toBeGreaterThan(0);
   });
 
   it('exports the ledger under the filters currently on screen', async () => {
