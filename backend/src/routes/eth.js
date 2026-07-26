@@ -6,7 +6,9 @@ const EthWallet = require('../models/EthWallet');
 const EthTransfer = require('../models/EthTransfer');
 const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
+const EthActivity = require('../models/EthActivity');
 const EthWalletService = require('../services/EthWalletService');
+const EthActivityService = require('../services/EthActivityService');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
 
@@ -32,6 +34,26 @@ function parseId(raw) {
 // address (same effect via the own set, no account created). 'external' records
 // "reviewed, genuinely a third party" and changes no classification at all.
 const LABEL_KINDS = new Set(['exchange', 'external', 'own']);
+
+// The activity layer's category vocabulary, single-sourced from the service so
+// the route and the CHECK constraint in 038 can never drift apart.
+const ACTIVITY_CATEGORIES = new Set(EthActivityService.CATEGORIES);
+
+const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
+
+// Resolves a wallet id from a request against the caller. Returns
+// { ok: false } when the id is absent-but-required, unparseable, or somebody
+// else's -- all three are a 404, so a foreign id is indistinguishable from a
+// made-up one.
+async function loadWallet(req, rawId, { required }) {
+  if (rawId === undefined || rawId === null || rawId === '') {
+    return required ? { ok: false } : { ok: true, walletId: null };
+  }
+  const walletId = parseId(rawId);
+  const wallet = walletId && await EthWallet.findByIdForUser(walletId, req.user.id);
+  if (!wallet) return { ok: false };
+  return { ok: true, walletId };
+}
 
 router.post('/wallets', async (req, res) => {
   try {
@@ -150,6 +172,119 @@ router.get('/transfers', async (req, res) => {
   } catch (error) {
     logger.error({ err: error, walletId: req.query.wallet_id }, 'Get ETH transfers error');
     res.status(500).json({ error: 'Failed to retrieve transfers' });
+  }
+});
+
+// The transaction-level activity feed: one row per transaction per owning
+// wallet, each either confidently categorized or flagged with a reason. Manual
+// overrides are resolved over the derived verdict inside the query, so a
+// corrected row reads and filters as the category the user chose.
+router.get('/activity', async (req, res) => {
+  try {
+    const wallet = await loadWallet(req, req.query.wallet_id, { required: false });
+    if (!wallet.ok) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    // Unlike the transfers route's `type`, an unknown category is a 400 rather
+    // than being ignored. A filter that silently returns the UNFILTERED feed
+    // reads as "there is nothing else", which is the opposite of what a filter
+    // for a review queue must promise.
+    let category = null;
+    if (req.query.category !== undefined && req.query.category !== '') {
+      category = String(req.query.category).trim().toLowerCase();
+      if (!ACTIVITY_CATEGORIES.has(category)) {
+        return res.status(400).json({ error: `Unknown category '${category}'` });
+      }
+    }
+
+    let needsReview = null;
+    if (req.query.needs_review === 'true') needsReview = true;
+    else if (req.query.needs_review === 'false') needsReview = false;
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    const { activity, total } = await EthActivity.findForUser(req.user.id, {
+      walletId: wallet.walletId,
+      category,
+      needsReview,
+      limit,
+      offset,
+    });
+
+    res.status(200).json({ data: activity, pagination: { total, limit, offset } });
+  } catch (error) {
+    logger.error({ err: error }, 'Get ETH activity error');
+    res.status(500).json({ error: 'Failed to retrieve activity' });
+  }
+});
+
+// A manual correction. Stored in its own table so the nightly rebuild cannot
+// erase it; every reader coalesces it over the derived verdict.
+router.post('/activity/override', async (req, res) => {
+  try {
+    const { wallet_id: walletIdRaw, tx_hash: txHashRaw, category: categoryRaw, note } = req.body || {};
+
+    const wallet = await loadWallet(req, walletIdRaw, { required: true });
+    if (!wallet.ok) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    if (typeof txHashRaw !== 'string' || !TX_HASH_RE.test(txHashRaw.trim())) {
+      return res.status(400).json({ error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' });
+    }
+    if (typeof categoryRaw !== 'string') {
+      return res.status(400).json({ error: 'category is required' });
+    }
+    const category = categoryRaw.trim().toLowerCase();
+    if (!ACTIVITY_CATEGORIES.has(category)) {
+      return res.status(400).json({ error: `category must be one of: ${[...ACTIVITY_CATEGORIES].join(', ')}` });
+    }
+    if (note !== undefined && note !== null && typeof note !== 'string') {
+      return res.status(400).json({ error: 'note must be a string' });
+    }
+
+    const override = await EthActivity.upsertOverride(
+      req.user.id,
+      wallet.walletId,
+      txHashRaw.trim().toLowerCase(),
+      { category, note: note?.trim() || null }
+    );
+    // The model's wallet join is the second ownership gate; a null here means
+    // the wallet vanished between the check and the write.
+    if (!override) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    res.status(201).json({ override });
+  } catch (error) {
+    logger.error({ err: error }, 'Set ETH activity override error');
+    res.status(500).json({ error: 'Failed to save the override' });
+  }
+});
+
+// Undoing a correction uncovers the derived verdict again -- the override is
+// deliberately not a one-way door.
+router.delete('/activity/override', async (req, res) => {
+  try {
+    const wallet = await loadWallet(req, req.query.wallet_id, { required: true });
+    if (!wallet.ok) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+    const txHash = typeof req.query.tx_hash === 'string' ? req.query.tx_hash.trim().toLowerCase() : '';
+    if (!TX_HASH_RE.test(txHash)) {
+      return res.status(400).json({ error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' });
+    }
+
+    const removed = await EthActivity.deleteOverride(req.user.id, wallet.walletId, txHash);
+    if (!removed) {
+      return res.status(404).json({ error: 'Override not found' });
+    }
+    res.status(200).json({ message: 'Override removed' });
+  } catch (error) {
+    logger.error({ err: error }, 'Remove ETH activity override error');
+    res.status(500).json({ error: 'Failed to remove the override' });
   }
 });
 

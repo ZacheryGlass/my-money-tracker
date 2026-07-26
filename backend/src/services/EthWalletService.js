@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
 const SecretsService = require('./SecretsService');
 const EthTransactionMirrorService = require('./EthTransactionMirrorService');
+const EthActivityService = require('./EthActivityService');
 const MethodSignatureService = require('./MethodSignatureService');
 const PriceService = require('./PriceService');
 const TransactionClassificationService = require('./TransactionClassificationService');
@@ -281,6 +282,9 @@ class EthWalletService {
       await EthTransfer.reclassifyCounterparties(wallet.user_id);
       const holdings = await this.refreshHoldings(walletId);
       const mirror = await EthTransactionMirrorService.rebuildForWallet(walletId);
+      // After reclassify: the ladder reads counterparty_is_own and
+      // counterparty_exchange off the freshly-classified legs.
+      const activity = await EthActivityService.rebuildForWallet(walletId);
       await TransactionClassificationService.backfill();
       // A partial sync must not report clean: the error slot doubles as the
       // degraded-feed badge until a sync fetches every feed.
@@ -296,6 +300,7 @@ class EthWalletService {
         inserted,
         holdings,
         mirror,
+        activity,
         methods,
         skippedFeeds,
         fetched: {
@@ -582,6 +587,11 @@ class EthWalletService {
       for (const wallet of wallets) {
         try {
           await EthTransactionMirrorService.rebuildForWallet(wallet.id);
+          // A label change flips self/exchange/external, which is what half the
+          // classification ladder reads -- so the activity rows heal
+          // retroactively, exactly like the mirror. Overrides live in their own
+          // table and are untouched by the rebuild.
+          await EthActivityService.rebuildForWallet(wallet.id);
         } catch (err) {
           logger.warn({ walletId: wallet.id, err }, 'Mirror rebuild failed during classification refresh');
         }
@@ -601,6 +611,9 @@ class EthWalletService {
         try {
           await this.refreshHoldings(wallet.id);
           await EthTransactionMirrorService.rebuildForWallet(wallet.id);
+          // The ignore list filters legs out of the activity builder too, so a
+          // newly-ignored spam token has to stop driving a classification.
+          await EthActivityService.rebuildForWallet(wallet.id);
         } catch (err) {
           logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh failed');
         }
