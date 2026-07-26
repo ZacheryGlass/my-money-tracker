@@ -343,6 +343,18 @@ test('the match object names the ids a verdict must be addressed to', async () =
   assert.match(sql, /'verdict_counter_record_id', em\.counter_record_id/);
 });
 
+// A LEFT JOIN's record_type is NULL on an unmatched row, and a bare CASE over
+// it falls to the ELSE. Without the guard that stamped 'exchange_transfer' on
+// every unmatched row, and `OR r.match_category = $n` then returned the ENTIRE
+// ledger for that one category -- a filter that silently widens, which is what
+// every filter here is fail-closed against.
+test('an unmatched row has NO match category, so one value cannot widen the feed', async () => {
+  await request(app).get('/api/crypto/ledger?category=exchange_transfer');
+  const { sql } = lastLedgerQuery();
+  assert.match(sql, /CASE WHEN mer\.id IS NULL THEN NULL ELSE/);
+  assert.match(sql, /CASE WHEN cer\.id IS NULL THEN NULL ELSE/);
+});
+
 // The dollars are 043's, denormalized onto the row by the valuation pass. A
 // ledger that recomputed them here would price a 2017 send at today's ETH.
 test('USD rides along from the dated valuation, never recomputed', async () => {
@@ -485,7 +497,7 @@ test('the CSV export is columns, not a rendered sentence', async () => {
   assert.match(first, /,1832\.4,2\.35,exact,/);
 });
 
-test('the export carries a folded pair’s venue half onto the same line', async () => {
+test('the export reports a folded pair without double-counting its assets', async () => {
   ledgerRows = [onchainRow({
     category: 'exchange_deposit',
     legs: [{ asset: 'ETH', direction: 'out', amount: '1.25' }],
@@ -500,10 +512,15 @@ test('the export carries a folded pair’s venue half onto the same line', async
     },
   })];
   const response = await request(app).get('/api/crypto/ledger/export');
-  const [, line] = response.text.trim().split('\n');
-  // One line, both halves: the wallet's outflow and the venue's credit.
-  assert.match(line, /1\.25 ETH/);
-  assert.equal(line.split('1.25 ETH').length - 1, 2, 'both halves belong on the folded line');
+  const [header, line] = response.text.trim().split('\n');
+  const cell = (name) => line.split(',')[header.split(',').indexOf(name)];
+
+  // #61 only ever pairs a deposit with a withdrawal, so the other half is the
+  // SAME money seen from the other side. Writing it into assets_in as well as
+  // assets_out would make SUM(assets_in) stop meaning "what arrived".
+  assert.equal(cell('assets_out'), '1.25 ETH');
+  assert.equal(cell('assets_in'), '', 'the venue half is the same money, not a second arrival');
+  assert.equal(line.split('1.25 ETH').length - 1, 1);
   // The venue account names the counterparty when the chain side has no label.
   assert.match(line, /Kraken/);
   // ...and the line SAYS it already accounts for the other record, on what

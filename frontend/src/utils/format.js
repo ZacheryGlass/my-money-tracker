@@ -90,6 +90,38 @@ export const formatExactUnits = (units, decimals = 18) => {
   return formatTokenUnits(units, scale, { maxFractionDigits: scale });
 };
 
+// What a row was worth ON ITS OWN DATE (#73), read off the valuation the server
+// already stored -- the client never multiplies a quantity by a price.
+//
+// Three distinct states, and conflating any two of them is the bug this exists
+// to prevent:
+//   a figure      -- valued from the dated series (exact, or carried across a
+//                    gap of a few days in a 24/7 market)
+//   No USD value  -- the asset has no close on that date. NOT $0: an unpriced
+//                    token is unknown, not worthless. Same wording the
+//                    counterparty triage queue already uses for the same reason.
+//   null          -- the row has no dollar meaning at all: an NFT leg's
+//                    value_wei is a count of units, and a reverted transfer
+//                    moved nothing.
+//
+// Shared by the per-leg transfers feed and the unified ledger. They read the
+// same three states off different column names, and two copies of this rule
+// would eventually disagree about which of them means "worthless".
+export const formatUsdAtTime = (value, basis) => {
+  if (basis === 'not_applicable') return null;
+  if (value == null) return 'No USD value';
+  const usd = Math.abs(Number(value));
+  if (!Number.isFinite(usd)) return 'No USD value';
+  // Sub-cent amounts round to $0 through the normal formatter, which reads as
+  // worthless rather than as tiny.
+  if (usd > 0 && usd < 0.01) return '< $0.01';
+  // BOTH bounds. maximumFractionDigits alone leaves the minimum at 0, so one
+  // column renders $1,234.5, $1,234 and $0.5 next to each other and the decimal
+  // points stop lining up -- in a money column, where scanning down the point is
+  // the whole reason the column is monospaced.
+  return formatCurrency(usd, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
 export const formatCompactCurrency = (value) => {
   const sign = value < 0 ? '-' : '';
   const abs = Math.abs(value);

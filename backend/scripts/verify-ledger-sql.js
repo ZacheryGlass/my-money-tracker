@@ -170,6 +170,28 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     [recordId('DEP-1'), activityIds[2]]
   );
 
+  // A SECOND venue, and a withdrawal there paired with a deposit at the first:
+  // 041's other shape, which never touches a tracked wallet. The table's
+  // orientation is withdrawal -> deposit, so the withdrawal is the primary and
+  // the deposit folds into it.
+  const account2 = await pool.query(
+    "INSERT INTO exchange_accounts (user_id, name, exchange) VALUES (1, 'Coinbase', 'coinbase') RETURNING id"
+  );
+  const pair = await pool.query(
+    `INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at, base_asset, base_amount,
+       external_id, needs_review, source)
+     VALUES ($1, 'withdrawal', '2026-01-10 09:00', 'ETH', -0.75, 'CB-WD-1', false, 'api'),
+            ($2, 'deposit',    '2026-01-10 09:20', 'ETH',  0.75, 'KR-DEP-2', true,  'api')
+     RETURNING id, external_id`,
+    [account2.rows[0].id, accountId]
+  );
+  const pairId = (externalId) => pair.rows.find((r) => r.external_id === externalId).id;
+  await pool.query(
+    `INSERT INTO exchange_matches (exchange_record_id, counter_record_id, match_method, confidence)
+     VALUES ($1, $2, 'address_amount', 'medium')`,
+    [pairId('CB-WD-1'), pairId('KR-DEP-2')]
+  );
+
   const CryptoLedger = require('../src/models/CryptoLedger');
 
   const all = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
@@ -186,7 +208,29 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     );
   }
 
-  ok('5 rows: 3 activity + 3 records, one pair folded', all.total === 5);
+  // 3 activity + 5 records, minus the on-chain fold and the venue-pair fold.
+  ok('6 rows: two pairs folded, each rendered once', all.total === 6);
+
+  // 041's OTHER shape. The withdrawal is the primary; the deposit folds in.
+  const venuePair = all.rows.find((r) => r.external_id === 'CB-WD-1');
+  ok('a venue-to-venue pair renders on its primary (the withdrawal)',
+    venuePair && venuePair.exchange_match?.external_id === 'KR-DEP-2');
+  ok('and its counter does NOT also appear on its own',
+    !all.rows.some((r) => r.external_id === 'KR-DEP-2'));
+  // The row shows the COUNTER while 041 keys the verdict on the PRIMARY, so
+  // inferring the target from what is on screen gets this case backwards.
+  ok('the venue pair names the verdict target in the table\'s own orientation',
+    venuePair
+      && String(venuePair.exchange_match.verdict_exchange_record_id) === String(pairId('CB-WD-1'))
+      && String(venuePair.exchange_match.verdict_counter_record_id) === String(pairId('KR-DEP-2')));
+  ok('a flagged counter raises the primary row',
+    venuePair && venuePair.needs_review === true && venuePair.record_needs_review === false);
+
+  // The one that returned the ENTIRE ledger before the NULL guard: an unmatched
+  // row's match_category fell to the CASE's ELSE.
+  const transfersOnly = await CryptoLedger.findForUser(1, { category: 'exchange_transfer', limit: 100, offset: 0 });
+  ok('category=exchange_transfer returns only transfers, not everything',
+    transfersOnly.total === 1 && transfersOnly.rows[0].external_id === 'UNK-1');
   const folded = all.rows.find((r) => r.exchange_match);
   ok('the matched record folds into its on-chain row',
     folded && folded.exchange_match.external_id === 'DEP-1');
@@ -229,17 +273,22 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   // A folded record is suppressed from its own branch, so each filter has to
   // find it through its host -- and the venue files a "deposit" for what the
   // wallet files as an exchange_deposit, so the mismatching name matters too.
+  // 3 unfolded venue rows + the on-chain host of the folded DEP-1.
   const bySource = await CryptoLedger.findForUser(1, { source: 'exchange', limit: 100, offset: 0 });
   ok('source=exchange still reaches the folded record',
-    bySource.total === 3 && bySource.rows.some((r) => r.exchange_match));
+    bySource.total === 4 && bySource.rows.some((r) => r.exchange_match));
+  // The on-chain host (its own category) AND the venue pair whose FOLDED half
+  // is a deposit -- the venue files a "deposit" for what its counterparty filed
+  // as a withdrawal, which is exactly the mismatch the second arm exists for.
   const byCategory = await CryptoLedger.findForUser(1, { category: 'exchange_deposit', limit: 100, offset: 0 });
-  ok('category=exchange_deposit finds the folded pair once', byCategory.total === 1);
+  ok('category=exchange_deposit finds both, each once', byCategory.total === 2);
+  // Kraken's own rows plus the two whose folded half is a Kraken record.
   const byAccount = await CryptoLedger.findForUser(1, { exchangeAccountId: accountId, limit: 100, offset: 0 });
-  ok('the account filter reaches the folded record too', byAccount.total === 3);
+  ok('the account filter reaches the folded record too', byAccount.total === 4);
   const byWallet = await CryptoLedger.findForUser(1, { walletId, limit: 100, offset: 0 });
   ok('the wallet filter keeps the folded pair and drops loose venue rows', byWallet.total === 3);
   const flagged = await CryptoLedger.findForUser(1, { needsReview: true, limit: 100, offset: 0 });
-  ok('needs_review narrows the union', flagged.total === 2);
+  ok('needs_review narrows the union', flagged.total === 3);
 
   // A flagged half must raise its host, or it leaves the queue while still
   // being unexplained.
@@ -248,7 +297,7 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('a flagged folded half raises the parent row',
     afterFlag.rows.find((r) => r.exchange_match)?.needs_review === true);
   ok('and the badge agrees with the filter',
-    (await CryptoLedger.summaryForUser(1)).needs_review_count === 3);
+    (await CryptoLedger.summaryForUser(1)).needs_review_count === 4);
   await pool.query("UPDATE exchange_records SET needs_review = FALSE WHERE external_id = 'DEP-1'");
 
   // A verdict is joined on (wallet, chain, tx_hash), never eth_activity.id.
@@ -261,16 +310,53 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('a user verdict is visible on the folded row',
     confirmed.rows.find((r) => r.exchange_match)?.exchange_match.verdict === 'confirmed');
 
+  // A REJECTED pairing deletes the match row, so the pair splits back into two
+  // rows and there is no match object to hang an undo on. Without a separate
+  // handle the rejection is permanent AND invisible: the matcher will never
+  // propose it again and nothing on screen can take it back.
+  await pool.query('DELETE FROM exchange_match_verdicts');
+  await pool.query('DELETE FROM exchange_matches WHERE activity_id IS NOT NULL');
+  await pool.query(
+    `INSERT INTO exchange_match_verdicts (exchange_record_id, wallet_id, chain_id, tx_hash, verdict)
+     VALUES ($1, $2, 1, $3, 'rejected')`,
+    [recordId('DEP-1'), walletId, DEPOSIT_TX]
+  );
+  const afterReject = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
+  // BOTH sides now carry that hash -- the on-chain row and the record that just
+  // un-folded -- so the source has to be named, not inferred from the hash.
+  const split = afterReject.rows.find((r) => r.source === 'onchain' && r.tx_hash === DEPOSIT_TX);
+  const unfolded = afterReject.rows.find((r) => r.external_id === 'DEP-1');
+  ok('rejecting splits the pair back into two rows',
+    afterReject.total === 7 && split && split.exchange_match === null && unfolded);
+  ok('a rejected pairing stays addressable, so it is not a one-way door',
+    split && String(split.rejected_match?.exchange_record_id) === String(recordId('DEP-1')));
+  // Put the confirmed verdict and the match back for the checks that follow.
+  await pool.query('DELETE FROM exchange_match_verdicts');
+  await pool.query(
+    `INSERT INTO exchange_matches (exchange_record_id, activity_id, match_method, confidence)
+     VALUES ($1, $2, 'tx_hash', 'high')`,
+    [recordId('DEP-1'), activityIds[2]]
+  );
+  await pool.query(
+    `INSERT INTO exchange_match_verdicts (exchange_record_id, wallet_id, chain_id, tx_hash, verdict)
+     VALUES ($1, $2, 1, $3, 'confirmed')`,
+    [recordId('DEP-1'), walletId, DEPOSIT_TX]
+  );
+
   const summary = await CryptoLedger.summaryForUser(1);
   console.log('\nsummary =', summary);
+  // exchange_count is RECORDS: 3 rendered on their own + 2 folded = 5, which is
+  // what Settings' per-account record_count adds up to.
+  // unpriced_count is ON-CHAIN only, matching what the unpriced banner can
+  // actually name: just the `send` row here.
   ok('summary counts records (folded included) and prices honestly',
-    summary.total === 5 && summary.onchain_count === 3 && summary.exchange_count === 3
-      && summary.matched_count === 1 && summary.unpriced_count === 2);
+    summary.total === 6 && summary.onchain_count === 3 && summary.exchange_count === 5
+      && summary.matched_count === 2 && summary.unpriced_count === 1);
 
   const p1 = await CryptoLedger.findForUser(1, { limit: 3, offset: 0 });
   const p2 = await CryptoLedger.findForUser(1, { limit: 3, offset: 3 });
   const ids = [...p1.rows, ...p2.rows].map((r) => r.id);
-  ok('paging is stable (no repeats, no drops)', new Set(ids).size === 5 && ids.length === 5);
+  ok('paging is stable (no repeats, no drops)', new Set(ids).size === 6 && ids.length === 6);
 
   // The row key must survive the wholesale rebuild every sync and label write
   // performs on eth_activity. The match rows CASCADE off it -- which is exactly
@@ -292,8 +378,11 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     );
     rebuiltIds.set(row.tx_hash, inserted.rows[0].id);
   }
-  ok('the match CASCADEd away with the rebuild, as 041 designs for',
-    (await pool.query('SELECT COUNT(*)::int AS n FROM exchange_matches')).rows[0].n === 0);
+  // The ON-CHAIN match CASCADEs off eth_activity; the venue-to-venue pair has
+  // no activity_id and survives. That asymmetry is why 041's pass re-runs at
+  // the end of every rebuild rather than only when a record changes.
+  ok('the on-chain match CASCADEd away with the rebuild, as 041 designs for',
+    (await pool.query('SELECT COUNT(*)::int AS n FROM exchange_matches')).rows[0].n === 1);
   await pool.query(
     `INSERT INTO exchange_matches (exchange_record_id, activity_id, match_method, confidence)
      VALUES ($1, $2, 'tx_hash', 'high')`,
@@ -308,7 +397,7 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     rebuilt.rows.find((r) => r.exchange_match)?.exchange_match.verdict === 'confirmed');
 
   ok('the export query runs and returns every row',
-    (await CryptoLedger.findAllForUser(1, { limit: 10 })).length === 5);
+    (await CryptoLedger.findAllForUser(1, { limit: 10 })).length === 6);
 
   const other = await CryptoLedger.findForUser(2, { limit: 100, offset: 0 });
   ok('a second user sees none of it', other.total === 0);

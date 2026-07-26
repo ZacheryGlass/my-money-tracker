@@ -163,10 +163,12 @@ const EXPORT_COLUMNS = [
 // Token symbols, NFT names and label names are attacker-authored: anyone can
 // deploy a contract with symbol `=cmd|'/c calc'!A1`, and the builtin label pack
 // is scraped. A cell that OPENS with a formula character is evaluated by Excel
-// and Sheets on open, so the leading character is quoted off. Applied only to
-// the text columns -- the numeric ones must stay parseable, and a legitimate
-// negative number starts with '-'.
-const FORMULA_LEAD = /^[=+@\t\r]/;
+// and Sheets on open, so the leading character is quoted off.
+//
+// '-' is in the set: Excel evaluates `-1+1` too. It costs nothing here because
+// this is applied ONLY to the text columns -- the numeric ones never pass
+// through it, so a negative amount stays a number to a spreadsheet.
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
 const deformula = (text) => (FORMULA_LEAD.test(text) ? `'${text}` : text);
 
 function legsText(legs, direction) {
@@ -178,10 +180,14 @@ function legsText(legs, direction) {
 }
 
 function exportRow(row) {
-  // A folded pair is one line, and the other half's assets belong on it -- the
-  // on-chain legs alone would describe half the event.
+  // The folded half's legs are NOT added to these columns. #61 only ever pairs
+  // a deposit with a withdrawal, so the other half is the SAME money seen from
+  // the other side -- writing 1.25 ETH into assets_out (the wallet sent it) and
+  // again into assets_in (the venue credited it) makes SUM(assets_in) stop
+  // meaning "what arrived". The pairing is reported in `matched_with` instead,
+  // where it explains the row without inflating it.
   const match = row.exchange_match;
-  const legs = [...(row.legs || []), ...(match?.legs || [])];
+  const legs = row.legs || [];
 
   return {
     date: row.occurred_at instanceof Date ? row.occurred_at.toISOString() : row.occurred_at,

@@ -5,7 +5,7 @@ import {
   ExternalLink, Landmark, Link2, Pencil, RefreshCw, Tag, Undo2, Wallet, X,
 } from 'lucide-react';
 import { crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
-import { formatCurrency, formatDateDisplay, formatTokenUnits } from '../utils/format';
+import { formatDateDisplay, formatTokenUnits, formatUsdAtTime } from '../utils/format';
 import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
 import {
   LEDGER_CATEGORIES,
@@ -292,9 +292,12 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
   });
 
   const enriched = useMemo(() => rows.map((row) => {
-    // The folded half's legs come from the server already in leg shape, so the
-    // one description covers the whole movement rather than half of it.
-    const legs = [...(row.legs || []), ...(row.exchange_match?.legs || [])];
+    // The folded half's legs are NOT merged in. #61 only ever pairs a deposit
+    // with a withdrawal, so the other side is the SAME money seen from the
+    // other end -- merging renders a 1.25 ETH deposit as "1.25 ETH → 1.25 ETH",
+    // which reads as a swap of an asset for itself. The pairing shows as the
+    // Matched chip and, in full, in the row detail.
+    const legs = row.legs || [];
     return {
       ...row,
       allLegs: legs,
@@ -424,13 +427,16 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
       // total as zero.
       cell: ({ row }) => {
         const entry = row.original;
+        // Three states, through the shared rule: a figure, "No USD value" (the
+        // asset had no close that day -- unknown, not worthless), or nothing at
+        // all. A sub-cent amount reads "< $0.01" rather than rounding to $0,
+        // which would put a real movement in the same cell as a fake zero.
+        const usd = formatUsdAtTime(entry.usd_value, entry.usd_basis);
+        if (usd === null) return <span className="text-tertiary">—</span>;
         if (entry.usd_value == null) {
           return (
-            <span
-              className="text-tertiary"
-              title={USD_BASIS_NOTE[entry.usd_basis] || 'No dollar value for this row'}
-            >
-              {entry.usd_basis === 'not_applicable' ? '—' : 'No price'}
+            <span className="text-tertiary" title={USD_BASIS_NOTE[entry.usd_basis] || undefined}>
+              {usd}
             </span>
           );
         }
@@ -439,7 +445,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
             className={`value-emphasis ${entry.usd_basis === 'carried' ? 'opacity-70' : ''}`}
             title={USD_BASIS_NOTE[entry.usd_basis] || undefined}
           >
-            {formatCurrency(Number(entry.usd_value))}
+            {usd}
             {entry.usd_basis === 'carried' && <span className="ml-0.5 text-tertiary">~</span>}
           </span>
         );
@@ -456,7 +462,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
           return <span className="text-tertiary">—</span>;
         }
         return (
-          <span className="font-money text-tertiary" title={entry.usd_fee ? `${formatCurrency(Number(entry.usd_fee))} at the time` : undefined}>
+          <span className="font-money text-tertiary" title={entry.usd_fee ? `${formatUsdAtTime(entry.usd_fee)} at the time` : undefined}>
             {formatTokenUnits(entry.fee_units, entry.fee_decimals, { maxFractionDigits: 8 }) ?? entry.fee_amount} {entry.fee_asset}
           </span>
         );
@@ -572,7 +578,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
           <DollarSign size={14} className="shrink-0" />
           <span>
             {unpriced.length} {unpriced.length === 1 ? 'asset has' : 'assets have'} no
-            price for the dates they moved ({unpriced.slice(0, 4).map((a) => a.symbol || a.asset_key).join(', ')}
+            price for the dates they moved ({unpriced.slice(0, 4).map((a) => a.asset_symbol || a.asset_key).join(', ')}
             {unpriced.length > 4 ? `, +${unpriced.length - 4} more` : ''}) — their rows read
             &quot;No price&quot;, which is not the same as $0.
           </span>
@@ -788,7 +794,7 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
           {row.fee_amount && Number.parseFloat(row.fee_amount) !== 0
             ? `${formatTokenUnits(row.fee_units, row.fee_decimals, { maxFractionDigits: 18 }) ?? row.fee_amount} ${row.fee_asset}`
             : '—'}
-          {row.usd_fee && <span className="ml-1 text-tertiary">({formatCurrency(Number(row.usd_fee))})</span>}
+          {row.usd_fee && <span className="ml-1 text-tertiary">({formatUsdAtTime(row.usd_fee)})</span>}
         </DetailField>
         {/* The basis is part of the number: "$1,832 exact" and "$1,832 carried
             from an earlier close" are different claims, and "no price" is not
@@ -796,7 +802,7 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
         <DetailField label="Value at the time">
           {row.usd_value != null
             ? <>
-                {formatCurrency(Number(row.usd_value))}
+                {formatUsdAtTime(row.usd_value, row.usd_basis)}
                 <span className="ml-1 text-tertiary">({row.usd_basis})</span>
               </>
             : <span title={USD_BASIS_NOTE[row.usd_basis] || undefined}>
@@ -818,6 +824,30 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
         {row.review_reason && <DetailField label="Why flagged">{row.review_reason}</DetailField>}
         {row.override_note && <DetailField label="Note">{row.override_note}</DetailField>}
       </div>
+
+      {/* A pairing this row was rejected against. Rejecting DELETES the match,
+          so there is no match object to hang the undo on -- without this the
+          rejection is permanent and invisible, and the matcher will never
+          propose that pairing again. */}
+      {!row.exchange_match && row.rejected_match && (
+        <div className="flex flex-wrap items-center gap-2 border border-border bg-surface-3 p-2 text-body-sm text-tertiary">
+          <span>You rejected a suggested pairing for this transaction, so it is shown on its own.</span>
+          <button
+            type="button"
+            onClick={() => run('match:clear', () => exchangesAPI.clearMatchVerdict({
+              exchangeRecordId: row.rejected_match.exchange_record_id,
+              walletId: row.wallet_id,
+              txHash: row.tx_hash,
+              chainId: row.chain_id,
+            }))}
+            disabled={saving != null}
+            className="inline-flex h-7 items-center gap-1 rounded border border-border bg-surface-2 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary disabled:opacity-40"
+          >
+            {saving === 'match:clear' ? <RefreshCw size={10} className="animate-spin" /> : <Undo2 size={10} />}
+            Undo rejection
+          </button>
+        </div>
+      )}
 
       {/* The other half of this movement (#61), with the EVIDENCE that paired
           them. A confirm/reject is a judgement about that evidence, so hiding
@@ -969,7 +999,12 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
               </button>
             )}
           </>
-        ) : row.needs_review ? (
+        ) : row.needs_review && row.record_needs_review ? (
+          // Gated on the ROW's OWN flag, not the ORed one: on a folded pair the
+          // flag can belong to the other half, and resolving this record would
+          // clear something already clear and leave the row still flagged --
+          // a button that looks broken. The other half has its own button in
+          // the match panel above.
           <button
             type="button"
             onClick={() => resolveRecord(row.exchange_account_id, row.row_id)}

@@ -92,6 +92,7 @@ const exchange = (overrides = {}) => ({
   exchange_account_id: 7,
   account_name: 'Kraken',
   record_type: 'trade',
+  record_needs_review: true,
   external_id: 'TRD-1',
   is_overridden: false,
   exchange_match: null,
@@ -175,7 +176,12 @@ describe('CryptoLedger', () => {
     // nothing to judge.
     expect(screen.getAllByTitle(/Both sides recorded the same transaction hash/).length).toBeGreaterThan(0);
     // Both halves on the one line: the wallet's outflow and the venue's credit.
-    expect(screen.getAllByText('1.25 ETH → 1.25 ETH').length).toBeGreaterThan(0);
+    // The folded half is NOT merged into the description. #61 only pairs a
+    // deposit with a withdrawal, so the other side is the same money seen from
+    // the other end -- merging renders it as "1.25 ETH → 1.25 ETH", a swap of
+    // an asset for itself.
+    expect(screen.getAllByText('− 1.25 ETH').length).toBeGreaterThan(0);
+    expect(screen.queryByText('1.25 ETH → 1.25 ETH')).toBeNull();
     // The matched venue names the counterparty where the chain side has none.
     expect(screen.getAllByText('Kraken').length).toBeGreaterThan(0);
   });
@@ -384,7 +390,7 @@ describe('CryptoLedger', () => {
     apiMocks.exchanges.resolveRecord.mockResolvedValue({ record: {} });
 
     render(<CryptoLedger />);
-    fireEvent.click((await screen.findAllByText('1.25 ETH → 1.25 ETH'))[0]);
+    fireEvent.click((await screen.findAllByText('− 1.25 ETH'))[0]);
     fireEvent.click((await screen.findAllByRole('button', { name: /mark the record reviewed/i }))[0]);
 
     await vi.waitFor(() => {
@@ -409,7 +415,7 @@ describe('CryptoLedger', () => {
     apiMocks.exchanges.setMatchVerdict.mockResolvedValue({ verdict: {} });
 
     render(<CryptoLedger />);
-    fireEvent.click((await screen.findAllByText('1.25 ETH → 1.25 ETH'))[0]);
+    fireEvent.click((await screen.findAllByText('− 1.25 ETH'))[0]);
     // The weakest evidence is stated outright, which is what makes the choice
     // a real one.
     expect((await screen.findAllByText(/Same amount, inside the settlement window/)).length).toBeGreaterThan(0);
@@ -439,7 +445,7 @@ describe('CryptoLedger', () => {
     apiMocks.exchanges.setMatchVerdict.mockResolvedValue({ verdict: {} });
 
     render(<CryptoLedger />);
-    fireEvent.click((await screen.findAllByText('1.25 ETH → 1.25 ETH'))[0]);
+    fireEvent.click((await screen.findAllByText('− 1.25 ETH'))[0]);
     fireEvent.click((await screen.findAllByRole('button', { name: /not the same/i }))[0]);
 
     await vi.waitFor(() => {
@@ -465,7 +471,7 @@ describe('CryptoLedger', () => {
     apiMocks.exchanges.setMatchVerdict.mockResolvedValue({ verdict: {} });
 
     render(<CryptoLedger />);
-    fireEvent.click((await screen.findAllByText(/0\.5 ETH → 1,832\.4 USD \+ 0\.5 ETH/))[0]);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USD'))[0]);
     fireEvent.click((await screen.findAllByRole('button', { name: /same movement/i }))[0]);
 
     await vi.waitFor(() => {
@@ -490,7 +496,7 @@ describe('CryptoLedger', () => {
     apiMocks.exchanges.clearMatchVerdict.mockResolvedValue({ message: 'removed' });
 
     render(<CryptoLedger />);
-    fireEvent.click((await screen.findAllByText('1.25 ETH → 1.25 ETH'))[0]);
+    fireEvent.click((await screen.findAllByText('− 1.25 ETH'))[0]);
     expect((await screen.findAllByText(/You confirmed this/)).length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByRole('button', { name: /undo verdict/i })[0]);
 
@@ -501,19 +507,83 @@ describe('CryptoLedger', () => {
     });
   });
 
+  it('keeps a rejected pairing undoable after it splits the rows apart', async () => {
+    // Rejecting DELETES the match row, so there is no exchange_match left to
+    // hang an undo on. Without the separate rejected_match the rejection is
+    // permanent and invisible: the matcher will never propose that pairing
+    // again and nothing on screen can take it back.
+    setLedger([onchain({
+      category: 'exchange_deposit',
+      legs: [{ asset: 'ETH', direction: 'out', amount: '1.25', units: '125', decimals: 2 }],
+      exchange_match: null,
+      rejected_match: { exchange_record_id: 55 },
+    })]);
+    apiMocks.exchanges.clearMatchVerdict.mockResolvedValue({ message: 'removed' });
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('− 1.25 ETH'))[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /undo rejection/i }))[0]);
+
+    await vi.waitFor(() => {
+      expect(apiMocks.exchanges.clearMatchVerdict).toHaveBeenCalledWith({
+        exchangeRecordId: 55, walletId: 1, txHash: TX, chainId: 42161,
+      });
+    });
+  });
+
+  it('does not offer to resolve a record that is already clear', async () => {
+    // On a folded pair the row's needs_review can belong to the OTHER half.
+    // A button wired to the ORed flag resolves a record that is already clear
+    // and leaves the row still flagged -- a button that looks broken.
+    setLedger([exchange({
+      needs_review: true,
+      record_needs_review: false,
+      exchange_match: {
+        match_id: 9, exchange_record_id: 71, verdict_exchange_record_id: 55,
+        verdict_counter_record_id: 71, match_method: 'address_amount', match_confidence: 'medium',
+        verdict: null, exchange_account_id: 8, account_name: 'Coinbase', exchange: 'coinbase',
+        record_type: 'deposit', needs_review: true, external_id: 'CB-1',
+        legs: [{ asset: 'ETH', direction: 'in', amount: '0.5', units: '5', decimals: 1 }],
+      },
+    })]);
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USD'))[0]);
+
+    expect(screen.queryByRole('button', { name: /^mark reviewed$/i })).toBeNull();
+    // The flag belongs to the folded half, and its own button targets it.
+    expect((await screen.findAllByRole('button', { name: /mark the record reviewed/i })).length)
+      .toBeGreaterThan(0);
+  });
+
   it('shows the dollars the transaction was worth AT THE TIME', async () => {
     setLedger([onchain({ usd_value: '152.30', usd_basis: 'exact' })]);
     render(<CryptoLedger />);
-    expect((await screen.findAllByText('$152')).length).toBeGreaterThan(0);
+    // Both bounds at two decimals, so a money column's decimal points line up
+    // instead of mixing $1,234.5, $1,234 and $0.5.
+    expect((await screen.findAllByText('$152.30')).length).toBeGreaterThan(0);
   });
 
-  it('says "No price" rather than showing an unpriced row as $0', async () => {
+  it('renders a sub-cent value as "< $0.01", never as $0', async () => {
+    // Rounding to whole dollars puts a real 42-cent movement in the same cell
+    // as a fabricated zero, which is the confusion the whole USD column exists
+    // to avoid.
+    setLedger([onchain({ usd_value: '0.004', usd_basis: 'exact' })]);
+    render(<CryptoLedger />);
+    expect((await screen.findAllByText('< $0.01')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('$0')).toBeNull();
+  });
+
+  it('says "No USD value" rather than showing an unpriced row as $0', async () => {
     // A 2019 token outside a free key's range is not worth zero; a blank or a
     // 0 in a money column is the one reading that must be impossible.
     setLedger([onchain({ usd_value: null, usd_fee: null, usd_basis: 'unpriced' })]);
     render(<CryptoLedger />);
 
-    expect((await screen.findAllByText('No price')).length).toBeGreaterThan(0);
+    // Same wording as the per-leg feed and the triage queue, from the one
+    // shared formatter -- two copies of this rule would eventually disagree
+    // about which state means "worthless".
+    expect((await screen.findAllByText('No USD value')).length).toBeGreaterThan(0);
     expect(screen.queryByText('$0')).toBeNull();
     expect(screen.getAllByTitle(/No price for this asset on this date — not zero/).length).toBeGreaterThan(0);
   });
@@ -546,7 +616,9 @@ describe('CryptoLedger', () => {
 
   it('names the assets it could not price, so a gap is not read as zero', async () => {
     apiMocks.eth.getUnpricedAssets.mockResolvedValue({
-      data: [{ asset_key: 'erc20:1:0xabc', symbol: 'OLDTOKEN' }],
+      // asset_symbol is the column GET /api/eth/prices/unpriced actually emits;
+      // reading `symbol` here printed the raw erc20:1:0x… key at the user.
+      data: [{ asset_key: 'erc20:1:0xabc', asset_symbol: 'OLDTOKEN' }],
       total: 1,
     });
 

@@ -71,15 +71,24 @@ const MATCHED_CTE = `
 // Taken as a function of the alias because it is needed three times -- an
 // unfolded record's own category, and the category a FOLDED record would have
 // had, so the category filter can still find it through its host row.
+//
+// The NULL guard is load-bearing on the folded arm: `mer` and `cer` are LEFT
+// JOINs, and a bare CASE over a NULL record_type falls to the ELSE. That would
+// stamp 'exchange_transfer' on EVERY unmatched row, and the category filter's
+// second arm (`OR r.match_category = $n`) would then return the entire ledger
+// for that one value -- a filter that silently widens, which is the failure
+// every other filter here is fail-closed against.
 const recordCategory = (alias) => `
-      CASE ${alias}.record_type
-        WHEN 'trade' THEN 'exchange_trade'
-        WHEN 'conversion' THEN 'exchange_trade'
-        WHEN 'deposit' THEN 'exchange_deposit'
-        WHEN 'withdrawal' THEN 'exchange_withdrawal'
-        WHEN 'reward' THEN 'staking_reward'
-        WHEN 'fee' THEN 'fee'
-        ELSE 'exchange_transfer'
+      CASE WHEN ${alias}.id IS NULL THEN NULL ELSE
+        CASE ${alias}.record_type
+          WHEN 'trade' THEN 'exchange_trade'
+          WHEN 'conversion' THEN 'exchange_trade'
+          WHEN 'deposit' THEN 'exchange_deposit'
+          WHEN 'withdrawal' THEN 'exchange_withdrawal'
+          WHEN 'reward' THEN 'staking_reward'
+          WHEN 'fee' THEN 'fee'
+          ELSE 'exchange_transfer'
+        END
       END`;
 
 // The folded venue half, as JSON.
@@ -133,6 +142,7 @@ const ONCHAIN_CTE = `
       COALESCE(o.category, a.category)::text AS category,
       ((CASE WHEN o.category IS NOT NULL THEN FALSE ELSE a.needs_review END)
         OR COALESCE(mer.needs_review, FALSE)) AS needs_review,
+      FALSE AS record_needs_review,
       (CASE WHEN o.category IS NOT NULL THEN NULL ELSE a.review_reason END)::text AS review_reason,
       a.wallet_id,
       a.chain_id,
@@ -171,6 +181,14 @@ const ONCHAIN_CTE = `
       NULL::text AS record_address,
       NULL::text AS record_source,
       CASE WHEN em.id IS NULL THEN NULL ELSE ${matchJson('em', 'mer', 'mea', 'mv')} END AS exchange_match,
+      -- A REJECTED pairing leaves no exchange_matches row at all -- the
+      -- selection pass drops the candidate -- so the pair splits back into two
+      -- rows and the match object above is NULL. Without this the rejection is
+      -- a one-way door: the verdict is stored, the matcher will never propose
+      -- that pairing again, and nothing on screen can undo it. Joined on
+      -- (wallet, chain, tx_hash) independently of the match itself.
+      rv.verdict::text AS rejected_verdict,
+      rv.exchange_record_id AS rejected_record_id,
       -- What the folded half would have been filed under on its own. The
       -- source/category/account filters read these too: a record suppressed
       -- from its own branch and then filtered out of its host would appear
@@ -194,8 +212,40 @@ const ONCHAIN_CTE = `
      AND mv.wallet_id = a.wallet_id
      AND mv.chain_id = a.chain_id
      AND mv.tx_hash = a.tx_hash
+    -- Independent of em: this is how a REJECTED pairing stays undoable, since
+    -- rejecting deletes the match row. DISTINCT ON keeps it 1:1 -- a
+    -- transaction the user rejected against two different records would
+    -- otherwise fan its row.
+    LEFT JOIN LATERAL (
+      SELECT v.verdict, v.exchange_record_id
+      FROM exchange_match_verdicts v
+      JOIN exchange_records vr ON vr.id = v.exchange_record_id
+      JOIN exchange_accounts vea ON vea.id = vr.exchange_account_id
+      WHERE v.wallet_id = a.wallet_id
+        AND v.chain_id = a.chain_id
+        AND v.tx_hash = a.tx_hash
+        AND v.counter_record_id IS NULL
+        AND v.verdict = 'rejected'
+        AND vea.user_id = $1
+      ORDER BY v.exchange_record_id
+      LIMIT 1
+    ) rv ON TRUE
     WHERE w.user_id = $1
   )`;
+
+// What counts as "the venue quoted this in dollars". Stablecoins are included
+// because a venue books a USDC pair as the dollar side of the trade; they are
+// not pegged by law, but no better figure exists for a row 043 does not value.
+const FIAT_ASSETS = "('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')";
+
+// One expression, used for both the value and the basis so the two cannot
+// disagree about whether a dollar figure exists.
+const FIAT_VALUE_SQL = `
+      CASE WHEN UPPER(er.quote_asset) IN ${FIAT_ASSETS} AND er.quote_amount IS NOT NULL
+             THEN ABS(er.quote_amount)::text
+           WHEN UPPER(er.base_asset) IN ${FIAT_ASSETS} AND er.base_amount IS NOT NULL
+             THEN ABS(er.base_amount)::text
+      END`;
 
 // The venue branch: every record no other row already accounts for.
 //
@@ -210,6 +260,11 @@ const EXCHANGE_CTE = `
       er.occurred_at,
       ${recordCategory('er')}::text AS category,
       (er.needs_review OR COALESCE(cer.needs_review, FALSE)) AS needs_review,
+      -- THIS record's own flag, beside the ORed one above. On a folded pair the
+      -- row-level flag can belong to the other half, and a "Mark reviewed"
+      -- button wired to the OR would resolve a record that is already clear and
+      -- leave the row still flagged.
+      er.needs_review AS record_needs_review,
       NULL::text AS review_reason,
       NULL::int AS wallet_id,
       NULL::int AS chain_id,
@@ -226,20 +281,18 @@ const EXCHANGE_CTE = `
       -- ledger, and a venue row is only in dollars when the venue itself quoted
       -- it in dollars. That case is EXACT -- the venue wrote the number -- and
       -- every other case is honestly unpriced rather than silently zero.
-      CASE WHEN UPPER(er.quote_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
-             AND er.quote_amount IS NOT NULL
-           THEN ABS(er.quote_amount)::text
-           WHEN UPPER(er.base_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
-             AND er.base_amount IS NOT NULL
-           THEN ABS(er.base_amount)::text
-      END AS usd_value,
-      CASE WHEN UPPER(er.fee_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
+      ${FIAT_VALUE_SQL} AS usd_value,
+      CASE WHEN UPPER(er.fee_asset) IN ${FIAT_ASSETS}
              AND er.fee_amount IS NOT NULL
            THEN ABS(er.fee_amount)::text
       END AS usd_fee,
-      CASE WHEN UPPER(er.quote_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
-             OR UPPER(er.base_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
-           THEN 'exact' ELSE 'unpriced' END AS usd_basis,
+      -- Derived from whether the VALUE resolved, not from the asset alone: an
+      -- import can write base_asset='USD' with a NULL base_amount (a cell it
+      -- could not read, flagged for review), and a basis of 'exact' beside an
+      -- empty dollar column is a blank in a summed column labelled as a real
+      -- figure -- exactly the gap-versus-zero confusion the basis exists to
+      -- resolve.
+      CASE WHEN ${FIAT_VALUE_SQL} IS NOT NULL THEN 'exact' ELSE 'unpriced' END AS usd_basis,
       NULL::text AS derived_category,
       NULL::text AS override_category,
       NULL::text AS override_note,
@@ -260,6 +313,8 @@ const EXCHANGE_CTE = `
       er.address::text AS record_address,
       er.source::text AS record_source,
       CASE WHEN cem.id IS NULL THEN NULL ELSE ${matchJson('cem', 'cer', 'cea', 'cmv')} END AS exchange_match,
+      NULL::text AS rejected_verdict,
+      NULL::bigint AS rejected_record_id,
       ${recordCategory('cer')}::text AS match_category,
       cea.id AS match_account_id
     FROM exchange_records er
@@ -413,6 +468,7 @@ function toLedgerRow(row) {
     occurred_at: row.occurred_at,
     category: row.category,
     needs_review: row.needs_review === true,
+    record_needs_review: row.record_needs_review === true,
     review_reason: row.review_reason,
     legs,
     // Fee, in the same shape on both sides: a whole-unit amount and its asset.
@@ -467,6 +523,12 @@ function toLedgerRow(row) {
     // already shaped so a reader never has to know which side it came from.
     exchange_match: row.exchange_match
       ? { ...row.exchange_match, legs: matchLegs(row.exchange_match) }
+      : null,
+    // A pairing this transaction was rejected against. There is no match row
+    // to hang it on (rejecting deletes it), so it rides separately -- it is
+    // what makes "Not the same" undoable rather than permanent.
+    rejected_match: row.rejected_verdict
+      ? { exchange_record_id: Number(row.rejected_record_id) }
       : null,
   };
 }
@@ -594,7 +656,12 @@ class CryptoLedger {
          (COUNT(*) FILTER (WHERE r.needs_review AND r.source = 'onchain'))::int AS onchain_needs_review,
          (COUNT(*) FILTER (WHERE r.needs_review AND r.source = 'exchange'))::int AS exchange_needs_review,
          (COUNT(*) FILTER (WHERE r.exchange_match IS NOT NULL))::int AS matched_count,
-         (COUNT(*) FILTER (WHERE r.usd_basis = 'unpriced'))::int AS unpriced_count,
+         -- ON-CHAIN only. 043 values eth_transfers, and the unpriced
+         -- enumeration this counter sits beside enumerates on-chain assets --
+         -- so counting a crypto/crypto venue trade here would make the number
+         -- permanently non-zero against a banner that can never name it, which
+         -- is the "badge that cannot reach zero" failure again.
+         (COUNT(*) FILTER (WHERE r.usd_basis = 'unpriced' AND r.source = 'onchain'))::int AS unpriced_count,
          (COUNT(*) FILTER (WHERE r.usd_basis = 'carried'))::int AS carried_count,
          MIN(r.occurred_at) AS first_at,
          MAX(r.occurred_at) AS last_at
