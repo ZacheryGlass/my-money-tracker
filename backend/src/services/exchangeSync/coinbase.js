@@ -136,9 +136,14 @@ function currencyOf(money) {
 // The JWT signs the bare path with no query string, so next_uri (which carries
 // one) is never followed directly -- its starting_after is extracted and
 // passed as a parameter instead.
-async function pageV2(client, path, { limit = V2_PAGE_LIMIT, maxPages, order = 'desc', shouldStop } = {}) {
+async function pageV2(client, path, {
+  limit = V2_PAGE_LIMIT, maxPages, order = 'desc', shouldStop, startAfter = null,
+} = {}) {
   const collected = [];
-  let startingAfter;
+  // Where to resume if the page budget runs out mid-walk. Returned to the
+  // caller so an unfinished walk can be picked up exactly where it stopped
+  // instead of restarting from the newest row and never reaching the old ones.
+  let startingAfter = startAfter || undefined;
   let pages = 0;
   let truncated = false;
 
@@ -161,13 +166,13 @@ async function pageV2(client, path, { limit = V2_PAGE_LIMIT, maxPages, order = '
     // done; everything past this point is already stored.
     if (stopped) break;
 
-    if (!body.pagination || !body.pagination.next_uri) break;
     const last = data[data.length - 1];
+    if (!body.pagination || !body.pagination.next_uri) break;
     if (!last || !last.id) break;
     startingAfter = last.id;
   }
 
-  return { rows: collected, pages, truncated };
+  return { rows: collected, pages, truncated, resumeAfter: truncated ? startingAfter ?? null : null };
 }
 
 // v3 accounts paginate with an explicit has_next flag; v3 fills do NOT have
@@ -406,9 +411,15 @@ const coinbaseConnector = {
   /**
    * One sync pass.
    *
-   * Cursor: { since: ISO timestamp }. The v2 transaction feed is walked
-   * newest-first per account and stopped once it reaches rows older than the
-   * watermark, so steady-state cost is one page per account.
+   * Cursor: { since: ISO timestamp, pending: { [v2AccountId]: startingAfterId } }.
+   *
+   * The v2 transaction feed is walked newest-first per account and stopped once
+   * it reaches rows older than `since`, so steady-state cost is one page per
+   * account. `pending` is what makes a first backfill CONVERGE: a history
+   * longer than the page budget would otherwise restart from the newest row
+   * every run, re-import the same first pages, and never once reach the old
+   * ones. Each unfinished account keeps the id it stopped after, and `since`
+   * only advances when every account has been walked to the end.
    */
   async sync(credentials, { cursor = null, interactive = true } = {}) {
     const client = new CoinbaseClient(credentials);
@@ -435,15 +446,29 @@ const coinbaseConnector = {
 
     const v2Accounts = await pageV2(client, '/v2/accounts', { maxPages: 10 });
 
+    const pending = (state.pending && typeof state.pending === 'object') ? state.pending : {};
+    const nextPending = {};
     const transactions = [];
     let truncated = false;
     let pagesUsed = 0;
+
     for (const account of v2Accounts.rows) {
       if (!account?.id) continue;
-      if (pagesUsed >= maxPages) { truncated = true; break; }
+      const resumeAfter = pending[account.id] ?? null;
+      if (pagesUsed >= maxPages) {
+        // Out of budget before this account was touched at all. Carrying its
+        // resume point forward unchanged is what stops the next run from
+        // treating it as finished.
+        truncated = true;
+        if (resumeAfter) nextPending[account.id] = resumeAfter;
+        continue;
+      }
       const result = await pageV2(client, `/v2/accounts/${account.id}/transactions`, {
         maxPages: maxPages - pagesUsed,
-        shouldStop: watermark
+        startAfter: resumeAfter,
+        // While an account is still being backfilled the watermark must not
+        // stop the walk: every remaining row is older than it by definition.
+        shouldStop: watermark && !resumeAfter
           ? (row) => {
             const at = Date.parse(row?.created_at ?? '');
             return Number.isFinite(at) && at < watermark;
@@ -451,7 +476,10 @@ const coinbaseConnector = {
           : null,
       });
       pagesUsed += result.pages;
-      if (result.truncated) truncated = true;
+      if (result.truncated) {
+        truncated = true;
+        if (result.resumeAfter) nextPending[account.id] = result.resumeAfter;
+      }
       transactions.push(...result.rows);
     }
 
@@ -489,10 +517,13 @@ const coinbaseConnector = {
 
     return {
       records,
-      // Only advanced when the walk finished. A truncated pass leaves the
-      // watermark where it was so the unread tail is fetched next time rather
-      // than skipped forever.
-      cursor: truncated ? state : { since: startedAt },
+      // `since` only advances when every account was walked to the end. A
+      // truncated pass keeps the old watermark and records where each
+      // unfinished account stopped, so the next run continues rather than
+      // starting over.
+      cursor: truncated
+        ? { since: state.since ?? null, pending: nextPending }
+        : { since: startedAt, pending: {} },
       balances: Object.fromEntries(sortedEntries(balances)),
       stats: {
         rows: transactions.length,

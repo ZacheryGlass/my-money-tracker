@@ -751,6 +751,33 @@ test('coinbase: v2 paging stops on an empty next_uri and threads starting_after'
   assert.equal(result.records.some((record) => record.external_id === 'cb:page2-a'), true);
 });
 
+test('coinbase: a backfill longer than the page budget resumes instead of restarting', async () => {
+  // Every page full and every page pointing at another: the budget runs out
+  // long before the history does.
+  const template = COINBASE.transactions.data[2];
+  const pageAt = (index) => ({
+    _after: index === 0 ? undefined : `cb-tx-${index * 100 - 1}`,
+    data: Array.from({ length: 100 }, (_, i) => ({ ...template, id: `cb-tx-${index * 100 + i}` })),
+    pagination: { next_uri: `/v2/accounts/x/transactions?starting_after=cb-tx-${index * 100 + 99}` },
+  });
+  coinbaseTransactionPages = Array.from({ length: 60 }, (_, index) => pageAt(index));
+
+  const first = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: null, interactive: true }
+  );
+
+  assert.equal(first.stats.backfillPending, true);
+  // The resume point is per v2 account. Without it the next run would walk the
+  // same first pages again, re-import rows it already has, and never once
+  // reach the old ones -- a backfill that can never converge.
+  const resumeIds = Object.values(first.cursor.pending);
+  assert.ok(resumeIds.length > 0, 'an unfinished account must carry where it stopped');
+  assert.match(resumeIds[0], /^cb-tx-\d+$/);
+  // ...and the watermark is NOT stamped as complete.
+  assert.equal(first.cursor.since, null);
+});
+
 test('coinbase: balances count held funds, not just the available slice', async () => {
   const result = await coinbaseConnector.sync(
     { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
