@@ -53,6 +53,13 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
       AND t.counterparty_is_own = FALSE
       -- Contract creations have a NULL to_address.
       AND (CASE WHEN t.from_address = w.address THEN t.to_address ELSE t.from_address END) IS NOT NULL
+      -- Mint (from = 0x0) and burn (to = 0x0). The zero address is the ABSENCE
+      -- of a counterparty, not one awaiting a verdict, and no label on it could
+      -- ever change a classification. Without this every NFT mint would enqueue
+      -- it, and a burn -- being outbound, hence material -- would pin the badge
+      -- above zero permanently on a row the user cannot meaningfully review.
+      AND (CASE WHEN t.from_address = w.address THEN t.to_address ELSE t.from_address END)
+          <> '0x0000000000000000000000000000000000000000'
       -- Ignored tokens produce no mirror row and the user has already declared
       -- them noise; reusing that signal is free spam suppression. The IS NULL
       -- arm keeps native/internal rows (NULL contract) out of the NOT IN.
@@ -114,7 +121,8 @@ class EthTransfer {
     const cols = [
       'wallet_id', 'tx_hash', 'ordinal', 'transfer_type', 'block_number',
       'block_time', 'from_address', 'to_address', 'value_wei',
-      'token_contract', 'token_symbol', 'token_decimals', 'is_error',
+      'token_contract', 'token_symbol', 'token_decimals', 'token_standard',
+      'token_id', 'is_error',
     ];
     // Chunked to stay far under Postgres' 65535-parameter cap on first syncs
     // of busy wallets.
@@ -129,7 +137,8 @@ class EthTransfer {
           row.wallet_id, row.tx_hash, row.ordinal, row.transfer_type,
           row.block_number, row.block_time, row.from_address, row.to_address,
           row.value_wei, row.token_contract, row.token_symbol,
-          row.token_decimals, row.is_error
+          row.token_decimals, row.token_standard ?? null, row.token_id ?? null,
+          row.is_error
         );
         return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`;
       });
@@ -199,6 +208,13 @@ class EthTransfer {
 
   // Net token balance per contract from transfer deltas. Failed transfers
   // moved nothing, and gas rows never carry a token contract.
+  //
+  // ERC-20 only, filtered two ways on purpose. NFT feeds land under their own
+  // transfer_types, so transfer_type = 'token' already excludes them; the
+  // token_standard test is the fail-closed half, because this is the one query
+  // that turns a contract into a priced holding. An NFT reaching here would
+  // mint a holding whose "quantity" is a token id count and send its symbol
+  // toward valuation -- exactly the leak the NULL-ticker rule exists to stop.
   static async tokenBalanceDeltas(walletId) {
     const result = await pool.query(
       `SELECT t.token_contract,
@@ -210,6 +226,7 @@ class EthTransfer {
        JOIN eth_wallets w ON w.id = t.wallet_id
        WHERE t.wallet_id = $1
          AND t.transfer_type = 'token'
+         AND t.token_standard = 'erc20'
          AND t.is_error = FALSE
          AND t.token_contract IS NOT NULL
          AND t.token_contract NOT IN (SELECT contract_address FROM eth_ignored_tokens WHERE user_id = w.user_id)

@@ -36,16 +36,40 @@ const TRANSFER_CHIP_STYLES = {
   Exchange: 'bg-teal-500/10 text-teal-400 border-teal-500/20',
   Gas: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   Token: 'bg-crypto-bg text-crypto border-crypto-border',
+  NFT: 'bg-crypto-bg-strong text-crypto border-crypto-border',
 };
+
+const NFT_TRANSFER_TYPES = new Set(['nft', 'nft1155']);
+
+// from = 0x0 is a mint, to = 0x0 is a burn. Both are real endpoints worth
+// showing, but neither is a counterparty anyone can label.
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 const transferChipLabel = (transfer) => {
   if (transfer.transfer_type === 'gas') return 'Gas';
+  // Ahead of self/exchange: what moved is the useful fact about an NFT row,
+  // and every mint reads as "External" otherwise.
+  if (NFT_TRANSFER_TYPES.has(transfer.transfer_type)) return 'NFT';
   if (transfer.counterparty_is_own) return 'Self';
   if (transfer.counterparty_exchange) return 'Exchange';
   return transfer.transfer_type === 'token' ? 'Token' : 'External';
 };
 
+// A uint256 token id is up to 78 digits and would blow out the column.
+const shortTokenId = (id) => {
+  const text = String(id);
+  return text.length > 10 ? `${text.slice(0, 8)}…` : text;
+};
+
 const formatTransferQuantity = (transfer) => {
+  // NFT rows carry a COUNT OF UNITS in value_wei, not a scaled amount, so the
+  // 1e18 divide below would render every one of them as 0. ERC-721 is always
+  // one unit; ERC-1155 can move several copies of an id.
+  if (NFT_TRANSFER_TYPES.has(transfer.transfer_type)) {
+    const units = Number(transfer.value_wei);
+    const label = `${transfer.token_symbol || 'NFT'}${transfer.token_id != null ? ` #${shortTokenId(transfer.token_id)}` : ''}`;
+    return units > 1 ? `${units} × ${label}` : label;
+  }
   const decimals = transfer.transfer_type === 'token'
     ? (transfer.token_decimals != null ? Number(transfer.token_decimals) : 18)
     : 18;
@@ -203,7 +227,8 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
         ? 'Gas fee'
         : `${outbound ? 'To' : 'From'} ${exchangeName || shortEthAddress(counterparty)}`,
       labelable: transfer.transfer_type !== 'gas'
-        && !transfer.counterparty_is_own && !exchangeName && counterparty,
+        && !transfer.counterparty_is_own && !exchangeName
+        && counterparty && counterparty !== ZERO_ADDRESS,
     };
   }), [rows, walletNames]);
 
@@ -338,7 +363,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
                 Label
               </button>
             )}
-            {transfer.transfer_type === 'token' && transfer.token_contract && (
+            {transfer.token_contract && (
               <button
                 onClick={() => handleIgnoreToken(transfer)}
                 disabled={ignoringContract === transfer.token_contract}

@@ -128,8 +128,21 @@ class EtherscanService {
     return this._fetchPaged('txlistinternal', address, startBlock, apiKey);
   }
 
+  // ERC-20 only; ERC-721 and ERC-1155 have their own feeds below.
   static fetchTokenTxs(address, startBlock = 0, apiKey) {
     return this._fetchPaged('tokentx', address, startBlock, apiKey);
+  }
+
+  // ERC-721. Rows carry tokenID and tokenDecimal ("0"), but no value field --
+  // one indivisible token moves per row.
+  static fetchNftTxs(address, startBlock = 0, apiKey) {
+    return this._fetchPaged('tokennfttx', address, startBlock, apiKey);
+  }
+
+  // ERC-1155. Rows carry tokenID and tokenValue (a count of units, not wei),
+  // and Etherscan emits one row per id for a batch transfer.
+  static fetch1155Txs(address, startBlock = 0, apiKey) {
+    return this._fetchPaged('token1155tx', address, startBlock, apiKey);
   }
 }
 

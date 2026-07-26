@@ -44,16 +44,20 @@ class EthWallet {
     return result.rows[0];
   }
 
-  static async updateCursors(id, { normal, internal, token }) {
+  // One cursor per Etherscan feed. A NULL means that feed returned nothing
+  // this run, which must leave its cursor where it was rather than reset it.
+  static async updateCursors(id, { normal, internal, token, nft, nft1155 }) {
     const result = await pool.query(
       `UPDATE eth_wallets
        SET last_block_normal = COALESCE($2, last_block_normal),
            last_block_internal = COALESCE($3, last_block_internal),
            last_block_token = COALESCE($4, last_block_token),
+           last_block_nft = COALESCE($5, last_block_nft),
+           last_block_1155 = COALESCE($6, last_block_1155),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
        RETURNING *`,
-      [id, normal ?? null, internal ?? null, token ?? null]
+      [id, normal ?? null, internal ?? null, token ?? null, nft ?? null, nft1155 ?? null]
     );
     return result.rows[0];
   }

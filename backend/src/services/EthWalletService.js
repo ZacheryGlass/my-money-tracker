@@ -64,7 +64,7 @@ class EthWalletService {
   // including failed txs, which still burn gas. Zero-value normal/internal
   // rows (contract calls, approvals) are dropped as noise; their economic
   // content is the gas row and/or the token row from the token feed.
-  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [] } = {}) {
+  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [] } = {}) {
     const wallet = walletAddress.toLowerCase();
     const rows = [];
     const ordinals = new Map();
@@ -88,7 +88,30 @@ class EthWalletService {
       token_contract: null,
       token_symbol: null,
       token_decimals: null,
+      token_standard: null,
+      token_id: null,
       is_error: raw.isError === '1',
+    });
+
+    // Shared by both NFT feeds. Neither reports isError -- an NFT log only
+    // exists if the transfer succeeded. from = 0x0 (mint) and to = 0x0 (burn)
+    // are deliberately preserved as-is: they are real, meaningful endpoints,
+    // and the activity layer needs them to tell a mint from a purchase.
+    const nftRow = (raw, transferType, tokenStandard, valueUnits) => ({
+      ...baseRow(raw, transferType),
+      // Units, not wei. See 033_nft_transfers.sql.
+      value_wei: valueUnits,
+      token_contract: (raw.contractAddress || '').toLowerCase() || null,
+      // Spam contracts use symbols as ad space; VARCHAR(64) is a hard limit
+      // and one oversized symbol would abort the whole insert chunk.
+      token_symbol: raw.tokenSymbol ? String(raw.tokenSymbol).slice(0, 64) : null,
+      // Whole units. NULL would default to 18 in the shared unit helpers.
+      token_decimals: 0,
+      token_standard: tokenStandard,
+      // uint256, past Number precision -- keep it a string end to end. A
+      // malformed id must not reach NUMERIC(78,0) and abort the chunk.
+      token_id: raw.tokenID != null && /^\d+$/.test(String(raw.tokenID)) ? String(raw.tokenID) : null,
+      is_error: false,
     });
 
     for (const raw of normal) {
@@ -115,10 +138,26 @@ class EthWalletService {
         ...baseRow(raw, 'token'),
         value_wei: raw.value,
         token_contract: (raw.contractAddress || '').toLowerCase() || null,
-        token_symbol: raw.tokenSymbol || null,
+        token_symbol: raw.tokenSymbol ? String(raw.tokenSymbol).slice(0, 64) : null,
         token_decimals: raw.tokenDecimal != null ? Number(raw.tokenDecimal) : null,
+        // tokentx is ERC-20 only; the NFT standards have their own feeds.
+        token_standard: 'erc20',
         is_error: false,
       });
+    }
+
+    // An ERC-721 is indivisible and tokennfttx carries no value field, so
+    // every row is exactly one unit.
+    for (const raw of nft) {
+      rows.push(nftRow(raw, 'nft', 'erc721', '1'));
+    }
+
+    // tokenValue is how many copies of that id moved. Etherscan already emits
+    // one row per id for a batch transfer, so a batch arrives pre-unbundled and
+    // each row gets its own ordinal for free.
+    for (const raw of nft1155) {
+      const units = raw.tokenValue != null && /^\d+$/.test(String(raw.tokenValue)) ? String(raw.tokenValue) : '1';
+      rows.push(nftRow(raw, 'nft1155', 'erc1155', units));
     }
 
     return rows;
@@ -145,25 +184,52 @@ class EthWalletService {
         normal: Math.max(0, Number(wallet.last_block_normal) - REORG_OVERLAP_BLOCKS),
         internal: Math.max(0, Number(wallet.last_block_internal) - REORG_OVERLAP_BLOCKS),
         token: Math.max(0, Number(wallet.last_block_token) - REORG_OVERLAP_BLOCKS),
+        nft: Math.max(0, Number(wallet.last_block_nft) - REORG_OVERLAP_BLOCKS),
+        nft1155: Math.max(0, Number(wallet.last_block_1155) - REORG_OVERLAP_BLOCKS),
       };
 
       const normal = await EtherscanService.fetchNormalTxs(wallet.address, resume.normal, apiKey);
       const internal = await EtherscanService.fetchInternalTxs(wallet.address, resume.internal, apiKey);
       const token = await EtherscanService.fetchTokenTxs(wallet.address, resume.token, apiKey);
+      // The NFT feeds must not take down the whole sync: a wallet with zero
+      // NFT activity would still lose its balance, holdings and mirror if
+      // tokennfttx rate-limits. A failed feed contributes no rows, keeps its
+      // stored rows (its delete is skipped), and leaves its cursor alone
+      // (null -> COALESCE in updateCursors).
+      let nft = [];
+      let nftOk = true;
+      try {
+        nft = await EtherscanService.fetchNftTxs(wallet.address, resume.nft, apiKey);
+      } catch (err) {
+        nftOk = false;
+        logger.warn({ walletId, err }, 'tokennfttx fetch failed; NFT feed skipped this sync');
+      }
+      let nft1155 = [];
+      let nft1155Ok = true;
+      try {
+        nft1155 = await EtherscanService.fetch1155Txs(wallet.address, resume.nft1155, apiKey);
+      } catch (err) {
+        nft1155Ok = false;
+        logger.warn({ walletId, err }, 'token1155tx fetch failed; 1155 feed skipped this sync');
+      }
 
-      const rows = this.normalizeFeeds(wallet.address, { normal, internal, token })
+      const rows = this.normalizeFeeds(wallet.address, { normal, internal, token, nft, nft1155 })
         .map((row) => ({ ...row, wallet_id: walletId }));
 
       // Gas rows derive from the normal feed, so they share its resume block.
       await EthTransfer.deleteFromBlock(walletId, ['native', 'gas'], resume.normal);
       await EthTransfer.deleteFromBlock(walletId, ['internal'], resume.internal);
       await EthTransfer.deleteFromBlock(walletId, ['token'], resume.token);
+      if (nftOk) await EthTransfer.deleteFromBlock(walletId, ['nft'], resume.nft);
+      if (nft1155Ok) await EthTransfer.deleteFromBlock(walletId, ['nft1155'], resume.nft1155);
       const inserted = await EthTransfer.bulkInsert(rows);
 
       await EthWallet.updateCursors(walletId, {
         normal: maxBlock(normal),
         internal: maxBlock(internal),
         token: maxBlock(token),
+        nft: nftOk ? maxBlock(nft) : null,
+        nft1155: nft1155Ok ? maxBlock(nft1155) : null,
       });
       await EthTransfer.reclassifyCounterparties(wallet.user_id);
       const holdings = await this.refreshHoldings(walletId);
@@ -176,7 +242,13 @@ class EthWalletService {
         inserted,
         holdings,
         mirror,
-        fetched: { normal: normal.length, internal: internal.length, token: token.length },
+        fetched: {
+          normal: normal.length,
+          internal: internal.length,
+          token: token.length,
+          nft: nft.length,
+          nft1155: nft1155.length,
+        },
       };
       logger.info({ walletId, address: wallet.address, results }, 'ETH wallet sync completed');
       return results;
