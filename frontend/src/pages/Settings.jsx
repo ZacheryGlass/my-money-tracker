@@ -1829,6 +1829,37 @@ const Settings = ({ user }) => {
                     </div>
                   </div>
 
+                  {/* Per-chain sync state. The wallet badge above deliberately
+                      carries only transient failures, so a chain (or a feed on
+                      one) that this Etherscan key simply cannot serve would be
+                      invisible without this -- and an unfetched feed means the
+                      figures derived from it are incomplete, not just stale. */}
+                  {wallet.chains?.length > 1 && (
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      {wallet.chains.map((chain) => (
+                        <span
+                          key={chain.chain_id}
+                          title={chain.error_message
+                            || (chain.enabled ? `Last synced ${formatRelativeTime(chain.last_synced_at)}` : 'Chain turned off; stored history kept')}
+                          className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold uppercase tracking-wide ${
+                            !chain.enabled ? 'bg-surface-3 border-border text-tertiary'
+                              : chain.error_code ? 'bg-loss/5 border-loss/20 text-loss'
+                              : 'bg-surface-3 border-border text-secondary'
+                          }`}
+                        >
+                          {chain.enabled && chain.error_code && <AlertTriangle size={10} />}
+                          {chain.name}
+                          {!chain.enabled && <span className="font-normal normal-case">off</span>}
+                          {chain.unsupported_feeds?.length > 0 && (
+                            <span className="font-normal normal-case">
+                              no {chain.unsupported_feeds.join(', ')}
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
                   {wallet.error_code && (
                     <div className="mt-5 p-4 rounded border text-xs leading-relaxed bg-loss/5 border-loss/20 text-loss">
                       <div className="flex items-start gap-3">

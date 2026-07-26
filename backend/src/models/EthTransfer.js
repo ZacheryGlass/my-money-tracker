@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
+const { DEFAULT_CHAIN_ID } = require('../config/chains');
 
 // Dollar floor below which a receive-only counterparty is treated as dust.
 // Single-sourced because three callers default it -- the route, the badge, and
@@ -108,18 +109,24 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
 class EthTransfer {
   // Sync resumes from an overlap block and re-inserts everything from there,
   // so each feed's stale rows must be cleared first to keep ordinals unique.
-  static async deleteFromBlock(walletId, transferTypes, block) {
+  //
+  // Scoped to ONE chain. Block numbers are per-chain sequences that overlap
+  // heavily -- Arbitrum block 500 has nothing to do with mainnet block 500 --
+  // so a delete without the chain predicate would wipe another chain's rows
+  // from a block window it never synced, and the reorg overlap makes that
+  // happen on every single sync.
+  static async deleteFromBlock(walletId, chainId, transferTypes, block) {
     await pool.query(
       `DELETE FROM eth_transfers
-       WHERE wallet_id = $1 AND transfer_type = ANY($2) AND block_number >= $3`,
-      [walletId, transferTypes, block]
+       WHERE wallet_id = $1 AND chain_id = $2 AND transfer_type = ANY($3) AND block_number >= $4`,
+      [walletId, chainId, transferTypes, block]
     );
   }
 
   static async bulkInsert(rows) {
     if (!rows.length) return 0;
     const cols = [
-      'wallet_id', 'tx_hash', 'ordinal', 'transfer_type', 'block_number',
+      'wallet_id', 'chain_id', 'tx_hash', 'ordinal', 'transfer_type', 'block_number',
       'block_time', 'from_address', 'to_address', 'value_wei',
       'token_contract', 'token_symbol', 'token_decimals', 'token_standard',
       'token_id', 'is_error', 'method_id', 'method_name',
@@ -134,7 +141,10 @@ class EthTransfer {
       const placeholders = chunk.map((row, i) => {
         const base = i * cols.length;
         values.push(
-          row.wallet_id, row.tx_hash, row.ordinal, row.transfer_type,
+          // A row with no chain_id is mainnet's -- the column's own default, and
+          // what every pre-#58 caller means. Explicit here rather than left to
+          // the column default because a NULL would reach a NOT NULL column.
+          row.wallet_id, row.chain_id ?? DEFAULT_CHAIN_ID, row.tx_hash, row.ordinal, row.transfer_type,
           row.block_number, row.block_time, row.from_address, row.to_address,
           row.value_wei, row.token_contract, row.token_symbol,
           row.token_decimals, row.token_standard ?? null, row.token_id ?? null,
@@ -145,7 +155,7 @@ class EthTransfer {
       const result = await pool.query(
         `INSERT INTO eth_transfers (${cols.join(', ')})
          VALUES ${placeholders.join(', ')}
-         ON CONFLICT (wallet_id, transfer_type, tx_hash, ordinal) DO NOTHING`,
+         ON CONFLICT (wallet_id, chain_id, transfer_type, tx_hash, ordinal) DO NOTHING`,
         values
       );
       inserted += result.rowCount;
@@ -260,9 +270,18 @@ class EthTransfer {
   // that turns a contract into a priced holding. An NFT reaching here would
   // mint a holding whose "quantity" is a token id count and send its symbol
   // toward valuation -- exactly the leak the NULL-ticker rule exists to stop.
+  // Grouped by (chain, contract), not contract alone. The same contract ADDRESS
+  // exists on several chains and is a different asset on each -- USDC on Base
+  // and USDC on Arbitrum are separate balances at separate addresses, and even
+  // an identical address (deterministic deployment) is a separate position.
+  // Summing across chains would net one chain's outflow against another's
+  // holdings and could produce a negative balance that silently drops a real
+  // position. It also matters for pricing: each chain has its own CoinGecko
+  // asset platform, so the contract must arrive with its chain attached.
   static async tokenBalanceDeltas(walletId) {
     const result = await pool.query(
-      `SELECT t.token_contract,
+      `SELECT t.chain_id,
+              t.token_contract,
               MAX(t.token_symbol) AS token_symbol,
               MAX(t.token_decimals) AS token_decimals,
               SUM(CASE WHEN t.to_address = w.address THEN t.value_wei ELSE 0 END) -
@@ -275,7 +294,8 @@ class EthTransfer {
          AND t.is_error = FALSE
          AND t.token_contract IS NOT NULL
          AND t.token_contract NOT IN (SELECT contract_address FROM eth_ignored_tokens WHERE user_id = w.user_id)
-       GROUP BY t.token_contract`,
+       GROUP BY t.chain_id, t.token_contract
+       ORDER BY t.chain_id, t.token_contract`,
       [walletId]
     );
     return result.rows;

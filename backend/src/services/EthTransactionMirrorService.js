@@ -5,6 +5,7 @@ const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const PriceService = require('./PriceService');
 const PriceCache = require('../models/PriceCache');
+const chains = require('../config/chains');
 const { shortAddress } = require('../utils/ethAddress');
 
 // Every address-label write runs refreshClassificationsForUser, which rebuilds
@@ -116,23 +117,29 @@ class EthTransactionMirrorService {
     return 0;
   }
 
-  // Cached CoinGecko token lookup. On failure returns {} rather than throwing:
-  // the caller then falls back to each row's previous amount, so a transient
-  // rate-limit degrades to stale numbers instead of zeroing the ledger.
-  static async _getTokenPrices(contracts, walletId) {
+  // Cached CoinGecko token lookup for ONE chain's asset platform. On failure
+  // returns {} rather than throwing: the caller then falls back to each row's
+  // previous amount, so a transient rate-limit degrades to stale numbers
+  // instead of zeroing the ledger.
+  //
+  // The platform is part of the cache key, not just the URL. The same contract
+  // address can be a different asset on two chains, so a key of contracts alone
+  // would serve Arbitrum's answer for Base's question.
+  static async _getTokenPrices(contracts, walletId, platform) {
     if (!contracts.length) return {};
-    const key = [...contracts].sort().join(',');
+    const contractList = [...contracts].sort().join(',');
+    const key = `${platform}:${contractList}`;
     const cached = tokenPriceCache.get(key);
     if (cached && Date.now() - cached.at < cached.ttl) return cached.prices;
 
     try {
       const prices = await PriceService.fetchCoinGeckoJson(
-        `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${encodeURIComponent(key)}&vs_currencies=usd`
+        `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${encodeURIComponent(contractList)}&vs_currencies=usd`
       );
       this._cacheTokenPrices(key, prices);
       return prices;
     } catch (err) {
-      logger.warn({ walletId, err }, 'Token price lookup failed; token rows keep their previous amounts');
+      logger.warn({ walletId, platform, err }, 'Token price lookup failed; token rows keep their previous amounts');
       // Cache the failure too, on a shorter TTL. Without this a rate-limit
       // storm re-hits CoinGecko on every wallet of every rebuild -- exactly the
       // scenario the cache exists to prevent, since the failure arrives fastest
@@ -169,12 +176,28 @@ class EthTransactionMirrorService {
 
     const ethPrice = await this._getEthPrice();
 
-    const contracts = [...new Set(
-      transfers
-        .filter((t) => t.transfer_type === 'token' && t.token_contract && !ignoredContracts.has(t.token_contract))
-        .map((t) => t.token_contract)
-    )];
-    const tokenPrices = await this._getTokenPrices(contracts, walletId);
+    // Token contracts are collected PER CHAIN and priced against that chain's
+    // CoinGecko asset platform. Pooling them would send every L2 contract to
+    // the ethereum platform, which answers "unknown" rather than erroring -- so
+    // every L2 token row would fall back to its prior amount, or to $0 on a
+    // first sync, and look like a pricing outage that never resolves.
+    const contractsByChain = new Map();
+    for (const transfer of transfers) {
+      if (transfer.transfer_type !== 'token') continue;
+      if (!transfer.token_contract || ignoredContracts.has(transfer.token_contract)) continue;
+      const chainId = Number(transfer.chain_id ?? chains.DEFAULT_CHAIN_ID);
+      if (!contractsByChain.has(chainId)) contractsByChain.set(chainId, new Set());
+      contractsByChain.get(chainId).add(transfer.token_contract);
+    }
+    const tokenPricesByChain = new Map();
+    for (const [chainId, contracts] of contractsByChain) {
+      const platform = chains.getChain(chainId)?.coingeckoPlatform;
+      // A chain no longer in the registry keeps its rows and its prior amounts
+      // rather than being repriced against a guess.
+      tokenPricesByChain.set(chainId, platform
+        ? await this._getTokenPrices([...contracts], walletId, platform)
+        : {});
+    }
 
     // Read the amounts this rebuild is about to overwrite, so a token whose
     // price is unavailable can keep its last known value instead of dropping
@@ -189,11 +212,20 @@ class EthTransactionMirrorService {
 
     const rows = [];
     for (const transfer of transfers) {
-      const body = buildMirrorRow(transfer, wallet.address, { ethPrice, tokenPrices, ignoredContracts, priorAmounts });
+      const chainId = Number(transfer.chain_id ?? chains.DEFAULT_CHAIN_ID);
+      const body = buildMirrorRow(transfer, wallet.address, {
+        ethPrice,
+        // buildMirrorRow stays chain-agnostic and takes a flat contract->price
+        // map: which chain's map that is gets decided here, once, by the row.
+        tokenPrices: tokenPricesByChain.get(chainId) || {},
+        ignoredContracts,
+        priorAmounts,
+      });
       if (!body) continue;
       rows.push({
         eth_transfer_id: transfer.id,
         date: transfer.block_time,
+        chain_id: chainId,
         ...body,
       });
     }
@@ -208,12 +240,12 @@ class EthTransactionMirrorService {
       const chunk = rows.slice(start, start + CHUNK);
       const values = [];
       const placeholders = chunk.map((row, i) => {
-        const base = i * 5;
-        values.push(row.eth_transfer_id, row.date, row.name, row.amount, row.category);
-        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, ${account.id}, 'USD', FALSE)`;
+        const base = i * 6;
+        values.push(row.eth_transfer_id, row.date, row.name, row.amount, row.category, row.chain_id);
+        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, ${account.id}, 'USD', FALSE)`;
       });
       await pool.query(
-        `INSERT INTO transactions (eth_transfer_id, date, name, amount, category, account_id, currency_code, pending)
+        `INSERT INTO transactions (eth_transfer_id, date, name, amount, category, chain_id, account_id, currency_code, pending)
          VALUES ${placeholders.join(', ')}
          ON CONFLICT (eth_transfer_id) WHERE eth_transfer_id IS NOT NULL DO NOTHING`,
         values

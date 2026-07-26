@@ -349,6 +349,37 @@ describe('Settings display names', () => {
       await waitFor(() => expect(within(tab).getByText('2')).toBeInTheDocument());
     });
 
+    it('shows per-chain state, including gaps the wallet badge deliberately omits', async () => {
+      // The wallet badge carries transient failures only, so a chain (or a feed
+      // on one) this Etherscan key cannot serve would otherwise be invisible --
+      // and an unfetched feed means derived figures there are incomplete.
+      apiMocks.eth.getWallets.mockResolvedValue({
+        wallets: [{
+          ...WALLET,
+          chains: [
+            { chain_id: 1, name: 'Ethereum', enabled: true, error_code: null, unsupported_feeds: [], last_synced_at: '2026-07-26T09:00:00Z' },
+            { chain_id: 42161, name: 'Arbitrum One', enabled: true, error_code: 'FEED_UNSUPPORTED', error_message: 'internal unavailable on Arbitrum One; derived balances there may drift', unsupported_feeds: ['internal'], last_synced_at: '2026-07-26T09:00:00Z' },
+            { chain_id: 8453, name: 'Base', enabled: false, error_code: null, unsupported_feeds: [], last_synced_at: null },
+          ],
+        }],
+      });
+      apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({ data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 } });
+      renderSettings();
+      fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
+
+      expect(await screen.findByText('Arbitrum One')).toBeInTheDocument();
+      // The gap is named, not just flagged: "no internal" is what tells the user
+      // (and #62) which derived numbers may drift.
+      expect(screen.getByText('no internal')).toBeInTheDocument();
+      // A switched-off chain reads as off while keeping its row -- disabling
+      // stops the sync, it does not delete history.
+      expect(screen.getByText('Base')).toBeInTheDocument();
+      expect(screen.getByText('off')).toBeInTheDocument();
+      // And none of this touches the wallet-level attention badge.
+      const tab = screen.getByRole('tab', { name: /Ethereum/ });
+      expect(within(tab).queryByText('1')).toBeNull();
+    });
+
     it('collapses low-value counterparties behind a disclosure', async () => {
       await openEthTab({
         data: [MATERIAL, dust('4'), dust('5')],

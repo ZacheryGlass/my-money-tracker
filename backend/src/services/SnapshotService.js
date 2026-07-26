@@ -6,6 +6,52 @@ const TickerSnapshot = require('../models/TickerSnapshot');
 const AccountSnapshot = require('../models/AccountSnapshot');
 const logger = require('../config/logger');
 
+// TickerSnapshot.bulkCreate upserts on (snapshot_date, account_id, ticker) for
+// tickered rows and (snapshot_date, account_id, name) for the rest. Two holdings
+// in ONE account that share a conflict key therefore appear twice in a single
+// INSERT ... ON CONFLICT DO UPDATE, and Postgres refuses that outright:
+// "ON CONFLICT DO UPDATE command cannot affect row a second time" -- an error,
+// not a dropped row, so the whole nightly snapshot job dies for every user.
+//
+// Multi-chain wallets make that routine: one crypto account now carries an ETH
+// holding per chain, all with ticker 'ETH' so they all price off the single
+// shared price_cache row. (It was already reachable by hand -- nothing stops a
+// user entering the same ticker twice in one account.)
+//
+// So same-key rows are summed into one snapshot here. Account totals stay
+// exact, which is what account_snapshots and net worth are built from;
+// per-chain detail lives on holdings and eth_transfers, which is where the UI
+// reads it from anyway. The surviving name comes from the LOWEST holding id so
+// the series keeps one stable label -- holdings arrive ordered by updated_at,
+// so picking "first seen" would let the name flap between chains day to day.
+function collapseDuplicateKeys(snapshots) {
+  const byKey = new Map();
+  for (const snapshot of snapshots) {
+    const key = snapshot.ticker != null
+      ? `t:${snapshot.accountId}:${String(snapshot.ticker).toUpperCase()}`
+      : `n:${snapshot.accountId}:${snapshot.name}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...snapshot });
+      continue;
+    }
+    existing.value += snapshot.value;
+    // Quantities only add up when both sides have one. A tickered row with a
+    // quantity merged with a manually valued row (no quantity, no unit price)
+    // has no meaningful share count, and inventing one would make
+    // quantity * price disagree with value.
+    existing.quantity = existing.quantity != null && snapshot.quantity != null
+      ? existing.quantity + snapshot.quantity
+      : null;
+    if (existing.quantity == null) existing.price = null;
+    if (snapshot.holdingId != null && (existing.holdingId == null || snapshot.holdingId < existing.holdingId)) {
+      existing.holdingId = snapshot.holdingId;
+      existing.name = snapshot.name;
+    }
+  }
+  return [...byKey.values()];
+}
+
 class SnapshotService {
   static async createTickerSnapshots(date) {
     // Fetch all holdings and prices
@@ -56,20 +102,24 @@ class SnapshotService {
         name: holding.name,
         value: value,
         quantity: quantity,
-        price: price
+        price: price,
+        // Not persisted; only used to pick a stable name when collapsing.
+        holdingId: holding.id
       });
     }
 
+    const collapsed = collapseDuplicateKeys(snapshots);
+
     // Bulk insert snapshots
-    if (snapshots.length > 0) {
-      await TickerSnapshot.bulkCreate(snapshots);
+    if (collapsed.length > 0) {
+      await TickerSnapshot.bulkCreate(collapsed);
     }
 
     return {
       processed: holdings.length,
       succeeded,
       failed,
-      created: snapshots.length
+      created: collapsed.length
     };
   }
 
@@ -125,3 +175,4 @@ class SnapshotService {
 }
 
 module.exports = SnapshotService;
+module.exports.collapseDuplicateKeys = collapseDuplicateKeys;

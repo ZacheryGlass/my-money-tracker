@@ -44,23 +44,11 @@ class EthWallet {
     return result.rows[0];
   }
 
-  // One cursor per Etherscan feed. A NULL means that feed returned nothing
-  // this run, which must leave its cursor where it was rather than reset it.
-  static async updateCursors(id, { normal, internal, token, nft, nft1155 }) {
-    const result = await pool.query(
-      `UPDATE eth_wallets
-       SET last_block_normal = COALESCE($2, last_block_normal),
-           last_block_internal = COALESCE($3, last_block_internal),
-           last_block_token = COALESCE($4, last_block_token),
-           last_block_nft = COALESCE($5, last_block_nft),
-           last_block_1155 = COALESCE($6, last_block_1155),
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1
-       RETURNING *`,
-      [id, normal ?? null, internal ?? null, token ?? null, nft ?? null, nft1155 ?? null]
-    );
-    return result.rows[0];
-  }
+  // Resume cursors moved to eth_wallet_chains in migration 039 -- they are
+  // per (wallet, chain) now, and EthWalletChain.updateCursors writes them. The
+  // eth_wallets.last_block_* columns survive only because 039's seed reads them
+  // on every boot to bootstrap a not-yet-resynced wallet's chain-1 row; nothing
+  // writes them any more, so do not add a writer here.
 
   static async updateSyncTime(id) {
     const result = await pool.query(
@@ -137,9 +125,15 @@ class EthWallet {
     }
   }
 
+  // Total ETH the wallet holds, SUMMED across chains. Post-#58 the wallet's
+  // account carries one ETH holding per synced chain, so reading a single row
+  // here would report only whichever chain the planner happened to return
+  // first -- an L2-heavy wallet would show a fraction of its real balance with
+  // no error anywhere. NULL (not 0) when there is no ETH row at all, which is
+  // what "never synced" looked like before and what callers still key on.
   static async getEthQuantity(id) {
     const result = await pool.query(
-      `SELECT h.quantity
+      `SELECT SUM(h.quantity) AS quantity
        FROM holdings h
        JOIN accounts a ON a.id = h.account_id
        WHERE a.eth_wallet_id = $1 AND UPPER(h.ticker) = 'ETH'`,

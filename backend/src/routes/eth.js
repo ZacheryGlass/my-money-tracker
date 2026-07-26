@@ -3,7 +3,9 @@
 const express = require('express');
 const requireUser = require('../middleware/auth');
 const EthWallet = require('../models/EthWallet');
+const EthWalletChain = require('../models/EthWalletChain');
 const EthTransfer = require('../models/EthTransfer');
+const chains = require('../config/chains');
 const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
 const EthWalletService = require('../services/EthWalletService');
@@ -63,11 +65,28 @@ router.get('/wallets', async (req, res) => {
     const wallets = await EthWallet.findAllByUser(req.user.id);
     const withAccounts = await Promise.all(
       wallets.map(async (wallet) => {
-        const [account, ethQuantity] = await Promise.all([
+        const [account, ethQuantity, chainStates] = await Promise.all([
           EthWallet.getAccountForWallet(wallet.id),
           EthWallet.getEthQuantity(wallet.id),
+          EthWalletChain.findForWallet(wallet.id),
         ]);
-        return { ...wallet, account: account || null, eth_quantity: ethQuantity };
+        return {
+          ...wallet,
+          account: account || null,
+          // Summed across chains -- see EthWallet.getEthQuantity.
+          eth_quantity: ethQuantity,
+          // Per-chain sync state. Carries the gaps the wallet-level badge
+          // deliberately does NOT carry: a feed (or a whole chain) this
+          // Etherscan key cannot serve is a standing condition, so it is
+          // reported here instead of pinning the attention badge forever.
+          // `enabled` is the live registry answer, not stored state, so a
+          // switched-off chain shows as such while keeping its history.
+          chains: chainStates.map((state) => ({
+            ...state,
+            name: chains.chainLabel(state.chain_id),
+            enabled: chains.isEnabled(state.chain_id),
+          })),
+        };
       })
     );
     res.status(200).json({ wallets: withAccounts });
