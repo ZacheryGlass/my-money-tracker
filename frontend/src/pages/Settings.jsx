@@ -2287,7 +2287,9 @@ const Settings = ({ user }) => {
                 >
                   {/* The server's count, not the page's: the list is capped, so
                       the rendered array can be smaller than the real total. */}
-                  <span>{spamActivity.summary.spam_count} quarantined transactions</span>
+                  <span>
+                    {spamActivity.summary.spam_count} quarantined transaction{spamActivity.summary.spam_count === 1 ? '' : 's'}
+                  </span>
                   <ChevronDown size={14} className={showSpamActivity ? 'rotate-180 transition-transform' : 'transition-transform'} />
                 </button>
                 {showSpamActivity && (
