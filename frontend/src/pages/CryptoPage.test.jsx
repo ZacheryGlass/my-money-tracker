@@ -220,6 +220,36 @@ describe('CryptoPage', () => {
     });
   });
 
+  it('links every transfer to its own chain’s explorer', async () => {
+    // A hash exists only on the chain it was mined on: an Arbitrum tx looked up
+    // on etherscan.io is simply "not found", which reads as though it never
+    // happened. Legacy rows predate chain_id and are all mainnet's.
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '2' }],
+    });
+    const leg = (id, hash, chain_id) => ({
+      id, chain_id, wallet_id: 1, wallet_address: '0xaaaa000000000000000000000000000000000001',
+      transfer_type: 'external', tx_hash: hash, block_time: '2026-07-01T00:00:00Z',
+      from_address: '0xaaaa000000000000000000000000000000000001',
+      to_address: '0xcccc000000000000000000000000000000000003',
+      value_wei: '1000000000000000000', is_error: false,
+      counterparty_is_own: false, counterparty_exchange: null,
+    });
+    apiMocks.eth.getTransfers.mockResolvedValue({
+      data: [leg(41, '0xarb00000', 42161), leg(42, '0xold00000', null)],
+      pagination: { total: 2 },
+    });
+
+    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    await screen.findByText('On-chain Activity');
+
+    expect(screen.getByTitle('0xarb00000').closest('a'))
+      .toHaveAttribute('href', 'https://arbiscan.io/tx/0xarb00000');
+    expect(screen.getByTitle('0xold00000').closest('a'))
+      .toHaveAttribute('href', 'https://etherscan.io/tx/0xold00000');
+  });
+
   it('shows a sentence-length wallet label whole in the wallet picker', async () => {
     const LONG = 'Use to store EOS ERC20 tokens before mainnet. Sent remainder to BinanceUS';
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });

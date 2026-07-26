@@ -61,7 +61,10 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
   const priorChains = process.env.ETH_CHAINS;
   if (chainSet !== undefined) process.env.ETH_CHAINS = chainSet;
   t.after(() => {
-    for (const [o, k, v] of restore) o[k] = v;
+    // Reverse: a test that re-stubs something the harness already stubbed saved
+    // the HARNESS's function as its "original", so restoring forwards would
+    // reinstate that stub and leak it into every later test.
+    for (const [o, k, v] of restore.reverse()) o[k] = v;
     if (priorChains === undefined) delete process.env.ETH_CHAINS;
     else process.env.ETH_CHAINS = priorChains;
   });
@@ -426,6 +429,76 @@ test('a transient failure and an unsupported feed are told apart', async (t) => 
   assert.equal(calls.walletCleared, undefined);
 });
 
+// A row on the given chain, so a chain can be told apart by what it inserts.
+const nativeRow = (block) => ({
+  blockNumber: String(block), timeStamp: '1700000000', hash: `0x${block}`,
+  from: WALLET, to: '0xdef', value: '1000000000000000000',
+  gasUsed: '21000', gasPrice: '1000000000', isError: '0',
+});
+
+test('a chain that throws outright is isolated: the chains that landed still rebuild', async (t) => {
+  // Not an Etherscan failure -- a DB blip inside the chain's own ingest, which
+  // the per-feed handling never sees. Escaping the loop would abandon the whole
+  // wallet: every chain that DID land would go without reclassification,
+  // holdings and mirror rows, rolling derived state back to the last sync.
+  const { calls, stub } = harness(t, {
+    chainSet: '1,42161',
+    cursors: { 1: { last_block_normal: 1000 }, 42161: { last_block_normal: 250000000 } },
+    feedBehavior: {
+      '1:normal': [nativeRow(2000)],
+      '42161:normal': [nativeRow(250001000)],
+    },
+  });
+  stub(EthTransfer, 'bulkInsert', async (rows) => {
+    if (rows.some((row) => row.chain_id === 42161)) throw new Error('deadlock detected');
+    calls.inserted.push(...rows);
+    return rows.length;
+  });
+  let rebuilds = 0;
+  stub(EthWalletService, 'refreshHoldings', async () => { rebuilds++; return {}; });
+  let mirrors = 0;
+  stub(MirrorService, 'rebuildForWallet', async () => { mirrors++; return {}; });
+
+  const result = await EthWalletService.syncWallet(7);
+
+  // The point of the fix: derived data is still rebuilt from what did land.
+  assert.equal(rebuilds, 1);
+  assert.equal(mirrors, 1);
+  assert.equal(calls.inserted.filter((row) => row.chain_id === 1).length, 2, 'mainnet still ingested');
+
+  // Mainnet's cursor advances; Arbitrum's is never written at all, so it
+  // resumes exactly where it left off. Advancing past rows that were never
+  // stored would drop them silently and forever.
+  assert.equal(calls.cursors.find((c) => c.chainId === 1).normal, 2000);
+  assert.equal(calls.cursors.find((c) => c.chainId === 42161), undefined);
+
+  // Recorded in the same error slot, with the same convention, as every other
+  // per-chain failure state.
+  const arbError = calls.chainErrors.find((e) => e.chainId === 42161);
+  assert.equal(arbError.code, 'SYNC_ERROR');
+  assert.match(arbError.message, /deadlock detected/);
+  assert.ok(calls.cleared.includes(1), 'the healthy chain still clears its own slot');
+
+  const arb = result.chains.find((c) => c.chainId === 42161);
+  assert.match(arb.error, /deadlock detected/);
+  assert.equal(arb.inserted, 0);
+  // Transient by assumption and it retries, so the wallet badge can still reach
+  // zero -- the same bargain a skipped feed makes.
+  assert.equal(calls.walletError.code, 'CHAIN_SYNC_FAILED');
+  assert.match(calls.walletError.message, /Arbitrum One chain/);
+});
+
+test('a wallet whose every chain fails still throws, as it did before isolation', async (t) => {
+  const { calls, stub } = harness(t, { chainSet: '1,42161' });
+  stub(EthTransfer, 'bulkInsert', async () => { throw new Error('connection terminated'); });
+
+  // Nothing landed, so there is nothing to rebuild from -- the caller and the
+  // nightly job's failure count must see a throw, not a clean empty sync.
+  await assert.rejects(() => EthWalletService.syncWallet(7), /connection terminated/);
+  assert.equal(calls.walletError.code, 'SYNC_ERROR');
+  assert.equal(calls.chainErrors.length, 2, 'each chain still records its own failure');
+});
+
 test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', async (t) => {
   const axios = require('axios');
   const original = axios.get;
@@ -645,6 +718,26 @@ test('039 keeps every statement idempotent for the boot-time re-run', () => {
   }
   // Constraint swaps cannot use IF NOT EXISTS, so they need a catalog guard.
   assert.match(MIGRATION, /DO \$\$\s*BEGIN\s*IF NOT EXISTS \(SELECT 1 FROM pg_constraint/);
+
+  // Both backfills are guarded on IS NULL, which is what makes the boot-time
+  // re-run a no-op instead of rewriting rows a later sync has already set.
+  for (const update of statements.filter((s) => /^UPDATE/i.test(s))) {
+    assert.match(update, /chain_id IS NULL/, `not idempotent: ${update.slice(0, 80)}`);
+  }
+});
+
+test('039 backfills chain_id onto transactions the mirror wrote before the column existed', () => {
+  // Without this, "NULL chain_id means not on-chain" -- which the column
+  // comment promises and the activity layer relies on -- is false for every
+  // pre-#58 mirrored row: they carry an eth_transfer_id and a NULL chain.
+  const start = MIGRATION.indexOf('UPDATE transactions t');
+  const backfill = MIGRATION.slice(start, MIGRATION.indexOf(';', start));
+  assert.match(backfill, /SET chain_id = e\.chain_id/);
+  assert.match(backfill, /FROM eth_transfers e/);
+  assert.match(backfill, /t\.eth_transfer_id = e\.id/);
+  // Taken from the transfer, not defaulted to 1, so it stays correct once an L2
+  // sync has mirrored rows of its own.
+  assert.ok(!/SET chain_id = 1/.test(backfill));
 });
 
 // ---------------------------------------------------------------------------
@@ -735,6 +828,19 @@ test('same-ticker holdings in one account collapse instead of aborting the snaps
     collapsed.filter((s) => s.ticker === null).map((s) => s.name).sort(),
     ['USDC 0x1234…5678', 'USDC 0x1234…5678 (Base)']
   );
+});
+
+test('the collapse is keyed on the raw ticker, exactly like the index it protects', () => {
+  // idx_ticker_snapshots_unique is (snapshot_date, account_id, ticker) with no
+  // case folding, so 'aapl' and 'AAPL' are two rows Postgres inserts happily.
+  // Folding case here would merge two legitimately separate series and lose the
+  // second's history -- a wider collapse than the crash it exists to prevent.
+  const collapsed = collapseDuplicateKeys([
+    { accountId: 9, ticker: 'AAPL', name: 'Apple', value: 100, quantity: 1, price: 100, holdingId: 1 },
+    { accountId: 9, ticker: 'aapl', name: 'apple', value: 200, quantity: 2, price: 100, holdingId: 2 },
+  ]);
+  assert.equal(collapsed.length, 2);
+  assert.deepEqual(collapsed.map((s) => s.value).sort((a, b) => a - b), [100, 200]);
 });
 
 test('a merged quantity is dropped when one side has none', () => {

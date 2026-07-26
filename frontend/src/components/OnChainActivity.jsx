@@ -3,6 +3,7 @@ import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../utils/api';
 import { formatDateDisplay } from '../utils/format';
+import { explorerTxUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
   LABEL_VERDICT_OPTIONS,
@@ -290,8 +291,11 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
               Failed
             </span>
           )}
+          {/* A hash only exists on its own chain: an Arbitrum tx looked up on
+              etherscan.io is simply not found, which reads as "this never
+              happened" rather than as a broken link. */}
           <a
-            href={`https://etherscan.io/tx/${row.original.tx_hash}`}
+            href={explorerTxUrl(row.original.tx_hash, row.original.chain_id)}
             target="_blank"
             rel="noreferrer"
             title={row.original.tx_hash}

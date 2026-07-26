@@ -380,6 +380,46 @@ describe('Settings display names', () => {
       expect(within(tab).queryByText('1')).toBeNull();
     });
 
+    it('shows a single chain’s standing gap, which a chain-count gate hid entirely', async () => {
+      // ETH_CHAINS=1 (or any wallet down to one chain) still has to report a
+      // feed its key cannot serve: the wallet badge deliberately omits standing
+      // gaps, so gating the strip on "more than one chain" made the only
+      // surface that reports them disappear.
+      apiMocks.eth.getWallets.mockResolvedValue({
+        wallets: [{
+          ...WALLET,
+          chains: [
+            { chain_id: 1, name: 'Ethereum', enabled: true, error_code: 'FEED_UNSUPPORTED', error_message: 'internal unavailable on Ethereum; derived balances there may drift', unsupported_feeds: ['internal'], last_synced_at: '2026-07-26T09:00:00Z' },
+          ],
+        }],
+      });
+      apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({ data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 } });
+      renderSettings();
+      fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
+
+      expect(await screen.findByText('no internal')).toBeInTheDocument();
+    });
+
+    it('stays quiet for a single healthy chain', async () => {
+      // Nothing to say: one chain, no gap, no error. The strip would just be
+      // a permanent "Ethereum" chip.
+      apiMocks.eth.getWallets.mockResolvedValue({
+        wallets: [{
+          ...WALLET,
+          chains: [
+            { chain_id: 1, name: 'Ethereum', enabled: true, error_code: null, unsupported_feeds: [], last_synced_at: '2026-07-26T09:00:00Z' },
+          ],
+        }],
+      });
+      apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({ data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 } });
+      renderSettings();
+      fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
+
+      // The wallet card is rendered; the chain strip inside it is not.
+      await screen.findByRole('button', { name: /sync/i });
+      expect(screen.queryByText('Ethereum', { selector: 'span' })).toBeNull();
+    });
+
     it('collapses low-value counterparties behind a disclosure', async () => {
       await openEthTab({
         data: [MATERIAL, dust('4'), dust('5')],

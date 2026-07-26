@@ -116,6 +116,21 @@ ON CONFLICT (wallet_id, chain_id) DO NOTHING;
 -- the activity layer and the chain column/filter in #63.
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS chain_id INT;
 
+-- Backfill the rows the mirror wrote before this column existed, or "NULL means
+-- not on-chain" is a lie for every pre-#58 mirrored transaction: they carry an
+-- eth_transfer_id and a NULL chain, the one combination the sentinel above
+-- claims cannot occur.
+--
+-- Cheap and idempotent: only NULLs are touched, so a re-run (this file executes
+-- on every boot) matches nothing, and the join is on transactions.eth_transfer_id,
+-- which 025 indexed. The chain comes from the transfer rather than a flat 1, so
+-- it stays correct once an L2 sync has mirrored rows of its own.
+UPDATE transactions t
+   SET chain_id = e.chain_id
+  FROM eth_transfers e
+ WHERE t.eth_transfer_id = e.id
+   AND t.chain_id IS NULL;
+
 -- Chain context on holdings. The wallet's crypto account now carries one ETH
 -- holding PER CHAIN plus per-chain token rows, and they are distinguished by
 -- name for display -- but derived-data cleanup has to know which rows a given

@@ -33,6 +33,19 @@
 //
 // Native asset is ETH on all of them, which is what lets one shared price_cache
 // 'ETH' row value every chain's balance.
+//
+// !! `shortName` IS DATA, NOT A LABEL. It is baked into holding names by
+// ethHoldingName/holdingSuffix, and holdings are matched by NAME (one account
+// now carries several ticker='ETH' rows, so the old ticker matcher cannot tell
+// them apart). Editing a shortName therefore re-keys that chain's holdings: the
+// next sync inserts fresh rows beside the old ones, the originals are stranded
+// with their cost basis, and NULL-ticker token snapshots -- keyed on
+// (date, account, name) -- fork into two series at the rename. Rename a chain's
+// display text via `name`, which nothing matches on. Mainnet's empty suffix is
+// load-bearing for the same reason: pre-#58 names must stay byte-identical.
+//
+// Explorer links live on the client (frontend/src/utils/chains.js): they are
+// presentation derived from a chain id the API already sends.
 const REGISTRY = [
   {
     id: 1,
@@ -120,6 +133,11 @@ function enabledChains() {
   return REGISTRY.filter((chain) => ids.has(chain.id));
 }
 
+// The whole registry with each entry's current enablement. No runtime caller:
+// this is the introspection entry point the registry tests assert against (that
+// 324 is absent rather than disabled, that 10/8453 ship off, that every chain is
+// ETH-native with a verified CoinGecko platform) -- claims that need to see the
+// disabled entries, which enabledChains() by definition cannot show.
 function allChains() {
   const ids = new Set(enabledChainIds());
   return REGISTRY.map((chain) => ({ ...chain, enabled: ids.has(chain.id) }));

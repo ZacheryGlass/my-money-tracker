@@ -27,8 +27,14 @@ const logger = require('../config/logger');
 function collapseDuplicateKeys(snapshots) {
   const byKey = new Map();
   for (const snapshot of snapshots) {
+    // Keyed on the RAW ticker, deliberately not an upper-cased one: the unique
+    // index this exists to protect (migration 009, (snapshot_date, account_id,
+    // ticker)) is case-sensitive, so 'aapl' and 'AAPL' are two rows Postgres is
+    // perfectly happy to insert. Folding case here would merge two legitimately
+    // separate series into one and lose the second's history -- a wider collapse
+    // than the crash it prevents.
     const key = snapshot.ticker != null
-      ? `t:${snapshot.accountId}:${String(snapshot.ticker).toUpperCase()}`
+      ? `t:${snapshot.accountId}:${snapshot.ticker}`
       : `n:${snapshot.accountId}:${snapshot.name}`;
     const existing = byKey.get(key);
     if (!existing) {

@@ -353,8 +353,55 @@ class EthWalletService {
       // back on resumes from where it left off instead of refetching years.
       const enabled = chains.enabledChains();
       const perChain = [];
+      // Isolation is per CHAIN, not merely per feed. _syncWalletChain already
+      // absorbs Etherscan's own failures, but everything else it does can throw
+      // too -- a DB blip in bulkInsert, a cursor write timing out -- and an
+      // escaping throw would abandon the whole wallet: every chain that DID
+      // land would go without reclassification, holdings and mirror rows, so a
+      // transient error on the fifth chain would silently roll the wallet's
+      // derived state back to the previous sync.
+      //
+      // A failed chain's cursors are untouched by construction (nothing past
+      // the throw runs), so it resumes exactly where it left off next sync.
       for (const chain of enabled) {
-        perChain.push(await this._syncWalletChain(wallet, chain, apiKey));
+        try {
+          perChain.push(await this._syncWalletChain(wallet, chain, apiKey));
+        } catch (err) {
+          logger.error({ walletId, chainId: chain.id, err },
+            'Chain sync failed; other chains continue and this chain retries next sync');
+          // Same error slot and convention as the feed-level states, so the
+          // chain badge reads identically whatever failed.
+          try {
+            await EthWalletChain.ensure(wallet.id, chain.id);
+            await EthWalletChain.setError(wallet.id, chain.id, err.code || 'SYNC_ERROR', err.message);
+          } catch (recordErr) {
+            logger.error({ walletId, chainId: chain.id, err: recordErr },
+              'Could not record the chain sync error');
+          }
+          perChain.push({
+            chainId: chain.id,
+            chainName: chain.name,
+            inserted: 0,
+            skippedFeeds: [],
+            unsupportedFeeds: [],
+            unavailable: false,
+            error: err.message,
+            errorCode: err.code || 'SYNC_ERROR',
+            fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, 0])),
+          });
+        }
+      }
+
+      const failedChains = perChain.filter((result) => result.error);
+      // A wallet where NOTHING landed fails exactly as it did before per-chain
+      // isolation: nothing was ingested, so there is nothing to rebuild derived
+      // data from, and the caller (and the nightly job's failure count) must
+      // still see a thrown error rather than a clean-looking empty sync.
+      if (failedChains.length === perChain.length && perChain.length > 0) {
+        const [first] = failedChains;
+        const error = new Error(first.error);
+        error.code = first.errorCode;
+        throw error;
       }
 
       // Naming the selectors Etherscan could not decode. Sync-time only: the
@@ -397,11 +444,19 @@ class EthWalletService {
       // cannot reach zero gets ignored, which would cost us the real sync
       // errors too. Those gaps live on the chain row, which the wallets API
       // returns, and are what #62 reconciles against.
-      if (skippedFeeds.length === 0) {
+      //
+      // A chain that threw outright badges the wallet for the same reason a
+      // skipped feed does: it is transient by assumption and it retries, so the
+      // badge can still reach zero.
+      const partial = [
+        ...skippedFeeds.map((feed) => `${feed} feed`),
+        ...failedChains.map((result) => `${result.chainName} chain`),
+      ];
+      if (partial.length === 0) {
         await EthWallet.clearError(walletId);
       } else {
-        await EthWallet.setError(walletId, 'FEED_SKIPPED',
-          `Partial sync: ${skippedFeeds.join(', ')} feed failed; will retry next sync`);
+        await EthWallet.setError(walletId, failedChains.length ? 'CHAIN_SYNC_FAILED' : 'FEED_SKIPPED',
+          `Partial sync: ${partial.join(', ')} failed; will retry next sync`);
       }
       await EthWallet.updateSyncTime(walletId);
 
