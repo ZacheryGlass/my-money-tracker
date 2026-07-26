@@ -1199,6 +1199,14 @@ const Settings = ({ user }) => {
   // no kind predates migration 031 and meant "exchange", which needs no pill.
   const renderAddressLabelRow = (label) => {
     const pill = label.source === 'builtin' ? 'Built-in'
+      // The bridge pack (migration 044) is small, hand-verified against each
+      // protocol's own deployment docs, and listed rather than hidden like the
+      // 5k scraped rows -- a wrong bridge address has to be correctable, and
+      // you cannot correct what you cannot see. The kind pill is checked before
+      // the source pill for those rows so the verdict, not the provenance, is
+      // what shows.
+      : label.kind === 'bridge' ? 'Bridge'
+      : label.source === 'builtin-bridge' ? 'Built-in'
       : label.kind === 'own' ? 'Yours'
       : label.kind === 'external' ? 'Outside party'
       : null;

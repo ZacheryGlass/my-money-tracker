@@ -35,7 +35,17 @@ function parseId(raw) {
 // its transfers become internal transfers. 'own' is the user's own untracked
 // address (same effect via the own set, no account created). 'external' records
 // "reviewed, genuinely a third party" and changes no classification at all.
-const LABEL_KINDS = new Set(['exchange', 'external', 'own']);
+// 'bridge' (#59) says the address is a cross-chain bridge: the activity ladder
+// reads it as bridge_out/bridge_in instead of unexplained spending, and the
+// matching pass pairs the two halves. It is user-settable because bridges are
+// deployed and redeployed faster than any seed can track.
+const LABEL_KINDS = new Set(['exchange', 'external', 'own', 'bridge']);
+
+// The kinds whose NAME never reaches a classification decision, so a typed name
+// is optional and a short address will do. An 'exchange' name is different in
+// kind: it becomes counterparty_exchange, the text in the ledger AND the
+// assertion that rewrites spending as an internal transfer.
+const NAME_OPTIONAL_KINDS = new Set(['external', 'own', 'bridge']);
 
 // The activity layer's category vocabulary, single-sourced from the service so
 // the route and the CHECK constraint in 038 can never drift apart.
@@ -407,14 +417,15 @@ router.post('/address-labels', async (req, res) => {
     // 'own' would otherwise flip it to 'exchange' and turn a self-transfer
     // into a phantom exchange deposit. Explicit non-strings are rejected
     // rather than coerced, so ["own"] does not slip past the allowlist.
+    const kindError = `kind must be one of: ${[...LABEL_KINDS].join(', ')}`;
     let kind = null;
     if (req.body?.kind !== undefined) {
       if (typeof req.body.kind !== 'string') {
-        return res.status(400).json({ error: "kind must be 'exchange', 'external', or 'own'" });
+        return res.status(400).json({ error: kindError });
       }
       kind = req.body.kind.trim().toLowerCase();
       if (!LABEL_KINDS.has(kind)) {
-        return res.status(400).json({ error: "kind must be 'exchange', 'external', or 'own'" });
+        return res.status(400).json({ error: kindError });
       }
     }
 
@@ -429,7 +440,7 @@ router.post('/address-labels', async (req, res) => {
     // classification, so a short-address fallback is enough to triage in one
     // tap. An omitted kind is held to the same bar as 'exchange', since on a
     // fresh row that is what it becomes.
-    if (kind !== 'external' && kind !== 'own' && !trimmedName) {
+    if (!NAME_OPTIONAL_KINDS.has(kind) && !trimmedName) {
       return res.status(400).json({ error: 'name is required (max 64 characters)' });
     }
     const normalized = address.trim().toLowerCase();

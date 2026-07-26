@@ -1,0 +1,270 @@
+{
+  "about": "Canonical cross-chain bridge contracts for the chains config/chains.js knows about, seeded as builtin 'bridge' labels by migration 044. Every address was read byte-for-byte out of raw source fetched from the protocol's own site (never a summarizer, never an aggregator, never model memory) and cross-checked against its public block-explorer name tag where the explorer would answer. See backend/scripts/generate-bridge-seed.js.",
+  "researchedOn": "2026-07-26",
+  "rowDefaults": {
+    "user_id": null,
+    "source": "builtin-bridge",
+    "kind": "bridge",
+    "confidence": "high"
+  },
+  "sources": {
+    "arbitrum": "https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses",
+    "linea": "https://docs.linea.build/network/build/contracts",
+    "optimism": "https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json",
+    "base": "https://docs.base.org/base-chain/network-information/base-contracts",
+    "across": "https://docs.across.to/chains-and-contracts"
+  },
+  "sourceNotes": {
+    "arbitrum": "Offchain Labs' own docs. The URL published in issue #59 (/build-decentralized-apps/reference/contract-addresses) 301s here.",
+    "linea": "Consensys' own docs. The three URLs in issue #59 now 404; Linea restructured its docs and this is the live canonical page.",
+    "optimism": "docs.optimism.io/superchain/addresses renders its L1 table CLIENT-SIDE from this file -- the URL is hardcoded in the page payload. It is Optimism's own first-party registry, and it is the only official source: no static docs.optimism.io page prints OP Mainnet's L1 addresses.",
+    "base": "Coinbase's own docs. Also the source for the OP Stack L2 predeploys, which are identical on OP Mainnet and Base (both explorers confirm the same two addresses).",
+    "across": "Across' own docs. The per-chain subpage URLs in issue #59 do not exist; the site serves one consolidated table."
+  },
+  "excluded": {
+    "zksync-era": "Chain 324 is ABSENT from Etherscan's V2 chainlist (config/chains.js), so no zkSync transfer can ever be ingested. Its L1 contracts are omitted with it; an L1 deposit into zkSync stays a flagged send, which is the visible failure, not the silent one.",
+    "hop": "Hop publishes no addresses in its documentation -- docs.hop.exchange defers to a TypeScript file on the SDK's `develop` branch, which is a moving target rather than a deployment record. Its address table also reuses one address for different contracts on different chains (the Ethereum USDC.e L1 bridge and the Base ETH L2 bridge are both 0x3666f603...), and eth_address_labels is address-keyed with no chain column.",
+    "stargate": "Same address-collision problem, inside Stargate's own tables (StargatePoolUSDC on Arbitrum and StargatePoolNative on OP Mainnet are both 0xe8cdf27a...), plus an unresolved V1/V2 split with two live doc sets. Both protocols remain one click away in the label form; seeding a per-token pool address globally would be a verdict about bytes verified on only one chain."
+  },
+  "explorerAccess": {
+    "etherscan.io": "readable",
+    "optimistic.etherscan.io": "readable",
+    "basescan.org": "readable",
+    "lineascan.build": "readable",
+    "arbiscan.io": "blocked -- HTTP 403 Cloudflare interstitial on every address, so no Arbitrum-side name tag was readable and none was substituted from elsewhere"
+  },
+  "labels": [
+    {
+      "address": "0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f",
+      "name": "Arbitrum: Delayed Inbox",
+      "chain_id": 1,
+      "protocol": "arbitrum",
+      "docs_name": "Delayed Inbox",
+      "explorer_name_tag": "Arbitrum: Delayed Inbox"
+    },
+    {
+      "address": "0x8315177ab297ba92a06054ce80a67ed4dbd7ed3a",
+      "name": "Arbitrum: Bridge",
+      "chain_id": 1,
+      "protocol": "arbitrum",
+      "docs_name": "Bridge",
+      "explorer_name_tag": "Arbitrum: Bridge"
+    },
+    {
+      "address": "0x0b9857ae2d4a3dbe74ffe1d7df045bb7f96e4840",
+      "name": "Arbitrum: Outbox",
+      "chain_id": 1,
+      "protocol": "arbitrum",
+      "docs_name": "Outbox",
+      "explorer_name_tag": "Arbitrum: Outbox 4"
+    },
+    {
+      "address": "0x72ce9c846789fdb6fc1f34ac4ad25dd9ef7031ef",
+      "name": "Arbitrum One: L1 Gateway Router",
+      "chain_id": 1,
+      "protocol": "arbitrum",
+      "docs_name": "L1 Gateway Router",
+      "explorer_name_tag": "Arbitrum One: L1 Gateway Router"
+    },
+    {
+      "address": "0xa3a7b6f88361f48403514059f1f16c8e78d60eec",
+      "name": "Arbitrum One: L1 ERC20 Gateway",
+      "chain_id": 1,
+      "protocol": "arbitrum",
+      "docs_name": "L1 ERC20 Gateway",
+      "explorer_name_tag": "Arbitrum One: L1 ERC20 Gateway"
+    },
+    {
+      "address": "0xcee284f754e854890e311e3280b767f80797180d",
+      "name": "Arbitrum One: L1 Arb-Custom Gateway",
+      "chain_id": 1,
+      "protocol": "arbitrum",
+      "docs_name": "L1 Arb-Custom Gateway",
+      "explorer_name_tag": "Arbitrum One: L1 Arb - Custom Gateway"
+    },
+    {
+      "address": "0xd92023e9d9911199a6711321d1277285e6d4e2db",
+      "name": "Arbitrum One: L1 WETH Gateway",
+      "chain_id": 1,
+      "protocol": "arbitrum",
+      "docs_name": "L1 Weth Gateway",
+      "explorer_name_tag": "Arbitrum One: Wrapped Ether Gateway"
+    },
+    {
+      "address": "0x5288c571fd7ad117bea99bf60fe0846c4e84f933",
+      "name": "Arbitrum One: L2 Gateway Router",
+      "chain_id": 42161,
+      "protocol": "arbitrum",
+      "docs_name": "L2 Gateway Router",
+      "explorer_name_tag": null
+    },
+    {
+      "address": "0x09e9222e96e7b4ae2a407b98d48e330053351eee",
+      "name": "Arbitrum One: L2 ERC20 Gateway",
+      "chain_id": 42161,
+      "protocol": "arbitrum",
+      "docs_name": "L2 ERC20 Gateway",
+      "explorer_name_tag": null
+    },
+    {
+      "address": "0x096760f208390250649e3e8763348e783aef5562",
+      "name": "Arbitrum One: L2 Arb-Custom Gateway",
+      "chain_id": 42161,
+      "protocol": "arbitrum",
+      "docs_name": "L2 Arb-Custom Gateway",
+      "explorer_name_tag": null
+    },
+    {
+      "address": "0x6c411ad3e74de3e7bd422b94a27770f5b86c623b",
+      "name": "Arbitrum One: L2 WETH Gateway",
+      "chain_id": 42161,
+      "protocol": "arbitrum",
+      "docs_name": "L2 Weth Gateway",
+      "explorer_name_tag": null
+    },
+    {
+      "address": "0x0000000000000000000000000000000000000064",
+      "name": "Arbitrum: ArbSys",
+      "chain_id": 42161,
+      "protocol": "arbitrum",
+      "docs_name": "ArbSys (precompile)",
+      "explorer_name_tag": null
+    },
+    {
+      "address": "0xd19d4b5d358258f05d7b411e21a1460d11b0876f",
+      "name": "Linea: L1 Message Service",
+      "chain_id": 1,
+      "protocol": "linea",
+      "docs_name": "LineaRollup: Linea Rollup and L1 Message Service",
+      "explorer_name_tag": "Linea: L1 Message Service"
+    },
+    {
+      "address": "0x051f1d88f0af5763fb888ec4378b4d8b29ea3319",
+      "name": "Linea: L1 Token Bridge",
+      "chain_id": 1,
+      "protocol": "linea",
+      "docs_name": "L1 Token bridge",
+      "explorer_name_tag": "Linea: L1 Token bridge"
+    },
+    {
+      "address": "0x508ca82df566dcd1b0de8296e70a96332cd644ec",
+      "name": "Linea: L2 Message Service",
+      "chain_id": 59144,
+      "protocol": "linea",
+      "docs_name": "L2 Message Service",
+      "explorer_name_tag": "Linea: L2 Message Service"
+    },
+    {
+      "address": "0x353012dc4a9a6cf55c941badc267f82004a8ceb9",
+      "name": "Linea: L2 Token Bridge",
+      "chain_id": 59144,
+      "protocol": "linea",
+      "docs_name": "L2 Token bridge",
+      "explorer_name_tag": "Linea: L2 Token bridge"
+    },
+    {
+      "address": "0x99c9fc46f92e8a1c0dec1b1747d010903e884be1",
+      "name": "Optimism: L1 Standard Bridge",
+      "chain_id": 1,
+      "protocol": "optimism",
+      "docs_name": "L1StandardBridgeProxy",
+      "explorer_name_tag": "Optimism: Gateway"
+    },
+    {
+      "address": "0xbeb5fc579115071764c7423a4f12edde41f106ed",
+      "name": "Optimism: Portal",
+      "chain_id": 1,
+      "protocol": "optimism",
+      "docs_name": "OptimismPortalProxy",
+      "explorer_name_tag": "Optimism: Portal"
+    },
+    {
+      "address": "0x25ace71c97b33cc4729cf772ae268934f7ab5fa1",
+      "name": "Optimism: L1 Cross Domain Messenger",
+      "chain_id": 1,
+      "protocol": "optimism",
+      "docs_name": "L1CrossDomainMessengerProxy",
+      "explorer_name_tag": "Optimism: Proxy OVM L1 Cross Domain Messenger"
+    },
+    {
+      "address": "0x3154cf16ccdb4c6d922629664174b904d80f2c35",
+      "name": "Base: L1 Standard Bridge",
+      "chain_id": 1,
+      "protocol": "base",
+      "docs_name": "L1StandardBridge",
+      "explorer_name_tag": "Base: Base Bridge"
+    },
+    {
+      "address": "0x49048044d57e1c92a77f79988d21fa8faf74e97e",
+      "name": "Base: Portal",
+      "chain_id": 1,
+      "protocol": "base",
+      "docs_name": "OptimismPortal",
+      "explorer_name_tag": "Base: Base Portal"
+    },
+    {
+      "address": "0x866e82a600a1414e583f7f13623f1ac5d58b0afa",
+      "name": "Base: L1 Cross Domain Messenger",
+      "chain_id": 1,
+      "protocol": "base",
+      "docs_name": "L1CrossDomainMessenger",
+      "explorer_name_tag": "Base: L1 Cross Domain Messenger"
+    },
+    {
+      "address": "0x4200000000000000000000000000000000000010",
+      "name": "OP Stack: L2 Standard Bridge",
+      "chain_id": 8453,
+      "protocol": "base",
+      "docs_name": "L2StandardBridge (predeploy, identical on OP Mainnet and Base)",
+      "explorer_name_tag": "Base: L2 Standard Bridge Proxy; Optimism: L2 Standard Bridge on chain 10"
+    },
+    {
+      "address": "0x4200000000000000000000000000000000000016",
+      "name": "OP Stack: L2 To L1 Message Passer",
+      "chain_id": 8453,
+      "protocol": "base",
+      "docs_name": "L2ToL1MessagePasser (predeploy, identical on OP Mainnet and Base)",
+      "explorer_name_tag": "Base: L2 To L1 Message Passer; Optimism: L2 To L1 Message Passer on chain 10"
+    },
+    {
+      "address": "0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5",
+      "name": "Across: Ethereum Spoke Pool",
+      "chain_id": 1,
+      "protocol": "across",
+      "docs_name": "SpokePool",
+      "explorer_name_tag": "Across Protocol: Ethereum Spoke Pool V2"
+    },
+    {
+      "address": "0xe35e9842fceaca96570b734083f4a58e8f7c5f2a",
+      "name": "Across: Arbitrum Spoke Pool",
+      "chain_id": 42161,
+      "protocol": "across",
+      "docs_name": "SpokePool",
+      "explorer_name_tag": null
+    },
+    {
+      "address": "0x6f26bf09b1c792e3228e5467807a900a503c0281",
+      "name": "Across: OP Mainnet Spoke Pool",
+      "chain_id": 10,
+      "protocol": "across",
+      "docs_name": "SpokePool",
+      "explorer_name_tag": "Across Protocol: Spoke Pool"
+    },
+    {
+      "address": "0x09aea4b2242abc8bb4bb78d537a67a245a7bec64",
+      "name": "Across: Base Spoke Pool",
+      "chain_id": 8453,
+      "protocol": "across",
+      "docs_name": "SpokePool",
+      "explorer_name_tag": "Across Protocol: Base Spoke Pool Proxy"
+    },
+    {
+      "address": "0x7e63a5f1a8f0b4d0934b2f2327daed3f6bb2ee75",
+      "name": "Across: Linea Spoke Pool",
+      "chain_id": 59144,
+      "protocol": "across",
+      "docs_name": "SpokePool",
+      "explorer_name_tag": "Across Protocol: Linea Spoke Pool"
+    }
+  ]
+}

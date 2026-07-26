@@ -22,6 +22,11 @@ export const LABEL_VERDICT_OPTIONS = [
   { value: 'exchange', label: 'Exchange' },
   { value: 'external', label: 'External (third party)' },
   { value: 'own', label: 'My own address' },
+  // A cross-chain bridge contract: money sent here is the user's own money
+  // changing chains, not spending. Seeded for the canonical bridges of the
+  // chains this app syncs, but offered by hand because bridges redeploy far
+  // faster than a seed can follow.
+  { value: 'bridge', label: 'Bridge (cross-chain)' },
 ];
 
 // undefined omits `kind` from the request body entirely; any other verdict is
@@ -30,10 +35,11 @@ export const labelVerdictKind = (verdict) => (verdict === LABEL_VERDICT_KEEP ? u
 
 // Mirrors the API rule: an exchange NAME is the text that appears in the ledger
 // AND the assertion that turns spending into a transfer, so it must be typed.
-// External/own names never reach classification and fall back to a short
+// External/own/bridge names never reach classification and fall back to a short
 // address. KEEP is held to the exchange bar because that is what a fresh row
 // becomes.
-export const labelVerdictNeedsName = (verdict) => verdict !== 'external' && verdict !== 'own';
+const NAME_OPTIONAL_VERDICTS = new Set(['external', 'own', 'bridge']);
+export const labelVerdictNeedsName = (verdict) => !NAME_OPTIONAL_VERDICTS.has(verdict);
 
 export function formatCategoryLabel(category, fallback = UNCATEGORIZED_LABEL) {
   const label = typeof category === 'string' ? category.trim() : '';

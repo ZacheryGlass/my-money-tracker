@@ -22,13 +22,28 @@ const RESOLVED_COLUMNS = `
     a.legs, a.fee_wei, a.confidence, a.classified_at,
     CASE WHEN o.category IS NOT NULL THEN FALSE ELSE a.needs_review END AS needs_review,
     CASE WHEN o.category IS NOT NULL THEN NULL ELSE a.review_reason END AS review_reason,
-    w.address AS wallet_address`;
+    w.address AS wallet_address,
+    -- The cross-chain pairing (#59). A matched pair IS one movement of the
+    -- user's own money, so each leg carries the other's coordinates and the
+    -- fee the bridge took, and the two render as a single self-transfer.
+    -- Both link columns are UNIQUE, so neither join can fan a row out.
+    COALESCE(lo.id, li.id) AS bridge_link_id,
+    COALESCE(lo.asset, li.asset) AS bridge_asset,
+    COALESCE(lo.out_amount, li.out_amount) AS bridge_out_amount,
+    COALESCE(lo.in_amount, li.in_amount) AS bridge_in_amount,
+    COALESCE(lo.fee_amount, li.fee_amount) AS bridge_fee_amount,
+    pair.chain_id AS bridge_counterpart_chain_id,
+    pair.tx_hash AS bridge_counterpart_tx_hash,
+    pair.category AS bridge_counterpart_category`;
 
 const RESOLVED_FROM = `
     FROM eth_activity a
     JOIN eth_wallets w ON w.id = a.wallet_id
     LEFT JOIN eth_activity_overrides o
-      ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash`;
+      ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash
+    LEFT JOIN eth_activity_links lo ON lo.out_activity_id = a.id
+    LEFT JOIN eth_activity_links li ON li.in_activity_id = a.id
+    LEFT JOIN eth_activity pair ON pair.id = COALESCE(lo.in_activity_id, li.out_activity_id)`;
 
 const INSERT_COLUMNS = [
   'wallet_id', 'chain_id', 'tx_hash', 'block_number', 'block_time', 'category',

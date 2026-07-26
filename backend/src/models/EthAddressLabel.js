@@ -12,6 +12,11 @@ class EthAddressLabel {
   // the wire on every Settings load. They still classify, still shadow, and
   // still answer findByAddress; they just are not a to-do list.
   //
+  // The bridge pack ('builtin-bridge', migration 044) IS listed, on the same
+  // reasoning read the other way: it is a few dozen rows, each taken from its
+  // protocol's own deployment docs, and a wrong one reclassifies a real send as
+  // an internal transfer. That has to be visible to be correctable.
+  //
   // The filter sits OUTSIDE the DISTINCT ON so shadowing resolves first: a
   // user's override of a packed address wins precedence and stays in the list,
   // while an untouched pack row wins nothing and drops out. Today the predicate
@@ -27,7 +32,7 @@ class EthAddressLabel {
          WHERE user_id = $1 OR user_id IS NULL
          ORDER BY address, user_id NULLS LAST
        ) labels
-       WHERE user_id IS NOT NULL OR source = 'builtin'
+       WHERE user_id IS NOT NULL OR source IN ('builtin', 'builtin-bridge')
        ORDER BY name, address`,
       [userId]
     );
