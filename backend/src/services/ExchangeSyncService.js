@@ -36,7 +36,11 @@ function notConfigured(message) {
  */
 function decryptCredentials(account) {
   if (!secretCrypto.isConfigured()) {
-    throw notConfigured('SECRETS_ENCRYPTION_KEY is not configured, so stored exchange keys cannot be read');
+    // A server misconfiguration, not a per-account one: the route answers 503
+    // the same way every other key path does, rather than blaming the account.
+    const error = new Error('SECRETS_ENCRYPTION_KEY is not configured on the server');
+    error.code = 'SECRETS_NOT_CONFIGURED';
+    throw error;
   }
   if (!account.api_key_encrypted || !account.api_secret_encrypted) {
     throw notConfigured('This exchange account has no API key stored');
@@ -197,8 +201,9 @@ class ExchangeSyncService {
       // The cursor is deliberately NOT passed here: a failed sync must leave
       // the resume point exactly where it was, or the next run starts past
       // rows nobody ever read.
+      const unconfigured = err.code === 'EXCHANGE_NOT_CONFIGURED' || err.code === 'SECRETS_NOT_CONFIGURED';
       await ExchangeAccount.saveSyncState(account.id, {
-        status: err.code === 'EXCHANGE_NOT_CONFIGURED' ? 'not_configured' : 'error',
+        status: unconfigured ? 'not_configured' : 'error',
         error: err.message,
       });
       throw err;
@@ -285,6 +290,7 @@ class ExchangeSyncService {
       } catch (err) {
         if (err.code === 'EXCHANGE_NOT_CONFIGURED'
           || err.code === 'EXCHANGE_CREDENTIAL_UNREADABLE'
+          || err.code === 'SECRETS_NOT_CONFIGURED'
           || err.code === 'EXCHANGE_NOT_SUPPORTED') {
           summary.skipped += 1;
           summary.results.push({ exchangeAccountId: account.id, skipped: err.code });

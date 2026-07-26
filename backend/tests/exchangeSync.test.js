@@ -875,6 +875,18 @@ test('key writes degrade to a 503 without SECRETS_ENCRYPTION_KEY, storing nothin
   assert.equal(list.body.encryption_configured, false);
 });
 
+test('a sync with no encryption key is a 503 about the server, not a 409 about the account', async () => {
+  connectAccount();
+  delete process.env.SECRETS_ENCRYPTION_KEY;
+
+  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+
+  // The stored credential is fine; the server just cannot read it. Blaming the
+  // account would send the user to re-enter a key that is already correct.
+  assert.equal(response.status, 503);
+  assert.match(response.body.error, /SECRETS_ENCRYPTION_KEY/);
+});
+
 test('credential and sync routes 404 for an account that is not the caller\'s', async () => {
   asUser(2);
   for (const [method, url] of [
