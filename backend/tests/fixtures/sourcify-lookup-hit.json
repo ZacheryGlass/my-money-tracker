@@ -1,0 +1,20 @@
+{
+    "ok": true,
+    "result": {
+        "function": {
+            "0x7ff36ab5": [
+                {
+                    "name": "swapExactETHForTokens(uint256,address[],address,uint256)",
+                    "filtered": false,
+                    "hasVerifiedContract": true
+                },
+                {
+                    "name": "join_tg_invmru_haha_9d69f3f(bool,address)",
+                    "filtered": false,
+                    "hasVerifiedContract": false
+                }
+            ]
+        },
+        "event": {}
+    }
+}

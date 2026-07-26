@@ -122,7 +122,7 @@ class EthTransfer {
       'wallet_id', 'tx_hash', 'ordinal', 'transfer_type', 'block_number',
       'block_time', 'from_address', 'to_address', 'value_wei',
       'token_contract', 'token_symbol', 'token_decimals', 'token_standard',
-      'token_id', 'is_error',
+      'token_id', 'is_error', 'method_id', 'method_name',
     ];
     // Chunked to stay far under Postgres' 65535-parameter cap on first syncs
     // of busy wallets.
@@ -138,7 +138,7 @@ class EthTransfer {
           row.block_number, row.block_time, row.from_address, row.to_address,
           row.value_wei, row.token_contract, row.token_symbol,
           row.token_decimals, row.token_standard ?? null, row.token_id ?? null,
-          row.is_error
+          row.is_error, row.method_id ?? null, row.method_name ?? null
         );
         return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`;
       });
@@ -151,6 +151,45 @@ class EthTransfer {
       inserted += result.rowCount;
     }
     return inserted;
+  }
+
+  // Selectors this wallet has stored but cannot yet name -- the decode pass's
+  // work list. Derived from stored rows rather than from the batch the sync
+  // just inserted, so a selector deferred by the lookup budget or stranded by a
+  // provider outage is still pending on the next sync instead of lost.
+  //
+  // Ordered by how often the selector appears so that when the budget does
+  // bite, the methods the user sees most get names first.
+  static async pendingMethodSelectors(walletId) {
+    const result = await pool.query(
+      `SELECT method_id
+       FROM eth_transfers
+       WHERE wallet_id = $1 AND method_id IS NOT NULL AND method_name IS NULL
+       GROUP BY method_id
+       ORDER BY COUNT(*) DESC, method_id`,
+      [walletId]
+    );
+    return result.rows.map((row) => row.method_id);
+  }
+
+  // Copies cached signatures onto the wallet's rows. `s.name IS NOT NULL` skips
+  // cached misses: they stay NULL so the UI falls back to the raw selector, and
+  // they stay in the pending set above, which costs one indexed scan per sync
+  // and zero network because the cache already answers for them.
+  static async applyMethodNames(walletId) {
+    const result = await pool.query(
+      `UPDATE eth_transfers t
+          -- The cache column is TEXT and this one is VARCHAR(200); clamp here
+          -- so an over-long signature can never abort a whole sync's decode.
+          SET method_name = LEFT(s.name, 200)
+         FROM eth_method_signatures s
+        WHERE t.wallet_id = $1
+          AND t.method_id = s.selector
+          AND t.method_name IS NULL
+          AND s.name IS NOT NULL`,
+      [walletId]
+    );
+    return result.rowCount;
   }
 
   // One feed, whether it covers every wallet the user owns or just one, so the
@@ -168,6 +207,10 @@ class EthTransfer {
   // ledger mirror: the feed is where the Ignore button lives, so leaving them in
   // means the row the user just ignored survives the refetch and the button
   // reads as broken. Gas and ETH rows carry no contract and always pass.
+  //
+  // t.* carries method_id and method_name out to the Transactions tab. Reads
+  // only: decoding happens during sync, so serving this feed never touches a
+  // signature service.
   static async findForUser(userId, { walletId = null, type, limit = 100, offset = 0 } = {}) {
     if (!userId) throw new Error('EthTransfer.findForUser requires a userId');
     const params = [userId];
