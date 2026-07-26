@@ -12,6 +12,7 @@ import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
 import { formatRelativeTime, formatCompactCurrency, formatDateDisplay } from '../utils/format';
+import { explorerAddressUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
   LABEL_VERDICT_OPTIONS,
@@ -290,8 +291,11 @@ function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackAsWallet
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="font-mono text-body-sm font-semibold text-primary" title={counterparty.address}>{short}</span>
+            {/* Counterparties are chain-agnostic (one verdict covers every
+                chain the address is reached on), so there is no chain here to
+                key the explorer on: mainnet it is. */}
             <a
-              href={`https://etherscan.io/address/${counterparty.address}`}
+              href={explorerAddressUrl(counterparty.address)}
               target="_blank"
               rel="noreferrer"
               className="text-[10px] text-tertiary transition-colors hover:text-accent"
@@ -1803,8 +1807,11 @@ const Settings = ({ user }) => {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {/* One address, several chains: the wallet has no single
+                          chain to link against, and an address page exists on
+                          every explorer anyway. */}
                       <a
-                        href={`https://etherscan.io/address/${wallet.address}`}
+                        href={explorerAddressUrl(wallet.address)}
                         target="_blank"
                         rel="noreferrer"
                         className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all"
@@ -1828,6 +1835,43 @@ const Settings = ({ user }) => {
                       </button>
                     </div>
                   </div>
+
+                  {/* Per-chain sync state. The wallet badge above deliberately
+                      carries only transient failures, so a chain (or a feed on
+                      one) that this Etherscan key simply cannot serve would be
+                      invisible without this -- and an unfetched feed means the
+                      figures derived from it are incomplete, not just stale.
+
+                      Shown for a multi-chain wallet, and ALWAYS when any chain
+                      row carries a gap: a mainnet-only wallet (ETH_CHAINS=1)
+                      whose one chain is degraded still has to say so, and
+                      gating purely on chain count hid exactly that case. */}
+                  {(wallet.chains?.length > 1
+                    || wallet.chains?.some((chain) => chain.error_code || chain.unsupported_feeds?.length > 0)) && (
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      {wallet.chains.map((chain) => (
+                        <span
+                          key={chain.chain_id}
+                          title={chain.error_message
+                            || (chain.enabled ? `Last synced ${formatRelativeTime(chain.last_synced_at)}` : 'Chain turned off; stored history kept')}
+                          className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold uppercase tracking-wide ${
+                            !chain.enabled ? 'bg-surface-3 border-border text-tertiary'
+                              : chain.error_code ? 'bg-loss/5 border-loss/20 text-loss'
+                              : 'bg-surface-3 border-border text-secondary'
+                          }`}
+                        >
+                          {chain.enabled && chain.error_code && <AlertTriangle size={10} />}
+                          {chain.name}
+                          {!chain.enabled && <span className="font-normal normal-case">off</span>}
+                          {chain.unsupported_feeds?.length > 0 && (
+                            <span className="font-normal normal-case">
+                              no {chain.unsupported_feeds.join(', ')}
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   {wallet.error_code && (
                     <div className="mt-5 p-4 rounded border text-xs leading-relaxed bg-loss/5 border-loss/20 text-loss">

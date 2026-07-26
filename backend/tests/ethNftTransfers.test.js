@@ -269,16 +269,27 @@ test('the NFT feeds hit the documented Etherscan actions', async () => {
 // survive (no delete), and its cursor stays put so the next sync retries.
 test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged', async (t) => {
   const EthWallet = require('../src/models/EthWallet');
+  const EthWalletChain = require('../src/models/EthWalletChain');
   const SecretsService = require('../src/services/SecretsService');
   const MirrorService = require('../src/services/EthTransactionMirrorService');
   const TransactionClassificationService = require('../src/services/TransactionClassificationService');
 
   const restore = [];
   const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
-  t.after(() => { for (const [o, k, v] of restore) o[k] = v; });
+  // Mainnet only, so this stays a test about ONE feed failing rather than about
+  // multi-chain fan-out (that lives in ethMultiChain.test.js).
+  const priorChains = process.env.ETH_CHAINS;
+  process.env.ETH_CHAINS = '1';
+  t.after(() => {
+    for (const [o, k, v] of restore) o[k] = v;
+    if (priorChains === undefined) delete process.env.ETH_CHAINS;
+    else process.env.ETH_CHAINS = priorChains;
+  });
 
-  stub(EthWallet, 'findById', async () => ({
-    id: 7, user_id: 1, address: '0xabc',
+  stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: '0xabc' }));
+  // Cursors live on eth_wallet_chains since migration 039.
+  stub(EthWalletChain, 'ensure', async () => ({
+    wallet_id: 7, chain_id: 1,
     last_block_normal: 500, last_block_internal: 500, last_block_token: 500,
     last_block_nft: 500, last_block_1155: 500,
   }));
@@ -293,10 +304,14 @@ test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged
     tokenSymbol: 'X', tokenID: '5', tokenValue: '2',
   }]);
   const deleted = [];
-  stub(EthTransfer, 'deleteFromBlock', async (walletId, types) => { deleted.push(types.join(',')); });
+  stub(EthTransfer, 'deleteFromBlock', async (walletId, chainId, types) => { deleted.push(types.join(',')); });
   stub(EthTransfer, 'bulkInsert', async () => 1);
   let cursors = null;
-  stub(EthWallet, 'updateCursors', async (id, c) => { cursors = c; });
+  stub(EthWalletChain, 'updateCursors', async (id, chainId, c) => { cursors = c; });
+  stub(EthWalletChain, 'setUnsupportedFeeds', async () => {});
+  stub(EthWalletChain, 'setError', async () => {});
+  stub(EthWalletChain, 'clearError', async () => {});
+  stub(EthWalletChain, 'updateSyncTime', async () => {});
   stub(EthTransfer, 'reclassifyCounterparties', async () => {});
   stub(EthWalletService, 'refreshHoldings', async () => ({}));
   stub(MirrorService, 'rebuildForWallet', async () => ({}));
@@ -316,8 +331,10 @@ test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged
   assert.equal(cursors.nft, null, 'failed feed cursor must not advance');
   assert.equal(cursors.nft1155, 600, 'healthy feed cursor advances normally');
   // A frozen cursor behind a green wallet row is silent data loss: the skip
-  // must reach the job log and the wallet badge, not just a warn line.
-  assert.deepEqual(result.skippedFeeds, ['nft'], 'the skip must be visible in the sync result');
+  // must reach the job log and the wallet badge, not just a warn line. The
+  // label carries its chain now, because the same feed can be healthy on one
+  // chain and skipped on another.
+  assert.deepEqual(result.skippedFeeds, ['Ethereum/nft'], 'the skip must be visible in the sync result');
   assert.equal(clearedError, false, 'a partial sync must not wipe the wallet badge');
   assert.equal(walletError?.code, 'FEED_SKIPPED');
   assert.match(walletError?.message || '', /nft/);

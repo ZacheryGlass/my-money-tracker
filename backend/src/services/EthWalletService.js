@@ -9,11 +9,27 @@ const MethodSignatureService = require('./MethodSignatureService');
 const PriceService = require('./PriceService');
 const TransactionClassificationService = require('./TransactionClassificationService');
 const EthWallet = require('../models/EthWallet');
+const EthWalletChain = require('../models/EthWalletChain');
 const EthTransfer = require('../models/EthTransfer');
+const chains = require('../config/chains');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
+
+// The five Etherscan account feeds, each with the cursor it resumes from and
+// the transfer_types it owns. `normal` owns two: gas rows are synthesized from
+// txlist, so they share its resume window.
+//
+// Order matters only for throttle fairness -- the feeds are independent, and
+// each one's failure is isolated from the others (see _syncWalletChain).
+const FEED_SPECS = [
+  { key: 'normal', fetch: 'fetchNormalTxs', types: ['native', 'gas'] },
+  { key: 'internal', fetch: 'fetchInternalTxs', types: ['internal'] },
+  { key: 'token', fetch: 'fetchTokenTxs', types: ['token'] },
+  { key: 'nft', fetch: 'fetchNftTxs', types: ['nft'] },
+  { key: 'nft1155', fetch: 'fetch1155Txs', types: ['nft1155'] },
+];
 
 // holdings.quantity is DECIMAL(20,8): 12 integer digits, 8 fractional.
 // Scam-token airdrops mint absurd quantities that would overflow the column
@@ -208,6 +224,126 @@ class EthWalletService {
     return serialized(() => this._syncWallet(walletId));
   }
 
+  // One chain's ingest for one wallet: fetch each feed, replace that feed's
+  // resume window, advance that feed's cursor. Everything derived (holdings,
+  // the ledger mirror, classification) spans chains and is rebuilt once by the
+  // caller after all chains have landed.
+  //
+  // Failure is isolated per (chain, feed), in three flavours:
+  //   * transient (rate limit, timeout, 5xx) -> 'skipped'. Retried next sync,
+  //     and it badges the wallet.
+  //   * ETHERSCAN_FEED_UNSUPPORTED -> 'unsupported', this feed only.
+  //   * ETHERSCAN_CHAIN_UNAVAILABLE -> 'unsupported', and a verdict on the whole
+  //     chain, so the remaining feeds are marked without being called.
+  // The unsupported kinds are recorded as a gap on eth_wallet_chains so #62
+  // knows derived figures there are INCOMPLETE rather than merely stale.
+  //
+  // All three do the same three things, which is the part that must not be got
+  // wrong: contribute no rows, SKIP that feed's delete so its stored rows
+  // survive, and leave its cursor untouched. Advancing a cursor past blocks
+  // that were never fetched drops those rows silently and forever.
+  static async _syncWalletChain(wallet, chain, apiKey) {
+    const state = await EthWalletChain.ensure(wallet.id, chain.id);
+    // Resume before the stored cursor so a reorg near the tip is healed by the
+    // delete-then-reinsert ingest. Per chain: an L2's cursor has nothing to do
+    // with mainnet's, and block numbers are independent sequences.
+    const resumeFrom = (cursor) => Math.max(0, Number(cursor ?? 0) - REORG_OVERLAP_BLOCKS);
+    const resume = {
+      normal: resumeFrom(state?.last_block_normal),
+      internal: resumeFrom(state?.last_block_internal),
+      token: resumeFrom(state?.last_block_token),
+      nft: resumeFrom(state?.last_block_nft),
+      nft1155: resumeFrom(state?.last_block_1155),
+    };
+
+    const feeds = {};
+    const fetchedOk = {};
+    const skipped = [];
+    const unsupported = [];
+
+    // Set by the first feed that reports the CHAIN as unreadable. The remaining
+    // feeds are then marked unsupported WITHOUT being called: they would answer
+    // identically, and the throttle they would spend is global across every
+    // user, so proving the same point five times delays everyone else's sync.
+    // They still land in unsupported_feeds, so the gap record stays complete
+    // and the whole-chain verdict below can still recognise itself.
+    let chainUnreadable = false;
+
+    for (const spec of FEED_SPECS) {
+      feeds[spec.key] = [];
+      if (chainUnreadable) {
+        fetchedOk[spec.key] = false;
+        unsupported.push(spec.key);
+        continue;
+      }
+      try {
+        feeds[spec.key] = await EtherscanService[spec.fetch](
+          wallet.address, resume[spec.key], apiKey, chain.id
+        );
+        fetchedOk[spec.key] = true;
+      } catch (err) {
+        fetchedOk[spec.key] = false;
+        if (err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE' || err.code === 'ETHERSCAN_FEED_UNSUPPORTED') {
+          // Only the whole-chain verdict cascades. A single missing feed says
+          // nothing about its neighbours, and assuming otherwise would freeze
+          // four healthy cursors and report four gaps that do not exist.
+          chainUnreadable = err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE';
+          unsupported.push(spec.key);
+          logger.warn({ walletId: wallet.id, chainId: chain.id, feed: spec.key, code: err.code, err: err.message },
+            'Etherscan cannot serve this feed; cursor frozen and gap recorded');
+        } else {
+          skipped.push(spec.key);
+          logger.warn({ walletId: wallet.id, chainId: chain.id, feed: spec.key, err },
+            'Feed fetch failed; feed skipped this sync and its cursor left unchanged');
+        }
+      }
+    }
+
+    const rows = this.normalizeFeeds(wallet.address, feeds)
+      .map((row) => ({ ...row, wallet_id: wallet.id, chain_id: chain.id }));
+
+    for (const spec of FEED_SPECS) {
+      if (!fetchedOk[spec.key]) continue;
+      await EthTransfer.deleteFromBlock(wallet.id, chain.id, spec.types, resume[spec.key]);
+    }
+    const inserted = await EthTransfer.bulkInsert(rows);
+
+    await EthWalletChain.updateCursors(wallet.id, chain.id, {
+      normal: fetchedOk.normal ? maxBlock(feeds.normal) : null,
+      internal: fetchedOk.internal ? maxBlock(feeds.internal) : null,
+      token: fetchedOk.token ? maxBlock(feeds.token) : null,
+      nft: fetchedOk.nft ? maxBlock(feeds.nft) : null,
+      nft1155: fetchedOk.nft1155 ? maxBlock(feeds.nft1155) : null,
+    });
+    // Written every time, empty array included, so a feed that starts working
+    // again (a plan upgrade) stops being reported as a gap.
+    await EthWalletChain.setUnsupportedFeeds(wallet.id, chain.id, unsupported);
+
+    if (unsupported.length === FEED_SPECS.length) {
+      await EthWalletChain.setError(wallet.id, chain.id, 'CHAIN_UNAVAILABLE',
+        `${chain.name} is not readable with this Etherscan key. Upgrade the plan or remove ${chain.id} from ETH_CHAINS.`);
+    } else if (skipped.length) {
+      await EthWalletChain.setError(wallet.id, chain.id, 'FEED_SKIPPED',
+        `Partial sync: ${skipped.join(', ')} feed failed; will retry next sync`);
+    } else if (unsupported.length) {
+      await EthWalletChain.setError(wallet.id, chain.id, 'FEED_UNSUPPORTED',
+        `${unsupported.join(', ')} unavailable on ${chain.name}; derived balances there may drift`);
+    } else {
+      await EthWalletChain.clearError(wallet.id, chain.id);
+    }
+    await EthWalletChain.updateSyncTime(wallet.id, chain.id);
+
+    return {
+      chainId: chain.id,
+      chainName: chain.name,
+      inserted,
+      skippedFeeds: skipped,
+      unsupportedFeeds: unsupported,
+      unavailable: unsupported.length === FEED_SPECS.length,
+      fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, feeds[spec.key].length])),
+    };
+  }
+
   static async _syncWallet(walletId) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
@@ -221,59 +357,69 @@ class EthWalletService {
     }
 
     try {
-      const resume = {
-        normal: Math.max(0, Number(wallet.last_block_normal) - REORG_OVERLAP_BLOCKS),
-        internal: Math.max(0, Number(wallet.last_block_internal) - REORG_OVERLAP_BLOCKS),
-        token: Math.max(0, Number(wallet.last_block_token) - REORG_OVERLAP_BLOCKS),
-        nft: Math.max(0, Number(wallet.last_block_nft) - REORG_OVERLAP_BLOCKS),
-        nft1155: Math.max(0, Number(wallet.last_block_1155) - REORG_OVERLAP_BLOCKS),
-      };
-
-      const normal = await EtherscanService.fetchNormalTxs(wallet.address, resume.normal, apiKey);
-      const internal = await EtherscanService.fetchInternalTxs(wallet.address, resume.internal, apiKey);
-      const token = await EtherscanService.fetchTokenTxs(wallet.address, resume.token, apiKey);
-      // The NFT feeds must not take down the whole sync: a wallet with zero
-      // NFT activity would still lose its balance, holdings and mirror if
-      // tokennfttx rate-limits. A failed feed contributes no rows, keeps its
-      // stored rows (its delete is skipped), and leaves its cursor alone
-      // (null -> COALESCE in updateCursors).
-      let nft = [];
-      let nftOk = true;
-      try {
-        nft = await EtherscanService.fetchNftTxs(wallet.address, resume.nft, apiKey);
-      } catch (err) {
-        nftOk = false;
-        logger.warn({ walletId, err }, 'tokennfttx fetch failed; NFT feed skipped this sync');
+      // Only enabled chains are touched. A chain switched off keeps its
+      // eth_wallet_chains row, its cursors and every transfer it ever ingested
+      // -- disabling stops syncing, it does not delete history, so switching it
+      // back on resumes from where it left off instead of refetching years.
+      const enabled = chains.enabledChains();
+      const perChain = [];
+      // Isolation is per CHAIN, not merely per feed. _syncWalletChain already
+      // absorbs Etherscan's own failures, but everything else it does can throw
+      // too -- a DB blip in bulkInsert, a cursor write timing out -- and an
+      // escaping throw would abandon the whole wallet: every chain that DID
+      // land would go without reclassification, holdings and mirror rows, so a
+      // transient error on the fifth chain would silently roll the wallet's
+      // derived state back to the previous sync.
+      //
+      // A failed chain's cursors are untouched by construction (nothing past
+      // the throw runs), so it resumes exactly where it left off next sync.
+      for (const chain of enabled) {
+        try {
+          perChain.push(await this._syncWalletChain(wallet, chain, apiKey));
+        } catch (err) {
+          logger.error({ walletId, chainId: chain.id, err },
+            'Chain sync failed; other chains continue and this chain retries next sync');
+          // Same error slot and convention as the feed-level states, so the
+          // chain badge reads identically whatever failed.
+          try {
+            await EthWalletChain.ensure(wallet.id, chain.id);
+            await EthWalletChain.setError(wallet.id, chain.id, err.code || 'SYNC_ERROR', err.message);
+          } catch (recordErr) {
+            logger.error({ walletId, chainId: chain.id, err: recordErr },
+              'Could not record the chain sync error');
+          }
+          perChain.push({
+            chainId: chain.id,
+            chainName: chain.name,
+            inserted: 0,
+            skippedFeeds: [],
+            unsupportedFeeds: [],
+            unavailable: false,
+            error: err.message,
+            errorCode: err.code || 'SYNC_ERROR',
+            fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, 0])),
+          });
+        }
       }
-      let nft1155 = [];
-      let nft1155Ok = true;
-      try {
-        nft1155 = await EtherscanService.fetch1155Txs(wallet.address, resume.nft1155, apiKey);
-      } catch (err) {
-        nft1155Ok = false;
-        logger.warn({ walletId, err }, 'token1155tx fetch failed; 1155 feed skipped this sync');
+
+      const failedChains = perChain.filter((result) => result.error);
+      // A wallet where NOTHING landed fails exactly as it did before per-chain
+      // isolation: nothing was ingested, so there is nothing to rebuild derived
+      // data from, and the caller (and the nightly job's failure count) must
+      // still see a thrown error rather than a clean-looking empty sync.
+      if (failedChains.length === perChain.length && perChain.length > 0) {
+        const [first] = failedChains;
+        const error = new Error(first.error);
+        error.code = first.errorCode;
+        throw error;
       }
-
-      // Surfaced on the wallet row and in the job log: a feed that fails every
-      // night freezes its cursor forever, and "fetched 0" alone is
-      // indistinguishable from a wallet that simply owns no NFTs.
-      const skippedFeeds = [...(nftOk ? [] : ['nft']), ...(nft1155Ok ? [] : ['nft1155'])];
-
-      const rows = this.normalizeFeeds(wallet.address, { normal, internal, token, nft, nft1155 })
-        .map((row) => ({ ...row, wallet_id: walletId }));
-
-      // Gas rows derive from the normal feed, so they share its resume block.
-      await EthTransfer.deleteFromBlock(walletId, ['native', 'gas'], resume.normal);
-      await EthTransfer.deleteFromBlock(walletId, ['internal'], resume.internal);
-      await EthTransfer.deleteFromBlock(walletId, ['token'], resume.token);
-      if (nftOk) await EthTransfer.deleteFromBlock(walletId, ['nft'], resume.nft);
-      if (nft1155Ok) await EthTransfer.deleteFromBlock(walletId, ['nft1155'], resume.nft1155);
-      const inserted = await EthTransfer.bulkInsert(rows);
 
       // Naming the selectors Etherscan could not decode. Sync-time only: the
       // transfers route must never wait on Sourcify or 4byte. Non-fatal by
       // design -- method_name is a cosmetic hint, so a signature service being
       // down must not fail a sync that already has every balance and transfer.
+      // Chain-agnostic: a 4-byte selector means the same thing everywhere, and
+      // eth_method_signatures is global, so one pass covers every chain.
       let methods = null;
       try {
         methods = await MethodSignatureService.decodePendingForWallet(walletId);
@@ -281,13 +427,11 @@ class EthWalletService {
         logger.warn({ walletId, err }, 'Method signature decode failed; selectors stay unnamed');
       }
 
-      await EthWallet.updateCursors(walletId, {
-        normal: maxBlock(normal),
-        internal: maxBlock(internal),
-        token: maxBlock(token),
-        nft: nftOk ? maxBlock(nft) : null,
-        nft1155: nft1155Ok ? maxBlock(nft1155) : null,
-      });
+      // Derived data is rebuilt ONCE for the whole wallet, after every chain has
+      // landed. Counterparty labels are address-keyed with no chain dimension,
+      // and holdings/mirror rows span chains, so doing this per chain would
+      // rebuild the same rows N times and briefly publish a wallet whose
+      // holdings reflect only the chains synced so far.
       await EthTransfer.reclassifyCounterparties(wallet.user_id);
       const holdings = await this.refreshHoldings(walletId);
       const mirror = await EthTransactionMirrorService.rebuildForWallet(walletId);
@@ -295,30 +439,55 @@ class EthWalletService {
       // counterparty_exchange off the freshly-classified legs.
       const activity = await EthActivityService.rebuildForWallet(walletId);
       await TransactionClassificationService.backfill();
+
+      // Feed labels carry their chain: "nft failed" is not actionable when five
+      // chains ran, and the same feed can be healthy on one chain and skipped
+      // on another.
+      const skippedFeeds = perChain.flatMap((result) =>
+        result.skippedFeeds.map((feed) => `${result.chainName}/${feed}`));
+      const unsupportedFeeds = perChain.flatMap((result) =>
+        result.unsupportedFeeds.map((feed) => `${result.chainName}/${feed}`));
+
       // A partial sync must not report clean: the error slot doubles as the
       // degraded-feed badge until a sync fetches every feed.
-      if (skippedFeeds.length === 0) {
+      //
+      // Only TRANSIENT skips reach the wallet badge. An unsupported feed is a
+      // standing property of the chain and the key, so badging it would pin the
+      // wallet's attention count above zero permanently -- and a badge that
+      // cannot reach zero gets ignored, which would cost us the real sync
+      // errors too. Those gaps live on the chain row, which the wallets API
+      // returns, and are what #62 reconciles against.
+      //
+      // A chain that threw outright badges the wallet for the same reason a
+      // skipped feed does: it is transient by assumption and it retries, so the
+      // badge can still reach zero.
+      const partial = [
+        ...skippedFeeds.map((feed) => `${feed} feed`),
+        ...failedChains.map((result) => `${result.chainName} chain`),
+      ];
+      if (partial.length === 0) {
         await EthWallet.clearError(walletId);
       } else {
-        await EthWallet.setError(walletId, 'FEED_SKIPPED',
-          `Partial sync: ${skippedFeeds.join(', ')} feed failed; will retry next sync`);
+        await EthWallet.setError(walletId, failedChains.length ? 'CHAIN_SYNC_FAILED' : 'FEED_SKIPPED',
+          `Partial sync: ${partial.join(', ')} failed; will retry next sync`);
       }
       await EthWallet.updateSyncTime(walletId);
 
       const results = {
-        inserted,
+        inserted: perChain.reduce((sum, result) => sum + result.inserted, 0),
         holdings,
         mirror,
         activity,
         methods,
         skippedFeeds,
-        fetched: {
-          normal: normal.length,
-          internal: internal.length,
-          token: token.length,
-          nft: nft.length,
-          nft1155: nft1155.length,
-        },
+        unsupportedFeeds,
+        chains: perChain,
+        // Cross-chain totals, so the shape callers already read still means
+        // "how much did this sync bring in".
+        fetched: FEED_SPECS.reduce((totals, spec) => {
+          totals[spec.key] = perChain.reduce((sum, result) => sum + result.fetched[spec.key], 0);
+          return totals;
+        }, {}),
       };
       logger.info({ walletId, address: wallet.address, results }, 'ETH wallet sync completed');
       return results;
@@ -471,11 +640,18 @@ class EthWalletService {
     return { wallet, account };
   }
 
-  // Rebuilds the wallet account's holdings: an ETH position priced later by
-  // the regular price job (ticker ETH -> price_cache), plus one row per
-  // non-ignored token. Token symbols never become tickers -- a scam token
-  // named "AAPL" must not inherit Apple's stock price -- so tokens are
-  // NULL-ticker holdings valued via manual_value at sync time.
+  // Rebuilds the wallet account's holdings: one ETH position PER CHAIN, priced
+  // later by the regular price job (they all carry ticker ETH, so they all read
+  // the single shared price_cache 'ETH' row), plus one row per non-ignored
+  // token per chain. Token symbols never become tickers -- a scam token named
+  // "AAPL" must not inherit Apple's stock price -- so tokens are NULL-ticker
+  // holdings valued via manual_value at sync time.
+  //
+  // Rows are matched by NAME rather than by ticker. Post-#58 one account holds
+  // several ticker='ETH' rows, so the old ticker matcher would return them all
+  // and every chain would fight over whichever row came back first, overwriting
+  // the previous chain's balance. Names are unique per account by construction:
+  // 'Ethereum', 'ETH (Arbitrum)', 'USDC 0x1234…5678', 'USDC 0x1234…5678 (Base)'.
   static async refreshHoldings(walletId) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
@@ -488,80 +664,156 @@ class EthWalletService {
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
       throw error;
     }
-    const wei = await EtherscanService.getEthBalance(wallet.address, apiKey);
-    const desired = [{
-      ticker: 'ETH',
-      name: 'Ethereum',
-      quantity: unitsToDecimalString(wei, 18),
-      manual_value: null,
-    }];
 
-    const deltas = await EthTransfer.tokenBalanceDeltas(walletId);
-    const held = deltas.filter((d) => BigInt(d.balance_units) > 0n);
+    const existingResult = await pool.query(
+      'SELECT id, name FROM holdings WHERE account_id = $1',
+      [account.id]
+    );
+    const existingByName = new Map(existingResult.rows.map((row) => [row.name, row.id]));
 
-    let prices = {};
-    if (held.length) {
+    const chainStates = await EthWalletChain.findForWallet(walletId);
+    // A chain the key provably cannot read: skip the balance call rather than
+    // spend a throttle slot learning the same thing nightly. Self-healing --
+    // the sync still probes its feeds every run, so the moment the plan is
+    // upgraded the error clears and this resumes.
+    const unreadable = new Set(
+      chainStates
+        .filter((state) => state.error_code === 'CHAIN_UNAVAILABLE')
+        .map((state) => Number(state.chain_id))
+    );
+
+    const desired = [];
+    // Only chains actually re-derived this run may have their stale rows
+    // reaped. This is what makes "disabling a chain leaves its stored rows
+    // untouched" true, and it also protects a chain whose balance call failed
+    // transiently from having last night's positions deleted.
+    const refreshedChainIds = [];
+
+    for (const chain of chains.enabledChains()) {
+      if (unreadable.has(chain.id)) {
+        logger.warn({ walletId, chainId: chain.id }, 'Skipping balance: chain unreadable with this key');
+        continue;
+      }
+      let wei;
       try {
-        const contracts = held.map((d) => d.token_contract).join(',');
-        prices = await PriceService.fetchCoinGeckoJson(
-          `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${encodeURIComponent(contracts)}&vs_currencies=usd`
-        );
+        wei = await EtherscanService.getEthBalance(wallet.address, apiKey, chain.id);
       } catch (err) {
-        logger.warn({ walletId, err }, 'Token price lookup failed; token holdings stay unvalued');
-        prices = {};
+        // Mainnet keeps its pre-#58 fail-loud behavior: an unreadable mainnet
+        // balance means the whole sync is untrustworthy. An L2 failing must not
+        // take the wallet down with it, and must not delete the position it
+        // wrote last night either.
+        if (chain.id === chains.DEFAULT_CHAIN_ID) throw err;
+        logger.warn({ walletId, chainId: chain.id, err },
+          'ETH balance fetch failed; that chain keeps its previous holdings');
+        continue;
+      }
+      refreshedChainIds.push(chain.id);
+      const name = chains.ethHoldingName(chain.id);
+      // Mainnet always keeps its ETH row, at zero if need be, so a mainnet-only
+      // wallet looks exactly as it did before #58. An L2 earns a row once it
+      // holds ETH or already has one -- otherwise enabling four chains would
+      // decorate every existing wallet with four permanent 0.00000000 rows.
+      if (chain.id === chains.DEFAULT_CHAIN_ID || BigInt(wei) > 0n || existingByName.has(name)) {
+        desired.push({
+          chain_id: chain.id,
+          ticker: 'ETH',
+          name,
+          quantity: unitsToDecimalString(wei, 18),
+          manual_value: null,
+        });
+      }
+    }
+
+    const refreshable = new Set(refreshedChainIds);
+    const deltas = await EthTransfer.tokenBalanceDeltas(walletId);
+    const held = deltas.filter((d) => BigInt(d.balance_units) > 0n && refreshable.has(Number(d.chain_id)));
+
+    // Prices are fetched per chain: CoinGecko's token_price endpoint is keyed by
+    // asset PLATFORM, and an Arbitrum contract queried against the ethereum
+    // platform simply returns nothing -- which reads as "unpriced" rather than
+    // as a mistake, so it would silently zero every L2 token's value.
+    const prices = new Map();
+    const byChain = new Map();
+    for (const delta of held) {
+      const chainId = Number(delta.chain_id);
+      if (!byChain.has(chainId)) byChain.set(chainId, []);
+      byChain.get(chainId).push(delta);
+    }
+    for (const [chainId, chainDeltas] of byChain) {
+      const platform = chains.getChain(chainId)?.coingeckoPlatform;
+      if (!platform) continue;
+      try {
+        const contracts = chainDeltas.map((d) => d.token_contract).join(',');
+        const json = await PriceService.fetchCoinGeckoJson(
+          `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${encodeURIComponent(contracts)}&vs_currencies=usd`
+        );
+        for (const [contract, value] of Object.entries(json || {})) {
+          prices.set(`${chainId}:${contract.toLowerCase()}`, value);
+        }
+      } catch (err) {
+        logger.warn({ walletId, chainId, err }, 'Token price lookup failed; token holdings stay unvalued');
       }
     }
 
     for (const delta of held) {
+      const chainId = Number(delta.chain_id);
       const decimals = delta.token_decimals != null ? Number(delta.token_decimals) : 18;
       const quantity = unitsToDecimalString(delta.balance_units, decimals);
-      const usd = Number(prices[delta.token_contract]?.usd);
+      const usd = Number(prices.get(`${chainId}:${delta.token_contract}`)?.usd);
       // Clamped like the mirror's toAmount: manual_value is DECIMAL(15,2) and
       // one absurd scam-token valuation must not abort the whole sync.
       const manualValue = Number.isFinite(usd)
         ? Math.min(Math.round(usd * Number(quantity) * 100) / 100, 9999999999999.99)
         : null;
       desired.push({
+        chain_id: chainId,
         ticker: null,
-        name: `${delta.token_symbol || 'TOKEN'} ${shortAddress(delta.token_contract)}`,
+        // Same contract address can exist on several chains as different
+        // assets, so the chain has to be in the name -- it is the match key.
+        name: `${delta.token_symbol || 'TOKEN'} ${shortAddress(delta.token_contract)}${chains.holdingSuffix(chainId)}`,
         quantity,
         manual_value: manualValue,
       });
     }
 
     for (const holding of desired) {
-      const matchClause = holding.ticker
-        ? 'account_id = $1 AND UPPER(ticker) = UPPER($2)'
-        : 'account_id = $1 AND ticker IS NULL AND name = $2';
-      const matchParams = holding.ticker ? [account.id, holding.ticker] : [account.id, holding.name];
-      const existing = await pool.query(`SELECT id FROM holdings WHERE ${matchClause}`, matchParams);
-      if (existing.rows.length > 0) {
+      const existingId = existingByName.get(holding.name);
+      if (existingId) {
         await pool.query(
-          `UPDATE holdings SET name = $1, quantity = $2, manual_value = $3, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $4`,
-          [holding.name, holding.quantity, holding.manual_value, existing.rows[0].id]
+          `UPDATE holdings SET ticker = $1, quantity = $2, manual_value = $3, chain_id = $4,
+                               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $5`,
+          [holding.ticker, holding.quantity, holding.manual_value, holding.chain_id, existingId]
         );
       } else {
         await pool.query(
-          `INSERT INTO holdings (account_id, ticker, name, quantity, manual_value)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [account.id, holding.ticker, holding.name, holding.quantity, holding.manual_value]
+          `INSERT INTO holdings (account_id, ticker, name, quantity, manual_value, chain_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [account.id, holding.ticker, holding.name, holding.quantity, holding.manual_value, holding.chain_id]
         );
       }
     }
 
-    // The account exists solely for this wallet, so anything the sync did not
-    // produce (sold-out positions, newly-ignored tokens) is stale.
-    const identifiers = desired.map((h) => (h.ticker || h.name).toUpperCase());
-    const placeholders = identifiers.map((_, i) => `$${i + 2}`).join(', ');
+    // The account exists solely for this wallet, so anything this run did not
+    // produce (sold-out positions, newly-ignored tokens) is stale -- but only
+    // on the chains this run actually re-derived. COALESCE(chain_id, 1) covers
+    // rows written before 039 added the column, which are all mainnet's.
     await pool.query(
       `DELETE FROM holdings
        WHERE account_id = $1
-       AND COALESCE(UPPER(ticker), UPPER(name)) NOT IN (${placeholders})`,
-      [account.id, ...identifiers]
+         AND COALESCE(chain_id, $2) = ANY($3::int[])
+         AND name <> ALL($4::text[])`,
+      [account.id, chains.DEFAULT_CHAIN_ID, refreshedChainIds, desired.map((h) => h.name)]
     );
 
-    return { eth: desired[0].quantity, tokens: held.length };
+    return {
+      eth: desired.find((h) => h.chain_id === chains.DEFAULT_CHAIN_ID && h.ticker === 'ETH')?.quantity ?? null,
+      ethByChain: Object.fromEntries(
+        desired.filter((h) => h.ticker === 'ETH').map((h) => [h.chain_id, h.quantity])
+      ),
+      tokens: held.length,
+      chains: refreshedChainIds,
+    };
   }
 
   static async removeWallet(walletId, { removeData = false } = {}) {

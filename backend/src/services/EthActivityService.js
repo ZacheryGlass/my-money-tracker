@@ -7,10 +7,10 @@ const EthActivity = require('../models/EthActivity');
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-// Ethereum mainnet. Every write stamps it explicitly rather than leaning on the
-// column default, so the day #58 adds an L2 the call sites that must learn a
-// chain id are the ones that already name one.
-const CHAIN_ID = 1;
+// Pre-039 eth_transfers rows may predate the chain_id column in a fake-pool
+// test (the real column is NOT NULL DEFAULT 1); everything modern carries its
+// own chain_id and the builder groups on it.
+const DEFAULT_CHAIN_ID = 1;
 
 // The full category vocabulary (038's CHECK constraint carries the same list).
 // A superset by design: later issues fill in exchange_trade (#61),
@@ -258,7 +258,7 @@ function classifyActivity({ wallet, failed, valueLegs, hadValueLegs, netLegs, ga
 }
 
 // Pure: one transaction's eth_transfers legs -> one eth_activity row body.
-function buildActivityRow(wallet, txHash, legs, ignoredContracts) {
+function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
   const gasLegs = legs.filter((leg) => leg.transfer_type === 'gas');
   const feeWei = gasLegs.reduce((sum, leg) => sum + toBigInt(leg.value_wei), 0n);
 
@@ -342,7 +342,7 @@ function buildActivityRow(wallet, txHash, legs, ignoredContracts) {
   const counterparty = resolveCounterparty(wallet, valueLegs, gasLegs);
 
   return {
-    chain_id: CHAIN_ID,
+    chain_id: chainId,
     tx_hash: txHash,
     block_number: Math.min(...legs.map((leg) => Number(leg.block_number))),
     block_time: legs.reduce(
@@ -361,16 +361,24 @@ function buildActivityRow(wallet, txHash, legs, ignoredContracts) {
 }
 
 // Pure: a wallet's eth_transfers rows -> its eth_activity rows, one per
-// tx_hash. Exported for tests, which is where every ladder rule is exercised.
+// (chain_id, tx_hash). The chain is part of the group key, not just the row:
+// block numbers are independent per-chain sequences and a cross-chain replay
+// (same account, same nonce, same calldata on two chains) genuinely shares a
+// hash -- grouping on tx_hash alone would fuse two different transactions into
+// one row and violate eth_activity's UNIQUE. Exported for tests, which is
+// where every ladder rule is exercised.
 function buildActivityRows(walletAddress, transfers, { ignoredContracts = new Set() } = {}) {
   const wallet = String(walletAddress).toLowerCase();
   const byTx = new Map();
   for (const transfer of transfers) {
-    const existing = byTx.get(transfer.tx_hash);
-    if (existing) existing.push(transfer);
-    else byTx.set(transfer.tx_hash, [transfer]);
+    const chainId = transfer.chain_id ?? DEFAULT_CHAIN_ID;
+    const groupKey = `${chainId}:${transfer.tx_hash}`;
+    const existing = byTx.get(groupKey);
+    if (existing) existing.legs.push(transfer);
+    else byTx.set(groupKey, { chainId, txHash: transfer.tx_hash, legs: [transfer] });
   }
-  return [...byTx.entries()].map(([txHash, legs]) => buildActivityRow(wallet, txHash, legs, ignoredContracts));
+  return [...byTx.values()].map(({ chainId, txHash, legs }) =>
+    buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts));
 }
 
 class EthActivityService {
@@ -427,6 +435,6 @@ class EthActivityService {
 module.exports = EthActivityService;
 module.exports.buildActivityRows = buildActivityRows;
 module.exports.CATEGORIES = CATEGORIES;
-module.exports.CHAIN_ID = CHAIN_ID;
+module.exports.DEFAULT_CHAIN_ID = DEFAULT_CHAIN_ID;
 module.exports.ZERO_ADDRESS = ZERO_ADDRESS;
 module.exports.REVIEW_REASONS = REVIEW_REASONS;

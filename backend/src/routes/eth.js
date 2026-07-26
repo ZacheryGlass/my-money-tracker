@@ -3,7 +3,9 @@
 const express = require('express');
 const requireUser = require('../middleware/auth');
 const EthWallet = require('../models/EthWallet');
+const EthWalletChain = require('../models/EthWalletChain');
 const EthTransfer = require('../models/EthTransfer');
+const chains = require('../config/chains');
 const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
 const EthActivity = require('../models/EthActivity');
@@ -85,11 +87,28 @@ router.get('/wallets', async (req, res) => {
     const wallets = await EthWallet.findAllByUser(req.user.id);
     const withAccounts = await Promise.all(
       wallets.map(async (wallet) => {
-        const [account, ethQuantity] = await Promise.all([
+        const [account, ethQuantity, chainStates] = await Promise.all([
           EthWallet.getAccountForWallet(wallet.id),
           EthWallet.getEthQuantity(wallet.id),
+          EthWalletChain.findForWallet(wallet.id),
         ]);
-        return { ...wallet, account: account || null, eth_quantity: ethQuantity };
+        return {
+          ...wallet,
+          account: account || null,
+          // Summed across chains -- see EthWallet.getEthQuantity.
+          eth_quantity: ethQuantity,
+          // Per-chain sync state. Carries the gaps the wallet-level badge
+          // deliberately does NOT carry: a feed (or a whole chain) this
+          // Etherscan key cannot serve is a standing condition, so it is
+          // reported here instead of pinning the attention badge forever.
+          // `enabled` is the live registry answer, not stored state, so a
+          // switched-off chain shows as such while keeping its history.
+          chains: chainStates.map((state) => ({
+            ...state,
+            name: chains.chainLabel(state.chain_id),
+            enabled: chains.isEnabled(state.chain_id),
+          })),
+        };
       })
     );
     res.status(200).json({ wallets: withAccounts });
@@ -233,7 +252,7 @@ router.get('/activity', async (req, res) => {
 // erase it; every reader coalesces it over the derived verdict.
 router.post('/activity/override', async (req, res) => {
   try {
-    const { wallet_id: walletIdRaw, tx_hash: txHashRaw, category: categoryRaw, note } = req.body || {};
+    const { wallet_id: walletIdRaw, tx_hash: txHashRaw, category: categoryRaw, note, chain_id: chainIdRaw } = req.body || {};
 
     const wallet = await loadWallet(req, walletIdRaw, { required: true });
     if (!wallet.ok) {
@@ -242,6 +261,12 @@ router.post('/activity/override', async (req, res) => {
 
     if (typeof txHashRaw !== 'string' || !TX_HASH_RE.test(txHashRaw.trim())) {
       return res.status(400).json({ error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' });
+    }
+    // Any positive integer, not just enabled chains: rows from a since-disabled
+    // chain stay stored, so their corrections must stay writable.
+    const chainId = chainIdRaw === undefined || chainIdRaw === null ? 1 : Number(chainIdRaw);
+    if (!Number.isInteger(chainId) || chainId < 1) {
+      return res.status(400).json({ error: 'chain_id must be a positive integer' });
     }
     if (typeof categoryRaw !== 'string') {
       return res.status(400).json({ error: 'category is required' });
@@ -260,7 +285,7 @@ router.post('/activity/override', async (req, res) => {
     // activity -> override, so an override written for a well-formed hash with
     // no activity row is stored and then invisible forever -- saved, silently
     // inert, and impossible to notice.
-    const targetExists = await EthActivity.overrideTargetExists(req.user.id, wallet.walletId, txHash);
+    const targetExists = await EthActivity.overrideTargetExists(req.user.id, wallet.walletId, txHash, { chainId });
     if (!targetExists) {
       return res.status(404).json({ error: 'No activity found for that transaction on this wallet' });
     }
@@ -269,7 +294,7 @@ router.post('/activity/override', async (req, res) => {
       req.user.id,
       wallet.walletId,
       txHash,
-      { category, note: note?.trim() || null }
+      { category, note: note?.trim() || null, chainId }
     );
     // The model's wallet join is the second ownership gate; a null here means
     // the wallet vanished between the check and the write.
@@ -296,8 +321,12 @@ router.delete('/activity/override', async (req, res) => {
     if (!TX_HASH_RE.test(txHash)) {
       return res.status(400).json({ error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' });
     }
+    const chainId = req.query.chain_id === undefined ? 1 : Number(req.query.chain_id);
+    if (!Number.isInteger(chainId) || chainId < 1) {
+      return res.status(400).json({ error: 'chain_id must be a positive integer' });
+    }
 
-    const removed = await EthActivity.deleteOverride(req.user.id, wallet.walletId, txHash);
+    const removed = await EthActivity.deleteOverride(req.user.id, wallet.walletId, txHash, { chainId });
     if (!removed) {
       return res.status(404).json({ error: 'Override not found' });
     }

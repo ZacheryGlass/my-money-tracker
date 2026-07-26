@@ -540,6 +540,27 @@ test('one activity row per tx_hash per wallet, however many legs the tx had', ()
   assert.deepEqual(rows.map((r) => r.chain_id), [1, 1]);
 });
 
+test('the same tx_hash on two chains is two activity rows, not one fused row', () => {
+  // A cross-chain replay (same account, same nonce, same calldata) genuinely
+  // shares a hash across chains; block numbers are unrelated sequences.
+  const rows = buildActivityRows(WALLET, [
+    leg({ tx_hash: TX, chain_id: 1, block_number: 1000 }),
+    gasLeg({ tx_hash: TX, chain_id: 1, block_number: 1000 }),
+    leg({ tx_hash: TX, chain_id: 42161, block_number: 250000000 }),
+    gasLeg({ tx_hash: TX, chain_id: 42161, block_number: 250000000 }),
+  ]);
+
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.chain_id).sort((a, b) => a - b), [1, 42161]);
+  for (const row of rows) assert.equal(row.tx_hash, TX);
+  const arb = rows.find((r) => r.chain_id === 42161);
+  assert.equal(arb.block_number, 250000000, 'each row keeps its own chain\'s block number');
+
+  // Legacy rows with no chain_id column (pre-039 fake-pool shapes) default to 1.
+  const legacy = buildActivityRows(WALLET, [leg({ tx_hash: TX2, chain_id: undefined })]);
+  assert.equal(legacy[0].chain_id, 1);
+});
+
 test('rebuildForWallet writes one row per transaction and is idempotent', async () => {
   db.transfers = [
     leg({ tx_hash: TX }), gasLeg({ tx_hash: TX }),
