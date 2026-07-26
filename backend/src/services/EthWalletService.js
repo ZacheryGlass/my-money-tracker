@@ -92,9 +92,9 @@ class EthWalletService {
       token_standard: null,
       token_id: null,
       is_error: raw.isError === '1',
-      // Only the top-level tx has calldata, so only its native leg can name a
-      // method. Internal traces, token logs and the synthesized gas leg all
-      // stay NULL -- the activity layer reads the method off the native leg.
+      // Only the top-level tx has calldata, so at most one leg names its
+      // method: the native leg when ETH moved, else the gas leg (stamped in
+      // the txlist loop below). Internal traces and token logs stay NULL.
       method_id: null,
       method_name: null,
     });
@@ -147,9 +147,14 @@ class EthWalletService {
           // "contract interaction" population this feature names. The gas leg
           // exists exactly once per tx the wallet SENT, which is exactly when
           // the calldata originated here, so it carries the method instead.
-          // Invariant kept: at most one leg per tx has a method.
-          method_id: hasNativeLeg ? null : methodId,
-          method_name: hasNativeLeg ? null : methodName,
+          // Invariant kept: at most one leg per tx has a method. Reverted
+          // zero-value calls get NO method: the gas leg keeps is_error false
+          // (the fee itself did not fail), so a method stamped here would
+          // render a reverted approve as a successful one. A reverted
+          // value-bearing call keeps its method on the native leg, which
+          // does carry is_error.
+          method_id: hasNativeLeg || raw.isError === '1' ? null : methodId,
+          method_name: hasNativeLeg || raw.isError === '1' ? null : methodName,
         });
       }
     }
@@ -239,6 +244,11 @@ class EthWalletService {
         logger.warn({ walletId, err }, 'token1155tx fetch failed; 1155 feed skipped this sync');
       }
 
+      // Surfaced on the wallet row and in the job log: a feed that fails every
+      // night freezes its cursor forever, and "fetched 0" alone is
+      // indistinguishable from a wallet that simply owns no NFTs.
+      const skippedFeeds = [...(nftOk ? [] : ['nft']), ...(nft1155Ok ? [] : ['nft1155'])];
+
       const rows = this.normalizeFeeds(wallet.address, { normal, internal, token, nft, nft1155 })
         .map((row) => ({ ...row, wallet_id: walletId }));
 
@@ -272,7 +282,14 @@ class EthWalletService {
       const holdings = await this.refreshHoldings(walletId);
       const mirror = await EthTransactionMirrorService.rebuildForWallet(walletId);
       await TransactionClassificationService.backfill();
-      await EthWallet.clearError(walletId);
+      // A partial sync must not report clean: the error slot doubles as the
+      // degraded-feed badge until a sync fetches every feed.
+      if (skippedFeeds.length === 0) {
+        await EthWallet.clearError(walletId);
+      } else {
+        await EthWallet.setError(walletId, 'FEED_SKIPPED',
+          `Partial sync: ${skippedFeeds.join(', ')} feed failed; will retry next sync`);
+      }
       await EthWallet.updateSyncTime(walletId);
 
       const results = {
@@ -280,6 +297,7 @@ class EthWalletService {
         holdings,
         mirror,
         methods,
+        skippedFeeds,
         fetched: {
           normal: normal.length,
           internal: internal.length,

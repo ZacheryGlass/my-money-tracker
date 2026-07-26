@@ -10,8 +10,8 @@
     "confidence": "low"
   },
   "counts": {
-    "exchange": 4745,
-    "external": 384,
+    "exchange": 4740,
+    "external": 389,
     "total": 5129
   },
   "labels": [
@@ -9453,7 +9453,7 @@
     {
       "address": "0x5d9fe07813a260857cf60639dac710ebb9531a20",
       "name": "Paykassa Inc.",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x5db93150ce94085d9fbde67ef0b13953a5567458",
@@ -13953,7 +13953,7 @@
     {
       "address": "0x8b8a4abc707f16da24b795e3e46ed22975a9d329",
       "name": "PayKassa.pro 2",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x8b8cd3560e9e7ad464740cbfe031bf941747b76e",
@@ -13968,7 +13968,7 @@
     {
       "address": "0x8b99f3660622e21f2910ecca7fbe51d654a1517d",
       "name": "Binance Charity",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0x8badd8b59ddaf9a12c4910ca1b2e8ea750a71594",
@@ -21433,7 +21433,7 @@
     {
       "address": "0xd65e0cbd31977b2e0e23c8330c8b5f020818fc91",
       "name": "PAYBIS 3",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xd65fb7d4cb595833e84c3c094bd4779bab0d4c62",
@@ -23638,7 +23638,7 @@
     {
       "address": "0xeccefab82bb383afc90b94c8d378de314e62ac5d",
       "name": "PayKassa.pro 1",
-      "kind": "exchange"
+      "kind": "external"
     },
     {
       "address": "0xecd8b3877d8e7cd0739de18a5b545bc0b3538566",

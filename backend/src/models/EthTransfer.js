@@ -173,7 +173,8 @@ class EthTransfer {
   }
 
   // Copies cached signatures onto the wallet's rows. `s.name IS NOT NULL` skips
-  // cached misses: they stay NULL so the UI falls back to the raw selector, and
+  // cached misses: they stay NULL so the UI (method display lands with the
+  // #63 ledger view) can fall back to the raw selector, and
   // they stay in the pending set above, which costs one indexed scan per sync
   // and zero network because the cache already answers for them.
   static async applyMethodNames(walletId) {
@@ -208,7 +209,8 @@ class EthTransfer {
   // means the row the user just ignored survives the refetch and the button
   // reads as broken. Gas and ETH rows carry no contract and always pass.
   //
-  // t.* carries method_id and method_name out to the Transactions tab. Reads
+  // t.* carries method_id and method_name out for the Transactions tab (the
+  // UI renders them with #63; nothing reads them client-side yet). Reads
   // only: decoding happens during sync, so serving this feed never touches a
   // signature service.
   static async findForUser(userId, { walletId = null, type, limit = 100, offset = 0 } = {}) {

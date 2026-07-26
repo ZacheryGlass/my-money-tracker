@@ -300,7 +300,10 @@ test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged
   stub(EthWalletService, 'refreshHoldings', async () => ({}));
   stub(MirrorService, 'rebuildForWallet', async () => ({}));
   stub(TransactionClassificationService, 'backfill', async () => {});
-  stub(EthWallet, 'clearError', async () => {});
+  let clearedError = false;
+  stub(EthWallet, 'clearError', async () => { clearedError = true; });
+  let walletError = null;
+  stub(EthWallet, 'setError', async (id, code, message) => { walletError = { code, message }; });
   stub(EthWallet, 'updateSyncTime', async () => {});
 
   const result = await EthWalletService.syncWallet(7);
@@ -311,4 +314,10 @@ test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged
   assert.ok(deleted.includes('nft1155'), 'healthy feed still refreshes its window');
   assert.equal(cursors.nft, null, 'failed feed cursor must not advance');
   assert.equal(cursors.nft1155, 600, 'healthy feed cursor advances normally');
+  // A frozen cursor behind a green wallet row is silent data loss: the skip
+  // must reach the job log and the wallet badge, not just a warn line.
+  assert.deepEqual(result.skippedFeeds, ['nft'], 'the skip must be visible in the sync result');
+  assert.equal(clearedError, false, 'a partial sync must not wipe the wallet badge');
+  assert.equal(walletError?.code, 'FEED_SKIPPED');
+  assert.match(walletError?.message || '', /nft/);
 });

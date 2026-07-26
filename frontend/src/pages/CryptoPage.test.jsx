@@ -205,8 +205,9 @@ describe('CryptoPage', () => {
     // Desktop row and mobile card render together, so take the first form.
     fireEvent.click(screen.getAllByTitle(/label this address/i)[0]);
     const verdict = screen.getAllByLabelText('Counterparty verdict')[0];
-    // A never-labeled address defaults to Exchange, today's behavior.
-    expect(verdict).toHaveValue('exchange');
+    // Every address defaults to Keep; the server resolves it against any
+    // hidden builtin so a rename can never re-vote a pack verdict.
+    expect(verdict).toHaveValue('keep');
     fireEvent.change(verdict, { target: { value: 'external' } });
     fireEvent.click(screen.getAllByRole('button', { name: /^save$/i })[0]);
 

@@ -545,18 +545,14 @@ const Settings = ({ user }) => {
     [addressLabels]
   );
 
-  // The verdict the form will send: the user's pick, or -- until they make one
-  // -- keep whatever the typed address already says, falling back to 'exchange'
-  // for an address nobody has judged. Only the user's own rows and the
-  // hand-verified builtins are visible here (the scraped pack is hidden from
-  // this list), so a packed address reads as new and defaults to 'exchange',
-  // which is what the insert would have done anyway.
-  const existingLabelForInput = useMemo(() => {
-    const address = labelAddressInput.trim().toLowerCase();
-    if (!ETH_ADDRESS_RE.test(address)) return null;
-    return addressLabels.find((label) => label.address === address) || null;
-  }, [labelAddressInput, addressLabels]);
-  const labelVerdict = labelVerdictChoice || (existingLabelForInput ? LABEL_VERDICT_KEEP : 'exchange');
+  // The verdict the form will send: the user's pick, or -- until they make
+  // one -- "keep", which the server resolves to the address's current verdict
+  // (the user's row, else any builtin's, the hidden scraped pack included)
+  // and to 'exchange' only for an address nobody has judged. Deriving the
+  // default from what this list can see re-voted pack 'external' gateways to
+  // 'exchange' on a plain rename, silently rewriting that spending as an
+  // internal transfer.
+  const labelVerdict = labelVerdictChoice || LABEL_VERDICT_KEEP;
 
   // Rows written before migration 031 have no kind and meant "exchange".
   // 'own' rows stay in the main list -- a cold-storage address is worth seeing.

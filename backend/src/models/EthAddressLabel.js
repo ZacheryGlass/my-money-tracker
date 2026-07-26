@@ -48,17 +48,24 @@ class EthAddressLabel {
   // A user's label is a separate row from any builtin for the same address
   // (the builtin keeps user_id NULL); reads shadow builtins with user rows.
   //
-  // A NULL kind means "don't change the verdict" -- it defaults to 'exchange'
-  // only when inserting a brand-new row. This is load-bearing, not defensive:
-  // renaming a label is a plain re-upsert with no kind, and a caller that
-  // predates the column (or simply omits it) must NOT silently re-vote. Writing
-  // kind outright would let renaming an 'own' address flip it to 'exchange',
-  // dropping it out of the own set and turning a self-transfer into a phantom
-  // exchange deposit -- real spending erased from cash flow.
+  // A NULL kind means "don't change the verdict" -- on the update arm it keeps
+  // the user's stored kind, and on a fresh insert it INHERITS the builtin's
+  // verdict when one exists, defaulting to 'exchange' only for an address
+  // nobody has judged anywhere. This is load-bearing, not defensive: renaming
+  // a label is a plain re-upsert with no kind, and a caller that predates the
+  // column (or simply omits it) must NOT silently re-vote. Writing kind
+  // outright would let a rename flip an 'own' address to 'exchange'; skipping
+  // the builtin lookup did the same to pack 'external' gateways (CoinPayments,
+  // MoonPay, ...) -- the fresh user row shadowed the pack row as 'exchange',
+  // rewriting that spending as an internal transfer.
   static async upsert(userId, address, name, note, kind = null) {
     const result = await pool.query(
       `INSERT INTO eth_address_labels (user_id, address, name, source, note, kind)
-       VALUES ($1, $2, $3, 'user', $4, COALESCE($5, 'exchange'))
+       VALUES ($1, $2::text, $3, 'user', $4,
+               COALESCE($5,
+                        (SELECT kind FROM eth_address_labels
+                          WHERE address = $2::text AND user_id IS NULL),
+                        'exchange'))
        ON CONFLICT (user_id, address) WHERE user_id IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name,
                      kind = COALESCE($5, eth_address_labels.kind),

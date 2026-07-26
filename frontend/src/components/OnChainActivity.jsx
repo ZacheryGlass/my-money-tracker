@@ -111,7 +111,6 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
   const [savingLabel, setSavingLabel] = useState(false);
   const [labelNames, setLabelNames] = useState([]);
   // address -> kind, for addresses that already carry a label row.
-  const [labeledKinds, setLabeledKinds] = useState(() => new Map());
   const [refreshKey, setRefreshKey] = useState(0);
   // Guards Load More responses that arrive after the filter changed.
   const typeFilterRef = useRef(typeFilter);
@@ -197,22 +196,20 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
             .filter((label) => !label.kind || label.kind === 'exchange')
             .map((label) => label.name)
         )]);
-        setLabeledKinds(new Map(labels.map((label) => [label.address, label.kind || 'exchange'])));
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [refreshKey]);
 
-  // The default verdict for an address: keep whatever it already says (this
-  // form is then a pure rename), or 'exchange' for one nobody has judged --
-  // which is what a label with no kind has always meant here.
-  const defaultVerdictFor = (address) => (
-    labeledKinds.has(address) ? LABEL_VERDICT_KEEP : 'exchange'
-  );
-
+  // The form always defaults to "keep": the server resolves it to the
+  // address's current verdict -- the user's row, else any builtin's (the
+  // scraped pack is hidden from getAddressLabels, so this page cannot see
+  // it) -- and to 'exchange' only for an address nobody has judged.
+  // Defaulting from what this page can see re-voted hidden pack 'external'
+  // gateways to 'exchange' on a plain rename.
   const handleLabelAddress = async (event, counterparty) => {
     event.preventDefault();
-    const verdict = labelVerdictChoice || defaultVerdictFor(counterparty);
+    const verdict = labelVerdictChoice || LABEL_VERDICT_KEEP;
     const name = labelName.trim();
     // External/own names never reach classification, so the server fills in a
     // short address; only an exchange name has to be typed.
@@ -354,7 +351,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
           // every label written here votes 'exchange', and an address the pack
           // got wrong could never be corrected from the screen that shows the
           // wrong transfer. Stacked rather than inline -- the cell is 13rem.
-          const verdict = labelVerdictChoice || defaultVerdictFor(transfer.counterparty);
+          const verdict = labelVerdictChoice || LABEL_VERDICT_KEEP;
           const nameRequired = labelVerdictNeedsName(verdict);
           return (
             <form
@@ -434,7 +431,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       },
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [showWalletColumn, labelingId, labelName, labelVerdictChoice, labeledKinds, savingLabel, ignoringContract]);
+  ], [showWalletColumn, labelingId, labelName, labelVerdictChoice, savingLabel, ignoringContract]);
 
   const table = useReactTable({
     data: enrichedRows,

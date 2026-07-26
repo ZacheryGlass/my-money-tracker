@@ -77,7 +77,7 @@ const KIND_BY_DATASET_LABEL = Object.assign(Object.create(null), {
 // asked about, while a wrong 'exchange' deletes real spending from the ledger.
 // Genuinely custodial platforms (Nexo, Abra, Prime Trust, ...) keep 'exchange';
 // only their gateway and deployer tags match here.
-const MERCHANT_NAME_RE = /payment|gateway|commerce|gift|refill|bitpay|coinpayments|moonpay|transak|simplex|ramp network|mercuryo|coinify|deployer/i;
+const MERCHANT_NAME_RE = /payment|gateway|commerce|gift|refill|bitpay|coinpayments|moonpay|transak|simplex|ramp network|mercuryo|coinify|deployer|paykassa|paybis|charity|donat/i;
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 const NAME_MAX = 64;      // eth_address_labels.name is VARCHAR(64)

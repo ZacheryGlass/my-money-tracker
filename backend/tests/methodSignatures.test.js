@@ -351,6 +351,19 @@ test('a zero-value call stamps its method on the gas leg instead', () => {
   assert.equal(gas.method_name, 'approve(address,uint256)');
 });
 
+test('a reverted zero-value call carries no method anywhere', () => {
+  const rows = EthWalletService.normalizeFeeds(WALLET, {
+    normal: [normalTx({ value: '0', isError: '1', methodId: '0x095ea7b3', functionName: 'approve(address,uint256)' })],
+  });
+  assert.equal(rows.length, 1, 'only the gas leg exists for a reverted zero-value call');
+  const gas = rows[0];
+  assert.equal(gas.transfer_type, 'gas');
+  // The gas leg keeps is_error false (the fee itself did not fail), so a
+  // method stamped here would render a reverted approve as a successful one.
+  assert.equal(gas.method_id, null);
+  assert.equal(gas.method_name, null);
+});
+
 test('a value-bearing call keeps the method off the gas leg', () => {
   const rows = EthWalletService.normalizeFeeds(WALLET, { normal: [normalTx()] });
   const gas = rows.find((r) => r.transfer_type === 'gas');

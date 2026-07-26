@@ -1,4 +1,4 @@
--- Builtin counterparty label pack: 5129 addresses (4745 exchange, 384 external).
+-- Builtin counterparty label pack: 5129 addresses (4740 exchange, 389 external).
 -- GENERATED FILE -- edit backend/scripts/generate-label-seed.js and re-run it,
 -- not this. Mirrors backend/data/builtin-address-labels.json exactly.
 --
@@ -1942,7 +1942,7 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0x5d60892e8582a6b46e795364d2de010ebfd22bec', 'Kraken 189', 'eth-labels', 'exchange', 'low'),
   (NULL, '0x5d636f90b48c9f14bd0bf9d8016d4cb0dd9e1d9f', 'Qmall Token: Deployer', 'eth-labels', 'external', 'low'),
   (NULL, '0x5d7f34372fa8708e09689d400a613eee67f75543', 'Binance 42', 'eth-labels', 'exchange', 'low'),
-  (NULL, '0x5d9fe07813a260857cf60639dac710ebb9531a20', 'Paykassa Inc.', 'eth-labels', 'exchange', 'low'),
+  (NULL, '0x5d9fe07813a260857cf60639dac710ebb9531a20', 'Paykassa Inc.', 'eth-labels', 'external', 'low'),
   (NULL, '0x5db93150ce94085d9fbde67ef0b13953a5567458', 'CoinEx 29', 'eth-labels', 'exchange', 'low'),
   (NULL, '0x5dbad78818d4c8958eff2d5b95b28385a22113cd', 'Balancer V3: Gauge Adder', 'eth-labels', 'external', 'low'),
   (NULL, '0x5dd697c77e80c7fda3da1cccd5214c3a75503727', 'CoinTiger 1', 'eth-labels', 'exchange', 'low'),
@@ -2848,10 +2848,10 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0x8b15eb5ea0a405da4d82f26d9197fad62ef7405a', 'Korbit 26', 'eth-labels', 'exchange', 'low'),
   (NULL, '0x8b2f57d12ae055f26fb643f9c4f64fffe9f4c6a1', 'Remitano: Compromised 1', 'eth-labels', 'exchange', 'low'),
   (NULL, '0x8b6a3587676719a4fecbb24b503a3634c44a44d5', 'HTX 74', 'eth-labels', 'exchange', 'low'),
-  (NULL, '0x8b8a4abc707f16da24b795e3e46ed22975a9d329', 'PayKassa.pro 2', 'eth-labels', 'exchange', 'low'),
+  (NULL, '0x8b8a4abc707f16da24b795e3e46ed22975a9d329', 'PayKassa.pro 2', 'eth-labels', 'external', 'low'),
   (NULL, '0x8b8cd3560e9e7ad464740cbfe031bf941747b76e', 'Kraken 222', 'eth-labels', 'exchange', 'low'),
   (NULL, '0x8b973a304138eca1936d77ac07980840c5775258', 'Kraken 177', 'eth-labels', 'exchange', 'low'),
-  (NULL, '0x8b99f3660622e21f2910ecca7fbe51d654a1517d', 'Binance Charity', 'eth-labels', 'exchange', 'low'),
+  (NULL, '0x8b99f3660622e21f2910ecca7fbe51d654a1517d', 'Binance Charity', 'eth-labels', 'external', 'low'),
   (NULL, '0x8badd8b59ddaf9a12c4910ca1b2e8ea750a71594', 'Blockchain.com 8', 'eth-labels', 'exchange', 'low'),
   (NULL, '0x8bc475255e8aa74eaa97cbed8eb76bcb6a8ad7f2', 'Bidesk 49', 'eth-labels', 'exchange', 'low'),
   (NULL, '0x8bc87020028a07e5ed17824b4fe0e2afcd823b2e', 'Crypto.com 27', 'eth-labels', 'exchange', 'low'),
@@ -4353,7 +4353,7 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0xd5ff5fb2a7b64d4b1d1a7c59eea2a81dccd140fe', 'Bitvavo 21', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xd61ff104c480a225ab4666b95b5ddeb101352a56', 'Bidesk 7', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xd6216fc19db775df9774a6e33526131da7d19a2c', 'KuCoin 6', 'eth-labels', 'exchange', 'low'),
-  (NULL, '0xd65e0cbd31977b2e0e23c8330c8b5f020818fc91', 'PAYBIS 3', 'eth-labels', 'exchange', 'low'),
+  (NULL, '0xd65e0cbd31977b2e0e23c8330c8b5f020818fc91', 'PAYBIS 3', 'eth-labels', 'external', 'low'),
   (NULL, '0xd65fb7d4cb595833e84c3c094bd4779bab0d4c62', 'Coinbase 117', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xd666ad8d95903bce9b4dcd2cacde5145e36405c2', 'MaskEX 11', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xd66d4b89e779539eeb3dbb579bc4e00859a933eb', 'HTX 163', 'eth-labels', 'exchange', 'low'),
@@ -4797,7 +4797,7 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0xeca770c95b901278ee944e0053972b6579c8d706', 'Bithumb 491', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xecab44b10b8faee48d7eee03f81a815078070624', 'CoinW 26', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xecabea0fb22f82f3a5a5d6043d7ccf65f3640c85', 'LAToken 18', 'eth-labels', 'exchange', 'low'),
-  (NULL, '0xeccefab82bb383afc90b94c8d378de314e62ac5d', 'PayKassa.pro 1', 'eth-labels', 'exchange', 'low'),
+  (NULL, '0xeccefab82bb383afc90b94c8d378de314e62ac5d', 'PayKassa.pro 1', 'eth-labels', 'external', 'low'),
   (NULL, '0xecd8b3877d8e7cd0739de18a5b545bc0b3538566', 'HTX: Old Address 27', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xed1568101082eeaa1d483d3ba051690bdbb1255b', 'CoinEx 4', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xed20e72c966da53c6ac5bbcb0ad16ac9f25b8ab0', 'Kraken 240', 'eth-labels', 'exchange', 'low'),

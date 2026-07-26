@@ -187,16 +187,21 @@ describe('Settings display names', () => {
       };
     };
 
-    it('defaults a new address to Exchange and sends that kind', async () => {
+    it('defaults every address to Keep and lets the server resolve the verdict', async () => {
       const form = await openLabelForm();
       fireEvent.change(form.address, { target: { value: '0x3333333333333333333333333333333333333333' } });
       fireEvent.change(form.name, { target: { value: 'Coinbase' } });
-      expect(form.verdict).toHaveValue('exchange');
+      expect(form.verdict).toHaveValue('keep');
 
       fireEvent.click(form.submit);
+      // kind undefined omits the field: the server inherits a builtin's
+      // verdict when one exists (the scraped pack is hidden from this list,
+      // so the client cannot know) and treats only a truly unjudged address
+      // as an exchange. Defaulting to 'exchange' here re-voted hidden pack
+      // 'external' gateways on a plain rename.
       await waitFor(() => {
         expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
-          '0x3333333333333333333333333333333333333333', 'Coinbase', { kind: 'exchange' }
+          '0x3333333333333333333333333333333333333333', 'Coinbase', { kind: undefined }
         );
       });
     });

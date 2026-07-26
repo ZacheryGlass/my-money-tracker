@@ -343,6 +343,18 @@ test('a seeded address is still resolvable by address', async () => {
   assert.match(sql, /user_id = \$2 OR user_id IS NULL/);
 });
 
+test('known gateways, ramps and donation addresses land on the demotion list', () => {
+  // Regression pins for the category, not just the brand list 029 knew about:
+  // a gateway that ships as 'exchange' classifies paying it as an internal
+  // transfer, deleting the spend from cash flow entirely.
+  for (const name of ['CoinPayments.net 1', 'Bitrefill 2', 'PayKassa.pro 1', 'PAYBIS 3', 'Binance Charity', 'MoonPay 2']) {
+    assert.ok(MERCHANT_NAME_RE.test(name), `${name} must demote to external`);
+  }
+  for (const name of ['Kraken 4', 'Coinbase 10', 'Binance 8', 'Gemini 3']) {
+    assert.ok(!MERCHANT_NAME_RE.test(name), `${name} must stay an exchange`);
+  }
+});
+
 test('the committed migration is a regeneration of the committed JSON pack', () => {
   // 036 and the JSON are two artifacts of one generator run, and the 21MB
   // dump needed to regenerate them honestly is not committed -- so a hand

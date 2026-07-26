@@ -40,9 +40,15 @@ test('upsert lowercases the address and writes a user-owned row', async () => {
   // the verdict alone", not "make it an exchange".
   assert.equal(params[4], null);
   // User rows are separate from builtins (user_id NULL): the arbiter is the
-  // partial per-user unique index, so builtins never get clobbered.
+  // partial per-user unique index, so builtins never get clobbered. The insert
+  // arm consults the builtin row before defaulting: naming a pack 'external'
+  // gateway must inherit 'external', not re-vote it to 'exchange'.
   const sql = text.replace(/\s+/g, ' ');
-  assert.match(sql, /VALUES \(\$1, \$2, \$3, 'user', \$4, COALESCE\(\$5, 'exchange'\)\)/);
+  // $2 is cast at both uses: the INSERT position would deduce varchar (the
+  // column type) while the subselect comparison deduces text, and Postgres
+  // rejects the conflict (42P08) -- caught against a real database, which the
+  // fake pool here cannot do.
+  assert.match(sql, /VALUES \(\$1, \$2::text, \$3, 'user', \$4, COALESCE\(\$5, \(SELECT kind FROM eth_address_labels WHERE address = \$2::text AND user_id IS NULL\), 'exchange'\)\)/);
   assert.match(sql, /ON CONFLICT \(user_id, address\) WHERE user_id IS NOT NULL/);
 });
 
