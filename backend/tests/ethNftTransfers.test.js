@@ -204,9 +204,10 @@ test('bulkInsert writes token_standard and token_id', async () => {
     token_decimals: 0, token_standard: 'erc721', token_id: '682', is_error: false,
   }]);
   const sql = sqlOf(queries[0]);
-  assert.match(sql, /INSERT INTO eth_transfers \([^)]*token_standard, token_id, is_error\)/);
+  assert.match(sql, /INSERT INTO eth_transfers \([^)]*token_standard, token_id, is_error, method_id, method_name\)/);
   // Column order and value order must agree or every row is written skewed.
-  assert.deepEqual(queries[0].params.slice(-3), ['erc721', '682', false]);
+  // method_id/method_name are NULL here: NFT legs never carry calldata.
+  assert.deepEqual(queries[0].params.slice(-5), ['erc721', '682', false, null, null]);
 });
 
 test('holdings derivation cannot see NFT rows', async () => {
