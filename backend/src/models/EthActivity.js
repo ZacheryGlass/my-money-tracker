@@ -230,14 +230,26 @@ class EthActivity {
   // flags with it. The quarantine gets its OWN count instead of being invisible;
   // hiding rows without saying how many is the failure a quarantine must not
   // have.
-  static async summaryForUser(userId) {
+  //
+  // `walletId` narrows it to one wallet and never widens it, matching the feed:
+  // a headline count that totals every wallet above wallet-filtered rows is a
+  // number nobody can reconcile with what they are looking at -- and for a
+  // quarantine the count IS the honesty guarantee, so it has to be about the
+  // rows on screen.
+  static async summaryForUser(userId, { walletId = null } = {}) {
     if (!userId) throw new Error('EthActivity.summaryForUser requires a userId');
+    const params = [userId];
+    let scope = '';
+    if (walletId != null) {
+      params.push(walletId);
+      scope = ` AND a.wallet_id = $${params.length}`;
+    }
     const result = await pool.query(
       `SELECT COUNT(*)::int AS total,
               (COUNT(*) FILTER (WHERE needs_review))::int AS needs_review_count,
               (COUNT(*) FILTER (WHERE spam))::int AS spam_count
-       FROM (SELECT ${RESOLVED_COLUMNS} ${RESOLVED_FROM} WHERE w.user_id = $1) resolved`,
-      [userId]
+       FROM (SELECT ${RESOLVED_COLUMNS} ${RESOLVED_FROM} WHERE w.user_id = $1${scope}) resolved`,
+      params
     );
     const row = result.rows[0] || {};
     return {
@@ -270,17 +282,22 @@ class EthActivity {
   static async upsertOverride(userId, walletId, txHash, { category, note = null, chainId = DEFAULT_CHAIN_ID } = {}) {
     if (!userId) throw new Error('EthActivity.upsertOverride requires a userId');
     const result = await pool.query(
-      `INSERT INTO eth_activity_overrides (wallet_id, chain_id, tx_hash, category, note)
-       SELECT w.id, $2, $3, $4, $5
+      `INSERT INTO eth_activity_overrides (wallet_id, chain_id, tx_hash, category, note, spam)
+       SELECT w.id, $2, $3, $4, $5, FALSE
        FROM eth_wallets w
        WHERE w.id = $1 AND w.user_id = $6
        ON CONFLICT (wallet_id, chain_id, tx_hash)
-       -- The spam column is deliberately absent from the SET list. The two
-       -- verdicts are independent statements about one transaction -- "it was
-       -- actually a purchase" and "it is not junk" -- so re-categorizing a row
-       -- the user already un-quarantined must not silently re-hide it.
+       -- Naming a category LIFTS the quarantine, and that is not a coupling
+       -- accident. A quarantine is "you do not need to look at this"; the user
+       -- looking at it and saying what it was settles the question in the other
+       -- direction. Leaving the flag alone let a correction be stored, acted on
+       -- by the exchange matcher, and stay invisible -- with the row's own
+       -- needs_review masked by the quarantine it still carried.
+       --
+       -- One click re-quarantines it if that is genuinely what they meant.
        DO UPDATE SET category = EXCLUDED.category,
                      note = EXCLUDED.note,
+                     spam = FALSE,
                      updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [walletId, chainId, txHash, category, note, userId]

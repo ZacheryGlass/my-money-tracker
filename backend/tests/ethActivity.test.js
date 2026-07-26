@@ -112,8 +112,16 @@ function fakeQuery(text, params = []) {
   }
   // The owner's own label rows, which tell the quarantine which counterparties
   // already carry a verdict of any kind (including the inert 'external').
-  if (/^SELECT address, kind FROM eth_address_labels WHERE user_id/.test(sql)) {
-    return { rows: db.labels.map((l) => ({ address: l.address, kind: l.kind ?? null })) };
+  if (/^SELECT DISTINCT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
+    // The user's own rows, plus builtin rows (user_id NULL) for addresses this
+    // wallet has actually transacted with -- the bounded arm that makes a pack
+    // 'external' count as a verdict without loading all 5k of them.
+    const seen = new Set(db.transfers.flatMap((t) => [t.from_address, t.to_address]));
+    return {
+      rows: db.labels
+        .filter((l) => (l.user_id ?? OWNER_ID) === OWNER_ID || seen.has(l.address))
+        .map((l) => ({ address: l.address, kind: l.kind ?? null, user_id: l.user_id ?? OWNER_ID })),
+    };
   }
   // Every address the owner has declared theirs, across all their wallets.
   if (/^SELECT address FROM eth_wallets WHERE user_id/.test(sql)) {
@@ -165,12 +173,12 @@ function fakeQuery(text, params = []) {
     // The INSERT ... SELECT FROM eth_wallets WHERE user_id is the ownership
     // gate: a foreign wallet selects nothing, so nothing is written.
     if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
-    const existing = db.overrides.get(key(walletId, chainId, txHash));
-    // DO UPDATE names category and note only, so a stored spam verdict rides
-    // through a re-categorization untouched.
+    // Naming a category LIFTS the quarantine: the SQL writes spam = FALSE on
+    // both the insert and the DO UPDATE. A correction that stayed hidden was
+    // stored, acted on by the matcher, and invisible.
     const row = {
       wallet_id: walletId, chain_id: chainId, tx_hash: txHash, category, note,
-      spam: existing ? existing.spam ?? null : null,
+      spam: false,
     };
     db.overrides.set(key(walletId, chainId, txHash), row);
     return { rows: [row] };

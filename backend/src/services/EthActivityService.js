@@ -385,6 +385,20 @@ const legUnits = (leg) => {
   return raw < 0n ? -raw : raw;
 };
 
+// Leg types whose `from_address` is a fact about the TRANSACTION rather than a
+// claim made by a contract.
+//
+// `native` and `internal` come from txlist / txlistinternal, where the sender is
+// the transaction's actual signer or the trace's actual caller. A `token` or
+// `nft` leg's `from` is copied verbatim out of a Transfer EVENT (see
+// EthWalletService.normalizeFeeds), and any contract may emit one naming any
+// address and any amount. That is not a corner case: the fake-token poisoning
+// variant deploys a counterfeit USDT and emits Transfer(victim, lookalike,
+// 1000e6) purely so the victim's history shows a plausible payment to an
+// address the attacker controls. Nothing about the wallet may be inferred from
+// a leg the attacker wrote.
+const SIGNED_LEG_TYPES = new Set(['native', 'internal']);
+
 // Did the wallet's owner sign this transaction?
 //
 // A gas leg exists exactly once per tx the wallet SENT (EthWalletService
@@ -393,17 +407,20 @@ const legUnits = (leg) => {
 // unsupported (039) while the token feed landed -- without it, a partial sync
 // could read the user's own outgoing transfer as an unsolicited arrival.
 //
-// The fallback insists on a NONZERO outbound leg, and that is the load-bearing
-// detail. The commonest poisoning variant is a spoofed zero-value Transfer
-// event with `from` set to the victim -- transferFrom(victim, lookalike, 0)
-// needs no allowance in most ERC-20s -- so it appears in the victim's feed as
-// an OUTBOUND leg to the attacker's lookalike address. Counting that as a
-// signature would make the attack self-immunizing, and would also let it into
-// the triage queue as a counterparty the user "sent to", which is the material
-// arm of the badge.
+// The fallback insists on a nonzero outbound leg OF A SIGNED TYPE, and both
+// halves are load-bearing:
+//   * nonzero, because the commonest poisoning variant is a spoofed ZERO-value
+//     Transfer with `from` set to the victim -- transferFrom(victim, lookalike,
+//     0) needs no allowance in most ERC-20s -- which appears in the victim's
+//     feed as an outbound leg they never signed;
+//   * a signed type, because the same forgery works just as well with a nonzero
+//     amount on a counterfeit token. Accepting it would let an attacker switch
+//     off every heuristic below for a transaction of their choosing, simply by
+//     writing the victim's address into their own event log.
 function walletInitiated(wallet, gasLegs, valueLegs) {
   if (gasLegs.length > 0) return true;
-  return valueLegs.some((leg) => leg.from_address === wallet && legUnits(leg) > 0n);
+  return valueLegs.some((leg) => SIGNED_LEG_TYPES.has(leg.transfer_type)
+    && leg.from_address === wallet && legUnits(leg) > 0n);
 }
 
 // Wallet-wide evidence, computed once over every stored transfer, exactly like
@@ -424,11 +441,19 @@ function spamContext(wallet, transfers, ownAddresses = []) {
   }
 
   // Contracts the wallet has interacted with VOLUNTARILY -- the issue's "no
-  // outbound, no approval, no purchase leg" test, in one set:
-  //   * every contract touched by a transaction the wallet signed. A swap, a
-  //     purchase and a claim all land here, and so does an approve, whose only
-  //     trace is the gas leg's destination.
-  //   * every contract the wallet has sent a nonzero amount of.
+  // outbound, no approval, no purchase leg" test. Every contract touched by a
+  // transaction the wallet SIGNED: a swap, a purchase, a claim and an approve
+  // (whose only trace is the gas leg's destination) all land here, and an
+  // outbound ERC-20 transfer does too, because sending a token requires signing
+  // for it.
+  //
+  // A signature is the whole membership test, and there is deliberately no
+  // "the wallet appears as the sender" shortcut beside it: `from_address` on a
+  // token leg is attacker-written (SIGNED_LEG_TYPES), so a counterfeit contract
+  // could otherwise whitelist ITSELF, permanently, by emitting one forged
+  // Transfer -- and every later airdrop of that counterfeit would then read as
+  // an asset the user chose to hold.
+  //
   // Address-keyed rather than (chain, contract)-keyed on purpose: the same
   // deployment on two chains is one decision by the user, and the conservative
   // direction for this set is WIDER -- a contract wrongly considered familiar
@@ -461,10 +486,12 @@ function spamContext(wallet, transfers, ownAddresses = []) {
         continue;
       }
       if (leg.is_error) continue;
+      if (leg.token_contract && initiated) voluntaryContracts.add(leg.token_contract);
+      // An address the wallet has deliberately paid. Gated on the signature for
+      // the same reason as the set above: an unsigned "outbound" leg is a
+      // forged one, and a poisoned lookalike must never be able to join the set
+      // that shields the next one from the lookalike test.
       const outbound = leg.from_address === wallet && legUnits(leg) > 0n;
-      if (leg.token_contract && (initiated || outbound)) {
-        voluntaryContracts.add(leg.token_contract);
-      }
       if (initiated && outbound && leg.to_address) familiarAddresses.add(leg.to_address);
     }
   }
@@ -509,7 +536,7 @@ function lookalikeTarget(address, context) {
 // do. They run before any heuristic because a heuristic that has to remember to
 // check them is a heuristic that will eventually forget.
 function detectSpam({
-  wallet, category, failed, initiated, valueLegs, netLegs, labeledAddresses, usdValue, context,
+  wallet, category, failed, initiated, valueLegs, netLegs, labeledAddresses, context,
 }) {
   // Gate 1: a verdict that asserts real money moved is never overruled.
   if (NEVER_SPAM_CATEGORIES.has(category)) return null;
@@ -541,29 +568,52 @@ function detectSpam({
   const inbound = valueLegs.filter((leg) => leg.to_address === wallet);
   const nftLegs = inbound.filter((leg) => NFT_TRANSFER_TYPES.has(leg.transfer_type));
   const tokenLegs = inbound.filter((leg) => leg.transfer_type === 'token');
-  const priced = usdValue != null && Number.isFinite(usdValue);
   const unfamiliar = (legs) => legs.length > 0
     && legs.every((leg) => leg.token_contract && !context.voluntaryContracts.has(leg.token_contract));
+
+  // THE DOLLARS THAT ACTUALLY ARRIVED, summed PER LEG over the netted inflows
+  // that carry a figure -- never the transaction-level roll-up.
+  //
+  // rollUpUsd folds a transaction's legs to the WEAKEST basis on purpose (a
+  // partial sum presented as a total is the silent-zero failure wearing a
+  // different hat), which means one unpriced junk leg makes the whole
+  // transaction report usd_value = null. Reading that as "no market, therefore
+  // not a payment" would let a scam leg supply its own evidence: an unsigned
+  // transaction crediting 1 ETH AND a worthless token would be quarantined
+  // whole, ETH included, because the token dragged the basis down. Asking each
+  // leg what it was worth cannot be gamed that way -- an attacker cannot make
+  // the ETH leg unpriced.
+  const pricedInflow = netLegs.filter((leg) => leg.direction === 'in'
+    && leg.usd != null
+    && (leg.usd_basis === 'exact' || leg.usd_basis === 'carried'));
+  const pricedInflowUsd = pricedInflow.reduce((sum, leg) => sum + Math.abs(Number(leg.usd) || 0), 0);
+
+  // THE GATE EVERY HEURISTIC BELOW SHARES: if we can see a dollar of real value
+  // arriving, nothing here may hide this transaction. Stated once, so a rule
+  // cannot be added later without it.
+  if (pricedInflowUsd >= SPAM_DUST_USD) return null;
 
   // 1. ADDRESS POISONING. Reported first: it is the only verdict here that is
   //    also a security warning, and a poisoning transfer is usually zero-value
   //    (rule 2 below) or dust, so it would otherwise be filed under the blander
   //    reason and lose the warning.
   //
-  //    THE FALSE-POSITIVE GATE, and the reason this rule alone is not enough:
-  //    four hex characters at each end is 32 bits of coincidence, which a few
+  //    Four hex characters at each end is 32 bits of coincidence, which a few
   //    hundred addresses will not collide on -- but "will not" is not "cannot",
-  //    and the cost of being wrong is hiding a payment. So a lookalike
-  //    quarantines only what cannot be a payment anyone meant to make: a
-  //    transfer worth less than a dollar at the time, or -- when the asset has
-  //    no price at all -- an asset this wallet has never voluntarily touched.
-  //    An inbound transfer with real USD value is NEVER quarantined on a
-  //    lookalike alone; it stays in the ledger and in the queue, where a human
-  //    can see it.
-  const poisonable = priced
-    ? usdValue < SPAM_DUST_USD
-    : unfamiliar(inbound.filter((leg) => leg.token_contract)) || inbound.every((leg) => legUnits(leg) === 0n);
-  if (poisonable) {
+  //    and the cost of being wrong is hiding a payment. So beyond the shared
+  //    gate above, a lookalike may only quarantine something that cannot be a
+  //    payment anyone meant to make:
+  //      * nothing moved at all; or
+  //      * we can see what it was worth, and it was under a dollar; or
+  //      * we cannot see what it was worth, but every asset that arrived is one
+  //        this wallet has never voluntarily touched.
+  //    An UNPRICED ETH transfer from a lookalike fails all three and stays --
+  //    no price means the size is unknown, not small.
+  const nothingMoved = inbound.every((leg) => legUnits(leg) === 0n);
+  const seenAndTiny = pricedInflow.length > 0;
+  const unseenAndAlien = pricedInflow.length === 0
+    && unfamiliar(inbound.filter((leg) => leg.token_contract));
+  if (nothingMoved || seenAndTiny || unseenAndAlien) {
     const impostor = counterparties.find((address) => lookalikeTarget(address, context));
     if (impostor) return SPAM_REASONS.ADDRESS_POISONING;
   }
@@ -576,20 +626,34 @@ function detectSpam({
     return SPAM_REASONS.ZERO_VALUE_TRANSFER;
   }
 
-  // 3. An unsolicited NFT. No price gate is possible -- NFT valuation is out of
-  //    scope (#73) and value_wei on those legs is a COUNT OF UNITS (033) -- so
-  //    the whole weight falls on gate 3 plus "never touched this collection".
-  //    An NFT you bought, minted or bid on was signed by you; one that simply
-  //    appeared, from a contract you have never called, is the endemic case.
-  //    A genuine gift from a friend is the false positive, and it costs one
-  //    click and no data: the transaction, its legs and its counterparty are
-  //    all still there.
-  if (unfamiliar(nftLegs) && tokenLegs.length === 0) return SPAM_REASONS.UNSOLICITED_NFT;
+  // 3. An unsolicited NFT. No price gate is possible for the NFT itself -- NFT
+  //    valuation is out of scope (#73) and value_wei on those legs is a COUNT
+  //    OF UNITS (033) -- so the weight falls on gate 3 plus "never touched this
+  //    collection". An NFT you bought, minted or bid on was signed by you; one
+  //    that simply appeared, from a contract you have never called, is the
+  //    endemic case. A genuine gift from a friend is the false positive, and it
+  //    costs one click and no data.
+  //
+  //    `unfamiliar(inbound)` rather than `unfamiliar(nftLegs)`: EVERY leg that
+  //    arrived has to be an unfamiliar contract, so a transaction that also
+  //    delivered ETH or a token is out of reach. One unsigned transaction can
+  //    carry both -- an auction settled by the seller with the overbid
+  //    refunded, a Safe batch, a relayed distribution -- and an NFT-shaped rule
+  //    must not be the thing that hides the money beside it. A native leg has
+  //    no contract, so it fails `unfamiliar` outright.
+  if (nftLegs.length > 0 && tokenLegs.length === 0 && unfamiliar(inbound)) {
+    return SPAM_REASONS.UNSOLICITED_NFT;
+  }
 
   // 4. An unsolicited token. Three independent conditions, all required: the
   //    wallet did not sign it (gate 3), it has never voluntarily touched the
-  //    token, and no provider prices the token at all. A scam airdrop fails all
-  //    three; an unexpected USDC payment fails only the first, and stays.
+  //    token, and nothing that arrived carries a price at all. A scam airdrop
+  //    fails all three; an unexpected USDC payment fails only the first, and
+  //    stays.
+  //
+  //    Again `unfamiliar(inbound)`, not `unfamiliar(tokenLegs)`: an unpriced
+  //    ETH credit riding alongside a junk token is still an ETH credit, and the
+  //    junk token must not be able to speak for it.
   //
   //    "Unpriced" stands in for the issue's mass-distribution signal, which a
   //    single wallet's feed genuinely cannot see -- Etherscan reports the legs
@@ -597,7 +661,9 @@ function detectSpam({
   //    recipients. It is the closest observable proxy: a token nobody lists is
   //    a token with no market, and a token with no market was not sent to you
   //    as payment.
-  if (!priced && unfamiliar(tokenLegs)) return SPAM_REASONS.UNSOLICITED_TOKEN;
+  if (tokenLegs.length > 0 && pricedInflow.length === 0 && unfamiliar(inbound)) {
+    return SPAM_REASONS.UNSOLICITED_TOKEN;
+  }
 
   return null;
 }
@@ -731,7 +797,6 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decim
     valueLegs,
     netLegs,
     labeledAddresses: spamInputs.labeledAddresses,
-    usdValue: usd.value,
     context: spamInputs.context,
   });
 
@@ -890,12 +955,31 @@ class EthActivityService {
         [walletId]
       ),
       pool.query('SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1', [wallet.user_id]),
-      // The owner's OWN label rows only, which is tens of rows. Deliberately not
-      // `OR user_id IS NULL`: that would drag in 036's 5,129-address builtin
-      // pack on every rebuild, and the pack's verdicts already reach the builder
-      // denormalized onto each leg. `kind` rides along so the same one query
-      // serves both the "already judged" test and the own-address set.
-      pool.query('SELECT address, kind FROM eth_address_labels WHERE user_id = $1', [wallet.user_id]),
+      // Which counterparties already carry a verdict, in ANY kind -- the same
+      // question the triage queue asks, and it has to get the same answer.
+      //
+      // The user's own rows, plus the builtin rows for addresses THIS WALLET
+      // has actually transacted with. The second arm is bounded on purpose: an
+      // unrestricted `OR user_id IS NULL` would drag 036's 5,129-address pack
+      // into every rebuild. It cannot be dropped either -- 'exchange' and 'own'
+      // reach the builder denormalized onto each leg, but 'external' is inert
+      // in classification by design, so a builtin 'external' (the pack's 389
+      // payment processors and fiat on-ramps) would otherwise reach nothing at
+      // all, and a payout from one of them in an unpriced token would be
+      // quarantined by a pack row that already says "reviewed third party".
+      //
+      // `kind` and `user_id` ride along so this one query also yields the
+      // own-address set below.
+      pool.query(
+        `SELECT DISTINCT l.address, l.kind, l.user_id
+           FROM eth_address_labels l
+          WHERE l.user_id = $1
+             OR (l.user_id IS NULL AND l.address IN (
+                   SELECT t.from_address FROM eth_transfers t WHERE t.wallet_id = $2
+                   UNION
+                   SELECT t.to_address FROM eth_transfers t WHERE t.wallet_id = $2))`,
+        [wallet.user_id, walletId]
+      ),
       // Every address the owner has declared theirs, across ALL their wallets --
       // the thing a poisoner most wants to imitate, and invisible to this
       // wallet's own transfers unless the two have transacted.
@@ -905,7 +989,12 @@ class EthActivityService {
     const labeledAddresses = new Set(labeledResult.rows.map((row) => row.address));
     const ownAddresses = [
       ...ownWalletsResult.rows.map((row) => row.address),
-      ...labeledResult.rows.filter((row) => row.kind === 'own').map((row) => row.address),
+      // 'own' is STRICTLY user-scoped with no builtin fallback -- a global "this
+      // address is yours" row would be nonsense -- so the user_id test here is
+      // not redundant with the query's first arm.
+      ...labeledResult.rows
+        .filter((row) => row.kind === 'own' && row.user_id === wallet.user_id)
+        .map((row) => row.address),
     ];
 
     const rows = buildActivityRows(wallet.address, transfersResult.rows, {

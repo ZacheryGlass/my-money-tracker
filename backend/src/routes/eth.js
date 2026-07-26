@@ -317,7 +317,11 @@ router.get('/activity', async (req, res) => {
     // How many rows the default view is hiding, alongside the review count. A
     // quarantine that never says how much it swallowed is indistinguishable
     // from a sync that never fetched anything.
-    const summary = await EthActivity.summaryForUser(req.user.id);
+    //
+    // Scoped to the SAME wallet as `data`, like the reconciliation route's:
+    // a headline that totals every wallet above wallet-filtered rows reads as
+    // hidden rows on the wallet in front of you.
+    const summary = await EthActivity.summaryForUser(req.user.id, { walletId: wallet.walletId });
 
     res.status(200).json({
       data: activity,
@@ -492,7 +496,19 @@ router.delete('/activity/override', async (req, res) => {
     if (!removed) {
       return res.status(404).json({ error: 'Override not found' });
     }
-    res.status(200).json({ message: 'Override removed' });
+    // This drops the whole correction, the spam verdict included -- they live
+    // on one row, and "forget what I said about this transaction" is a coherent
+    // unit. But an un-quarantine dropped here UNCOVERS the derived spam verdict
+    // again, so the transaction can vanish from the default feed as a side
+    // effect of an action about its category. Say so rather than answering a
+    // bare "removed": a rescue undone in silence is the failure this whole
+    // feature exists to avoid. Re-rescue with POST /activity/spam.
+    res.status(200).json({
+      message: removed.spam === false
+        ? 'Override removed. This also dropped the "not spam" verdict, so the automatic quarantine applies again.'
+        : 'Override removed',
+      dropped_spam_verdict: removed.spam ?? null,
+    });
   } catch (error) {
     logger.error({ err: error }, 'Remove ETH activity override error');
     res.status(500).json({ error: 'Failed to remove the override' });

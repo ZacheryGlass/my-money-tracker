@@ -122,8 +122,16 @@ function fakeQuery(text, params = []) {
     const wanted = new Set(params[0]);
     return { rows: db.labels.filter((l) => wanted.has(l.address)) };
   }
-  if (/^SELECT address, kind FROM eth_address_labels WHERE user_id/.test(sql)) {
-    return { rows: db.labels.map((l) => ({ address: l.address, kind: l.kind ?? null })) };
+  if (/^SELECT DISTINCT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
+    // The user's own rows, plus builtin rows (user_id NULL) for addresses this
+    // wallet has actually transacted with -- the bounded arm that makes a pack
+    // 'external' count as a verdict without loading all 5k of them.
+    const seen = new Set(db.transfers.flatMap((t) => [t.from_address, t.to_address]));
+    return {
+      rows: db.labels
+        .filter((l) => (l.user_id ?? OWNER_ID) === OWNER_ID || seen.has(l.address))
+        .map((l) => ({ address: l.address, kind: l.kind ?? null, user_id: l.user_id ?? OWNER_ID })),
+    };
   }
   // Every address the owner has declared theirs, across all their wallets.
   if (/^SELECT address FROM eth_wallets WHERE user_id/.test(sql)) {
@@ -174,12 +182,11 @@ function fakeQuery(text, params = []) {
   if (/^INSERT INTO eth_activity_overrides/.test(sql)) {
     const [walletId, chainId, txHash, category, note, userId] = params;
     if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
-    const existing = db.overrides.get(key(walletId, chainId, txHash));
-    // The category upsert's DO UPDATE names category and note only, so a spam
-    // verdict rides through a re-categorization untouched.
+    // Naming a category LIFTS the quarantine: the SQL writes spam = FALSE on
+    // both the insert and the DO UPDATE. A correction that stayed hidden was
+    // stored, acted on by the exchange matcher, and invisible.
     const row = {
-      wallet_id: walletId, chain_id: chainId, tx_hash: txHash, category, note,
-      spam: existing ? existing.spam ?? null : null,
+      wallet_id: walletId, chain_id: chainId, tx_hash: txHash, category, note, spam: false,
     };
     db.overrides.set(key(walletId, chainId, txHash), row);
     return { rows: [row] };
@@ -616,6 +623,125 @@ test('GATE: approving a token counts as touching it, even with no transfer log',
   assert.equal(row.spam, false);
 });
 
+// --- the shared value gate: no rule may hide money we can see --------------
+
+test('GATE: an NFT rule never hides the ETH that arrived beside the NFT', () => {
+  // One unsigned transaction delivers an unfamiliar NFT AND 1.5 ETH -- an
+  // auction settled by the seller with the overbid refunded, a Safe batch, a
+  // relayed distribution. An NFT-shaped rule must not be the thing that hides
+  // $4,500.
+  const row = only([
+    // 'not_applicable' is what the valuation SQL writes on an NFT leg: its
+    // value_wei is a COUNT OF UNITS (033), so there is no quantity to price.
+    nftLeg({ from_address: STRANGER, to_address: WALLET, usd_basis: 'not_applicable' }),
+    leg({
+      from_address: STRANGER, to_address: WALLET, value_wei: '1500000000000000000',
+      usd_at_time: '4500.00', usd_basis: 'exact',
+    }),
+  ]);
+
+  assert.equal(row.spam, false);
+  assert.equal(row.usd_value, 4500);
+  assert.equal(row.needs_review, true, 'it stays a human decision');
+});
+
+test('GATE: a junk token cannot drag a priced transaction into the quarantine', () => {
+  // rollUpUsd folds a transaction to the WEAKEST basis, so one unpriced junk
+  // leg makes usd_value null for the whole transaction. Reading THAT as "no
+  // market, therefore not a payment" would let the scam leg supply its own
+  // evidence -- and take the 1 ETH beside it into the quarantine.
+  const row = only([
+    leg({
+      from_address: STRANGER, to_address: WALLET, value_wei: '1000000000000000000',
+      usd_at_time: '4500.00', usd_basis: 'exact',
+    }),
+    tokenLeg({
+      token_contract: SPAM_TOKEN, token_symbol: 'CLAIM-NOW',
+      from_address: STRANGER, to_address: WALLET, value_wei: '10000000000000000000000',
+    }),
+  ]);
+
+  assert.equal(row.spam, false);
+  // The transaction genuinely reports unpriced -- a partial sum presented as a
+  // total is the failure #73 refuses -- and the quarantine still must not read
+  // that as evidence.
+  assert.equal(row.usd_value, null);
+  assert.equal(row.legs.find((l) => l.asset === 'ETH').usd, 4500);
+});
+
+test('GATE: an unpriced ETH credit beside a junk token is not quarantined either', () => {
+  const row = only([
+    leg({ from_address: STRANGER, to_address: WALLET, value_wei: '1000000000000000000' }),
+    tokenLeg({
+      token_contract: SPAM_TOKEN, from_address: STRANGER, to_address: WALLET,
+      value_wei: '10000000000000000000000',
+    }),
+  ]);
+
+  // Nothing here carries a price, so the shared dollar gate cannot help. What
+  // stops it is that a native leg has no contract and therefore cannot be
+  // "unfamiliar" -- an ETH credit is never an unsolicited token.
+  assert.equal(row.spam, false);
+});
+
+// --- forged legs -----------------------------------------------------------
+
+test('a forged NONZERO outbound token leg cannot switch off the heuristics', async () => {
+  // The fake-token poisoning variant: the attacker deploys a counterfeit USDT
+  // and emits Transfer(victim, lookalike, 1000e6). `from_address` on a token
+  // leg is copied verbatim out of that event, so the victim's feed shows an
+  // outbound leg they never signed.
+  const FAKE_USDT = `0x${'9'.repeat(40)}`;
+  db.transfers = [
+    // The forgery. No gas leg: the wallet signed nothing.
+    tokenLeg({
+      tx_hash: TX3, block_number: 900, token_contract: FAKE_USDT, token_symbol: 'USDT',
+      token_decimals: 6, from_address: WALLET, to_address: LOOKALIKE, value_wei: '1000000000',
+    }),
+    // ...followed by an airdrop of the same counterfeit token.
+    tokenLeg({
+      tx_hash: TX, token_contract: FAKE_USDT, token_symbol: 'USDT', token_decimals: 6,
+      from_address: STRANGER, to_address: WALLET, value_wei: '5000000000',
+    }),
+  ];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
+  // The forged leg must not have whitelisted its own contract. Before the fix
+  // it did -- permanently -- and every later airdrop of the counterfeit read as
+  // an asset the user had chosen to hold.
+  const airdrop = db.activity.find((r) => r.tx_hash === TX);
+  assert.equal(airdrop.spam, true);
+  assert.equal(airdrop.spam_reason, SPAM_REASONS.UNSOLICITED_TOKEN);
+
+  // The forged transaction itself still nets outbound, so it is NOT quarantined
+  // -- from one wallet's feed a forged nonzero Transfer and a real one on a
+  // chain whose `normal` feed is unsupported are indistinguishable, and hiding
+  // a real outbound transfer is the worse error. It stays in the queue, where
+  // an ambiguous transaction belongs.
+  const forged = db.activity.find((r) => r.tx_hash === TX3);
+  assert.equal(forged.spam, false);
+  assert.equal(forged.needs_review, true);
+});
+
+test('a real outbound token transfer still marks its contract voluntary', async () => {
+  // The signature is what separates the two, and a real ERC-20 transfer always
+  // has one: sending a token means signing for it.
+  db.transfers = [
+    tokenLeg({
+      tx_hash: TX3, block_number: 900, token_contract: SPAM_TOKEN,
+      from_address: WALLET, to_address: STRANGER, value_wei: '5000000000000000000',
+    }),
+    gasLeg({ tx_hash: TX3, block_number: 900, to_address: SPAM_TOKEN }),
+    tokenLeg({
+      tx_hash: TX, token_contract: SPAM_TOKEN, from_address: STRANGER,
+      to_address: WALLET, value_wei: '5000000000000000000',
+    }),
+  ];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
+  assert.equal(db.activity.find((r) => r.tx_hash === TX).spam, false);
+});
+
 // --- the gates every heuristic runs behind ---------------------------------
 
 test('GATE: a claimed airdrop is never spam -- signing it is the distinguishing signal', () => {
@@ -811,6 +937,34 @@ test('a transaction can be quarantined by hand, and that also survives a resync'
   assert.equal(quarantined.body.data[0].spam_reason, null);
 });
 
+test('naming a category lifts the quarantine, so a correction is never invisible', async () => {
+  // A quarantine says "you do not need to look at this". The user looking at it
+  // and saying what it was settles the question the other way -- and leaving
+  // the flag up made the correction stored, acted on by the exchange matcher,
+  // and invisible, with the row's own needs_review masked by the quarantine it
+  // still carried.
+  db.transfers = [tokenLeg({
+    token_contract: SPAM_TOKEN, from_address: STRANGER, to_address: WALLET,
+    value_wei: '10000000000000000000000',
+  })];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+  assert.equal((await request(app).get('/api/eth/activity')).body.data.length, 0);
+
+  const corrected = await request(app).post('/api/eth/activity/override')
+    .send({ wallet_id: OWNED_WALLET_ID, tx_hash: TX, category: 'exchange_withdrawal' });
+  assert.equal(corrected.status, 201);
+
+  const listed = await request(app).get('/api/eth/activity');
+  assert.equal(listed.body.data.length, 1, 'the corrected row is visible');
+  assert.equal(listed.body.data[0].category, 'exchange_withdrawal');
+  assert.equal(listed.body.data[0].spam, false);
+  assert.equal(listed.body.data[0].derived_spam, true, 'why we hid it is still auditable');
+
+  // And it survives the rebuild, like every other override.
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+  assert.equal((await request(app).get('/api/eth/activity')).body.data.length, 1);
+});
+
 test('the two verdicts are independent: re-categorizing does not re-hide', async () => {
   db.transfers = [tokenLeg({
     token_contract: SPAM_TOKEN, from_address: STRANGER, to_address: WALLET,
@@ -829,7 +983,7 @@ test('the two verdicts are independent: re-categorizing does not re-hide', async
   assert.equal(listed.body.data[0].spam, false);
 });
 
-test('deleting the override drops the spam verdict with it', async () => {
+test('deleting the override drops the spam verdict with it, and SAYS so', async () => {
   db.transfers = [tokenLeg({
     token_contract: SPAM_TOKEN, from_address: STRANGER, to_address: WALLET,
     value_wei: '10000000000000000000000',
@@ -841,9 +995,50 @@ test('deleting the override drops the spam verdict with it', async () => {
   const removed = await request(app)
     .delete(`/api/eth/activity/override?wallet_id=${OWNED_WALLET_ID}&tx_hash=${TX}`);
   assert.equal(removed.status, 200);
+  // The two verdicts live on one row, so this drops both -- which re-hides a
+  // transaction the user had rescued, as a side effect of an action about its
+  // category. A bare "removed" would be that rescue undone in silence.
+  assert.equal(removed.body.dropped_spam_verdict, false);
+  assert.match(removed.body.message, /quarantine applies again/i);
 
   const listed = await request(app).get('/api/eth/activity');
   assert.equal(listed.body.data.length, 0, 'the derived quarantine is uncovered again');
+});
+
+test('a builtin \'external\' label counts as a verdict, like it does in the triage queue', async () => {
+  // 036 seeds 389 'external' addresses -- payment processors and fiat on-ramps
+  // by design. 'external' is inert in classification, so it never reaches the
+  // builder denormalized onto a leg; without the bounded builtin arm on the
+  // label read, a payout from one of them in an unpriced token was quarantined
+  // by a pack row that already says "reviewed third party". The triage queue
+  // honours builtin rows of any kind, so the two tests must agree.
+  db.labels = [{ address: STRANGER, name: 'A payment gateway', kind: 'external', user_id: null }];
+  db.transfers = [tokenLeg({
+    token_contract: SPAM_TOKEN, from_address: STRANGER, to_address: WALLET,
+    value_wei: '10000000000000000000000',
+  })];
+
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
+  assert.equal(db.activity[0].spam, false);
+  assert.equal(db.activity[0].needs_review, true, 'still unexplained, just not junk');
+});
+
+test('the activity summary answers about the wallet the feed was filtered to', async () => {
+  db.transfers = [tokenLeg({
+    token_contract: SPAM_TOKEN, from_address: STRANGER, to_address: WALLET,
+    value_wei: '10000000000000000000000',
+  })];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+  queries.length = 0;
+
+  await request(app).get(`/api/eth/activity?wallet_id=${OWNED_WALLET_ID}`);
+  const summary = queries.find((q) => /AS spam_count/.test(q.sql));
+  // A headline that totals every wallet above wallet-filtered rows reads as
+  // hidden rows on the wallet in front of you -- the same trap the
+  // reconciliation route already documents.
+  assert.match(summary.sql, /a\.wallet_id = \$2/);
+  assert.deepEqual(summary.params, [OWNER_ID, OWNED_WALLET_ID]);
 });
 
 // --- review-queue exclusion ------------------------------------------------

@@ -92,19 +92,31 @@ ALTER TABLE eth_activity_overrides ALTER COLUMN category DROP NOT NULL;
 
 -- ...which means an override row can now be written that says nothing at all.
 -- Refuse it: an empty correction is a row the user can neither see nor undo.
+--
+-- Definition-guarded like the two above, and this one needs it most: the CHECK
+-- ENUMERATES the nullable verdict columns, so a third one (a "hide from
+-- spending" flag, say) has to widen it. A name-only guard is satisfied by the
+-- constraint already there, so that widening would be skipped forever on every
+-- deployed database while looking perfectly applied on a fresh one -- and the
+-- two would then disagree about whether a third-column-only override is legal.
+-- BUMP THE SENTINEL BELOW ('spam', the newest column named) when widening.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
                  WHERE conrelid = 'eth_activity_overrides'::regclass
-                   AND conname = 'eth_activity_overrides_not_empty') THEN
+                   AND conname = 'eth_activity_overrides_not_empty'
+                   AND pg_get_constraintdef(oid) LIKE '%spam%') THEN
+    ALTER TABLE eth_activity_overrides DROP CONSTRAINT IF EXISTS eth_activity_overrides_not_empty;
     ALTER TABLE eth_activity_overrides
       ADD CONSTRAINT eth_activity_overrides_not_empty
       CHECK (category IS NOT NULL OR spam IS NOT NULL);
   END IF;
 END $$;
 
--- Partial, like idx_eth_activity_needs_review: quarantined rows are a filtered
--- view over a full history, and the triage queue's exclusion probes this table
--- once per transfer through the UNIQUE (wallet_id, chain_id, tx_hash) key.
-CREATE INDEX IF NOT EXISTS idx_eth_activity_spam
-  ON eth_activity(wallet_id) WHERE spam;
+-- NO INDEX ON `spam`, deliberately, and this note is here so the next reader
+-- does not add one back on reflex. Nothing can use it: the triage queue's
+-- exclusion probes eth_activity by (wallet_id, chain_id, tx_hash) and is served
+-- by the UNIQUE index, and the activity feed filters on COALESCE(override,
+-- derived) outside the CTE that scans the table, which no index on the base
+-- column can answer. A partial index here would cost every insert and serve
+-- nothing.
