@@ -5,7 +5,8 @@ import {
   ExternalLink, Landmark, Link2, Pencil, RefreshCw, Tag, Undo2, Wallet, X,
 } from 'lucide-react';
 import { crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
-import { formatDateDisplay, formatTokenUnits, formatUsdAtTime } from '../utils/format';
+import { formatDateDisplay, formatExactUnits, formatTokenUnits, formatUsdAtTime } from '../utils/format';
+import { useIsMobile } from '../hooks/useMediaQuery';
 import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
 import {
   LEDGER_CATEGORIES,
@@ -22,6 +23,8 @@ import LoadingState from './LoadingState';
 import { shortEthAddress } from './OnChainActivity';
 
 const PAGE_SIZE = 100;
+// GET /api/crypto/ledger clamps `limit` to 500, and asking past it is a 400.
+const MAX_PAGE_SIZE = 500;
 
 // The two dimensions that are worth a tab strip. Category has twenty values and
 // belongs in a select; these have three each and are the ones a user flips
@@ -83,15 +86,15 @@ const shortTokenId = (id) => {
   return text.length > 10 ? `${text.slice(0, 8)}…` : text;
 };
 
-// Base units through the SHARED formatter, which is BigInt end to end. Eight
-// places, not its six-place default: a real 0.00000042 ETH receipt is a row the
-// user has to explain, and rendering it as 0 turns the one fact that identifies
-// it into a shrug. Wide enough for ETH dust, short enough that 1,832.412345
-// USDC still reads at a glance.
+// Base units through the SHARED formatter, which is BigInt end to end, at FULL
+// precision. Not the six-place default and not an eight-place cap either: the
+// server derives `decimals` from the amount's own significant digits, so there
+// is no padding to hide, and any cap turns the smallest legs -- a 1-wei dust
+// receipt, exactly the row a user has to explain -- into "0 ETH", which is the
+// one thing they are not.
 const legText = (leg) => {
   const id = leg.token_id != null ? ` #${shortTokenId(leg.token_id)}` : '';
-  const amount = formatTokenUnits(leg.units, leg.decimals, { maxFractionDigits: 8 })
-    ?? String(leg.amount ?? '');
+  const amount = formatExactUnits(leg.units, leg.decimals) ?? String(leg.amount ?? '');
   return `${amount} ${leg.asset}${id}`;
 };
 
@@ -188,6 +191,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
   const [error, setError] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [reload, setReload] = useState(0);
+  const isMobile = useIsMobile();
 
   const filters = useMemo(() => ({
     ...(source ? { source } : {}),
@@ -200,15 +204,39 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
   const filtersRef = useRef(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
 
-  const refresh = useCallback(() => setReload((n) => n + 1), []);
+  // How much of the feed is on screen, so a post-action refetch can ask for the
+  // SAME window rather than snapping back to page 1. Reviewing is the core loop
+  // of this screen: after ten Load Mores, resolving one row and losing the
+  // other nine pages (and the open detail panel with them) makes the queue feel
+  // like it is refilling itself.
+  const loadedRef = useRef(0);
+  // A filter change is a genuinely new feed, so the window resets. Declared
+  // BEFORE the loader: effects run in order, so this has already zeroed by the
+  // time the fetch below reads it.
+  useEffect(() => { loadedRef.current = 0; }, [filters]);
+  useEffect(() => { loadedRef.current = rows.length; }, [rows]);
+
+  // A refresh triggered by a review action must not flip the whole table back
+  // to the loading state: DataTable unmounts, and the expanded row the user is
+  // still working in goes with it.
+  const silentRef = useRef(false);
+  const refresh = useCallback(() => {
+    silentRef.current = true;
+    setReload((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    const silent = silentRef.current;
+    silentRef.current = false;
     const load = async () => {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
       try {
-        const result = await cryptoAPI.getLedger({ ...filters, limit: PAGE_SIZE, offset: 0 });
+        // Clamped to the route's own cap (500): asking for more is a 400, and
+        // a review action must never be the thing that breaks the feed.
+        const limit = Math.min(Math.max(loadedRef.current, PAGE_SIZE), MAX_PAGE_SIZE);
+        const result = await cryptoAPI.getLedger({ ...filters, limit, offset: 0 });
         if (cancelled) return;
         setRows(result.data || []);
         setTotal(result.pagination?.total || 0);
@@ -473,6 +501,12 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
   const table = useReactTable({
     data: enriched,
     columns,
+    // TanStack keys on the ARRAY INDEX by default, and every React key and
+    // detail-panel identity downstream inherits that. A refetch that inserts or
+    // drops one row would then hand the open panel -- which seeds its category,
+    // note and label fields from props once -- another row's state, and the
+    // next Save would write the correction to the wrong transaction.
+    getRowId: (row) => `${row.source}:${row.row_id}`,
     // Rows arrive time-ordered from the API and page in via Load More; sorting
     // a partial page client-side would reorder only what is loaded and quietly
     // claim to be the whole ledger's order.
@@ -493,7 +527,11 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
           <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Unified Ledger</h2>
           <p className="mt-0.5 text-caption text-tertiary">
             {summary
-              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched pairs shown once` : ''}${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} unpriced` : ''}`
+              // "exchange records", not "exchange": the count is RECORDS the
+              // venues wrote, folded halves included, so it deliberately does
+              // not add up with the event total beside it -- it is the number
+              // that reconciles with Settings' per-account record_count.
+              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange records${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched pairs shown once` : ''}${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} unpriced` : ''}`
               : 'Loading…'}
             {rangeText ? ` · ${rangeText}` : ''}
           </p>
@@ -611,8 +649,14 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
           emptyMessage="No ledger entries match these filters."
           onRowClick={toggleRow}
           rowClassName={() => 'cursor-pointer'}
-          renderRowDetail={(row) => (expandedId === row.original.id ? (
+          // ONE mount, never two. DataTable keeps the desktop table and the
+          // mobile list both in the DOM and hides one with CSS, so rendering
+          // the panel from both paths mounted it twice: two `getTransfers`
+          // fetches for one expand, two copies of the correction form's state
+          // drifting apart, and duplicate aria labels for every field.
+          renderRowDetail={(row) => (!isMobile && expandedId === row.original.id ? (
             <LedgerRowDetail
+              key={row.original.id}
               row={row.original}
               onError={setError}
               onChanged={() => { refresh(); onDataChanged?.(); }}
@@ -659,9 +703,10 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
                 {entry.needs_review && (
                   <p className="mt-2 text-[10px] uppercase tracking-wider text-orange-400">Needs review</p>
                 )}
-                {open && (
+                {open && isMobile && (
                   <div onClick={(event) => event.stopPropagation()}>
                     <LedgerRowDetail
+                      key={entry.id}
                       row={entry}
                       onError={setError}
                       onChanged={() => { refresh(); onDataChanged?.(); }}
@@ -834,12 +879,22 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
           <span>You rejected a suggested pairing for this transaction, so it is shown on its own.</span>
           <button
             type="button"
-            onClick={() => run('match:clear', () => exchangesAPI.clearMatchVerdict({
-              exchangeRecordId: row.rejected_match.exchange_record_id,
-              walletId: row.wallet_id,
-              txHash: row.tx_hash,
-              chainId: row.chain_id,
-            }))}
+            // Addressed in the shape the verdict was STORED in: a venue-to-venue
+            // rejection is keyed on both record ids, an on-chain one on (wallet,
+            // chain, tx_hash). Sending the wrong shape is a 400 or a 404.
+            onClick={() => run('match:clear', () => exchangesAPI.clearMatchVerdict(
+              row.rejected_match.counter_record_id != null
+                ? {
+                  exchangeRecordId: row.rejected_match.exchange_record_id,
+                  counterRecordId: row.rejected_match.counter_record_id,
+                }
+                : {
+                  exchangeRecordId: row.rejected_match.exchange_record_id,
+                  walletId: row.wallet_id,
+                  txHash: row.tx_hash,
+                  chainId: row.chain_id,
+                }
+            ))}
             disabled={saving != null}
             className="inline-flex h-7 items-center gap-1 rounded border border-border bg-surface-2 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary disabled:opacity-40"
           >
@@ -920,6 +975,26 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
               </button>
             )}
           </div>
+        </div>
+      )}
+
+      {/* The same transaction as another of the user's own wallets saw it. The
+          activity table writes one row per WALLET, so a wallet-to-wallet
+          transfer is two rows for one movement -- the sending side hosts and
+          this is what it folded, stated rather than silently dropped. */}
+      {row.self_match?.length > 0 && (
+        <div className="border border-accent/20 bg-accent/5 p-2">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-accent">
+            Also recorded by {row.self_match.length === 1 ? 'another of your wallets' : 'your other wallets'} · shown once
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {row.self_match.map((half) => (
+              <li key={half.wallet_id} className="text-body-sm text-secondary">
+                <span className="text-tertiary">{half.wallet_label || shortEthAddress(half.wallet_address)}: </span>
+                <span className="font-money">{describeLegs(half.legs)}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

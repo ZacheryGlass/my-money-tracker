@@ -17,6 +17,14 @@ const EthActivityService = require('../services/EthActivityService');
 // eth_wallets.user_id, exchange_records through exchange_accounts.user_id. Both
 // joins are in the CTEs, so a missing userId cannot widen the feed -- and the
 // entry points throw without one rather than serving an unscoped read.
+//
+// The FOLD joins carry the predicate too, and that is not redundant. A row
+// reached through `exchange_matches` is reached by ID: nothing in the schema
+// forbids a match row whose two sides belong to different users, and an
+// unscoped fold join would render user 2's record inside user 1's feed. The
+// matcher never writes one today; the ledger does not depend on that staying
+// true. Every one of `mer`/`mea`, `cer`/`cea`, the matched_records CTE and both
+// rejected-verdict LATERALs tests $1 on the record's own account.
 
 // Which exchange records are already accounted for on another row.
 //
@@ -41,7 +49,12 @@ const MATCHED_CTE = `
     FROM exchange_matches em
     JOIN eth_activity a ON a.id = em.activity_id
     JOIN eth_wallets w ON w.id = a.wallet_id
-    WHERE w.user_id = $1
+    -- The record side is scoped too. Suppressing a record because SOMEBODY's
+    -- transaction folded it would delete another user's row from their own
+    -- feed; the wallet's owner is not evidence about the record's owner.
+    JOIN exchange_records mr ON mr.id = em.exchange_record_id
+    JOIN exchange_accounts mra ON mra.id = mr.exchange_account_id
+    WHERE w.user_id = $1 AND mra.user_id = $1
     UNION
     SELECT em.counter_record_id AS record_id
     FROM exchange_matches em
@@ -133,8 +146,8 @@ const matchJson = (em, er, ea, mv) => `jsonb_build_object(
 // folded into an explained activity row would otherwise vanish from the review
 // queue while still being unexplained -- the exact failure "no transaction
 // unexplained" exists to prevent.
-const ONCHAIN_CTE = `
-  onchain AS (
+const ONCHAIN_RAW_CTE = `
+  onchain_raw AS (
     SELECT
       'onchain'::text AS source,
       a.id AS row_id,
@@ -180,7 +193,10 @@ const ONCHAIN_CTE = `
       NULL::text AS external_id,
       NULL::text AS record_address,
       NULL::text AS record_source,
-      CASE WHEN em.id IS NULL THEN NULL ELSE ${matchJson('em', 'mer', 'mea', 'mv')} END AS exchange_match,
+      -- Guarded on mer, not on em: the record join carries the ownership
+      -- predicate, so a match row pointing at somebody else's record leaves
+      -- mer NULL and the fold simply does not happen.
+      CASE WHEN mer.id IS NULL THEN NULL ELSE ${matchJson('em', 'mer', 'mea', 'mv')} END AS exchange_match,
       -- A REJECTED pairing leaves no exchange_matches row at all -- the
       -- selection pass drops the candidate -- so the pair splits back into two
       -- rows and the match object above is NULL. Without this the rejection is
@@ -189,6 +205,7 @@ const ONCHAIN_CTE = `
       -- (wallet, chain, tx_hash) independently of the match itself.
       rv.verdict::text AS rejected_verdict,
       rv.exchange_record_id AS rejected_record_id,
+      rv.counter_record_id AS rejected_counter_record_id,
       -- What the folded half would have been filed under on its own. The
       -- source/category/account filters read these too: a record suppressed
       -- from its own branch and then filtered out of its host would appear
@@ -196,7 +213,14 @@ const ONCHAIN_CTE = `
       -- narrowing to it -- and the venue calls a deposit a "withdrawal", so
       -- that mismatch is the normal case, not the corner one.
       ${recordCategory('mer')}::text AS match_category,
-      mea.id AS match_account_id
+      mea.id AS match_account_id,
+      -- Which side of a wallet-to-wallet transfer this row is. Two of the
+      -- user's own wallets both record the same transaction (038's UNIQUE is
+      -- per WALLET), and the collapse below hosts the sending side.
+      EXISTS (
+        SELECT 1 FROM jsonb_array_elements(COALESCE(a.legs, '[]'::jsonb)) l
+        WHERE l->>'direction' = 'out'
+      ) AS has_out_leg
     FROM eth_activity a
     JOIN eth_wallets w ON w.id = a.wallet_id
     LEFT JOIN eth_activity_overrides o
@@ -205,7 +229,9 @@ const ONCHAIN_CTE = `
     -- of these can fan one row into two.
     LEFT JOIN exchange_matches em ON em.activity_id = a.id
     LEFT JOIN exchange_records mer ON mer.id = em.exchange_record_id
-    LEFT JOIN exchange_accounts mea ON mea.id = mer.exchange_account_id
+      AND EXISTS (SELECT 1 FROM exchange_accounts oa
+                  WHERE oa.id = mer.exchange_account_id AND oa.user_id = $1)
+    LEFT JOIN exchange_accounts mea ON mea.id = mer.exchange_account_id AND mea.user_id = $1
     LEFT JOIN exchange_match_verdicts mv
       ON mv.exchange_record_id = em.exchange_record_id
      AND mv.counter_record_id IS NULL
@@ -217,7 +243,7 @@ const ONCHAIN_CTE = `
     -- transaction the user rejected against two different records would
     -- otherwise fan its row.
     LEFT JOIN LATERAL (
-      SELECT v.verdict, v.exchange_record_id
+      SELECT v.verdict, v.exchange_record_id, v.counter_record_id
       FROM exchange_match_verdicts v
       JOIN exchange_records vr ON vr.id = v.exchange_record_id
       JOIN exchange_accounts vea ON vea.id = vr.exchange_account_id
@@ -231,6 +257,81 @@ const ONCHAIN_CTE = `
       LIMIT 1
     ) rv ON TRUE
     WHERE w.user_id = $1
+  )`;
+
+// One TRANSACTION, one ledger event.
+//
+// 038's UNIQUE is per (wallet, chain, tx_hash), so a transfer between two of
+// the user's OWN tracked wallets is two eth_activity rows -- the sender's and
+// the receiver's -- sharing (chain_id, tx_hash). Rendering both doubles the
+// event: a $6,000 self-transfer summed to $12,000, the summary counted two
+// events, and the CSV export inherited both. So the group collapses to ONE row
+// here, in the same presentation shape as the exchange fold: a host row plus
+// the other halves folded into `self_match`.
+//
+// The HOST is the out-leg row -- the wallet that sent, which is also the wallet
+// that paid the gas -- so the surviving row's legs, fee and dollars describe
+// the movement from the side that made it. `fee_wei DESC` then `wallet_id`
+// break the tie, so the choice is deterministic across runs and paging is
+// stable.
+//
+// Partitioned on (chain_id, tx_hash), never tx_hash alone -- exactly 038's own
+// rule. A cross-chain replay (the same account, nonce and calldata on two
+// chains) genuinely shares a hash and is two real, separate movements.
+//
+// needs_review is ORed across the group for the same reason the exchange fold
+// ORs it: a flagged receiving row folded into an explained sending row would
+// leave the review queue while still being unexplained.
+const ONCHAIN_CTE = `
+  onchain AS (
+    SELECT
+      r.source, r.row_id, r.occurred_at, r.category,
+      (r.needs_review OR r.group_needs_review) AS needs_review,
+      r.record_needs_review, r.review_reason,
+      r.wallet_id, r.chain_id, r.tx_hash, r.block_number,
+      r.counterparty_address, r.counterparty_name, r.method_id, r.method_name,
+      r.legs, r.fee_wei, r.confidence,
+      r.usd_value, r.usd_fee, r.usd_basis,
+      r.derived_category, r.override_category, r.override_note, r.is_overridden,
+      r.wallet_address, r.wallet_label,
+      r.exchange_account_id, r.exchange, r.account_name, r.record_type,
+      r.base_asset, r.base_amount, r.quote_asset, r.quote_amount,
+      r.fee_asset, r.fee_amount, r.external_id, r.record_address, r.record_source,
+      r.exchange_match,
+      r.rejected_verdict, r.rejected_record_id, r.rejected_counter_record_id,
+      r.match_category, r.match_account_id,
+      fold.wallets AS self_match,
+      -- The folded wallets stay addressable by the wallet filter. Without this
+      -- a self-transfer would vanish when narrowed to the RECEIVING wallet --
+      -- the filter dropping the event instead of narrowing to it, which is the
+      -- same failure the exchange fold's second filter arm exists to prevent.
+      fold.wallet_ids AS fold_wallet_ids
+    FROM (
+      SELECT q.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY q.chain_id, q.tx_hash
+          ORDER BY q.has_out_leg DESC, q.fee_wei DESC NULLS LAST, q.wallet_id
+        ) AS rn,
+        BOOL_OR(q.needs_review) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_needs_review
+      FROM onchain_raw q
+    ) r
+    LEFT JOIN LATERAL (
+      SELECT
+        jsonb_agg(jsonb_build_object(
+          'wallet_id', f.wallet_id,
+          'wallet_label', f.wallet_label,
+          'wallet_address', f.wallet_address,
+          'category', f.category,
+          'needs_review', f.needs_review,
+          'legs', f.legs
+        ) ORDER BY f.wallet_id) AS wallets,
+        array_agg(f.wallet_id ORDER BY f.wallet_id) AS wallet_ids
+      FROM onchain_raw f
+      WHERE f.chain_id = r.chain_id
+        AND f.tx_hash = r.tx_hash
+        AND f.row_id <> r.row_id
+    ) fold ON TRUE
+    WHERE r.rn = 1
   )`;
 
 // What counts as "the venue quoted this in dollars". Stablecoins are included
@@ -312,26 +413,51 @@ const EXCHANGE_CTE = `
       er.external_id::text AS external_id,
       er.address::text AS record_address,
       er.source::text AS record_source,
-      CASE WHEN cem.id IS NULL THEN NULL ELSE ${matchJson('cem', 'cer', 'cea', 'cmv')} END AS exchange_match,
-      NULL::text AS rejected_verdict,
-      NULL::bigint AS rejected_record_id,
+      CASE WHEN cer.id IS NULL THEN NULL ELSE ${matchJson('cem', 'cer', 'cea', 'cmv')} END AS exchange_match,
+      -- The venue side needs the rejected-verdict handle just as much as the
+      -- on-chain side does, and for the same reason: rejecting a pairing
+      -- DELETES the exchange_matches row, the selection pass drops the
+      -- candidate, and the pair splits into two rows carrying no match object.
+      -- Hardcoding NULL here made rejecting a venue-to-venue pair permanent --
+      -- the Undo button never rendered and no other screen reaches the clear
+      -- endpoint. Matched on EITHER side of the pair, because both halves come
+      -- back as their own rows and either one should be able to undo it.
+      crv.verdict::text AS rejected_verdict,
+      crv.exchange_record_id AS rejected_record_id,
+      crv.counter_record_id AS rejected_counter_record_id,
       ${recordCategory('cer')}::text AS match_category,
-      cea.id AS match_account_id
+      cea.id AS match_account_id,
+      NULL::jsonb AS self_match,
+      NULL::int[] AS fold_wallet_ids
     FROM exchange_records er
     JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
     -- The venue-to-venue pair this record is the primary of, if any.
     LEFT JOIN exchange_matches cem
       ON cem.exchange_record_id = er.id AND cem.counter_record_id IS NOT NULL
     LEFT JOIN exchange_records cer ON cer.id = cem.counter_record_id
-    LEFT JOIN exchange_accounts cea ON cea.id = cer.exchange_account_id
+      AND EXISTS (SELECT 1 FROM exchange_accounts oa
+                  WHERE oa.id = cer.exchange_account_id AND oa.user_id = $1)
+    LEFT JOIN exchange_accounts cea ON cea.id = cer.exchange_account_id AND cea.user_id = $1
     LEFT JOIN exchange_match_verdicts cmv
       ON cmv.exchange_record_id = cem.exchange_record_id
      AND cmv.counter_record_id = cem.counter_record_id
+    LEFT JOIN LATERAL (
+      SELECT v.verdict, v.exchange_record_id, v.counter_record_id
+      FROM exchange_match_verdicts v
+      JOIN exchange_records vr ON vr.id = v.exchange_record_id
+      JOIN exchange_accounts vea ON vea.id = vr.exchange_account_id
+      WHERE (v.exchange_record_id = er.id OR v.counter_record_id = er.id)
+        AND v.counter_record_id IS NOT NULL
+        AND v.verdict = 'rejected'
+        AND vea.user_id = $1
+      ORDER BY v.exchange_record_id, v.counter_record_id
+      LIMIT 1
+    ) crv ON TRUE
     WHERE ea.user_id = $1
       AND NOT EXISTS (SELECT 1 FROM matched_records mm WHERE mm.record_id = er.id)
   )`;
 
-const LEDGER_CTE = `WITH ${MATCHED_CTE},\n${ONCHAIN_CTE},\n${EXCHANGE_CTE}`;
+const LEDGER_CTE = `WITH ${MATCHED_CTE},\n${ONCHAIN_RAW_CTE},\n${ONCHAIN_CTE},\n${EXCHANGE_CTE}`;
 
 const UNION_SOURCE = '(SELECT * FROM onchain UNION ALL SELECT * FROM exch) r';
 
@@ -524,11 +650,24 @@ function toLedgerRow(row) {
     exchange_match: row.exchange_match
       ? { ...row.exchange_match, legs: matchLegs(row.exchange_match) }
       : null,
-    // A pairing this transaction was rejected against. There is no match row
-    // to hang it on (rejecting deletes it), so it rides separately -- it is
-    // what makes "Not the same" undoable rather than permanent.
+    // A pairing this row was rejected against. There is no match row to hang it
+    // on (rejecting deletes it), so it rides separately -- it is what makes
+    // "Not the same" undoable rather than permanent. `counter_record_id` says
+    // which of 041's two shapes it was, because clearing the verdict has to be
+    // addressed in the same shape it was stored in.
     rejected_match: row.rejected_verdict
-      ? { exchange_record_id: Number(row.rejected_record_id) }
+      ? {
+        exchange_record_id: Number(row.rejected_record_id),
+        counter_record_id: row.rejected_counter_record_id != null
+          ? Number(row.rejected_counter_record_id)
+          : null,
+      }
+      : null,
+    // The other wallet(s) of this same transaction, folded in. 038 writes one
+    // eth_activity row per WALLET, so a transfer between two tracked wallets is
+    // two rows for one movement; the sending side hosts and the rest ride here.
+    self_match: Array.isArray(row.self_match)
+      ? row.self_match.map((half) => ({ ...half, legs: withBaseUnits(half.legs) }))
       : null,
   };
 }
@@ -560,10 +699,13 @@ function buildFilters({ category, needsReview, source, walletId, exchangeAccount
     clauses.push(`r.needs_review = $${params.length}`);
   }
   // A wallet narrows to that wallet's transactions, folded halves included --
-  // they belong to the transaction, so they belong to its wallet.
+  // they belong to the transaction, so they belong to its wallet. The second
+  // arm is the wallet-to-wallet collapse: the RECEIVING wallet's row was folded
+  // into the sender's, and testing only the host would make the event vanish
+  // from the receiver's view rather than narrow to it.
   if (walletId != null) {
     params.push(walletId);
-    clauses.push(`r.wallet_id = $${params.length}`);
+    clauses.push(`(r.wallet_id = $${params.length} OR $${params.length} = ANY(r.fold_wallet_ids))`);
   }
   if (exchangeAccountId != null) {
     params.push(exchangeAccountId);
@@ -600,7 +742,22 @@ class CryptoLedger {
       params
     );
 
-    const total = result.rows.length ? Number(result.rows[0].total_count) : 0;
+    // COUNT(*) OVER() rides on the returned rows, so an EMPTY page carries no
+    // count at all -- and an offset past the end reported total 0 beside a
+    // header reading "Showing 0 of 0" for a ledger with three rows in it. The
+    // window stays the fast path (one query for every page that has rows); an
+    // empty page pays for one scalar count rather than lying.
+    let total = result.rows.length ? Number(result.rows[0].total_count) : 0;
+    if (!result.rows.length) {
+      const counted = await pool.query(
+        `${LEDGER_CTE}
+         SELECT COUNT(*)::int AS total_count
+         FROM ${UNION_SOURCE}
+         ${where}`,
+        params.slice(0, params.length - 2)
+      );
+      total = Number(counted.rows[0]?.total_count) || 0;
+    }
     return { rows: result.rows.map(toLedgerRow), total };
   }
 

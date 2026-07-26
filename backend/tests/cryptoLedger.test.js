@@ -195,7 +195,13 @@ const request = require('supertest');
 const app = require('../src/server');
 const CryptoLedger = require('../src/models/CryptoLedger');
 
-const lastLedgerQuery = () => queries.filter((q) => /UNION ALL SELECT \* FROM exch/.test(q.sql)).at(-1);
+// The FEED query, not the scalar count findForUser falls back to when a page
+// comes back empty (COUNT(*) OVER() rides on returned rows, so an out-of-range
+// offset has no count to read). Both run the same CTE; only the feed is the one
+// these assertions are about.
+const lastLedgerQuery = () => queries
+  .filter((q) => /UNION ALL SELECT \* FROM exch/.test(q.sql) && !/COUNT\(\*\)::int AS total_count/.test(q.sql))
+  .at(-1);
 
 beforeEach(() => {
   queries.length = 0;
@@ -353,6 +359,48 @@ test('an unmatched row has NO match category, so one value cannot widen the feed
   const { sql } = lastLedgerQuery();
   assert.match(sql, /CASE WHEN mer\.id IS NULL THEN NULL ELSE/);
   assert.match(sql, /CASE WHEN cer\.id IS NULL THEN NULL ELSE/);
+});
+
+// 038 writes one eth_activity row per WALLET, so a transfer between two of the
+// user's own tracked wallets is two rows for ONE movement -- and the feed
+// rendered both, doubling the dollars and the event count.
+test('a transaction two tracked wallets both saw collapses to one event', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  // (chain_id, tx_hash), never tx_hash alone: a cross-chain replay genuinely
+  // shares a hash and is two real movements.
+  assert.match(sql, /ROW_NUMBER\(\) OVER \( PARTITION BY q\.chain_id, q\.tx_hash/);
+  assert.match(sql, /BOOL_OR\(q\.needs_review\) OVER \(PARTITION BY q\.chain_id, q\.tx_hash\)/);
+  // The SENDING side hosts, so the surviving legs, gas and dollars are the
+  // mover's rather than an arbitrary one of the two.
+  assert.match(sql, /ORDER BY q\.has_out_leg DESC/);
+  assert.match(sql, /WHERE r\.rn = 1/);
+});
+
+// A REJECTED venue-to-venue pairing has no exchange_matches row left to hang an
+// undo on, and the exchange branch used to hardcode NULL here -- which made
+// rejecting one permanent, with no screen anywhere able to take it back.
+test('a rejected venue pair stays addressable from either half', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  assert.match(sql, /WHERE \(v\.exchange_record_id = er\.id OR v\.counter_record_id = er\.id\)/);
+  assert.match(sql, /crv\.verdict::text AS rejected_verdict/);
+  assert.match(sql, /crv\.counter_record_id AS rejected_counter_record_id/);
+});
+
+// Nothing in the schema forbids an exchange_matches row whose two sides belong
+// to different users. The matcher never writes one; the ledger must not depend
+// on that, because an unscoped fold join renders another user's record inline.
+test('every fold join is scoped to the caller, not just the root reads', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  assert.match(sql, /LEFT JOIN exchange_accounts mea ON mea\.id = mer\.exchange_account_id AND mea\.user_id = \$1/);
+  assert.match(sql, /LEFT JOIN exchange_accounts cea ON cea\.id = cer\.exchange_account_id AND cea\.user_id = \$1/);
+  assert.match(sql, /oa\.id = mer\.exchange_account_id AND oa\.user_id = \$1/);
+  assert.match(sql, /oa\.id = cer\.exchange_account_id AND oa\.user_id = \$1/);
+  // The suppression side too: hiding a record because SOMEBODY's transaction
+  // folded it would delete another user's row from their own feed.
+  assert.match(sql, /JOIN exchange_accounts mra ON mra\.id = mr\.exchange_account_id WHERE w\.user_id = \$1 AND mra\.user_id = \$1/);
 });
 
 // The dollars are 043's, denormalized onto the row by the valuation pass. A
@@ -545,6 +593,17 @@ test('a name that opens with a formula character cannot execute on open', async 
   // Numeric columns stay untouched, or a fee stops being a number to a
   // spreadsheet -- which is the entire reason the file is a CSV.
   assert.match(line, /,0\.00084,ETH,/);
+});
+
+// fee_asset is an ASSET CODE off an imported CSV -- attacker-authored in
+// exactly the way a token symbol is -- and it is the one text column that used
+// to skip the guard while sitting in its own cell, where nothing precedes it.
+test('a hostile fee asset code cannot open its cell with a formula either', async () => {
+  ledgerRows = [exchangeRow({ fee_asset: '=cmd|\'/c calc\'!A1', fee_amount: '4.76' })];
+  const response = await request(app).get('/api/crypto/ledger/export');
+  const [, line] = response.text.trim().split('\n');
+  assert.ok(!/,"?=cmd/.test(line), 'a fee asset must not open a cell with a formula');
+  assert.match(line, /'=cmd/);
 });
 
 // A leg cell always OPENS with its amount, so it is safe as written; the guard

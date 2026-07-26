@@ -403,6 +403,153 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('a second user sees none of it', other.total === 0);
   ok('and their summary is zero', (await CryptoLedger.summaryForUser(2)).total === 0);
 
+  // COUNT(*) OVER() rides on the RETURNED rows, so a page past the end carries
+  // no count at all and the header read "Showing 0 of 0" for a ledger with six
+  // rows in it -- a pagination total that lies about the size of the feed.
+  const beyond = await CryptoLedger.findForUser(1, { limit: 3, offset: 99 });
+  ok('an out-of-range page still reports the real total, not 0',
+    beyond.rows.length === 0 && beyond.total === 6);
+  const beyondFiltered = await CryptoLedger.findForUser(1,
+    { source: 'exchange', limit: 3, offset: 99 });
+  ok('and the empty-page count honours the filters', beyondFiltered.total === 4);
+
+  // --- one transaction, one ledger event ------------------------------------
+  //
+  // 038's UNIQUE is per (wallet, chain, tx_hash), so a transfer between two of
+  // the user's OWN tracked wallets is TWO eth_activity rows for ONE movement.
+  // Rendering both doubled the dollars and the event count.
+  const wallet2 = await pool.query(
+    "INSERT INTO eth_wallets (user_id, address, label) VALUES (1, $1, 'Second') RETURNING id",
+    [addr('b')]
+  );
+  const wallet2Id = wallet2.rows[0].id;
+  const SELF_TX = tx('7');
+  await pool.query(
+    `INSERT INTO eth_activity (wallet_id, chain_id, tx_hash, block_number, block_time, category,
+       counterparty_address, legs, fee_wei, needs_review, usd_value, usd_basis)
+     VALUES
+       ($1, 1, $3, 19100000, '2026-04-01 10:00', 'self_transfer', $5,
+        '[{"asset":"ETH","direction":"out","amount":"3"}]'::jsonb, '420000000000000', false, 6000.00, 'exact'),
+       ($2, 1, $3, 19100000, '2026-04-01 10:00', 'self_transfer', $4,
+        '[{"asset":"ETH","direction":"in","amount":"3"}]'::jsonb, 0, true, 6000.00, 'exact')`,
+    [walletId, wallet2Id, SELF_TX, addr('a'), addr('b')]
+  );
+
+  const collapsed = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
+  const selfRows = collapsed.rows.filter((r) => r.tx_hash === SELF_TX);
+  ok('a transfer between two tracked wallets is ONE ledger event', selfRows.length === 1);
+  ok('hosted by the SENDING wallet, so the surviving legs and gas are the mover\'s',
+    selfRows[0] && selfRows[0].wallet_id === walletId
+      && selfRows[0].legs.length === 1 && selfRows[0].legs[0].direction === 'out');
+  // The bug in numbers: $6,000 moved, and the feed said $12,000.
+  ok('its dollars are counted ONCE, not doubled',
+    selfRows.reduce((sum, r) => sum + Number(r.usd_value || 0), 0) === 6000);
+  ok('the receiving side is folded in rather than dropped',
+    selfRows[0]?.self_match?.length === 1
+      && selfRows[0].self_match[0].wallet_id === wallet2Id
+      && selfRows[0].self_match[0].legs[0].direction === 'in');
+  // Same rule as the exchange fold: a flagged half that vanishes into an
+  // explained host leaves the review queue while still being unexplained.
+  ok('a flag on the folded half raises the collapsed row', selfRows[0]?.needs_review === true);
+  // ...and the filter must NARROW to the event, never drop it: the receiving
+  // wallet's own row is the one that got folded away.
+  const byWallet2 = await CryptoLedger.findForUser(1, { walletId: wallet2Id, limit: 100, offset: 0 });
+  ok('the receiving wallet still finds its own transfer',
+    byWallet2.rows.some((r) => r.tx_hash === SELF_TX));
+
+  const collapsedSummary = await CryptoLedger.summaryForUser(1);
+  ok('the summary counts the collapsed transfer once, not twice',
+    collapsedSummary.total === 7 && collapsedSummary.onchain_count === 4);
+  const exportRows = await CryptoLedger.findAllForUser(1, { limit: 1000 });
+  ok('and the CSV export emits one summable line for it',
+    exportRows.filter((r) => r.tx_hash === SELF_TX).length === 1);
+
+  // A cross-chain replay -- the same account, nonce and calldata submitted on
+  // two chains -- genuinely shares a hash and is two real movements. This is
+  // exactly why the partition is (chain_id, tx_hash) and never tx_hash alone.
+  const REPLAY_TX = tx('8');
+  await pool.query(
+    `INSERT INTO eth_activity (wallet_id, chain_id, tx_hash, block_number, block_time, category,
+       counterparty_address, legs, fee_wei, needs_review, usd_value, usd_basis)
+     VALUES
+       ($1, 1,     $2, 19200000, '2026-04-02 10:00', 'send', $3,
+        '[{"asset":"ETH","direction":"out","amount":"0.1"}]'::jsonb, '100000000000000', false, 200.00, 'exact'),
+       ($1, 42161, $2, 310000000, '2026-04-02 10:05', 'send', $3,
+        '[{"asset":"ETH","direction":"out","amount":"0.1"}]'::jsonb, '100000000000000', false, 200.00, 'exact')`,
+    [walletId, REPLAY_TX, addr('c')]
+  );
+  const replayed = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
+  ok('a cross-chain replay stays TWO events, because the hash is not the key',
+    replayed.rows.filter((r) => r.tx_hash === REPLAY_TX).length === 2);
+
+  // A wallet sending to ITSELF is one activity row already; the collapse must
+  // not invent a fold for it.
+  const SOLO_TX = tx('9');
+  await pool.query(
+    `INSERT INTO eth_activity (wallet_id, chain_id, tx_hash, block_number, block_time, category,
+       counterparty_address, legs, fee_wei, needs_review, usd_value, usd_basis)
+     VALUES ($1, 1, $2, 19300000, '2026-04-03 10:00', 'self_transfer', $3,
+       '[]'::jsonb, '80000000000000', false, NULL, 'not_applicable')`,
+    [walletId, SOLO_TX, addr('a')]
+  );
+  const soloRows = (await CryptoLedger.findForUser(1, { limit: 100, offset: 0 }))
+    .rows.filter((r) => r.tx_hash === SOLO_TX);
+  ok('a single-wallet self-send is untouched by the collapse',
+    soloRows.length === 1 && soloRows[0].self_match === null);
+
+  // --- rejecting a VENUE pair stays undoable --------------------------------
+  //
+  // Rejecting deletes the exchange_matches row, so the pair splits into two
+  // rows carrying no match object. The exchange branch used to hardcode
+  // rejected_verdict NULL, which made the rejection permanent: the Undo button
+  // never rendered and no other screen reaches the clear endpoint.
+  await pool.query('DELETE FROM exchange_matches WHERE counter_record_id IS NOT NULL');
+  await pool.query(
+    `INSERT INTO exchange_match_verdicts (exchange_record_id, counter_record_id, verdict)
+     VALUES ($1, $2, 'rejected')`,
+    [pairId('CB-WD-1'), pairId('KR-DEP-2')]
+  );
+  const venueSplit = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
+  const rejectedPrimary = venueSplit.rows.find((r) => r.external_id === 'CB-WD-1');
+  const rejectedCounter = venueSplit.rows.find((r) => r.external_id === 'KR-DEP-2');
+  ok('rejecting a venue pair splits it back into two rows',
+    rejectedPrimary && rejectedCounter && rejectedPrimary.exchange_match === null);
+  // Both halves, because either one is where the user might go to undo it.
+  ok('and BOTH halves carry the handle that undoes it',
+    String(rejectedPrimary?.rejected_match?.exchange_record_id) === String(pairId('CB-WD-1'))
+      && String(rejectedPrimary?.rejected_match?.counter_record_id) === String(pairId('KR-DEP-2'))
+      && String(rejectedCounter?.rejected_match?.exchange_record_id) === String(pairId('CB-WD-1'))
+      && String(rejectedCounter?.rejected_match?.counter_record_id) === String(pairId('KR-DEP-2')));
+  await pool.query('DELETE FROM exchange_match_verdicts WHERE counter_record_id IS NOT NULL');
+
+  // --- a cross-user match row cannot leak ------------------------------------
+  //
+  // Nothing in the schema forbids an exchange_matches row whose two sides
+  // belong to different users. The matcher never writes one; the ledger must
+  // not depend on that.
+  const foreignAccount = await pool.query(
+    "INSERT INTO exchange_accounts (user_id, name, exchange) VALUES (2, 'Their Kraken', 'kraken') RETURNING id"
+  );
+  const foreignRecord = await pool.query(
+    `INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at, base_asset,
+       base_amount, external_id, needs_review, source)
+     VALUES ($1, 'deposit', '2026-02-20 18:45', 'ETH', 1.25, 'THEIRS-1', false, 'api')
+     RETURNING id`,
+    [foreignAccount.rows[0].id]
+  );
+  await pool.query('DELETE FROM exchange_matches WHERE activity_id IS NOT NULL');
+  await pool.query(
+    `INSERT INTO exchange_matches (exchange_record_id, activity_id, match_method, confidence)
+     VALUES ($1, $2, 'tx_hash', 'high')`,
+    [foreignRecord.rows[0].id, rebuiltIds.get(DEPOSIT_TX)]
+  );
+  const leaked = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
+  ok('a cross-user match row folds NOTHING into the owner\'s feed',
+    leaked.rows.every((r) => r.exchange_match?.external_id !== 'THEIRS-1'));
+  ok('and the foreign record is not suppressed from ITS owner\'s feed',
+    (await CryptoLedger.findForUser(2, { limit: 100, offset: 0 }))
+      .rows.some((r) => r.external_id === 'THEIRS-1'));
+
   await pool.end();
 
   console.log('\n--- checks ---');

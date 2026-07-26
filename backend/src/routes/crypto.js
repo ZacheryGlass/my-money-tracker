@@ -205,7 +205,11 @@ function exportRow(row) {
     assets_in: legsText(legs, 'in'),
     assets_out: legsText(legs, 'out'),
     fee_amount: row.fee_amount ?? '',
-    fee_asset: row.fee_amount ? (row.fee_asset || '') : '',
+    // Deformulated like every other text cell. A venue row's fee_asset comes
+    // straight off an imported CSV, so it is attacker-authored in exactly the
+    // same way a token symbol is -- "=cmd|'/c calc'!A1" in a Kraken export's
+    // asset column landed here unprefixed.
+    fee_asset: row.fee_amount ? deformula(row.fee_asset || '') : '',
     // Left EMPTY when unpriced rather than written as 0: this column gets
     // summed, and a fabricated zero is indistinguishable from a real one. The
     // basis column beside it is what tells the two apart.

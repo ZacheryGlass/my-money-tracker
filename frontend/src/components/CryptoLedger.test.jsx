@@ -531,6 +531,73 @@ describe('CryptoLedger', () => {
     });
   });
 
+  it('keeps a rejected VENUE pair undoable, addressed in the shape it was stored', async () => {
+    // The exchange branch used to hardcode rejected_verdict NULL, so rejecting
+    // a venue-to-venue pairing was permanent: the pair split into two rows,
+    // neither carried rejected_match, the Undo button never rendered, and no
+    // other screen reaches the clear endpoint. The verdict is keyed on BOTH
+    // record ids here, never on (wallet, chain, tx_hash) -- there is no wallet.
+    setLedger([exchange({
+      exchange_match: null,
+      rejected_match: { exchange_record_id: 55, counter_record_id: 71 },
+    })]);
+    apiMocks.exchanges.clearMatchVerdict.mockResolvedValue({ message: 'removed' });
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USD'))[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /undo rejection/i }))[0]);
+
+    await vi.waitFor(() => {
+      expect(apiMocks.exchanges.clearMatchVerdict).toHaveBeenCalledWith({
+        exchangeRecordId: 55, counterRecordId: 71,
+      });
+    });
+  });
+
+  it('mounts the row detail once, not once per breakpoint', async () => {
+    // DataTable keeps the desktop table and the mobile list both in the DOM and
+    // hides one with CSS. Rendering the panel from both paths fetched the raw
+    // legs twice for one expand and gave the correction form two copies of its
+    // state, drifting apart under the same aria labels.
+    setLedger([onchain()]);
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USDC'))[0]);
+
+    await vi.waitFor(() => expect(apiMocks.eth.getTransfers).toHaveBeenCalled());
+    expect(apiMocks.eth.getTransfers).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByLabelText('Set category')).toHaveLength(1);
+  });
+
+  it('refetches the window the user has loaded, not just page one', async () => {
+    // Reviewing is the core loop of this screen. Refetching offset 0 / limit
+    // 100 after every action threw away every Load More page (and closed the
+    // open detail row with them), which makes a draining queue look like it is
+    // refilling itself.
+    const page = (from, count) => Array.from({ length: count }, (unused, i) => onchain({
+      id: `onchain:1:0x${from + i}:1`,
+      row_id: from + i,
+      tx_hash: TX,
+    }));
+    apiMocks.crypto.getLedger.mockImplementation(async ({ offset }) => (
+      offset ? { data: page(100, 50), pagination: { total: 150 } }
+        : { data: page(0, 100), pagination: { total: 150 } }
+    ));
+    apiMocks.eth.setActivityOverride.mockResolvedValue({ override: {} });
+
+    render(<CryptoLedger />);
+    fireEvent.click(await screen.findByRole('button', { name: /load more/i }));
+    await vi.waitFor(() => expect(screen.getByText('Showing 150 of 150')).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByText('0.5 ETH → 1,832.4 USDC')[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /save correction/i }))[0]);
+
+    await vi.waitFor(() => {
+      expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 150, offset: 0 })
+      );
+    });
+  });
+
   it('does not offer to resolve a record that is already clear', async () => {
     // On a folded pair the row's needs_review can belong to the OTHER half.
     // A button wired to the ORed flag resolves a record that is already clear
