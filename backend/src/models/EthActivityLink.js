@@ -73,12 +73,24 @@ class EthActivityLink {
     const matched = `EXISTS (SELECT 1 FROM eth_activity_links l
                              WHERE l.out_activity_id = a.id OR l.in_activity_id = a.id)`;
 
+    // The RESOLVED category, matching every other reader (EthActivity's
+    // RESOLVED_COLUMNS) and the matcher that produced the links. A row the user
+    // overrode away from bridge_out is no longer a bridge leg and this pass must
+    // not touch its review state at all -- an override IS a review, and the
+    // readers already report it as such. Written as a correlated subquery rather
+    // than a LEFT JOIN in the FROM list because the target table of an UPDATE
+    // cannot be joined against there.
+    const resolvedCategory = `COALESCE(
+      (SELECT o.category FROM eth_activity_overrides o
+        WHERE o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash),
+      a.category)`;
+
     await pool.query(
       `UPDATE eth_activity a
        SET needs_review = FALSE, review_reason = NULL, confidence = 'high'
        FROM eth_wallets w
        WHERE a.wallet_id = w.id AND w.user_id = $1
-         AND a.category IN ('bridge_out', 'bridge_in')
+         AND ${resolvedCategory} IN ('bridge_out', 'bridge_in')
          AND ${matched}`,
       [userId]
     );
@@ -87,7 +99,7 @@ class EthActivityLink {
        SET needs_review = TRUE, review_reason = $2, confidence = 'medium'
        FROM eth_wallets w
        WHERE a.wallet_id = w.id AND w.user_id = $1
-         AND a.category IN ('bridge_out', 'bridge_in')
+         AND ${resolvedCategory} IN ('bridge_out', 'bridge_in')
          AND NOT ${matched}`,
       [userId, reviewReason]
     );

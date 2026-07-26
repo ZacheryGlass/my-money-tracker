@@ -43,6 +43,7 @@ const db = {
   labels: [],
   activity: [],
   links: [],
+  overrides: [],
 };
 let nextActivityId = 1;
 
@@ -72,6 +73,15 @@ function resolvedLabels(userId) {
 }
 
 const isLinked = (id) => db.links.some((l) => l.out_activity_id === id || l.in_activity_id === id);
+
+// COALESCE(o.category, a.category), joined on the full (wallet, chain, tx_hash)
+// key -- the same resolution every other reader of eth_activity performs.
+function resolvedCategory(row) {
+  const override = db.overrides.find((o) => o.wallet_id === row.wallet_id
+    && o.chain_id === row.chain_id && o.tx_hash === row.tx_hash);
+  return override ? override.category : row.category;
+}
+const isBridgeLeg = (row) => ['bridge_out', 'bridge_in'].includes(resolvedCategory(row));
 
 function fakeQuery(text, params = []) {
   const sql = String(text).replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
@@ -111,10 +121,11 @@ function fakeQuery(text, params = []) {
     }
     return { rows: [], rowCount: inserted };
   }
-  if (/^SELECT a\.id, a\.chain_id, a\.block_time, a\.category, a\.legs FROM eth_activity a/.test(sql)) {
+  if (/^SELECT a\.id, a\.chain_id, a\.block_time, COALESCE\(o\.category, a\.category\) AS category, a\.legs FROM eth_activity a/.test(sql)) {
+    assert.match(sql, /LEFT JOIN eth_activity_overrides o ON o\.wallet_id = a\.wallet_id AND o\.chain_id = a\.chain_id AND o\.tx_hash = a\.tx_hash/);
     const rows = db.activity
-      .filter((r) => r.category === 'bridge_out' || r.category === 'bridge_in')
-      .slice()
+      .filter(isBridgeLeg)
+      .map((row) => ({ ...row, category: resolvedCategory(row) }))
       .sort((a, b) => (new Date(a.block_time) - new Date(b.block_time))
         || (a.chain_id - b.chain_id) || (a.id - b.id));
     return { rows };
@@ -142,18 +153,20 @@ function fakeQuery(text, params = []) {
     return { rows: [], rowCount: inserted };
   }
   if (/^UPDATE eth_activity a SET needs_review = FALSE/.test(sql)) {
+    assert.match(sql, /COALESCE\( \(SELECT o\.category FROM eth_activity_overrides o/);
     let n = 0;
     for (const row of db.activity) {
-      if (!['bridge_out', 'bridge_in'].includes(row.category) || !isLinked(row.id)) continue;
+      if (!isBridgeLeg(row) || !isLinked(row.id)) continue;
       Object.assign(row, { needs_review: false, review_reason: null, confidence: 'high' });
       n++;
     }
     return { rows: [], rowCount: n };
   }
   if (/^UPDATE eth_activity a SET needs_review = TRUE/.test(sql)) {
+    assert.match(sql, /COALESCE\( \(SELECT o\.category FROM eth_activity_overrides o/);
     let n = 0;
     for (const row of db.activity) {
-      if (!['bridge_out', 'bridge_in'].includes(row.category) || isLinked(row.id)) continue;
+      if (!isBridgeLeg(row) || isLinked(row.id)) continue;
       Object.assign(row, { needs_review: true, review_reason: params[1], confidence: 'medium' });
       n++;
     }
@@ -237,6 +250,7 @@ beforeEach(() => {
   db.labels = [];
   db.activity = [];
   db.links = [];
+  db.overrides = [];
   nextActivityId = 1;
 });
 
@@ -521,6 +535,26 @@ test('different assets never pair, but the two spellings of one asset do', () =>
   assert.equal(bridgeAsset('WBTC'), 'WBTC');
 });
 
+test('the two normalizations COMPOSE, in the order suffix-then-wrapper', () => {
+  // A bridged wrapped ether is spelled WETH.e, so both rules apply to one
+  // symbol. Testing WETH before stripping .e leaves it in a bucket of its own
+  // that pairs with neither ETH nor WETH, and its deposit never matches.
+  assert.equal(bridgeAsset('WETH.e'), 'ETH');
+  assert.equal(bridgeAsset('weth.e'), 'ETH');
+  // Both single-rule cases still hold either way round; only the composition
+  // distinguishes the orders.
+  assert.equal(bridgeAsset('WETH'), bridgeAsset('WETH.e'));
+  assert.equal(bridgeAsset('ETH'), bridgeAsset('WETH.e'));
+
+  assert.equal(pairBridgeLegs(
+    [candidate(1, 1, bridgeAsset('WETH.e'), '1', T0)],
+    [candidate(2, 42161, bridgeAsset('ETH'), '1', T0 + HOUR)]
+  ).length, 1);
+
+  // A symbol that is nothing BUT the suffix normalizes to nothing, not to '.E'.
+  assert.equal(bridgeAsset('.e'), null);
+});
+
 // --- the stateful matching pass --------------------------------------------
 
 async function seedBridgeActivity(rows) {
@@ -624,6 +658,138 @@ test('a multi-asset bridge transaction is left unpaired rather than guessed', as
   const result = await EthActivityService.matchBridgeTransfersForUser(OWNER_ID);
   assert.equal(result.matched, 0);
   assert.equal(db.activity[0].needs_review, true);
+});
+
+test('two DIFFERENT unnamed ERC-20s are never fused into one movement', async () => {
+  // `asset` is a display string and 'TOKEN' is the placeholder for an ERC-20 the
+  // feed never named -- so without a readability flag, two unrelated unnamed
+  // tokens of the same size compare equal and pair, un-flagging both sides of a
+  // movement that never happened. A leg we cannot read is a leg we do not pair.
+  const UNNAMED_A = '0xaaa0000000000000000000000000000000000001';
+  const UNNAMED_B = '0xbbb0000000000000000000000000000000000002';
+  const unnamed = (contract, overrides) => leg({
+    transfer_type: 'token', token_standard: 'erc20', token_decimals: 18,
+    token_contract: contract, token_symbol: null, value_wei: '1000000000000000000',
+    ...overrides,
+  });
+
+  const out = only([unnamed(UNNAMED_A, { to_address: BRIDGE })], bridging());
+  const back = only([unnamed(UNNAMED_B, {
+    from_address: BRIDGE_L2, to_address: WALLET, chain_id: 42161, tx_hash: TX2,
+  })], bridging());
+
+  assert.equal(out.category, 'bridge_out');
+  assert.equal(back.category, 'bridge_in');
+  // The placeholder is still what renders; the flag is what says not to trust it.
+  assert.equal(out.legs[0].asset, 'TOKEN');
+  assert.equal(out.legs[0].symbol_known, false);
+  assert.equal(back.legs[0].symbol_known, false);
+
+  await seedBridgeActivity([
+    { chain_id: 1, tx_hash: TX, category: 'bridge_out', block_time: '2026-03-01T00:00:00.000Z', legs: out.legs },
+    { chain_id: 42161, tx_hash: TX2, category: 'bridge_in', block_time: '2026-03-01T00:05:00.000Z', legs: back.legs },
+  ]);
+
+  const result = await EthActivityService.matchBridgeTransfersForUser(OWNER_ID);
+  assert.deepEqual(result, { matched: 0, unmatched: 2 });
+  assert.equal(db.links.length, 0);
+  for (const row of db.activity) assert.equal(row.needs_review, true);
+});
+
+test('a NAMED token leg carries no flag and pairs as before', async () => {
+  // The control for the test above: the refusal has to come from the missing
+  // symbol, not from tokens being unpairable in general.
+  const named = (overrides) => leg({
+    transfer_type: 'token', token_standard: 'erc20', token_decimals: 6,
+    token_contract: USDC, token_symbol: 'USDC', value_wei: '250000000', ...overrides,
+  });
+
+  const out = only([named({ to_address: BRIDGE })], bridging());
+  const back = only([named({
+    from_address: BRIDGE_L2, to_address: WALLET, chain_id: 42161, tx_hash: TX2,
+    token_symbol: 'USDC.e',
+  })], bridging());
+
+  assert.equal(Object.hasOwn(out.legs[0], 'symbol_known'), false,
+    'the flag is emitted only when the symbol is a placeholder');
+
+  await seedBridgeActivity([
+    { chain_id: 1, tx_hash: TX, category: 'bridge_out', block_time: '2026-03-01T00:00:00.000Z', legs: out.legs },
+    { chain_id: 42161, tx_hash: TX2, category: 'bridge_in', block_time: '2026-03-01T00:05:00.000Z', legs: back.legs },
+  ]);
+
+  assert.deepEqual(await EthActivityService.matchBridgeTransfersForUser(OWNER_ID),
+    { matched: 1, unmatched: 0 });
+});
+
+test('a later leg naming the same contract upgrades the placeholder', () => {
+  // Same upgrade rule as decimals_known: the first NON-EMPTY symbol wins, so a
+  // multi-leg transaction where only one leg carried the symbol is readable.
+  const row = only([
+    leg({
+      transfer_type: 'token', token_standard: 'erc20', token_decimals: 18,
+      token_contract: USDC, token_symbol: null, to_address: BRIDGE,
+      value_wei: '3000000000000000000',
+    }),
+    leg({
+      transfer_type: 'token', token_standard: 'erc20', token_decimals: 18,
+      token_contract: USDC, token_symbol: 'DAI', from_address: BRIDGE, to_address: WALLET,
+      value_wei: '1000000000000000000',
+    }),
+  ], bridging());
+
+  assert.equal(row.legs.length, 1);
+  assert.equal(row.legs[0].asset, 'DAI');
+  assert.equal(Object.hasOwn(row.legs[0], 'symbol_known'), false);
+});
+
+test('an overridden bridge leg gets no link, and its far side goes back to flagged', async () => {
+  // Every other reader COALESCEs eth_activity_overrides over the derived
+  // category. A matcher that read the derived one would keep pairing a
+  // transaction the user explicitly re-categorized as a plain send -- and, worse
+  // than the stale link itself, would un-flag the far side on the strength of a
+  // verdict the user withdrew.
+  await seedBridgeActivity([
+    { chain_id: 1, tx_hash: TX, category: 'bridge_out', block_time: '2026-03-01T00:00:00.000Z', legs: ethLeg('2') },
+    { chain_id: 42161, tx_hash: TX2, category: 'bridge_in', block_time: '2026-03-01T00:11:00.000Z', legs: ethLegIn('2') },
+  ]);
+
+  // Baseline: derived on both sides, so they pair and both clear.
+  assert.deepEqual(await EthActivityService.matchBridgeTransfersForUser(OWNER_ID),
+    { matched: 1, unmatched: 0 });
+
+  // The user disagrees: that outflow was a send, not a bridge deposit.
+  db.overrides = [{ wallet_id: OWNED_WALLET_ID, chain_id: 1, tx_hash: TX, category: 'send' }];
+  const result = await EthActivityService.matchBridgeTransfersForUser(OWNER_ID);
+
+  assert.deepEqual(result, { matched: 0, unmatched: 1 });
+  assert.equal(db.links.length, 0);
+
+  const far = db.activity.find((r) => r.category === 'bridge_in');
+  assert.equal(far.needs_review, true, 'the far side must not stay silently completed');
+  assert.equal(far.review_reason, REVIEW_REASONS.unmatched_bridge);
+
+  // The overridden row is out of scope for this pass entirely: an override IS a
+  // review, and the readers already report it as such.
+  const overridden = db.activity.find((r) => r.tx_hash === TX);
+  assert.equal(overridden.needs_review, false);
+});
+
+test('a row overridden INTO a bridge leg becomes matchable', async () => {
+  // The same rule read the other way: resolution is COALESCE, not "ignore
+  // overrides that disagree".
+  await seedBridgeActivity([
+    { chain_id: 1, tx_hash: TX, category: 'send', block_time: '2026-03-01T00:00:00.000Z', legs: ethLeg('2') },
+    { chain_id: 42161, tx_hash: TX2, category: 'bridge_in', block_time: '2026-03-01T00:11:00.000Z', legs: ethLegIn('2') },
+  ]);
+
+  assert.deepEqual(await EthActivityService.matchBridgeTransfersForUser(OWNER_ID),
+    { matched: 0, unmatched: 1 });
+
+  db.overrides = [{ wallet_id: OWNED_WALLET_ID, chain_id: 1, tx_hash: TX, category: 'bridge_out' }];
+  assert.deepEqual(await EthActivityService.matchBridgeTransfersForUser(OWNER_ID),
+    { matched: 1, unmatched: 0 });
+  assert.deepEqual(db.links.map((l) => [l.out_activity_id, l.in_activity_id]), [[1, 2]]);
 });
 
 test('the matcher refuses to run unscoped', async () => {

@@ -1202,11 +1202,11 @@ const Settings = ({ user }) => {
       // The bridge pack (migration 044) is small, hand-verified against each
       // protocol's own deployment docs, and listed rather than hidden like the
       // 5k scraped rows -- a wrong bridge address has to be correctable, and
-      // you cannot correct what you cannot see. The kind pill is checked before
-      // the source pill for those rows so the verdict, not the provenance, is
-      // what shows.
+      // you cannot correct what you cannot see. Its rows show 'Bridge', the
+      // verdict, rather than their provenance: source 'builtin-bridge' always
+      // arrives with kind 'bridge', so this branch claims every one of them and
+      // there is no 'builtin-bridge' source pill to fall through to.
       : label.kind === 'bridge' ? 'Bridge'
-      : label.source === 'builtin-bridge' ? 'Built-in'
       : label.kind === 'own' ? 'Yours'
       : label.kind === 'external' ? 'Outside party'
       : null;

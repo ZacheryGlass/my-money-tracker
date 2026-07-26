@@ -73,6 +73,12 @@ function formatUnits(value, decimals) {
   return frac ? `${whole}.${frac}` : whole.toString();
 }
 
+// Did the feed actually give this leg a symbol, or is the display string about
+// to be a placeholder? Whitespace counts as absent: ' ' is not a symbol.
+function hasSymbol(transfer) {
+  return typeof transfer.token_symbol === 'string' && transfer.token_symbol.trim() !== '';
+}
+
 // The netting key. An NFT nets per (contract, token_id): two different ids from
 // one collection are two different things and must never cancel out.
 function assetOf(transfer) {
@@ -85,6 +91,7 @@ function assetOf(transfer) {
       token_standard: transfer.token_standard
         || (transfer.transfer_type === 'nft' ? 'erc721' : 'erc1155'),
       decimals: 0,
+      symbol_known: hasSymbol(transfer),
     };
   }
   if (transfer.transfer_type === 'token') {
@@ -100,11 +107,21 @@ function assetOf(transfer) {
       // amount to the wrong scale. The netting loop upgrades to the first
       // NON-NULL value it sees for the same contract.
       decimals_known: transfer.token_decimals != null,
+      // `asset` above is a DISPLAY string, and 'TOKEN' is a placeholder, not a
+      // symbol -- two different unnamed ERC-20s both render as 'TOKEN'. Anything
+      // that compares assets for IDENTITY (bridge pairing) must know the
+      // difference, so the leg says whether its symbol was ever read. Same
+      // upgrade rule as decimals_known: the first NON-EMPTY symbol for the
+      // contract wins.
+      symbol_known: hasSymbol(transfer),
     };
   }
   // native + internal are both ETH, and netting them together is the point: a
   // contract that refunds part of the ETH you sent is one net outflow.
-  return { key: 'ETH', asset: 'ETH', contract: null, token_id: null, token_standard: null, decimals: 18 };
+  return {
+    key: 'ETH', asset: 'ETH', contract: null, token_id: null, token_standard: null,
+    decimals: 18, symbol_known: true,
+  };
 }
 
 function counterpartyAddress(wallet, leg) {
@@ -346,6 +363,13 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, bridg
       entry.decimals = asset.decimals;
       entry.decimals_known = true;
     }
+    // Same rule for the symbol: a later leg of the same contract that DID carry
+    // one upgrades the placeholder, and only then does the asset become
+    // comparable for identity.
+    if (!entry.symbol_known && asset.symbol_known) {
+      entry.asset = asset.asset;
+      entry.symbol_known = true;
+    }
     // A leg from the wallet to itself nets to zero, which is correct.
     if (incoming) entry.raw += toBigInt(leg.value_wei);
     if (outgoing) entry.raw -= toBigInt(leg.value_wei);
@@ -362,6 +386,12 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, bridg
       direction: entry.raw > 0n ? 'in' : 'out',
       amount: formatUnits(entry.raw, entry.decimals),
       amount_raw: (entry.raw < 0n ? -entry.raw : entry.raw).toString(),
+      // Emitted ONLY when the symbol is a placeholder, so the common leg keeps
+      // its shape and the flag reads as an explicit "do not trust `asset` as an
+      // identity". Absent means known -- which is also how the rows written
+      // before this flag existed read, and eth_activity is derived wholesale, so
+      // they are rewritten at the next sync anyway.
+      ...(entry.symbol_known ? {} : { symbol_known: false }),
     }))
     // Deterministic: out before in, then asset, then id. A rebuild that
     // reordered legs would show as a diff on every sync.
@@ -472,11 +502,16 @@ function scaleAmount(text) {
 //            would leave every canonical ERC-20 deposit unpaired.
 // Deliberately short. Every entry here is an assertion that two symbols are the
 // same money, and a wrong one pairs two different assets.
+//
+// ORDER MATTERS, and it is the suffix first. The two rules COMPOSE -- a bridged
+// wrapped ether is spelled `WETH.e` -- so testing WETH before stripping the
+// suffix leaves `WETH.e` in a bucket of its own that pairs with neither ETH nor
+// WETH, and the deposit it belongs to stays unmatched forever.
 function bridgeAsset(symbol) {
   const upper = String(symbol ?? '').trim().toUpperCase();
-  if (!upper) return null;
-  if (upper === 'WETH') return 'ETH';
-  return upper.replace(/\.E$/, '');
+  const base = upper.replace(/\.E$/, '');
+  if (!base) return null;
+  return base === 'WETH' ? 'ETH' : base;
 }
 
 // One bridge activity row -> the single fungible movement it represents, or
@@ -490,6 +525,12 @@ function bridgeMovement(row, direction) {
   const [leg] = legs;
   if (leg.direction !== direction) return null;
   if (NFT_STANDARDS.has(leg.token_standard)) return null;
+  // A leg we cannot read is a leg we do not pair. `asset` is a display string
+  // and 'TOKEN' is what an ERC-20 whose symbol the feed never supplied renders
+  // as -- so two DIFFERENT unnamed tokens would compare equal here and fuse
+  // into one "movement", which is precisely the wrong-pairing failure this
+  // whole section is bounded against.
+  if (leg.symbol_known === false) return null;
   const asset = bridgeAsset(leg.asset);
   const amount = scaleAmount(leg.amount);
   if (!asset || amount === null || amount === 0n) return null;
@@ -609,11 +650,22 @@ class EthActivityService {
   static async matchBridgeTransfersForUser(userId) {
     if (!userId) throw new Error('EthActivityService.matchBridgeTransfersForUser requires a userId');
 
+    // The RESOLVED category, never the derived one. Every other reader
+    // COALESCEs eth_activity_overrides over eth_activity (EthActivity's
+    // RESOLVED_COLUMNS), and a matcher that skipped that would keep pairing a
+    // transaction the user has explicitly re-categorized as a plain send --
+    // handing it a link, and silently un-flagging the far side on the strength
+    // of a verdict the user withdrew. It reads the other way too: a row the user
+    // overrode INTO bridge_out becomes matchable, which is the same rule.
     const { rows } = await pool.query(
-      `SELECT a.id, a.chain_id, a.block_time, a.category, a.legs
+      `SELECT a.id, a.chain_id, a.block_time,
+              COALESCE(o.category, a.category) AS category, a.legs
        FROM eth_activity a
        JOIN eth_wallets w ON w.id = a.wallet_id
-       WHERE w.user_id = $1 AND a.category IN ('bridge_out', 'bridge_in')
+       LEFT JOIN eth_activity_overrides o
+         ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash
+       WHERE w.user_id = $1
+         AND COALESCE(o.category, a.category) IN ('bridge_out', 'bridge_in')
        -- Time first: block_number is a per-chain sequence (039) and means
        -- nothing across chains, and the greedy pairing below depends on both
        -- sides being in true chronological order. The rest of the key only
