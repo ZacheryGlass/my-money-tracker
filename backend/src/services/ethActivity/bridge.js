@@ -129,11 +129,11 @@ function pairBridgeLegs(outs, ins) {
   return links;
 }
 
+// scaleAmount stays module-private: bridgeMovement is its only caller.
 module.exports = {
   BRIDGE_MAX_FEE_BPS,
   BRIDGE_DEPOSIT_WINDOW_MS,
   BRIDGE_WITHDRAWAL_WINDOW_MS,
-  scaleAmount,
   bridgeAsset,
   bridgeMovement,
   pairBridgeLegs,

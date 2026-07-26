@@ -153,13 +153,12 @@ function resolveCounterparty(wallet, valueLegs, gasLegs) {
   return { address: ownAddress || null, name: null };
 }
 
+// legDecimals and hasSymbol stay module-private: assetOf is their only caller.
 module.exports = {
   weakestBasis,
   toCents,
   fromCents,
-  legDecimals,
   tokenDecimalsFallbacks,
-  hasSymbol,
   assetOf,
   counterpartyAddress,
   resolveCounterparty,

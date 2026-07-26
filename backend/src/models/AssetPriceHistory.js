@@ -38,10 +38,10 @@ const assetKeySql = (t = 't') => `
 
 // Whole units from base units. NFT legs never reach here (their key is NULL
 // above); token legs use their own decimals, clamped to [0, 78] like
-// EthActivityService.legDecimals so a malformed feed value cannot turn
-// 10^decimals into an aborting exponent.
+// legDecimals in services/ethActivity/legs.js so a malformed feed value cannot
+// turn 10^decimals into an aborting exponent.
 //
-// The window function is the same repair EthActivityService's netting loop
+// The window function is the same repair the activity builder's netting loop
 // makes, and it has to be: Etherscan omits `tokenDecimal` on some legs of a
 // contract it fills in on others, and the activity builder upgrades a NULL leg
 // to the first non-NULL value it sees for that contract. Scaling by a blind 18

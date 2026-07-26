@@ -2,13 +2,14 @@
 
 const ExchangeMatch = require('../models/ExchangeMatch');
 const logger = require('../config/logger');
+const { ZERO_ADDRESS } = require('../utils/ethActivityVocabulary');
 
-// eth_activity.review_reason is VARCHAR(200).
+// eth_activity.review_reason is VARCHAR(200). Deliberately NOT the activity
+// vocabulary's REVIEW_REASONS: this is the matcher's own reason, and the two
+// maps answer different questions.
 const REVIEW_REASONS = {
   unmatched_exchange: 'No exchange record explains this transfer yet -- import or sync that account',
 };
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const HEX_ADDRESS = /^0x[0-9a-f]{40}$/;
 
 // Strongest evidence first. The order IS the algorithm: matching is greedy and
