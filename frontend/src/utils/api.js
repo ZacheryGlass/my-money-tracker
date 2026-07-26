@@ -374,12 +374,16 @@ export const eth = {
     const response = await api.get('/api/eth/counterparties/unreviewed', { params: { include_dust: 'true' } });
     return response.data;
   },
-  // The transaction-level activity feed. `spam` is three-valued:
-  // 'exclude' (the default -- quarantined rows are hidden), 'only' (the Spam
-  // filter) and 'all'. An unknown value is a 400, not a silently wider feed.
-  getActivity: async ({ walletId, category, needsReview, spam, limit, offset } = {}) => {
+  // The transaction-level activity feed. `spam` is three-valued: 'exclude'
+  // (the default -- quarantined rows are hidden), 'only' (the Spam filter) and
+  // 'all'. An unknown value is a 400, not a silently wider feed. Overrides are
+  // resolved server-side, so a corrected row reads and filters as the category
+  // the user chose. Named camelCase filters are translated; anything else
+  // passes through so new server filters need no client release.
+  getActivity: async ({ walletId, category, needsReview, spam, limit, offset, ...params } = {}) => {
     const response = await api.get('/api/eth/activity', {
       params: {
+        ...params,
         ...(walletId != null ? { wallet_id: walletId } : {}),
         ...(category ? { category } : {}),
         ...(needsReview != null ? { needs_review: String(needsReview) } : {}),
@@ -387,6 +391,20 @@ export const eth = {
         ...(limit != null ? { limit } : {}),
         ...(offset != null ? { offset } : {}),
       },
+    });
+    return response.data;
+  },
+  // A manual correction. Stored apart from the derived table, so it survives
+  // every resync and reclassification.
+  setActivityOverride: async ({ walletId, txHash, chainId, category, note }) => {
+    const response = await api.post('/api/eth/activity/override', {
+      wallet_id: walletId, tx_hash: txHash, chain_id: chainId, category, note,
+    });
+    return response.data;
+  },
+  clearActivityOverride: async ({ walletId, txHash, chainId }) => {
+    const response = await api.delete('/api/eth/activity/override', {
+      params: { wallet_id: walletId, tx_hash: txHash, chain_id: chainId },
     });
     return response.data;
   },
@@ -415,6 +433,49 @@ export const eth = {
       },
     });
     return response.data;
+  },
+  // Assets the dated valuation could not price (#73). The ledger is this
+  // enumeration's designated consumer: it shows USD per row, and a blank there
+  // has to be explained as "no price for this asset" rather than read as $0.
+  getUnpricedAssets: async () => {
+    const response = await api.get('/api/eth/prices/unpriced');
+    return response.data;
+  },
+};
+
+// The unified crypto ledger (#63): on-chain activity and exchange records
+// interleaved by time, with a matched pair rendered once.
+export const crypto = {
+  // filters: { category, source, needsReview, walletId, exchangeAccountId }.
+  // An unknown category/source is a 400 server-side, so the client's filter
+  // values come from utils/dataLabels LEDGER_CATEGORIES rather than free text.
+  getLedger: async ({ needsReview, walletId, exchangeAccountId, ...params } = {}) => {
+    const response = await api.get('/api/crypto/ledger', {
+      params: {
+        ...params,
+        ...(needsReview != null ? { needs_review: String(needsReview) } : {}),
+        ...(walletId != null ? { wallet_id: walletId } : {}),
+        ...(exchangeAccountId != null ? { exchange_account_id: exchangeAccountId } : {}),
+      },
+    });
+    return response.data;
+  },
+  // Unfiltered counts for the badge: a needs-review count that only saw the
+  // rows currently on screen would read zero the moment they were filtered out.
+  getLedgerSummary: async () => {
+    const response = await api.get('/api/crypto/ledger/summary');
+    return response.data;
+  },
+  // Built as a URL rather than fetched: the browser's own download handles the
+  // Content-Disposition, and buffering an entire ledger through axios to
+  // re-emit it as a Blob would only add a copy.
+  ledgerExportUrl: (params = {}) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+    }
+    const suffix = query.toString();
+    return `${API_URL}/api/crypto/ledger/export${suffix ? `?${suffix}` : ''}`;
   },
 };
 
@@ -454,6 +515,38 @@ export const exchanges = {
   // false, so this is the only thing that can empty the review queue.
   resolveRecord: async (id, recordId) => {
     const response = await api.patch(`/api/exchanges/${id}/records/${recordId}/resolve`);
+    return response.data;
+  },
+  // Derived pairings between an on-chain transfer and the venue's own record of
+  // it (#61), with the counts behind the "how much is still unpaired" line.
+  getMatches: async (params = {}) => {
+    const response = await api.get('/api/exchanges/matches', { params });
+    return response.data;
+  },
+  // Confirm or reject one pairing. A verdict names exactly ONE pair, in one of
+  // 041's two shapes: wallet_id + tx_hash (+ chain_id) for an on-chain match,
+  // or counter_record_id for a venue-to-venue one. Sending both, or neither, is
+  // a 400 rather than a guess.
+  setMatchVerdict: async ({ exchangeRecordId, walletId, txHash, chainId, counterRecordId, verdict, note }) => {
+    const response = await api.post('/api/exchanges/matches/verdict', {
+      exchange_record_id: exchangeRecordId,
+      ...(counterRecordId != null
+        ? { counter_record_id: counterRecordId }
+        : { wallet_id: walletId, tx_hash: txHash, chain_id: chainId }),
+      verdict,
+      note,
+    });
+    return response.data;
+  },
+  clearMatchVerdict: async ({ exchangeRecordId, walletId, txHash, chainId, counterRecordId }) => {
+    const response = await api.delete('/api/exchanges/matches/verdict', {
+      params: {
+        exchange_record_id: exchangeRecordId,
+        ...(counterRecordId != null
+          ? { counter_record_id: counterRecordId }
+          : { wallet_id: walletId, tx_hash: txHash, chain_id: chainId }),
+      },
+    });
     return response.data;
   },
   // Read-only API credentials for one exchange account. The server stores them

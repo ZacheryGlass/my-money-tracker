@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../utils/api';
-import { formatCurrency, formatDateDisplay } from '../utils/format';
+import { formatDateDisplay, formatUsdAtTime } from '../utils/format';
 import { explorerTxUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
@@ -85,33 +85,10 @@ const formatTransferQuantity = (transfer) => {
   return `${quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${symbol}`;
 };
 
-// What the row was worth ON ITS OWN DATE (#73), read off the valuation the
-// server already stored -- the client never multiplies a quantity by a price.
-//
-// Three distinct states, and conflating any two of them is the bug this
-// replaces:
-//   a figure      -- valued from the dated series (exact, or carried across a
-//                    gap of a few days in a 24/7 market)
-//   No USD value  -- the asset has no close on that date. NOT $0: an unpriced
-//                    token is unknown, not worthless. Same wording the
-//                    counterparty triage queue already uses for the same reason.
-//   nothing       -- the row has no dollar meaning at all: an NFT leg's
-//                    value_wei is a count of units, and a reverted transfer
-//                    moved nothing.
-const formatTransferUsd = (transfer) => {
-  if (transfer.usd_basis === 'not_applicable') return null;
-  if (transfer.usd_at_time == null) return 'No USD value';
-  const usd = Math.abs(Number(transfer.usd_at_time));
-  if (!Number.isFinite(usd)) return 'No USD value';
-  // Sub-cent amounts round to $0 through the normal formatter, which reads as
-  // worthless rather than as tiny.
-  if (usd > 0 && usd < 0.01) return '< $0.01';
-  // BOTH bounds. maximumFractionDigits alone leaves the minimum at 0, so one
-  // column renders $1,234.5, $1,234 and $0.5 next to each other and the decimal
-  // points stop lining up -- in a money column, where scanning down the point is
-  // the whole reason the column is monospaced.
-  return formatCurrency(usd, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
+// What the row was worth ON ITS OWN DATE (#73). The three-state rule lives in
+// utils/format.js so this feed and the unified ledger cannot drift apart about
+// which state means "worthless".
+const formatTransferUsd = (transfer) => formatUsdAtTime(transfer.usd_at_time, transfer.usd_basis);
 
 // Dedicated on-chain ledger for wallet-linked accounts, fed by the raw
 // eth_transfers feed rather than the mirrored transactions table.

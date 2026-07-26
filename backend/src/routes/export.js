@@ -4,35 +4,13 @@ const express = require('express');
 const pool = require('../config/database');
 const requireUser = require('../middleware/auth');
 const logger = require('../config/logger');
+// The quoting rules are shared with the crypto ledger export; see utils/csv.js.
+const { toCsv: arrayToCSV } = require('../utils/csv');
 
 const router = express.Router();
 
 // Apply auth middleware to all routes
 router.use(requireUser);
-
-// Helper function to convert array to CSV
-function arrayToCSV(data, headers) {
-  if (!data || data.length === 0) return headers.join(',') + '\n';
-
-  const csvRows = [headers.join(',')];
-
-  for (const row of data) {
-    const values = headers.map(header => {
-      // Use the header as-is since database columns match expected headers
-      const value = row[header];
-      // Escape values that contain commas or quotes
-      if (value === null || value === undefined) return '';
-      const stringValue = String(value);
-      if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-        return `"${stringValue.replace(/"/g, '""')}"`;
-      }
-      return stringValue;
-    });
-    csvRows.push(values.join(','));
-  }
-
-  return csvRows.join('\n');
-}
 
 // GET /api/export/holdings - Export all holdings as CSV
 router.get('/holdings', async (req, res) => {

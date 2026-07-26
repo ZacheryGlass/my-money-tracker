@@ -22,12 +22,17 @@ const SORT_INDICATOR = { asc: '↑', desc: '↓' };
 //            drop columns on small screens
 //   'hidden' hide the card entirely below the breakpoint (the default
 //            otherwise); the page supplies its own mobile layout
+//
+// `renderRowDetail(row)` opens a full-width panel under a row when it returns
+// something -- the caller owns which row is expanded, so a table can drive it
+// from its own state without TanStack's expansion model.
 const DataTable = ({
   table,
   emptyMessage,
   onRowClick,
   rowClassName,
   renderMobileRow,
+  renderRowDetail,
   mobile = renderMobileRow ? 'rows' : 'hidden',
   breakpoint = 'lg',
   header,
@@ -94,27 +99,36 @@ const DataTable = ({
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className={`transition-colors hover:bg-surface-2 ${
-                    rowClassName ? rowClassName(row.original) : onRowClick ? 'cursor-pointer' : ''
-                  }`}
-                  onClick={() => onRowClick?.(row.original)}
-                >
-                  {row.getVisibleCells().map((cell) => {
-                    const meta = cell.column.columnDef.meta || {};
-                    return (
-                      <td
-                        key={cell.id}
-                        className={`px-3 py-2 align-middle text-body-sm text-secondary ${meta.cellClassName || 'whitespace-nowrap'}`}
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))
+              rows.map((row) => {
+                const detail = renderRowDetail?.(row);
+                return (
+                  <React.Fragment key={row.id}>
+                    <tr
+                      className={`transition-colors hover:bg-surface-2 ${
+                        rowClassName ? rowClassName(row.original) : onRowClick ? 'cursor-pointer' : ''
+                      }`}
+                      onClick={() => onRowClick?.(row.original)}
+                    >
+                      {row.getVisibleCells().map((cell) => {
+                        const meta = cell.column.columnDef.meta || {};
+                        return (
+                          <td
+                            key={cell.id}
+                            className={`px-3 py-2 align-middle text-body-sm text-secondary ${meta.cellClassName || 'whitespace-nowrap'}`}
+                          >
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                    {detail && (
+                      <tr className="bg-surface-2">
+                        <td colSpan={visibleColumns.length} className="px-3 py-3">{detail}</td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })
             )}
           </tbody>
         </table>

@@ -275,7 +275,7 @@ class EthTransfer {
   // UI renders them with #63; nothing reads them client-side yet). Reads
   // only: decoding happens during sync, so serving this feed never touches a
   // signature service.
-  static async findForUser(userId, { walletId = null, type, limit = 100, offset = 0 } = {}) {
+  static async findForUser(userId, { walletId = null, type, txHash = null, chainId = null, limit = 100, offset = 0 } = {}) {
     if (!userId) throw new Error('EthTransfer.findForUser requires a userId');
     const params = [userId];
     let where = `WHERE w.user_id = $1
@@ -284,6 +284,22 @@ class EthTransfer {
     if (walletId != null) {
       params.push(walletId);
       where += ` AND t.wallet_id = $${params.length}`;
+    }
+    // The raw legs behind one activity row (#63's row detail).
+    if (txHash) {
+      params.push(txHash);
+      where += ` AND LOWER(t.tx_hash) = $${params.length}`;
+    }
+    // Its own filter, NOT nested inside the hash branch: the route validates
+    // chain_id and 400s a malformed one, so a caller has every reason to
+    // believe it applies on its own -- and a filter that is accepted and then
+    // ignored returns the WIDER feed, which reads as "these are all the rows
+    // on that chain". It also matters beside a hash: a cross-chain replay
+    // genuinely shares one, so hash alone can pull a second chain's legs into
+    // a transaction's detail panel.
+    if (chainId != null) {
+      params.push(chainId);
+      where += ` AND t.chain_id = $${params.length}`;
     }
     if (TRANSFER_TYPE_FILTERS[type]) {
       where += ` AND ${TRANSFER_TYPE_FILTERS[type]}`;
