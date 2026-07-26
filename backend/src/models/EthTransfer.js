@@ -73,6 +73,33 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
       -- arm keeps native/internal rows (NULL contract) out of the NOT IN.
       AND (t.token_contract IS NULL
            OR t.token_contract NOT IN (SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1))
+      -- Quarantined spam (#74). A transfer whose transaction the classifier
+      -- called poisoning, dust or a scam airdrop is not a counterparty awaiting
+      -- a verdict -- demanding one per address is exactly the flood that makes
+      -- this badge unclearable at full-history scale, and an unclearable badge
+      -- gets ignored along with the wallet-sync errors it also carries.
+      --
+      -- Filtered HERE, in the legs CTE, rather than in ranked: dropping the legs
+      -- keeps quarantined transfers out of transfer_count, sent_count and
+      -- usd_volume as well as out of the badge, so a spam wave cannot inflate
+      -- the materiality of a counterparty that also sent something real.
+      --
+      -- COALESCE resolves the user's own verdict over the derived one, so
+      -- un-quarantining a false positive puts its counterparty straight back in
+      -- the queue where it can be labeled. Joined on the full (wallet, chain,
+      -- tx) key, which both tables carry a UNIQUE on, so it cannot fan a leg
+      -- into two.
+      AND NOT EXISTS (
+        SELECT 1 FROM eth_activity act
+        LEFT JOIN eth_activity_overrides ovr
+          ON ovr.wallet_id = act.wallet_id
+         AND ovr.chain_id = act.chain_id
+         AND ovr.tx_hash = act.tx_hash
+        WHERE act.wallet_id = t.wallet_id
+          AND act.chain_id = t.chain_id
+          AND act.tx_hash = t.tx_hash
+          AND COALESCE(ovr.spam, act.spam)
+      )
   ),
   unlabeled AS (
     SELECT l.* FROM legs l

@@ -21,6 +21,7 @@ vi.mock('../utils/api', () => ({
     getIgnoredTokens: vi.fn().mockResolvedValue({ tokens: [] }),
     getAddressLabels: vi.fn().mockResolvedValue({ labels: [] }),
     getUnreviewedCounterparties: vi.fn().mockResolvedValue({ data: [], summary: { count: 0 }, pagination: {} }),
+    getActivity: vi.fn().mockResolvedValue({ data: [], summary: { spam_count: 0 }, pagination: { total: 0 } }),
   },
   exchanges: {
     getAll: vi.fn(),

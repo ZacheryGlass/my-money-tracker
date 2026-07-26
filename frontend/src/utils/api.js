@@ -374,6 +374,35 @@ export const eth = {
     const response = await api.get('/api/eth/counterparties/unreviewed', { params: { include_dust: 'true' } });
     return response.data;
   },
+  // The transaction-level activity feed. `spam` is three-valued:
+  // 'exclude' (the default -- quarantined rows are hidden), 'only' (the Spam
+  // filter) and 'all'. An unknown value is a 400, not a silently wider feed.
+  getActivity: async ({ walletId, category, needsReview, spam, limit, offset } = {}) => {
+    const response = await api.get('/api/eth/activity', {
+      params: {
+        ...(walletId != null ? { wallet_id: walletId } : {}),
+        ...(category ? { category } : {}),
+        ...(needsReview != null ? { needs_review: String(needsReview) } : {}),
+        ...(spam ? { spam } : {}),
+        ...(limit != null ? { limit } : {}),
+        ...(offset != null ? { offset } : {}),
+      },
+    });
+    return response.data;
+  },
+  // The one-click un-quarantine (spam: false) and its inverse. Written to the
+  // overrides table, so it survives every resync -- and separately from a
+  // category correction, because "this is not junk" and "this was actually a
+  // purchase" are two different statements.
+  setActivitySpam: async (walletId, txHash, spam, { chainId } = {}) => {
+    const response = await api.post('/api/eth/activity/spam', {
+      wallet_id: walletId,
+      tx_hash: txHash,
+      spam,
+      ...(chainId != null ? { chain_id: chainId } : {}),
+    });
+    return response.data;
+  },
   // The full balance audit: derived-from-transfers versus what the chain
   // reports, per (wallet, chain, asset). The wallets response already carries a
   // capped per-wallet summary, which is what the wallet card renders; this is
