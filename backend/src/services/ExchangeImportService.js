@@ -2,6 +2,7 @@
 
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
+const ExchangeMatchService = require('./ExchangeMatchService');
 const { parseExchangeCsv } = require('./exchangeImport');
 const logger = require('../config/logger');
 
@@ -33,6 +34,12 @@ class ExchangeImportService {
     // action, not about the file's contents.
     await ExchangeAccount.touchImport(exchangeAccountId, userId);
 
+    // The records that just landed are the missing half of on-chain transfers
+    // already sitting flagged in the activity feed (#61). Re-deriving here is
+    // what makes "import the export" the actual fix for those flags, instead of
+    // something that only takes effect at the next wallet sync.
+    const matches = await ExchangeMatchService.rebuildForUserSafely(userId, { exchangeAccountId });
+
     const needsReview = parsed.records.filter((record) => record.needs_review).length;
     logger.info({
       userId,
@@ -43,6 +50,7 @@ class ExchangeImportService {
       upgraded: result.upgraded,
       duplicates: result.duplicates,
       needsReview,
+      matched: matches?.matches ?? 0,
     }, 'Exchange CSV import');
 
     return {
@@ -55,6 +63,7 @@ class ExchangeImportService {
       upgraded: result.upgraded,
       duplicates: result.duplicates,
       needs_review: needsReview,
+      matched: matches?.matches ?? 0,
       // Surfaced rather than swallowed: a repeated header or a preamble block
       // that was stepped over is a fact about the file the user should see.
       skipped_header_rows: parsed.stats.headerRowsSkipped,
