@@ -57,6 +57,18 @@ function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() 
   const exchangeCategory = outgoing ? 'CRYPTO_EXCHANGE_DEPOSIT' : 'CRYPTO_EXCHANGE_WITHDRAWAL';
   const usd = transfer.usd_at_time == null ? null : Number(transfer.usd_at_time);
 
+  // SCOPE BOUNDARY, deliberate (#59). Only `exchange` and `own` are denormalized
+  // onto the leg, so a bridge deposit mirrors as CRYPTO_EXTERNAL / CRYPTO_TOKEN
+  // like any other outbound transfer -- NOT as an internal move the way
+  // CRYPTO_EXCHANGE_DEPOSIT is. That is safe (neither category is spending, so
+  // nothing lands in a spending total), but it does mean the activity layer
+  // knows a bridge is one movement of the user's own money and the ledger mirror
+  // still does not. Teaching it requires the bridge verdict -- and, for the
+  // internal-transfer pairing, the cross-chain LINK -- to reach this per-leg
+  // pass, which is a separate change; do not infer it from the label here.
+
+
+
   if (transfer.transfer_type === 'gas') {
     // A fee is always a cost, whichever way the transaction went, and it is
     // real even when the transaction reverted. Same rule as a value leg,

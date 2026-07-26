@@ -473,6 +473,16 @@ class EthWalletService {
       // After reclassify: the ladder reads counterparty_is_own and
       // counterparty_exchange off the freshly-classified legs.
       const activity = await EthActivityService.rebuildForWallet(walletId);
+      // Bridge pairing is cross-CHAIN and cross-WALLET, so it runs once over
+      // the owner's whole activity set after the rebuild -- the far side of a
+      // bridge this sync just ingested may well sit on a different wallet row.
+      // Non-fatal: an unpaired leg is flagged and visible, which is strictly
+      // better than reporting a sync that landed as failed.
+      try {
+        await EthActivityService.matchBridgeTransfersForUser(wallet.user_id);
+      } catch (err) {
+        logger.warn({ walletId, err }, 'Bridge matching failed; legs stay flagged for review');
+      }
       await TransactionClassificationService.backfill();
 
       // The balance audit (#62): does the ledger we just stored reproduce the
@@ -955,6 +965,15 @@ class EthWalletService {
       // running it inside the loop re-derived the same rows N times -- and the
       // early passes ran against a half-rebuilt feed.
       await ExchangeMatchService.rebuildForUserSafely(userId, { reason: 'classification-refresh' });
+      // After the loop, not inside it: a bridge_out on one wallet can pair with
+      // a bridge_in on another, so pairing can only be decided once every
+      // wallet's rows are current. Labeling an address 'bridge' is exactly the
+      // edit that creates those legs, which is why this runs here at all.
+      try {
+        await EthActivityService.matchBridgeTransfersForUser(userId);
+      } catch (err) {
+        logger.warn({ userId, err }, 'Bridge matching failed during classification refresh');
+      }
       await TransactionClassificationService.backfill();
     });
   }
@@ -999,6 +1018,14 @@ class EthWalletService {
       }
       // Once for the user, not once per wallet -- same reason as above.
       await ExchangeMatchService.rebuildForUserSafely(userId, { reason: 'derived-refresh' });
+      // Every rebuild above dropped this user's links (ON DELETE CASCADE), so
+      // re-deriving them is not an optimization -- without it an ignore-list
+      // edit silently unpairs every bridge the user has ever made.
+      try {
+        await EthActivityService.matchBridgeTransfersForUser(userId);
+      } catch (err) {
+        logger.warn({ userId, err }, 'Bridge matching failed during derived-data refresh');
+      }
       await TransactionClassificationService.backfill();
     });
   }

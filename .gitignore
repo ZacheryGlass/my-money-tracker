@@ -6,6 +6,9 @@
 # committed (the 21MB dump it comes from must not be).
 backend/data/*
 !backend/data/builtin-address-labels.json
+# The bridge pack is the research record, not a cache of one: the source URLs
+# and explorer name tags behind each address live nowhere else.
+!backend/data/builtin-bridge-labels.json
 
 # OS junk
 .DS_Store

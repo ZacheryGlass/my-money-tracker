@@ -220,7 +220,11 @@ test('the label management list hides the bulk pack but keeps overrides', async 
   const sql = sqlOf(queries[0]);
   // 5k scraped rows would bury the user's own labels and ship ~700KB per
   // Settings load. They still classify; they are just not a management list.
-  assert.match(sql, /WHERE user_id IS NOT NULL OR source = 'builtin'/);
+  // The bridge pack (044, 'builtin-bridge') IS listed: a few dozen rows taken
+  // from each protocol's own deployment docs, where a wrong one has to be
+  // visible to be correctable. Only 'eth-labels' is hidden.
+  assert.match(sql, /WHERE user_id IS NOT NULL OR source IN \('builtin', 'builtin-bridge'\)/);
+  assert.doesNotMatch(sql, /'eth-labels'/);
   // The pack filter runs AFTER precedence resolves, so an override of a packed
   // address is still listed (and still removable).
   const inner = sql.slice(sql.indexOf('SELECT DISTINCT ON'), sql.indexOf(') labels'));

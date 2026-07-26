@@ -237,6 +237,38 @@ describe('Settings display names', () => {
       });
     });
 
+    it('marks an address as a bridge with no name typed', async () => {
+      const form = await openLabelForm();
+      fireEvent.change(form.address, { target: { value: '0x3333333333333333333333333333333333333333' } });
+      fireEvent.change(form.verdict, { target: { value: 'bridge' } });
+      fireEvent.click(form.submit);
+
+      // Like external and own, a bridge name is display-only -- it never
+      // becomes counterparty_exchange -- so the server falls back to a short
+      // address. Bridges redeploy faster than any seed can follow, which is why
+      // this verdict is offered by hand at all.
+      await waitFor(() => {
+        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
+          '0x3333333333333333333333333333333333333333', null, { kind: 'bridge' }
+        );
+      });
+    });
+
+    it('lists a seeded bridge label so a wrong one is correctable', async () => {
+      // The 5k scraped rows are hidden from this list; the few dozen bridge
+      // rows are not. A wrong bridge address has to be visible to be fixed.
+      await openLabelForm([
+        {
+          address: '0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f',
+          name: 'Arbitrum: Delayed Inbox',
+          kind: 'bridge',
+          source: 'builtin-bridge',
+        },
+      ]);
+      expect(await screen.findByText('Arbitrum: Delayed Inbox')).toBeInTheDocument();
+      expect(screen.getByText('Bridge')).toBeInTheDocument();
+    });
+
     it('renaming an already-labeled address keeps its verdict by sending no kind', async () => {
       const form = await openLabelForm([
         { address: '0x2222222222222222222222222222222222222222', name: 'Cold storage', kind: 'own', source: 'user' },

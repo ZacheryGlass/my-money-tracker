@@ -121,7 +121,7 @@ test('POST /api/eth/address-labels rejects a non-string kind rather than coercin
 // A <select> sends its value verbatim; ' OWN ' only shows up via a caller that
 // pads or shouts, and normalizing it here is what keeps the allowlist the
 // single definition of a valid verdict.
-for (const kind of ['exchange', 'external', 'own', ' OWN ']) {
+for (const kind of ['exchange', 'external', 'own', 'bridge', ' OWN ']) {
   test(`POST /api/eth/address-labels accepts the verdict '${kind}'`, async () => {
     const response = await request(app)
       .post('/api/eth/address-labels')
@@ -144,11 +144,11 @@ test('POST /api/eth/address-labels accepts an omitted kind', async () => {
   assert.notEqual(response.status, 400);
 });
 
-// The triage queue's two one-click verdicts carry no name. Their labels never
-// reach classification as text, so a short-address fallback is enough -- only
+// The one-click verdicts carry no name. Their labels never reach
+// classification as text, so a short-address fallback is enough -- only
 // 'exchange' names must be typed, because that name IS the assertion that
 // turns real spending into an internal transfer.
-for (const kind of ['external', 'own']) {
+for (const kind of ['external', 'own', 'bridge']) {
   test(`POST /api/eth/address-labels accepts kind='${kind}' with no name`, async () => {
     const response = await request(app)
       .post('/api/eth/address-labels')
