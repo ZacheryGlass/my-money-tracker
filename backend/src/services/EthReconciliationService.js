@@ -6,6 +6,7 @@ const EthReconciliation = require('../models/EthReconciliation');
 const EthWalletChain = require('../models/EthWalletChain');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
+const { toBigIntOrNull, absBigInt } = require('../utils/units');
 
 // The balance audit (#62).
 //
@@ -84,10 +85,6 @@ const REQUIRED_FEEDS = {
   token: ['token'],
 };
 
-function absBigInt(value) {
-  return value < 0n ? -value : value;
-}
-
 // Exact integer comparison, no floats anywhere: |delta| * 1e8 < 1 unit, or
 // |delta| * 1e6 <= |live|. Both are shifts and multiplications on BigInt, so a
 // wei-scale difference is never rounded into agreement.
@@ -98,13 +95,6 @@ function isDust(delta, live, decimals) {
   if (magnitude * 10n ** BigInt(DUST_DECIMAL_PLACES) < unit) return true;
   if (live != null && magnitude * 10n ** BigInt(RELATIVE_TOLERANCE_EXPONENT) <= absBigInt(live)) return true;
   return false;
-}
-
-function toBigInt(value) {
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  if (!/^-?\d+$/.test(text)) return null;
-  return BigInt(text);
 }
 
 class EthReconciliationService {
@@ -227,9 +217,9 @@ class EthReconciliationService {
       // '0' rather than null when a chain has no transfers at all: a wallet that
       // has never touched Arbitrum genuinely derives zero there, and the chain
       // reporting zero back is a match, not an absence of information.
-      const derived = toBigInt(nativeByChain.get(chainId) ?? '0') ?? 0n;
+      const derived = toBigIntOrNull(nativeByChain.get(chainId) ?? '0') ?? 0n;
       const skip = gate.skip || (this.feedGap(gate, 'native') ? SKIP_REASONS.FEED_GAP : null);
-      const live = skip ? null : toBigInt(liveWeiByChain[chainId]);
+      const live = skip ? null : toBigIntOrNull(liveWeiByChain[chainId]);
 
       let verdict;
       if (skip) {
@@ -284,7 +274,7 @@ class EthReconciliationService {
         contract: row.token_contract,
         symbol: row.token_symbol,
         decimals: row.token_decimals != null ? Number(row.token_decimals) : DEFAULT_DECIMALS,
-        derived: toBigInt(row.balance_units) ?? 0n,
+        derived: toBigIntOrNull(row.balance_units) ?? 0n,
       }))
       .filter((row) => {
         if (row.derived !== 0n) return true;
@@ -323,7 +313,7 @@ class EthReconciliationService {
         // can keep the promise. Not counted as deferred either, for the same
         // reason.
         verdict = { status: 'skipped', delta: null, skipReason: SKIP_REASONS.NO_API_KEY };
-      } else if (toBigInt(liveWeiByChain[token.chainId]) == null) {
+      } else if (toBigIntOrNull(liveWeiByChain[token.chainId]) == null) {
         // This chain's ETH balance could not be read this run, so the key
         // cannot reach it right now. Spending up to MAX_TOKEN_LOOKUPS throttled
         // `tokenbalance` calls against a chain that has already proved
@@ -337,7 +327,7 @@ class EthReconciliationService {
       } else {
         lookups += 1;
         try {
-          live = toBigInt(await EtherscanService.getTokenBalance(
+          live = toBigIntOrNull(await EtherscanService.getTokenBalance(
             wallet.address, token.contract, apiKey, token.chainId
           ));
         } catch (err) {

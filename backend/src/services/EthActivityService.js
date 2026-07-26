@@ -8,6 +8,7 @@ const EthActivityLink = require('../models/EthActivityLink');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const { DEFAULT_CHAIN_ID } = require('../config/chains');
 const { tokenAssetKey } = require('../utils/assetPriceKey');
+const { toBigIntLenient, absBigInt, formatUnits } = require('../utils/units');
 // The category/reason/basis vocabulary lives in a dependency-free util so
 // routes, models and tests can read it without loading this service.
 const {
@@ -41,20 +42,6 @@ function toCents(value) {
 
 function fromCents(cents) {
   return cents == null ? null : Number((cents / 100).toFixed(2));
-}
-
-// NUMERIC(78,0) arrives as a string. Tolerates null and a stray scale so one
-// malformed row cannot throw mid-rebuild.
-function toBigInt(value) {
-  if (value === null || value === undefined) return 0n;
-  const text = String(value).trim();
-  if (!text) return 0n;
-  const whole = text.split('.')[0];
-  try {
-    return BigInt(whole);
-  } catch {
-    return 0n;
-  }
 }
 
 // Branch on transfer_type FIRST. value_wei on an NFT leg is a count of units
@@ -98,19 +85,6 @@ function tokenDecimalsFallbacks(transfers) {
     if (seen == null || value < seen) byToken.set(key, value);
   }
   return byToken;
-}
-
-// Base units -> a whole-unit decimal string. Sign is carried by `direction`, so
-// this returns the magnitude. NOT EthWalletService.unitsToDecimalString: that
-// one clamps to the holdings column's DECIMAL(20,8); this is full precision,
-// for display inside legs JSONB where nothing bounds the scale.
-function formatUnits(value, decimals) {
-  const abs = value < 0n ? -value : value;
-  if (decimals <= 0) return abs.toString();
-  const base = 10n ** BigInt(decimals);
-  const whole = abs / base;
-  const frac = (abs % base).toString().padStart(decimals, '0').replace(/0+$/, '');
-  return frac ? `${whole}.${frac}` : whole.toString();
 }
 
 // Did the feed actually give this leg a symbol, or is the display string about
@@ -376,8 +350,8 @@ function classifyActivity({
 // (033) rather than wei, which is fine: every caller below only asks whether it
 // is zero.
 const legUnits = (leg) => {
-  const raw = toBigInt(leg.value_wei);
-  return raw < 0n ? -raw : raw;
+  const raw = toBigIntLenient(leg.value_wei);
+  return absBigInt(raw);
 };
 
 // Leg types whose `from_address` is a fact about the TRANSACTION rather than a
@@ -742,7 +716,7 @@ const EMPTY_SPAM_INPUTS = Object.freeze({
 function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks = new Map(),
   spamInputs = EMPTY_SPAM_INPUTS, bridgeAddresses = new Set()) {
   const gasLegs = legs.filter((leg) => leg.transfer_type === 'gas');
-  const feeWei = gasLegs.reduce((sum, leg) => sum + toBigInt(leg.value_wei), 0n);
+  const feeWei = gasLegs.reduce((sum, leg) => sum + toBigIntLenient(leg.value_wei), 0n);
 
   // Reverted, read from two places because a revert can land in two shapes.
   //
@@ -791,8 +765,8 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decim
       entry.symbol_known = true;
     }
     // A leg from the wallet to itself nets to zero, which is correct.
-    if (incoming) entry.raw += toBigInt(leg.value_wei);
-    if (outgoing) entry.raw -= toBigInt(leg.value_wei);
+    if (incoming) entry.raw += toBigIntLenient(leg.value_wei);
+    if (outgoing) entry.raw -= toBigIntLenient(leg.value_wei);
 
     // USD nets the same way the quantity does, and it MUST: every leg of one
     // transaction shares a date, so it shares a price, and the signed sum of
@@ -823,7 +797,7 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decim
       token_standard: entry.token_standard,
       direction: entry.raw > 0n ? 'in' : 'out',
       amount: formatUnits(entry.raw, entry.decimals),
-      amount_raw: (entry.raw < 0n ? -entry.raw : entry.raw).toString(),
+      amount_raw: absBigInt(entry.raw).toString(),
       // Magnitude, like `amount`: direction already carries the sign. NULL when
       // the asset could not be priced on this date -- never 0, which would read
       // as "worth nothing" rather than "not known".
