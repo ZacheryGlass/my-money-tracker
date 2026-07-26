@@ -597,8 +597,9 @@ function detectSpam({
   // whole, ETH included, because the token dragged the basis down. Asking each
   // leg what it was worth cannot be gamed that way -- an attacker cannot make
   // the ETH leg unpriced.
-  const claimsPriced = netLegs.filter((leg) => leg.direction === 'in'
-    && (leg.usd_basis === 'exact' || leg.usd_basis === 'carried'));
+  const inboundNetLegs = netLegs.filter((leg) => leg.direction === 'in');
+  const claimsPriced = inboundNetLegs.filter((leg) => leg.usd_basis === 'exact'
+    || leg.usd_basis === 'carried');
   const pricedInflow = claimsPriced.filter((leg) => Number.isFinite(Number(leg.usd)));
   // A leg that says it is priced and then will not parse is not a zero. On a
   // gate whose only job is to refuse to hide money, an unreadable figure has to
@@ -644,6 +645,15 @@ function detectSpam({
   //    An UNPRICED ETH transfer from a lookalike fails all three and stays --
   //    no price means the size is unknown, not small.
   //
+  //    `seenAndTiny` therefore requires EVERY inbound net leg to carry a figure,
+  //    not merely one of them. "We can see what it was worth" is a statement
+  //    about the transaction, and one priced five-cent junk leg beside an
+  //    UNPRICED 2 ETH leg says nothing at all about the ETH -- quarantining on
+  //    that is precisely the money-hiding the paragraph above forbids, reached
+  //    by letting the attacker's own priced leg answer for the one it rode in
+  //    with. (The shared dollar gate does not catch it: the junk leg is under a
+  //    dollar, which is what makes it worth sending.)
+  //
   //    `nothingMoved` is stated over EVERY value leg, not just the inbound
   //    ones, and that matters twice. It reads correctly for the spoofed
   //    zero-value OUTBOUND shape (which has no inbound legs at all), and it
@@ -655,7 +665,7 @@ function detectSpam({
   //    legs out first would let an ETH credit be quarantined by the token
   //    beside it, which is the same hole rules 3 and 4 are written to avoid.
   const nothingMoved = valueLegs.length > 0 && valueLegs.every((leg) => legUnits(leg) === 0n);
-  const seenAndTiny = pricedInflow.length > 0;
+  const seenAndTiny = pricedInflow.length > 0 && pricedInflow.length === inboundNetLegs.length;
   const unseenAndAlien = pricedInflow.length === 0
     && unfamiliar(inbound) && inbound.every(noMarket);
   if (nothingMoved || seenAndTiny || unseenAndAlien) {
@@ -1032,18 +1042,28 @@ class EthActivityService {
       // `kind` and `user_id` ride along so this one query also yields the
       // own-address set below.
       pool.query(
-        // EXISTS rather than IN (SELECT ... UNION ...): correlated on the label
-        // address, so it stops at the first matching transfer instead of
-        // materializing and de-duplicating the wallet's whole counterparty set
-        // on every rebuild -- and this runs on every sync, every label write and
-        // every ignore-list change.
-        `SELECT l.address, l.kind, l.user_id
+        // The counterparty set is built ONCE and probed, rather than asked as a
+        // correlated EXISTS per label row.
+        //
+        // The correlated form read better -- "stop at the first matching
+        // transfer" -- but the label side is 036's 5,129 rows, so Postgres ran
+        // that subquery 5,129 times, and the `OR` across the two address
+        // columns made each run a scan. Measured at 16.9s on a 30k-transfer
+        // wallet, inside a rebuild that routes/eth.js awaits on every label
+        // write and every ignore toggle. The UNION materializes the wallet's
+        // distinct counterparties one time (a hashed probe afterwards), and 045
+        // adds the (wallet_id, from_address) / (wallet_id, to_address) indexes
+        // that make each half an index-only scan.
+        `WITH counterparties AS (
+             SELECT from_address AS address FROM eth_transfers WHERE wallet_id = $2
+              UNION
+             SELECT to_address AS address FROM eth_transfers WHERE wallet_id = $2
+           )
+         SELECT l.address, l.kind, l.user_id
            FROM eth_address_labels l
           WHERE l.user_id = $1
-             OR (l.user_id IS NULL AND EXISTS (
-                   SELECT 1 FROM eth_transfers t
-                    WHERE t.wallet_id = $2
-                      AND (t.from_address = l.address OR t.to_address = l.address)))`,
+             OR (l.user_id IS NULL
+                 AND l.address IN (SELECT address FROM counterparties))`,
         [wallet.user_id, walletId]
       ),
       // Every address the owner has declared theirs, across ALL their wallets --

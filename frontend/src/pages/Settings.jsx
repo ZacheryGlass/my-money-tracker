@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
@@ -68,6 +68,16 @@ const keyStatusLabel = (status) => {
 };
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+// One page of the spam quarantine (#74). The section is the only place the
+// "Not spam" button exists, so the list has to be walkable to the end rather
+// than truncated at a round number: during a spam wave the transaction worth
+// rescuing is exactly the one a cap would hide.
+const SPAM_PAGE_SIZE = 50;
+// GET /api/eth/activity clamps `limit` to 500, so a refetch cannot restore more
+// than that in one request however many pages are open. Beyond it the appended
+// pages are re-walked by offset instead; the clamp only bounds the single call.
+const SPAM_MAX_LIMIT = 500;
 
 // The venues the backend accepts. Coinbase covers both the retail export and a
 // Coinbase Pro / Exchange statement -- the importer recognizes which is which
@@ -677,6 +687,16 @@ const Settings = ({ user }) => {
   const [spamActivity, setSpamActivity] = useState(null);
   const [showSpamActivity, setShowSpamActivity] = useState(false);
   const [unquarantiningTx, setUnquarantiningTx] = useState(null);
+  const [loadingMoreSpam, setLoadingMoreSpam] = useState(false);
+  // How many pages of the quarantine are currently on screen. A REF, not state:
+  // fetchItems reads it, and putting it in that useCallback's deps would make
+  // "show more" refetch the entire Settings page instead of one list.
+  //
+  // It also has to survive the refetch that follows a "Not spam" click. This is
+  // the ONLY surface with that button, so a wave that buried a real transaction
+  // at row 200 must not spring back to row 50 the moment the user rescues
+  // something above it.
+  const spamPagesRef = useRef(1);
   const [showExternalLabels, setShowExternalLabels] = useState(false);
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
   // Loaded-and-empty and failed-to-load must not look alike: "No Exchange
@@ -800,10 +820,13 @@ const Settings = ({ user }) => {
         ethAPI.getIgnoredTokens().catch(() => null),
         ethAPI.getAddressLabels().catch(() => null),
         ethAPI.getUnreviewedCounterparties().catch(() => null),
-        // Capped: the point of the list is that the quarantine is inspectable,
-        // not that a decade of airdrops is scrollable. summary.spam_count is
-        // the honest total and the header renders it, not the array's length.
-        ethAPI.getActivity({ spam: 'only', limit: 50 }).catch(() => null),
+        // Paged, not capped: the first page is all anyone usually needs, and
+        // "Show more" walks the rest (see handleShowMoreSpam). summary.spam_count
+        // is the honest total and the header renders it, not the array's length.
+        ethAPI.getActivity({
+          spam: 'only',
+          limit: Math.min(SPAM_PAGE_SIZE * spamPagesRef.current, SPAM_MAX_LIMIT),
+        }).catch(() => null),
         exchangesAPI.getAll().catch(() => null),
         keysAPI.getAll().catch(() => null),
       ]);
@@ -1393,6 +1416,34 @@ const Settings = ({ user }) => {
       setError(err.response?.data?.error || 'Failed to restore that transaction');
     } finally {
       setUnquarantiningTx(null);
+    }
+  };
+
+  // The next page of the quarantine, appended. Offset pagination against the
+  // feed the section already uses -- no new endpoint, and the header keeps
+  // reporting summary.spam_count, so "showing 100 of 412" stays true throughout.
+  //
+  // De-duplicated on the way in: the feed is ordered, but a row rescued from an
+  // earlier page shifts everything below it up by one, and the same transaction
+  // arriving twice is a duplicate React key and a second "Not spam" button for
+  // a transaction already restored.
+  const handleShowMoreSpam = async () => {
+    if (loadingMoreSpam) return;
+    const loaded = spamActivity?.data || [];
+    setLoadingMoreSpam(true);
+    setError(null);
+    try {
+      const next = await ethAPI.getActivity({
+        spam: 'only', limit: SPAM_PAGE_SIZE, offset: loaded.length,
+      });
+      const seen = new Set(loaded.map((row) => `${row.chain_id}:${row.tx_hash}`));
+      const added = (next.data || []).filter((row) => !seen.has(`${row.chain_id}:${row.tx_hash}`));
+      spamPagesRef.current += 1;
+      setSpamActivity({ ...next, data: [...loaded, ...added] });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load more quarantined transactions');
+    } finally {
+      setLoadingMoreSpam(false);
     }
   };
 
@@ -2340,9 +2391,24 @@ const Settings = ({ user }) => {
                         </div>
                       );
                     })}
+                    {/* The list is walkable to the end, not truncated: this is
+                        the only surface carrying "Not spam", so a transaction
+                        the heuristics got wrong has to stay reachable however
+                        much junk arrived above it. */}
                     {(spamActivity.pagination?.total || 0) > (spamActivity.data || []).length && (
-                      <div className="p-3 text-center text-[10px] uppercase tracking-wider text-tertiary">
-                        Showing the {(spamActivity.data || []).length} most recent of {spamActivity.pagination.total}
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-3">
+                        <span className="text-[10px] uppercase tracking-wider text-tertiary">
+                          Showing the {(spamActivity.data || []).length} most recent of {spamActivity.pagination.total}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleShowMoreSpam}
+                          disabled={loadingMoreSpam}
+                          className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+                        >
+                          {loadingMoreSpam && <RefreshCw size={10} className="animate-spin" />}
+                          Show more
+                        </button>
                       </div>
                     )}
                   </div>

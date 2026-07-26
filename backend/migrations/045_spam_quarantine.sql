@@ -59,11 +59,19 @@ END $$;
 -- A quarantined row always says why, and an unquarantined row never carries a
 -- stale reason. Enforced here rather than trusted of the builder: "hidden, and
 -- nobody can say on what grounds" is the failure mode a quarantine cannot have.
+-- Definition-guarded like the other two, and for the reason the comment above
+-- already gives: a name-only guard is satisfied by whatever constraint happens
+-- to bear the name, so tightening or loosening this pairing later would be
+-- skipped forever on every deployed database while looking perfectly applied on
+-- a fresh one. BUMP THE SENTINEL BELOW ('spam_reason IS NULL', the closing
+-- clause of the current definition) when changing the rule.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
                  WHERE conrelid = 'eth_activity'::regclass
-                   AND conname = 'eth_activity_spam_reason_paired') THEN
+                   AND conname = 'eth_activity_spam_reason_paired'
+                   AND pg_get_constraintdef(oid) LIKE '%spam_reason IS NULL%') THEN
+    ALTER TABLE eth_activity DROP CONSTRAINT IF EXISTS eth_activity_spam_reason_paired;
     ALTER TABLE eth_activity
       ADD CONSTRAINT eth_activity_spam_reason_paired
       CHECK ((spam AND spam_reason IS NOT NULL) OR (NOT spam AND spam_reason IS NULL));
@@ -112,6 +120,25 @@ BEGIN
       CHECK (category IS NOT NULL OR spam IS NOT NULL);
   END IF;
 END $$;
+
+-- The counterparty side of the rebuild, which DOES need indexes.
+--
+-- detectSpam has to know which counterparties already carry a verdict, and that
+-- includes 036's 5,129 builtin label rows -- but only for addresses THIS wallet
+-- has actually transacted with. Answering that means asking eth_transfers for
+-- the wallet's distinct counterparty addresses, and the only index that existed
+-- was (wallet_id, block_number), which makes it a heap scan of every leg the
+-- wallet owns. On a 30k-transfer wallet that was 16.9 seconds -- inside
+-- rebuildForWallet, which routes/eth.js AWAITS on every label write and every
+-- ignore-list toggle, so the cost lands on a user's click.
+--
+-- Two composite indexes, one per direction, because a counterparty is whichever
+-- end of the leg is not us and no single index covers both. They also serve the
+-- distinct scan index-only: (wallet_id, address) is exactly the pair being read.
+CREATE INDEX IF NOT EXISTS idx_eth_transfers_wallet_from
+  ON eth_transfers (wallet_id, from_address);
+CREATE INDEX IF NOT EXISTS idx_eth_transfers_wallet_to
+  ON eth_transfers (wallet_id, to_address);
 
 -- NO INDEX ON `spam`, deliberately, and this note is here so the next reader
 -- does not add one back on reflex. Nothing can use it: the triage queue's

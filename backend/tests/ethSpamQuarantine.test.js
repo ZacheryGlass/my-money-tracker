@@ -124,7 +124,7 @@ function fakeQuery(text, params = []) {
     const wanted = new Set(params[0]);
     return { rows: db.labels.filter((l) => wanted.has(l.address)) };
   }
-  if (/^SELECT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
+  if (/^WITH counterparties AS \(.*SELECT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
     // The user's own rows, plus builtin rows (user_id NULL) for addresses this
     // wallet has actually transacted with -- the bounded arm that makes a pack
     // 'external' count as a verdict without loading all 5k of them.
@@ -267,7 +267,15 @@ const { buildActivityRows, SPAM_REASONS } = EthActivityService;
 // all. Rule 4 requires it, because 'unpriced' on its own ALSO means 'the dated
 // series does not reach this row' -- true of every 2019 transfer until the
 // backfill gets there, and not evidence that anything is worthless.
-const UNLISTED = [SPAM_TOKEN, SPAM_NFT].map((contract) => tokenAssetKey(1, contract));
+//
+// SPAM_NFT is deliberately absent, and that is the reachable state rather than
+// an omission: assetKeyForTransfer returns null for 'nft'/'nft1155' legs (043 --
+// their value_wei is a count of units, and NFT valuation is out of scope), so an
+// NFT contract never gets an asset_price_coverage row at all and can never be
+// 'unlisted'. Seeding one would have let rule 1 quarantine an unsolicited NFT as
+// address_poisoning in a test while production reached rule 3 and called it
+// unsolicited_nft.
+const UNLISTED = [SPAM_TOKEN].map((contract) => tokenAssetKey(1, contract));
 
 // --- leg fixtures ----------------------------------------------------------
 
@@ -429,6 +437,46 @@ test('a lookalike cannot hide the ETH that arrived with the junk token', () => {
 
   assert.equal(row.spam, false);
   assert.equal(row.needs_review, true);
+});
+
+test('a priced dust leg cannot drag the UNPRICED ETH beside it into the quarantine', () => {
+  // "We can see what it was worth, and it was under a dollar" has to be true of
+  // the TRANSACTION, not of whichever leg happened to carry a figure. Five cents
+  // of priced junk riding alongside an unpriced 2 ETH credit says nothing at all
+  // about the ETH -- and the shared dollar gate cannot stop it, because being
+  // under a dollar is exactly what makes the junk leg worth sending.
+  const row = rowFor([
+    ...paidPayeeBefore(),
+    leg({
+      tx_hash: TX, from_address: LOOKALIKE, to_address: WALLET,
+      value_wei: '2000000000000000000', usd_at_time: null, usd_basis: 'unpriced',
+    }),
+    tokenLeg({
+      tx_hash: TX, token_contract: SPAM_TOKEN, from_address: LOOKALIKE, to_address: WALLET,
+      value_wei: '1000', usd_at_time: '0.05', usd_basis: 'exact',
+    }),
+  ], TX);
+
+  assert.equal(row.spam, false, 'no price means the size is unknown, not small');
+  assert.equal(row.needs_review, true, 'it stays a human decision');
+});
+
+test('...but a lookalike whose every arriving leg IS priced dust is still quarantined', () => {
+  // The other half of the same rule: once every inbound leg carries a figure,
+  // the transaction's worth really is known, and it is three cents.
+  const row = rowFor([
+    ...paidPayeeBefore(),
+    leg({
+      tx_hash: TX, from_address: LOOKALIKE, to_address: WALLET,
+      value_wei: '10000000000000', usd_at_time: '0.02', usd_basis: 'exact',
+    }),
+    tokenLeg({
+      tx_hash: TX, token_contract: SPAM_TOKEN, from_address: LOOKALIKE, to_address: WALLET,
+      value_wei: '1000', usd_at_time: '0.01', usd_basis: 'exact',
+    }),
+  ], TX);
+
+  assert.equal(row.spam_reason, SPAM_REASONS.ADDRESS_POISONING);
 });
 
 test('a lookalike of the wallet\'s own address counts too', () => {

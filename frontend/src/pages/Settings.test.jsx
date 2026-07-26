@@ -555,6 +555,37 @@ describe('Settings display names', () => {
       await waitFor(() => expect(apiMocks.eth.getActivity).toHaveBeenCalledTimes(2));
     });
 
+    it('pages through the whole quarantine, so a rescue stays reachable in a spam wave', async () => {
+      // This section is the ONLY place "Not spam" exists. A hard cap at one page
+      // would mean the transaction most worth rescuing -- the real one buried
+      // under a wave of airdrops -- is the one that cannot be reached.
+      const row = (n) => ({ ...POISONED, tx_hash: `0x${String(n).padStart(64, '0')}` });
+      await openEthTab({
+        data: [row(1), row(2)],
+        summary: { spam_count: 4, needs_review_count: 0 },
+        pagination: { total: 4 },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /quarantined transactions/i }));
+      expect(screen.getByText(/showing the 2 most recent of 4/i)).toBeInTheDocument();
+
+      apiMocks.eth.getActivity.mockResolvedValue({
+        // Row 2 comes back a second time: a rescue on an earlier page shifts
+        // everything below it up, and the same transaction must not render twice.
+        data: [row(2), row(3)],
+        summary: { spam_count: 4, needs_review_count: 0 },
+        pagination: { total: 4 },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /show more/i }));
+
+      await waitFor(() => {
+        expect(apiMocks.eth.getActivity).toHaveBeenLastCalledWith({
+          spam: 'only', limit: 50, offset: 2,
+        });
+      });
+      await waitFor(() => expect(screen.getByText(/showing the 3 most recent of 4/i)).toBeInTheDocument());
+      expect(screen.getAllByRole('button', { name: /not spam/i })).toHaveLength(3);
+    });
+
     it('shows a retry state when the quarantine fetch fails rather than claiming it hid nothing', async () => {
       apiMocks.eth.getWallets.mockResolvedValue({ wallets: [WALLET] });
       apiMocks.eth.getActivity.mockRejectedValue(new Error('boom'));
