@@ -6,11 +6,18 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Activity, AlertTriangle, Coins, Layers, Plus, RefreshCw, Wallet } from 'lucide-react';
-import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi, eth as ethAPI } from '../utils/api';
+import {
+  accounts as accountsAPI,
+  holdings as holdingsAPI,
+  history as historyApi,
+  eth as ethAPI,
+  crypto as cryptoAPI,
+} from '../utils/api';
 import { formatCurrency, formatRelativeTime } from '../utils/format';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 import AccountHistoryChart from '../components/AccountHistoryChart';
+import CryptoLedger from '../components/CryptoLedger';
 import DataTable, { DataTablePagination } from '../components/DataTable';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
@@ -34,6 +41,14 @@ const HOLDINGS_TAB = 'crypto-holdings';
 const TRANSACTIONS_TAB = 'crypto-transactions';
 const CRYPTO_TAB_IDS = [OVERVIEW_TAB, HOLDINGS_TAB, TRANSACTIONS_TAB];
 
+// Inside the Transactions tab. The unified ledger (#63) is the tab -- one
+// chronological line per EVENT across wallets, chains and exchange accounts.
+// The raw per-leg feed stays reachable beside it rather than being deleted:
+// it is the only place a token can be ignored in context, and a swap's six
+// router hops are legible there in a way a netted line cannot be.
+const LEDGER_VIEW = 'ledger';
+const TRANSFERS_VIEW = 'transfers';
+
 // Sentinel for "sync every wallet"; real wallet ids are >= 1.
 const SYNC_ALL = 'all';
 
@@ -42,6 +57,11 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
   const [holdings, setHoldings] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [historyRows, setHistoryRows] = useState([]);
+  // Counts for the Transactions badge and for whether the tab exists at all.
+  // Exchange records create no account and no wallet, so a user whose crypto
+  // history is entirely CSV imports has nothing else to gate the tab on.
+  const [ledgerSummary, setLedgerSummary] = useState(null);
+  const [txView, setTxView] = useState(LEDGER_VIEW);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedWalletId, setSelectedWalletId] = useState(null);
@@ -58,16 +78,18 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
 
   const fetchData = async () => {
     try {
-      const [walletsData, holdingsData, accountsData, historyData] = await Promise.all([
+      const [walletsData, holdingsData, accountsData, historyData, ledgerData] = await Promise.all([
         ethAPI.getWallets().catch(() => null),
         holdingsAPI.getAll(),
         accountsAPI.getAll(),
         historyApi.getAccounts({ limit: 10000, withCount: false }),
+        cryptoAPI.getLedgerSummary().catch(() => null),
       ]);
       setWallets(walletsData?.wallets || []);
       setHoldings(holdingsData.holdings || []);
       setAccounts(accountsData.accounts || []);
       setHistoryRows(historyData.data || []);
+      setLedgerSummary(ledgerData?.summary || null);
       setError(null);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load crypto data');
@@ -145,8 +167,12 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
   // declared after an early return run on some renders and not others, which
   // React rejects outright ("rendered more hooks than during the previous
   // render") the moment loading flips false.
+  // The ledger spans wallets AND exchange accounts, so the tab exists whenever
+  // either has anything in it.
+  const hasLedger = wallets.length > 0 || (ledgerSummary?.total || 0) > 0;
+
   const activeTab = CRYPTO_TAB_IDS.includes(tab)
-    && (tab !== TRANSACTIONS_TAB || wallets.length > 0)
+    && (tab !== TRANSACTIONS_TAB || hasLedger)
     ? tab
     : OVERVIEW_TAB;
 
@@ -307,14 +333,20 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
     return <LoadingState label="Loading Crypto" />;
   }
 
-  const isEmpty = wallets.length === 0 && cryptoAccounts.length === 0;
+  const isEmpty = wallets.length === 0 && cryptoAccounts.length === 0 && !hasLedger;
 
   const countBadge = (count, tone) => (
     <span className={`ml-1 rounded border px-1.5 py-0.5 text-[10px] font-bold ${tone}`}>{count}</span>
   );
 
-  // Transactions is dropped entirely when there is no wallet to show, rather
+  // Transactions is dropped entirely when there is nothing to show, rather
   // than offered as a tab that opens onto an empty body.
+  //
+  // Its badge answers "what is unexplained", which is the ledger's whole
+  // promise, and it can actually reach zero -- every flagged row is resolvable
+  // by hand. A failed wallet sync outranks it: an incomplete feed makes the
+  // review count itself untrustworthy.
+  const needsReviewCount = ledgerSummary?.needs_review_count || 0;
   const tabOptions = [
     { value: OVERVIEW_TAB, label: 'Overview' },
     {
@@ -324,12 +356,14 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
         ? countBadge(cryptoHoldings.length, 'border-accent/20 bg-accent/10 text-accent')
         : null,
     },
-    ...(wallets.length > 0 ? [{
+    ...(hasLedger ? [{
       value: TRANSACTIONS_TAB,
       label: 'Transactions',
       badge: erroredWallets.length > 0
         ? countBadge(erroredWallets.length, 'border-loss/20 bg-loss/10 text-loss')
-        : null,
+        : needsReviewCount > 0
+          ? countBadge(needsReviewCount, 'border-orange-500/30 bg-orange-500/10 text-orange-400')
+          : null,
     }] : []),
   ];
 
@@ -494,7 +528,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
             </section>
           ))}
 
-          {wallets.length > 0 && tabBody(TRANSACTIONS_TAB, (
+          {hasLedger && tabBody(TRANSACTIONS_TAB, (
             <section>
               {/* A <select>, not a tab strip: these labels are notes-to-self
                   ("Use to store EOS ERC20 tokens before mainnet...") that no
@@ -505,29 +539,53 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
                     <select> sizes to its widest <option>, and these labels run
                     to a full sentence, so without it the control blows past the
                     viewport on a phone instead of ellipsizing. */}
-                <label className="flex min-w-0 flex-1 items-center gap-2 sm:flex-initial">
-                  <span className="shrink-0 text-caption font-semibold uppercase tracking-wide text-tertiary">Wallet</span>
-                  <select
-                    value={selectedWalletId == null ? '' : String(selectedWalletId)}
-                    onChange={(event) => setSelectedWalletId(
-                      event.target.value === '' ? null : parseInt(event.target.value)
-                    )}
-                    className="h-9 w-full min-w-0 border border-border bg-surface px-2 text-body-sm text-primary sm:w-[280px]"
+                {wallets.length > 0 && (
+                  <label className="flex min-w-0 flex-1 items-center gap-2 sm:flex-initial">
+                    <span className="shrink-0 text-caption font-semibold uppercase tracking-wide text-tertiary">Wallet</span>
+                    <select
+                      value={selectedWalletId == null ? '' : String(selectedWalletId)}
+                      onChange={(event) => setSelectedWalletId(
+                        event.target.value === '' ? null : parseInt(event.target.value)
+                      )}
+                      className="h-9 w-full min-w-0 border border-border bg-surface px-2 text-body-sm text-primary sm:w-[280px]"
+                    >
+                      <option value="">All wallets ({wallets.length})</option>
+                      {wallets.map((wallet) => (
+                        <option key={wallet.id} value={String(wallet.id)}>{walletLabel(wallet)}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {/* Two small buttons rather than a FilterTabs strip: the page
+                    tab bar is directly above and a third strip in view at once
+                    reads as three competing navigations. */}
+                <div className="flex items-center gap-1" role="group" aria-label="Transactions view">
+                  {[[LEDGER_VIEW, 'Ledger'], [TRANSFERS_VIEW, 'Transfer legs']].map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setTxView(id)}
+                      aria-pressed={txView === id}
+                      className={`inline-flex h-8 items-center rounded border px-3 text-[9px] font-bold uppercase tracking-wide transition-all ${
+                        txView === id
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-surface-3 text-tertiary hover:text-primary'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {wallets.length > 0 && (
+                  <button
+                    onClick={handleSyncClick}
+                    disabled={syncingWalletId != null}
+                    className="inline-flex h-8 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-50"
                   >
-                    <option value="">All wallets ({wallets.length})</option>
-                    {wallets.map((wallet) => (
-                      <option key={wallet.id} value={String(wallet.id)}>{walletLabel(wallet)}</option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  onClick={handleSyncClick}
-                  disabled={syncingWalletId != null}
-                  className="inline-flex h-8 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-50"
-                >
-                  <RefreshCw size={12} className={syncingWalletId != null ? 'animate-spin' : ''} />
-                  {selectedWalletId == null ? 'Sync all' : 'Sync'}
-                </button>
+                    <RefreshCw size={12} className={syncingWalletId != null ? 'animate-spin' : ''} />
+                    {selectedWalletId == null ? 'Sync all' : 'Sync'}
+                  </button>
+                )}
               </div>
 
               {/* One line, not one banner per wallet: in the default all-wallets
@@ -549,12 +607,20 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
                 </div>
               )}
 
-              <OnChainActivity
-                key={`${selectedWalletId ?? 'all'}:${syncNonce}`}
-                walletId={selectedWalletId}
-                walletNames={selectedWalletId == null ? walletNames : undefined}
-                onDataChanged={fetchData}
-              />
+              {txView === LEDGER_VIEW ? (
+                <CryptoLedger
+                  walletId={selectedWalletId}
+                  refreshKey={syncNonce}
+                  onDataChanged={fetchData}
+                />
+              ) : (
+                <OnChainActivity
+                  key={`${selectedWalletId ?? 'all'}:${syncNonce}`}
+                  walletId={selectedWalletId}
+                  walletNames={selectedWalletId == null ? walletNames : undefined}
+                  onDataChanged={fetchData}
+                />
+              )}
             </section>
           ))}
         </>

@@ -53,6 +53,47 @@ export const formatDayOrdinal = (day) => {
   return `${n}${suffix}`;
 };
 
+// Crypto quantities arrive as full-precision decimal STRINGS -- 18 decimals of
+// wei, or NUMERIC(38,18) off an exchange record -- and Number() silently
+// rounds anything past ~15 significant digits. This formats the string itself:
+// half-up rounding through BigInt, then trailing zeros trimmed and the whole
+// part grouped.
+//
+// A non-zero amount that rounds to zero renders as "<0.000001" rather than
+// "0": a ledger row reading 0 for a real (if tiny) movement is a lie, and dust
+// is exactly what a crypto ledger is full of.
+export const formatExactUnits = (value, { maxFractionDigits = 6 } = {}) => {
+  if (value === null || value === undefined || value === '') return '0';
+  const text = String(value).trim();
+  if (!/^-?\d*(\.\d*)?$/.test(text) || text === '' || text === '-' || text === '.') return text;
+
+  const negative = text.startsWith('-');
+  const [wholeRaw = '0', fracRaw = ''] = text.replace(/^-/, '').split('.');
+  const whole = wholeRaw || '0';
+
+  let outWhole = whole;
+  let outFrac = fracRaw.slice(0, maxFractionDigits);
+  if (fracRaw.length > maxFractionDigits && fracRaw.charCodeAt(maxFractionDigits) >= 53) {
+    // Carry through the decimal point without ever building a float.
+    const bumped = (BigInt(whole + outFrac.padEnd(maxFractionDigits, '0') || '0') + 1n)
+      .toString()
+      .padStart(maxFractionDigits + 1, '0');
+    outWhole = maxFractionDigits ? bumped.slice(0, -maxFractionDigits) : bumped;
+    outFrac = maxFractionDigits ? bumped.slice(-maxFractionDigits) : '';
+  }
+  outFrac = outFrac.replace(/0+$/, '');
+
+  const isZero = /^0*$/.test(outWhole) && outFrac === '';
+  const wasZero = /^0*$/.test(whole) && /^0*$/.test(fracRaw);
+  if (isZero && !wasZero) {
+    return `${negative ? '-' : ''}<0.${'0'.repeat(Math.max(0, maxFractionDigits - 1))}1`;
+  }
+
+  const grouped = BigInt(outWhole || '0').toLocaleString('en-US');
+  const sign = negative && !isZero ? '-' : '';
+  return `${sign}${grouped}${outFrac ? `.${outFrac}` : ''}`;
+};
+
 export const formatCompactCurrency = (value) => {
   const sign = value < 0 ? '-' : '';
   const abs = Math.abs(value);

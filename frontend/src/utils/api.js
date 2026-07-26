@@ -374,6 +374,64 @@ export const eth = {
     const response = await api.get('/api/eth/counterparties/unreviewed', { params: { include_dust: 'true' } });
     return response.data;
   },
+  // The transaction-level feed. Overrides are resolved server-side, so a
+  // corrected row reads and filters as the category the user chose.
+  getActivity: async ({ walletId, ...params } = {}) => {
+    const response = await api.get('/api/eth/activity', {
+      params: { ...params, ...(walletId != null ? { wallet_id: walletId } : {}) },
+    });
+    return response.data;
+  },
+  // A manual correction. Stored apart from the derived table, so it survives
+  // every resync and reclassification.
+  setActivityOverride: async ({ walletId, txHash, chainId, category, note }) => {
+    const response = await api.post('/api/eth/activity/override', {
+      wallet_id: walletId, tx_hash: txHash, chain_id: chainId, category, note,
+    });
+    return response.data;
+  },
+  clearActivityOverride: async ({ walletId, txHash, chainId }) => {
+    const response = await api.delete('/api/eth/activity/override', {
+      params: { wallet_id: walletId, tx_hash: txHash, chain_id: chainId },
+    });
+    return response.data;
+  },
+};
+
+// The unified crypto ledger (#63): on-chain activity and exchange records
+// interleaved by time, with a matched pair rendered once.
+export const crypto = {
+  // filters: { category, source, needsReview, walletId, exchangeAccountId }.
+  // An unknown category/source is a 400 server-side, so the client's filter
+  // values come from utils/dataLabels LEDGER_CATEGORIES rather than free text.
+  getLedger: async ({ needsReview, walletId, exchangeAccountId, ...params } = {}) => {
+    const response = await api.get('/api/crypto/ledger', {
+      params: {
+        ...params,
+        ...(needsReview != null ? { needs_review: String(needsReview) } : {}),
+        ...(walletId != null ? { wallet_id: walletId } : {}),
+        ...(exchangeAccountId != null ? { exchange_account_id: exchangeAccountId } : {}),
+      },
+    });
+    return response.data;
+  },
+  // Unfiltered counts for the badge: a needs-review count that only saw the
+  // rows currently on screen would read zero the moment they were filtered out.
+  getLedgerSummary: async () => {
+    const response = await api.get('/api/crypto/ledger/summary');
+    return response.data;
+  },
+  // Built as a URL rather than fetched: the browser's own download handles the
+  // Content-Disposition, and buffering an entire ledger through axios to
+  // re-emit it as a Blob would only add a copy.
+  ledgerExportUrl: (params = {}) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+    }
+    const suffix = query.toString();
+    return `${API_URL}/api/crypto/ledger/export${suffix ? `?${suffix}` : ''}`;
+  },
 };
 
 // Exchange accounts and their CSV imports (Settings -> Exchanges). On-exchange

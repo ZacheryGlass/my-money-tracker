@@ -13,7 +13,11 @@ const apiMocks = vi.hoisted(() => ({
     ignoreToken: vi.fn(),
     getAddressLabels: vi.fn(),
     labelAddress: vi.fn(),
+    setActivityOverride: vi.fn(),
+    clearActivityOverride: vi.fn(),
   },
+  crypto: { getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn() },
+  exchanges: { getAll: vi.fn(), resolveRecord: vi.fn() },
 }));
 
 vi.mock('../utils/api', () => ({
@@ -21,7 +25,15 @@ vi.mock('../utils/api', () => ({
   holdings: apiMocks.holdings,
   history: apiMocks.history,
   eth: apiMocks.eth,
+  crypto: apiMocks.crypto,
+  exchanges: apiMocks.exchanges,
 }));
+
+// The Transactions tab now opens onto the unified ledger; the raw per-leg feed
+// is the second view behind this button.
+const showTransferLegs = async () => {
+  fireEvent.click(await screen.findByRole('button', { name: /transfer legs/i }));
+};
 
 const CRYPTO_ACCOUNT = {
   id: 9,
@@ -40,6 +52,14 @@ describe('CryptoPage', () => {
     apiMocks.holdings.getAll.mockResolvedValue({ holdings: [] });
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [] });
     apiMocks.history.getAccounts.mockResolvedValue({ data: [] });
+    apiMocks.crypto.getLedger.mockResolvedValue({ data: [], pagination: { total: 0 } });
+    apiMocks.crypto.getLedgerSummary.mockResolvedValue({
+      summary: {
+        total: 0, needs_review_count: 0, onchain_count: 0, exchange_count: 0, matched_count: 0,
+      },
+    });
+    apiMocks.crypto.ledgerExportUrl.mockReturnValue('/api/crypto/ledger/export');
+    apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
   });
 
   it('sends the user to the Ethereum settings tab when nothing is tracked', async () => {
@@ -129,6 +149,7 @@ describe('CryptoPage', () => {
     });
 
     render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    await showTransferLegs();
 
     await screen.findByText('On-chain Activity');
     // No walletId => the merged feed across every wallet.
@@ -164,6 +185,7 @@ describe('CryptoPage', () => {
     apiMocks.eth.ignoreToken.mockResolvedValue({ token: {} });
 
     render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    await showTransferLegs();
 
     await screen.findByText('On-chain Activity');
     const callsBefore = apiMocks.holdings.getAll.mock.calls.length;
@@ -200,6 +222,7 @@ describe('CryptoPage', () => {
     apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
 
     render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    await showTransferLegs();
     await screen.findByText('On-chain Activity');
 
     // Desktop row and mobile card render together, so take the first form.
@@ -242,6 +265,7 @@ describe('CryptoPage', () => {
     });
 
     render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    await showTransferLegs();
     await screen.findByText('On-chain Activity');
 
     expect(screen.getByTitle('0xarb00000').closest('a'))

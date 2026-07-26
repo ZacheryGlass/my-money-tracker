@@ -21,6 +21,7 @@ const expensesRoutes = require('./routes/expenses');
 const plaidRoutes = require('./routes/plaid');
 const ethRoutes = require('./routes/eth');
 const exchangesRoutes = require('./routes/exchanges');
+const cryptoRoutes = require('./routes/crypto');
 const transactionsRoutes = require('./routes/transactions');
 const analyticsRoutes = require('./routes/analytics');
 const keysRoutes = require('./routes/keys');
@@ -107,6 +108,10 @@ app.use('/api/expenses', expensesRoutes);
 app.use('/api/plaid', plaidRoutes);
 app.use('/api/eth', ethRoutes);
 app.use('/api/exchanges', exchangesRoutes);
+// The unified crypto ledger reads BOTH /api/eth and /api/exchanges data, so it
+// belongs under neither; mounting it on either would make one source's route
+// file own the other's shape.
+app.use('/api/crypto', cryptoRoutes);
 app.use('/api/transactions', transactionsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/keys', keysRoutes);

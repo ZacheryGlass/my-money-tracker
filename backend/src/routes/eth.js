@@ -186,11 +186,32 @@ router.get('/transfers', async (req, res) => {
       }
     }
 
+    // A malformed hash is a 400 rather than a filter that quietly matches
+    // nothing: an empty detail panel reads as "this transaction had no legs".
+    let txHash = null;
+    if (req.query.tx_hash !== undefined && req.query.tx_hash !== '') {
+      txHash = String(req.query.tx_hash).trim().toLowerCase();
+      if (!TX_HASH_RE.test(txHash)) {
+        return res.status(400).json({ error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' });
+      }
+    }
+    // Any positive integer, not just enabled chains: a since-disabled chain's
+    // rows stay stored and must stay readable.
+    let chainId = null;
+    if (req.query.chain_id !== undefined && req.query.chain_id !== '') {
+      chainId = Number(req.query.chain_id);
+      if (!Number.isInteger(chainId) || chainId < 1) {
+        return res.status(400).json({ error: 'chain_id must be a positive integer' });
+      }
+    }
+
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const { transfers, total } = await EthTransfer.findForUser(req.user.id, {
       walletId,
       type: req.query.type,
+      txHash,
+      chainId,
       limit,
       offset,
     });

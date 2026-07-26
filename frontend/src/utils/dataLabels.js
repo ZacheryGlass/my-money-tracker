@@ -35,6 +35,54 @@ export const labelVerdictKind = (verdict) => (verdict === LABEL_VERDICT_KEEP ? u
 // becomes.
 export const labelVerdictNeedsName = (verdict) => verdict !== 'external' && verdict !== 'own';
 
+// The unified crypto ledger's category vocabulary (#63). MUST stay in step with
+// backend CryptoLedger.CATEGORIES -- the activity layer's own list plus the two
+// values only an exchange record produces. The server answers an unknown
+// ?category= with a 400, so a value offered here that the server does not know
+// is a dead filter rather than a wider feed.
+//
+// Ordered as the ladder reads, not alphabetically: the deterministic verdicts
+// first, the judgement calls last, so the picker on a flagged row puts the
+// likely answers where the eye lands.
+export const LEDGER_CATEGORIES = [
+  ['self_transfer', 'Self transfer'],
+  ['exchange_deposit', 'Exchange deposit'],
+  ['exchange_withdrawal', 'Exchange withdrawal'],
+  ['exchange_trade', 'Exchange trade'],
+  ['exchange_transfer', 'Exchange transfer'],
+  ['staking_reward', 'Staking reward'],
+  ['swap', 'Swap'],
+  ['bridge_out', 'Bridge out'],
+  ['bridge_in', 'Bridge in'],
+  ['nft_purchase', 'NFT purchase'],
+  ['nft_sale', 'NFT sale'],
+  ['nft_mint', 'NFT mint'],
+  ['nft_burn', 'NFT burn'],
+  ['airdrop', 'Airdrop'],
+  ['send', 'Send'],
+  ['receive', 'Receive'],
+  ['spend', 'Spend'],
+  ['approval', 'Approval'],
+  ['contract_interaction', 'Contract call'],
+  ['fee', 'Fee'],
+  ['failed', 'Failed'],
+];
+
+const LEDGER_CATEGORY_LABELS = new Map(LEDGER_CATEGORIES);
+
+// Only 'fee' and 'exchange_transfer' are missing from eth_activity's CHECK
+// constraint, so they are the two an on-chain override cannot be set to. The
+// filter offers both (an exchange row really does land there); the override
+// picker subtracts them, or the user could save a category the server rejects.
+export const ONCHAIN_OVERRIDE_CATEGORIES = LEDGER_CATEGORIES.filter(
+  ([value]) => value !== 'fee' && value !== 'exchange_transfer'
+);
+
+export function formatLedgerCategory(category) {
+  if (!category) return UNCATEGORIZED_LABEL;
+  return LEDGER_CATEGORY_LABELS.get(category) || formatTransactionCategory(category);
+}
+
 export function formatCategoryLabel(category, fallback = UNCATEGORIZED_LABEL) {
   const label = typeof category === 'string' ? category.trim() : '';
   return label || fallback;

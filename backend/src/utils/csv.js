@@ -62,4 +62,25 @@ function isBlankRow(row) {
   return !row || row.every((cell) => String(cell ?? '').trim() === '');
 }
 
-module.exports = { parseCsv, isBlankRow };
+// The writer, RFC 4180 to match the reader above. `headers` is [key, ...] or
+// [[key, label], ...] when the column heading should differ from the row key.
+//
+// Lives here rather than in a route because there are now two exporters (the
+// holdings/transactions export and the crypto ledger), and a second copy of
+// the quoting rules is a second place for a comma inside a wallet label to
+// break a user's spreadsheet.
+function toCsv(rows, headers) {
+  const columns = headers.map((header) => (Array.isArray(header) ? header : [header, header]));
+  const escape = (value) => {
+    if (value === null || value === undefined) return '';
+    const text = String(value);
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const lines = [columns.map(([, label]) => escape(label)).join(',')];
+  for (const row of rows || []) {
+    lines.push(columns.map(([key]) => escape(row[key])).join(','));
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+module.exports = { parseCsv, isBlankRow, toCsv };
