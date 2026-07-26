@@ -993,6 +993,39 @@ test('spam writes refuse to run unscoped', async () => {
   );
 });
 
+// --- the reason vocabulary -------------------------------------------------
+
+test('every reason code the service can write is legal in 045\'s CHECK', () => {
+  // The column is constrained, so a reason the migration does not know aborts
+  // the whole insert chunk -- taking every OTHER activity row in that chunk
+  // with it. The two lists cannot be single-sourced across the JS/SQL boundary,
+  // so they are compared instead.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const sql = fs.readFileSync(
+    path.join(__dirname, '../migrations/045_spam_quarantine.sql'), 'utf8'
+  );
+  const listed = new Set(
+    (sql.match(/spam_reason IN \(([^)]*)\)/s)?.[1] || '')
+      .split(',')
+      .map((value) => value.trim().replace(/^'|'$/g, ''))
+      .filter(Boolean)
+  );
+
+  for (const code of Object.values(SPAM_REASONS)) {
+    assert.ok(listed.has(code), `045's CHECK is missing '${code}'`);
+  }
+  // And nothing in the CHECK that the service cannot produce, so the guarded DO
+  // block's sentinel and the code stay in step in both directions.
+  assert.equal(listed.size, Object.values(SPAM_REASONS).length);
+
+  // The definition guard's sentinel has to name a value actually in the list,
+  // or the constraint swap never runs on an already-deployed database.
+  const sentinel = sql.match(/pg_get_constraintdef\(oid\) LIKE '%([a-z_]+)%'\s*\)\s*THEN\s*ALTER TABLE eth_activity DROP CONSTRAINT IF EXISTS eth_activity_spam_reason_check/);
+  assert.ok(sentinel, 'the spam_reason constraint swap must be definition-guarded');
+  assert.ok(listed.has(sentinel[1]), `sentinel '${sentinel?.[1]}' is not one of the reason codes`);
+});
+
 // --- determinism -----------------------------------------------------------
 
 test('the quarantine is deterministic, so a nightly rebuild writes the same answer', async () => {
