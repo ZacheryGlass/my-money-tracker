@@ -1,7 +1,11 @@
 # Personal data files
 *.xlsx
 *.pdf
-backend/data/
+# Contents only, not the directory: git cannot re-include a file whose parent
+# directory is excluded, and the generated builtin label pack has to be
+# committed (the 21MB dump it comes from must not be).
+backend/data/*
+!backend/data/builtin-address-labels.json
 
 # OS junk
 .DS_Store

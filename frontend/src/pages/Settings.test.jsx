@@ -166,6 +166,76 @@ describe('Settings display names', () => {
     expect(screen.getByText('My Deposit')).toBeInTheDocument();
   });
 
+  // Thousands of addresses arrive pre-labeled from the builtin pack, and a
+  // wrong 'exchange' among them rewrites real spending as an internal transfer.
+  // This form is where that gets corrected, so the verdict has to be reachable
+  // -- and a rename must not silently re-vote.
+  describe('label form verdicts', () => {
+    const openLabelForm = async (labels = []) => {
+      apiMocks.eth.getAddressLabels.mockResolvedValue({ labels });
+      apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
+      renderSettings();
+      fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
+      await screen.findByText('Labeled Addresses');
+      // Scoped: the wallet form higher up the tab has its own 0x… input.
+      const form = within(screen.getByRole('region', { name: /labeled addresses/i }));
+      return {
+        address: form.getByPlaceholderText('0x…'),
+        name: form.getByPlaceholderText('Coinbase'),
+        verdict: form.getByRole('combobox', { name: /verdict/i }),
+        submit: form.getByRole('button', { name: /label address/i }),
+      };
+    };
+
+    it('defaults a new address to Exchange and sends that kind', async () => {
+      const form = await openLabelForm();
+      fireEvent.change(form.address, { target: { value: '0x3333333333333333333333333333333333333333' } });
+      fireEvent.change(form.name, { target: { value: 'Coinbase' } });
+      expect(form.verdict).toHaveValue('exchange');
+
+      fireEvent.click(form.submit);
+      await waitFor(() => {
+        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
+          '0x3333333333333333333333333333333333333333', 'Coinbase', { kind: 'exchange' }
+        );
+      });
+    });
+
+    it('marks an address as an outside party with no name typed', async () => {
+      const form = await openLabelForm();
+      fireEvent.change(form.address, { target: { value: '0x3333333333333333333333333333333333333333' } });
+      fireEvent.change(form.verdict, { target: { value: 'external' } });
+      fireEvent.click(form.submit);
+
+      // The name is optional for this verdict -- it never reaches
+      // classification, so the server falls back to a short address.
+      await waitFor(() => {
+        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
+          '0x3333333333333333333333333333333333333333', null, { kind: 'external' }
+        );
+      });
+    });
+
+    it('renaming an already-labeled address keeps its verdict by sending no kind', async () => {
+      const form = await openLabelForm([
+        { address: '0x2222222222222222222222222222222222222222', name: 'Cold storage', kind: 'own', source: 'user' },
+      ]);
+      fireEvent.change(form.address, { target: { value: '0x2222222222222222222222222222222222222222' } });
+      expect(form.verdict).toHaveValue('keep');
+      fireEvent.change(form.name, { target: { value: 'Ledger' } });
+      fireEvent.click(form.submit);
+
+      // kind undefined omits the field, which the API reads as "keep the
+      // current verdict". Writing 'exchange' here would drop the address out of
+      // the own set and turn a self-transfer into a phantom exchange deposit.
+      await waitFor(() => {
+        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
+          '0x2222222222222222222222222222222222222222', 'Ledger', { kind: undefined }
+        );
+      });
+    });
+  });
+
   describe('unknown counterparty triage', () => {
     const WALLET = { id: 1, address: '0xaaaa000000000000000000000000000000000001', account: null, error_code: null };
     const MATERIAL = {

@@ -5,6 +5,20 @@ const pool = require('../config/database');
 class EthAddressLabel {
   // The user's own rows plus the shared builtins, with a user row shadowing
   // the builtin for the same address.
+  //
+  // Bulk seed packs (source 'eth-labels', migration 036) are deliberately left
+  // out: this list is a management UI, and 5k scraped rows would bury the
+  // handful of labels the user actually curated -- while shipping ~700KB down
+  // the wire on every Settings load. They still classify, still shadow, and
+  // still answer findByAddress; they just are not a to-do list.
+  //
+  // The filter sits OUTSIDE the DISTINCT ON so shadowing resolves first: a
+  // user's override of a packed address wins precedence and stays in the list,
+  // while an untouched pack row wins nothing and drops out. Today the predicate
+  // only ever removes builtins, so filtering inside would give the same answer
+  // -- keep it outside anyway. Narrowing the candidate set before precedence
+  // resolves is exactly the trap that lets a builtin outrank a user's override
+  // in reclassifyCounterparties, and the next predicate may not be so harmless.
   static async findAllForUser(userId) {
     const result = await pool.query(
       `SELECT * FROM (
@@ -13,6 +27,7 @@ class EthAddressLabel {
          WHERE user_id = $1 OR user_id IS NULL
          ORDER BY address, user_id NULLS LAST
        ) labels
+       WHERE user_id IS NOT NULL OR source = 'builtin'
        ORDER BY name, address`,
       [userId]
     );

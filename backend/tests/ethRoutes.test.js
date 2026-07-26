@@ -102,6 +102,48 @@ test('POST /api/eth/address-labels rejects an unknown kind', async () => {
   assert.match(response.body.error, /kind must be/);
 });
 
+// The verdict selectors in the UI (Settings' label form, the Crypto page's
+// inline Label button) are the only way to correct a wrong builtin, so the
+// values they can send are a contract, not an implementation detail.
+test('POST /api/eth/address-labels rejects a non-string kind rather than coercing it', async () => {
+  for (const kind of [['own'], { kind: 'own' }, 3]) {
+    const response = await request(app)
+      .post('/api/eth/address-labels')
+      .send({ address: '0x1111111111111111111111111111111111111111', name: 'X', kind })
+      .set('Content-Type', 'application/json');
+
+    // ['own'].toString() is 'own': coercing would let an array vote.
+    assert.equal(response.status, 400, `kind ${JSON.stringify(kind)} should not be accepted`);
+    assert.match(response.body.error, /kind must be/);
+  }
+});
+
+// A <select> sends its value verbatim; ' OWN ' only shows up via a caller that
+// pads or shouts, and normalizing it here is what keeps the allowlist the
+// single definition of a valid verdict.
+for (const kind of ['exchange', 'external', 'own', ' OWN ']) {
+  test(`POST /api/eth/address-labels accepts the verdict '${kind}'`, async () => {
+    const response = await request(app)
+      .post('/api/eth/address-labels')
+      .send({ address: '0x1111111111111111111111111111111111111111', name: 'Coinbase', kind })
+      .set('Content-Type', 'application/json');
+
+    // No DB in this suite, so validation passing (not 400) is the assertion.
+    assert.notEqual(response.status, 400);
+  });
+}
+
+// Omitting kind entirely is how a rename avoids re-voting: the model reads NULL
+// as "keep the current verdict" and only defaults to 'exchange' on insert.
+test('POST /api/eth/address-labels accepts an omitted kind', async () => {
+  const response = await request(app)
+    .post('/api/eth/address-labels')
+    .send({ address: '0x1111111111111111111111111111111111111111', name: 'Coinbase' })
+    .set('Content-Type', 'application/json');
+
+  assert.notEqual(response.status, 400);
+});
+
 // The triage queue's two one-click verdicts carry no name. Their labels never
 // reach classification as text, so a short-address fallback is enough -- only
 // 'exchange' names must be typed, because that name IS the assertion that

@@ -178,6 +178,47 @@ describe('CryptoPage', () => {
     });
   });
 
+  // The inline Label button is the only place a wrong verdict is visible next
+  // to the transfer it distorts, so it has to be able to write any verdict --
+  // not just 'exchange', which is what a builtin pack row already claims.
+  it('labels a counterparty with a chosen verdict from the activity feed', async () => {
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '2' }],
+    });
+    apiMocks.eth.getTransfers.mockResolvedValue({
+      data: [{
+        id: 31, wallet_id: 1, wallet_address: '0xaaaa000000000000000000000000000000000001',
+        transfer_type: 'external', tx_hash: '0xshop00000', block_time: '2026-07-02T00:00:00Z',
+        from_address: '0xaaaa000000000000000000000000000000000001',
+        to_address: '0xcccc000000000000000000000000000000000003',
+        value_wei: '1000000000000000000', is_error: false,
+        counterparty_is_own: false, counterparty_exchange: null,
+      }],
+      pagination: { total: 1 },
+    });
+    apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
+
+    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    await screen.findByText('On-chain Activity');
+
+    // Desktop row and mobile card render together, so take the first form.
+    fireEvent.click(screen.getAllByTitle(/label this address/i)[0]);
+    const verdict = screen.getAllByLabelText('Counterparty verdict')[0];
+    // A never-labeled address defaults to Exchange, today's behavior.
+    expect(verdict).toHaveValue('exchange');
+    fireEvent.change(verdict, { target: { value: 'external' } });
+    fireEvent.click(screen.getAllByRole('button', { name: /^save$/i })[0]);
+
+    await vi.waitFor(() => {
+      // No name needed for this verdict: it never reaches classification, so
+      // the server fills in a short address.
+      expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
+        '0xcccc000000000000000000000000000000000003', null, { kind: 'external' }
+      );
+    });
+  });
+
   it('shows a sentence-length wallet label whole in the wallet picker', async () => {
     const LONG = 'Use to store EOS ERC20 tokens before mainnet. Sent remainder to BinanceUS';
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
