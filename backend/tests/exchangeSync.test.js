@@ -193,6 +193,7 @@ require.cache[pgModulePath] = {
 // here and can be asserted on.
 const requests = [];
 let krakenLedgerPages = null;
+let krakenLedgerHistory = null;
 let coinbaseTransactionPages = null;
 let failNextKrakenWith = null;
 
@@ -213,6 +214,27 @@ function krakenResponse(url, body) {
   if (endpoint === 'WithdrawStatus') return { status: 200, data: KRAKEN_FUNDING.WithdrawStatus };
   if (endpoint === 'DepositStatus') return { status: 200, data: KRAKEN_FUNDING.DepositStatus };
   if (endpoint === 'Ledgers') {
+    // A whole synthetic history that honours start/end/ofs the way Kraken
+    // documents them: start EXCLUSIVE, end INCLUSIVE, newest row first.
+    if (krakenLedgerHistory) {
+      const start = Number(params.get('start') || 0);
+      const end = Number(params.get('end') || Number.MAX_SAFE_INTEGER);
+      const offset = Number(params.get('ofs') || 0);
+      const window = krakenLedgerHistory
+        .filter((row) => row.time > start && row.time <= end)
+        .sort((a, b) => b.time - a.time);
+      const page = window.slice(offset, offset + 50);
+      return {
+        status: 200,
+        data: {
+          error: [],
+          result: {
+            ledger: Object.fromEntries(page.map((row) => [row.ledgerId, row])),
+            count: window.length,
+          },
+        },
+      };
+    }
     if (krakenLedgerPages) {
       const offset = Number(params.get('ofs') || 0);
       const page = krakenLedgerPages[offset / 50] ?? { ledger: {}, count: 0 };
@@ -298,6 +320,7 @@ beforeEach(() => {
   derivedBalances = {};
   accountOverrides = {};
   krakenLedgerPages = null;
+  krakenLedgerHistory = null;
   coinbaseTransactionPages = null;
   failNextKrakenWith = null;
   process.env.SECRETS_ENCRYPTION_KEY = ENCRYPTION_KEY;
@@ -625,6 +648,54 @@ test('kraken: a truncated walk keeps a resume point instead of claiming it finis
   // strand everything older than the budget forever.
   assert.ok(Number.isFinite(result.cursor.pendingEnd), 'the unfinished window carries an end to resume from');
   assert.equal(result.cursor.pendingStart, 0);
+});
+
+test('kraken: repeated syncs read a long history to the end, skipping nothing', async () => {
+  // The property the whole cursor design exists for, driven through the real
+  // connector against a feed that honours start/end/ofs the way Kraken
+  // documents them. 3,000 rows against a 1,250-row interactive budget, so the
+  // first pass necessarily truncates.
+  const template = Object.values(KRAKEN_LEDGERS.result.ledger)[0];
+  const newest = 1710093600;
+  // One row an hour, so the history is months long rather than fifty minutes:
+  // a history shorter than RESUME_OVERLAP_SECONDS would be re-read whole by
+  // the incremental pass and prove nothing about it.
+  krakenLedgerHistory = Array.from({ length: 3000 }, (_, i) => ({
+    ...template,
+    ledgerId: `LHIST${String(i).padStart(4, '0')}-0-H`,
+    refid: `RHIST-${i}`,
+    type: 'deposit',
+    time: newest - (i * 3600),
+  }));
+
+  const seen = new Set();
+  let cursor = null;
+  let runs = 0;
+  for (; runs < 10; runs += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await krakenConnector.sync(
+      { apiKey: 'k', apiSecret: Buffer.alloc(32, 1).toString('base64') },
+      { cursor, interactive: true }
+    );
+    result.records.forEach((record) => seen.add(record.external_id));
+    cursor = result.cursor;
+    if (!result.stats.backfillPending) break;
+  }
+
+  assert.ok(runs < 9, `the backfill has to converge; it took ${runs + 1} runs`);
+  // Every single ledger row reached a record. A cursor that advanced past
+  // unread rows would leave a hole here that nothing downstream could detect.
+  assert.equal(seen.size, 3000);
+  assert.equal(cursor.pendingEnd, null);
+
+  // ...and once finished, a further sync is incremental rather than a fourth
+  // walk of the whole history.
+  requests.length = 0;
+  await krakenConnector.sync(
+    { apiKey: 'k', apiSecret: Buffer.alloc(32, 1).toString('base64') },
+    { cursor, interactive: true }
+  );
+  assert.ok(requests.filter((entry) => entry.endpoint === 'Ledgers').length <= 2);
 });
 
 test('kraken: an incremental sync rewinds past the watermark rather than resuming exactly on it', async () => {
