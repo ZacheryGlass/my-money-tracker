@@ -255,8 +255,11 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       description: transfer.transfer_type === 'gas'
         ? 'Gas fee'
         : `${outbound ? 'To' : 'From'} ${exchangeName || shortEthAddress(counterparty)}`,
+      // Rows already showing an exchange name stay labelable: the scraped
+      // pack is low-confidence and hidden from the Settings list, so this
+      // button is the only two-click path to correct a wrong pack verdict.
       labelable: transfer.transfer_type !== 'gas'
-        && !transfer.counterparty_is_own && !exchangeName
+        && !transfer.counterparty_is_own
         && counterparty && counterparty !== ZERO_ADDRESS,
     };
   }), [rows, walletNames]);
@@ -403,12 +406,14 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
           <div className="flex items-center justify-end gap-1.5">
             {transfer.labelable && (
               <button
-                onClick={() => { setLabelingId(transfer.id); setLabelName(''); setLabelVerdictChoice(null); }}
-                title="Label this address and say how to treat it (exchange, outside party, or yours)"
+                onClick={() => { setLabelingId(transfer.id); setLabelName(transfer.exchangeName || ''); setLabelVerdictChoice(null); }}
+                title={transfer.exchangeName
+                  ? 'Correct or rename this label (exchange, outside party, or yours)'
+                  : 'Label this address and say how to treat it (exchange, outside party, or yours)'}
                 className="inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-teal-500/30 hover:text-teal-400"
               >
                 <Tag size={10} />
-                Label
+                {transfer.exchangeName ? 'Relabel' : 'Label'}
               </button>
             )}
             {transfer.token_contract && (

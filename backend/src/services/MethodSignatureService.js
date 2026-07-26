@@ -195,4 +195,3 @@ class MethodSignatureService {
 }
 
 module.exports = MethodSignatureService;
-module.exports.MAX_LOOKUPS_PER_SYNC = MAX_LOOKUPS_PER_SYNC;

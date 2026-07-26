@@ -1,10 +1,12 @@
 -- The 4-byte method selector of the top-level transaction, so "Contract
 -- interaction" can eventually read "Uniswap: swapExactETHForTokens".
 --
--- Only the top-level tx carries a selector, so both columns are populated on the
--- native leg (ordinal 0) of the txlist row and stay NULL on internal, token and
--- gas legs. Both are nullable and always will be: a plain ETH send has no
--- selector at all, and a selector nobody can name has no method_name.
+-- Only the top-level tx carries a selector, so exactly one leg per txlist row
+-- holds it: the native leg when the tx moved ETH, else the synthesized gas leg
+-- (zero-value calls -- approve, swaps -- emit no native leg, but their calldata
+-- still originated from the wallet). Internal and token legs stay NULL. Both
+-- columns are nullable and always will be: a plain ETH send has no selector at
+-- all, and a selector nobody can name has no method_name.
 --
 -- method_name is a DISPLAY HINT ONLY. Selector collisions are real and cheap to
 -- mint (0x7ff36ab5 is both swapExactETHForTokens and a spam signature), so

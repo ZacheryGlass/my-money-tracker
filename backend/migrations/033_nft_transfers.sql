@@ -65,6 +65,8 @@ END $$;
 -- (verified: a safeBatchTransferFrom of 10 ids returns 10 rows sharing a
 -- tx_hash), so ordinals unbundle a batch with no extra work.
 
+-- No reader yet: this pre-builds the per-token (contract, id) lookup the
+-- Crypto page's NFT facet (#56) needs. Until then it is write cost only.
 CREATE INDEX IF NOT EXISTS idx_eth_transfers_nft
   ON eth_transfers(token_contract, token_id) WHERE token_id IS NOT NULL;
 

@@ -29,7 +29,7 @@ require.cache[pgModulePath] = {
 
 const EthAddressLabel = require('../src/models/EthAddressLabel');
 const EthTransfer = require('../src/models/EthTransfer');
-const { cleanName, extract, MERCHANT_NAME_RE, NAME_MAX } = require('../scripts/generate-label-seed');
+const { cleanName, extract, buildSql, MERCHANT_NAME_RE, NAME_MAX } = require('../scripts/generate-label-seed');
 
 const migrationsDir = path.join(__dirname, '../migrations');
 const readMigration = (file) => fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
@@ -341,4 +341,11 @@ test('a seeded address is still resolvable by address', async () => {
   // such label" (404); hiding the pack from the list must not hide it here.
   assert.doesNotMatch(sql, /source/);
   assert.match(sql, /user_id = \$2 OR user_id IS NULL/);
+});
+
+test('the committed migration is a regeneration of the committed JSON pack', () => {
+  // 036 and the JSON are two artifacts of one generator run, and the 21MB
+  // dump needed to regenerate them honestly is not committed -- so a hand
+  // edit of either artifact would ship silently without this check.
+  assert.equal(buildSql(PACK.labels, PACK.counts), SEED_SQL);
 });
