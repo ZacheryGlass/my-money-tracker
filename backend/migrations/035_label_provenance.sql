@@ -45,6 +45,15 @@ ALTER TABLE eth_address_labels ALTER COLUMN source SET NOT NULL;
 -- every boot is a full validation scan for no reason, and a bare
 -- "IF NOT EXISTS name" guard would leave a stale two-value CHECK in place
 -- forever on any database that already has the constraint.
+--
+-- THIS IS THE FIRST OF THREE OWNERS of this constraint (041 and 044 widen it
+-- under their own sentinels). The narrow list below is safe only because
+-- 'eth-labels' -- this block's sentinel -- is a member of THEIR union: seeing
+-- it, this guard passes and never re-narrows what they widened. Removing
+-- 'eth-labels' from 041/044's lists, or re-pointing this sentinel at a value
+-- their union lacks, makes this block drop and re-narrow on every boot (035
+-- runs first), breaking the next boot of every database that has 'auto-match'
+-- or 'builtin-bridge' rows. See the full note in 041.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint

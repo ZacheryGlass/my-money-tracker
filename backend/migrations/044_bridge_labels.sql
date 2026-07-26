@@ -37,6 +37,11 @@
 -- widening is skipped forever on every deployed database while looking
 -- perfectly applied on a fresh one. Guard on the DEFINITION instead, and BUMP
 -- THE SENTINEL ('bridge', the newest value) when adding a kind.
+--
+-- So eth_address_labels_kind_check is dual-owned (032 + here), but unlike the
+-- source CHECK the two cannot fight: 032's guard is name-only, and this block
+-- always leaves a constraint of that name in place, so after 044 has run once
+-- 032's IF NOT EXISTS is satisfied forever and it can never re-narrow.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
@@ -64,11 +69,17 @@ BEGIN
     ALTER TABLE eth_address_labels DROP CONSTRAINT IF EXISTS eth_address_labels_source_check;
     ALTER TABLE eth_address_labels
       ADD CONSTRAINT eth_address_labels_source_check
-      -- The UNION of every source, 041's 'auto-match' included: that migration
-      -- owns this same constraint under its own sentinel, and two narrower
-      -- lists take turns dropping and re-adding each other's -- failing on the
-      -- second boot, once the rows the other list forbids exist. See the note
-      -- in 041. Add a source in BOTH lists.
+      -- The UNION of every source, 041's 'auto-match' included: THREE
+      -- migrations own this constraint -- 035 creates it (sentinel
+      -- 'eth-labels'), 041 and this one widen it under their own sentinels --
+      -- and two narrower lists take turns dropping and re-adding each other's,
+      -- failing on the second boot once the rows the other list forbids exist.
+      -- See the note in 041. Add a source in BOTH widening lists.
+      --
+      -- 035 stays harmless only while 'eth-labels' remains in this union: it
+      -- runs first every boot and its guard passes on seeing that value, so it
+      -- never re-narrows what 041/044 widened. Drop 'eth-labels' from the union
+      -- and 035 re-narrows the constraint on every single boot.
       CHECK (source IN ('user', 'builtin', 'eth-labels', 'auto-match', 'builtin-bridge'));
   END IF;
 END $$;

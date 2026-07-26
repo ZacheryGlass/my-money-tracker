@@ -196,6 +196,10 @@ function parseVerdictTarget(source) {
 // where a Coinbase -> Kraken transfer reads as ONE movement: the withdrawal
 // record and the deposit record, side by side, with no on-chain leg because
 // there never was one.
+//
+// No UI consumer yet -- the list endpoint is unrendered (see CLAUDE.md Open
+// Work); the ledger surfaces matches through the activity feed instead, and
+// POST/DELETE /matches/verdict are what the inline confirm/reject buttons call.
 router.get('/matches', async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);

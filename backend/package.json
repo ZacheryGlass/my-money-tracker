@@ -8,12 +8,13 @@
     "start": "node src/server.js",
     "start:prod": "node scripts/migrate.js && node src/server.js",
     "migrate": "node scripts/migrate.js",
-    "lint": "eslint src/ scripts/generate-label-seed.js scripts/generate-bridge-seed.js",
+    "lint": "eslint src/ scripts/generate-label-seed.js scripts/generate-bridge-seed.js scripts/verify-ledger-sql.js",
     "test": "node --test --test-reporter=spec \"tests/*.test.js\"",
     "import": "node scripts/importFromCsv.js",
     "verify": "node scripts/verifyImport.js",
     "export": "node scripts/exportFromGoogleSheets.js",
-    "export:excel": "node scripts/exportFromExcel.js"
+    "export:excel": "node scripts/exportFromExcel.js",
+    "verify:ledger": "node scripts/verify-ledger-sql.js"
   },
   "keywords": [],
   "author": "",

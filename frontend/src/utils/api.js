@@ -462,8 +462,12 @@ export const crypto = {
   },
   // Unfiltered counts for the badge: a needs-review count that only saw the
   // rows currently on screen would read zero the moment they were filtered out.
-  getLedgerSummary: async () => {
-    const response = await api.get('/api/crypto/ledger/summary');
+  // Takes the same wallet narrowing as the feed (and nothing else), so the
+  // header counts describe the rows actually on screen.
+  getLedgerSummary: async ({ walletId } = {}) => {
+    const response = await api.get('/api/crypto/ledger/summary', {
+      params: walletId != null ? { wallet_id: walletId } : undefined,
+    });
     return response.data;
   },
   // Built as a URL rather than fetched: the browser's own download handles the
@@ -515,12 +519,6 @@ export const exchanges = {
   // false, so this is the only thing that can empty the review queue.
   resolveRecord: async (id, recordId) => {
     const response = await api.patch(`/api/exchanges/${id}/records/${recordId}/resolve`);
-    return response.data;
-  },
-  // Derived pairings between an on-chain transfer and the venue's own record of
-  // it (#61), with the counts behind the "how much is still unpaired" line.
-  getMatches: async (params = {}) => {
-    const response = await api.get('/api/exchanges/matches', { params });
     return response.data;
   },
   // Confirm or reject one pairing. A verdict names exactly ONE pair, in one of

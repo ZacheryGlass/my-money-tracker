@@ -653,6 +653,34 @@ test('an override is resolved over the derived verdict and clears the flag', asy
   assert.equal(row.needs_review, false);
 });
 
+test('the summary narrows to the wallet the feed is narrowed to', async () => {
+  // The header sentence sits directly above the rows. A user-wide count over a
+  // one-wallet feed described a ledger that was not on screen.
+  ledgerRows = [onchainRow()];
+  const response = await request(app).get(`/api/crypto/ledger/summary?wallet_id=${OWNED_WALLET_ID}`);
+  assert.equal(response.status, 200);
+  const { sql, params } = queries.filter((q) => /AS needs_review_count/.test(q.sql)).at(-1);
+  assert.match(sql, /r\.wallet_id = \$\d+/);
+  assert.ok(params.includes(OWNED_WALLET_ID));
+});
+
+test('a foreign wallet id 404s the summary too, rather than widening it', async () => {
+  const response = await request(app).get(`/api/crypto/ledger/summary?wallet_id=${FOREIGN_ID}`);
+  assert.equal(response.status, 404);
+  assert.equal(queries.filter((q) => /AS needs_review_count/.test(q.sql)).length, 0);
+});
+
+test('the view filters never move the summary, only the wallet does', async () => {
+  // A needs-review badge that read zero because the user filtered those rows
+  // away is a badge that lies.
+  ledgerRows = [onchainRow()];
+  await request(app).get('/api/crypto/ledger/summary?category=swap&needs_review=false&source=onchain');
+  const { sql } = queries.filter((q) => /AS needs_review_count/.test(q.sql)).at(-1);
+  assert.doesNotMatch(sql, /r\.category = \$\d+/);
+  assert.doesNotMatch(sql, /r\.needs_review = \$\d+/);
+  assert.doesNotMatch(sql, /r\.source = \$\d+/);
+});
+
 test('the summary counts every source and is not filtered by the feed', async () => {
   ledgerRows = [onchainRow(), exchangeRow()];
   const response = await request(app).get('/api/crypto/ledger/summary');

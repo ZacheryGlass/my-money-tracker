@@ -873,7 +873,7 @@ test('GATE: a claimed airdrop is never spam -- signing it is the distinguishing 
   //
   // The ladder still calls it `receive` + needs_review rather than `airdrop`:
   // an inbound-only arrival in a transaction you signed is equally a vesting
-  // release, a staking claim or a DeFi withdrawal, and rule 7 exists precisely
+  // release, a staking claim or a DeFi withdrawal, and rule 8 exists precisely
   // so that judgment stays a human's. Not spam is the property under test.
   const row = only([
     tokenLeg({

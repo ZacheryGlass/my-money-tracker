@@ -268,6 +268,24 @@ describe('CryptoLedger', () => {
     });
   });
 
+  it('counts the header on the same wallet the feed is narrowed to', async () => {
+    // The header sentence sits directly above the rows: a user-wide summary
+    // over a one-wallet feed described a ledger that was not on screen.
+    render(<CryptoLedger walletId={4} />);
+
+    await vi.waitFor(() => {
+      expect(apiMocks.crypto.getLedgerSummary).toHaveBeenCalledWith({ walletId: 4 });
+    });
+  });
+
+  it('asks for the whole-user summary when no wallet is selected', async () => {
+    render(<CryptoLedger />);
+
+    await vi.waitFor(() => {
+      expect(apiMocks.crypto.getLedgerSummary).toHaveBeenCalledWith({});
+    });
+  });
+
   it('corrects a flagged on-chain row into eth_activity_overrides', async () => {
     setLedger([onchain({
       id: `onchain:42161:${TX2}:1`,

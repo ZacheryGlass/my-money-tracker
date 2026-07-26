@@ -2306,13 +2306,17 @@ const Settings = ({ user }) => {
       {ethWallets.length > 0 && (
         <section className="mb-8" aria-labelledby="eth-spam-heading">
           <div className="mb-3 px-2">
-            <h2 id="eth-spam-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Quarantined</h2>
+            <h2 id="eth-spam-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Quarantined wallet transactions</h2>
             <p className="mt-1 text-xs text-secondary">
               Address-poisoning attempts, dust and scam airdrops, recognized automatically and kept out of
               Needs Review — a queue that fills with junk faster than anyone can drain it is a queue that gets
               ignored. Nothing is deleted: these transactions keep their amounts and still count toward the
               balance checks, they are just out of the way. If one of them is real, restore it in a click and
               the choice sticks through every future sync.
+            </p>
+            <p className="mt-1 text-xs text-tertiary">
+              Counted per wallet transaction: a transfer that touched two of your wallets is listed once for
+              each. The Ledger folds those into single movements, so its quarantine count can be lower.
             </p>
           </div>
 
@@ -2347,7 +2351,11 @@ const Settings = ({ user }) => {
                   {/* The server's count, not the page's: the list is capped, so
                       the rendered array can be smaller than the real total. */}
                   <span>
-                    {spamActivity.summary.spam_count} quarantined transaction{spamActivity.summary.spam_count === 1 ? '' : 's'}
+                    {/* Per WALLET-transaction, which is the unit
+                        /api/eth/activity counts. The unified ledger collapses
+                        cross-wallet duplicates, so its count is not this one --
+                        see the BOOL_AND note in models/CryptoLedger.js. */}
+                    {spamActivity.summary.spam_count} quarantined wallet transaction{spamActivity.summary.spam_count === 1 ? '' : 's'}
                   </span>
                   <ChevronDown size={14} className={showSpamActivity ? 'rotate-180 transition-transform' : 'transition-transform'} />
                 </button>

@@ -926,3 +926,110 @@ test('the mirror and the activity row agree on what a leg was worth', () => {
   const mirrored = buildMirrorRow(valued, WALLET);
   assert.equal(mirrored.amount, row.usd_value);
 });
+
+// --- the nightly job's post-loop passes (#76) --------------------------------
+//
+// rebuildForWallet REPLACES the wallet's eth_activity rows, and that DELETE
+// cascades eth_activity_links away with them. So the 08:10 job must re-run the
+// two user-wide passes the sync job runs, or every bridge pair is destroyed for
+// the rest of the day and one $6,000 bridge renders as two rows summing $12,000.
+
+const historicalPriceJob = require('../src/jobs/historicalPriceJob');
+const JobLog = require('../src/models/JobLog');
+const EthWallet = require('../src/models/EthWallet');
+const EthTransactionMirrorService = require('../src/services/EthTransactionMirrorService');
+const EthActivityService = require('../src/services/EthActivityService');
+const ExchangeMatchService = require('../src/services/ExchangeMatchService');
+
+async function runJobWithStubs(wallets, { failMatchesFor = null } = {}) {
+  const calls = [];
+  const saved = {
+    isRunning: JobLog.isRunning, create: JobLog.create, complete: JobLog.complete,
+    fail: JobLog.fail,
+    findAllForJobs: EthWallet.findAllForJobs,
+    applyToWallet: AssetPriceHistory.applyToWallet,
+    backfill: HistoricalPriceService.backfillLedgerAssets,
+    mirror: EthTransactionMirrorService.rebuildForWallet,
+    activity: EthActivityService.rebuildForWallet,
+    bridge: EthActivityService.matchBridgeTransfersForUser,
+    matches: ExchangeMatchService.rebuildForUserSafely,
+  };
+  JobLog.isRunning = async () => false;
+  JobLog.create = async () => ({ id: 1 });
+  JobLog.complete = async () => {};
+  JobLog.fail = async () => {};
+  EthWallet.findAllForJobs = async () => wallets;
+  AssetPriceHistory.applyToWallet = async () => 0;
+  HistoricalPriceService.backfillLedgerAssets = async () => ({
+    assets: 0, covered: 0, rangeLimited: 0, failed: 0,
+  });
+  EthTransactionMirrorService.rebuildForWallet = async (id) => { calls.push(['mirror', id]); };
+  EthActivityService.rebuildForWallet = async (id, options) => {
+    calls.push(['activity', id, options]);
+  };
+  EthActivityService.matchBridgeTransfersForUser = async (userId) => {
+    calls.push(['bridge', userId]);
+  };
+  ExchangeMatchService.rebuildForUserSafely = async (userId, context) => {
+    calls.push(['matches', userId, context]);
+    if (userId === failMatchesFor) throw new Error('match rebuild blew up');
+    return {};
+  };
+  try {
+    const result = await historicalPriceJob.run();
+    return { calls, result };
+  } finally {
+    JobLog.isRunning = saved.isRunning;
+    JobLog.create = saved.create;
+    JobLog.complete = saved.complete;
+    JobLog.fail = saved.fail;
+    EthWallet.findAllForJobs = saved.findAllForJobs;
+    AssetPriceHistory.applyToWallet = saved.applyToWallet;
+    HistoricalPriceService.backfillLedgerAssets = saved.backfill;
+    EthTransactionMirrorService.rebuildForWallet = saved.mirror;
+    EthActivityService.rebuildForWallet = saved.activity;
+    EthActivityService.matchBridgeTransfersForUser = saved.bridge;
+    ExchangeMatchService.rebuildForUserSafely = saved.matches;
+  }
+}
+
+test('the nightly job re-runs the match and bridge passes once per user', async () => {
+  const { calls } = await runJobWithStubs([
+    { id: 1, user_id: OWNER_ID },
+    { id: 2, user_id: OWNER_ID },
+    { id: 3, user_id: 2 },
+  ]);
+
+  // Per wallet: the match rebuild is suppressed, so it does not re-derive the
+  // owner's whole match set once per wallet against a half-rebuilt feed.
+  const activity = calls.filter((c) => c[0] === 'activity');
+  assert.equal(activity.length, 3);
+  for (const call of activity) assert.equal(call[2].rebuildMatches, false);
+
+  // Per USER, after the loop: both passes, exactly once each.
+  assert.deepEqual(
+    calls.filter((c) => c[0] === 'matches').map((c) => c[1]),
+    [OWNER_ID, 2]
+  );
+  assert.deepEqual(
+    calls.filter((c) => c[0] === 'bridge').map((c) => c[1]),
+    [OWNER_ID, 2]
+  );
+  // And after every wallet has landed -- a bridge_out on one wallet pairs with
+  // a bridge_in on another, so pairing cannot be decided mid-loop.
+  const lastActivity = calls.map((c) => c[0]).lastIndexOf('activity');
+  const firstBridge = calls.map((c) => c[0]).indexOf('bridge');
+  assert.ok(firstBridge > lastActivity);
+});
+
+test('one user\'s failed post-loop pass does not skip the next user\'s', async () => {
+  const { calls } = await runJobWithStubs(
+    [{ id: 1, user_id: OWNER_ID }, { id: 2, user_id: 2 }],
+    { failMatchesFor: OWNER_ID }
+  );
+
+  // User 1's match pass throws, so its bridge pass is skipped -- but user 2's
+  // pair still runs. Per-user isolation, the same shape the wallet loop uses.
+  assert.deepEqual(calls.filter((c) => c[0] === 'bridge').map((c) => c[1]), [2]);
+  assert.deepEqual(calls.filter((c) => c[0] === 'matches').map((c) => c[1]), [OWNER_ID, 2]);
+});

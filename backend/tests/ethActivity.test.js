@@ -480,7 +480,7 @@ test('rule 6: an NFT out against fungible in is an nft_sale', () => {
   assert.equal(row.category, 'nft_sale');
 });
 
-test('rule 7: a one-way send to an unlabeled counterparty is flagged, never spending', () => {
+test('rule 8: a one-way send to an unlabeled counterparty is flagged, never spending', () => {
   const row = only([leg(), gasLeg()]);
 
   assert.equal(row.category, 'send');
@@ -490,7 +490,7 @@ test('rule 7: a one-way send to an unlabeled counterparty is flagged, never spen
   assert.notEqual(row.category, 'spend');
 });
 
-test('rule 7: a one-way receive from an unlabeled counterparty is flagged', () => {
+test('rule 8: a one-way receive from an unlabeled counterparty is flagged', () => {
   const row = only([leg({ from_address: OTHER, to_address: WALLET })]);
 
   assert.equal(row.category, 'receive');

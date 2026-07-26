@@ -362,6 +362,16 @@ const ONCHAIN_CTE = `
           ORDER BY q.has_out_leg DESC, q.fee_wei DESC NULLS LAST, q.wallet_id
         ) AS rn,
         BOOL_OR(q.needs_review) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_needs_review,
+        -- BOOL_AND, not BOOL_OR: a self-transfer between two of the user's own
+        -- wallets is ONE row here, and it may only be quarantined if EVERY
+        -- wallet's view of it was.
+        --
+        -- THE UNIT DIFFERS FROM SETTINGS, deliberately: Settings' quarantine
+        -- panel reads /api/eth/activity?spam=only, which counts one row per
+        -- WALLET-transaction, so a transfer touching two wallets is two. The
+        -- ledger counts collapsed movements. Both are honest counts of
+        -- different things, and Settings' copy says which it is -- do not
+        -- "reconcile" one to the other by switching this to BOOL_OR.
         BOOL_AND(q.spam) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_spam
       FROM onchain_raw q
     ) r
@@ -1012,8 +1022,19 @@ class CryptoLedger {
   // is the honesty counter for the quarantine, exactly as unpriced_count is for
   // the dollars -- hiding rows without saying how many is the one thing a
   // quarantine must not do.
-  static async summaryForUser(userId) {
+  //
+  // Takes the SAME `walletId` the feed takes, and nothing else. The header
+  // sentence it fills sits directly above the rows, so a user-wide count over a
+  // wallet-filtered feed described a different ledger than the one on screen.
+  // The other filters stay out on purpose: a needs-review count that only
+  // counted the rows matching the category currently selected would read zero
+  // the moment the user filtered them away, which is the opposite of a badge.
+  static async summaryForUser(userId, filters = {}) {
     if (!userId) throw new Error('CryptoLedger.summaryForUser requires a userId');
+    const params = [userId];
+    // spam: 'all' -- every counter below does its own `NOT r.spam` FILTER, and
+    // spam_count needs the quarantined rows present to count them.
+    const where = buildFilters({ walletId: filters.walletId ?? null, spam: 'all' }, params);
     const result = await pool.query(
       `${LEDGER_CTE}
        SELECT
@@ -1045,8 +1066,9 @@ class CryptoLedger {
          (COUNT(*) FILTER (WHERE r.usd_basis = 'carried' AND NOT r.spam))::int AS carried_count,
          MIN(r.occurred_at) FILTER (WHERE NOT r.spam) AS first_at,
          MAX(r.occurred_at) FILTER (WHERE NOT r.spam) AS last_at
-       FROM ${UNION_SOURCE}`,
-      [userId]
+       FROM ${UNION_SOURCE}
+       ${where}`,
+      params
     );
     const row = result.rows[0] || {};
     return {

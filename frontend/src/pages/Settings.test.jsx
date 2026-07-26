@@ -540,7 +540,7 @@ describe('Settings display names', () => {
       if (spamResult !== undefined) apiMocks.eth.getActivity.mockResolvedValue(spamResult);
       renderSettings();
       fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
-      await screen.findByText('Quarantined');
+      await screen.findByText(/^Quarantined wallet transactions$/);
     };
 
     it('says nothing was quarantined when nothing was', async () => {
@@ -556,8 +556,8 @@ describe('Settings display names', () => {
       });
 
       // The server's count, not the page's: the list is capped.
-      expect(screen.getByText(/^1 quarantined transaction$/)).toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: /quarantined transaction/i }));
+      expect(screen.getByText(/^1 quarantined wallet transaction$/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /quarantined wallet transaction/i }));
 
       expect(screen.getByText('Lookalike address')).toBeInTheDocument();
       // The security warning is the whole reason the server stores a reason
@@ -574,7 +574,7 @@ describe('Settings display names', () => {
         summary: { spam_count: 1, needs_review_count: 0 },
         pagination: { total: 1 },
       });
-      fireEvent.click(screen.getByRole('button', { name: /quarantined transaction/i }));
+      fireEvent.click(screen.getByRole('button', { name: /quarantined wallet transaction/i }));
 
       fireEvent.click(screen.getByRole('button', { name: /not spam/i }));
       await waitFor(() => {
@@ -597,7 +597,7 @@ describe('Settings display names', () => {
         summary: { spam_count: 4, needs_review_count: 0 },
         pagination: { total: 4 },
       });
-      fireEvent.click(screen.getByRole('button', { name: /quarantined transactions/i }));
+      fireEvent.click(screen.getByRole('button', { name: /quarantined wallet transactions/i }));
       expect(screen.getByText(/showing the 2 most recent of 4/i)).toBeInTheDocument();
 
       apiMocks.eth.getActivity.mockResolvedValue({
@@ -624,7 +624,7 @@ describe('Settings display names', () => {
       renderSettings();
       fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
 
-      await screen.findByText('Quarantined');
+      await screen.findByText(/^Quarantined wallet transactions$/);
       expect(screen.queryByText(/nothing has been quarantined/i)).toBeNull();
       expect(screen.getByText(/couldn't load the quarantine/i)).toBeInTheDocument();
       expect(screen.queryByText(/failed to load/i)).toBeNull();

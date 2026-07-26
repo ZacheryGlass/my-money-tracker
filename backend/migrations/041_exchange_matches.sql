@@ -219,14 +219,23 @@ CREATE INDEX IF NOT EXISTS idx_eth_activity_exchange_flows
 -- user's explicit verdict always wins because it is never overwritten, and a
 -- builtin's is never outranked because the presence of one stops the write.
 --
--- TWO MIGRATIONS OWN THIS ONE CONSTRAINT: 044 widens it for 'builtin-bridge'
--- and this one for 'auto-match'. Each guards on its OWN sentinel, so the two
+-- THREE MIGRATIONS OWN THIS ONE CONSTRAINT: 035 creates it (sentinel
+-- 'eth-labels', narrow list), 044 widens it for 'builtin-bridge', and this one
+-- for 'auto-match'. Each guards on its OWN sentinel, so the WIDENING
 -- definitions must be the same UNION of every value or they fight: a list here
 -- without 'builtin-bridge' fails its own sentinel check after 044 has run,
 -- drops 044's constraint, and re-adds a narrower one that 044's already-seeded
 -- bridge rows violate -- which took down the SECOND boot of every database
 -- (migrations re-run every time) while looking perfectly applied on the first.
 -- Add a source in BOTH lists.
+--
+-- THE INVARIANT THAT KEEPS 035 HARMLESS: 035 runs first each boot and its
+-- sentinel is 'eth-labels', which is IN both union lists -- so once 041/044
+-- have run, 035's guard is already satisfied and it never re-narrows. Removing
+-- 'eth-labels' from the union (or changing 035's sentinel to a value the union
+-- lacks) makes 035 drop and re-narrow the constraint on every boot, ahead of
+-- 041 and 044's own guards seeing a definition they accept. 'eth-labels' must
+-- stay in the union for as long as 035 exists.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint

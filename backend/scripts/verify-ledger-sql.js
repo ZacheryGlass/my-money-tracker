@@ -353,6 +353,15 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     summary.total === 6 && summary.onchain_count === 3 && summary.exchange_count === 5
       && summary.matched_count === 2 && summary.unpriced_count === 1);
 
+  // The header sentence sits above the rows, so a wallet-filtered feed needs a
+  // wallet-filtered summary: a user-wide total there described a ledger that
+  // was not on screen.
+  const walletSummary = await CryptoLedger.summaryForUser(1, { walletId });
+  ok('the summary narrows to the same wallet the feed does',
+    walletSummary.total === byWallet.total && walletSummary.total < summary.total);
+  ok('and the wallet summary keeps the folded pair once, like the feed',
+    walletSummary.onchain_count === 3 && walletSummary.matched_count === 1);
+
   const p1 = await CryptoLedger.findForUser(1, { limit: 3, offset: 0 });
   const p2 = await CryptoLedger.findForUser(1, { limit: 3, offset: 3 });
   const ids = [...p1.rows, ...p2.rows].map((r) => r.id);

@@ -153,12 +153,23 @@ router.get('/ledger', async (req, res) => {
 });
 
 // The badge and the "first transaction to today" range, without paging the
-// feed. Unfiltered on purpose: a needs-review badge that only counted the rows
-// matching the filters currently on screen would read zero the moment the user
-// filtered them away.
+// feed. Every filter but ONE is ignored on purpose: a needs-review badge that
+// only counted the rows matching the category currently on screen would read
+// zero the moment the user filtered them away.
+//
+// `wallet_id` is the exception, because it is not a view filter -- it selects
+// WHICH LEDGER this is. The header sentence sits above the rows, so a user-wide
+// total over a one-wallet feed described a ledger that was not on screen.
+// Validated by the same parseFilters as the feed, so an unowned id 404s here
+// too rather than silently widening back to everything the user owns.
 router.get('/ledger/summary', async (req, res) => {
   try {
-    const summary = await CryptoLedger.summaryForUser(req.user.id);
+    const parsed = await parseFilters(req);
+    if (parsed.error) return res.status(parsed.error.status).json(parsed.error.body);
+
+    const summary = await CryptoLedger.summaryForUser(req.user.id, {
+      walletId: parsed.filters.walletId,
+    });
     return res.status(200).json({ summary });
   } catch (error) {
     logger.error({ err: error }, 'Get crypto ledger summary error');

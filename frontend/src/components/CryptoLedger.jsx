@@ -271,14 +271,19 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
     return () => { cancelled = true; };
   }, [filters, reload, refreshKey]);
 
-  // The badge is deliberately unfiltered, so it reloads on its own schedule.
+  // Narrowed by WALLET only, and otherwise unfiltered -- so it reloads on its
+  // own schedule rather than with `filters`. The view filters (category,
+  // source, status) must not move the badge: a needs-review count that dropped
+  // to zero because the user filtered those rows away is a badge that lies.
+  // `walletId` is different in kind -- it selects which ledger this is, and the
+  // header sentence sits directly above the rows it is describing.
   useEffect(() => {
     let cancelled = false;
-    cryptoAPI.getLedgerSummary()
+    cryptoAPI.getLedgerSummary(walletId != null ? { walletId } : {})
       .then((result) => { if (!cancelled) setSummary(result.summary || null); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [reload, refreshKey]);
+  }, [reload, refreshKey, walletId]);
 
   // Completeness signals. A ledger that claims to be the whole history has to
   // say when it is NOT -- otherwise "everything is explained" and "everything

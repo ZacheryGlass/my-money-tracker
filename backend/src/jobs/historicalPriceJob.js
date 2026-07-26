@@ -6,6 +6,7 @@ const EthWallet = require('../models/EthWallet');
 const HistoricalPriceService = require('../services/HistoricalPriceService');
 const EthTransactionMirrorService = require('../services/EthTransactionMirrorService');
 const EthActivityService = require('../services/EthActivityService');
+const ExchangeMatchService = require('../services/ExchangeMatchService');
 const logger = require('../config/logger');
 
 const JOB_NAME = 'historical-prices';
@@ -62,11 +63,35 @@ async function run({ maxAssets } = {}) {
         // are pure DB work since #73 (neither fetches a price any more), which
         // is what makes doing them every night affordable.
         await EthTransactionMirrorService.rebuildForWallet(wallet.id);
-        await EthActivityService.rebuildForWallet(wallet.id);
+        // rebuildMatches: false, then one user-wide pass after the loop --
+        // exactly the shape EthWalletService.refreshClassificationsForUser
+        // uses. Leaving it default-true re-derived every one of the owner's
+        // exchange matches once PER WALLET, against a half-rebuilt feed.
+        await EthActivityService.rebuildForWallet(wallet.id, { rebuildMatches: false });
         revalued.rebuilt++;
       } catch (err) {
         revalued.failed++;
         logger.warn({ job: JOB_NAME, walletId: wallet.id, err }, 'Re-valuation failed for one wallet');
+      }
+    }
+
+    // Once per OWNER, after every one of their wallets has landed.
+    //
+    // Not optional cleanup: rebuildForWallet replaces the wallet's eth_activity
+    // rows, and that DELETE cascades eth_activity_links away with them. Without
+    // these two passes both halves of every bridge revert to needs_review and
+    // the ledger renders one $6,000 bridge as two rows summing $12,000 until
+    // the next 07:50 sync rebuilds the links -- i.e. for most of the day.
+    // Bridge pairing is also cross-wallet (a bridge_out on one wallet pairs
+    // with a bridge_in on another), so it can only be decided per user, once
+    // every wallet is current.
+    const userIds = [...new Set(wallets.map((w) => w.user_id).filter((id) => id != null))];
+    for (const userId of userIds) {
+      try {
+        await ExchangeMatchService.rebuildForUserSafely(userId, { reason: 'historical-prices' });
+        await EthActivityService.matchBridgeTransfersForUser(userId);
+      } catch (err) {
+        logger.warn({ job: JOB_NAME, userId, err }, 'Match/bridge rebuild failed for one user');
       }
     }
 
