@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, ChevronDown, X, Check, Save, Undo2, Eye, EyeOff, Download, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag } from 'lucide-react';
-import { plaid as plaidAPI, eth as ethAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI, keys as keysAPI, admin as adminAPI } from '../utils/api';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, ChevronDown, X, Check, Save, Undo2, Eye, EyeOff, Download, Upload, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag, ArrowLeftRight } from 'lucide-react';
+import { plaid as plaidAPI, eth as ethAPI, exchanges as exchangesAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI, keys as keysAPI, admin as adminAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
@@ -18,6 +18,7 @@ const SETTINGS_TABS = [
   { id: 'data-tools', label: 'Data Tools' },
   { id: 'institutions', label: 'Institutions' },
   { id: 'ethereum', label: 'Ethereum' },
+  { id: 'exchanges', label: 'Exchanges' },
   { id: 'api-keys', label: 'API Keys' },
   { id: 'accounts', label: 'Accounts' },
 ];
@@ -58,6 +59,22 @@ const keyStatusLabel = (status) => {
 };
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+// The venues the backend accepts. Coinbase covers both the retail export and a
+// Coinbase Pro / Exchange statement -- the importer recognizes which is which
+// from the file's own header, so the user never has to say.
+const EXCHANGE_VENUES = [
+  { id: 'coinbase', label: 'Coinbase' },
+  { id: 'kraken', label: 'Kraken' },
+  { id: 'other', label: 'Other' },
+];
+const EXCHANGE_VENUE_LABELS = Object.fromEntries(EXCHANGE_VENUES.map((v) => [v.id, v.label]));
+const IMPORT_FORMAT_LABELS = {
+  coinbase_retail: 'Coinbase transactions export',
+  coinbase_pro: 'Coinbase Pro account statement',
+  kraken: 'Kraken ledgers export',
+  generic: 'generic column mapping',
+};
 
 const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '');
 
@@ -503,6 +520,15 @@ const Settings = ({ user }) => {
   const [triagingAddress, setTriagingAddress] = useState(null);
   const [showDustCounterparties, setShowDustCounterparties] = useState(false);
   const [showExternalLabels, setShowExternalLabels] = useState(false);
+  const [exchangeAccounts, setExchangeAccounts] = useState([]);
+  const [exchangeNameInput, setExchangeNameInput] = useState('');
+  const [exchangeVenue, setExchangeVenue] = useState('coinbase');
+  const [addingExchange, setAddingExchange] = useState(false);
+  const [exchangeFormError, setExchangeFormError] = useState(null);
+  const [importingExchangeId, setImportingExchangeId] = useState(null);
+  // Per account, so one failed upload does not blank another account's receipt.
+  const [exchangeImportResults, setExchangeImportResults] = useState({});
+  const [deletingExchangeId, setDeletingExchangeId] = useState(null);
   const [keyStatuses, setKeyStatuses] = useState(null);
   const [keyInputs, setKeyInputs] = useState({});
   const [savingKeyService, setSavingKeyService] = useState(null);
@@ -559,17 +585,19 @@ const Settings = ({ user }) => {
     try {
       // Ethereum data is fetched alongside but must not fail the whole page:
       // a wallet-side error should degrade only the Ethereum tab.
-      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, counterpartyResult, keysResult] = await Promise.all([
+      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, counterpartyResult, exchangeResult, keysResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
         ethAPI.getWallets().catch(() => null),
         ethAPI.getIgnoredTokens().catch(() => null),
         ethAPI.getAddressLabels().catch(() => null),
         ethAPI.getUnreviewedCounterparties().catch(() => null),
+        exchangesAPI.getAll().catch(() => null),
         keysAPI.getAll().catch(() => null),
       ]);
       const loadedItems = plaidData.items || [];
       setEthWallets(ethResult?.wallets || []);
+      setExchangeAccounts(exchangeResult?.accounts || []);
       setIgnoredTokens(ignoredResult?.tokens || []);
       setAddressLabels(labelsResult?.labels || []);
       setCounterpartyData(counterpartyResult || null);
@@ -736,6 +764,65 @@ const Settings = ({ user }) => {
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to disconnect wallet');
+    }
+  };
+
+  const handleAddExchangeAccount = async (event) => {
+    event.preventDefault();
+    if (addingExchange) return;
+    const name = exchangeNameInput.trim();
+    if (!name) {
+      setExchangeFormError('Enter a name for this exchange account');
+      return;
+    }
+    setAddingExchange(true);
+    setExchangeFormError(null);
+    try {
+      await exchangesAPI.create(name, exchangeVenue);
+      showSuccess('Exchange account added');
+      setExchangeNameInput('');
+      await fetchItems();
+    } catch (err) {
+      setExchangeFormError(err.response?.data?.error || 'Failed to add exchange account');
+    } finally {
+      setAddingExchange(false);
+    }
+  };
+
+  const handleExchangeImport = async (account, event) => {
+    const file = event.target.files?.[0];
+    // Cleared immediately so picking the same file again re-fires onChange --
+    // otherwise a failed upload cannot be retried without choosing another file.
+    event.target.value = '';
+    if (!file) return;
+
+    setImportingExchangeId(account.id);
+    setExchangeImportResults((prev) => ({ ...prev, [account.id]: null }));
+    try {
+      const text = await file.text();
+      const result = await exchangesAPI.importCsv(account.id, text);
+      setExchangeImportResults((prev) => ({ ...prev, [account.id]: { ...result, fileName: file.name } }));
+      await fetchItems();
+    } catch (err) {
+      setExchangeImportResults((prev) => ({
+        ...prev,
+        // The server's message names the format problem; it is the only thing
+        // that tells the user which export to reach for instead.
+        [account.id]: { error: err.response?.data?.error || 'Failed to import this file', fileName: file.name },
+      }));
+    } finally {
+      setImportingExchangeId(null);
+    }
+  };
+
+  const handleDeleteExchangeAccount = async (account) => {
+    setDeletingExchangeId(null);
+    try {
+      await exchangesAPI.remove(account.id);
+      showSuccess('Exchange account deleted');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete exchange account');
     }
   };
 
@@ -1854,6 +1941,179 @@ const Settings = ({ user }) => {
         </div>
       </section>
       </>
+      )}
+
+      {activeTab === 'exchanges' && (
+      <section className="mb-8" aria-labelledby="exchange-accounts-heading">
+        <div className="mb-3 px-2">
+          <h2 id="exchange-accounts-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Exchange Accounts</h2>
+          <p className="mt-1 text-xs text-secondary">
+            Trades, moves between exchanges and fiat on and off ramps never touch a tracked wallet, so no
+            on-chain source can show them. Upload an exchange&apos;s CSV export to fill that history in.
+            Coinbase, Coinbase Pro and Kraken exports are read directly; other files are matched by column
+            name. Re-uploading a fuller export is safe — records are keyed by the exchange&apos;s own row
+            ids, so nothing lands twice.
+          </p>
+        </div>
+
+        <form onSubmit={handleAddExchangeAccount} className="card mb-4 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end">
+            <label className="min-w-0 flex-1 text-caption text-tertiary">
+              Account name
+              <input
+                type="text"
+                value={exchangeNameInput}
+                onChange={(event) => setExchangeNameInput(event.target.value)}
+                placeholder="Kraken Spot"
+                maxLength={120}
+                className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                disabled={addingExchange}
+              />
+            </label>
+            <label className="min-w-0 text-caption text-tertiary">
+              Exchange
+              <select
+                value={exchangeVenue}
+                onChange={(event) => setExchangeVenue(event.target.value)}
+                className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                disabled={addingExchange}
+              >
+                {EXCHANGE_VENUES.map((venue) => (
+                  <option key={venue.id} value={venue.id}>{venue.label}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="submit"
+              disabled={addingExchange}
+              className="inline-flex h-10 items-center justify-center gap-2 border border-border bg-surface-3 px-4 text-button font-semibold text-secondary transition-colors hover:border-accent hover:text-accent disabled:opacity-40"
+            >
+              {addingExchange ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+              Add Account
+            </button>
+          </div>
+          {exchangeFormError && <p className="mt-2 text-body-sm text-loss">{exchangeFormError}</p>}
+        </form>
+
+        {exchangeAccounts.length === 0 ? (
+          <div className="card border-2 border-dashed border-border bg-transparent p-12 text-center">
+            <ArrowLeftRight size={40} className="mx-auto mb-4 text-tertiary opacity-20" />
+            <h3 className="mb-2 text-lg font-bold uppercase tracking-tight text-primary">No Exchange Accounts</h3>
+            <p className="mx-auto mb-5 max-w-md text-sm leading-relaxed text-secondary">
+              Add an account above — one per exchange, including ones you have closed — then upload its CSV
+              export. A closed account&apos;s history is exactly the part no live connection can ever recover.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {exchangeAccounts.map((account) => {
+              const result = exchangeImportResults[account.id];
+              const importing = importingExchangeId === account.id;
+              return (
+                <Motion.div layout key={account.id} className="card overflow-hidden border-border">
+                  <div className="p-5 md:p-6">
+                    <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
+                      <div className="flex min-w-0 items-center gap-4">
+                        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded border border-border bg-surface-3 shadow-sm">
+                          <ArrowLeftRight size={24} className="text-accent" />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="truncate text-base font-bold leading-tight text-primary">{account.name}</h3>
+                          <div className="mt-1 flex flex-wrap items-center gap-4">
+                            <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">
+                              {EXCHANGE_VENUE_LABELS[account.exchange] || account.exchange}
+                            </span>
+                            <span className="font-mono text-[10px] font-bold text-secondary">
+                              {(account.record_count ?? 0).toLocaleString()} records
+                            </span>
+                            {account.needs_review_count > 0 && (
+                              <span className="text-[10px] font-bold uppercase tracking-wide text-loss">
+                                {account.needs_review_count} need review
+                              </span>
+                            )}
+                            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                              <Clock size={12} />
+                              {account.last_import_at ? formatRelativeTime(account.last_import_at) : 'Never imported'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <label className={`flex cursor-pointer items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent ${importing ? 'pointer-events-none opacity-50' : ''}`}>
+                          <Upload size={14} className={importing ? 'animate-pulse' : ''} />
+                          {importing ? 'Importing…' : 'Import CSV'}
+                          <input
+                            type="file"
+                            accept=".csv,text/csv"
+                            aria-label={`Import CSV for ${account.name}`}
+                            className="hidden"
+                            disabled={importing}
+                            onChange={(event) => handleExchangeImport(account, event)}
+                          />
+                        </label>
+                        {deletingExchangeId === account.id ? (
+                          <>
+                            <button
+                              onClick={() => handleDeleteExchangeAccount(account)}
+                              className="rounded border border-loss/30 bg-loss/10 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-loss transition-all"
+                            >
+                              Delete {(account.record_count ?? 0).toLocaleString()} records
+                            </button>
+                            <button
+                              onClick={() => setDeletingExchangeId(null)}
+                              className="rounded border border-border bg-surface-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => setDeletingExchangeId(account.id)}
+                            className="rounded border border-transparent p-2.5 text-tertiary transition-all hover:bg-loss/10 hover:text-loss"
+                            title="Delete exchange account"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {result?.error && (
+                      <div className="mt-5 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
+                        <div className="flex items-start gap-3">
+                          <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                          <p>{result.fileName ? `${result.fileName}: ` : ''}{result.error}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {result && !result.error && (
+                      <div className="mt-5 rounded border border-border bg-surface-2 p-4 text-xs leading-relaxed text-secondary">
+                        <p>
+                          Read {result.fileName} as a {IMPORT_FORMAT_LABELS[result.format] || result.format}:{' '}
+                          <span className="font-semibold text-primary">{result.imported.toLocaleString()} new</span>
+                          {result.duplicates > 0 && `, ${result.duplicates.toLocaleString()} already imported`}
+                          {result.needs_review > 0 && (
+                            <span className="text-loss">, {result.needs_review.toLocaleString()} flagged for review</span>
+                          )}
+                          .
+                        </p>
+                        {(result.skipped_header_rows > 0 || result.skipped_noise_rows > 0) && (
+                          <p className="mt-1 text-tertiary">
+                            Skipped {result.skipped_header_rows + result.skipped_noise_rows} repeated header or
+                            preamble line(s) inside the file.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </Motion.div>
+              );
+            })}
+          </div>
+        )}
+      </section>
       )}
 
       {activeTab === 'api-keys' && (

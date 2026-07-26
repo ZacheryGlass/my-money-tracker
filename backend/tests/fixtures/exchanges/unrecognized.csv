@@ -1,0 +1,3 @@
+Ledger Note,Counterparty,Memo
+opening balance,house,nothing an importer can map
+closing balance,house,no timestamp and no amount column

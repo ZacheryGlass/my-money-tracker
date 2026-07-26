@@ -376,6 +376,40 @@ export const eth = {
   },
 };
 
+// Exchange accounts and their CSV imports (Settings -> Exchanges). On-exchange
+// activity never touches a tracked wallet, so it can only come from an export.
+export const exchanges = {
+  getAll: async () => {
+    const response = await api.get('/api/exchanges');
+    return response.data;
+  },
+  create: async (name, exchange) => {
+    const response = await api.post('/api/exchanges', { name, exchange });
+    return response.data;
+  },
+  update: async (id, payload) => {
+    const response = await api.patch(`/api/exchanges/${id}`, payload);
+    return response.data;
+  },
+  remove: async (id) => {
+    const response = await api.delete(`/api/exchanges/${id}`);
+    return response.data;
+  },
+  // Raw text/csv, matching the holdings bulk import. Re-uploading a fuller
+  // export is safe: the server dedupes on the exchange's own row ids.
+  importCsv: async (id, csvText, { format } = {}) => {
+    const response = await api.post(`/api/exchanges/${id}/import`, csvText, {
+      headers: { 'Content-Type': 'text/csv' },
+      params: format ? { format } : undefined,
+    });
+    return response.data;
+  },
+  getRecords: async (id, params = {}) => {
+    const response = await api.get(`/api/exchanges/${id}/records`, { params });
+    return response.data;
+  },
+};
+
 // API key management (Settings -> API Keys). Responses carry masked
 // statuses only; plaintext secrets never round-trip to the client.
 export const keys = {

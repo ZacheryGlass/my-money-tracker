@@ -50,6 +50,14 @@ const apiMocks = vi.hoisted(() => ({
   history: {
     getPortfolio: vi.fn(),
   },
+  exchanges: {
+    getAll: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+    importCsv: vi.fn(),
+    getRecords: vi.fn(),
+  },
 }));
 
 vi.mock('../utils/api', () => ({
@@ -61,6 +69,7 @@ vi.mock('../utils/api', () => ({
   holdings: apiMocks.holdings,
   exportData: apiMocks.exportData,
   history: apiMocks.history,
+  exchanges: apiMocks.exchanges,
 }));
 
 vi.mock('react-plaid-link', () => ({
@@ -88,6 +97,7 @@ describe('Settings display names', () => {
     apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
       data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 },
     });
+    apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
     apiMocks.admin.getOverview.mockRejectedValue({ response: { status: 403 } });
     apiMocks.keys.getAll.mockResolvedValue({
       encryptionConfigured: true,
