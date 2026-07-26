@@ -117,8 +117,12 @@ class EthActivity {
        FROM resolved r
        ${where}
        -- block_number is chain-global, so it orders a merged multi-wallet feed
-       -- correctly; tx_hash breaks ties within a block so paging is stable.
-       ORDER BY r.block_number DESC, r.tx_hash DESC
+       -- correctly; tx_hash breaks ties within a block. Neither is unique in a
+       -- merged feed -- two of the user's own wallets both see an A->B
+       -- self-send, same block, same hash -- so id closes the ordering the way
+       -- EthTransfer.findByWallet does. A non-total ORDER BY lets LIMIT/OFFSET
+       -- repeat one row on page 2 and drop the other entirely.
+       ORDER BY r.block_number DESC, r.tx_hash DESC, r.id DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -145,6 +149,22 @@ class EthActivity {
     );
     const row = result.rows[0] || {};
     return { total: Number(row.total) || 0, needsReviewCount: Number(row.needs_review_count) || 0 };
+  }
+
+  // Does the user own an activity row for this exact key? An override that
+  // targets nothing is invisible forever -- every reader joins activity ->
+  // override, so a correction written against a hash this wallet never saw is
+  // stored and never rendered. Fail-closed like every other scoped read.
+  static async overrideTargetExists(userId, walletId, txHash, { chainId = DEFAULT_CHAIN_ID } = {}) {
+    if (!userId) throw new Error('EthActivity.overrideTargetExists requires a userId');
+    const result = await pool.query(
+      `SELECT 1 FROM eth_activity a
+       JOIN eth_wallets w ON w.id = a.wallet_id
+       WHERE a.wallet_id = $1 AND a.chain_id = $2 AND a.tx_hash = $3 AND w.user_id = $4
+       LIMIT 1`,
+      [walletId, chainId, txHash, userId]
+    );
+    return result.rows.length > 0;
   }
 
   // The wallet join IS the ownership check: a foreign wallet id selects no row,

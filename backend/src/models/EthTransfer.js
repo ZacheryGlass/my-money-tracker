@@ -140,7 +140,7 @@ class EthTransfer {
       'wallet_id', 'tx_hash', 'ordinal', 'transfer_type', 'block_number',
       'block_time', 'from_address', 'to_address', 'value_wei',
       'token_contract', 'token_symbol', 'token_decimals', 'token_standard',
-      'token_id', 'is_error', 'method_id', 'method_name',
+      'token_id', 'is_error', 'tx_is_error', 'method_id', 'method_name',
     ];
     // Chunked to stay far under Postgres' 65535-parameter cap on first syncs
     // of busy wallets.
@@ -156,7 +156,8 @@ class EthTransfer {
           row.block_number, row.block_time, row.from_address, row.to_address,
           row.value_wei, row.token_contract, row.token_symbol,
           row.token_decimals, row.token_standard ?? null, row.token_id ?? null,
-          row.is_error, row.method_id ?? null, row.method_name ?? null
+          row.is_error, row.tx_is_error ?? null,
+          row.method_id ?? null, row.method_name ?? null
         );
         return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`;
       });

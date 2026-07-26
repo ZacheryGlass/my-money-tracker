@@ -94,6 +94,11 @@ function assetOf(transfer) {
       token_id: null,
       token_standard: transfer.token_standard || 'erc20',
       decimals: legDecimals(transfer),
+      // legDecimals falls back to 18 when the feed omitted tokenDecimal, and
+      // one such leg first in the list would otherwise pin the whole netted
+      // amount to the wrong scale. The netting loop upgrades to the first
+      // NON-NULL value it sees for the same contract.
+      decimals_known: transfer.token_decimals != null,
     };
   }
   // native + internal are both ETH, and netting them together is the point: a
@@ -190,11 +195,17 @@ function classifyActivity({ wallet, failed, valueLegs, hadValueLegs, netLegs, ga
   // input that must never reach classification, and carving one exception is
   // how that invariant stops being one.
   //
-  // Not flagged for review: a zero-value contract call IS explained. The two
-  // ways to get here without a gas leg are ignored-token spam (the user already
-  // declared it noise -- re-flagging it would rebuild the very queue the ignore
-  // list exists to empty) and a genuinely leg-less transaction, which is the
-  // one case worth a flag.
+  // Not flagged for review: a zero-value contract call IS explained. Getting
+  // here with no gas leg means ignored-token spam (the user already declared it
+  // noise -- re-flagging it would rebuild the very queue the ignore list exists
+  // to empty), which still has hadValueLegs set.
+  //
+  // The no_legs arm below is currently UNREACHABLE and kept as a fallback, not
+  // as live behaviour: a tx only exists here because it had at least one leg,
+  // and the only leg that is neither a gas leg nor a value leg is an errored
+  // one -- which the failed gate above already claimed. It stays because the
+  // alternative to a flagged row is a confident verdict about a transaction
+  // whose legs we cannot see.
   if (netLegs.length === 0) {
     if (gasLegs.length > 0 || hadValueLegs) return verdict('contract_interaction');
     return verdict('contract_interaction', {
@@ -251,9 +262,23 @@ function buildActivityRow(wallet, txHash, legs, ignoredContracts) {
   const gasLegs = legs.filter((leg) => leg.transfer_type === 'gas');
   const feeWei = gasLegs.reduce((sum, leg) => sum + toBigInt(leg.value_wei), 0n);
 
-  // Reverted: is_error rides on the native leg (or the internal trace). The gas
-  // leg is written is_error = false on purpose -- the fee did not fail.
-  const failed = legs.some((leg) => leg.transfer_type !== 'gas' && leg.is_error);
+  // Reverted, read from two places because a revert can land in two shapes.
+  //
+  // 1. A value-bearing tx reverts: is_error rides on the native leg (or the
+  //    internal trace). The gas leg is written is_error = false on purpose --
+  //    the fee did not fail, and the mirror and the triage queue rely on that.
+  // 2. A ZERO-VALUE tx reverts (a failed approve, a swap that reverts before
+  //    any Transfer log) -- the most common revert shape on chain. It emits no
+  //    native leg at all, so the only row is the gas leg, whose is_error is
+  //    false by rule 1's semantics. tx_is_error carries the transaction's own
+  //    status there (038) so the gate can see it without changing what
+  //    is_error means to anyone else.
+  //
+  // tx_is_error is FORWARD-ONLY data, the same precedent as 034's method
+  // capture: rows ingested before 038 have NULL and read as "not known to have
+  // failed", so an old reverted approve still classifies contract_interaction.
+  // Removing and re-adding the wallet re-ingests from block 0 and heals it.
+  const failed = legs.some((leg) => (leg.transfer_type !== 'gas' && leg.is_error) || leg.tx_is_error === true);
 
   // At most one leg per tx carries calldata (034): the native leg when ETH
   // moved, else the gas leg.
@@ -276,6 +301,12 @@ function buildActivityRow(wallet, txHash, legs, ignoredContracts) {
     if (!incoming && !outgoing) continue;
     const asset = assetOf(leg);
     const entry = nets.get(asset.key) || { ...asset, raw: 0n };
+    // First NON-NULL token_decimals across the contract's legs wins, rather
+    // than whichever leg happened to be first.
+    if (!entry.decimals_known && asset.decimals_known) {
+      entry.decimals = asset.decimals;
+      entry.decimals_known = true;
+    }
     // A leg from the wallet to itself nets to zero, which is correct.
     if (incoming) entry.raw += toBigInt(leg.value_wei);
     if (outgoing) entry.raw -= toBigInt(leg.value_wei);

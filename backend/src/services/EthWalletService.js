@@ -93,6 +93,10 @@ class EthWalletService {
       token_standard: null,
       token_id: null,
       is_error: raw.isError === '1',
+      // The transaction's own status, distinct from this leg's. Stamped only on
+      // the gas leg below; NULL everywhere else. See the tx_is_error note in
+      // 038 for why the gas leg cannot just use is_error.
+      tx_is_error: null,
       // Only the top-level tx has calldata, so at most one leg names its
       // method: the native leg when ETH moved, else the gas leg (stamped in
       // the txlist loop below). Internal traces and token logs stay NULL.
@@ -143,6 +147,11 @@ class EthWalletService {
           ...baseRow(raw, 'gas'),
           value_wei: fee.toString(),
           is_error: false,
+          // is_error stays FALSE (the fee did not fail) and consumers depend on
+          // that; the transaction's status rides alongside it. A reverted
+          // zero-value call emits nothing BUT this leg, so without it the most
+          // common revert shape on chain is invisible to the activity layer.
+          tx_is_error: raw.isError === '1',
           // Zero-value calls -- every approve, token->token swap, ERC-20
           // transfer -- emit no native leg, and they are the majority of the
           // "contract interaction" population this feature names. The gas leg
@@ -585,15 +594,22 @@ class EthWalletService {
       await EthTransfer.reclassifyCounterparties(userId);
       const wallets = await EthWallet.findAllByUser(userId);
       for (const wallet of wallets) {
+        // Two independent derivations, so two independent catches: sharing one
+        // made an activity failure log as "Mirror rebuild failed", and a mirror
+        // failure skip the activity rebuild entirely.
         try {
           await EthTransactionMirrorService.rebuildForWallet(wallet.id);
+        } catch (err) {
+          logger.warn({ walletId: wallet.id, err }, 'Mirror rebuild failed during classification refresh');
+        }
+        try {
           // A label change flips self/exchange/external, which is what half the
           // classification ladder reads -- so the activity rows heal
           // retroactively, exactly like the mirror. Overrides live in their own
           // table and are untouched by the rebuild.
           await EthActivityService.rebuildForWallet(wallet.id);
         } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Mirror rebuild failed during classification refresh');
+          logger.warn({ walletId: wallet.id, err }, 'Activity rebuild failed during classification refresh');
         }
       }
       await TransactionClassificationService.backfill();
@@ -608,14 +624,26 @@ class EthWalletService {
     return serialized(async () => {
       const wallets = await EthWallet.findAllByUser(userId);
       for (const wallet of wallets) {
+        // Three independent derivations of the same source rows: holdings need
+        // a price lookup, the mirror and the activity rows do not. One catch
+        // around all three let a price outage skip both rebuilds and report
+        // every failure under the same message.
         try {
           await this.refreshHoldings(wallet.id);
+        } catch (err) {
+          logger.warn({ walletId: wallet.id, err }, 'Holdings refresh failed during derived-data refresh');
+        }
+        try {
           await EthTransactionMirrorService.rebuildForWallet(wallet.id);
+        } catch (err) {
+          logger.warn({ walletId: wallet.id, err }, 'Mirror rebuild failed during derived-data refresh');
+        }
+        try {
           // The ignore list filters legs out of the activity builder too, so a
           // newly-ignored spam token has to stop driving a classification.
           await EthActivityService.rebuildForWallet(wallet.id);
         } catch (err) {
-          logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh failed');
+          logger.warn({ walletId: wallet.id, err }, 'Activity rebuild failed during derived-data refresh');
         }
       }
       await TransactionClassificationService.backfill();

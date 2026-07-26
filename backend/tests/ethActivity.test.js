@@ -113,6 +113,14 @@ function fakeQuery(text, params = []) {
     }
     return { rows: [], rowCount: inserted };
   }
+  // The override's target check: a correction must point at a visible row.
+  if (/^SELECT 1 FROM eth_activity a JOIN eth_wallets w/.test(sql)) {
+    const [walletId, chainId, txHash, userId] = params;
+    if (userId !== OWNER_ID) return { rows: [] };
+    const exists = db.activity.some((r) => key(r.wallet_id, r.chain_id, r.tx_hash)
+      === key(walletId, chainId, txHash));
+    return { rows: exists ? [{ '?column?': 1 }] : [] };
+  }
   if (/^INSERT INTO eth_activity_overrides/.test(sql)) {
     const [walletId, chainId, txHash, category, note, userId] = params;
     // The INSERT ... SELECT FROM eth_wallets WHERE user_id is the ownership
@@ -436,6 +444,57 @@ test('the failed gate: a reverted tx is failed, moved nothing, and still burned 
   assert.equal(row.fee_wei, '2100000000000000', 'the fee is real either way');
 });
 
+test('the failed gate: a reverted ZERO-VALUE call is failed, and still burned gas', () => {
+  // The most common revert on chain -- a failed approve, or a swap that reverts
+  // before any Transfer log. It emits no native leg, so the ONLY row is the gas
+  // leg, which is written is_error = false on purpose (the fee did not fail).
+  // tx_is_error is what carries the transaction's own status there.
+  const row = only([gasLeg({ to_address: ROUTER, tx_is_error: true })]);
+
+  assert.equal(row.category, 'failed');
+  assert.equal(row.needs_review, false);
+  assert.deepEqual(row.legs, []);
+  assert.equal(row.fee_wei, '2100000000000000', 'gas is burned by a revert too');
+});
+
+test('a pre-038 row (NULL tx_is_error) still classifies, as contract_interaction', () => {
+  // tx_is_error is FORWARD-ONLY, like 034's method capture: rows ingested
+  // before the column existed read as "not known to have failed" rather than
+  // crashing or being retroactively invented. Remove + re-add the wallet to
+  // re-ingest from block 0 and heal the history.
+  const legacy = only([gasLeg({ to_address: ROUTER, tx_is_error: null })]);
+  assert.equal(legacy.category, 'contract_interaction');
+  assert.equal(legacy.needs_review, false);
+
+  const missing = { ...gasLeg({ to_address: ROUTER }) };
+  delete missing.tx_is_error;
+  assert.equal(only([missing]).category, 'contract_interaction');
+});
+
+test('a successful zero-value call is untouched by the revert flag', () => {
+  const row = only([gasLeg({ to_address: ROUTER, tx_is_error: false })]);
+  assert.equal(row.category, 'contract_interaction');
+});
+
+test('netting takes the first NON-NULL token_decimals across a contract\'s legs', () => {
+  // The feed omitted tokenDecimal on the first leg; legDecimals falls back to
+  // 18, which would scale 6-decimal USDC by a trillion.
+  const row = only([
+    tokenLeg({
+      token_contract: USDC, token_symbol: 'USDC', token_decimals: null,
+      from_address: ROUTER, to_address: WALLET, value_wei: '1000000',
+    }),
+    tokenLeg({
+      token_contract: USDC, token_symbol: 'USDC', token_decimals: 6,
+      from_address: ROUTER, to_address: WALLET, value_wei: '2000000',
+    }),
+  ]);
+
+  assert.equal(row.legs.length, 1);
+  assert.equal(row.legs[0].amount, '3');
+  assert.equal(row.legs[0].amount_raw, '3000000');
+});
+
 test('an ignored spam token drives no classification and refills no queue', () => {
   const legs = [tokenLeg({
     token_contract: SPAM_TOKEN, token_symbol: 'SCAM',
@@ -614,6 +673,9 @@ test('a known category filters', async () => {
 });
 
 test('the override endpoint validates the wallet, the hash and the category', async () => {
+  db.transfers = [leg({ tx_hash: TX })];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
   const noWallet = await request(app).post('/api/eth/activity/override')
     .send({ tx_hash: TX, category: 'spend' });
   assert.equal(noWallet.status, 404);
@@ -635,6 +697,48 @@ test('the override endpoint validates the wallet, the hash and the category', as
   assert.equal(approval.body.override.category, 'approval');
 });
 
+test('an unknown needs_review value is a 400, like an unknown category', async () => {
+  const bogus = await request(app).get('/api/eth/activity?needs_review=yes');
+  assert.equal(bogus.status, 400);
+  assert.match(bogus.body.error, /needs_review/);
+
+  // The two accepted spellings still work, and an empty value means "no filter".
+  for (const value of ['true', 'false', '']) {
+    const ok = await request(app).get(`/api/eth/activity?needs_review=${value}`);
+    assert.equal(ok.status, 200, `needs_review=${value} must be accepted`);
+  }
+});
+
+test('an override for a transaction with no activity row is a 404, not an invisible write', async () => {
+  db.transfers = [leg({ tx_hash: TX })];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
+  // Well-formed, owned wallet, but a hash this wallet never saw. Every reader
+  // joins activity -> override, so writing it would store a correction that can
+  // never be rendered or undone from the UI.
+  const orphan = await request(app).post('/api/eth/activity/override')
+    .send({ wallet_id: OWNED_WALLET_ID, tx_hash: TX2, category: 'spend' });
+  assert.equal(orphan.status, 404);
+  assert.equal(db.overrides.size, 0, 'nothing may be written against a hash with no activity');
+
+  const real = await request(app).post('/api/eth/activity/override')
+    .send({ wallet_id: OWNED_WALLET_ID, tx_hash: TX, category: 'spend' });
+  assert.equal(real.status, 201);
+});
+
+test('the activity feed orders by a unique key, so paging cannot repeat or drop a row', async () => {
+  db.transfers = [leg({ tx_hash: TX })];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+  queries.length = 0;
+
+  await request(app).get('/api/eth/activity');
+  const { sql } = queries.find((q) => /^WITH resolved AS/.test(q.sql));
+  // Two of the user's wallets both see an A->B self-send: same block, same
+  // hash. Without the id the ORDER BY is not total and LIMIT/OFFSET can serve
+  // one of them twice and the other never.
+  assert.match(sql, /ORDER BY r\.block_number DESC, r\.tx_hash DESC, r\.id DESC/);
+});
+
 test('activity reads refuse to run unscoped', async () => {
   await assert.rejects(() => EthActivity.findForUser(undefined), /requires a userId/);
   await assert.rejects(() => EthActivity.findForUser(null, { walletId: 1 }), /requires a userId/);
@@ -644,6 +748,10 @@ test('activity reads refuse to run unscoped', async () => {
     /requires a userId/
   );
   await assert.rejects(() => EthActivity.deleteOverride(null, 1, TX), /requires a userId/);
+  await assert.rejects(
+    () => EthActivity.overrideTargetExists(undefined, 1, TX),
+    /requires a userId/
+  );
 });
 
 // --- the NFT materiality decision ------------------------------------------

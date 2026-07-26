@@ -198,9 +198,18 @@ router.get('/activity', async (req, res) => {
       }
     }
 
+    // Same fail-closed rule as `category`, for the same reason: `?needs_review=yes`
+    // silently returning the whole feed reads as "nothing needs review".
+    // 'true'/'false' is the spelling every other boolean query param in the app
+    // uses (include_hidden, include_dust, removeData).
     let needsReview = null;
-    if (req.query.needs_review === 'true') needsReview = true;
-    else if (req.query.needs_review === 'false') needsReview = false;
+    if (req.query.needs_review !== undefined && req.query.needs_review !== '') {
+      const raw = String(req.query.needs_review).trim().toLowerCase();
+      if (raw !== 'true' && raw !== 'false') {
+        return res.status(400).json({ error: "needs_review must be 'true' or 'false'" });
+      }
+      needsReview = raw === 'true';
+    }
 
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
@@ -245,10 +254,21 @@ router.post('/activity/override', async (req, res) => {
       return res.status(400).json({ error: 'note must be a string' });
     }
 
+    const txHash = txHashRaw.trim().toLowerCase();
+
+    // A correction must target something the user can see. Every reader joins
+    // activity -> override, so an override written for a well-formed hash with
+    // no activity row is stored and then invisible forever -- saved, silently
+    // inert, and impossible to notice.
+    const targetExists = await EthActivity.overrideTargetExists(req.user.id, wallet.walletId, txHash);
+    if (!targetExists) {
+      return res.status(404).json({ error: 'No activity found for that transaction on this wallet' });
+    }
+
     const override = await EthActivity.upsertOverride(
       req.user.id,
       wallet.walletId,
-      txHashRaw.trim().toLowerCase(),
+      txHash,
       { category, note: note?.trim() || null }
     );
     // The model's wallet join is the second ownership gate; a null here means

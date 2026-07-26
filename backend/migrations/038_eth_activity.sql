@@ -91,16 +91,40 @@ BEGIN
   END IF;
 END $$;
 
+-- Guarded on the DEFINITION, like the category check above and for the same
+-- reason: a name-only guard is satisfied by the constraint that already exists,
+-- so a later widening would be skipped forever on every deployed database while
+-- looking perfectly applied on a fresh one. BUMP THE SENTINEL BELOW ('medium',
+-- the newest value in the list) when adding a confidence level.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
                  WHERE conrelid = 'eth_activity'::regclass
-                   AND conname = 'eth_activity_confidence_check') THEN
+                   AND conname = 'eth_activity_confidence_check'
+                   AND pg_get_constraintdef(oid) LIKE '%medium%') THEN
+    ALTER TABLE eth_activity DROP CONSTRAINT IF EXISTS eth_activity_confidence_check;
     ALTER TABLE eth_activity
       ADD CONSTRAINT eth_activity_confidence_check
       CHECK (confidence IN ('high', 'medium', 'low'));
   END IF;
 END $$;
+
+-- Transaction-level revert flag, on eth_transfers (034's table) because that is
+-- where ingest writes and this branch owns the schema change.
+--
+-- Why a second column instead of reusing is_error: the gas leg of a reverted
+-- transaction is written is_error = FALSE deliberately -- the fee did not fail,
+-- and the spending mirror and the triage queue both rely on gas legs being
+-- non-error. But a reverted ZERO-VALUE call (a failed approve, a swap that
+-- reverts before any Transfer log) produces NO leg other than that gas leg, so
+-- the revert had nowhere to live and the activity layer read the most common
+-- failure shape on chain as a successful contract_interaction. tx_is_error
+-- carries the transaction's own status without touching per-leg semantics.
+--
+-- FORWARD-ONLY, exactly like 034's method capture: rows ingested before this
+-- migration keep NULL, which reads as "not known to have failed". Removing and
+-- re-adding the wallet re-ingests from block 0 and heals the history.
+ALTER TABLE eth_transfers ADD COLUMN IF NOT EXISTS tx_is_error BOOLEAN;
 
 -- The feed's default ordering. block_number is chain-global, so it sorts a
 -- merged multi-wallet feed correctly.
