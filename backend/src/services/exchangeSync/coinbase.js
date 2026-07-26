@@ -274,6 +274,20 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
   // native_amount is the same event valued in the account's fiat currency, so
   // it is the quote leg for a buy/sell. For a Convert the counter-leg is a
   // separate transaction and is paired below, not here.
+  //
+  // UNVERIFIED AGAINST A LIVE ACCOUNT -- the first thing to check with a real
+  // key. If Coinbase also writes an `advanced_trade_fill` transaction into the
+  // FIAT account for the same fill, that leg imports as its own record and the
+  // fiat side is counted twice: once as this record's quote and once as that
+  // record's base. The docs do not say either way and the retail CSV export
+  // writes a buy as a single self-contained row, which is why it is modelled
+  // that way here.
+  //
+  // Deliberately not guessed away: dropping the quote would leave every trade
+  // without a cost basis, silently. Keeping it makes the failure LOUD instead
+  // -- a doubled fiat position is exactly what the post-sync balance
+  // reconciliation compares against the live endpoint, so a wrong assumption
+  // here surfaces as a flagged account rather than as quietly wrong history.
   let quoteAsset = null;
   let quoteAmount = null;
   if (mapped === 'trade') {
