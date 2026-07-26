@@ -24,8 +24,27 @@ const RESOLVED_COLUMNS = `
     -- so an override changes what a transaction MEANS without touching what it
     -- was worth: the dollars are a market fact, the category is a judgment.
     a.usd_value, a.usd_fee, a.usd_basis,
-    CASE WHEN o.category IS NOT NULL THEN FALSE ELSE a.needs_review END AS needs_review,
-    CASE WHEN o.category IS NOT NULL THEN NULL ELSE a.review_reason END AS review_reason,
+    -- The spam quarantine (045), resolved the same way the category is: the
+    -- user's verdict wins, and NULL means they have not given one. A row can be
+    -- un-quarantined (FALSE over a derived TRUE) or hand-quarantined (TRUE over
+    -- a derived FALSE); both survive the wholesale rebuild because they live on
+    -- the overrides table.
+    COALESCE(o.spam, a.spam) AS spam,
+    a.spam AS derived_spam,
+    o.spam AS override_spam,
+    -- WHICH heuristic fired, kept even when the user overrode it -- "we thought
+    -- this was poisoning and you disagreed" is the only way the verdict is
+    -- auditable. A reason code, not prose; see 045.
+    a.spam_reason,
+    -- needs_review is stored as the LADDER's honest answer and masked here.
+    -- Masking rather than clearing at build time is what makes an un-quarantine
+    -- lossless: a false positive comes back to the queue instead of arriving
+    -- silently marked reviewed. An override of the category still clears it --
+    -- an override IS a review -- but a spam verdict is not a category verdict.
+    CASE WHEN o.category IS NOT NULL OR COALESCE(o.spam, a.spam) THEN FALSE
+         ELSE a.needs_review END AS needs_review,
+    CASE WHEN o.category IS NOT NULL OR COALESCE(o.spam, a.spam) THEN NULL
+         ELSE a.review_reason END AS review_reason,
     w.address AS wallet_address,
     -- The exchange's own record of this same movement (#61), or NULL when
     -- nothing matched. Carries the venue's fee_asset/fee_amount because that is
@@ -72,6 +91,7 @@ const INSERT_COLUMNS = [
   // Appended, never inserted mid-list: `legs` needs its ::jsonb cast and the
   // placeholder builder below finds it by index.
   'usd_value', 'usd_fee', 'usd_basis',
+  'spam', 'spam_reason',
 ];
 
 // The one column that needs a cast, found by name rather than by a hardcoded
@@ -94,6 +114,12 @@ class EthActivity {
       const values = [];
       const placeholders = chunk.map((row, i) => {
         const base = i * INSERT_COLUMNS.length;
+        // 045's paired CHECK refuses a quarantine with no reason and a reason
+        // with no quarantine. Both columns are derived from ONE value here, so
+        // a caller that got them out of step cannot abort a whole insert chunk
+        // -- and cannot hide a row without saying why, which is the half of
+        // that constraint that actually matters.
+        const spamReason = row.spam === true ? (row.spam_reason ?? null) : null;
         values.push(
           walletId,
           row.chain_id ?? DEFAULT_CHAIN_ID,
@@ -114,7 +140,9 @@ class EthActivity {
           // on its date is not a transaction worth nothing.
           row.usd_value ?? null,
           row.usd_fee ?? null,
-          row.usd_basis ?? null
+          row.usd_basis ?? null,
+          spamReason != null,
+          spamReason
         );
         return `(${INSERT_COLUMNS.map((_, j) => (j === LEGS_COLUMN_INDEX ? `$${base + j + 1}::jsonb` : `$${base + j + 1}`)).join(', ')})`;
       });
@@ -132,13 +160,23 @@ class EthActivity {
   // The activity feed. Covers every wallet the user owns; walletId narrows
   // within that set and never widens it. Fail-closed: an unscoped read throws
   // rather than serving one user's chain history to another.
-  static async findForUser(userId, { walletId = null, category = null, needsReview = null, limit = 100, offset = 0 } = {}) {
+  // `spam` is three-valued and DEFAULTS TO EXCLUDING quarantined rows (#74):
+  //   'exclude' (default) the ledger as a person wants to read it
+  //   'only'                the Spam filter -- what was quarantined, and why
+  //   'all'                 both, for a caller that wants the full history
+  // Excluding by default is the point of a quarantine, and the honest half of
+  // it is that `total` then reports the FILTERED count, so a caller can never
+  // mistake a hidden row for a missing one -- ask for 'only' and it is there.
+  static async findForUser(userId, { walletId = null, category = null, needsReview = null, spam = 'exclude', limit = 100, offset = 0 } = {}) {
     if (!userId) throw new Error('EthActivity.findForUser requires a userId');
     const params = [userId];
     // Filters apply to the RESOLVED values, not the derived ones: a
     // transaction the user re-categorized has to answer to the category they
-    // chose, and must not still show up under needs_review.
+    // chose, and must not still show up under needs_review -- and one the user
+    // un-quarantined has to come back to the default feed.
     let where = 'WHERE TRUE';
+    if (spam === 'only') where += ' AND r.spam';
+    else if (spam !== 'all') where += ' AND NOT r.spam';
     if (walletId != null) {
       params.push(walletId);
       where += ` AND r.wallet_id = $${params.length}`;
@@ -185,16 +223,40 @@ class EthActivity {
   }
 
   // Scalar counts for the "no transaction unexplained" badge (#63 renders it).
-  static async summaryForUser(userId) {
+  //
+  // needs_review is already masked for quarantined rows by RESOLVED_COLUMNS, so
+  // a wave of scam airdrops cannot move this badge -- which is the whole reason
+  // #74 exists: a badge that cannot reach zero gets ignored, and takes the real
+  // flags with it. The quarantine gets its OWN count instead of being invisible;
+  // hiding rows without saying how many is the failure a quarantine must not
+  // have.
+  //
+  // `walletId` narrows it to one wallet and never widens it, matching the feed:
+  // a headline count that totals every wallet above wallet-filtered rows is a
+  // number nobody can reconcile with what they are looking at -- and for a
+  // quarantine the count IS the honesty guarantee, so it has to be about the
+  // rows on screen.
+  static async summaryForUser(userId, { walletId = null } = {}) {
     if (!userId) throw new Error('EthActivity.summaryForUser requires a userId');
+    const params = [userId];
+    let scope = '';
+    if (walletId != null) {
+      params.push(walletId);
+      scope = ` AND a.wallet_id = $${params.length}`;
+    }
     const result = await pool.query(
       `SELECT COUNT(*)::int AS total,
-              (COUNT(*) FILTER (WHERE needs_review))::int AS needs_review_count
-       FROM (SELECT ${RESOLVED_COLUMNS} ${RESOLVED_FROM} WHERE w.user_id = $1) resolved`,
-      [userId]
+              (COUNT(*) FILTER (WHERE needs_review))::int AS needs_review_count,
+              (COUNT(*) FILTER (WHERE spam))::int AS spam_count
+       FROM (SELECT ${RESOLVED_COLUMNS} ${RESOLVED_FROM} WHERE w.user_id = $1${scope}) resolved`,
+      params
     );
     const row = result.rows[0] || {};
-    return { total: Number(row.total) || 0, needsReviewCount: Number(row.needs_review_count) || 0 };
+    return {
+      total: Number(row.total) || 0,
+      needsReviewCount: Number(row.needs_review_count) || 0,
+      spamCount: Number(row.spam_count) || 0,
+    };
   }
 
   // Does the user own an activity row for this exact key? An override that
@@ -220,16 +282,51 @@ class EthActivity {
   static async upsertOverride(userId, walletId, txHash, { category, note = null, chainId = DEFAULT_CHAIN_ID } = {}) {
     if (!userId) throw new Error('EthActivity.upsertOverride requires a userId');
     const result = await pool.query(
-      `INSERT INTO eth_activity_overrides (wallet_id, chain_id, tx_hash, category, note)
-       SELECT w.id, $2, $3, $4, $5
+      `INSERT INTO eth_activity_overrides (wallet_id, chain_id, tx_hash, category, note, spam)
+       SELECT w.id, $2, $3, $4, $5, FALSE
        FROM eth_wallets w
        WHERE w.id = $1 AND w.user_id = $6
        ON CONFLICT (wallet_id, chain_id, tx_hash)
+       -- Naming a category LIFTS the quarantine, and that is not a coupling
+       -- accident. A quarantine is "you do not need to look at this"; the user
+       -- looking at it and saying what it was settles the question in the other
+       -- direction. Leaving the flag alone let a correction be stored, acted on
+       -- by the exchange matcher, and stay invisible -- with the row's own
+       -- needs_review masked by the quarantine it still carried.
+       --
+       -- One click re-quarantines it if that is genuinely what they meant.
        DO UPDATE SET category = EXCLUDED.category,
                      note = EXCLUDED.note,
+                     spam = FALSE,
                      updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [walletId, chainId, txHash, category, note, userId]
+    );
+    return result.rows[0] || null;
+  }
+
+  // The one-click un-quarantine, and its inverse.
+  //
+  // Writes ONLY the spam column, leaving any category override intact for the
+  // same reason upsertOverride leaves this one alone. On insert the category is
+  // NULL, which readers COALESCE away -- so "not spam" restores the row exactly
+  // as the ladder classified it rather than re-labelling it, and un-masks the
+  // ladder's needs_review with it. That is what "restores the row" has to mean:
+  // a false positive that came back as a bare `receive` with the flag already
+  // cleared would be a second, quieter way to lose it.
+  static async setSpamOverride(userId, walletId, txHash, { spam, chainId = DEFAULT_CHAIN_ID } = {}) {
+    if (!userId) throw new Error('EthActivity.setSpamOverride requires a userId');
+    if (typeof spam !== 'boolean') throw new Error('EthActivity.setSpamOverride requires a boolean spam verdict');
+    const result = await pool.query(
+      `INSERT INTO eth_activity_overrides (wallet_id, chain_id, tx_hash, spam)
+       SELECT w.id, $2, $3, $4
+       FROM eth_wallets w
+       WHERE w.id = $1 AND w.user_id = $5
+       ON CONFLICT (wallet_id, chain_id, tx_hash)
+       DO UPDATE SET spam = EXCLUDED.spam,
+                     updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [walletId, chainId, txHash, spam, userId]
     );
     return result.rows[0] || null;
   }

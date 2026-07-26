@@ -37,6 +37,9 @@ const db = {
   transfers: [],
   ignoredTokens: [],
   labels: [],
+  // Every address the owner has declared theirs. WALLET is added in
+  // beforeEach; a second entry stands in for a second tracked wallet.
+  ownWallets: [],
   activity: [],
   overrides: new Map(),
 };
@@ -50,6 +53,8 @@ const ACTIVITY_COLUMNS = [
   'legs', 'fee_wei', 'needs_review', 'review_reason', 'confidence',
   // At-the-time USD (043).
   'usd_value', 'usd_fee', 'usd_basis',
+  // The spam quarantine (045).
+  'spam', 'spam_reason',
 ];
 
 const walletRow = (id = OWNED_WALLET_ID) => ({
@@ -60,15 +65,24 @@ const walletRow = (id = OWNED_WALLET_ID) => ({
 function resolvedRows() {
   return db.activity.map((row) => {
     const override = db.overrides.get(key(row.wallet_id, row.chain_id, row.tx_hash)) || null;
+    const overrideCategory = override?.category ?? null;
+    // COALESCE(o.spam, a.spam): the user's verdict wins, NULL means they have
+    // not given one.
+    const spam = override && override.spam != null ? override.spam : row.spam === true;
     return {
       ...row,
-      category: override ? override.category : row.category,
+      category: overrideCategory ?? row.category,
       derived_category: row.category,
-      override_category: override ? override.category : null,
+      override_category: overrideCategory,
       override_note: override ? override.note : null,
-      is_overridden: Boolean(override),
-      needs_review: override ? false : row.needs_review,
-      review_reason: override ? null : row.review_reason,
+      is_overridden: overrideCategory != null,
+      spam,
+      derived_spam: row.spam === true,
+      override_spam: override ? override.spam ?? null : null,
+      // A quarantined row is masked out of the queue, but the stored flag stays
+      // honest, so un-quarantining brings it back.
+      needs_review: overrideCategory != null || spam ? false : row.needs_review,
+      review_reason: overrideCategory != null || spam ? null : row.review_reason,
       wallet_address: WALLET,
     };
   });
@@ -95,6 +109,23 @@ function fakeQuery(text, params = []) {
   if (/^SELECT DISTINCT ON \(address\) address, name FROM eth_address_labels/.test(sql)) {
     const wanted = new Set(params[0]);
     return { rows: db.labels.filter((l) => wanted.has(l.address)) };
+  }
+  // The owner's own label rows, which tell the quarantine which counterparties
+  // already carry a verdict of any kind (including the inert 'external').
+  if (/^WITH counterparties AS \(.*SELECT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
+    // The user's own rows, plus builtin rows (user_id NULL) for addresses this
+    // wallet has actually transacted with -- the bounded arm that makes a pack
+    // 'external' count as a verdict without loading all 5k of them.
+    const seen = new Set(db.transfers.flatMap((t) => [t.from_address, t.to_address]));
+    return {
+      rows: db.labels
+        .filter((l) => (l.user_id ?? OWNER_ID) === OWNER_ID || seen.has(l.address))
+        .map((l) => ({ address: l.address, kind: l.kind ?? null, user_id: l.user_id ?? OWNER_ID })),
+    };
+  }
+  // Every address the owner has declared theirs, across all their wallets.
+  if (/^SELECT address FROM eth_wallets WHERE user_id/.test(sql)) {
+    return { rows: db.ownWallets.map((address) => ({ address })) };
   }
   if (/^DELETE FROM eth_activity WHERE wallet_id/.test(sql)) {
     db.activity = db.activity.filter((row) => row.wallet_id !== params[0]);
@@ -123,12 +154,32 @@ function fakeQuery(text, params = []) {
       === key(walletId, chainId, txHash));
     return { rows: exists ? [{ '?column?': 1 }] : [] };
   }
+  // The spam verdict writes ONLY its own column, leaving any category override
+  // in place -- and vice versa. Matched first because its column list is a
+  // prefix-free subset of the category override's.
+  if (/^INSERT INTO eth_activity_overrides \(wallet_id, chain_id, tx_hash, spam\)/.test(sql)) {
+    const [walletId, chainId, txHash, spam, userId] = params;
+    if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
+    const k = key(walletId, chainId, txHash);
+    const existing = db.overrides.get(k);
+    const row = existing
+      ? { ...existing, spam }
+      : { wallet_id: walletId, chain_id: chainId, tx_hash: txHash, category: null, note: null, spam };
+    db.overrides.set(k, row);
+    return { rows: [row] };
+  }
   if (/^INSERT INTO eth_activity_overrides/.test(sql)) {
     const [walletId, chainId, txHash, category, note, userId] = params;
     // The INSERT ... SELECT FROM eth_wallets WHERE user_id is the ownership
     // gate: a foreign wallet selects nothing, so nothing is written.
     if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
-    const row = { wallet_id: walletId, chain_id: chainId, tx_hash: txHash, category, note };
+    // Naming a category LIFTS the quarantine: the SQL writes spam = FALSE on
+    // both the insert and the DO UPDATE. A correction that stayed hidden was
+    // stored, acted on by the matcher, and invisible.
+    const row = {
+      wallet_id: walletId, chain_id: chainId, tx_hash: txHash, category, note,
+      spam: false,
+    };
     db.overrides.set(key(walletId, chainId, txHash), row);
     return { rows: [row] };
   }
@@ -152,11 +203,26 @@ function fakeQuery(text, params = []) {
     const category = filterOf('category');
     const needsReview = filterOf('needs_review');
     let rows = resolvedRows();
+    // The spam predicate is a bare literal, not a parameter, so it is read off
+    // the SQL text the same way -- and its absence means 'all'.
+    if (/AND NOT r\.spam/.test(sql)) rows = rows.filter((r) => !r.spam);
+    else if (/AND r\.spam(?![_a-z])/.test(sql)) rows = rows.filter((r) => r.spam);
     if (walletId !== undefined) rows = rows.filter((r) => r.wallet_id === walletId);
     if (category !== undefined) rows = rows.filter((r) => r.category === category);
     if (needsReview !== undefined) rows = rows.filter((r) => r.needs_review === needsReview);
     const total = rows.length;
     return { rows: rows.map((r) => ({ ...r, total_count: total })) };
+  }
+  // summaryForUser: the badge counts, resolved the same way.
+  if (/^SELECT COUNT\(\*\)::int AS total, \(COUNT\(\*\) FILTER \(WHERE needs_review\)\)/.test(sql)) {
+    const rows = resolvedRows();
+    return {
+      rows: [{
+        total: rows.length,
+        needs_review_count: rows.filter((r) => r.needs_review).length,
+        spam_count: rows.filter((r) => r.spam).length,
+      }],
+    };
   }
   return { rows: [] };
 }
@@ -247,6 +313,7 @@ beforeEach(() => {
   db.transfers = [];
   db.ignoredTokens = [];
   db.labels = [];
+  db.ownWallets = [WALLET];
   db.activity = [];
   db.overrides.clear();
   queries.length = 0;

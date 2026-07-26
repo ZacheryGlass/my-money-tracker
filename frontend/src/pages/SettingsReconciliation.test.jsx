@@ -19,6 +19,7 @@ const apiMocks = vi.hoisted(() => ({
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getReconciliation: vi.fn(),
+    getActivity: vi.fn(), setActivitySpam: vi.fn(),
   },
   keys: { getAll: vi.fn(), set: vi.fn(), clear: vi.fn() },
   admin: { getOverview: vi.fn(), triggerJob: vi.fn() },
@@ -89,6 +90,9 @@ describe('Settings -> Ethereum balance audit', () => {
     apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
     apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
       data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 },
+    });
+    apiMocks.eth.getActivity.mockResolvedValue({
+      data: [], summary: { spam_count: 0, needs_review_count: 0 }, pagination: { total: 0 },
     });
     apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
     apiMocks.admin.getOverview.mockRejectedValue({ response: { status: 403 } });

@@ -35,6 +35,39 @@ export const labelVerdictKind = (verdict) => (verdict === LABEL_VERDICT_KEEP ? u
 // becomes.
 export const labelVerdictNeedsName = (verdict) => verdict !== 'external' && verdict !== 'own';
 
+// Why a transaction was quarantined as spam (#74). The server stores a REASON
+// CODE rather than prose precisely so this map can exist: the poisoning verdict
+// carries a security warning the other three must not, and a client cannot
+// branch on a sentence.
+//
+// A missing code is rendered as the generic line rather than swallowed -- a row
+// hidden for reasons nobody can state is the failure a quarantine cannot have.
+export const SPAM_REASON_LABELS = {
+  address_poisoning: {
+    title: 'Lookalike address',
+    detail: 'The sender\'s address copies the first and last four characters of one you actually use. '
+      + 'Never copy an address out of transaction history — always paste it from the source.',
+    warn: true,
+  },
+  zero_value_transfer: {
+    title: 'Zero-value transfer',
+    detail: 'Nothing moved, and your wallet did not send it. This is how a poisoned address gets into your history.',
+  },
+  unsolicited_token: {
+    title: 'Unsolicited token',
+    detail: 'A token you have never traded or approved, arriving unasked, that no price provider lists.',
+  },
+  unsolicited_nft: {
+    title: 'Unsolicited NFT',
+    detail: 'An NFT from a collection you have never bought from or interacted with, sent to you unasked.',
+  },
+};
+
+export const spamReasonLabel = (code) => SPAM_REASON_LABELS[code] || {
+  title: 'Marked as spam',
+  detail: 'Hidden from the ledger. Nothing was deleted.',
+};
+
 export function formatCategoryLabel(category, fallback = UNCATEGORIZED_LABEL) {
   const label = typeof category === 'string' ? category.trim() : '';
   return label || fallback;

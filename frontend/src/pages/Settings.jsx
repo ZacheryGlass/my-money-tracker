@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
@@ -12,12 +12,13 @@ import FilterTabs from '../components/FilterTabs';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
 import { formatRelativeTime, formatCompactCurrency, formatDateDisplay, formatExactUnits } from '../utils/format';
-import { explorerAddressUrl } from '../utils/chains';
+import { explorerAddressUrl, explorerTxUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
   LABEL_VERDICT_OPTIONS,
   labelVerdictKind,
   labelVerdictNeedsName,
+  spamReasonLabel,
 } from '../utils/dataLabels';
 
 const SETTINGS_TABS = [
@@ -67,6 +68,16 @@ const keyStatusLabel = (status) => {
 };
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+// One page of the spam quarantine (#74). The section is the only place the
+// "Not spam" button exists, so the list has to be walkable to the end rather
+// than truncated at a round number: during a spam wave the transaction worth
+// rescuing is exactly the one a cap would hide.
+const SPAM_PAGE_SIZE = 50;
+// GET /api/eth/activity clamps `limit` to 500, so a refetch cannot restore more
+// than that in one request however many pages are open. Beyond it the appended
+// pages are re-walked by offset instead; the clamp only bounds the single call.
+const SPAM_MAX_LIMIT = 500;
 
 // The venues the backend accepts. Coinbase covers both the retail export and a
 // Coinbase Pro / Exchange statement -- the importer recognizes which is which
@@ -669,6 +680,23 @@ const Settings = ({ user }) => {
   const [counterpartyData, setCounterpartyData] = useState(null);
   const [triagingAddress, setTriagingAddress] = useState(null);
   const [showDustCounterparties, setShowDustCounterparties] = useState(false);
+  // Quarantined spam (#74). null = not loaded or the fetch failed, same rule as
+  // counterpartyData: "nothing was hidden" must never be the way a failed
+  // request looks, because the whole promise of a quarantine is that it says
+  // what it swallowed.
+  const [spamActivity, setSpamActivity] = useState(null);
+  const [showSpamActivity, setShowSpamActivity] = useState(false);
+  const [unquarantiningTx, setUnquarantiningTx] = useState(null);
+  const [loadingMoreSpam, setLoadingMoreSpam] = useState(false);
+  // How many pages of the quarantine are currently on screen. A REF, not state:
+  // fetchItems reads it, and putting it in that useCallback's deps would make
+  // "show more" refetch the entire Settings page instead of one list.
+  //
+  // It also has to survive the refetch that follows a "Not spam" click. This is
+  // the ONLY surface with that button, so a wave that buried a real transaction
+  // at row 200 must not spring back to row 50 the moment the user rescues
+  // something above it.
+  const spamPagesRef = useRef(1);
   const [showExternalLabels, setShowExternalLabels] = useState(false);
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
   // Loaded-and-empty and failed-to-load must not look alike: "No Exchange
@@ -785,13 +813,20 @@ const Settings = ({ user }) => {
     try {
       // Ethereum data is fetched alongside but must not fail the whole page:
       // a wallet-side error should degrade only the Ethereum tab.
-      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, counterpartyResult, exchangeResult, keysResult] = await Promise.all([
+      const [plaidData, accountsData, ethResult, ignoredResult, labelsResult, counterpartyResult, spamResult, exchangeResult, keysResult] = await Promise.all([
         plaidAPI.getItems(),
         accountsAPI.getAll({ includeHidden: true }),
         ethAPI.getWallets().catch(() => null),
         ethAPI.getIgnoredTokens().catch(() => null),
         ethAPI.getAddressLabels().catch(() => null),
         ethAPI.getUnreviewedCounterparties().catch(() => null),
+        // Paged, not capped: the first page is all anyone usually needs, and
+        // "Show more" walks the rest (see handleShowMoreSpam). summary.spam_count
+        // is the honest total and the header renders it, not the array's length.
+        ethAPI.getActivity({
+          spam: 'only',
+          limit: Math.min(SPAM_PAGE_SIZE * spamPagesRef.current, SPAM_MAX_LIMIT),
+        }).catch(() => null),
         exchangesAPI.getAll().catch(() => null),
         keysAPI.getAll().catch(() => null),
       ]);
@@ -806,6 +841,7 @@ const Settings = ({ user }) => {
       setIgnoredTokens(ignoredResult?.tokens || []);
       setAddressLabels(labelsResult?.labels || []);
       setCounterpartyData(counterpartyResult || null);
+      setSpamActivity(spamResult || null);
       setKeyStatuses(keysResult || null);
       setItems(loadedItems);
       setConsentItems(new Set(
@@ -1360,6 +1396,54 @@ const Settings = ({ user }) => {
       setError(err.response?.data?.error || 'Failed to ignore token');
     } finally {
       setTriagingAddress(null);
+    }
+  };
+
+  // One click, and the transaction comes back exactly as it was: the ladder's
+  // category, its legs, its dollars and its review flag. The verdict is written
+  // to the overrides table, so it outlives every resync -- and the counterparty
+  // rejoins the triage queue, which is where it belongs the moment the user
+  // says this was not junk.
+  const handleUnquarantine = async (row) => {
+    if (unquarantiningTx) return;
+    setUnquarantiningTx(row.tx_hash);
+    setError(null);
+    try {
+      await ethAPI.setActivitySpam(row.wallet_id, row.tx_hash, false, { chainId: row.chain_id });
+      showSuccess('Restored to the ledger');
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to restore that transaction');
+    } finally {
+      setUnquarantiningTx(null);
+    }
+  };
+
+  // The next page of the quarantine, appended. Offset pagination against the
+  // feed the section already uses -- no new endpoint, and the header keeps
+  // reporting summary.spam_count, so "showing 100 of 412" stays true throughout.
+  //
+  // De-duplicated on the way in: the feed is ordered, but a row rescued from an
+  // earlier page shifts everything below it up by one, and the same transaction
+  // arriving twice is a duplicate React key and a second "Not spam" button for
+  // a transaction already restored.
+  const handleShowMoreSpam = async () => {
+    if (loadingMoreSpam) return;
+    const loaded = spamActivity?.data || [];
+    setLoadingMoreSpam(true);
+    setError(null);
+    try {
+      const next = await ethAPI.getActivity({
+        spam: 'only', limit: SPAM_PAGE_SIZE, offset: loaded.length,
+      });
+      const seen = new Set(loaded.map((row) => `${row.chain_id}:${row.tx_hash}`));
+      const added = (next.data || []).filter((row) => !seen.has(`${row.chain_id}:${row.tx_hash}`));
+      spamPagesRef.current += 1;
+      setSpamActivity({ ...next, data: [...loaded, ...added] });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load more quarantined transactions');
+    } finally {
+      setLoadingMoreSpam(false);
     }
   };
 
@@ -2203,6 +2287,130 @@ const Settings = ({ user }) => {
                         onIgnoreToken={handleIgnoreCounterpartyToken}
                       />
                     ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </section>
+      )}
+
+      {ethWallets.length > 0 && (
+        <section className="mb-8" aria-labelledby="eth-spam-heading">
+          <div className="mb-3 px-2">
+            <h2 id="eth-spam-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Quarantined</h2>
+            <p className="mt-1 text-xs text-secondary">
+              Address-poisoning attempts, dust and scam airdrops, recognized automatically and kept out of
+              Needs Review — a queue that fills with junk faster than anyone can drain it is a queue that gets
+              ignored. Nothing is deleted: these transactions keep their amounts and still count toward the
+              balance checks, they are just out of the way. If one of them is real, restore it in a click and
+              the choice sticks through every future sync.
+            </p>
+          </div>
+
+          <div className="card overflow-hidden">
+            {!spamActivity ? (
+              // Loaded-and-empty and failed-to-load must not look alike here
+              // either: "nothing was hidden" is exactly the claim a failed
+              // request must not be allowed to make.
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-secondary">
+                <span className="flex items-center gap-2 text-loss">
+                  <AlertTriangle size={14} />
+                  Couldn&apos;t load the quarantine.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => fetchItems()}
+                  className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent"
+                >
+                  <RefreshCw size={10} /> Retry
+                </button>
+              </div>
+            ) : (spamActivity.summary?.spam_count || 0) === 0 ? (
+              <div className="p-6 text-center text-sm text-secondary">Nothing has been quarantined.</div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  aria-expanded={showSpamActivity}
+                  onClick={() => setShowSpamActivity((open) => !open)}
+                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-caption text-tertiary transition-colors hover:text-primary"
+                >
+                  {/* The server's count, not the page's: the list is capped, so
+                      the rendered array can be smaller than the real total. */}
+                  <span>
+                    {spamActivity.summary.spam_count} quarantined transaction{spamActivity.summary.spam_count === 1 ? '' : 's'}
+                  </span>
+                  <ChevronDown size={14} className={showSpamActivity ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                </button>
+                {showSpamActivity && (
+                  <div className="divide-y divide-border border-t border-border">
+                    {(spamActivity.data || []).map((row) => {
+                      const reason = spamReasonLabel(row.spam_reason);
+                      return (
+                        <div key={`${row.chain_id}:${row.tx_hash}`} className="flex flex-wrap items-start justify-between gap-3 p-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`inline-flex items-center border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${reason.warn ? 'border-loss/20 bg-loss/10 text-loss' : 'border-border bg-surface-3 text-tertiary'}`}>
+                                {reason.title}
+                              </span>
+                              <span className="text-[10px] uppercase tracking-wider text-tertiary">
+                                {formatDateDisplay(row.block_time)}
+                              </span>
+                              <a
+                                href={explorerTxUrl(row.tx_hash, row.chain_id)}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={row.tx_hash}
+                                className="font-mono text-[10px] text-tertiary transition-colors hover:text-accent"
+                              >
+                                {row.tx_hash.slice(0, 10)}…
+                              </a>
+                            </div>
+                            <p className="mt-1 text-xs text-secondary">{reason.detail}</p>
+                            {/* What actually moved is still on the row, and
+                                saying so is the difference between a hidden
+                                transaction and a deleted one. */}
+                            {(row.legs || []).length > 0 && (
+                              <p className="mt-1 font-mono text-[10px] text-tertiary">
+                                {row.legs.map((legRow) => `${legRow.direction === 'out' ? '-' : '+'}${legRow.amount} ${legRow.asset}`).join(', ')}
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleUnquarantine(row)}
+                            disabled={Boolean(unquarantiningTx)}
+                            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+                          >
+                            {unquarantiningTx === row.tx_hash
+                              ? <RefreshCw size={14} className="animate-spin" />
+                              : <Undo2 size={14} />}
+                            Not spam
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {/* The list is walkable to the end, not truncated: this is
+                        the only surface carrying "Not spam", so a transaction
+                        the heuristics got wrong has to stay reachable however
+                        much junk arrived above it. */}
+                    {(spamActivity.pagination?.total || 0) > (spamActivity.data || []).length && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-3">
+                        <span className="text-[10px] uppercase tracking-wider text-tertiary">
+                          Showing the {(spamActivity.data || []).length} most recent of {spamActivity.pagination.total}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleShowMoreSpam}
+                          disabled={loadingMoreSpam}
+                          className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+                        >
+                          {loadingMoreSpam && <RefreshCw size={10} className="animate-spin" />}
+                          Show more
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </>

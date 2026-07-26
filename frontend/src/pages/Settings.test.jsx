@@ -30,6 +30,8 @@ const apiMocks = vi.hoisted(() => ({
     labelAddress: vi.fn(),
     unlabelAddress: vi.fn(),
     getUnreviewedCounterparties: vi.fn(),
+    getActivity: vi.fn(),
+    setActivitySpam: vi.fn(),
   },
   keys: {
     getAll: vi.fn(),
@@ -97,6 +99,9 @@ describe('Settings display names', () => {
     // try/catch swallows that into an error banner with no data rendered.
     apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
       data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 },
+    });
+    apiMocks.eth.getActivity.mockResolvedValue({
+      data: [], summary: { spam_count: 0, needs_review_count: 0 }, pagination: { total: 0 },
     });
     apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
     apiMocks.admin.getOverview.mockRejectedValue({ response: { status: 403 } });
@@ -478,6 +483,118 @@ describe('Settings display names', () => {
       expect(screen.getByText(/couldn't load the review queue/i)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
       // One endpoint failing must not surface a page-level error.
+      expect(screen.queryByText(/failed to load/i)).toBeNull();
+    });
+  });
+
+  // The spam quarantine (#74). The section exists to make the quarantine
+  // inspectable and reversible: hiding rows is only acceptable if the user can
+  // see how many were hidden, why, and get any of them back in one click.
+  describe('quarantined spam', () => {
+    const WALLET = { id: 1, address: '0xaaaa000000000000000000000000000000000001', account: null, error_code: null };
+    const POISONED = {
+      wallet_id: 1,
+      chain_id: 1,
+      tx_hash: `0x${'1'.repeat(64)}`,
+      block_time: '2026-07-19T22:03:00Z',
+      category: 'receive',
+      spam: true,
+      spam_reason: 'address_poisoning',
+      legs: [{ asset: 'ETH', direction: 'in', amount: '0.00001' }],
+    };
+
+    const openEthTab = async (spamResult) => {
+      apiMocks.eth.getWallets.mockResolvedValue({ wallets: [WALLET] });
+      if (spamResult !== undefined) apiMocks.eth.getActivity.mockResolvedValue(spamResult);
+      renderSettings();
+      fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
+      await screen.findByText('Quarantined');
+    };
+
+    it('says nothing was quarantined when nothing was', async () => {
+      await openEthTab();
+      expect(screen.getByText(/nothing has been quarantined/i)).toBeInTheDocument();
+    });
+
+    it('reports the count, the reason and the amount, and warns about poisoning', async () => {
+      await openEthTab({
+        data: [POISONED],
+        summary: { spam_count: 1, needs_review_count: 0 },
+        pagination: { total: 1 },
+      });
+
+      // The server's count, not the page's: the list is capped.
+      expect(screen.getByText(/^1 quarantined transaction$/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /quarantined transaction/i }));
+
+      expect(screen.getByText('Lookalike address')).toBeInTheDocument();
+      // The security warning is the whole reason the server stores a reason
+      // CODE rather than prose -- this line must not appear on a dust airdrop.
+      expect(screen.getByText(/never copy an address out of transaction history/i)).toBeInTheDocument();
+      // What moved is still on the row: hidden is not deleted.
+      expect(screen.getByText('+0.00001 ETH')).toBeInTheDocument();
+    });
+
+    it('restores a false positive in one click, chain and all', async () => {
+      apiMocks.eth.setActivitySpam.mockResolvedValue({ override: {} });
+      await openEthTab({
+        data: [{ ...POISONED, chain_id: 42161 }],
+        summary: { spam_count: 1, needs_review_count: 0 },
+        pagination: { total: 1 },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /quarantined transaction/i }));
+
+      fireEvent.click(screen.getByRole('button', { name: /not spam/i }));
+      await waitFor(() => {
+        // The chain id rides along: a hash only identifies a transaction
+        // together with its chain (039).
+        expect(apiMocks.eth.setActivitySpam).toHaveBeenCalledWith(1, POISONED.tx_hash, false, { chainId: 42161 });
+      });
+      // The full refetch is what brings the row back and puts its counterparty
+      // back into Needs Review.
+      await waitFor(() => expect(apiMocks.eth.getActivity).toHaveBeenCalledTimes(2));
+    });
+
+    it('pages through the whole quarantine, so a rescue stays reachable in a spam wave', async () => {
+      // This section is the ONLY place "Not spam" exists. A hard cap at one page
+      // would mean the transaction most worth rescuing -- the real one buried
+      // under a wave of airdrops -- is the one that cannot be reached.
+      const row = (n) => ({ ...POISONED, tx_hash: `0x${String(n).padStart(64, '0')}` });
+      await openEthTab({
+        data: [row(1), row(2)],
+        summary: { spam_count: 4, needs_review_count: 0 },
+        pagination: { total: 4 },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /quarantined transactions/i }));
+      expect(screen.getByText(/showing the 2 most recent of 4/i)).toBeInTheDocument();
+
+      apiMocks.eth.getActivity.mockResolvedValue({
+        // Row 2 comes back a second time: a rescue on an earlier page shifts
+        // everything below it up, and the same transaction must not render twice.
+        data: [row(2), row(3)],
+        summary: { spam_count: 4, needs_review_count: 0 },
+        pagination: { total: 4 },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /show more/i }));
+
+      await waitFor(() => {
+        expect(apiMocks.eth.getActivity).toHaveBeenLastCalledWith({
+          spam: 'only', limit: 50, offset: 2,
+        });
+      });
+      await waitFor(() => expect(screen.getByText(/showing the 3 most recent of 4/i)).toBeInTheDocument());
+      expect(screen.getAllByRole('button', { name: /not spam/i })).toHaveLength(3);
+    });
+
+    it('shows a retry state when the quarantine fetch fails rather than claiming it hid nothing', async () => {
+      apiMocks.eth.getWallets.mockResolvedValue({ wallets: [WALLET] });
+      apiMocks.eth.getActivity.mockRejectedValue(new Error('boom'));
+      renderSettings();
+      fireEvent.click(await screen.findByRole('tab', { name: /Ethereum/ }));
+
+      await screen.findByText('Quarantined');
+      expect(screen.queryByText(/nothing has been quarantined/i)).toBeNull();
+      expect(screen.getByText(/couldn't load the quarantine/i)).toBeInTheDocument();
       expect(screen.queryByText(/failed to load/i)).toBeNull();
     });
   });

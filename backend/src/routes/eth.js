@@ -45,6 +45,12 @@ const ACTIVITY_CATEGORIES = new Set(EthActivityService.CATEGORIES);
 
 const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
 
+// How the activity feed treats quarantined spam (#74). The default hides it --
+// that IS the quarantine -- and 'only' is the Spam filter. Fail-closed like
+// every other filter here: `?spam=hide` silently returning the default feed
+// would read as "nothing was quarantined".
+const SPAM_FILTERS = new Set(['exclude', 'only', 'all']);
+
 // The stored verdicts of the balance audit, as the reconciliation route filters
 // them. 'match'/'dust' are the two "nothing to do here" verdicts.
 const RECONCILIATION_STATUSES = new Set(['match', 'dust', 'mismatch', 'skipped', 'unavailable']);
@@ -286,6 +292,16 @@ router.get('/activity', async (req, res) => {
       needsReview = raw === 'true';
     }
 
+    // Quarantined spam is hidden by default and reachable with ?spam=only.
+    // Unknown values 400 for the same reason the two filters above do.
+    let spam = 'exclude';
+    if (req.query.spam !== undefined && req.query.spam !== '') {
+      spam = String(req.query.spam).trim().toLowerCase();
+      if (!SPAM_FILTERS.has(spam)) {
+        return res.status(400).json({ error: `spam must be one of: ${[...SPAM_FILTERS].join(', ')}` });
+      }
+    }
+
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
@@ -293,11 +309,25 @@ router.get('/activity', async (req, res) => {
       walletId: wallet.walletId,
       category,
       needsReview,
+      spam,
       limit,
       offset,
     });
 
-    res.status(200).json({ data: activity, pagination: { total, limit, offset } });
+    // How many rows the default view is hiding, alongside the review count. A
+    // quarantine that never says how much it swallowed is indistinguishable
+    // from a sync that never fetched anything.
+    //
+    // Scoped to the SAME wallet as `data`, like the reconciliation route's:
+    // a headline that totals every wallet above wallet-filtered rows reads as
+    // hidden rows on the wallet in front of you.
+    const summary = await EthActivity.summaryForUser(req.user.id, { walletId: wallet.walletId });
+
+    res.status(200).json({
+      data: activity,
+      summary: { spam_count: summary.spamCount, needs_review_count: summary.needsReviewCount },
+      pagination: { total, limit, offset },
+    });
   } catch (error) {
     logger.error({ err: error }, 'Get ETH activity error');
     res.status(500).json({ error: 'Failed to retrieve activity' });
@@ -393,6 +423,58 @@ router.post('/activity/override', async (req, res) => {
   }
 });
 
+// The one-click un-quarantine (and its inverse, marking something as spam by
+// hand). Stored in the same overrides table as a category correction, so it
+// survives every rebuild -- and separately from it, because "this is not junk"
+// and "this was actually a purchase" are two different statements.
+//
+// Nothing is deleted either way: `spam: true` on a real transfer hides it from
+// the default feed and the triage queue and nowhere else. Its legs, its dollars
+// and its eth_transfers rows are untouched, so the balance audit still sees
+// every wei that moved.
+router.post('/activity/spam', async (req, res) => {
+  try {
+    const { wallet_id: walletIdRaw, tx_hash: txHashRaw, chain_id: chainIdRaw, spam } = req.body || {};
+
+    const wallet = await loadWallet(req, walletIdRaw, { required: true });
+    if (!wallet.ok) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+    if (typeof txHashRaw !== 'string' || !TX_HASH_RE.test(txHashRaw.trim())) {
+      return res.status(400).json({ error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' });
+    }
+    const chainId = chainIdRaw === undefined || chainIdRaw === null ? chains.DEFAULT_CHAIN_ID : Number(chainIdRaw);
+    if (!Number.isInteger(chainId) || chainId < 1) {
+      return res.status(400).json({ error: 'chain_id must be a positive integer' });
+    }
+    // Explicit boolean only. Coercing 'false' -- which is what a query-string
+    // habit produces -- would quarantine the row the user was rescuing.
+    if (typeof spam !== 'boolean') {
+      return res.status(400).json({ error: 'spam must be true or false' });
+    }
+
+    const txHash = txHashRaw.trim().toLowerCase();
+
+    // Same trap as the category override: every reader joins activity ->
+    // override, so a verdict written against a hash this wallet never saw is
+    // stored and then invisible forever.
+    const targetExists = await EthActivity.overrideTargetExists(req.user.id, wallet.walletId, txHash, { chainId });
+    if (!targetExists) {
+      return res.status(404).json({ error: 'No activity found for that transaction on this wallet' });
+    }
+
+    const override = await EthActivity.setSpamOverride(req.user.id, wallet.walletId, txHash, { spam, chainId });
+    if (!override) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    res.status(201).json({ override });
+  } catch (error) {
+    logger.error({ err: error }, 'Set ETH activity spam verdict error');
+    res.status(500).json({ error: 'Failed to save the spam verdict' });
+  }
+});
+
 // Undoing a correction uncovers the derived verdict again -- the override is
 // deliberately not a one-way door.
 router.delete('/activity/override', async (req, res) => {
@@ -414,7 +496,19 @@ router.delete('/activity/override', async (req, res) => {
     if (!removed) {
       return res.status(404).json({ error: 'Override not found' });
     }
-    res.status(200).json({ message: 'Override removed' });
+    // This drops the whole correction, the spam verdict included -- they live
+    // on one row, and "forget what I said about this transaction" is a coherent
+    // unit. But an un-quarantine dropped here UNCOVERS the derived spam verdict
+    // again, so the transaction can vanish from the default feed as a side
+    // effect of an action about its category. Say so rather than answering a
+    // bare "removed": a rescue undone in silence is the failure this whole
+    // feature exists to avoid. Re-rescue with POST /activity/spam.
+    res.status(200).json({
+      message: removed.spam === false
+        ? 'Override removed. This also dropped the "not spam" verdict, so the automatic quarantine applies again.'
+        : 'Override removed',
+      dropped_spam_verdict: removed.spam ?? null,
+    });
   } catch (error) {
     logger.error({ err: error }, 'Remove ETH activity override error');
     res.status(500).json({ error: 'Failed to remove the override' });
