@@ -22,13 +22,44 @@ const RESOLVED_COLUMNS = `
     a.legs, a.fee_wei, a.confidence, a.classified_at,
     CASE WHEN o.category IS NOT NULL THEN FALSE ELSE a.needs_review END AS needs_review,
     CASE WHEN o.category IS NOT NULL THEN NULL ELSE a.review_reason END AS review_reason,
-    w.address AS wallet_address`;
+    w.address AS wallet_address,
+    -- The exchange's own record of this same movement (#61), or NULL when
+    -- nothing matched. Carries the venue's fee_asset/fee_amount because that is
+    -- the WITHDRAWAL fee: it is charged off-chain, so fee_wei (gas) does not
+    -- contain it and the on-chain legs never will.
+    CASE WHEN em.id IS NULL THEN NULL ELSE jsonb_build_object(
+      'id', em.id,
+      'exchange_record_id', em.exchange_record_id,
+      'match_method', em.match_method,
+      'confidence', em.confidence,
+      'exchange_account_id', mea.id,
+      'exchange_account_name', mea.name,
+      'exchange', mea.exchange,
+      'record_type', mer.record_type,
+      'occurred_at', mer.occurred_at,
+      'base_asset', mer.base_asset,
+      'base_amount', mer.base_amount,
+      'fee_asset', mer.fee_asset,
+      'fee_amount', mer.fee_amount,
+      'verdict', mv.verdict
+    ) END AS exchange_match`;
 
 const RESOLVED_FROM = `
     FROM eth_activity a
     JOIN eth_wallets w ON w.id = a.wallet_id
     LEFT JOIN eth_activity_overrides o
-      ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash`;
+      ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash
+    -- At most one match per activity row (041's unique index says so), so none
+    -- of these can fan one row into two.
+    LEFT JOIN exchange_matches em ON em.activity_id = a.id
+    LEFT JOIN exchange_records mer ON mer.id = em.exchange_record_id
+    LEFT JOIN exchange_accounts mea ON mea.id = mer.exchange_account_id
+    LEFT JOIN exchange_match_verdicts mv
+      ON mv.exchange_record_id = em.exchange_record_id
+     AND mv.counter_record_id IS NULL
+     AND mv.wallet_id = a.wallet_id
+     AND mv.chain_id = a.chain_id
+     AND mv.tx_hash = a.tx_hash`;
 
 const INSERT_COLUMNS = [
   'wallet_id', 'chain_id', 'tx_hash', 'block_number', 'block_time', 'category',

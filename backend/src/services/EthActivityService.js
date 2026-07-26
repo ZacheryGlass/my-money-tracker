@@ -4,15 +4,21 @@ const pool = require('../config/database');
 const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const EthActivity = require('../models/EthActivity');
+const ExchangeMatchService = require('./ExchangeMatchService');
 const { DEFAULT_CHAIN_ID } = require('../config/chains');
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 
 // The full category vocabulary (038's CHECK constraint carries the same list).
-// A superset by design: later issues fill in exchange_trade (#61),
-// staking_reward (#61), bridge_out/bridge_in (#59). 'spend' and 'approval' are
-// reachable only through an override -- see classifyActivity.
+// A superset by design: later issues fill in exchange_trade, staking_reward and
+// bridge_out/bridge_in (#59). 'spend' and 'approval' are reachable only through
+// an override -- see classifyActivity.
+//
+// #61 (exchange matching) deliberately added NONE of them: pairing an on-chain
+// transfer with the exchange's own record says the two rows are the same money,
+// not that the transaction was something other than the deposit or withdrawal
+// the ladder already called it.
 const CATEGORIES = [
   'self_transfer', 'exchange_deposit', 'exchange_withdrawal', 'exchange_trade',
   'staking_reward', 'swap', 'nft_purchase', 'nft_sale', 'nft_mint', 'nft_burn',
@@ -384,7 +390,12 @@ class EthActivityService {
   // Deterministic full rebuild of one wallet's activity rows. Called after
   // every sync and every classification refresh, exactly like the ledger
   // mirror. Overrides live in their own table and are untouched here.
-  static async rebuildForWallet(walletId) {
+  //
+  // `rebuildMatches: false` is for a caller that is walking EVERY wallet of one
+  // user: the match pass is user-wide by design, so running it per wallet
+  // repeats the same full re-derivation N times. Such a caller runs it once
+  // itself, after the loop -- see EthWalletService.
+  static async rebuildForWallet(walletId, { rebuildMatches = true } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
@@ -401,8 +412,20 @@ class EthActivityService {
     await this._nameCounterparties(wallet.user_id, rows);
     const written = await EthActivity.replaceForWallet(walletId, rows);
 
+    // The exchange matching pass (#61), re-derived here for the same reason the
+    // rows above are: it is a claim about these rows, and eth_activity is
+    // delete-then-insert, so any match written earlier was cascaded away by the
+    // DELETE that just ran. It also OWNS the needs_review flag on the two
+    // exchange categories -- an exchange flow with no record behind it is the
+    // thing the issue wants surfaced -- so it has to run after the ladder, not
+    // inside it. Non-fatal: a sync that fetched every transfer must not report
+    // failure because a derived side table could not be refreshed.
+    const matches = rebuildMatches
+      ? await ExchangeMatchService.rebuildForUserSafely(wallet.user_id, { walletId })
+      : null;
+
     logger.info({ walletId, activity: written }, 'ETH activity rebuilt');
-    return { activity: written };
+    return { activity: written, matches };
   }
 
   // Fills counterparty_name for display from the owner's labels, resolved with

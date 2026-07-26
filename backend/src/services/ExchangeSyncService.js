@@ -2,6 +2,7 @@
 
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
+const ExchangeMatchService = require('./ExchangeMatchService');
 const { connectorFor } = require('./exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
 const {
@@ -290,6 +291,14 @@ class ExchangeSyncService {
       balanceReport: { ...report, backfill_pending: pending, balances_incomplete: balancesIncomplete },
     });
 
+    // API-sourced records are the ones that most often carry the exact tx_hash,
+    // which is what upgrades a match from heuristic to exact -- so a sync is the
+    // single most productive moment to re-derive them (#61). Non-fatal: the
+    // records are already stored and the sync succeeded.
+    const matches = await ExchangeMatchService.rebuildForUserSafely(account.user_id, {
+      exchangeAccountId: account.id,
+    });
+
     logger.info({
       exchangeAccountId: account.id,
       userId: account.user_id,
@@ -303,6 +312,7 @@ class ExchangeSyncService {
       mismatches: report.mismatch_count,
       backfillPending: pending,
       balancesIncomplete,
+      matched: matches?.matches ?? 0,
     }, 'Exchange API sync');
 
     return {
@@ -316,6 +326,7 @@ class ExchangeSyncService {
       unknown_types: result.stats?.unknownTypes ?? 0,
       backfill_pending: pending,
       balance_report: report,
+      matched: matches?.matches ?? 0,
       status,
     };
   }
