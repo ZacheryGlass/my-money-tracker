@@ -1,0 +1,33 @@
+
+Transactions
+User,Test User,00000000-0000-0000-0000-000000000000
+ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes,Sender Address,Recipient Address
+aaaa000000000000000000f1,2024-01-02 10:00:00 UTC,Staking Income,ETH,0.005,USD,$2000.00,$10.00,$10.00,$0.00,,,
+aaaa000000000000000000f2,2024-01-03 11:00:00 UTC,Reward Income,USDC,0.5,USD,$1.00,$0.50,$0.50,$0.00,Received 0.5 USDC from Coinbase Rewards,,
+aaaa000000000000000000f3,2024-01-04 12:00:00 UTC,Buy,BTC,0.01,USD,$40000.00,$400.00,$410.00,10.00,Bought 0.01 BTC for 410 USD using bank account Test Bank ****1234,,
+ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes,Sender Address,Recipient Address
+aaaa000000000000000000f4,2024-01-05 13:00:00 UTC,Advanced Trade Sell,ETH,-0.25,USD,$2500.00,-$625.00,-$620.00,$5.00,Sold 0.25 ETH for 620 USD on ETH-USD at 2500 USD/ETH,,
+aaaa000000000000000000f5,2024-01-06 14:00:00 UTC,Sell,USDC,-100,USD,$1.00,$100.00,$100.00,$0.00,Sold 100 USDC for 100 USD,,
+aaaa000000000000000000f6,2024-01-07 15:00:00 UTC,Convert,ETH,-1.5,USD,$2400.00,$3600.00,$3600.00,$0.00,Converted 1.5 ETH to 1.5 ETH2,,
+aaaa000000000000000000e6,2024-01-07 14:59:53 UTC,Convert,ETH2,1.5,USD,$2400.00,$3600.00,$3600.25,0.25,Converted 1.5 ETH to 1.5 ETH2,,
+aaaa000000000000000000f7,2024-01-08 16:00:00 UTC,Send,ETH,-2,USD,$2300.00,-$4600.00,-$4600.00,$0.00,Sent 2 ETH to 0x00000000000000000000000000000000000000ff (to 0x000...000ff),,0x00000000000000000000000000000000000000ff
+aaaa000000000000000000f8,2024-01-09 17:00:00 UTC,Receive,ETH,3,USD,$2350.00,$7050.00,$7050.00,$0.00,Received 3 ETH from an external account,0x00000000000000000000000000000000000000ee,0x00000000000000000000000000000000000000aa
+aaaa000000000000000000f9,2024-01-10 18:00:00 UTC,Withdrawal,USD,-250,USD,$1.00,$250.00,$250.00,$0.00,Withdrawal to Test Bank ******1234,,
+aaaa000000000000000000fa,2024-01-11 19:00:00 UTC,Pro Withdrawal,EOS,0.5,USD,$1.10,$0.55,$0.55,$0.00,,,
+aaaa000000000000000000fb,2024-01-12 20:00:00 UTC,Exchange Withdrawal,USD,120,USD,$1.00,$120.00,$120.00,$0.00,,,
+aaaa000000000000000000fc,2024-01-13 21:00:00 UTC,Vault Withdrawal,BTC,0.02,USD,$41000.00,$820.00,$820.00,$0.00,Transfer from BTC Vault,BTC Vault,
+aaaa000000000000000000fd,2024-01-14 22:00:00 UTC,Deposit,USD,500,USD,$1.00,$500.00,$500.00,$0.00,Deposit from Test Bank ****1234,,
+aaaa000000000000000000fe,2024-01-15 23:00:00 UTC,Pro Deposit,BTC,-0.03,USD,$41500.00,-$1245.00,-$1245.00,$0.00,,,
+aaaa000000000000000000ff,2024-01-16 09:30:00 UTC,Exchange Deposit,USD,-300,USD,$1.00,-$300.00,-$300.00,$0.00,Deposited -300 USD into GDAX,,GDAX
+
+Transactions
+User,Test User,00000000-0000-0000-0000-000000000000
+ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes,Sender Address,Recipient Address
+aaaa00000000000000000101,2024-01-17 10:15:00 UTC,Retail Staking Transfer,ETH,4,USD,$2200.00,$8800.00,$8800.00,$0.00,,,
+aaaa00000000000000000102,2024-01-18 10:20:00 UTC,Retail Unstaking Transfer,ETH,-4,USD,$2250.00,$9000.00,$9000.00,$0.00,,,
+aaaa00000000000000000103,2024-01-19 10:25:00 UTC,Transfer,BTC,0.001,USD,$42000.00,$42.00,$42.00,$0.00,,,
+aaaa00000000000000000104,2024-01-20 10:30:00 UTC,Retail Eth2 Deprecation,ETH,0.000001,USD,$2260.00,$0.00,$0.00,$0.00,,,
+aaaa00000000000000000105,2024-01-21 10:35:00 UTC,Quantum Airdrop,ZZZ,12.5,USD,$0.10,$1.25,$1.25,$0.00,A transaction type this importer has never seen,,
+aaaa00000000000000000106,2024-01-22 11:00:00 UTC,Convert,SOL,-2,USD,$100.00,$200.00,$200.00,$0.00,Converted 2 SOL to 0.05 ETH,,
+aaaa00000000000000000107,2024-01-23 11:05:00 UTC,Staking Income,ETH,1.5e-8,USD,$2300.00,$0.00,$0.00,$0.00,,,
+aaaa00000000000000000108,2024-01-24 11:10:00 UTC,Deposit,USD,"1,5",USD,$1.00,$1.50,$1.50,$0.00,An amount whose decimal separator could be either thing,,
