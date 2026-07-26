@@ -410,7 +410,7 @@ function walletInitiated(wallet, gasLegs, valueLegs) {
 // tokenDecimalsFallbacks: the questions are about the wallet's whole history
 // ("has this token ever been touched on purpose?"), so a per-transaction view
 // would answer them differently depending on which transaction was asked.
-function spamContext(wallet, transfers) {
+function spamContext(wallet, transfers, ownAddresses = []) {
   const initiatedTxs = new Set();
   const byTx = new Map();
   for (const transfer of transfers) {
@@ -438,7 +438,15 @@ function spamContext(wallet, transfers) {
   // other addresses, and every address the wallet has deliberately paid.
   // "Deliberately" is the same nonzero-and-signed test as above -- a poisoned
   // lookalike must never be able to join the set that shields the next one.
-  const familiarAddresses = new Set([wallet]);
+  //
+  // The owner's OTHER addresses are passed in rather than inferred from
+  // counterparty_is_own alone: that flag only appears on transfers between two
+  // of them, so a user with two wallets that have never transacted would be
+  // blind to a lookalike of their second address on their first -- and an own
+  // address is the single most valuable thing for a poisoner to imitate. There
+  // is no false-positive cost either: an address the user declared theirs is
+  // unambiguous.
+  const familiarAddresses = new Set([wallet, ...ownAddresses.filter(Boolean)]);
 
   for (const [groupKey, legs] of byTx) {
     const initiated = initiatedTxs.has(groupKey);
@@ -832,6 +840,10 @@ function buildActivityRows(walletAddress, transfers, {
   // 'external' -- reviewed, genuinely a third party -- is inert in
   // classification but must still keep the quarantine off a reviewed address.
   labeledAddresses = new Set(),
+  // Every address the OWNER has declared theirs -- their other tracked wallets
+  // and their 'own'-labeled untracked addresses. Seeds the lookalike set; see
+  // spamContext.
+  ownAddresses = [],
 } = {}) {
   const wallet = String(walletAddress).toLowerCase();
   // Wallet-wide, before the grouping: the SQL partition this mirrors spans the
@@ -843,7 +855,10 @@ function buildActivityRows(walletAddress, transfers, {
   // Built from the RAW transfers, ignored tokens included. An ignored token the
   // user once traded is still a token they chose to hold, and dropping that
   // evidence would let the ignore list quietly make its own past voluntary.
-  const spamInputs = { labeledAddresses, context: spamContext(wallet, transfers) };
+  const spamInputs = {
+    labeledAddresses,
+    context: spamContext(wallet, transfers, ownAddresses.map((a) => String(a).toLowerCase())),
+  };
   const byTx = new Map();
   for (const transfer of transfers) {
     const chainId = transfer.chain_id ?? DEFAULT_CHAIN_ID;
@@ -869,7 +884,7 @@ class EthActivityService {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
-    const [transfersResult, ignoredResult, labeledResult] = await Promise.all([
+    const [transfersResult, ignoredResult, labeledResult, ownWalletsResult] = await Promise.all([
       pool.query(
         'SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id',
         [walletId]
@@ -878,13 +893,24 @@ class EthActivityService {
       // The owner's OWN label rows only, which is tens of rows. Deliberately not
       // `OR user_id IS NULL`: that would drag in 036's 5,129-address builtin
       // pack on every rebuild, and the pack's verdicts already reach the builder
-      // denormalized onto each leg.
-      pool.query('SELECT address FROM eth_address_labels WHERE user_id = $1', [wallet.user_id]),
+      // denormalized onto each leg. `kind` rides along so the same one query
+      // serves both the "already judged" test and the own-address set.
+      pool.query('SELECT address, kind FROM eth_address_labels WHERE user_id = $1', [wallet.user_id]),
+      // Every address the owner has declared theirs, across ALL their wallets --
+      // the thing a poisoner most wants to imitate, and invisible to this
+      // wallet's own transfers unless the two have transacted.
+      pool.query('SELECT address FROM eth_wallets WHERE user_id = $1', [wallet.user_id]),
     ]);
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
     const labeledAddresses = new Set(labeledResult.rows.map((row) => row.address));
+    const ownAddresses = [
+      ...ownWalletsResult.rows.map((row) => row.address),
+      ...labeledResult.rows.filter((row) => row.kind === 'own').map((row) => row.address),
+    ];
 
-    const rows = buildActivityRows(wallet.address, transfersResult.rows, { ignoredContracts, labeledAddresses });
+    const rows = buildActivityRows(wallet.address, transfersResult.rows, {
+      ignoredContracts, labeledAddresses, ownAddresses,
+    });
     await this._nameCounterparties(wallet.user_id, rows);
     const written = await EthActivity.replaceForWallet(walletId, rows);
 

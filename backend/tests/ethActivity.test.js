@@ -37,6 +37,9 @@ const db = {
   transfers: [],
   ignoredTokens: [],
   labels: [],
+  // Every address the owner has declared theirs. WALLET is added in
+  // beforeEach; a second entry stands in for a second tracked wallet.
+  ownWallets: [],
   activity: [],
   overrides: new Map(),
 };
@@ -109,8 +112,12 @@ function fakeQuery(text, params = []) {
   }
   // The owner's own label rows, which tell the quarantine which counterparties
   // already carry a verdict of any kind (including the inert 'external').
-  if (/^SELECT address FROM eth_address_labels WHERE user_id/.test(sql)) {
-    return { rows: db.labels.map((l) => ({ address: l.address })) };
+  if (/^SELECT address, kind FROM eth_address_labels WHERE user_id/.test(sql)) {
+    return { rows: db.labels.map((l) => ({ address: l.address, kind: l.kind ?? null })) };
+  }
+  // Every address the owner has declared theirs, across all their wallets.
+  if (/^SELECT address FROM eth_wallets WHERE user_id/.test(sql)) {
+    return { rows: db.ownWallets.map((address) => ({ address })) };
   }
   if (/^DELETE FROM eth_activity WHERE wallet_id/.test(sql)) {
     db.activity = db.activity.filter((row) => row.wallet_id !== params[0]);
@@ -298,6 +305,7 @@ beforeEach(() => {
   db.transfers = [];
   db.ignoredTokens = [];
   db.labels = [];
+  db.ownWallets = [WALLET];
   db.activity = [];
   db.overrides.clear();
   queries.length = 0;

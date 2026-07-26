@@ -54,6 +54,9 @@ const db = {
   transfers: [],
   ignoredTokens: [],
   labels: [],
+  // Every address the owner has declared theirs. WALLET is added in
+  // beforeEach; a second entry stands in for a second tracked wallet.
+  ownWallets: [],
   activity: [],
   overrides: new Map(),
 };
@@ -119,8 +122,12 @@ function fakeQuery(text, params = []) {
     const wanted = new Set(params[0]);
     return { rows: db.labels.filter((l) => wanted.has(l.address)) };
   }
-  if (/^SELECT address FROM eth_address_labels WHERE user_id/.test(sql)) {
-    return { rows: db.labels.map((l) => ({ address: l.address })) };
+  if (/^SELECT address, kind FROM eth_address_labels WHERE user_id/.test(sql)) {
+    return { rows: db.labels.map((l) => ({ address: l.address, kind: l.kind ?? null })) };
+  }
+  // Every address the owner has declared theirs, across all their wallets.
+  if (/^SELECT address FROM eth_wallets WHERE user_id/.test(sql)) {
+    return { rows: db.ownWallets.map((address) => ({ address })) };
   }
   if (/^DELETE FROM eth_activity WHERE wallet_id/.test(sql)) {
     db.activity = db.activity.filter((row) => row.wallet_id !== params[0]);
@@ -324,6 +331,7 @@ beforeEach(() => {
   db.transfers = [];
   db.ignoredTokens = [];
   db.labels = [];
+  db.ownWallets = [WALLET];
   db.activity = [];
   db.overrides.clear();
   queries.length = 0;
@@ -394,6 +402,39 @@ test('a lookalike of the wallet\'s own address counts too', () => {
 });
 
 // --- heuristic 1's gate: a lookalike alone must never hide real money -------
+
+test('a lookalike of the owner\'s OTHER wallet counts, even with no traffic between them', async () => {
+  // counterparty_is_own only appears on transfers BETWEEN two of the owner's
+  // addresses, so a user with two wallets that have never transacted would
+  // otherwise be blind to a lookalike of their second address -- which is the
+  // single most valuable thing for a poisoner to imitate.
+  const secondWallet = `0x${'7'.repeat(40)}`;
+  const impostor = `0x${secondWallet.slice(2, 6)}${'1'.repeat(32)}${secondWallet.slice(-4)}`;
+  db.ownWallets = [WALLET, secondWallet];
+  db.transfers = [leg({
+    from_address: impostor, to_address: WALLET,
+    value_wei: '10000000000000', usd_at_time: '0.02', usd_basis: 'exact',
+  })];
+
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
+  assert.equal(db.activity[0].spam, true);
+  assert.equal(db.activity[0].spam_reason, SPAM_REASONS.ADDRESS_POISONING);
+});
+
+test('an \'own\'-labeled untracked address is imitable too', async () => {
+  const coldStorage = `0x${'8'.repeat(40)}`;
+  const impostor = `0x${coldStorage.slice(2, 6)}${'1'.repeat(32)}${coldStorage.slice(-4)}`;
+  db.labels = [{ address: coldStorage, name: 'Cold storage', kind: 'own' }];
+  db.transfers = [leg({
+    from_address: impostor, to_address: WALLET,
+    value_wei: '10000000000000', usd_at_time: '0.02', usd_basis: 'exact',
+  })];
+
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
+  assert.equal(db.activity[0].spam_reason, SPAM_REASONS.ADDRESS_POISONING);
+});
 
 test('GATE: a PRICED inbound transfer from a lookalike is never quarantined', () => {
   // Four hex characters at each end is 32 bits of coincidence -- unlikely, not
