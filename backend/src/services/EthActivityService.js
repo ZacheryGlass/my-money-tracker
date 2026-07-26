@@ -76,13 +76,43 @@ function toBigInt(value) {
 // (033), not wei and not a scaled token amount, so scaling it by 18 -- or by
 // anything -- would render a 1-of-1 as 0.000000000000000001. token_decimals is
 // written 0 on those rows, but this never relies on that.
-function legDecimals(transfer) {
+//
+// THE DECIMALS-REPAIR RULE, shared verbatim with the valuation SQL
+// (AssetPriceHistory quantitySql): the leg's OWN token_decimals, else the
+// MINIMUM non-NULL value seen for that (chain, contract) across the wallet,
+// else 18 -- clamped to [0, 78] so a malformed feed value cannot turn
+// 10^decimals into an aborting exponent. Etherscan omits tokenDecimal on some
+// legs of a contract it fills in on others, so a repair is needed; it just has
+// to be the SAME repair on both sides. When it was not, one row could show a
+// netted `amount` scaled by 6 next to a `usd_value` scaled by 18 -- two numbers
+// about the same transfer that cannot both be true.
+function legDecimals(transfer, fallback = 18) {
   if (NFT_TRANSFER_TYPES.has(transfer.transfer_type)) return 0;
   if (transfer.transfer_type === 'token') {
-    const decimals = transfer.token_decimals != null ? Number(transfer.token_decimals) : 18;
-    return Number.isFinite(decimals) ? Math.max(0, Math.min(decimals, 78)) : 18;
+    const raw = transfer.token_decimals != null ? Number(transfer.token_decimals) : fallback;
+    const decimals = Number.isFinite(raw) ? raw : 18;
+    return Math.max(0, Math.min(decimals, 78));
   }
   return 18;
+}
+
+// The wallet-wide half of that rule: MIN(token_decimals) per (chain, contract)
+// over every leg, matching the SQL window function exactly. Built across ALL of
+// a wallet's transfers, not per transaction -- the SQL partition spans the
+// wallet, so a per-tx map would disagree the moment the only leg naming its
+// decimals sat in a different transaction.
+function tokenDecimalsFallbacks(transfers) {
+  const byToken = new Map();
+  for (const transfer of transfers) {
+    if (transfer.transfer_type !== 'token' || !transfer.token_contract) continue;
+    if (transfer.token_decimals == null) continue;
+    const value = Number(transfer.token_decimals);
+    if (!Number.isFinite(value)) continue;
+    const key = `${transfer.chain_id ?? DEFAULT_CHAIN_ID}:${transfer.token_contract}`;
+    const seen = byToken.get(key);
+    if (seen == null || value < seen) byToken.set(key, value);
+  }
+  return byToken;
 }
 
 // Base units -> a whole-unit decimal string. Sign is carried by `direction`, so
@@ -100,7 +130,7 @@ function formatUnits(value, decimals) {
 
 // The netting key. An NFT nets per (contract, token_id): two different ids from
 // one collection are two different things and must never cancel out.
-function assetOf(transfer) {
+function assetOf(transfer, decimalsFallbacks = new Map()) {
   if (NFT_TRANSFER_TYPES.has(transfer.transfer_type)) {
     return {
       key: `nft:${transfer.token_contract}:${transfer.token_id}`,
@@ -119,12 +149,14 @@ function assetOf(transfer) {
       contract: transfer.token_contract || null,
       token_id: null,
       token_standard: transfer.token_standard || 'erc20',
-      decimals: legDecimals(transfer),
-      // legDecimals falls back to 18 when the feed omitted tokenDecimal, and
-      // one such leg first in the list would otherwise pin the whole netted
-      // amount to the wrong scale. The netting loop upgrades to the first
-      // NON-NULL value it sees for the same contract.
-      decimals_known: transfer.token_decimals != null,
+      // The feed omits tokenDecimal on some legs; the wallet-wide MIN for this
+      // (chain, contract) fills the gap, which is the same repair the valuation
+      // SQL makes. One leg missing its decimals can no longer pin the netted
+      // amount to a scale the dollar figure disagrees with.
+      decimals: legDecimals(
+        transfer,
+        decimalsFallbacks.get(`${transfer.chain_id ?? DEFAULT_CHAIN_ID}:${transfer.token_contract}`) ?? 18
+      ),
     };
   }
   // native + internal are both ETH, and netting them together is the point: a
@@ -284,7 +316,7 @@ function classifyActivity({ wallet, failed, valueLegs, hadValueLegs, netLegs, ga
 }
 
 // Pure: one transaction's eth_transfers legs -> one eth_activity row body.
-function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
+function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks = new Map()) {
   const gasLegs = legs.filter((leg) => leg.transfer_type === 'gas');
   const feeWei = gasLegs.reduce((sum, leg) => sum + toBigInt(leg.value_wei), 0n);
 
@@ -325,14 +357,8 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
     // A leg the wallet is not party to cannot appear in its feed; skip rather
     // than assume a direction.
     if (!incoming && !outgoing) continue;
-    const asset = assetOf(leg);
+    const asset = assetOf(leg, decimalsFallbacks);
     const entry = nets.get(asset.key) || { ...asset, raw: 0n, usdCents: 0, usdBasis: null };
-    // First NON-NULL token_decimals across the contract's legs wins, rather
-    // than whichever leg happened to be first.
-    if (!entry.decimals_known && asset.decimals_known) {
-      entry.decimals = asset.decimals;
-      entry.decimals_known = true;
-    }
     // A leg from the wallet to itself nets to zero, which is correct.
     if (incoming) entry.raw += toBigInt(leg.value_wei);
     if (outgoing) entry.raw -= toBigInt(leg.value_wei);
@@ -449,11 +475,29 @@ function rollUpUsd(netLegs, gasLegs, failed) {
   if (!priced.length) return { value: null, fee, basis: 'not_applicable' };
 
   const outbound = priced.filter((leg) => leg.direction === 'out');
-  const side = outbound.length ? outbound : priced.filter((leg) => leg.direction === 'in');
-  if (!side.length) return { value: null, fee, basis: 'not_applicable' };
+  const inbound = priced.filter((leg) => leg.direction === 'in');
+  const basisOf = (legs) => legs.reduce((weakest, leg) => weakestBasis(weakest, leg.usd_basis), null);
+  const valued = (basis) => basis === 'exact' || basis === 'carried';
 
-  const basis = side.reduce((weakest, leg) => weakestBasis(weakest, leg.usd_basis), null);
-  if (basis !== 'exact' && basis !== 'carried') return { value: null, fee, basis };
+  // Outbound is the PREFERRED side, not the only one. Both sides of a swap are
+  // the same event, so when the preferred side is unpriced and the other side
+  // has a real figure, taking the figure is strictly better than reporting
+  // nothing: selling an unlisted token for 2 ETH is a two-ETH event, and
+  // "usd_value: null" on it is the silent-zero failure by another route -- the
+  // number was right there on the other leg. Only when NEITHER side is priced
+  // does the transaction report unpriced.
+  let side = outbound.length ? outbound : inbound;
+  let basis = basisOf(side);
+  if (!valued(basis)) {
+    const other = side === outbound ? inbound : outbound;
+    const otherBasis = basisOf(other);
+    if (other.length && valued(otherBasis)) {
+      side = other;
+      basis = otherBasis;
+    }
+  }
+  if (!side.length) return { value: null, fee, basis: 'not_applicable' };
+  if (!valued(basis)) return { value: null, fee, basis };
 
   const cents = side.reduce((sum, leg) => sum + Math.abs(toCents(leg.usd) ?? 0), 0);
   return { value: fromCents(cents), fee, basis };
@@ -468,6 +512,9 @@ function rollUpUsd(netLegs, gasLegs, failed) {
 // where every ladder rule is exercised.
 function buildActivityRows(walletAddress, transfers, { ignoredContracts = new Set() } = {}) {
   const wallet = String(walletAddress).toLowerCase();
+  // Wallet-wide, before the grouping: the SQL partition this mirrors spans the
+  // wallet, not the transaction.
+  const decimalsFallbacks = tokenDecimalsFallbacks(transfers);
   const byTx = new Map();
   for (const transfer of transfers) {
     const chainId = transfer.chain_id ?? DEFAULT_CHAIN_ID;
@@ -477,7 +524,7 @@ function buildActivityRows(walletAddress, transfers, { ignoredContracts = new Se
     else byTx.set(groupKey, { chainId, txHash: transfer.tx_hash, legs: [transfer] });
   }
   return [...byTx.values()].map(({ chainId, txHash, legs }) =>
-    buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts));
+    buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks));
 }
 
 class EthActivityService {

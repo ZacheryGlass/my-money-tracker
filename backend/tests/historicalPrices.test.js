@@ -154,6 +154,15 @@ const { buildMirrorRow } = require('../src/services/EthTransactionMirrorService'
 // has no app_settings, so short-circuit it rather than exercising secrets here.
 SecretsService.getAppSetting = async () => null;
 
+// The real spacing is 2100 ms per CoinGecko call (30/min on the demo tier) and
+// 250 ms for Coinbase. Against a fake axios those gaps buy nothing but minutes
+// of suite time, so they are zeroed here -- the VALUES are asserted below,
+// which is the part that has to be right.
+const SHIPPED_SPACING = { ...HistoricalPriceService.PROVIDER_SPACING_MS };
+HistoricalPriceService.PROVIDER_SPACING_MS.coingecko = 0;
+HistoricalPriceService.PROVIDER_SPACING_MS.coingeckoPro = 0;
+HistoricalPriceService.PROVIDER_SPACING_MS.coinbase = 0;
+
 beforeEach(() => {
   db.prices = [];
   db.coverage = [];
@@ -162,6 +171,9 @@ beforeEach(() => {
   queries.length = 0;
   requests.length = 0;
   handleGet = null;
+  // A 429 shuts the CoinGecko queue for the rest of the RUN; a direct
+  // ensureAsset call is its own run, so each test starts with it open.
+  HistoricalPriceService.resetProviderPauses();
 });
 
 // --- the asset key ---------------------------------------------------------
@@ -305,10 +317,15 @@ test('CoinGecko refusing 2017 falls through to Coinbase, which actually has it',
     }
     if (url.includes('api.exchange.coinbase.com')) {
       // [time, low, high, open, close, volume]; time is the bucket START in
-      // seconds and close is that day's close.
+      // seconds and close is that day's close. The first candle sits on the
+      // window's first day, which is what makes this a COVERED fill rather than
+      // a series that stops short of the dates the ledger asked for.
       return {
         status: 200,
-        data: [[Date.parse('2017-06-12T00:00:00Z') / 1000, 290, 400, 300, 350, 1234]],
+        data: [
+          [Date.parse('2017-06-01T00:00:00Z') / 1000, 200, 260, 210, 250, 999],
+          [Date.parse('2017-06-12T00:00:00Z') / 1000, 290, 400, 300, 350, 1234],
+        ],
       };
     }
     throw new Error(`unexpected GET ${url}`);
@@ -322,7 +339,30 @@ test('CoinGecko refusing 2017 falls through to Coinbase, which actually has it',
   assert.equal(entry.provider, 'coinbase-exchange');
   assert.match(entry.detail, /365 days/);
   assert.deepEqual(db.prices.map((p) => [p.price_date, p.price_usd, p.source]),
-    [['2017-06-12', '350', 'coinbase-exchange']]);
+    [['2017-06-01', '250', 'coinbase-exchange'], ['2017-06-12', '350', 'coinbase-exchange']]);
+});
+
+test('a series that stops short of the ledger reports range_limited, not covered', async () => {
+  // A non-empty response is not a covered window. The fill starts eleven days
+  // after the date the ledger needs, so those rows stay unpriced -- and a green
+  // tick over them is exactly the kind of quiet claim #73 exists to remove.
+  handleGet = async (url) => {
+    if (url.includes('api.coingecko.com')) {
+      throw httpError(401, { error: { status: { error_code: 10012 } } });
+    }
+    return {
+      status: 200,
+      data: [[Date.parse('2017-06-12T00:00:00Z') / 1000, 290, 400, 300, 350, 1234]],
+    };
+  };
+
+  const entry = await HistoricalPriceService.ensureAsset({
+    asset_key: 'ETH', asset_symbol: 'ETH', first_date: '2017-06-01',
+  });
+
+  assert.equal(entry.status, 'range_limited');
+  assert.equal(entry.earliestDate, '2017-06-12');
+  assert.equal(db.prices.length, 1, 'the closes that DID land are still stored');
 });
 
 test('the Coinbase walk pages under the 300-candle cap instead of being truncated', async () => {
@@ -479,7 +519,13 @@ test('the backfill skips assets already written off and reports what it deferred
   db.coverage = [{ asset_key: `erc20:1:${DEAD_TOKEN}`, status: 'unlisted', checked_at: new Date() }];
   handleGet = async () => ({
     status: 200,
-    data: { prices: [[Date.parse('2026-07-25T00:00:00Z'), 3000]] },
+    // Reaching the window's first day, so the fill is genuinely covered.
+    data: {
+      prices: [
+        [Date.parse('2024-01-01T00:00:00Z'), 2200],
+        [Date.parse('2026-07-25T00:00:00Z'), 3000],
+      ],
+    },
   });
 
   const summary = await HistoricalPriceService.backfillLedgerAssets({ maxAssets: 1 });
@@ -491,6 +537,86 @@ test('the backfill skips assets already written off and reports what it deferred
   assert.equal(summary.deferred, 1);
   assert.equal(summary.covered, 1);
   assert.equal(requests.filter((r) => r.url.includes(DEAD_TOKEN)).length, 0);
+});
+
+test('the request spacing shipped is the one the provider limits allow', () => {
+  // 250 ms is 240 calls/min. CoinGecko's demo tier allows 30, so a shared
+  // 250 ms queue put every call after the first thirty into a 429 -- and with
+  // the work list ordered the same way every night, always the SAME thirty.
+  assert.ok(SHIPPED_SPACING.coingecko >= 2100, 'demo tier is 30 calls/min');
+  assert.ok(SHIPPED_SPACING.coinbase <= 250, 'Coinbase public market data is ~10 req/s');
+  // A paid key buys 500+/min; keeping it at 2.1 s would make a 200-asset budget
+  // a seven-minute walk for no reason.
+  assert.ok(SHIPPED_SPACING.coingeckoPro <= 250);
+});
+
+test('a 429 pauses CoinGecko for the run and writes NO coverage verdict', async () => {
+  // A rate limit says nothing about the asset. Recording `error` per asset
+  // would invent a provider verdict AND refresh checked_at, so a run that died
+  // at asset 31 would look exactly like one that examined all 200.
+  db.ledgerAssets = [
+    { asset_key: `erc20:1:${USDC}`, asset_symbol: 'USDC', first_date: '2024-01-01', transfer_count: 9 },
+    { asset_key: `erc20:1:${DEAD_TOKEN}`, asset_symbol: 'DEAD', first_date: '2024-01-01', transfer_count: 8 },
+  ];
+  handleGet = async () => { throw httpError(429, { status: { error_code: 429 } }); };
+
+  const summary = await HistoricalPriceService.backfillLedgerAssets();
+
+  assert.equal(summary.rateLimited, 2);
+  assert.equal(summary.failed, 0, 'not an error: the assets were never examined');
+  assert.equal(db.coverage.length, 0, 'no verdict is written, so both stay due');
+  // Only the FIRST call goes out; the queue is shut for the rest of the run.
+  assert.equal(requests.length, 1);
+});
+
+test('an empty series is a verdict of its own, not an error re-probed nightly', async () => {
+  handleGet = async () => ({ status: 200, data: { prices: [] } });
+
+  const entry = await HistoricalPriceService.ensureAsset({
+    asset_key: `erc20:1:${DEAD_TOKEN}`, asset_symbol: 'DEAD', first_date: '2018-01-01',
+  });
+
+  assert.equal(entry.status, 'empty');
+  assert.equal(db.prices.length, 0);
+  // Same slow cadence as `unlisted`: a series can appear later, but asking
+  // every night is what the coverage table exists to stop.
+  assert.equal(HistoricalPriceService.shouldFetch({ status: 'empty', checked_at: new Date() }), false);
+  assert.equal(
+    HistoricalPriceService.shouldFetch({ status: 'empty', checked_at: new Date(Date.now() - 40 * 86400000) }),
+    true
+  );
+});
+
+test('a covered series already reaching yesterday does not spend the budget', () => {
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const twoDaysAgo = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  assert.equal(
+    HistoricalPriceService.shouldFetch({ status: 'covered', latest_date: yesterday }), false);
+  // Two days stale IS due -- and that run also corrects the provisional close
+  // stored for the day that had not finished.
+  assert.equal(
+    HistoricalPriceService.shouldFetch({ status: 'covered', latest_date: twoDaysAgo }), true);
+});
+
+test('the budget rotates by staleness, so the tail is deferred and not starved', async () => {
+  // The work list is ordered by transfer count, which barely changes -- so
+  // slicing the top N out of it handed the same assets the whole budget every
+  // run and the tail was never reached at all.
+  const stale = new Date(Date.now() - 10 * 86400000);
+  db.ledgerAssets = [
+    { asset_key: 'ETH', asset_symbol: 'ETH', first_date: '2024-01-01', transfer_count: 500 },
+    { asset_key: `erc20:1:${USDC}`, asset_symbol: 'USDC', first_date: '2024-01-01', transfer_count: 2 },
+  ];
+  db.coverage = [
+    { asset_key: 'ETH', status: 'range_limited', checked_at: new Date() },
+    { asset_key: `erc20:1:${USDC}`, status: 'range_limited', checked_at: stale },
+  ];
+  handleGet = async () => ({ status: 200, data: { prices: [[Date.parse('2026-07-25T00:00:00Z'), 1]] } });
+
+  await HistoricalPriceService.backfillLedgerAssets({ maxAssets: 1 });
+
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0].url.includes(USDC), 'the longest-unchecked asset goes first');
 });
 
 test('re-running the backfill over a window it already holds changes nothing', async () => {

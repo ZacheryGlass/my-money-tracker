@@ -106,7 +106,11 @@ const formatTransferUsd = (transfer) => {
   // Sub-cent amounts round to $0 through the normal formatter, which reads as
   // worthless rather than as tiny.
   if (usd > 0 && usd < 0.01) return '< $0.01';
-  return formatCurrency(usd, { maximumFractionDigits: 2 });
+  // BOTH bounds. maximumFractionDigits alone leaves the minimum at 0, so one
+  // column renders $1,234.5, $1,234 and $0.5 next to each other and the decimal
+  // points stop lining up -- in a money column, where scanning down the point is
+  // the whole reason the column is monospaced.
+  return formatCurrency(usd, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 // Dedicated on-chain ledger for wallet-linked accounts, fed by the raw

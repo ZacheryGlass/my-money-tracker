@@ -222,8 +222,15 @@ class EthWalletService {
     return rows;
   }
 
-  static syncWallet(walletId) {
-    return serialized(() => this._syncWallet(walletId));
+  // `fillPrices` decides whether this sync also walks the price providers for
+  // this wallet's assets. TRUE for a wallet add and a user-pressed Sync (a
+  // freshly added wallet must not render a decade of "No USD value" while it
+  // waits for tonight's job), FALSE for the nightly job -- which syncs at 7:50
+  // and would spend a provider budget on exactly the assets the historical
+  // price job re-walks at 8:10, twenty minutes later. Same series, same
+  // providers, same rate limit, twice.
+  static syncWallet(walletId, { fillPrices = true } = {}) {
+    return serialized(() => this._syncWallet(walletId, { fillPrices }));
   }
 
   // One chain's ingest for one wallet: fetch each feed, replace that feed's
@@ -346,7 +353,7 @@ class EthWalletService {
     };
   }
 
-  static async _syncWallet(walletId) {
+  static async _syncWallet(walletId, { fillPrices = true } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     // Credentials belong to the wallet's owner (the nightly job has no
@@ -443,11 +450,19 @@ class EthWalletService {
       // being down must not fail a sync that already has every transfer, and
       // the rows simply stay unpriced (never $0, never today's price) until the
       // nightly job reaches them.
+      //
+      // Skipped on the nightly sync (fillPrices = false): the historical price
+      // job runs twenty minutes later against the same providers under the same
+      // rate limit, so doing it here too would just spend the budget twice. The
+      // SQL re-valuation below still runs every time -- it touches no network,
+      // and skipping it would strand the mirror on yesterday's prices.
       let priced = null;
-      try {
-        priced = await HistoricalPriceService.ensureAssetsForWallet(walletId);
-      } catch (err) {
-        logger.warn({ walletId, err }, 'Historical price fill failed; legs keep their previous valuation');
+      if (fillPrices) {
+        try {
+          priced = await HistoricalPriceService.ensureAssetsForWallet(walletId);
+        } catch (err) {
+          logger.warn({ walletId, err }, 'Historical price fill failed; legs keep their previous valuation');
+        }
       }
       const valued = await AssetPriceHistory.applyToWallet(walletId);
 
@@ -517,14 +532,18 @@ class EthWalletService {
     }
   }
 
-  static async syncAllWallets() {
+  // The nightly job's entry point. fillPrices defaults FALSE here and only
+  // here: the historical price job at 8:10 owns the provider walk for every
+  // wallet, so the 7:50 sync must not do it first. A caller that wants the
+  // interactive behaviour passes it explicitly.
+  static async syncAllWallets({ fillPrices = false } = {}) {
     const wallets = await EthWallet.findAllForJobs();
     const summary = { processed: 0, succeeded: 0, failed: 0, results: [] };
 
     for (const wallet of wallets) {
       summary.processed++;
       try {
-        const result = await this.syncWallet(wallet.id);
+        const result = await this.syncWallet(wallet.id, { fillPrices });
         summary.succeeded++;
         summary.results.push({ walletId: wallet.id, address: wallet.address, ...result });
       } catch (err) {

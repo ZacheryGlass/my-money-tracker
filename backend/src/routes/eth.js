@@ -269,6 +269,12 @@ router.get('/activity', async (req, res) => {
 //
 // Prices are global market data; WHICH assets a person holds is not, so this
 // reads through the user-scoped, fail-closed model entry point.
+//
+// NO UI CONSUMER YET. The unified ledger (#63) is the screen that surfaces
+// usd_value / usd_basis / the unpriced list together; until it lands this is
+// reachable only by hand. Deliberate, and stated here rather than implied: the
+// enumeration is what makes "unpriced, not $0" checkable today, and #63 is
+// where it becomes visible.
 router.get('/prices/unpriced', async (req, res) => {
   try {
     const assets = await AssetPriceHistory.unpricedAssetsForUser(req.user.id);

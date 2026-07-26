@@ -5,6 +5,9 @@ const AssetPriceHistory = require('../models/AssetPriceHistory');
 const SecretsService = require('./SecretsService');
 const chains = require('../config/chains');
 const { parseAssetKey, NATIVE_ASSET_KEY } = require('../utils/assetPriceKey');
+const {
+  baseUrl: coinGeckoBase, keyHeader: coinGeckoKeyHeader, isPro: coinGeckoIsPro,
+} = require('../utils/coingecko');
 const logger = require('../config/logger');
 
 // =============================================================================
@@ -51,7 +54,10 @@ const logger = require('../config/logger');
 // missing row reads as `unpriced`, which is the entire point: never $0, and
 // never today's price.
 
-const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
+// Host and key header come from utils/coingecko: demo and pro are two different
+// hosts with two different header names, and pairing them wrong is ignored
+// rather than rejected -- which would leave a paid key silently capped at the
+// 365 days it was bought to escape. See that file.
 const COINBASE_EXCHANGE_BASE = 'https://api.exchange.coinbase.com';
 
 // CoinGecko's 365-day refusal. HTTP 401 + this code, distinct from a bad key.
@@ -72,21 +78,61 @@ const NATIVE_HISTORY_START = '2016-05-18';
 
 const REQUEST_TIMEOUT_MS = 15000;
 
-// One global throttle across every provider and every caller, the same shape
-// and for the same reason as config/etherscan.js: the nightly job walks tens of
+// One throttle PER PROVIDER, process-wide across every caller -- the same shape
+// and for the same reason as config/etherscan.js (the nightly job walks tens of
 // assets and a user-triggered sync can land on top of it, so the spacing has to
-// be a property of the process rather than of one loop. 250 ms is far under
-// Coinbase's ~10 req/s and comfortably inside CoinGecko's 30 calls/min for the
-// handful of calls a daily run makes.
-const REQUEST_SPACING_MS = 250;
-let queue = Promise.resolve();
+// be a property of the process rather than of one loop), but NOT one shared
+// spacing: the two providers' limits differ by an order of magnitude.
+//
+//   * CoinGecko demo: 30 calls/min. A single 250 ms queue is 240 calls/min --
+//     eight times the limit -- so with a 200-asset budget the first thirty
+//     assets would succeed and every one after them would 429, night after
+//     night, always the same thirty. 2100 ms is 28 calls/min, just under.
+//   * CoinGecko pro: the paid tiers start at 500 calls/min, so a pro key drops
+//     to the same 250 ms as everything else -- otherwise paying for the plan
+//     would buy a 7-minute walk of a 200-asset budget.
+//   * Coinbase Exchange: ~10 req/s public. 250 ms is far under it.
+//
+// Mutable and exported so the test suite can zero the spacing: the fake axios
+// makes the calls free, and a real 2.1 s gap between them would add minutes to
+// the suite for no coverage.
+const PROVIDER_SPACING_MS = {
+  coingecko: 2100,
+  coingeckoPro: 250,
+  coinbase: 250,
+};
 
-function throttled(fn) {
-  const run = queue.then(fn);
-  queue = run
+function spacingFor(provider) {
+  if (provider === 'coingecko') {
+    return coinGeckoIsPro() ? PROVIDER_SPACING_MS.coingeckoPro : PROVIDER_SPACING_MS.coingecko;
+  }
+  return PROVIDER_SPACING_MS[provider] ?? PROVIDER_SPACING_MS.coinbase;
+}
+
+const queues = { coingecko: Promise.resolve(), coinbase: Promise.resolve() };
+
+function throttled(provider, fn) {
+  const run = queues[provider].then(fn);
+  queues[provider] = run
     .catch(() => {})
-    .then(() => new Promise((resolve) => setTimeout(resolve, REQUEST_SPACING_MS)));
+    .then(() => new Promise((resolve) => setTimeout(resolve, spacingFor(provider))));
   return run;
+}
+
+// A 429 is a verdict on the RUN, not on the asset.
+//
+// The asset is fine; the key is out of budget for the minute, and every call
+// after it would be refused too. Recording that as `error` per asset would
+// write a provider verdict the provider never gave, and -- worse -- it would
+// mark each asset as checked, so a run that got rate-limited at asset 31 would
+// look exactly like one that examined all 200. So the CoinGecko queue is shut
+// for the rest of the run (later calls short-circuit, spending no network and
+// no wall clock) and the affected assets keep their PREVIOUS coverage row, which
+// leaves them due again next run.
+let coinGeckoPaused = false;
+
+function resetProviderPauses() {
+  coinGeckoPaused = false;
 }
 
 // --- date helpers ----------------------------------------------------------
@@ -162,24 +208,40 @@ function foldToDailyClose(observations) {
 // an asset that does not exist. Throwing would flatten all three into "error"
 // and the job would re-probe a permanently unlistable token every night.
 async function getCoinGecko(url) {
+  // The queue is shut for this run: answer without calling, so the remaining
+  // assets cost nothing and are recorded as "not asked" rather than "failed".
+  if (coinGeckoPaused) {
+    return {
+      ok: false,
+      status: 429,
+      rateLimited: true,
+      message: 'CoinGecko rate limit reached earlier in this run',
+    };
+  }
+
   const headers = { accept: 'application/json' };
   const apiKey = await SecretsService.getAppSetting('cg_api_key');
-  if (apiKey) headers['x-cg-api-key'] = apiKey;
+  if (apiKey) headers[coinGeckoKeyHeader()] = apiKey;
 
   try {
-    const response = await throttled(() => axios.get(url, { timeout: REQUEST_TIMEOUT_MS, headers }));
+    const response = await throttled('coingecko', () => axios.get(url, { timeout: REQUEST_TIMEOUT_MS, headers }));
     return { ok: true, status: response.status, data: response.data };
   } catch (error) {
     const status = error.response?.status ?? null;
     const body = error.response?.data ?? null;
     const errorCode = body?.status?.error_code ?? body?.error?.status?.error_code ?? null;
+    if (status === 429) {
+      coinGeckoPaused = true;
+      logger.warn({ url }, 'CoinGecko rate limit hit; pausing its queue for the rest of this run');
+      return { ok: false, status, errorCode, rateLimited: true, data: body, message: error.message };
+    }
     return { ok: false, status, errorCode, data: body, message: error.message };
   }
 }
 
 async function getCoinbase(url) {
   try {
-    const response = await throttled(() => axios.get(url, {
+    const response = await throttled('coinbase', () => axios.get(url, {
       timeout: REQUEST_TIMEOUT_MS,
       // Coinbase rejects requests with no User-Agent from some networks; naming
       // the client is also simple courtesy on a keyless public endpoint.
@@ -200,10 +262,12 @@ async function getCoinbase(url) {
 // verdict, never a throw:
 //   { points }                     -- observations, possibly empty
 //   { rangeLimited: true }         -- the plan will not serve dates this old
+//   { rateLimited: true }          -- the KEY is out of budget; not this asset's
+//                                     problem, and no coverage row is written
 //   { unlisted: true }             -- the provider has no such asset
 //   { error }                      -- transient; retried next run
 async function coinGeckoRange(pathSegment, from, to) {
-  const url = `${COINGECKO_BASE}/${pathSegment}/market_chart/range`
+  const url = `${coinGeckoBase()}/${pathSegment}/market_chart/range`
     + `?vs_currency=usd&from=${dateToUnix(from)}&to=${dateToUnix(to) + 86399}`;
   const result = await getCoinGecko(url);
 
@@ -215,6 +279,9 @@ async function coinGeckoRange(pathSegment, from, to) {
     // noticed.
     if (!prices) return { error: 'CoinGecko returned no prices array' };
     return { points: prices };
+  }
+  if (result.rateLimited) {
+    return { rateLimited: true, detail: `CoinGecko rate limited: ${result.message}` };
   }
   if (result.errorCode === COINGECKO_RANGE_LIMIT_CODE) {
     return { rangeLimited: true, detail: 'CoinGecko plan serves only the last 365 days' };
@@ -367,18 +434,28 @@ class HistoricalPriceService {
         earliestDate: range.earliest,
         latestDate: range.latest,
         upserted: 0,
+        // 'rate_limited' is a run-level condition, not an asset verdict, and is
+        // not even a legal coverage status: _fill writes no coverage row for it,
+        // so the asset stays exactly as due as it was before the run.
+        skipCoverage: outcome.status === 'rate_limited',
       };
     }
 
     const daily = foldToDailyClose(outcome.points);
     const upserted = await AssetPriceHistory.upsertMany(asset.asset_key, daily, outcome.provider);
     const range = await AssetPriceHistory.coveredRange(asset.asset_key);
+    // "Points landed" is NOT "the window is covered". A plan cap, a Coinbase
+    // page walk that died halfway, or a provider whose series simply starts
+    // later than the ledger does all return a non-empty array that stops short
+    // of the dates the ledger needs -- and every row before `earliest` stays
+    // unpriced. Comparing the stored earliest to the date the ledger asked for
+    // is the only check that catches all three; reporting `covered` off a
+    // non-empty array would put a green tick on a series missing its tail.
+    const reachedBack = range.earliest && toDateString(range.earliest) <= toDateString(neededFrom);
+    const partial = outcome.status === 'range_limited' || outcome.partial === true || !reachedBack;
     return {
       ...base,
-      // A series that landed but could not reach far enough back is
-      // `range_limited`, not `covered`: the rows before its earliest date stay
-      // unpriced and the user is owed that distinction rather than a green tick.
-      status: outcome.status === 'range_limited' ? 'range_limited' : 'covered',
+      status: partial ? 'range_limited' : 'covered',
       earliestDate: range.earliest,
       latestDate: range.latest,
       upserted,
@@ -403,7 +480,15 @@ class HistoricalPriceService {
     // Coinbase at an invisible seam.
     const cb = await coinbaseDailyCandles('ETH-USD', window.from, window.to);
     if (cb.points && cb.points.length) {
-      return { ...cb, provider: 'coinbase-exchange', detail: `CoinGecko fell through: ${reason}` };
+      return {
+        ...cb,
+        provider: 'coinbase-exchange',
+        // A page walk that died partway carries `partial`, and it has to carry a
+        // status too: the pages that landed are real closes, but the window is
+        // not covered and ensureAsset must not tick it as such.
+        status: cb.partial ? 'range_limited' : undefined,
+        detail: `CoinGecko fell through: ${reason}`,
+      };
     }
 
     // Both refused. A narrowed CoinGecko window is the last resort: a year of
@@ -424,8 +509,18 @@ class HistoricalPriceService {
       }
     }
 
+    // Both providers answered cleanly and neither had a single close: an EMPTY
+    // series, which is a coverage verdict rather than a transport failure and
+    // must not be re-probed nightly forever. `rate_limited` is neither -- the
+    // key ran out of budget, so nothing was learned about the asset at all.
+    const answeredEmpty = Array.isArray(cg.points) && Array.isArray(cb.points);
+    const status = cg.rangeLimited ? 'range_limited'
+      : (cg.rateLimited && !Array.isArray(cb.points)) ? 'rate_limited'
+        : answeredEmpty ? 'empty'
+          : 'error';
+
     return {
-      status: cg.rangeLimited ? 'range_limited' : 'error',
+      status,
       provider: null,
       detail: `${reason}; Coinbase: ${cb.error || cb.detail || 'no candles'}`,
     };
@@ -459,6 +554,16 @@ class HistoricalPriceService {
     }
     if (result.unlisted) return { status: 'unlisted', provider: null, detail: result.detail };
     if (result.rangeLimited) return { status: 'range_limited', provider: null, detail: result.detail };
+    // Out of budget for the minute: not an asset verdict, and no coverage row.
+    if (result.rateLimited) return { status: 'rate_limited', provider: null, detail: result.detail };
+    // A well-formed 200 carrying an empty prices array. NOT an error: the
+    // provider answered, and it answered "nothing". Recording it as `error`
+    // re-probed the same dead contract every single night, which is precisely
+    // what the coverage table exists to stop -- so it gets `empty`, rechecked
+    // on the same slow cadence as `unlisted` (a series can appear later).
+    if (Array.isArray(result.points)) {
+      return { status: 'empty', provider: 'coingecko', detail: 'CoinGecko returned an empty series' };
+    }
     return {
       status: 'error',
       provider: null,
@@ -468,19 +573,33 @@ class HistoricalPriceService {
 
   // Should this asset be asked again tonight?
   //
-  // `unlisted` is the one permanent verdict -- CoinGecko answered 404 for a
-  // (chain, contract) pair, and a contract does not start existing later. It is
-  // re-checked on a slow cadence anyway, because a token CAN get listed after
-  // the fact and a verdict nothing ever revisits is indistinguishable from a
-  // bug. Everything else is retried every run: `covered` needs yesterday's
-  // close appended, `range_limited` needs its recent window refreshed, and
-  // `error` was transient by definition.
-  static shouldFetch(coverage, { recheckUnlistedAfterDays = 30 } = {}) {
+  // `unlisted` (CoinGecko answered 404 for a (chain, contract) pair) and
+  // `empty` (it answered 200 with no closes) are the two standing verdicts.
+  // Neither is permanent -- a token CAN get listed after the fact, and a
+  // verdict nothing ever revisits is indistinguishable from a bug -- so both
+  // are re-checked on the same slow cadence rather than nightly.
+  //
+  // `covered` whose series already reaches YESTERDAY is skipped too, and that
+  // is a budget decision, not a correctness one: today's close is provisional
+  // until the day ends, so re-fetching it buys a number that will be rewritten
+  // anyway, and the budget it eats is the budget the tail of the work list
+  // never gets. The next run sees a two-day-old latest and fetches, which is
+  // also what corrects that provisional close.
+  //
+  // `range_limited` and `error` are still retried every run: the first needs
+  // its recent window refreshed, the second was transient by definition.
+  static shouldFetch(coverage, { recheckUnlistedAfterDays = 30, today = todayUtc() } = {}) {
     if (!coverage) return true;
-    if (coverage.status !== 'unlisted') return true;
-    if (!coverage.checked_at) return true;
-    const ageDays = (Date.now() - new Date(coverage.checked_at).getTime()) / 86400000;
-    return ageDays >= recheckUnlistedAfterDays;
+    if (coverage.status === 'unlisted' || coverage.status === 'empty') {
+      if (!coverage.checked_at) return true;
+      const ageDays = (Date.now() - new Date(coverage.checked_at).getTime()) / 86400000;
+      return ageDays >= recheckUnlistedAfterDays;
+    }
+    if (coverage.status === 'covered' && coverage.latest_date
+        && toDateString(coverage.latest_date) >= addDays(today, -1)) {
+      return false;
+    }
+    return true;
   }
 
   // The nightly pass: extend every ledger asset's series, then record coverage.
@@ -502,14 +621,29 @@ class HistoricalPriceService {
   }
 
   static async _fill(assets, maxAssets) {
+    resetProviderPauses();
     const coverage = await AssetPriceHistory.coverageFor(assets.map((asset) => asset.asset_key));
 
     const due = assets.filter((asset) => this.shouldFetch(coverage.get(asset.asset_key)));
     const skippedKnown = assets.length - due.length;
-    // Ordered by transfer count in the query, so a budget bite drops the assets
-    // the user sees least -- and says so rather than reporting a clean run.
-    const budgeted = due.slice(0, maxAssets);
-    const deferred = due.length - budgeted.length;
+
+    // ORDERED BY STALENESS, not by transfer count.
+    //
+    // The work-list query orders by COUNT(*) DESC, which is a stable ordering
+    // over an ordering that barely changes -- so slicing the first maxAssets
+    // out of it hands the SAME assets the whole budget every single run and the
+    // tail is not deferred, it is starved forever. Never-checked first, then
+    // longest-unchecked, makes the rotation actually rotate: an asset the
+    // budget dropped tonight is at the FRONT tomorrow. Transfer count stays as
+    // the tiebreak, so among equally stale assets the busiest still wins.
+    const staleness = (asset) => {
+      const seen = coverage.get(asset.asset_key);
+      return seen?.checked_at ? new Date(seen.checked_at).getTime() : -Infinity;
+    };
+    const ordered = [...due].sort((a, b) => staleness(a) - staleness(b));
+
+    const budgeted = ordered.slice(0, maxAssets);
+    const deferred = ordered.length - budgeted.length;
     if (deferred > 0) {
       logger.warn({ assets: assets.length, budgeted: budgeted.length, deferred },
         'Historical price backfill hit its per-run asset budget; the rest resume next run');
@@ -531,7 +665,11 @@ class HistoricalPriceService {
           detail: err.message,
         };
       }
-      await AssetPriceHistory.upsertCoverage(entry);
+      // A rate-limited asset was never actually examined, so its previous
+      // coverage row stands -- writing anything here (even 'error') would both
+      // invent a verdict and refresh checked_at, pushing the asset to the BACK
+      // of the staleness rotation for a run that never asked about it.
+      if (!entry.skipCoverage) await AssetPriceHistory.upsertCoverage(entry);
       results.push(entry);
     }
 
@@ -542,7 +680,9 @@ class HistoricalPriceService {
       deferred,
       covered: results.filter((entry) => entry.status === 'covered').length,
       unlisted: results.filter((entry) => entry.status === 'unlisted').length,
+      empty: results.filter((entry) => entry.status === 'empty').length,
       rangeLimited: results.filter((entry) => entry.status === 'range_limited').length,
+      rateLimited: results.filter((entry) => entry.status === 'rate_limited').length,
       failed: results.filter((entry) => entry.status === 'error').length,
       upserted: results.reduce((sum, entry) => sum + (entry.upserted || 0), 0),
       results,
@@ -552,6 +692,11 @@ class HistoricalPriceService {
 
 module.exports = HistoricalPriceService;
 module.exports.foldToDailyClose = foldToDailyClose;
+// Mutable on purpose: the suite zeroes the spacing (see the constant's comment).
+module.exports.PROVIDER_SPACING_MS = PROVIDER_SPACING_MS;
+// The pause is per RUN and _fill clears it, so nothing in production needs
+// this; a test that calls ensureAsset directly is its own run and does.
+module.exports.resetProviderPauses = resetProviderPauses;
 module.exports.NATIVE_HISTORY_START = NATIVE_HISTORY_START;
 module.exports.COINBASE_PAGE_DAYS = COINBASE_PAGE_DAYS;
 module.exports.COINGECKO_RANGE_LIMIT_CODE = COINGECKO_RANGE_LIMIT_CODE;

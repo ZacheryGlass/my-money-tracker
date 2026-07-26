@@ -83,10 +83,20 @@ CREATE TABLE IF NOT EXISTS asset_price_coverage (
   asset_symbol VARCHAR(64),
   chain_id INT,
   contract_address VARCHAR(42),
-  -- covered      -- a series exists and is being extended
+  -- covered      -- a series exists, reaches as far back as the ledger needs,
+  --                 and is being extended
   -- unlisted     -- the provider has no series for this asset, ever
-  -- range_limited-- a series exists but the plan will not serve dates this old
+  -- empty        -- the provider answered cleanly with NO closes at all. Not an
+  --                 error (nothing failed) and not unlisted (the asset exists),
+  --                 but rechecked on the same slow cadence, because probing a
+  --                 dead contract nightly is what this table exists to prevent
+  -- range_limited-- a series exists but stops short of the dates the ledger
+  --                 needs: a plan cap, a partial page walk, or a provider whose
+  --                 history simply starts later. The rows before it stay unpriced
   -- error        -- transient; retried on the next run
+  --
+  -- NOT a status: a provider rate limit. That says nothing about the asset, so
+  -- the run writes no coverage row at all and the asset stays due.
   status VARCHAR(20) NOT NULL DEFAULT 'error',
   provider VARCHAR(40),
   earliest_date DATE,
@@ -99,17 +109,17 @@ CREATE TABLE IF NOT EXISTS asset_price_coverage (
 -- 038's category check: a name-only guard is satisfied by the constraint that
 -- already exists, so a later widening would be skipped forever on every
 -- deployed database while looking applied on a fresh one. BUMP THE SENTINEL
--- ('range_limited', the newest value) when adding a status.
+-- ('empty', the newest value) when adding a status.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
                  WHERE conrelid = 'asset_price_coverage'::regclass
                    AND conname = 'asset_price_coverage_status_check'
-                   AND pg_get_constraintdef(oid) LIKE '%range_limited%') THEN
+                   AND pg_get_constraintdef(oid) LIKE '%empty%') THEN
     ALTER TABLE asset_price_coverage DROP CONSTRAINT IF EXISTS asset_price_coverage_status_check;
     ALTER TABLE asset_price_coverage
       ADD CONSTRAINT asset_price_coverage_status_check
-      CHECK (status IN ('covered', 'unlisted', 'range_limited', 'error'));
+      CHECK (status IN ('covered', 'unlisted', 'empty', 'range_limited', 'error'));
   END IF;
 END $$;
 

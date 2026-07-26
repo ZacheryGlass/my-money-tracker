@@ -84,7 +84,30 @@ test('CoinGecko sends the key resolved by SecretsService', async () => {
   const price = await PriceService.getCoinGeckoPrice('BTC', { BTC: 'bitcoin' });
 
   assert.equal(price, 42);
-  assert.equal(calls[0].config.headers['x-cg-api-key'], 'stored-cg-key');
+  // The header name is tier-specific and NOT interchangeable: a key sent under
+  // a header the host does not read is ignored in silence, so the call runs
+  // anonymous while looking authenticated. Demo is the default tier.
+  assert.equal(calls[0].config.headers['x-cg-demo-api-key'], 'stored-cg-key');
+  assert.equal(calls[0].config.headers['x-cg-api-key'], undefined);
+  assert.match(String(calls[0].url), /^https:\/\/api\.coingecko\.com\//);
+});
+
+test('a pro key goes to the pro host under the pro header', async () => {
+  appSettings.cg_api_key = 'stored-cg-key';
+  process.env.CG_API_PLAN = 'pro';
+  axiosResponse = { status: 200, data: { bitcoin: { usd: 42 } } };
+
+  try {
+    const price = await PriceService.getCoinGeckoPrice('BTC', { BTC: 'bitcoin' });
+    assert.equal(price, 42);
+    // Both halves move together. pro-api.coingecko.com does not accept the demo
+    // header and api.coingecko.com does not accept the pro one, so sending the
+    // pair from two different tiers buys the anonymous rate limit.
+    assert.equal(calls[0].config.headers['x-cg-pro-api-key'], 'stored-cg-key');
+    assert.match(String(calls[0].url), /^https:\/\/pro-api\.coingecko\.com\//);
+  } finally {
+    delete process.env.CG_API_PLAN;
+  }
 });
 
 test('CoinGecko omits the auth header when no key is configured', async () => {
@@ -93,5 +116,5 @@ test('CoinGecko omits the auth header when no key is configured', async () => {
   const price = await PriceService.getCoinGeckoPrice('BTC', { BTC: 'bitcoin' });
 
   assert.equal(price, 7);
-  assert.equal(calls[0].config.headers['x-cg-api-key'], undefined);
+  assert.equal(calls[0].config.headers['x-cg-demo-api-key'], undefined);
 });

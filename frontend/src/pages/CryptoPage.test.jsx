@@ -188,8 +188,9 @@ describe('CryptoPage', () => {
     render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
 
     await screen.findByText('On-chain Activity');
-    // 2017 dollars, not 2026 dollars.
-    expect(screen.getAllByText('$150').length).toBeGreaterThan(0);
+    // 2017 dollars, not 2026 dollars -- and always two decimals, so the column
+    // does not mix $150 with $1,234.50.
+    expect(screen.getAllByText('$150.00').length).toBeGreaterThan(0);
     expect(screen.queryByText(/\$1,8\d\d/)).toBeNull();
     expect(screen.getAllByText('No USD value').length).toBeGreaterThan(0);
     // Exactly one unpriced row: the NFT leg shows no USD line at all rather

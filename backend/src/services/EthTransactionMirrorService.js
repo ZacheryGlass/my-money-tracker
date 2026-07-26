@@ -29,10 +29,25 @@ function toAmount(value) {
 // drift valuations" means.
 //
 // usd_at_time NULL means UNPRICED -- no close was reachable for that asset on
-// that date. The row still appears in the ledger (hiding it would lose the
-// activity), carrying 0.00, and the honest signal lives in usd_basis on the
-// leg, in eth_activity.usd_basis, and in the unpriced enumeration the Settings
-// page reads. Substituting today's price here is the precise bug #73 removes.
+// that date. SUCH A LEG IS NOT MIRRORED AT ALL.
+//
+// The mirror's rows are money: `transactions.amount` is what Spending sums, and
+// nothing downstream reads a basis column (there is none on `transactions`), so
+// a mirrored row IS an assertion about dollars. Writing 0.00 for a leg the
+// series could not price makes that assertion "$0", and Spending adds it as a
+// real zero -- a 2019 500-USDC deposit outside a free key's 365-day token range
+// would quietly remove $500 from the ledger, which is the same silent-zero
+// failure #73 exists to delete, just one layer down. Substituting today's price
+// would be the other half of that bug.
+//
+// So the leg is omitted, exactly as NFT legs and ignored tokens are omitted:
+// the mirror only ever carried the legs it could state a dollar figure for. The
+// activity is NOT lost -- eth_activity explains the transaction with
+// usd_basis = 'unpriced', the on-chain feed shows the crypto amount with "No USD
+// value", and GET /api/eth/prices/unpriced enumerates the assets responsible.
+// Rebuild-safe by construction: the mirror is deleted and rewritten wholesale,
+// so a leg that gets priced by a later backfill reappears on the next rebuild
+// (the historical-price job re-derives every wallet nightly for that reason).
 function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() } = {}) {
   const wallet = walletAddress.toLowerCase();
   const outgoing = transfer.from_address === wallet;
@@ -44,11 +59,13 @@ function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() 
 
   if (transfer.transfer_type === 'gas') {
     // A fee is always a cost, whichever way the transaction went, and it is
-    // real even when the transaction reverted.
+    // real even when the transaction reverted. Same rule as a value leg,
+    // though: an unpriced fee is an unknown cost, not a free transaction.
+    if (usd == null) return null;
     return {
       category: 'CRYPTO_GAS_FEE',
       name: 'Gas fee',
-      amount: usd == null ? 0 : toAmount(Math.abs(usd)),
+      amount: toAmount(Math.abs(usd)),
     };
   }
 
@@ -62,7 +79,9 @@ function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() 
   // presenting the NFT itself is the activity layer's job (#56).
   if (transfer.transfer_type === 'nft' || transfer.transfer_type === 'nft1155') return null;
 
-  const amount = usd == null ? 0 : toAmount(outgoing ? Math.abs(usd) : -Math.abs(usd));
+  // Unpriced: no row, rather than a row asserting $0.00. See the header.
+  if (usd == null) return null;
+  const amount = toAmount(outgoing ? Math.abs(usd) : -Math.abs(usd));
 
   if (transfer.transfer_type === 'token') {
     const contract = transfer.token_contract;
@@ -113,11 +132,20 @@ class EthTransactionMirrorService {
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
 
     const rows = [];
-    let unpriced = 0;
+    let unpricedSkipped = 0;
     for (const transfer of transfers) {
       const body = buildMirrorRow(transfer, wallet.address, { ignoredContracts });
-      if (!body) continue;
-      if (transfer.usd_basis === 'unpriced') unpriced++;
+      if (!body) {
+        // Counted, not mirrored: these are the legs the ledger is knowingly
+        // silent about, and the count is what makes that silence visible in the
+        // logs instead of looking like a wallet with less activity.
+        if (transfer.usd_at_time == null && transfer.usd_basis !== 'not_applicable'
+            && transfer.transfer_type !== 'nft' && transfer.transfer_type !== 'nft1155'
+            && !transfer.is_error) {
+          unpricedSkipped++;
+        }
+        continue;
+      }
       rows.push({
         eth_transfer_id: transfer.id,
         date: transfer.block_time,
@@ -148,8 +176,8 @@ class EthTransactionMirrorService {
       );
     }
 
-    logger.info({ walletId, mirrored: rows.length, unpriced }, 'ETH transaction mirror rebuilt');
-    return { mirrored: rows.length, unpriced };
+    logger.info({ walletId, mirrored: rows.length, unpricedSkipped }, 'ETH transaction mirror rebuilt');
+    return { mirrored: rows.length, unpricedSkipped };
   }
 
 }

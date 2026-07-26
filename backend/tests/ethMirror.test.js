@@ -115,7 +115,7 @@ test('gas rows mirror as fees; failed value rows are dropped', () => {
   assert.equal(failed, null);
 });
 
-test('ignored tokens are dropped; unpriced tokens mirror at $0 rather than a guess', () => {
+test('ignored tokens are dropped; an unpriced token is NOT mirrored at $0', () => {
   const tokenTransfer = transfer({
     transfer_type: 'token',
     token_contract: TOKEN,
@@ -131,14 +131,22 @@ test('ignored tokens are dropped; unpriced tokens mirror at $0 rather than a gue
   });
   assert.equal(ignored, null);
 
-  // 0 in the ledger, because transactions.amount is NOT NULL -- but the row is
-  // still there, and the honest signal lives on usd_basis, on
-  // eth_activity.usd_basis and in the unpriced enumeration. The one thing that
-  // must never happen is a fabricated dollar figure.
-  const unpriced = buildMirrorRow(tokenTransfer, WALLET);
-  assert.equal(unpriced.category, 'CRYPTO_TOKEN');
-  assert.equal(unpriced.amount, 0);
-  assert.match(unpriced.name, /^PEPE → /);
+  // NO ROW AT ALL. transactions.amount is NOT NULL and carries no basis, so a
+  // mirrored row is an assertion about dollars -- and $0.00 is an assertion
+  // Spending sums as a real zero, quietly deleting a 500-USDC transfer the
+  // provider could not price. The activity is still explained by
+  // eth_activity.usd_basis, the transfers feed and the unpriced enumeration.
+  assert.equal(buildMirrorRow(tokenTransfer, WALLET), null);
+
+  // Same rule for a fee: an unpriced gas leg is an unknown cost, not a free
+  // transaction.
+  assert.equal(
+    buildMirrorRow(
+      transfer({ transfer_type: 'gas', value_wei: '1000000000000000', usd_at_time: null, usd_basis: 'unpriced' }),
+      WALLET
+    ),
+    null
+  );
 
   const priced = buildMirrorRow(
     { ...tokenTransfer, usd_at_time: '10.00', usd_basis: 'exact' },
