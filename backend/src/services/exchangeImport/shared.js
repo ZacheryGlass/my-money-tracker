@@ -34,10 +34,40 @@ const QUOTE_ASSETS = new Set([
 const SCALE = 18n;
 const SCALE_FACTOR = 10n ** SCALE;
 
+// "1.5e-8" -> "0.000000015", by moving the decimal point through the digit
+// string. Number(text).toFixed() would round-trip through a float and lose
+// everything past the 15th significant digit, which is exactly the range this
+// column exists to hold.
+function expandExponent(mantissa, exponent) {
+  // A wei-scale ledger never needs more than a few hundred places; anything
+  // past that is a corrupt cell, not a quantity.
+  if (!Number.isFinite(exponent) || Math.abs(exponent) > 1000) return null;
+
+  const [whole = '', fraction = ''] = mantissa.split('.');
+  let digits = `${whole}${fraction}`;
+  // Where the point lands once the exponent is applied.
+  let point = whole.length + exponent;
+
+  if (point <= 0) {
+    digits = `${'0'.repeat(-point)}${digits}`;
+    point = 0;
+  } else if (point > digits.length) {
+    digits = `${digits}${'0'.repeat(point - digits.length)}`;
+  }
+
+  const integer = (point === 0 ? '0' : digits.slice(0, point)).replace(/^0+(?=\d)/, '');
+  const decimals = digits.slice(point);
+  return decimals ? `${integer}.${decimals}` : integer;
+}
+
 // Decimal string in, decimal string out -- never a JS number. base_amount is
 // NUMERIC(38,18) and satoshi/wei-scale quantities lose digits through a float
 // (0.1 + 0.2 arithmetic is the mild version; 18 significant digits is the
 // version that silently rewrites a balance).
+//
+// Returns null for anything it cannot read exactly. A null that came from a
+// non-empty cell is caught by finalizeRecord and flagged -- a quantity the
+// importer could not read must never look like a quantity of zero.
 function cleanAmount(raw) {
   if (raw === null || raw === undefined) return null;
   let text = String(raw).trim();
@@ -49,11 +79,25 @@ function cleanAmount(raw) {
     negative = true;
     text = text.slice(1, -1).trim();
   }
+
+  // "1,5" is 1.5 in half of Europe and 15 in a thousands-separated export, and
+  // nothing in the cell says which. Guessing scales a balance by ten; refusing
+  // routes the row to review with the original text intact in raw.
+  if (text.includes(',') && !text.includes('.')) return null;
+
   // Currency symbols and thousands separators. Coinbase writes both "-$2.83"
   // and "$-2.83"; stripping the symbol first collapses the two.
   text = text.replace(/[$€£¥\s,]/g, '');
   if (text.startsWith('-')) { negative = !negative; text = text.slice(1); }
   else if (text.startsWith('+')) { text = text.slice(1); }
+
+  // Scientific notation: some exports print dust that way ("1.5e-8").
+  const scientific = /^(\d+(?:\.\d*)?|\.\d+)[eE]([+-]?\d+)$/.exec(text);
+  if (scientific) {
+    const expanded = expandExponent(scientific[1], Number(scientific[2]));
+    if (expanded === null) return null;
+    text = expanded;
+  }
 
   if (!/^(\d+(\.\d*)?|\.\d+)$/.test(text)) return null;
   if (/^0*(\.0*)?$/.test(text)) return '0';
@@ -99,9 +143,19 @@ function addAmounts(a, b) {
   return fromScaled(toScaled(a) + toScaled(b));
 }
 
+// A string JS already anchors to UTC: an explicit Z, an explicit offset, or a
+// date-only ISO form (which the language spec defines as UTC).
+const ZONE_ANCHORED = /([zZ]|[+-]\d{2}:?\d{2})$/;
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 // Exchange exports write UTC in three dialects; all three mean the same instant.
 // Returning null (rather than guessing) is what makes the caller abort, since a
 // record with no time cannot be placed in a history.
+//
+// Everything without a zone is read as UTC, including the formats that fall
+// through to the Date constructor. Host-local parsing would make the same file
+// produce different occurred_at values -- and so different content-hash ids --
+// on a laptop and on the server.
 function parseTimestamp(raw) {
   if (raw === null || raw === undefined) return null;
   const text = String(raw).trim();
@@ -120,7 +174,16 @@ function parseTimestamp(raw) {
 
   const parsed = new Date(candidate);
   if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
+  if (ZONE_ANCHORED.test(candidate) || DATE_ONLY.test(candidate)) {
+    return parsed.toISOString();
+  }
+
+  // No zone in the text, so the Date constructor read the wall clock as local.
+  // Re-read the same calendar fields as UTC.
+  return new Date(Date.UTC(
+    parsed.getFullYear(), parsed.getMonth(), parsed.getDate(),
+    parsed.getHours(), parsed.getMinutes(), parsed.getSeconds(), parsed.getMilliseconds()
+  )).toISOString();
 }
 
 // Stable id for a row the exchange gave no id of its own. Content-addressed, so
@@ -154,10 +217,37 @@ function trimTo(value, max) {
   return text.length > max ? text.slice(0, max) : text;
 }
 
+// A 20-hex-byte address, with or without the prefix some exports drop.
+const HEX_ADDRESS = /^(0x)?[0-9a-fA-F]{40}$/;
+
+// One spelling per address, so an exchange withdrawal can be matched against
+// the on-chain deposit it produced: eth_transfers stores lowercase 0x-prefixed
+// addresses, and a checksummed or bare-hex export would never join to it.
+// Anything that is not hex-shaped -- "GDAX", "BTC Vault", a bech32 address --
+// is left exactly as the exchange wrote it.
+function normalizeAddress(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (!HEX_ADDRESS.test(text)) return text;
+  const hex = /^0x/i.test(text) ? text.slice(2) : text;
+  return `0x${hex.toLowerCase()}`;
+}
+
+function hasText(value) {
+  if (Array.isArray(value)) return value.some(hasText);
+  return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
 // Final shape check before a record leaves an importer. Anything that would be
 // rejected by the table's own constraints is caught here, where the error can
 // still name the source line.
-function finalizeRecord(record, { line }) {
+//
+// `amountCell` is the raw text cleanAmount was given (a string, or one per leg
+// for a paired record). A null amount read out of a non-empty cell is a
+// quantity this importer could not parse, and it must not reach the history
+// looking like a row the exchange left blank.
+function finalizeRecord(record, { line, amountCell } = {}) {
   if (!RECORD_TYPES.has(record.record_type)) {
     throw new ImportFormatError(`Line ${line}: unsupported record type "${record.record_type}"`);
   }
@@ -167,19 +257,26 @@ function finalizeRecord(record, { line }) {
   if (!record.external_id) {
     throw new ImportFormatError(`Line ${line}: could not build an identifier for this row`);
   }
+
+  const amount = record.base_amount ?? null;
+  const unreadableAmount = amount === null && hasText(amountCell);
+
   return {
     record_type: record.record_type,
     occurred_at: record.occurred_at,
+    // 20 chars is every real ticker with room to spare; a longer "asset" is a
+    // contract address or a mis-read column, and the untruncated text stays in
+    // raw for whoever reviews it.
     base_asset: trimTo(record.base_asset, 20),
-    base_amount: record.base_amount ?? null,
+    base_amount: amount,
     quote_asset: trimTo(record.quote_asset, 20),
     quote_amount: record.quote_amount ?? null,
     fee_asset: trimTo(record.fee_asset, 20),
     fee_amount: record.fee_amount ?? null,
     tx_hash: trimTo(record.tx_hash, 80),
-    address: trimTo(record.address, 80),
+    address: trimTo(normalizeAddress(record.address), 80),
     external_id: trimTo(record.external_id, 120),
-    needs_review: Boolean(record.needs_review),
+    needs_review: Boolean(record.needs_review) || unreadableAmount,
     raw: record.raw ?? null,
   };
 }
@@ -248,4 +345,5 @@ module.exports = {
   pickBaseQuote,
   combineFees,
   trimTo,
+  normalizeAddress,
 };

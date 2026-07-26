@@ -15,6 +15,14 @@ const { isBlankRow } = require('../../utils/csv');
 
 const FORMAT = 'generic';
 
+// Stated wherever this importer talks to the user, because it is the one rule
+// they cannot see from their file: a timestamp with no zone in it is read as
+// UTC. Reading it as the server's local time would shift every row by the
+// host's offset -- and, since occurred_at feeds the content hash that ids
+// id-less rows, would give the same file different ids on a laptop and in
+// production. An export that writes local time should carry an offset.
+const TIMESTAMP_CONVENTION = 'Timestamps without a time zone are read as UTC.';
+
 // Header names this importer recognizes without being told. An exchange that
 // uses none of them is not rejected outright -- the caller can pass an explicit
 // mapping -- but it is never guessed at.
@@ -98,7 +106,8 @@ function parse(rows, { mapping = {} } = {}) {
   if (missing.length) {
     throw new ImportFormatError(
       `Unrecognized CSV layout: no ${missing.join(' or ')} column found. Header was: ${header.join(', ')}. `
-      + 'Supply an explicit column mapping to import this file.'
+      + 'Supply an explicit column mapping to import this file. '
+      + `${TIMESTAMP_CONVENTION}`
     );
   }
 
@@ -135,13 +144,14 @@ function parse(rows, { mapping = {} } = {}) {
 
     const fee = cleanAmount(cellOf(row, 'fee_amount'));
     const nativeId = cellOf(row, 'external_id');
-    const contentKey = [occurredAt, cellOf(row, 'record_type'), cellOf(row, 'base_asset'), cellOf(row, 'base_amount')].join('|');
+    const amountCell = cellOf(row, 'base_amount');
+    const contentKey = [occurredAt, cellOf(row, 'record_type'), cellOf(row, 'base_asset'), amountCell].join('|');
 
     records.push(finalizeRecord({
       record_type: mapped ?? UNKNOWN_RECORD_TYPE,
       occurred_at: occurredAt,
       base_asset: cellOf(row, 'base_asset') || null,
-      base_amount: cleanAmount(cellOf(row, 'base_amount')),
+      base_amount: cleanAmount(amountCell),
       quote_asset: cellOf(row, 'quote_asset') || null,
       quote_amount: cleanAmount(cellOf(row, 'quote_amount')),
       fee_asset: fee && fee !== '0' ? (cellOf(row, 'fee_asset') || cellOf(row, 'quote_asset') || null) : null,
@@ -153,7 +163,7 @@ function parse(rows, { mapping = {} } = {}) {
         : contentId('gen', [contentKey], dupIndexFor(contentKey)),
       needs_review: !mapped,
       raw,
-    }, { line }));
+    }, { line, amountCell }));
   }
 
   return {
@@ -168,4 +178,4 @@ function detect() {
   return false;
 }
 
-module.exports = { FORMAT, detect, parse, normalizeType };
+module.exports = { FORMAT, detect, parse, normalizeType, TIMESTAMP_CONVENTION };

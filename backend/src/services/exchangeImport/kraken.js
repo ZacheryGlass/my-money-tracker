@@ -94,6 +94,11 @@ function detect(rows) {
   return findHeader(rows) !== null;
 }
 
+// The ledger row types that describe half of a two-legged event and are paired
+// by refid. Their record's identity is the refid, whether or not the file
+// happens to hold both legs.
+const PAIRED_ROW_TYPES = new Set(['trade', 'spend', 'receive']);
+
 // Row type -> record type for rows that stand alone. Paired rows (trade legs,
 // spend/receive) never reach this.
 function mapRowType(type, subtype) {
@@ -141,6 +146,7 @@ function parse(rows) {
       if (value) raw[String(name).trim()] = value;
     });
 
+    const amountCell = cellOf(row, 'amount');
     parsedRows.push({
       line,
       txid: cellOf(row, 'txid'),
@@ -149,7 +155,8 @@ function parse(rows) {
       type: cellOf(row, 'type').toLowerCase(),
       subtype: cellOf(row, 'subtype').toLowerCase(),
       asset: normalizeAsset(cellOf(row, 'asset')),
-      amount: cleanAmount(cellOf(row, 'amount')),
+      amountCell,
+      amount: cleanAmount(amountCell),
       fee: cleanAmount(cellOf(row, 'fee')),
       raw,
     });
@@ -170,17 +177,33 @@ function parse(rows) {
   const emitted = [];
   let unknownTypes = 0;
 
-  const externalIdFor = (row) => (row.txid
-    ? `kraken:${row.txid}`
-    : contentId('kraken', [row.occurredAt, row.type, row.asset, row.amount],
-      dupIndexFor(`${row.occurredAt}|${row.type}|${row.asset}|${row.amount}`)));
+  const hashIdFor = (row) => contentId(
+    'kraken', [row.occurredAt, row.type, row.asset, row.amount],
+    dupIndexFor(`${row.occurredAt}|${row.type}|${row.asset}|${row.amount}`)
+  );
 
-  const emitSingle = (row) => {
+  // A row that stands alone is identified by its own txid. A widowed leg of a
+  // two-legged event is NOT: it is identified by the refid, the same key the
+  // complete pair will carry. Keying the half record on its txid and the whole
+  // one on the refid is what let a date-limited export and a full one both
+  // land, counting the same trade twice.
+  //
+  // `solo` says the widowed leg is the only paired-type row under that refid.
+  // In the degenerate case where several are (a shape Kraken does not write),
+  // the txid goes back into the key so the rows cannot collide with each other.
+  const externalIdFor = (row, { solo = false } = {}) => {
+    if (PAIRED_ROW_TYPES.has(row.type) && row.refid) {
+      return solo ? `kraken:${row.refid}` : `kraken:${row.refid}:${row.txid || row.line}`;
+    }
+    return row.txid ? `kraken:${row.txid}` : hashIdFor(row);
+  };
+
+  const emitSingle = (row, { solo = false } = {}) => {
     const mapped = mapRowType(row.type, row.subtype);
     if (!mapped) unknownTypes += 1;
     // An unpaired trade or spend/receive leg is half an event: the record is
     // kept (the money moved) but flagged, because its counter-leg is missing.
-    const unpaired = mapped === 'trade' || mapped === 'conversion';
+    const unpaired = PAIRED_ROW_TYPES.has(row.type);
     emitted.push({
       order: row.line,
       record: finalizeRecord({
@@ -194,10 +217,10 @@ function parse(rows) {
         fee_amount: row.fee && row.fee !== '0' ? absAmount(row.fee) : null,
         tx_hash: null,
         address: null,
-        external_id: externalIdFor(row),
+        external_id: externalIdFor(row, { solo }),
         needs_review: !mapped || unpaired,
         raw: row.raw,
-      }, { line: row.line }),
+      }, { line: row.line, amountCell: row.amountCell }),
     });
   };
 
@@ -228,7 +251,7 @@ function parse(rows) {
         external_id: `kraken:${first.refid}`,
         needs_review: needsReview,
         raw: { _format: FORMAT, rows: legs.map((leg) => leg.raw) },
-      }, { line: first.line }),
+      }, { line: first.line, amountCell: legs.map((leg) => leg.amountCell) }),
     });
   };
 
@@ -243,7 +266,8 @@ function parse(rows) {
       const receive = group.find((row) => row.type === 'receive');
       emitPaired('conversion', [spend, receive]);
     } else {
-      for (const row of group) emitSingle(row);
+      const paired = group.filter((row) => PAIRED_ROW_TYPES.has(row.type));
+      for (const row of group) emitSingle(row, { solo: paired.length === 1 });
     }
   }
 

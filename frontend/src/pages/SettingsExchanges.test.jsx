@@ -27,6 +27,8 @@ vi.mock('../utils/api', () => ({
     create: vi.fn(),
     remove: vi.fn(),
     importCsv: vi.fn(),
+    getRecords: vi.fn(),
+    resolveRecord: vi.fn(),
   },
 }));
 
@@ -38,6 +40,29 @@ const ACCOUNT = {
   needs_review_count: 2,
   last_import_at: new Date().toISOString(),
 };
+
+const FLAGGED = [
+  {
+    id: 11,
+    occurred_at: '2024-03-10T18:00:00.000Z',
+    record_type: 'trade',
+    base_asset: 'SOL',
+    base_amount: '-2.0000000000',
+    quote_asset: null,
+    needs_review: true,
+    raw: { type: 'trade' },
+  },
+  {
+    id: 12,
+    occurred_at: '2024-03-09T17:00:00.000Z',
+    record_type: 'transfer',
+    base_asset: 'DOGE',
+    base_amount: '25.0000000000',
+    quote_asset: null,
+    needs_review: true,
+    raw: { type: 'quantumsettlement' },
+  },
+];
 
 const renderSettings = async () => {
   render(
@@ -54,6 +79,8 @@ const renderSettings = async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   exchangesAPI.getAll.mockResolvedValue({ accounts: [ACCOUNT] });
+  exchangesAPI.getRecords.mockResolvedValue({ data: FLAGGED, pagination: { total: FLAGGED.length } });
+  exchangesAPI.resolveRecord.mockResolvedValue({ record: { id: 11, needs_review: false } });
 });
 
 describe('Settings -> Exchanges tab', () => {
@@ -83,6 +110,20 @@ describe('Settings -> Exchanges tab', () => {
     await renderSettings();
 
     expect(await screen.findByText('No Exchange Accounts')).toBeInTheDocument();
+  });
+
+  it('says the list failed to load rather than claiming there are no accounts', async () => {
+    exchangesAPI.getAll.mockRejectedValue(new Error('network'));
+    await renderSettings();
+
+    // "No Exchange Accounts" after a failed request invites adding a duplicate
+    // of an account that already exists, and hides everything imported into it.
+    expect(await screen.findByText(/Couldn't load your exchange accounts/)).toBeInTheDocument();
+    expect(screen.queryByText('No Exchange Accounts')).not.toBeInTheDocument();
+
+    exchangesAPI.getAll.mockResolvedValue({ accounts: [ACCOUNT] });
+    fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
+    expect(await screen.findByText('Kraken Spot')).toBeInTheDocument();
   });
 
   it('adds an account with the chosen venue', async () => {
@@ -132,6 +173,60 @@ describe('Settings -> Exchanges tab', () => {
     expect(screen.getByText(/3 already imported/)).toBeInTheDocument();
     expect(screen.getByText(/1 flagged for review/)).toBeInTheDocument();
     expect(screen.getByText(/Kraken ledgers export/)).toBeInTheDocument();
+  });
+
+  it('reports records an earlier partial export could only half describe', async () => {
+    exchangesAPI.importCsv.mockResolvedValue({
+      format: 'kraken',
+      parsed: 11,
+      imported: 0,
+      upgraded: 2,
+      duplicates: 9,
+      needs_review: 0,
+      skipped_header_rows: 0,
+      skipped_noise_rows: 0,
+    });
+    await renderSettings();
+
+    const csv = 'txid,refid,time,type\n';
+    const file = new File([csv], 'kraken-full.csv', { type: 'text/csv' });
+    Object.defineProperty(file, 'text', { value: () => Promise.resolve(csv) });
+    fireEvent.change(await screen.findByLabelText('Import CSV for Kraken Spot'), { target: { files: [file] } });
+
+    // Nothing new arrived and nothing was a plain duplicate: without this line
+    // a re-upload that repaired two trades reads as having done nothing.
+    expect(await screen.findByText(/2 completed from an earlier partial export/)).toBeInTheDocument();
+  });
+
+  it('lists the flagged records and lets one be marked reviewed', async () => {
+    await renderSettings();
+
+    const card = (await screen.findByText('Kraken Spot')).closest('.card');
+    fireEvent.click(within(card).getByRole('button', { name: /Needs review \(2\)/ }));
+
+    await waitFor(() => expect(exchangesAPI.getRecords)
+      .toHaveBeenCalledWith(3, { needs_review: true, limit: 100 }));
+
+    // Each row has to say why it is here; a queue of unexplained rows is one
+    // nobody works through.
+    expect(await screen.findByText(/only one side of this trade is in the file/)).toBeInTheDocument();
+    expect(screen.getByText(/unrecognized row type "quantumsettlement"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Mark record 11 reviewed'));
+
+    await waitFor(() => expect(exchangesAPI.resolveRecord).toHaveBeenCalledWith(3, 11));
+    // Resolved rows leave the queue, which is the only way it reaches zero.
+    await waitFor(() => expect(screen.queryByLabelText('Mark record 11 reviewed')).not.toBeInTheDocument());
+    expect(screen.getByLabelText('Mark record 12 reviewed')).toBeInTheDocument();
+  });
+
+  it('does not offer a review queue for an account with nothing flagged', async () => {
+    exchangesAPI.getAll.mockResolvedValue({ accounts: [{ ...ACCOUNT, needs_review_count: 0 }] });
+    await renderSettings();
+
+    await screen.findByText('Kraken Spot');
+    expect(screen.queryByRole('button', { name: /Needs review/ })).not.toBeInTheDocument();
+    expect(exchangesAPI.getRecords).not.toHaveBeenCalled();
   });
 
   it('shows the server\'s reason when a file cannot be read', async () => {

@@ -76,6 +76,33 @@ const IMPORT_FORMAT_LABELS = {
   generic: 'generic column mapping',
 };
 
+// Why a record is in the review queue. The importer does not store a reason --
+// it stores the source row -- so this reads the shape of what it produced. A
+// queue of rows with no stated reason is a queue nobody works through.
+const exchangeReviewReason = (record) => {
+  const raw = record?.raw || {};
+  const rows = Array.isArray(raw.rows) ? raw.rows : null;
+  const sourceType = raw['Transaction Type'] || raw.type || rows?.[0]?.type || null;
+
+  if (record?.base_amount === null || record?.base_amount === undefined) {
+    return 'the amount in this row could not be read';
+  }
+  if (record?.record_type === 'fee') {
+    return 'a fee with no trade in the file to attach it to';
+  }
+  if ((record?.record_type === 'trade' || record?.record_type === 'conversion') && !record?.quote_asset) {
+    return 'only one side of this trade is in the file';
+  }
+  return sourceType ? `unrecognized row type "${sourceType}"` : 'flagged while importing';
+};
+
+const exchangeRecordAmount = (record) => {
+  if (record?.base_amount === null || record?.base_amount === undefined) return '—';
+  const amount = Number(record.base_amount);
+  if (!Number.isFinite(amount)) return record.base_amount;
+  return amount.toLocaleString(undefined, { maximumFractionDigits: 8 });
+};
+
 const shortEthAddress = (address) => (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '');
 
 const MANUAL_ENTRY_TYPES = {
@@ -521,6 +548,14 @@ const Settings = ({ user }) => {
   const [showDustCounterparties, setShowDustCounterparties] = useState(false);
   const [showExternalLabels, setShowExternalLabels] = useState(false);
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
+  // Loaded-and-empty and failed-to-load must not look alike: "No Exchange
+  // Accounts" after a failed request invites the user to add one they already
+  // have, and hides the imports they made.
+  const [exchangeLoadFailed, setExchangeLoadFailed] = useState(false);
+  // Per account: the flagged records, once the user opens the disclosure.
+  const [reviewQueues, setReviewQueues] = useState({});
+  const [openReviewAccountId, setOpenReviewAccountId] = useState(null);
+  const [resolvingRecordId, setResolvingRecordId] = useState(null);
   const [exchangeNameInput, setExchangeNameInput] = useState('');
   const [exchangeVenue, setExchangeVenue] = useState('coinbase');
   const [addingExchange, setAddingExchange] = useState(false);
@@ -598,6 +633,7 @@ const Settings = ({ user }) => {
       const loadedItems = plaidData.items || [];
       setEthWallets(ethResult?.wallets || []);
       setExchangeAccounts(exchangeResult?.accounts || []);
+      setExchangeLoadFailed(!exchangeResult);
       setIgnoredTokens(ignoredResult?.tokens || []);
       setAddressLabels(labelsResult?.labels || []);
       setCounterpartyData(counterpartyResult || null);
@@ -823,6 +859,62 @@ const Settings = ({ user }) => {
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to delete exchange account');
+    }
+  };
+
+  // Fetched on open rather than with the page: most accounts have nothing
+  // flagged, and the queue is the one list that must be current when read.
+  const loadReviewQueue = async (accountId) => {
+    setReviewQueues((prev) => ({ ...prev, [accountId]: { ...prev[accountId], loading: true, error: null } }));
+    try {
+      const data = await exchangesAPI.getRecords(accountId, { needs_review: true, limit: 100 });
+      setReviewQueues((prev) => ({
+        ...prev,
+        [accountId]: { records: data.data || [], total: data.pagination?.total ?? 0, loading: false, error: null },
+      }));
+    } catch (err) {
+      setReviewQueues((prev) => ({
+        ...prev,
+        [accountId]: {
+          records: [], total: 0, loading: false,
+          error: err.response?.data?.error || 'Failed to load the flagged records',
+        },
+      }));
+    }
+  };
+
+  const handleToggleReviewQueue = async (account) => {
+    if (openReviewAccountId === account.id) {
+      setOpenReviewAccountId(null);
+      return;
+    }
+    setOpenReviewAccountId(account.id);
+    await loadReviewQueue(account.id);
+  };
+
+  const handleResolveRecord = async (account, record) => {
+    setResolvingRecordId(record.id);
+    try {
+      await exchangesAPI.resolveRecord(account.id, record.id);
+      // Dropped from the list rather than re-fetched: the row is gone from the
+      // queue by definition, and the account's badge is refreshed below.
+      setReviewQueues((prev) => {
+        const queue = prev[account.id];
+        if (!queue) return prev;
+        return {
+          ...prev,
+          [account.id]: {
+            ...queue,
+            records: queue.records.filter((row) => row.id !== record.id),
+            total: Math.max((queue.total ?? 1) - 1, 0),
+          },
+        };
+      });
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to mark this record reviewed');
+    } finally {
+      setResolvingRecordId(null);
     }
   };
 
@@ -1951,8 +2043,10 @@ const Settings = ({ user }) => {
             Trades, moves between exchanges and fiat on and off ramps never touch a tracked wallet, so no
             on-chain source can show them. Upload an exchange&apos;s CSV export to fill that history in.
             Coinbase, Coinbase Pro and Kraken exports are read directly; other files are matched by column
-            name. Re-uploading a fuller export is safe — records are keyed by the exchange&apos;s own row
-            ids, so nothing lands twice.
+            name, and a timestamp with no time zone in it is read as UTC. Re-uploading a fuller export is
+            safe — records are keyed by the event the exchange recorded, so nothing lands twice, and a
+            trade an earlier date-limited export could only half describe is completed rather than
+            duplicated.
           </p>
         </div>
 
@@ -1995,7 +2089,24 @@ const Settings = ({ user }) => {
           {exchangeFormError && <p className="mt-2 text-body-sm text-loss">{exchangeFormError}</p>}
         </form>
 
-        {exchangeAccounts.length === 0 ? (
+        {exchangeLoadFailed ? (
+          // A failed request must not read as "you have no exchange accounts":
+          // that invites adding a duplicate of one that already exists, and
+          // hides every record already imported into it.
+          <div className="card flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-secondary">
+            <span className="flex items-center gap-2 text-loss">
+              <AlertTriangle size={14} />
+              Couldn&apos;t load your exchange accounts.
+            </span>
+            <button
+              type="button"
+              onClick={() => fetchItems()}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent"
+            >
+              <RefreshCw size={10} /> Retry
+            </button>
+          </div>
+        ) : exchangeAccounts.length === 0 ? (
           <div className="card border-2 border-dashed border-border bg-transparent p-12 text-center">
             <ArrowLeftRight size={40} className="mx-auto mb-4 text-tertiary opacity-20" />
             <h3 className="mb-2 text-lg font-bold uppercase tracking-tight text-primary">No Exchange Accounts</h3>
@@ -2009,6 +2120,7 @@ const Settings = ({ user }) => {
             {exchangeAccounts.map((account) => {
               const result = exchangeImportResults[account.id];
               const importing = importingExchangeId === account.id;
+              const reviewQueue = reviewQueues[account.id];
               return (
                 <Motion.div layout key={account.id} className="card overflow-hidden border-border">
                   <div className="p-5 md:p-6">
@@ -2093,6 +2205,11 @@ const Settings = ({ user }) => {
                         <p>
                           Read {result.fileName} as a {IMPORT_FORMAT_LABELS[result.format] || result.format}:{' '}
                           <span className="font-semibold text-primary">{result.imported.toLocaleString()} new</span>
+                          {/* A record an earlier, shorter export could only half
+                              describe, completed by this file. Neither new nor
+                              a duplicate, and worth saying out loud: it is the
+                              only sign the second upload was worth making. */}
+                          {result.upgraded > 0 && `, ${result.upgraded.toLocaleString()} completed from an earlier partial export`}
                           {result.duplicates > 0 && `, ${result.duplicates.toLocaleString()} already imported`}
                           {result.needs_review > 0 && (
                             <span className="text-loss">, {result.needs_review.toLocaleString()} flagged for review</span>
@@ -2108,6 +2225,68 @@ const Settings = ({ user }) => {
                       </div>
                     )}
                   </div>
+
+                  {/* The flagged rows themselves. Without somewhere to see and
+                      clear them the count can only ever go up, and a badge that
+                      cannot reach zero is one the user learns to ignore --
+                      taking the rows it was pointing at with it. */}
+                  {account.needs_review_count > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        aria-expanded={openReviewAccountId === account.id}
+                        onClick={() => handleToggleReviewQueue(account)}
+                        className="flex w-full items-center justify-between gap-2 border-t border-border px-5 py-3 text-caption text-tertiary transition-colors hover:text-primary md:px-6"
+                      >
+                        <span>Needs review ({account.needs_review_count.toLocaleString()})</span>
+                        <ChevronDown
+                          size={14}
+                          className={openReviewAccountId === account.id ? 'rotate-180 transition-transform' : 'transition-transform'}
+                        />
+                      </button>
+
+                      {openReviewAccountId === account.id && (
+                        <div className="border-t border-border">
+                          {reviewQueue?.loading ? (
+                            <div className="p-4 text-body-sm text-secondary">Loading flagged records…</div>
+                          ) : reviewQueue?.error ? (
+                            <div className="flex items-center gap-2 p-4 text-body-sm text-loss">
+                              <AlertTriangle size={14} /> {reviewQueue.error}
+                            </div>
+                          ) : (reviewQueue?.records?.length ?? 0) === 0 ? (
+                            <div className="p-4 text-body-sm text-secondary">Nothing left to review here.</div>
+                          ) : (
+                            <ul className="divide-y divide-border">
+                              {reviewQueue.records.map((record) => (
+                                <li key={record.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 md:px-6">
+                                  <div className="min-w-0">
+                                    <p className="text-body-sm text-primary">
+                                      <span className="text-tertiary">{formatDateDisplay(record.occurred_at)}</span>
+                                      {' · '}
+                                      <span className="uppercase tracking-wide">{record.record_type}</span>
+                                      {' · '}
+                                      <span className="font-money">{exchangeRecordAmount(record)}</span>
+                                      {record.base_asset ? ` ${record.base_asset}` : ''}
+                                    </p>
+                                    <p className="mt-0.5 text-caption text-tertiary">{exchangeReviewReason(record)}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={resolvingRecordId === record.id}
+                                    onClick={() => handleResolveRecord(account, record)}
+                                    aria-label={`Mark record ${record.id} reviewed`}
+                                    className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+                                  >
+                                    <Check size={10} /> Mark reviewed
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </Motion.div>
               );
             })}

@@ -158,8 +158,45 @@ router.post('/:id/import', express.text({ type: 'text/csv', limit: '10mb' }), as
     if (error instanceof ImportFormatError || error.code === 'UNRECOGNIZED_CSV_FORMAT') {
       return res.status(400).json({ error: error.message, code: 'UNRECOGNIZED_CSV_FORMAT' });
     }
+    // A value the table cannot hold -- a quantity past NUMERIC(38,18), a NUL in
+    // a note -- is a fact about the file. As a 500 it reads as "the server is
+    // broken" and the user retries the same upload forever; named, they can go
+    // look at the row. The import stays all-or-nothing either way.
+    if (ExchangeRecord.BAD_VALUE_CODES.has(error.code)) {
+      const named = error.exchangeRecordExternalId ? ` (record ${error.exchangeRecordExternalId})` : '';
+      const detail = error.exchangeRecordDetail ? `: ${error.exchangeRecordDetail}` : '';
+      logger.warn({ err: error, accountId: req.params.id }, 'Exchange CSV import rejected an unstorable value');
+      return res.status(400).json({
+        error: `This file has a value that cannot be stored${named}${detail}. Nothing was imported.`,
+        code: 'UNSTORABLE_VALUE',
+      });
+    }
     logger.error({ err: error, accountId: req.params.id }, 'Exchange CSV import error');
     return res.status(500).json({ error: 'Failed to import exchange records' });
+  }
+});
+
+// Clearing the flag by hand is the only thing that empties the review queue:
+// nothing else ever writes needs_review = false, so without this the badge is
+// permanent and gets ignored, taking the flagged rows with it.
+router.patch('/:id/records/:recordId/resolve', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+
+    const recordId = parseId(req.params.recordId);
+    // The UPDATE joins through the account, so a record belonging to another
+    // account -- or another user -- matches nothing and looks like a typo.
+    const record = recordId
+      ? await ExchangeRecord.resolveReview(recordId, account.id, req.user.id)
+      : null;
+    if (!record) return res.status(404).json({ error: 'Exchange record not found' });
+
+    return res.status(200).json({ record });
+  } catch (error) {
+    logger.error({ err: error, accountId: req.params.id, recordId: req.params.recordId },
+      'Resolve exchange record error');
+    return res.status(500).json({ error: 'Failed to resolve exchange record' });
   }
 });
 

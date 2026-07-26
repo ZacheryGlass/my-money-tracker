@@ -408,6 +408,12 @@ export const exchanges = {
     const response = await api.get(`/api/exchanges/${id}/records`, { params });
     return response.data;
   },
+  // Clears needs_review on one record. Nothing else ever writes that flag to
+  // false, so this is the only thing that can empty the review queue.
+  resolveRecord: async (id, recordId) => {
+    const response = await api.patch(`/api/exchanges/${id}/records/${recordId}/resolve`);
+    return response.data;
+  },
 };
 
 // API key management (Settings -> API Keys). Responses carry masked

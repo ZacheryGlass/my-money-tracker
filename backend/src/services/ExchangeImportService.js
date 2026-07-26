@@ -27,6 +27,7 @@ class ExchangeImportService {
       format: parsed.format,
       parsed: parsed.records.length,
       inserted: result.inserted,
+      upgraded: result.upgraded,
       duplicates: result.duplicates,
       needsReview,
     }, 'Exchange CSV import');
@@ -35,6 +36,10 @@ class ExchangeImportService {
       format: parsed.format,
       parsed: parsed.records.length,
       imported: result.inserted,
+      // Records an earlier, shorter export could only half describe, completed
+      // by this one. Counted apart from "imported" because nothing new arrived
+      // and apart from "duplicates" because something did change.
+      upgraded: result.upgraded,
       duplicates: result.duplicates,
       needs_review: needsReview,
       // Surfaced rather than swallowed: a repeated header or a preamble block

@@ -11,11 +11,19 @@ const path = require('path');
 // legs, the legacy asset codes -- with invented ids, amounts and addresses.
 // Real exports are personal financial history and never enter this repository.
 const { parseExchangeCsv, ImportFormatError } = require('../src/services/exchangeImport');
+const { cleanAmount, parseTimestamp } = require('../src/services/exchangeImport/shared');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'exchanges');
 const fixture = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
 
 const byId = (records) => new Map(records.map((record) => [record.external_id, record]));
+
+// A file the user uploaded before the exchange's export covered everything:
+// the same rows, minus the ones named here.
+const withoutLines = (text, predicate) => text
+  .split('\n')
+  .filter((line, index) => index === 0 || !predicate(line))
+  .join('\n');
 
 // --- Coinbase retail -------------------------------------------------------
 
@@ -35,19 +43,46 @@ test('coinbase retail: detected past its preamble and mapped type by type', () =
   assert.equal(typeOf('00f7'), 'withdrawal');    // Send
   assert.equal(typeOf('00f8'), 'deposit');       // Receive
   assert.equal(typeOf('00f9'), 'withdrawal');    // Withdrawal
-  assert.equal(typeOf('00fa'), 'withdrawal');    // Pro Withdrawal
-  assert.equal(typeOf('00fb'), 'withdrawal');    // Exchange Withdrawal
-  assert.equal(typeOf('00fc'), 'withdrawal');    // Vault Withdrawal
   assert.equal(typeOf('00fd'), 'deposit');       // Deposit
-  assert.equal(typeOf('00fe'), 'deposit');       // Pro Deposit
-  assert.equal(typeOf('00ff'), 'deposit');       // Exchange Deposit
   assert.equal(typeOf('0101'), 'transfer');      // Retail Staking Transfer
   assert.equal(typeOf('0102'), 'transfer');      // Retail Unstaking Transfer
   assert.equal(typeOf('0103'), 'transfer');      // Transfer
   assert.equal(typeOf('0104'), 'transfer');      // Retail Eth2 Deprecation
 
   assert.equal(stats.unknownTypes, 1);
-  assert.equal(records.length, 20);
+  assert.equal(records.length, 23);
+});
+
+test('coinbase retail: the moves between Coinbase surfaces are transfers, whatever they are called', () => {
+  const { records } = parseExchangeCsv(fixture('coinbase-retail.csv'));
+  const records_by_id = byId(records);
+  const recordOf = (suffix) => records_by_id.get(`cb:aaaa0000000000000000${suffix}`);
+
+  // Coinbase names these from the DESTINATION's point of view and then signs
+  // the row the other way: an "Exchange Deposit" is money LEAVING retail. Taken
+  // at their word they book a withdrawal as a deposit and back again.
+  for (const [suffix, label] of [
+    ['00fa', 'Pro Withdrawal'], ['00fb', 'Exchange Withdrawal'], ['00fc', 'Vault Withdrawal'],
+    ['00fe', 'Pro Deposit'], ['00ff', 'Exchange Deposit'],
+  ]) {
+    assert.equal(recordOf(suffix).record_type, 'transfer', `${label} must not claim a direction`);
+    assert.equal(recordOf(suffix).needs_review, false, `${label} is understood, not a mystery`);
+  }
+
+  // The sign is what carries direction now, and it has to stay readable.
+  assert.equal(recordOf('00fb').base_amount, '120');    // out of Pro, into retail
+  assert.equal(recordOf('00ff').base_amount, '-300');   // out of retail, into Pro
+
+  // The property that broke: nothing typed as a deposit may be negative, and
+  // nothing typed as a withdrawal may be positive.
+  for (const record of records) {
+    if (record.record_type === 'deposit' && record.base_amount !== null) {
+      assert.ok(!record.base_amount.startsWith('-'), `deposit ${record.external_id} is negative`);
+    }
+    if (record.record_type === 'withdrawal' && record.base_amount !== null) {
+      assert.ok(record.base_amount.startsWith('-'), `withdrawal ${record.external_id} is positive`);
+    }
+  }
 });
 
 test('coinbase retail: repeated header lines are skipped, not imported as rows', () => {
@@ -90,9 +125,9 @@ test('coinbase retail: addresses follow the direction of the transfer', () => {
   assert.equal(records.get('cb:aaaa000000000000000000ff').address, 'GDAX');
 });
 
-test('coinbase retail: a Convert takes its second leg from the note', () => {
-  const convert = byId(parseExchangeCsv(fixture('coinbase-retail.csv')).records)
-    .get('cb:aaaa000000000000000000f6');
+test('coinbase retail: a Convert\'s two ledger rows become one conversion', () => {
+  const { records } = parseExchangeCsv(fixture('coinbase-retail.csv'));
+  const convert = byId(records).get('cb:aaaa000000000000000000f6');
 
   assert.equal(convert.record_type, 'conversion');
   assert.equal(convert.base_asset, 'ETH');
@@ -100,6 +135,53 @@ test('coinbase retail: a Convert takes its second leg from the note', () => {
   assert.equal(convert.quote_asset, 'ETH2');
   assert.equal(convert.quote_amount, '1.5');
   assert.equal(convert.needs_review, false);
+  // The export bills whichever leg it feels like -- here the receiving one,
+  // which used to be the row that got dropped, taking the fee with it.
+  assert.equal(convert.fee_asset, 'USD');
+  assert.equal(convert.fee_amount, '0.25');
+  // The counter-leg's own id is kept: it is the only trace of that ledger line.
+  assert.equal(convert.raw._paired_id, 'aaaa000000000000000000e6');
+
+  // The bug this replaces: the note was applied to BOTH rows, so the second one
+  // became a conversion of an asset into itself.
+  assert.equal(records.filter((record) => record.external_id === 'cb:aaaa000000000000000000e6').length, 0);
+  for (const record of records) {
+    assert.ok(
+      !(record.base_asset && record.base_asset === record.quote_asset),
+      `${record.external_id} converts ${record.base_asset} into itself`
+    );
+  }
+});
+
+test('coinbase retail: a Convert leg with no counter-leg imports alone, flagged', () => {
+  const orphan = byId(parseExchangeCsv(fixture('coinbase-retail.csv')).records)
+    .get('cb:aaaa00000000000000000106');
+
+  assert.equal(orphan.record_type, 'conversion');
+  assert.equal(orphan.base_asset, 'SOL');
+  assert.equal(orphan.base_amount, '-2');
+  // The note names an ETH leg that is nowhere in this file. Reading the note's
+  // own numbers back as the counter-leg would invent a position.
+  assert.equal(orphan.quote_asset, null);
+  assert.equal(orphan.quote_amount, null);
+  assert.equal(orphan.needs_review, true);
+});
+
+test('coinbase retail: an amount the importer cannot read is flagged, never zero', () => {
+  const records = byId(parseExchangeCsv(fixture('coinbase-retail.csv')).records);
+
+  // Dust written in scientific notation, expanded digit by digit: a float
+  // round-trip would round it and a failed parse would silently store nothing.
+  const dust = records.get('cb:aaaa00000000000000000107');
+  assert.equal(dust.base_amount, '0.000000015');
+  assert.equal(dust.needs_review, false);
+
+  // "1,5" is 1.5 in half of Europe and 15 with a thousands separator. Neither
+  // reading is safe, so the cell does not become a number at all.
+  const ambiguous = records.get('cb:aaaa00000000000000000108');
+  assert.equal(ambiguous.base_amount, null);
+  assert.equal(ambiguous.needs_review, true);
+  assert.equal(ambiguous.raw['Quantity Transacted'], '1,5');
 });
 
 test('an unrecognized row type imports flagged rather than being dropped', () => {
@@ -113,8 +195,9 @@ test('an unrecognized row type imports flagged rather than being dropped', () =>
   assert.equal(unknown.base_amount, '12.5');
   // The original wording survives for whoever reviews it.
   assert.equal(unknown.raw['Transaction Type'], 'Quantum Airdrop');
-  // Everything else imported clean, so the review queue can reach zero.
-  assert.equal(records.filter((record) => record.needs_review).length, 1);
+  // The unknown type, the widowed Convert leg and the unreadable amount -- and
+  // nothing else, so the review queue can still reach zero.
+  assert.equal(records.filter((record) => record.needs_review).length, 3);
 });
 
 // --- Coinbase Pro ----------------------------------------------------------
@@ -135,8 +218,9 @@ test('coinbase pro: two match legs and a fee row collapse into one trade', () =>
   assert.equal(trade.fee_amount, '2.5000000000000000');
   assert.equal(trade.needs_review, false);
 
-  // Three source lines, one record: no leftover leg and no standalone fee.
-  assert.equal(records.filter((record) => record.record_type === 'fee').length, 0);
+  // Three source lines, one record: no leftover leg, and the fee row did not
+  // survive as a record of its own beside the trade it belongs to.
+  assert.equal(records.filter((record) => record.raw?.rows?.some((row) => row['trade id'] === '900001')).length, 1);
   assert.equal(records.length, 8);
 });
 
@@ -152,15 +236,65 @@ test('coinbase pro: a fee-free fill still pairs, and non-fill rows map directly'
   assert.equal(records.get('cbp:transfer:44444444-4444-4444-4444-444444444444').record_type, 'withdrawal');
 });
 
-test('coinbase pro: id-less conversion rows get distinct content hashes', () => {
+test('coinbase pro: the two legs of an id-less conversion become one record', () => {
   const { records } = parseExchangeCsv(fixture('coinbase-pro.csv'));
   const conversions = records.filter((record) => record.record_type === 'conversion');
 
-  assert.equal(conversions.length, 2);
-  for (const conversion of conversions) {
-    assert.match(conversion.external_id, /^cbp:h:[0-9a-f]{40}$/);
-  }
-  assert.notEqual(conversions[0].external_id, conversions[1].external_id);
+  // Two rows, no id on either, same portfolio and instant, opposite signs.
+  // Apart they each lose the only thing that says what the balance became.
+  assert.equal(conversions.length, 1);
+  const [conversion] = conversions;
+  assert.match(conversion.external_id, /^cbp:h:[0-9a-f]{40}$/);
+  assert.equal(conversion.base_asset, 'USDC');
+  assert.equal(conversion.base_amount, '-100.0000000000000000');
+  assert.equal(conversion.quote_asset, 'USD');
+  assert.equal(conversion.quote_amount, '100.0000000000000000');
+  assert.equal(conversion.needs_review, false);
+});
+
+test('coinbase pro: a widowed conversion leg keys the same id the pair will', () => {
+  const full = fixture('coinbase-pro.csv');
+  // The export the user pulled first stopped before the incoming leg.
+  const partial = withoutLines(full, (line) => /^default,conversion,.*,USD,/.test(line));
+
+  const widowed = parseExchangeCsv(partial).records.filter((record) => record.record_type === 'conversion');
+  const complete = parseExchangeCsv(full).records.filter((record) => record.record_type === 'conversion');
+
+  assert.equal(widowed.length, 1);
+  assert.equal(widowed[0].needs_review, true, 'half a conversion is not a conversion');
+  assert.equal(widowed[0].quote_asset, null);
+  // Same event, same id -- the upgrade in ExchangeRecord depends on it.
+  assert.equal(widowed[0].external_id, complete[0].external_id);
+});
+
+test('coinbase pro: a group of nothing but fee rows is a fee, not a trade', () => {
+  const { records } = parseExchangeCsv(fixture('coinbase-pro.csv'));
+  // A fee row whose order id is blank forms a group of its own. Shaped into a
+  // trade it claimed a fill that appears nowhere in the file, unflagged.
+  const orphanFee = byId(records).get('cbp:trade:default:900003');
+
+  assert.equal(orphanFee.record_type, 'fee');
+  assert.equal(orphanFee.needs_review, true);
+  assert.equal(orphanFee.fee_asset, 'USD');
+  assert.equal(orphanFee.fee_amount, '0.5000000000000000');
+  assert.equal(orphanFee.quote_asset, null);
+});
+
+test('coinbase pro: a widowed match leg keys the same id the whole fill will', () => {
+  const full = fixture('coinbase-pro.csv');
+  // Trade 900001's USD leg is missing from the shorter export.
+  const partial = withoutLines(full, (line) => /^default,match,.*,-500\.0+,/.test(line));
+
+  const widowed = byId(parseExchangeCsv(partial).records)
+    .get('cbp:trade:22222222-2222-2222-2222-222222222222:900001');
+  const complete = byId(parseExchangeCsv(full).records)
+    .get('cbp:trade:22222222-2222-2222-2222-222222222222:900001');
+
+  assert.ok(widowed, 'the surviving leg still imports');
+  assert.equal(widowed.needs_review, true);
+  assert.equal(widowed.quote_asset, null);
+  assert.equal(complete.needs_review, false);
+  assert.equal(complete.quote_asset, 'USD');
 });
 
 test('coinbase pro: an unknown row type is flagged, a rebate is income', () => {
@@ -168,8 +302,9 @@ test('coinbase pro: an unknown row type is flagged, a rebate is income', () => {
   const flagged = records.filter((record) => record.needs_review);
 
   assert.equal(stats.unknownTypes, 1);
-  assert.equal(flagged.length, 1);
-  assert.equal(flagged[0].raw.type, 'quantumsettlement');
+  // The unknown type and the orphaned fee row.
+  assert.equal(flagged.length, 2);
+  assert.ok(flagged.some((record) => record.raw.type === 'quantumsettlement'));
   assert.equal(records.filter((record) => record.record_type === 'reward').length, 1);
 });
 
@@ -190,9 +325,32 @@ test('kraken: the two ledger legs of a trade pair by refid into one record', () 
   assert.equal(trade.fee_amount, '1.2500');
   assert.equal(trade.raw.rows.length, 2);
 
-  // 12 ledger lines, 10 events: the trade pair and the spend/receive pair each
+  // 13 ledger lines, 11 events: the trade pair and the spend/receive pair each
   // describe one thing that happened.
-  assert.equal(records.length, 10);
+  assert.equal(records.length, 11);
+});
+
+test('kraken: a widowed trade leg keys the refid, the same id the pair will', () => {
+  const full = fixture('kraken-ledgers.csv');
+  const records = byId(parseExchangeCsv(full).records);
+
+  // The counter-leg of TTRD99 is outside this export's date range.
+  const widowed = records.get('kraken:TTRD99-99999-WWWWWW');
+  assert.ok(widowed, 'a lone leg is kept -- the money did move');
+  assert.equal(widowed.record_type, 'trade');
+  assert.equal(widowed.needs_review, true);
+  assert.equal(widowed.quote_asset, null);
+  // Keyed on its txid instead, the fuller export's paired record -- keyed on
+  // the refid -- would land beside it and the trade would be counted twice.
+  assert.equal(records.has('kraken:LMMMMM-33333-MMMMMM'), false);
+
+  // The same holds for a pair whose second leg this file happens to hold: the
+  // id does not change when the counter-leg shows up.
+  const partial = withoutLines(full, (line) => line.includes('"LCCCCC-33333-CCCCCC"'));
+  const half = byId(parseExchangeCsv(partial).records).get('kraken:TTRD00-11111-TTTTTT');
+  assert.equal(half.needs_review, true);
+  assert.equal(half.quote_asset, null);
+  assert.equal(records.get('kraken:TTRD00-11111-TTTTTT').needs_review, false);
 });
 
 test('kraken: a staking payout is income, not a deposit', () => {
@@ -263,7 +421,71 @@ test('kraken: an unknown ledger type imports flagged', () => {
   assert.equal(unknown.needs_review, true);
   assert.equal(unknown.record_type, 'transfer');
   assert.equal(unknown.raw.type, 'quantumsettlement');
-  assert.equal(records.filter((record) => record.needs_review).length, 1);
+  // The unknown type and the widowed trade leg.
+  assert.equal(records.filter((record) => record.needs_review).length, 2);
+});
+
+// --- Amounts and timestamps ------------------------------------------------
+
+test('amounts are read exactly, or not at all', () => {
+  // Scientific notation, expanded by moving the point through the digits.
+  assert.equal(cleanAmount('1.5e-8'), '0.000000015');
+  assert.equal(cleanAmount('1.5E8'), '150000000');
+  assert.equal(cleanAmount('-2.5e-3'), '-0.0025');
+  assert.equal(cleanAmount('1e-18'), '0.000000000000000001');
+
+  // Past a float's 15 significant digits, which is the whole point: Number()
+  // would round this and the stored balance would be wrong.
+  assert.equal(cleanAmount('1234567890123456789e-6'), '1234567890123.456789');
+  assert.equal(cleanAmount('9.999999999999999999e-1'), '0.9999999999999999999');
+
+  // A comma with no point could be either separator; neither guess is safe.
+  assert.equal(cleanAmount('1,5'), null);
+  assert.equal(cleanAmount('1,234'), null);
+  // With a decimal point the comma can only be grouping.
+  assert.equal(cleanAmount('$1,234.56'), '1234.56');
+
+  assert.equal(cleanAmount(''), null);
+  assert.equal(cleanAmount('n/a'), null);
+  assert.equal(cleanAmount('1e'), null);
+});
+
+test('a timestamp with no zone is UTC, whatever the host thinks', () => {
+  // ISO with an explicit zone is taken at its word.
+  assert.equal(parseTimestamp('2024-02-02T12:00:00.000Z'), '2024-02-02T12:00:00.000Z');
+  assert.equal(parseTimestamp('2026-07-24 20:13:04 UTC'), '2026-07-24T20:13:04.000Z');
+  assert.equal(parseTimestamp('2020-03-04 03:58:53'), '2020-03-04T03:58:53.000Z');
+
+  // The formats that fall through to the Date constructor used to be read as
+  // server-local. occurred_at feeds the content hash that ids rows the exchange
+  // left unidentified, so the same file produced different ids in different
+  // time zones -- and, re-imported, a second copy of every one of them.
+  assert.equal(parseTimestamp('03/04/2020 03:58:53'), '2020-03-04T03:58:53.000Z');
+  assert.equal(parseTimestamp('Mar 4, 2020 03:58:53'), '2020-03-04T03:58:53.000Z');
+  // A date with no clock at all is still midnight UTC.
+  assert.equal(parseTimestamp('2020-03-04'), '2020-03-04T00:00:00.000Z');
+  // An explicit offset still wins.
+  assert.equal(parseTimestamp('2020-03-04T03:58:53+02:00'), '2020-03-04T01:58:53.000Z');
+
+  assert.equal(parseTimestamp('not a date'), null);
+  assert.equal(parseTimestamp(''), null);
+});
+
+test('addresses are stored one way, so a withdrawal can find its on-chain deposit', () => {
+  const csv = [
+    'time,type,asset,amount,address',
+    '2024-05-01T00:00:00Z,withdrawal,ETH,-1,0xAABBCCDDEEFF00112233445566778899AABBCCDD',
+    '2024-05-02T00:00:00Z,withdrawal,ETH,-2,aabbccddeeff00112233445566778899aabbccdd',
+    '2024-05-03T00:00:00Z,withdrawal,BTC,-3,bc1qSyntheticFixtureAddress',
+  ].join('\n');
+
+  const [checksummed, bare, notHex] = parseExchangeCsv(csv).records;
+  // eth_transfers holds lowercase 0x-prefixed addresses; anything else joins to
+  // nothing, which reads as "this withdrawal never arrived anywhere".
+  assert.equal(checksummed.address, '0xaabbccddeeff00112233445566778899aabbccdd');
+  assert.equal(bare.address, '0xaabbccddeeff00112233445566778899aabbccdd');
+  // A venue name or a bech32 address is left exactly as the exchange wrote it.
+  assert.equal(notHex.address, 'bc1qSyntheticFixtureAddress');
 });
 
 // --- Generic fallback ------------------------------------------------------
