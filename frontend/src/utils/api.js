@@ -396,6 +396,26 @@ export const eth = {
     });
     return response.data;
   },
+  // The full balance audit: derived-from-transfers versus what the chain
+  // reports, per (wallet, chain, asset). The wallets response already carries a
+  // capped per-wallet summary, which is what the wallet card renders; this is
+  // the unabridged list for a wallet whose summary says something is off.
+  getReconciliation: async ({ walletId, status } = {}) => {
+    const response = await api.get('/api/eth/reconciliation', {
+      params: {
+        ...(walletId != null ? { wallet_id: walletId } : {}),
+        ...(status ? { status } : {}),
+      },
+    });
+    return response.data;
+  },
+  // Assets the dated valuation could not price (#73). The ledger is this
+  // enumeration's designated consumer: it shows USD per row, and a blank there
+  // has to be explained as "no price for this asset" rather than read as $0.
+  getUnpricedAssets: async () => {
+    const response = await api.get('/api/eth/prices/unpriced');
+    return response.data;
+  },
 };
 
 // The unified crypto ledger (#63): on-chain activity and exchange records
@@ -470,6 +490,38 @@ export const exchanges = {
   // false, so this is the only thing that can empty the review queue.
   resolveRecord: async (id, recordId) => {
     const response = await api.patch(`/api/exchanges/${id}/records/${recordId}/resolve`);
+    return response.data;
+  },
+  // Derived pairings between an on-chain transfer and the venue's own record of
+  // it (#61), with the counts behind the "how much is still unpaired" line.
+  getMatches: async (params = {}) => {
+    const response = await api.get('/api/exchanges/matches', { params });
+    return response.data;
+  },
+  // Confirm or reject one pairing. A verdict names exactly ONE pair, in one of
+  // 041's two shapes: wallet_id + tx_hash (+ chain_id) for an on-chain match,
+  // or counter_record_id for a venue-to-venue one. Sending both, or neither, is
+  // a 400 rather than a guess.
+  setMatchVerdict: async ({ exchangeRecordId, walletId, txHash, chainId, counterRecordId, verdict, note }) => {
+    const response = await api.post('/api/exchanges/matches/verdict', {
+      exchange_record_id: exchangeRecordId,
+      ...(counterRecordId != null
+        ? { counter_record_id: counterRecordId }
+        : { wallet_id: walletId, tx_hash: txHash, chain_id: chainId }),
+      verdict,
+      note,
+    });
+    return response.data;
+  },
+  clearMatchVerdict: async ({ exchangeRecordId, walletId, txHash, chainId, counterRecordId }) => {
+    const response = await api.delete('/api/exchanges/matches/verdict', {
+      params: {
+        exchange_record_id: exchangeRecordId,
+        ...(counterRecordId != null
+          ? { counter_record_id: counterRecordId }
+          : { wallet_id: walletId, tx_hash: txHash, chain_id: chainId }),
+      },
+    });
     return response.data;
   },
   // Read-only API credentials for one exchange account. The server stores them

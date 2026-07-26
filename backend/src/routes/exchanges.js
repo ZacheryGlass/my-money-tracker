@@ -4,8 +4,11 @@ const express = require('express');
 const requireUser = require('../middleware/auth');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
+const ExchangeMatch = require('../models/ExchangeMatch');
 const ExchangeImportService = require('../services/ExchangeImportService');
 const ExchangeSyncService = require('../services/ExchangeSyncService');
+const ExchangeMatchService = require('../services/ExchangeMatchService');
+const chains = require('../config/chains');
 const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
 const { CREDENTIAL_FIELDS, connectorFor } = require('../services/exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
@@ -138,6 +141,174 @@ router.post('/', async (req, res) => {
   }
 });
 
+// --- matching (#61) --------------------------------------------------------
+//
+// Registered BEFORE the '/:id' routes: '/matches' is a literal that must never
+// be read as an account id. It cannot be today (no route is a bare GET '/:id'),
+// and this ordering is what keeps that true when one is added.
+
+const VERDICTS = new Set(['confirmed', 'rejected']);
+const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
+
+// A verdict names exactly one pair, in one of the two shapes 041 allows: an
+// on-chain match (wallet + chain + hash) or an exchange-to-exchange pair (the
+// far record). Accepting both at once, or neither, is a 400 rather than a
+// guess -- the CHECK constraint would reject it anyway, as a 500.
+function parseVerdictTarget(source) {
+  const exchangeRecordId = parseId(source.exchange_record_id);
+  if (!exchangeRecordId) return { error: 'exchange_record_id is required' };
+
+  const hasCounter = source.counter_record_id !== undefined && source.counter_record_id !== null && source.counter_record_id !== '';
+  const hasOnChain = (source.wallet_id !== undefined && source.wallet_id !== null && source.wallet_id !== '')
+    || (source.tx_hash !== undefined && source.tx_hash !== null && source.tx_hash !== '');
+
+  if (hasCounter === hasOnChain) {
+    return { error: 'Provide either counter_record_id (an exchange-to-exchange pair) or wallet_id + tx_hash (an on-chain match)' };
+  }
+
+  if (hasCounter) {
+    const counterRecordId = parseId(source.counter_record_id);
+    if (!counterRecordId) return { error: 'counter_record_id must be a positive integer' };
+    if (counterRecordId === exchangeRecordId) {
+      return { error: 'counter_record_id must be a different record' };
+    }
+    return { target: { exchangeRecordId, counterRecordId } };
+  }
+
+  const walletId = parseId(source.wallet_id);
+  if (!walletId) return { error: 'wallet_id must be a positive integer' };
+  const txHash = typeof source.tx_hash === 'string' ? source.tx_hash.trim().toLowerCase() : '';
+  if (!TX_HASH_RE.test(txHash)) {
+    return { error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' };
+  }
+  // Any positive integer, not just an enabled chain: rows from a since-disabled
+  // chain stay stored, so their verdicts stay writable.
+  const chainId = source.chain_id === undefined || source.chain_id === null || source.chain_id === ''
+    ? chains.DEFAULT_CHAIN_ID
+    : Number(source.chain_id);
+  if (!Number.isInteger(chainId) || chainId < 1) {
+    return { error: 'chain_id must be a positive integer' };
+  }
+  return { target: { exchangeRecordId, walletId, chainId, txHash } };
+}
+
+// Every match this user has, both shapes, with each side described. This is
+// where a Coinbase -> Kraken transfer reads as ONE movement: the withdrawal
+// record and the deposit record, side by side, with no on-chain leg because
+// there never was one.
+router.get('/matches', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    const [{ matches, total }, summary] = await Promise.all([
+      ExchangeMatch.findForUser(req.user.id, { limit, offset }),
+      ExchangeMatch.summaryForUser(req.user.id),
+    ]);
+
+    return res.status(200).json({ data: matches, summary, pagination: { total, limit, offset } });
+  } catch (error) {
+    logger.error({ err: error }, 'Get exchange matches error');
+    return res.status(500).json({ error: 'Failed to retrieve exchange matches' });
+  }
+});
+
+// Confirm or reject a match. Stored in its own table so the rebuild cannot
+// erase it -- the same reason eth_activity_overrides is a second table -- and
+// re-derived immediately so the answer is visible on the next read.
+router.post('/matches/verdict', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { target, error: invalid } = parseVerdictTarget(body);
+    if (invalid) return res.status(400).json({ error: invalid });
+
+    const verdict = typeof body.verdict === 'string' ? body.verdict.trim().toLowerCase() : '';
+    if (!VERDICTS.has(verdict)) {
+      return res.status(400).json({ error: `verdict must be one of: ${[...VERDICTS].join(', ')}` });
+    }
+    if (body.note !== undefined && body.note !== null && typeof body.note !== 'string') {
+      return res.status(400).json({ error: 'note must be a string' });
+    }
+
+    // A verdict about something the user cannot see would be stored and then
+    // invisible forever -- exactly the trap the activity override route 404s
+    // for. Both sides are checked, so a foreign record id is a 404 too.
+    const { exists, records } = await ExchangeMatch.verdictTargetExists(req.user.id, target);
+    if (!exists) {
+      return res.status(404).json({ error: 'No match found for that record and transaction' });
+    }
+
+    // Shape, not just ownership. Only a transfer can be half of a movement: a
+    // trade or a reward has no counterpart to be the same money as, and the
+    // matcher would never propose one -- so confirming it stores an answer to a
+    // question that cannot be asked. The derived side enforces this in SQL
+    // (MATCHABLE_RECORD_TYPES); a manual verdict has to enforce it here.
+    const matchable = new Set(ExchangeMatch.MATCHABLE_RECORD_TYPES);
+    const anchor = records.get(target.exchangeRecordId);
+    const counter = target.counterRecordId ? records.get(target.counterRecordId) : null;
+    for (const record of [anchor, counter]) {
+      if (record && !matchable.has(record.record_type)) {
+        return res.status(400).json({
+          error: `Only ${[...matchable].join(' and ')} records can be matched; record ${record.id} is a ${record.record_type}`,
+        });
+      }
+    }
+    // And a pair runs one way: money leaves the sending venue and arrives at
+    // the receiving one. The derived pair query anchors on the WITHDRAWAL for
+    // exactly this reason -- one identity per movement instead of two orderings
+    // of the same two ids -- and a verdict stored the other way round would
+    // never line up with the match it is supposed to confirm or suppress.
+    if (counter && !(anchor?.record_type === 'withdrawal' && counter.record_type === 'deposit')) {
+      return res.status(400).json({
+        error: 'A pair runs withdrawal -> deposit: exchange_record_id must be the withdrawal and counter_record_id the deposit',
+      });
+    }
+
+    // Two confirmations claiming the same record is the same money explained
+    // twice. They sit under different unique keys, so the database takes both
+    // and selectMatches then drops one by an ordering the user never sees.
+    if (verdict === 'confirmed') {
+      const conflict = await ExchangeMatch.findConflictingConfirmation(req.user.id, target);
+      if (conflict) {
+        return res.status(409).json({
+          error: 'Another confirmed match already claims one of these records; remove that verdict first',
+          conflict,
+        });
+      }
+    }
+
+    const saved = await ExchangeMatch.upsertVerdict(req.user.id, {
+      ...target,
+      verdict,
+      note: body.note?.trim() || null,
+    });
+    if (!saved) return res.status(404).json({ error: 'Exchange record not found' });
+
+    const result = await ExchangeMatchService.rebuildForUserSafely(req.user.id);
+    return res.status(201).json({ verdict: saved, matches: result?.matches ?? null });
+  } catch (error) {
+    logger.error({ err: error }, 'Set exchange match verdict error');
+    return res.status(500).json({ error: 'Failed to save the match verdict' });
+  }
+});
+
+// Undoing a verdict uncovers whatever the matcher derives on its own.
+router.delete('/matches/verdict', async (req, res) => {
+  try {
+    const { target, error: invalid } = parseVerdictTarget(req.query || {});
+    if (invalid) return res.status(400).json({ error: invalid });
+
+    const removed = await ExchangeMatch.deleteVerdict(req.user.id, target);
+    if (!removed) return res.status(404).json({ error: 'Match verdict not found' });
+
+    await ExchangeMatchService.rebuildForUserSafely(req.user.id);
+    return res.status(200).json({ message: 'Match verdict removed' });
+  } catch (error) {
+    logger.error({ err: error }, 'Remove exchange match verdict error');
+    return res.status(500).json({ error: 'Failed to remove the match verdict' });
+  }
+});
+
 router.patch('/:id', async (req, res) => {
   try {
     const account = await loadAccount(req, res);
@@ -166,8 +337,15 @@ router.delete('/:id', async (req, res) => {
     const account = await loadAccount(req, res);
     if (!account) return undefined;
 
-    // exchange_records go with it via ON DELETE CASCADE.
+    // exchange_records go with it via ON DELETE CASCADE, and exchange_matches
+    // with them -- so there is no such thing as a dangling link here.
     await ExchangeAccount.delete(account.id, req.user.id);
+    // What the cascade CANNOT do is put the on-chain half back in the review
+    // queue: those activity rows had needs_review cleared because a record
+    // explained them, and that record is now gone. Re-deriving restores the
+    // flag (#61's acceptance criterion) instead of leaving a transfer marked
+    // explained by evidence that no longer exists.
+    await ExchangeMatchService.rebuildForUserSafely(req.user.id, { exchangeAccountId: account.id });
     return res.status(200).json({ message: 'Exchange account deleted' });
   } catch (error) {
     logger.error({ err: error, accountId: req.params.id }, 'Delete exchange account error');

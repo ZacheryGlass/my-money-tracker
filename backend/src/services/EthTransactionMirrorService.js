@@ -3,29 +3,17 @@
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
-const PriceService = require('./PriceService');
-const PriceCache = require('../models/PriceCache');
 const chains = require('../config/chains');
 const { shortAddress } = require('../utils/ethAddress');
 
-// Every address-label write runs refreshClassificationsForUser, which rebuilds
-// each of that owner's wallets and so calls CoinGecko once per wallet. The
-// triage queue makes rapid sequential
-// labeling the normal workflow, so without this a handful of clicks will
-// rate-limit a free-tier key. Token prices do not depend on labels, so reusing
-// a recent response across back-to-back rebuilds is safe; the nightly sync
-// benefits too. Keyed by the exact contract set, since that is what the URL is.
-const TOKEN_PRICE_TTL_MS = 5 * 60 * 1000;
-// Failures expire sooner so a transient rate-limit does not keep the ledger on
-// stale amounts for the full window once the API recovers.
-const TOKEN_PRICE_FAILURE_TTL_MS = 30 * 1000;
-const TOKEN_PRICE_CACHE_MAX = 32;
-const tokenPriceCache = new Map();
-
-// transactions.amount is DECIMAL(15,2); clamp so one absurd scam-token price
-// cannot fail the whole rebuild.
+// transactions.amount is DECIMAL(15,2). The valuation pass already clamps to
+// the same bound in SQL (AssetPriceHistory.USD_CLAMP), so this is the second
+// line rather than the first -- it also catches a NULL or a stray string
+// arriving from a hand-written row.
 function toAmount(value) {
-  const capped = Math.max(Math.min(value, 9999999999999.99), -9999999999999.99);
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  const capped = Math.max(Math.min(number, 9999999999999.99), -9999999999999.99);
   return Math.round(capped * 100) / 100;
 }
 
@@ -33,22 +21,51 @@ function toAmount(value) {
 // transfer should not appear in the ledger. Ledger sign convention is Plaid's:
 // positive = money leaving the account.
 //
-// USD values use the CURRENT ETH/token price, not the price on the transfer
-// date -- good enough for an activity ledger, not for tax reporting.
-function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {}, ignoredContracts = new Set(), priorAmounts = {} } = {}) {
+// USD IS AT-THE-TIME (#73). Every amount below comes from usd_at_time, which
+// the valuation pass wrote from the dated series in asset_price_history -- so a
+// 2017 transfer carries 2017 dollars, and nothing here fetches a price. That
+// also makes a rebuild deterministic: the same stored legs produce the same
+// amounts every time, which is exactly what "re-running classification does not
+// drift valuations" means.
+//
+// usd_at_time NULL means UNPRICED -- no close was reachable for that asset on
+// that date. SUCH A LEG IS NOT MIRRORED AT ALL.
+//
+// The mirror's rows are money: `transactions.amount` is what Spending sums, and
+// nothing downstream reads a basis column (there is none on `transactions`), so
+// a mirrored row IS an assertion about dollars. Writing 0.00 for a leg the
+// series could not price makes that assertion "$0", and Spending adds it as a
+// real zero -- a 2019 500-USDC deposit outside a free key's 365-day token range
+// would quietly remove $500 from the ledger, which is the same silent-zero
+// failure #73 exists to delete, just one layer down. Substituting today's price
+// would be the other half of that bug.
+//
+// So the leg is omitted, exactly as NFT legs and ignored tokens are omitted:
+// the mirror only ever carried the legs it could state a dollar figure for. The
+// activity is NOT lost -- eth_activity explains the transaction with
+// usd_basis = 'unpriced', the on-chain feed shows the crypto amount with "No USD
+// value", and GET /api/eth/prices/unpriced enumerates the assets responsible.
+// Rebuild-safe by construction: the mirror is deleted and rewritten wholesale,
+// so a leg that gets priced by a later backfill reappears on the next rebuild
+// (the historical-price job re-derives every wallet nightly for that reason).
+function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() } = {}) {
   const wallet = walletAddress.toLowerCase();
   const outgoing = transfer.from_address === wallet;
   // Own beats exchange (reclassify also encodes this, belt and suspenders):
   // a tracked wallet that happens to be labeled stays a self-transfer.
   const exchange = transfer.counterparty_is_own ? null : transfer.counterparty_exchange || null;
   const exchangeCategory = outgoing ? 'CRYPTO_EXCHANGE_DEPOSIT' : 'CRYPTO_EXCHANGE_WITHDRAWAL';
+  const usd = transfer.usd_at_time == null ? null : Number(transfer.usd_at_time);
 
   if (transfer.transfer_type === 'gas') {
-    const eth = Number(transfer.value_wei) / 1e18;
+    // A fee is always a cost, whichever way the transaction went, and it is
+    // real even when the transaction reverted. Same rule as a value leg,
+    // though: an unpriced fee is an unknown cost, not a free transaction.
+    if (usd == null) return null;
     return {
       category: 'CRYPTO_GAS_FEE',
       name: 'Gas fee',
-      amount: toAmount(eth * ethPrice),
+      amount: toAmount(Math.abs(usd)),
     };
   }
 
@@ -62,19 +79,13 @@ function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {
   // presenting the NFT itself is the activity layer's job (#56).
   if (transfer.transfer_type === 'nft' || transfer.transfer_type === 'nft1155') return null;
 
+  // Unpriced: no row, rather than a row asserting $0.00. See the header.
+  if (usd == null) return null;
+  const amount = toAmount(outgoing ? Math.abs(usd) : -Math.abs(usd));
+
   if (transfer.transfer_type === 'token') {
     const contract = transfer.token_contract;
     if (!contract || ignoredContracts.has(contract)) return null;
-    const decimals = transfer.token_decimals != null ? Number(transfer.token_decimals) : 18;
-    const quantity = Number(transfer.value_wei) / 10 ** decimals;
-    const price = Number(tokenPrices[contract]?.usd);
-    // No price this round -- a rate-limited or unlisted token. Reuse whatever
-    // this row was worth on the last successful rebuild: a stale amount beats a
-    // fabricated $0, which would silently erase the token side of the ledger
-    // until the next healthy sync. Falls back to 0 for genuinely new rows.
-    const amount = Number.isFinite(price)
-      ? toAmount(outgoing ? quantity * price : -(quantity * price))
-      : Number(priorAmounts[transfer.id] ?? 0);
     const symbol = transfer.token_symbol || 'TOKEN';
     return {
       category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER'
@@ -87,8 +98,6 @@ function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {
     };
   }
 
-  const eth = Number(transfer.value_wei) / 1e18;
-  const usd = eth * ethPrice;
   return {
     category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER'
       : exchange ? exchangeCategory
@@ -96,71 +105,19 @@ function buildMirrorRow(transfer, walletAddress, { ethPrice = 0, tokenPrices = {
     name: outgoing
       ? `ETH → ${exchange || shortAddress(transfer.to_address)}`
       : `ETH ← ${exchange || shortAddress(transfer.from_address)}`,
-    amount: toAmount(outgoing ? usd : -usd),
+    amount,
   };
 }
 
 class EthTransactionMirrorService {
-  static async _getEthPrice() {
-    const cached = await pool.query(
-      "SELECT price_usd FROM price_cache WHERE UPPER(ticker) = 'ETH'"
-    );
-    if (cached.rows.length) return Number(cached.rows[0].price_usd);
-
-    // First sync can land before the daily price job has ever run.
-    const fetched = await PriceService.fetchPrice('ETH', 'Crypto');
-    if (fetched) {
-      await PriceCache.upsert('ETH', fetched.price, fetched.source);
-      return fetched.price;
-    }
-    logger.warn('No ETH price available; mirrored transactions get $0 amounts until the next sync');
-    return 0;
-  }
-
-  // Cached CoinGecko token lookup for ONE chain's asset platform. On failure
-  // returns {} rather than throwing: the caller then falls back to each row's
-  // previous amount, so a transient rate-limit degrades to stale numbers
-  // instead of zeroing the ledger.
-  //
-  // The platform is part of the cache key, not just the URL. The same contract
-  // address can be a different asset on two chains, so a key of contracts alone
-  // would serve Arbitrum's answer for Base's question.
-  static async _getTokenPrices(contracts, walletId, platform) {
-    if (!contracts.length) return {};
-    const contractList = [...contracts].sort().join(',');
-    const key = `${platform}:${contractList}`;
-    const cached = tokenPriceCache.get(key);
-    if (cached && Date.now() - cached.at < cached.ttl) return cached.prices;
-
-    try {
-      const prices = await PriceService.fetchCoinGeckoJson(
-        `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${encodeURIComponent(contractList)}&vs_currencies=usd`
-      );
-      this._cacheTokenPrices(key, prices);
-      return prices;
-    } catch (err) {
-      logger.warn({ walletId, platform, err }, 'Token price lookup failed; token rows keep their previous amounts');
-      // Cache the failure too, on a shorter TTL. Without this a rate-limit
-      // storm re-hits CoinGecko on every wallet of every rebuild -- exactly the
-      // scenario the cache exists to prevent, since the failure arrives fastest
-      // and so recurs most often.
-      this._cacheTokenPrices(key, {}, TOKEN_PRICE_FAILURE_TTL_MS);
-      return {};
-    }
-  }
-
-  static _cacheTokenPrices(key, prices, ttl = TOKEN_PRICE_TTL_MS) {
-    // Evict the oldest single entry rather than clearing the map: Map preserves
-    // insertion order, so the first key is the least recently written. Clearing
-    // would throw away entries written moments ago and re-trigger the very
-    // fetches this cache is meant to avoid.
-    if (tokenPriceCache.size >= TOKEN_PRICE_CACHE_MAX) {
-      tokenPriceCache.delete(tokenPriceCache.keys().next().value);
-    }
-    tokenPriceCache.set(key, { at: Date.now(), prices, ttl });
-  }
-
   // Deterministic full rebuild of the wallet account's mirrored ledger rows.
+  //
+  // Touches no network. Before #73 this fetched the current ETH price and a
+  // CoinGecko token-price page per chain on every rebuild -- and a rebuild runs
+  // on every label click through refreshClassificationsForUser, which is why it
+  // needed a TTL cache and a stale-amount fallback to survive rapid triage. The
+  // dated series removed all of that: valuation is a SQL pass that ran before
+  // this, and this reads its answer.
   static async rebuildForWallet(walletId) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
@@ -174,58 +131,25 @@ class EthTransactionMirrorService {
     const transfers = transfersResult.rows;
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
 
-    const ethPrice = await this._getEthPrice();
-
-    // Token contracts are collected PER CHAIN and priced against that chain's
-    // CoinGecko asset platform. Pooling them would send every L2 contract to
-    // the ethereum platform, which answers "unknown" rather than erroring -- so
-    // every L2 token row would fall back to its prior amount, or to $0 on a
-    // first sync, and look like a pricing outage that never resolves.
-    const contractsByChain = new Map();
-    for (const transfer of transfers) {
-      if (transfer.transfer_type !== 'token') continue;
-      if (!transfer.token_contract || ignoredContracts.has(transfer.token_contract)) continue;
-      const chainId = Number(transfer.chain_id ?? chains.DEFAULT_CHAIN_ID);
-      if (!contractsByChain.has(chainId)) contractsByChain.set(chainId, new Set());
-      contractsByChain.get(chainId).add(transfer.token_contract);
-    }
-    const tokenPricesByChain = new Map();
-    for (const [chainId, contracts] of contractsByChain) {
-      const platform = chains.getChain(chainId)?.coingeckoPlatform;
-      // A chain no longer in the registry keeps its rows and its prior amounts
-      // rather than being repriced against a guess.
-      tokenPricesByChain.set(chainId, platform
-        ? await this._getTokenPrices([...contracts], walletId, platform)
-        : {});
-    }
-
-    // Read the amounts this rebuild is about to overwrite, so a token whose
-    // price is unavailable can keep its last known value instead of dropping
-    // to $0. Must run before the DELETE below.
-    const priorResult = await pool.query(
-      'SELECT eth_transfer_id, amount FROM transactions WHERE account_id = $1 AND eth_transfer_id IS NOT NULL',
-      [account.id]
-    );
-    const priorAmounts = Object.fromEntries(
-      priorResult.rows.map((row) => [row.eth_transfer_id, row.amount])
-    );
-
     const rows = [];
+    let unpricedSkipped = 0;
     for (const transfer of transfers) {
-      const chainId = Number(transfer.chain_id ?? chains.DEFAULT_CHAIN_ID);
-      const body = buildMirrorRow(transfer, wallet.address, {
-        ethPrice,
-        // buildMirrorRow stays chain-agnostic and takes a flat contract->price
-        // map: which chain's map that is gets decided here, once, by the row.
-        tokenPrices: tokenPricesByChain.get(chainId) || {},
-        ignoredContracts,
-        priorAmounts,
-      });
-      if (!body) continue;
+      const body = buildMirrorRow(transfer, wallet.address, { ignoredContracts });
+      if (!body) {
+        // Counted, not mirrored: these are the legs the ledger is knowingly
+        // silent about, and the count is what makes that silence visible in the
+        // logs instead of looking like a wallet with less activity.
+        if (transfer.usd_at_time == null && transfer.usd_basis !== 'not_applicable'
+            && transfer.transfer_type !== 'nft' && transfer.transfer_type !== 'nft1155'
+            && !transfer.is_error) {
+          unpricedSkipped++;
+        }
+        continue;
+      }
       rows.push({
         eth_transfer_id: transfer.id,
         date: transfer.block_time,
-        chain_id: chainId,
+        chain_id: Number(transfer.chain_id ?? chains.DEFAULT_CHAIN_ID),
         ...body,
       });
     }
@@ -252,8 +176,8 @@ class EthTransactionMirrorService {
       );
     }
 
-    logger.info({ walletId, mirrored: rows.length }, 'ETH transaction mirror rebuilt');
-    return { mirrored: rows.length };
+    logger.info({ walletId, mirrored: rows.length, unpricedSkipped }, 'ETH transaction mirror rebuilt');
+    return { mirrored: rows.length, unpricedSkipped };
   }
 
 }

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import {
-  AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, Landmark,
-  Link2, Pencil, RefreshCw, Tag, Undo2, Wallet, X,
+  AlertTriangle, Check, ChevronDown, ChevronRight, DollarSign, Download,
+  ExternalLink, Landmark, Link2, Pencil, RefreshCw, Tag, Undo2, Wallet, X,
 } from 'lucide-react';
 import { crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
-import { formatDateDisplay, formatExactUnits } from '../utils/format';
+import { formatCurrency, formatDateDisplay, formatTokenUnits } from '../utils/format';
 import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
 import {
   LEDGER_CATEGORIES,
@@ -83,13 +83,26 @@ const shortTokenId = (id) => {
   return text.length > 10 ? `${text.slice(0, 8)}…` : text;
 };
 
-// Eight places, not the formatter's default six: a real 0.00000042 ETH receipt
-// is a row the user has to explain, and rendering it as "<0.000001" turns the
-// one fact that identifies it into a shrug. Wide enough for ETH dust, still
-// short enough that 1,832.412345 USDC reads at a glance.
+// Base units through the SHARED formatter, which is BigInt end to end. Eight
+// places, not its six-place default: a real 0.00000042 ETH receipt is a row the
+// user has to explain, and rendering it as 0 turns the one fact that identifies
+// it into a shrug. Wide enough for ETH dust, short enough that 1,832.412345
+// USDC still reads at a glance.
 const legText = (leg) => {
   const id = leg.token_id != null ? ` #${shortTokenId(leg.token_id)}` : '';
-  return `${formatExactUnits(leg.amount, { maxFractionDigits: 8 })} ${leg.asset}${id}`;
+  const amount = formatTokenUnits(leg.units, leg.decimals, { maxFractionDigits: 8 })
+    ?? String(leg.amount ?? '');
+  return `${amount} ${leg.asset}${id}`;
+};
+
+// At-the-time dollars, or an explicit gap. A blank cell would read as $0, which
+// is the one thing an unpriced asset is NOT -- so an unpriced row says so, and
+// a carried price says it was carried.
+const USD_BASIS_NOTE = {
+  exact: null,
+  carried: 'Priced from the nearest earlier close, not this exact date',
+  unpriced: 'No price for this asset on this date — not zero',
+  not_applicable: 'No dollar value applies to this row',
 };
 
 // "0.5 ETH -> 1,832.4 USDC". One description built from netted legs, for both
@@ -104,17 +117,14 @@ const describeLegs = (legs) => {
   return 'No net movement';
 };
 
-// A folded venue half contributes its own assets to the line: the on-chain legs
-// alone describe half the event. Same shape as the API's legs, built from the
-// record's signed base/quote exactly as the server builds an unfolded row's.
-const matchLegs = (match) => {
-  const legs = [];
-  for (const [asset, amount] of [[match.base_asset, match.base_amount], [match.quote_asset, match.quote_amount]]) {
-    if (!asset || amount == null || Number.parseFloat(amount) === 0) continue;
-    const text = String(amount).trim();
-    legs.push({ asset, direction: text.startsWith('-') ? 'out' : 'in', amount: text.replace(/^-/, '') });
-  }
-  return legs;
+// How #61 decided this pairing, in the user's words. The evidence IS the reason
+// to trust or reject it, so it is shown rather than hidden behind a confidence
+// score nobody can interpret.
+const MATCH_METHOD_NOTE = {
+  tx_hash: 'Both sides recorded the same transaction hash',
+  address_amount: 'Same address and amount, within the fee tolerance',
+  amount_window: 'Same amount, inside the settlement window',
+  manual: 'You confirmed this pairing',
 };
 
 // A folded venue record outranks the bare address: it is PROOF of which venue
@@ -122,7 +132,7 @@ const matchLegs = (match) => {
 // nobody has judged. A user's own label still beats both.
 const counterpartyText = (row) => {
   if (row.counterparty_name) return row.counterparty_name;
-  if (row.exchange_matches?.length) return row.exchange_matches[0].account_name;
+  if (row.exchange_match?.account_name) return row.exchange_match.account_name;
   if (row.counterparty_address) return shortEthAddress(row.counterparty_address);
   if (row.record_address) return row.record_address;
   return '—';
@@ -168,6 +178,8 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState(null);
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
+  const [reconciliation, setReconciliation] = useState(null);
+  const [unpriced, setUnpriced] = useState([]);
   const [source, setSource] = useState('');
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
@@ -219,15 +231,26 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
     return () => { cancelled = true; };
   }, [reload, refreshKey]);
 
-  // Completeness signals from the venue side. A ledger that claims to be the
-  // whole history has to say when one of its sources is behind or disagrees
-  // with the venue's own balances -- otherwise "everything is explained" and
-  // "everything we managed to import is explained" look identical.
+  // Completeness signals. A ledger that claims to be the whole history has to
+  // say when it is NOT -- otherwise "everything is explained" and "everything
+  // we managed to import is explained" look identical. Three independent ways
+  // it can be incomplete, each with its own source of truth:
+  //
+  //   the chain disagrees with the stored ledger   -> #62's balance audit
+  //   an asset has no price for its date           -> #73's unpriced list
+  //   a venue import is behind or did not reconcile -> the account's sync status
   useEffect(() => {
     let cancelled = false;
-    exchangesAPI.getAll()
-      .then((result) => { if (!cancelled) setExchangeAccounts(result.accounts || []); })
-      .catch(() => {});
+    Promise.all([
+      exchangesAPI.getAll().catch(() => null),
+      ethAPI.getReconciliation({ status: 'mismatch' }).catch(() => null),
+      ethAPI.getUnpricedAssets().catch(() => null),
+    ]).then(([accounts, recon, unpriced]) => {
+      if (cancelled) return;
+      setExchangeAccounts(accounts?.accounts || []);
+      setReconciliation(recon || null);
+      setUnpriced(unpriced?.data || []);
+    });
     return () => { cancelled = true; };
   }, [reload, refreshKey]);
 
@@ -236,6 +259,15 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
       || account.last_sync_status === 'error'
       || account.balance_report?.backfill_pending
   ), [exchangeAccounts]);
+
+  // Native-only, matching the audit's own badge rule: a token delta has benign
+  // explanations (rebasing supply, fee-on-transfer) and badging those would pin
+  // a permanent number on every wallet that ever held one -- a warning that
+  // cannot clear gets ignored, taking the ETH signal with it.
+  const nativeDrift = useMemo(
+    () => (reconciliation?.data || []).filter((row) => row.asset_key === 'ETH'),
+    [reconciliation]
+  );
 
   const loadMore = async () => {
     const at = filtersRef.current;
@@ -260,7 +292,9 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
   });
 
   const enriched = useMemo(() => rows.map((row) => {
-    const legs = [...(row.legs || []), ...(row.exchange_matches || []).flatMap(matchLegs)];
+    // The folded half's legs come from the server already in leg shape, so the
+    // one description covers the whole movement rather than half of it.
+    const legs = [...(row.legs || []), ...(row.exchange_match?.legs || [])];
     return {
       ...row,
       allLegs: legs,
@@ -309,13 +343,17 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
                 Corrected
               </Chip>
             )}
-            {entry.exchange_matches?.length > 0 && (
+            {entry.exchange_match && (
               <Chip
-                className="border-teal-500/20 bg-teal-500/10 text-teal-400"
-                title="One event recorded on both sides; shown once"
+                className={entry.exchange_match.verdict === 'confirmed'
+                  ? 'border-gain/20 bg-gain/10 text-gain'
+                  : 'border-teal-500/20 bg-teal-500/10 text-teal-400'}
+                title={`One event recorded on both sides; shown once. ${
+                  MATCH_METHOD_NOTE[entry.exchange_match.match_method] || entry.exchange_match.match_method
+                }`}
               >
                 <Link2 size={9} />
-                Matched
+                {entry.exchange_match.verdict === 'confirmed' ? 'Matched ✓' : 'Matched'}
               </Chip>
             )}
             {/* A hash only exists on its own chain: the same lookup on the
@@ -376,6 +414,38 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
       ),
     },
     {
+      id: 'usd',
+      accessorFn: (row) => row.usd_value || '',
+      header: 'Value',
+      meta: { width: '7.5rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+      // Dollars AT THE TIME (#73), not today's price: a 2017 half-ETH send was
+      // ~$150, and pricing it at today's ~$1,800 is a different transaction.
+      // An unpriced row says so instead of showing a blank a reader would
+      // total as zero.
+      cell: ({ row }) => {
+        const entry = row.original;
+        if (entry.usd_value == null) {
+          return (
+            <span
+              className="text-tertiary"
+              title={USD_BASIS_NOTE[entry.usd_basis] || 'No dollar value for this row'}
+            >
+              {entry.usd_basis === 'not_applicable' ? '—' : 'No price'}
+            </span>
+          );
+        }
+        return (
+          <span
+            className={`value-emphasis ${entry.usd_basis === 'carried' ? 'opacity-70' : ''}`}
+            title={USD_BASIS_NOTE[entry.usd_basis] || undefined}
+          >
+            {formatCurrency(Number(entry.usd_value))}
+            {entry.usd_basis === 'carried' && <span className="ml-0.5 text-tertiary">~</span>}
+          </span>
+        );
+      },
+    },
+    {
       id: 'fee',
       accessorFn: (row) => row.fee_amount || '',
       header: 'Fee',
@@ -386,8 +456,8 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
           return <span className="text-tertiary">—</span>;
         }
         return (
-          <span className="font-money text-tertiary">
-            {formatExactUnits(entry.fee_amount)} {entry.fee_asset}
+          <span className="font-money text-tertiary" title={entry.usd_fee ? `${formatCurrency(Number(entry.usd_fee))} at the time` : undefined}>
+            {formatTokenUnits(entry.fee_units, entry.fee_decimals, { maxFractionDigits: 8 }) ?? entry.fee_amount} {entry.fee_asset}
           </span>
         );
       },
@@ -417,7 +487,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
           <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Unified Ledger</h2>
           <p className="mt-0.5 text-caption text-tertiary">
             {summary
-              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched` : ''}`
+              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched pairs shown once` : ''}${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} unpriced` : ''}`
               : 'Loading…'}
             {rangeText ? ` · ${rangeText}` : ''}
           </p>
@@ -481,6 +551,33 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
           ))}
         </select>
       </label>
+
+      {/* Three ways this ledger can be less than the whole truth, each from its
+          own source. Stated separately because the fixes are different: a
+          balance drift means a transfer is missing, an unpriced asset means the
+          dollars are absent (not zero), and a stalled import means rows are. */}
+      {nativeDrift.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 border border-loss/20 bg-loss/5 p-2 text-body-sm text-loss">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span>
+            The stored ledger does not reproduce the ETH balance the chain reports
+            on {nativeDrift.length} {nativeDrift.length === 1 ? 'wallet/chain' : 'wallet/chain pairs'} — a
+            transfer is missing here, so these totals are short.
+          </span>
+        </div>
+      )}
+
+      {unpriced.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 border border-orange-500/20 bg-orange-500/5 p-2 text-body-sm text-orange-400">
+          <DollarSign size={14} className="shrink-0" />
+          <span>
+            {unpriced.length} {unpriced.length === 1 ? 'asset has' : 'assets have'} no
+            price for the dates they moved ({unpriced.slice(0, 4).map((a) => a.symbol || a.asset_key).join(', ')}
+            {unpriced.length > 4 ? `, +${unpriced.length - 4} more` : ''}) — their rows read
+            &quot;No price&quot;, which is not the same as $0.
+          </span>
+        </div>
+      )}
 
       {incompleteAccounts.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2 border border-orange-500/20 bg-orange-500/5 p-2 text-body-sm text-orange-400">
@@ -644,6 +741,27 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
     () => exchangesAPI.resolveRecord(accountId, recordId)
   );
 
+  // Confirm or reject the pairing #61 derived. A verdict names exactly one
+  // pair, in whichever of 041's two shapes this row is: an on-chain match is
+  // keyed on (wallet, chain, tx_hash) -- NOT on eth_activity.id, which churns
+  // on every rebuild -- and a venue-to-venue pair on the counter record.
+  const matchTarget = (match) => ({
+    exchangeRecordId: match.verdict_exchange_record_id,
+    ...(match.verdict_counter_record_id != null
+      ? { counterRecordId: match.verdict_counter_record_id }
+      : { walletId: row.wallet_id, txHash: row.tx_hash, chainId: row.chain_id }),
+  });
+
+  const judgeMatch = (match, verdict) => run(
+    `match:${verdict}`,
+    () => exchangesAPI.setMatchVerdict({ ...matchTarget(match), verdict })
+  );
+
+  const clearMatchVerdict = (match) => run(
+    'match:clear',
+    () => exchangesAPI.clearMatchVerdict(matchTarget(match))
+  );
+
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -668,8 +786,22 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
         </DetailField>
         <DetailField label="Fee">
           {row.fee_amount && Number.parseFloat(row.fee_amount) !== 0
-            ? `${formatExactUnits(row.fee_amount, { maxFractionDigits: 8 })} ${row.fee_asset}`
+            ? `${formatTokenUnits(row.fee_units, row.fee_decimals, { maxFractionDigits: 18 }) ?? row.fee_amount} ${row.fee_asset}`
             : '—'}
+          {row.usd_fee && <span className="ml-1 text-tertiary">({formatCurrency(Number(row.usd_fee))})</span>}
+        </DetailField>
+        {/* The basis is part of the number: "$1,832 exact" and "$1,832 carried
+            from an earlier close" are different claims, and "no price" is not
+            zero. Stating it is what keeps the dollars honest. */}
+        <DetailField label="Value at the time">
+          {row.usd_value != null
+            ? <>
+                {formatCurrency(Number(row.usd_value))}
+                <span className="ml-1 text-tertiary">({row.usd_basis})</span>
+              </>
+            : <span title={USD_BASIS_NOTE[row.usd_basis] || undefined}>
+                {row.usd_basis === 'not_applicable' ? 'Not applicable' : 'No price for this date'}
+              </span>}
         </DetailField>
         {row.method_name && (
           // Attacker-controlled text end to end (anyone can deploy a contract
@@ -687,28 +819,77 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
         {row.override_note && <DetailField label="Note">{row.override_note}</DetailField>}
       </div>
 
-      {row.exchange_matches?.length > 0 && (
+      {/* The other half of this movement (#61), with the EVIDENCE that paired
+          them. A confirm/reject is a judgement about that evidence, so hiding
+          it behind a confidence score would leave nothing to judge. */}
+      {row.exchange_match && (
         <div className="border border-teal-500/20 bg-teal-500/5 p-2">
           <p className="text-[9px] font-bold uppercase tracking-wide text-teal-400">
-            Matched exchange {row.exchange_matches.length === 1 ? 'record' : 'records'}
+            Matched with {row.exchange_match.account_name || row.exchange_match.exchange} · {row.exchange_match.record_type}
           </p>
-          {row.exchange_matches.map((match) => (
-            <div key={match.id} className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-secondary">
-              <span className="font-money">{describeLegs(matchLegs(match))}</span>
-              <span className="text-tertiary">· {match.account_name} · {match.record_type}</span>
-              {match.needs_review && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-secondary">
+            <span className="font-money">{describeLegs(row.exchange_match.legs)}</span>
+            <span className="text-tertiary">
+              · {MATCH_METHOD_NOTE[row.exchange_match.match_method] || row.exchange_match.match_method}
+              {row.exchange_match.match_confidence ? ` · ${row.exchange_match.match_confidence} confidence` : ''}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {row.exchange_match.verdict ? (
+              <>
+                <Chip className={row.exchange_match.verdict === 'confirmed'
+                  ? 'border-gain/20 bg-gain/10 text-gain'
+                  : 'border-loss/20 bg-loss/10 text-loss'}>
+                  You {row.exchange_match.verdict} this
+                </Chip>
                 <button
                   type="button"
-                  onClick={() => resolveRecord(match.exchange_account_id, match.id)}
+                  onClick={() => clearMatchVerdict(row.exchange_match)}
+                  disabled={saving != null}
+                  title="Hand the decision back to the matcher"
+                  className="inline-flex h-7 items-center gap-1 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary disabled:opacity-40"
+                >
+                  {saving === 'match:clear' ? <RefreshCw size={10} className="animate-spin" /> : <Undo2 size={10} />}
+                  Undo verdict
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => judgeMatch(row.exchange_match, 'confirmed')}
                   disabled={saving != null}
                   className="inline-flex h-7 items-center gap-1 rounded border border-gain/30 bg-gain/10 px-2 text-[9px] font-bold uppercase tracking-wide text-gain transition-all hover:bg-gain/20 disabled:opacity-40"
                 >
-                  {saving === `resolve:${match.id}` && <RefreshCw size={10} className="animate-spin" />}
-                  Mark reviewed
+                  {saving === 'match:confirmed' ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />}
+                  Same movement
                 </button>
-              )}
-            </div>
-          ))}
+                {/* Rejecting splits the pair back into two rows -- which is the
+                    honest outcome when the matcher guessed, not a deletion. */}
+                <button
+                  type="button"
+                  onClick={() => judgeMatch(row.exchange_match, 'rejected')}
+                  disabled={saving != null}
+                  title="These are two different movements; show them separately"
+                  className="inline-flex h-7 items-center gap-1 rounded border border-loss/30 bg-loss/10 px-2 text-[9px] font-bold uppercase tracking-wide text-loss transition-all hover:bg-loss/20 disabled:opacity-40"
+                >
+                  {saving === 'match:rejected' ? <RefreshCw size={10} className="animate-spin" /> : <X size={10} />}
+                  Not the same
+                </button>
+              </>
+            )}
+            {row.exchange_match.needs_review && (
+              <button
+                type="button"
+                onClick={() => resolveRecord(row.exchange_match.exchange_account_id, row.exchange_match.exchange_record_id)}
+                disabled={saving != null}
+                className="inline-flex h-7 items-center gap-1 rounded border border-accent/30 bg-accent/10 px-2 text-[9px] font-bold uppercase tracking-wide text-accent transition-all hover:bg-accent/20 disabled:opacity-40"
+              >
+                {saving === `resolve:${row.exchange_match.exchange_record_id}` && <RefreshCw size={10} className="animate-spin" />}
+                Mark the record reviewed
+              </button>
+            )}
+          </div>
         </div>
       )}
 

@@ -751,9 +751,10 @@ test('the transactions mirror carries chain_id through', async (t) => {
 
   stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
   stub(EthWallet, 'getAccountForWallet', async () => ({ id: 9 }));
-  stub(MirrorService, '_getEthPrice', async () => 3000);
+  // No price stub: the mirror fetches nothing since #73. usd_at_time is what
+  // the valuation pass already wrote onto the leg.
   const transfers = [
-    { id: 1, chain_id: 42161, transfer_type: 'native', tx_hash: '0xa', block_time: new Date(0), from_address: WALLET, to_address: '0xdef', value_wei: '1000000000000000000', is_error: false, counterparty_is_own: false, counterparty_exchange: null },
+    { id: 1, chain_id: 42161, transfer_type: 'native', tx_hash: '0xa', block_time: new Date(0), from_address: WALLET, to_address: '0xdef', value_wei: '1000000000000000000', is_error: false, counterparty_is_own: false, counterparty_exchange: null, usd_at_time: '3000.00', usd_basis: 'exact' },
   ];
   const originalQuery = require('../src/config/database').query;
   restore.push([require('../src/config/database'), 'query', originalQuery]);
@@ -774,35 +775,46 @@ test('the transactions mirror carries chain_id through', async (t) => {
   assert.equal(insert.params[5], 42161);
 });
 
+// The per-chain platform invariant moved with #73: the mirror stopped fetching
+// prices entirely, and the chain-scoped CoinGecko lookup now lives in the
+// historical series fill. The invariant itself is unchanged and still the one
+// that matters -- an Arbitrum contract asked against the ethereum platform is a
+// 404, which would be recorded as a permanent "this token has no price" verdict
+// against a perfectly listed token.
 test('per-chain token prices use that chain’s CoinGecko platform', async (t) => {
   const restore = [];
   const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
   t.after(() => { for (const [o, k, v] of restore) o[k] = v; });
 
-  const PriceService = require('../src/services/PriceService');
+  const axios = require('axios');
+  const HistoricalPriceService = require('../src/services/HistoricalPriceService');
+  const AssetPriceHistory = require('../src/models/AssetPriceHistory');
+  const SecretsService = require('../src/services/SecretsService');
+
+  const MAINNET_TOKEN = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const ARBITRUM_TOKEN = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
   const urls = [];
-  stub(PriceService, 'fetchCoinGeckoJson', async (url) => { urls.push(url); return {}; });
-  stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
-  stub(EthWallet, 'getAccountForWallet', async () => ({ id: 9 }));
-  stub(MirrorService, '_getEthPrice', async () => 3000);
+  stub(axios, 'get', async (url) => {
+    urls.push(url);
+    return { status: 200, data: { prices: [[Date.parse('2026-07-01T00:00:00Z'), 1.5]] } };
+  });
+  stub(SecretsService, 'getAppSetting', async () => null);
+  stub(AssetPriceHistory, 'ledgerAssetsForWallet', async () => ([
+    { asset_key: `erc20:1:${MAINNET_TOKEN}`, asset_symbol: 'A', first_date: '2026-06-01' },
+    { asset_key: `erc20:42161:${ARBITRUM_TOKEN}`, asset_symbol: 'B', first_date: '2026-06-01' },
+  ]));
+  stub(AssetPriceHistory, 'coverageFor', async () => new Map());
+  stub(AssetPriceHistory, 'coveredRange', async () => ({ earliest: null, latest: null, points: 0 }));
+  stub(AssetPriceHistory, 'upsertMany', async () => 1);
+  stub(AssetPriceHistory, 'upsertCoverage', async () => null);
 
-  const transfers = [
-    { id: 1, chain_id: 1, transfer_type: 'token', tx_hash: '0xa', block_time: new Date(0), from_address: '0xdef', to_address: WALLET, value_wei: '1', is_error: false, token_contract: '0xaaa', token_symbol: 'A', token_decimals: 18, counterparty_is_own: false, counterparty_exchange: null },
-    { id: 2, chain_id: 42161, transfer_type: 'token', tx_hash: '0xb', block_time: new Date(0), from_address: '0xdef', to_address: WALLET, value_wei: '1', is_error: false, token_contract: '0xbbb', token_symbol: 'B', token_decimals: 18, counterparty_is_own: false, counterparty_exchange: null },
-  ];
-  restore.push([require('../src/config/database'), 'query', require('../src/config/database').query]);
-  require('../src/config/database').query = async (text) => {
-    if (/FROM eth_transfers WHERE wallet_id/.test(text)) return { rows: transfers };
-    return { rows: [] };
-  };
+  await HistoricalPriceService.ensureAssetsForWallet(7);
 
-  await MirrorService.rebuildForWallet(7);
-
-  // Querying an Arbitrum contract against the ethereum platform returns
-  // nothing rather than erroring, so pooling the contracts would look like a
-  // pricing outage that never resolves.
-  assert.ok(urls.some((url) => url.includes('/token_price/ethereum?') && url.includes('0xaaa')));
-  assert.ok(urls.some((url) => url.includes('/token_price/arbitrum-one?') && url.includes('0xbbb')));
+  assert.ok(urls.some((url) => url.includes(`/coins/ethereum/contract/${MAINNET_TOKEN}/market_chart/range`)));
+  assert.ok(urls.some((url) => url.includes(`/coins/arbitrum-one/contract/${ARBITRUM_TOKEN}/market_chart/range`)));
+  // Never pooled into one platform: two contracts, two chain-scoped calls.
+  assert.equal(urls.filter((url) => url.includes('/market_chart/range')).length, 2);
 });
 
 test('same-ticker holdings in one account collapse instead of aborting the snapshot job', () => {

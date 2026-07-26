@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../utils/api';
-import { formatDateDisplay } from '../utils/format';
+import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { explorerTxUrl } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
@@ -83,6 +83,34 @@ const formatTransferQuantity = (transfer) => {
   const quantity = Number(transfer.value_wei) / 10 ** decimals;
   const symbol = transfer.transfer_type === 'token' ? (transfer.token_symbol || 'TOKEN') : 'ETH';
   return `${quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${symbol}`;
+};
+
+// What the row was worth ON ITS OWN DATE (#73), read off the valuation the
+// server already stored -- the client never multiplies a quantity by a price.
+//
+// Three distinct states, and conflating any two of them is the bug this
+// replaces:
+//   a figure      -- valued from the dated series (exact, or carried across a
+//                    gap of a few days in a 24/7 market)
+//   No USD value  -- the asset has no close on that date. NOT $0: an unpriced
+//                    token is unknown, not worthless. Same wording the
+//                    counterparty triage queue already uses for the same reason.
+//   nothing       -- the row has no dollar meaning at all: an NFT leg's
+//                    value_wei is a count of units, and a reverted transfer
+//                    moved nothing.
+const formatTransferUsd = (transfer) => {
+  if (transfer.usd_basis === 'not_applicable') return null;
+  if (transfer.usd_at_time == null) return 'No USD value';
+  const usd = Math.abs(Number(transfer.usd_at_time));
+  if (!Number.isFinite(usd)) return 'No USD value';
+  // Sub-cent amounts round to $0 through the normal formatter, which reads as
+  // worthless rather than as tiny.
+  if (usd > 0 && usd < 0.01) return '< $0.01';
+  // BOTH bounds. maximumFractionDigits alone leaves the minimum at 0, so one
+  // column renders $1,234.5, $1,234 and $0.5 next to each other and the decimal
+  // points stop lining up -- in a money column, where scanning down the point is
+  // the whole reason the column is monospaced.
+  return formatCurrency(usd, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 // Dedicated on-chain ledger for wallet-linked accounts, fed by the raw
@@ -249,6 +277,11 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       chip: transferChipLabel(transfer),
       walletName: walletNames?.get(transfer.wallet_id),
       quantity: formatTransferQuantity(transfer),
+      usdAtTime: formatTransferUsd(transfer),
+      // A carried close is a real valuation, but it is not the day's own close,
+      // and a ledger that cannot say which is which cannot be reconciled
+      // against a tax record.
+      usdCarried: transfer.usd_basis === 'carried',
       description: transfer.transfer_type === 'gas'
         ? 'Gas fee'
         : `${outbound ? 'To' : 'From'} ${exchangeName || shortEthAddress(counterparty)}`,
@@ -337,10 +370,25 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       accessorFn: (row) => row.quantity,
       header: 'Amount',
       meta: { width: '11rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+      // The crypto amount leads because it is the stable fact -- the dollars
+      // are derived from it, at the price on the transfer's own date.
       cell: ({ row }) => (
-        <span className={`font-money font-bold ${row.original.outbound ? 'text-loss' : 'text-gain'}`}>
-          {row.original.outbound ? '-' : '+'}{row.original.quantity}
-        </span>
+        <div className="flex flex-col items-end">
+          <span className={`font-money font-bold ${row.original.outbound ? 'text-loss' : 'text-gain'}`}>
+            {row.original.outbound ? '-' : '+'}{row.original.quantity}
+          </span>
+          {row.original.usdAtTime && (
+            <span
+              className="font-money text-[10px] text-tertiary"
+              title={row.original.usdCarried
+                ? 'Valued at the most recent close before this date'
+                : 'Valued at the price on the transaction date'}
+            >
+              {row.original.usdAtTime}
+              {row.original.usdCarried && <span className="ml-0.5">*</span>}
+            </span>
+          )}
+        </div>
       ),
     },
     {
@@ -521,8 +569,18 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
                       <span>{transfer.chip}</span>
                     </div>
                   </div>
-                  <div className={`shrink-0 font-money text-sm font-bold ${transfer.outbound ? 'text-loss' : 'text-gain'}`}>
-                    {transfer.outbound ? '-' : '+'}{transfer.quantity}
+                  {/* Mirrors the desktop Amount cell exactly: a mobile view
+                      that silently omits the at-the-time dollars would be a
+                      different ledger on a smaller screen. */}
+                  <div className="flex shrink-0 flex-col items-end">
+                    <div className={`font-money text-sm font-bold ${transfer.outbound ? 'text-loss' : 'text-gain'}`}>
+                      {transfer.outbound ? '-' : '+'}{transfer.quantity}
+                    </div>
+                    {transfer.usdAtTime && (
+                      <div className="font-money text-[10px] text-tertiary">
+                        {transfer.usdAtTime}{transfer.usdCarried && '*'}
+                      </div>
+                    )}
                   </div>
                 </div>
                 {transfer.walletName && (

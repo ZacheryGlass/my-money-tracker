@@ -4,15 +4,21 @@ const pool = require('../config/database');
 const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const EthActivity = require('../models/EthActivity');
+const ExchangeMatchService = require('./ExchangeMatchService');
 const { DEFAULT_CHAIN_ID } = require('../config/chains');
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 
 // The full category vocabulary (038's CHECK constraint carries the same list).
-// A superset by design: later issues fill in exchange_trade (#61),
-// staking_reward (#61), bridge_out/bridge_in (#59). 'spend' and 'approval' are
-// reachable only through an override -- see classifyActivity.
+// A superset by design: later issues fill in exchange_trade, staking_reward and
+// bridge_out/bridge_in (#59). 'spend' and 'approval' are reachable only through
+// an override -- see classifyActivity.
+//
+// #61 (exchange matching) deliberately added NONE of them: pairing an on-chain
+// transfer with the exchange's own record says the two rows are the same money,
+// not that the transaction was something other than the deposit or withdrawal
+// the ladder already called it.
 const CATEGORIES = [
   'self_transfer', 'exchange_deposit', 'exchange_withdrawal', 'exchange_trade',
   'staking_reward', 'swap', 'nft_purchase', 'nft_sale', 'nft_mint', 'nft_burn',
@@ -30,6 +36,33 @@ const REVIEW_REASONS = {
   unmatched: 'Inbound and outbound legs did not match a known shape',
   no_legs: 'No transfer legs found for this transaction',
 };
+
+// The at-the-time USD basis vocabulary (043's CHECK carries the same list),
+// weakest last. Folding a set of legs takes the WEAKEST basis among them: one
+// unpriced leg makes the total unpriced, because a partial sum presented as a
+// total is the silent-zero failure wearing a different hat.
+const USD_BASIS_RANK = { exact: 0, carried: 1, unpriced: 2, not_applicable: 3 };
+
+function weakestBasis(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return (USD_BASIS_RANK[a] ?? 2) >= (USD_BASIS_RANK[b] ?? 2) ? a : b;
+}
+
+// USD is accumulated in INTEGER CENTS, never in dollars.
+// eth_transfers.usd_at_time is NUMERIC(20,2) and arrives as a string; summing
+// the parsed dollars would drift by fractions of a cent across a swap's legs
+// and land a $3,000.00 trade at $2,999.99. Exact NUMERIC in SQL, exact cents
+// in JS -- floats value nothing here.
+function toCents(value) {
+  if (value == null) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number * 100) : null;
+}
+
+function fromCents(cents) {
+  return cents == null ? null : Number((cents / 100).toFixed(2));
+}
 
 // NUMERIC(78,0) arrives as a string. Tolerates null and a stray scale so one
 // malformed row cannot throw mid-rebuild.
@@ -49,13 +82,43 @@ function toBigInt(value) {
 // (033), not wei and not a scaled token amount, so scaling it by 18 -- or by
 // anything -- would render a 1-of-1 as 0.000000000000000001. token_decimals is
 // written 0 on those rows, but this never relies on that.
-function legDecimals(transfer) {
+//
+// THE DECIMALS-REPAIR RULE, shared verbatim with the valuation SQL
+// (AssetPriceHistory quantitySql): the leg's OWN token_decimals, else the
+// MINIMUM non-NULL value seen for that (chain, contract) across the wallet,
+// else 18 -- clamped to [0, 78] so a malformed feed value cannot turn
+// 10^decimals into an aborting exponent. Etherscan omits tokenDecimal on some
+// legs of a contract it fills in on others, so a repair is needed; it just has
+// to be the SAME repair on both sides. When it was not, one row could show a
+// netted `amount` scaled by 6 next to a `usd_value` scaled by 18 -- two numbers
+// about the same transfer that cannot both be true.
+function legDecimals(transfer, fallback = 18) {
   if (NFT_TRANSFER_TYPES.has(transfer.transfer_type)) return 0;
   if (transfer.transfer_type === 'token') {
-    const decimals = transfer.token_decimals != null ? Number(transfer.token_decimals) : 18;
-    return Number.isFinite(decimals) ? Math.max(0, Math.min(decimals, 78)) : 18;
+    const raw = transfer.token_decimals != null ? Number(transfer.token_decimals) : fallback;
+    const decimals = Number.isFinite(raw) ? raw : 18;
+    return Math.max(0, Math.min(decimals, 78));
   }
   return 18;
+}
+
+// The wallet-wide half of that rule: MIN(token_decimals) per (chain, contract)
+// over every leg, matching the SQL window function exactly. Built across ALL of
+// a wallet's transfers, not per transaction -- the SQL partition spans the
+// wallet, so a per-tx map would disagree the moment the only leg naming its
+// decimals sat in a different transaction.
+function tokenDecimalsFallbacks(transfers) {
+  const byToken = new Map();
+  for (const transfer of transfers) {
+    if (transfer.transfer_type !== 'token' || !transfer.token_contract) continue;
+    if (transfer.token_decimals == null) continue;
+    const value = Number(transfer.token_decimals);
+    if (!Number.isFinite(value)) continue;
+    const key = `${transfer.chain_id ?? DEFAULT_CHAIN_ID}:${transfer.token_contract}`;
+    const seen = byToken.get(key);
+    if (seen == null || value < seen) byToken.set(key, value);
+  }
+  return byToken;
 }
 
 // Base units -> a whole-unit decimal string. Sign is carried by `direction`, so
@@ -73,7 +136,7 @@ function formatUnits(value, decimals) {
 
 // The netting key. An NFT nets per (contract, token_id): two different ids from
 // one collection are two different things and must never cancel out.
-function assetOf(transfer) {
+function assetOf(transfer, decimalsFallbacks = new Map()) {
   if (NFT_TRANSFER_TYPES.has(transfer.transfer_type)) {
     return {
       key: `nft:${transfer.token_contract}:${transfer.token_id}`,
@@ -92,12 +155,14 @@ function assetOf(transfer) {
       contract: transfer.token_contract || null,
       token_id: null,
       token_standard: transfer.token_standard || 'erc20',
-      decimals: legDecimals(transfer),
-      // legDecimals falls back to 18 when the feed omitted tokenDecimal, and
-      // one such leg first in the list would otherwise pin the whole netted
-      // amount to the wrong scale. The netting loop upgrades to the first
-      // NON-NULL value it sees for the same contract.
-      decimals_known: transfer.token_decimals != null,
+      // The feed omits tokenDecimal on some legs; the wallet-wide MIN for this
+      // (chain, contract) fills the gap, which is the same repair the valuation
+      // SQL makes. One leg missing its decimals can no longer pin the netted
+      // amount to a scale the dollar figure disagrees with.
+      decimals: legDecimals(
+        transfer,
+        decimalsFallbacks.get(`${transfer.chain_id ?? DEFAULT_CHAIN_ID}:${transfer.token_contract}`) ?? 18
+      ),
     };
   }
   // native + internal are both ETH, and netting them together is the point: a
@@ -257,7 +322,7 @@ function classifyActivity({ wallet, failed, valueLegs, hadValueLegs, netLegs, ga
 }
 
 // Pure: one transaction's eth_transfers legs -> one eth_activity row body.
-function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
+function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks = new Map()) {
   const gasLegs = legs.filter((leg) => leg.transfer_type === 'gas');
   const feeWei = gasLegs.reduce((sum, leg) => sum + toBigInt(leg.value_wei), 0n);
 
@@ -298,17 +363,29 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
     // A leg the wallet is not party to cannot appear in its feed; skip rather
     // than assume a direction.
     if (!incoming && !outgoing) continue;
-    const asset = assetOf(leg);
-    const entry = nets.get(asset.key) || { ...asset, raw: 0n };
-    // First NON-NULL token_decimals across the contract's legs wins, rather
-    // than whichever leg happened to be first.
-    if (!entry.decimals_known && asset.decimals_known) {
-      entry.decimals = asset.decimals;
-      entry.decimals_known = true;
-    }
+    const asset = assetOf(leg, decimalsFallbacks);
+    const entry = nets.get(asset.key) || { ...asset, raw: 0n, usdCents: 0, usdBasis: null };
     // A leg from the wallet to itself nets to zero, which is correct.
     if (incoming) entry.raw += toBigInt(leg.value_wei);
     if (outgoing) entry.raw -= toBigInt(leg.value_wei);
+
+    // USD nets the same way the quantity does, and it MUST: every leg of one
+    // transaction shares a date, so it shares a price, and the signed sum of
+    // leg dollars is the netted quantity times that price. Summing here rather
+    // than multiplying the net amount by a price also keeps this layer out of
+    // the pricing business entirely -- usd_at_time is written once, in SQL.
+    //
+    // Two `if`s, not a ternary on `incoming`: a leg from the wallet TO ITSELF
+    // has both flags set, and the quantity above nets it to zero. A ternary
+    // would add its dollars and never subtract them, so a self-leg riding
+    // alongside a real one (a rebase, a claim-and-restake) would understate the
+    // outflow by exactly the self-leg's value while showing the correct amount.
+    const cents = toCents(leg.usd_at_time);
+    entry.usdBasis = weakestBasis(entry.usdBasis, leg.usd_basis || 'unpriced');
+    if (cents != null) {
+      if (incoming) entry.usdCents += cents;
+      if (outgoing) entry.usdCents -= cents;
+    }
     nets.set(asset.key, entry);
   }
 
@@ -322,6 +399,13 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
       direction: entry.raw > 0n ? 'in' : 'out',
       amount: formatUnits(entry.raw, entry.decimals),
       amount_raw: (entry.raw < 0n ? -entry.raw : entry.raw).toString(),
+      // Magnitude, like `amount`: direction already carries the sign. NULL when
+      // the asset could not be priced on this date -- never 0, which would read
+      // as "worth nothing" rather than "not known".
+      usd: entry.usdBasis === 'exact' || entry.usdBasis === 'carried'
+        ? fromCents(Math.abs(entry.usdCents))
+        : null,
+      usd_basis: entry.usdBasis || 'unpriced',
     }))
     // Deterministic: out before in, then asset, then id. A rebuild that
     // reordered legs would show as a diff on every sync.
@@ -339,6 +423,7 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
   });
 
   const counterparty = resolveCounterparty(wallet, valueLegs, gasLegs);
+  const usd = rollUpUsd(netLegs, gasLegs, failed);
 
   return {
     chain_id: chainId,
@@ -356,7 +441,72 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
     // A reverted transaction moved nothing, so it has no legs -- only the fee.
     legs: failed ? [] : netLegs,
     fee_wei: feeWei.toString(),
+    usd_value: usd.value,
+    usd_fee: usd.fee,
+    usd_basis: usd.basis,
   };
+}
+
+// The transaction-level dollar figure, at the time.
+//
+// ONE SIDE, not both. A swap of 1 ETH for 3,000 USDC is a $3,000 event, not a
+// $6,000 one, so the outbound side is the value when there is one and the
+// inbound side otherwise (a receive, an airdrop, a withdrawal). The netted legs
+// already collapsed a refund into its outflow, so this cannot double-count a
+// contract that handed part of the ETH back.
+//
+// NFT legs contribute nothing: their value is out of scope (#73) and their
+// amount is a COUNT OF UNITS (033). The ETH leg of a purchase already carries
+// what was actually paid, which IS the at-the-time value of the NFT.
+function rollUpUsd(netLegs, gasLegs, failed) {
+  let feeCents = 0;
+  let feeBasis = null;
+  for (const leg of gasLegs) {
+    feeBasis = weakestBasis(feeBasis, leg.usd_basis || 'unpriced');
+    const cents = toCents(leg.usd_at_time);
+    if (cents != null) feeCents += Math.abs(cents);
+  }
+  const fee = gasLegs.length && (feeBasis === 'exact' || feeBasis === 'carried')
+    ? fromCents(feeCents)
+    : null;
+
+  // A reverted transaction moved no value; only its fee is real. Reporting a
+  // dollar value for it would put a completed-looking amount on a transaction
+  // that never happened.
+  if (failed || !netLegs.length) {
+    return { value: null, fee, basis: 'not_applicable' };
+  }
+
+  const priced = netLegs.filter((leg) => leg.usd_basis !== 'not_applicable');
+  if (!priced.length) return { value: null, fee, basis: 'not_applicable' };
+
+  const outbound = priced.filter((leg) => leg.direction === 'out');
+  const inbound = priced.filter((leg) => leg.direction === 'in');
+  const basisOf = (legs) => legs.reduce((weakest, leg) => weakestBasis(weakest, leg.usd_basis), null);
+  const valued = (basis) => basis === 'exact' || basis === 'carried';
+
+  // Outbound is the PREFERRED side, not the only one. Both sides of a swap are
+  // the same event, so when the preferred side is unpriced and the other side
+  // has a real figure, taking the figure is strictly better than reporting
+  // nothing: selling an unlisted token for 2 ETH is a two-ETH event, and
+  // "usd_value: null" on it is the silent-zero failure by another route -- the
+  // number was right there on the other leg. Only when NEITHER side is priced
+  // does the transaction report unpriced.
+  let side = outbound.length ? outbound : inbound;
+  let basis = basisOf(side);
+  if (!valued(basis)) {
+    const other = side === outbound ? inbound : outbound;
+    const otherBasis = basisOf(other);
+    if (other.length && valued(otherBasis)) {
+      side = other;
+      basis = otherBasis;
+    }
+  }
+  if (!side.length) return { value: null, fee, basis: 'not_applicable' };
+  if (!valued(basis)) return { value: null, fee, basis };
+
+  const cents = side.reduce((sum, leg) => sum + Math.abs(toCents(leg.usd) ?? 0), 0);
+  return { value: fromCents(cents), fee, basis };
 }
 
 // Pure: a wallet's eth_transfers rows -> its eth_activity rows, one per
@@ -368,6 +518,9 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
 // where every ladder rule is exercised.
 function buildActivityRows(walletAddress, transfers, { ignoredContracts = new Set() } = {}) {
   const wallet = String(walletAddress).toLowerCase();
+  // Wallet-wide, before the grouping: the SQL partition this mirrors spans the
+  // wallet, not the transaction.
+  const decimalsFallbacks = tokenDecimalsFallbacks(transfers);
   const byTx = new Map();
   for (const transfer of transfers) {
     const chainId = transfer.chain_id ?? DEFAULT_CHAIN_ID;
@@ -377,14 +530,19 @@ function buildActivityRows(walletAddress, transfers, { ignoredContracts = new Se
     else byTx.set(groupKey, { chainId, txHash: transfer.tx_hash, legs: [transfer] });
   }
   return [...byTx.values()].map(({ chainId, txHash, legs }) =>
-    buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts));
+    buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks));
 }
 
 class EthActivityService {
   // Deterministic full rebuild of one wallet's activity rows. Called after
   // every sync and every classification refresh, exactly like the ledger
   // mirror. Overrides live in their own table and are untouched here.
-  static async rebuildForWallet(walletId) {
+  //
+  // `rebuildMatches: false` is for a caller that is walking EVERY wallet of one
+  // user: the match pass is user-wide by design, so running it per wallet
+  // repeats the same full re-derivation N times. Such a caller runs it once
+  // itself, after the loop -- see EthWalletService.
+  static async rebuildForWallet(walletId, { rebuildMatches = true } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
@@ -401,8 +559,20 @@ class EthActivityService {
     await this._nameCounterparties(wallet.user_id, rows);
     const written = await EthActivity.replaceForWallet(walletId, rows);
 
+    // The exchange matching pass (#61), re-derived here for the same reason the
+    // rows above are: it is a claim about these rows, and eth_activity is
+    // delete-then-insert, so any match written earlier was cascaded away by the
+    // DELETE that just ran. It also OWNS the needs_review flag on the two
+    // exchange categories -- an exchange flow with no record behind it is the
+    // thing the issue wants surfaced -- so it has to run after the ladder, not
+    // inside it. Non-fatal: a sync that fetched every transfer must not report
+    // failure because a derived side table could not be refreshed.
+    const matches = rebuildMatches
+      ? await ExchangeMatchService.rebuildForUserSafely(wallet.user_id, { walletId })
+      : null;
+
     logger.info({ walletId, activity: written }, 'ETH activity rebuilt');
-    return { activity: written };
+    return { activity: written, matches };
   }
 
   // Fills counterparty_name for display from the owner's labels, resolved with

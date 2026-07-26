@@ -10,8 +10,15 @@ const apiMocks = vi.hoisted(() => ({
     setActivityOverride: vi.fn(),
     clearActivityOverride: vi.fn(),
     labelAddress: vi.fn(),
+    getReconciliation: vi.fn(),
+    getUnpricedAssets: vi.fn(),
   },
-  exchanges: { getAll: vi.fn(), resolveRecord: vi.fn() },
+  exchanges: {
+    getAll: vi.fn(),
+    resolveRecord: vi.fn(),
+    setMatchVerdict: vi.fn(),
+    clearMatchVerdict: vi.fn(),
+  },
 }));
 
 vi.mock('../utils/api', () => ({
@@ -37,9 +44,11 @@ const onchain = (overrides = {}) => ({
   category: 'swap',
   needs_review: false,
   review_reason: null,
+  // Base units + scale ride beside the decimal string, so the client renders
+  // through the SHARED BigInt formatter rather than a second one of its own.
   legs: [
-    { asset: 'ETH', direction: 'out', amount: '0.5' },
-    { asset: 'USDC', direction: 'in', amount: '1832.4' },
+    { asset: 'ETH', direction: 'out', amount: '0.5', units: '5', decimals: 1 },
+    { asset: 'USDC', direction: 'in', amount: '1832.4', units: '18324', decimals: 1 },
   ],
   fee_amount: '0.00084',
   fee_asset: 'ETH',
@@ -53,7 +62,10 @@ const onchain = (overrides = {}) => ({
   method_name: 'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)',
   is_overridden: false,
   derived_category: 'swap',
-  exchange_matches: [],
+  exchange_match: null,
+  usd_value: '1832.40',
+  usd_fee: '2.35',
+  usd_basis: 'exact',
   ...overrides,
 });
 
@@ -68,7 +80,7 @@ const exchange = (overrides = {}) => ({
   review_reason: null,
   legs: [
     { asset: 'ETH', direction: 'out', amount: '0.5' },
-    { asset: 'USD', direction: 'in', amount: '1832.4' },
+    { asset: 'USD', direction: 'in', amount: '1832.4', units: '18324', decimals: 1 },
   ],
   fee_amount: '4.76',
   fee_asset: 'USD',
@@ -82,7 +94,10 @@ const exchange = (overrides = {}) => ({
   record_type: 'trade',
   external_id: 'TRD-1',
   is_overridden: false,
-  exchange_matches: [],
+  exchange_match: null,
+  usd_value: '1832.40',
+  usd_fee: '2.35',
+  usd_basis: 'exact',
   ...overrides,
 });
 
@@ -102,6 +117,8 @@ describe('CryptoLedger', () => {
     });
     apiMocks.crypto.ledgerExportUrl.mockReturnValue('/api/crypto/ledger/export');
     apiMocks.eth.getTransfers.mockResolvedValue({ data: [], pagination: { total: 0 } });
+    apiMocks.eth.getReconciliation.mockResolvedValue({ data: [], summary: {} });
+    apiMocks.eth.getUnpricedAssets.mockResolvedValue({ data: [], total: 0 });
     apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
   });
 
@@ -111,7 +128,7 @@ describe('CryptoLedger', () => {
     setLedger([onchain({
       category: 'receive',
       needs_review: true,
-      legs: [{ asset: 'ETH', direction: 'in', amount: '0.000000420000000000' }],
+      legs: [{ asset: 'ETH', direction: 'in', amount: '0.00000042', units: '42', decimals: 8 }],
     })]);
 
     render(<CryptoLedger />);
@@ -139,19 +156,24 @@ describe('CryptoLedger', () => {
     setLedger([onchain({
       id: `onchain:42161:${TX}:1`,
       category: 'exchange_deposit',
-      legs: [{ asset: 'ETH', direction: 'out', amount: '1.25' }],
-      exchange_matches: [{
-        id: 55, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
-        record_type: 'deposit', base_asset: 'ETH', base_amount: '1.250000000000000000',
-        quote_asset: null, quote_amount: null, needs_review: false, external_id: 'DEP-1',
-      }],
+      legs: [{ asset: 'ETH', direction: 'out', amount: '1.25', units: '125', decimals: 2 }],
+      exchange_match: {
+        match_id: 3, exchange_record_id: 55, verdict_exchange_record_id: 55,
+        verdict_counter_record_id: null, match_method: 'tx_hash', match_confidence: 'high',
+        verdict: null, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
+        record_type: 'deposit', needs_review: false, external_id: 'DEP-1',
+        legs: [{ asset: 'ETH', direction: 'in', amount: '1.25', units: '125', decimals: 2 }],
+      },
     })]);
 
     render(<CryptoLedger />);
 
     // One row, not two.
     expect(await screen.findByText('Showing 1 of 1')).toBeInTheDocument();
-    expect(screen.getAllByTitle('One event recorded on both sides; shown once').length).toBeGreaterThan(0);
+    // The chip carries the EVIDENCE, not just the fact: a confirm/reject is a
+    // judgement about how the two were paired, so hiding it would leave
+    // nothing to judge.
+    expect(screen.getAllByTitle(/Both sides recorded the same transaction hash/).length).toBeGreaterThan(0);
     // Both halves on the one line: the wallet's outflow and the venue's credit.
     expect(screen.getAllByText('1.25 ETH → 1.25 ETH').length).toBeGreaterThan(0);
     // The matched venue names the counterparty where the chain side has none.
@@ -245,7 +267,7 @@ describe('CryptoLedger', () => {
       category: 'send',
       needs_review: true,
       review_reason: 'Counterparty has no verdict: spending, a gift, or a transfer?',
-      legs: [{ asset: 'ETH', direction: 'out', amount: '0.25' }],
+      legs: [{ asset: 'ETH', direction: 'out', amount: '0.25', units: '25', decimals: 2 }],
       tx_hash: TX2,
     })]);
     apiMocks.eth.setActivityOverride.mockResolvedValue({ override: {} });
@@ -290,7 +312,7 @@ describe('CryptoLedger', () => {
       derived_category: 'send',
       is_overridden: true,
       override_note: 'Bought a domain',
-      legs: [{ asset: 'ETH', direction: 'out', amount: '0.25' }],
+      legs: [{ asset: 'ETH', direction: 'out', amount: '0.25', units: '25', decimals: 2 }],
     })]);
     apiMocks.eth.clearActivityOverride.mockResolvedValue({ message: 'Override removed' });
 
@@ -350,22 +372,188 @@ describe('CryptoLedger', () => {
       id: `onchain:1:${TX2}:1`,
       category: 'exchange_deposit',
       needs_review: true,
-      legs: [{ asset: 'ETH', direction: 'out', amount: '1.25' }],
-      exchange_matches: [{
-        id: 88, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
-        record_type: 'deposit', base_asset: 'ETH', base_amount: '1.250000000000000000',
-        quote_asset: null, quote_amount: null, needs_review: true, external_id: 'DEP-2',
-      }],
+      legs: [{ asset: 'ETH', direction: 'out', amount: '1.25', units: '125', decimals: 2 }],
+      exchange_match: {
+        match_id: 4, exchange_record_id: 88, verdict_exchange_record_id: 88,
+        verdict_counter_record_id: null, match_method: 'address_amount', match_confidence: 'medium',
+        verdict: null, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
+        record_type: 'deposit', needs_review: true, external_id: 'DEP-2',
+        legs: [{ asset: 'ETH', direction: 'in', amount: '1.25', units: '125', decimals: 2 }],
+      },
     })]);
     apiMocks.exchanges.resolveRecord.mockResolvedValue({ record: {} });
 
     render(<CryptoLedger />);
     fireEvent.click((await screen.findAllByText('1.25 ETH → 1.25 ETH'))[0]);
-    fireEvent.click((await screen.findAllByRole('button', { name: /mark reviewed/i }))[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /mark the record reviewed/i }))[0]);
 
     await vi.waitFor(() => {
       expect(apiMocks.exchanges.resolveRecord).toHaveBeenCalledWith(7, 88);
     });
+  });
+
+  it('confirms a pairing against the endpoint that owns verdicts', async () => {
+    setLedger([onchain({
+      id: `onchain:1:${TX}:1`,
+      category: 'exchange_deposit',
+      legs: [{ asset: 'ETH', direction: 'out', amount: '1.25', units: '125', decimals: 2 }],
+      chain_id: 1,
+      exchange_match: {
+        match_id: 3, exchange_record_id: 55, verdict_exchange_record_id: 55,
+        verdict_counter_record_id: null, match_method: 'amount_window', match_confidence: 'low',
+        verdict: null, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
+        record_type: 'deposit', needs_review: false, external_id: 'DEP-1',
+        legs: [{ asset: 'ETH', direction: 'in', amount: '1.25', units: '125', decimals: 2 }],
+      },
+    })]);
+    apiMocks.exchanges.setMatchVerdict.mockResolvedValue({ verdict: {} });
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('1.25 ETH → 1.25 ETH'))[0]);
+    // The weakest evidence is stated outright, which is what makes the choice
+    // a real one.
+    expect((await screen.findAllByText(/Same amount, inside the settlement window/)).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByRole('button', { name: /same movement/i })[0]);
+
+    await vi.waitFor(() => {
+      // Keyed on (wallet, chain, tx_hash), NEVER on eth_activity.id: that
+      // surrogate churns on every rebuild, which is why 041 keys it this way.
+      expect(apiMocks.exchanges.setMatchVerdict).toHaveBeenCalledWith({
+        exchangeRecordId: 55, walletId: 1, txHash: TX, chainId: 1, verdict: 'confirmed',
+      });
+    });
+  });
+
+  it('rejects a pairing, which splits it back into two rows', async () => {
+    setLedger([onchain({
+      category: 'exchange_deposit',
+      legs: [{ asset: 'ETH', direction: 'out', amount: '1.25', units: '125', decimals: 2 }],
+      exchange_match: {
+        match_id: 3, exchange_record_id: 55, verdict_exchange_record_id: 55,
+        verdict_counter_record_id: null, match_method: 'amount_window', match_confidence: 'low',
+        verdict: null, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
+        record_type: 'deposit', needs_review: false, external_id: 'DEP-1',
+        legs: [{ asset: 'ETH', direction: 'in', amount: '1.25', units: '125', decimals: 2 }],
+      },
+    })]);
+    apiMocks.exchanges.setMatchVerdict.mockResolvedValue({ verdict: {} });
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('1.25 ETH → 1.25 ETH'))[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /not the same/i }))[0]);
+
+    await vi.waitFor(() => {
+      expect(apiMocks.exchanges.setMatchVerdict).toHaveBeenCalledWith(
+        expect.objectContaining({ exchangeRecordId: 55, verdict: 'rejected' })
+      );
+    });
+  });
+
+  it('addresses a venue-to-venue verdict to the primary, not the record on screen', async () => {
+    // The row shows the COUNTER record while 041 keys the verdict on the
+    // primary, so the ids come from the server rather than from what is
+    // rendered -- inferring them here gets this case backwards.
+    setLedger([exchange({
+      exchange_match: {
+        match_id: 9, exchange_record_id: 71, verdict_exchange_record_id: 55,
+        verdict_counter_record_id: 71, match_method: 'address_amount', match_confidence: 'medium',
+        verdict: null, exchange_account_id: 8, account_name: 'Coinbase', exchange: 'coinbase',
+        record_type: 'deposit', needs_review: false, external_id: 'CB-1',
+        legs: [{ asset: 'ETH', direction: 'in', amount: '0.5', units: '5', decimals: 1 }],
+      },
+    })]);
+    apiMocks.exchanges.setMatchVerdict.mockResolvedValue({ verdict: {} });
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText(/0\.5 ETH → 1,832\.4 USD \+ 0\.5 ETH/))[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /same movement/i }))[0]);
+
+    await vi.waitFor(() => {
+      expect(apiMocks.exchanges.setMatchVerdict).toHaveBeenCalledWith({
+        exchangeRecordId: 55, counterRecordId: 71, verdict: 'confirmed',
+      });
+    });
+  });
+
+  it('undoes a verdict, handing the decision back to the matcher', async () => {
+    setLedger([onchain({
+      category: 'exchange_deposit',
+      legs: [{ asset: 'ETH', direction: 'out', amount: '1.25', units: '125', decimals: 2 }],
+      exchange_match: {
+        match_id: 3, exchange_record_id: 55, verdict_exchange_record_id: 55,
+        verdict_counter_record_id: null, match_method: 'tx_hash', match_confidence: 'high',
+        verdict: 'confirmed', exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
+        record_type: 'deposit', needs_review: false, external_id: 'DEP-1',
+        legs: [{ asset: 'ETH', direction: 'in', amount: '1.25', units: '125', decimals: 2 }],
+      },
+    })]);
+    apiMocks.exchanges.clearMatchVerdict.mockResolvedValue({ message: 'removed' });
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('1.25 ETH → 1.25 ETH'))[0]);
+    expect((await screen.findAllByText(/You confirmed this/)).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByRole('button', { name: /undo verdict/i })[0]);
+
+    await vi.waitFor(() => {
+      expect(apiMocks.exchanges.clearMatchVerdict).toHaveBeenCalledWith(
+        expect.objectContaining({ exchangeRecordId: 55 })
+      );
+    });
+  });
+
+  it('shows the dollars the transaction was worth AT THE TIME', async () => {
+    setLedger([onchain({ usd_value: '152.30', usd_basis: 'exact' })]);
+    render(<CryptoLedger />);
+    expect((await screen.findAllByText('$152')).length).toBeGreaterThan(0);
+  });
+
+  it('says "No price" rather than showing an unpriced row as $0', async () => {
+    // A 2019 token outside a free key's range is not worth zero; a blank or a
+    // 0 in a money column is the one reading that must be impossible.
+    setLedger([onchain({ usd_value: null, usd_fee: null, usd_basis: 'unpriced' })]);
+    render(<CryptoLedger />);
+
+    expect((await screen.findAllByText('No price')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('$0')).toBeNull();
+    expect(screen.getAllByTitle(/No price for this asset on this date — not zero/).length).toBeGreaterThan(0);
+  });
+
+  it('marks a carried price as approximate rather than passing it off as exact', async () => {
+    setLedger([onchain({ usd_value: '1500.00', usd_basis: 'carried' })]);
+    render(<CryptoLedger />);
+    expect((await screen.findAllByTitle(/nearest earlier close/)).length).toBeGreaterThan(0);
+  });
+
+  it('warns when the chain disagrees with the stored ledger', async () => {
+    // #62's audit: a native drift means a transfer is missing, so the totals
+    // above it are short and saying "everything is explained" would be false.
+    apiMocks.eth.getReconciliation.mockResolvedValue({
+      data: [
+        { wallet_id: 1, chain_id: 1, asset_key: 'ETH', status: 'mismatch' },
+        // A token delta is NOT counted: rebasing and fee-on-transfer contracts
+        // drift with no transfer to record, and a warning that cannot clear
+        // gets ignored -- taking the ETH signal with it.
+        { wallet_id: 1, chain_id: 1, asset_key: '0xabc', status: 'mismatch' },
+      ],
+      summary: {},
+    });
+
+    render(<CryptoLedger />);
+
+    expect(await screen.findByText(/does not reproduce the ETH balance/)).toBeInTheDocument();
+    expect(screen.getByText(/on 1 wallet\/chain/)).toBeInTheDocument();
+  });
+
+  it('names the assets it could not price, so a gap is not read as zero', async () => {
+    apiMocks.eth.getUnpricedAssets.mockResolvedValue({
+      data: [{ asset_key: 'erc20:1:0xabc', symbol: 'OLDTOKEN' }],
+      total: 1,
+    });
+
+    render(<CryptoLedger />);
+
+    expect(await screen.findByText(/OLDTOKEN/)).toBeInTheDocument();
+    expect(screen.getByText(/not the same as \$0/)).toBeInTheDocument();
   });
 
   it('links an on-chain row to its own chain’s explorer', async () => {

@@ -18,48 +18,41 @@ const EthActivityService = require('../services/EthActivityService');
 // joins are in the CTEs, so a missing userId cannot widen the feed -- and the
 // entry points throw without one rather than serving an unscoped read.
 
-// An exchange record and an on-chain activity row that carry the SAME
-// transaction hash are one event seen from both sides: the venue's own ledger
-// line for a withdrawal, and the wallet's receipt of it. Rendering both is
-// double-counting the event and doubling the review burden, so the record is
-// folded INTO the activity row and suppressed from its own branch.
+// Which exchange records are already accounted for on another row.
 //
-// Keyed on the hash and nothing else. That is a fact both sides recorded, not a
-// heuristic on amount and timestamp -- the fuzzy matcher (#61) is what will
-// pair the legs that carry no hash, and it lands beside this rather than
-// replacing it.
+// This is #61's matcher, NOT a hash comparison done here: `exchange_matches`
+// already decided that "sent 1.4 ETH to Coinbase" and "Coinbase received
+// 1.4 ETH" are one movement, with evidence (tx_hash / address_amount /
+// amount_window / manual), a confidence, and a user verdict that can overrule
+// it. Re-deriving that in this file would be a second matcher disagreeing with
+// the first.
 //
-// DISTINCT ON (er.id) is load-bearing: exchange_records has no chain column
-// (the on-chain side is chain-keyed since 039), and one hash can also belong to
-// two activity rows when two of the user's own wallets are both party to the
-// transaction. Picking the lowest activity id makes the fold deterministic and
-// guarantees the record appears exactly ONCE -- against every activity row, it
-// would appear as many times as the hash matched.
+// Two shapes, per 041's one_shape CHECK:
+//   activity_id + record        -> the record folds into the on-chain row
+//   record + counter_record_id  -> a venue-to-venue transfer that never touched
+//                                  a tracked wallet; the counter folds into the
+//                                  primary, which is the orientation the table
+//                                  itself carries
+// Either way the movement renders ONCE. Both unique indexes guarantee at most
+// one match per record, so no fold can fan a row into two.
 const MATCHED_CTE = `
-  matched AS (
-    SELECT DISTINCT ON (er.id) er.id AS record_id, a.id AS activity_id
-    FROM exchange_records er
-    JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
-    JOIN eth_activity a ON LOWER(a.tx_hash) = LOWER(er.tx_hash)
+  matched_records AS (
+    SELECT em.exchange_record_id AS record_id
+    FROM exchange_matches em
+    JOIN eth_activity a ON a.id = em.activity_id
     JOIN eth_wallets w ON w.id = a.wallet_id
-    WHERE ea.user_id = $1
-      AND w.user_id = $1
-      AND er.tx_hash IS NOT NULL
-      AND er.tx_hash <> ''
-    ORDER BY er.id, a.id
+    WHERE w.user_id = $1
+    UNION
+    SELECT em.counter_record_id AS record_id
+    FROM exchange_matches em
+    JOIN exchange_records er ON er.id = em.exchange_record_id
+    JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+    WHERE ea.user_id = $1 AND em.counter_record_id IS NOT NULL
   )`;
 
-// The on-chain branch. Overrides are COALESCEd over the derived verdict in this
-// one place, the same contract EthActivity.findForUser has: an override IS a
-// review, so it also clears needs_review and its reason.
-//
-// needs_review ORs in the folded records' own flags. A flagged exchange record
-// folded into an explained activity row would otherwise vanish from the review
-// queue while still being unexplained -- the exact failure "no transaction
-// unexplained" exists to prevent.
 // record_type is the exchange's own vocabulary; it is mapped onto the activity
-// layer's categories so ONE ?category= filter answers for both sources. The
-// mapping is deliberately conservative:
+// layer's categories here so ONE ?category= filter answers for both sources.
+// The mapping is deliberately conservative:
 //
 //   trade / conversion -> exchange_trade   both are a venue-side trade
 //   deposit            -> exchange_deposit the two halves of a deposit agree:
@@ -75,9 +68,9 @@ const MATCHED_CTE = `
 // 'transfer' is NOT mapped to self_transfer: that would assert both ends are
 // the user's, which is precisely what the import could not determine.
 //
-// Taken as a function of the alias because it is needed twice -- once to give
-// an unfolded record its category, and once so a FOLDED record can still be
-// found by the category filter through its host row.
+// Taken as a function of the alias because it is needed three times -- an
+// unfolded record's own category, and the category a FOLDED record would have
+// had, so the category filter can still find it through its host row.
 const recordCategory = (alias) => `
       CASE ${alias}.record_type
         WHEN 'trade' THEN 'exchange_trade'
@@ -89,6 +82,48 @@ const recordCategory = (alias) => `
         ELSE 'exchange_transfer'
       END`;
 
+// The folded venue half, as JSON.
+//
+// ::text on every NUMERIC. jsonb_build_object would emit them as JSON NUMBERS,
+// and node-pg parses jsonb with JSON.parse -- so a folded amount would arrive
+// as a double, print in exponent notation below 1e-6 and drop digits above
+// 2^53. Nowhere else in this file does a quantity leave Postgres as anything
+// but a string.
+// `verdict_*` are the ids a confirm/reject must be addressed to, stated by the
+// side that knows: 041's verdict table keys an on-chain match on the matched
+// record plus (wallet, chain, tx_hash), and a venue pair on BOTH record ids in
+// the table's own orientation. Inferring that client-side from `record_id`
+// alone gets the venue-pair case backwards, because the record shown is the
+// COUNTER while the verdict is keyed on the primary.
+const matchJson = (em, er, ea, mv) => `jsonb_build_object(
+      'match_id', ${em}.id,
+      'exchange_record_id', ${er}.id,
+      'verdict_exchange_record_id', ${em}.exchange_record_id,
+      'verdict_counter_record_id', ${em}.counter_record_id,
+      'match_method', ${em}.match_method,
+      'match_confidence', ${em}.confidence,
+      'verdict', ${mv}.verdict,
+      'exchange_account_id', ${ea}.id,
+      'account_name', ${ea}.name,
+      'exchange', ${ea}.exchange,
+      'record_type', ${er}.record_type,
+      'occurred_at', ${er}.occurred_at,
+      'base_asset', ${er}.base_asset, 'base_amount', ${er}.base_amount::text,
+      'quote_asset', ${er}.quote_asset, 'quote_amount', ${er}.quote_amount::text,
+      'fee_asset', ${er}.fee_asset, 'fee_amount', ${er}.fee_amount::text,
+      'external_id', ${er}.external_id,
+      'needs_review', ${er}.needs_review,
+      'category', ${recordCategory(er)}
+    )`;
+
+// The on-chain branch. Overrides are COALESCEd over the derived verdict in this
+// one place, the same contract EthActivity.findForUser has: an override IS a
+// review, so it also clears needs_review and its reason.
+//
+// needs_review ORs in the folded record's own flag. A flagged exchange record
+// folded into an explained activity row would otherwise vanish from the review
+// queue while still being unexplained -- the exact failure "no transaction
+// unexplained" exists to prevent.
 const ONCHAIN_CTE = `
   onchain AS (
     SELECT
@@ -97,7 +132,7 @@ const ONCHAIN_CTE = `
       a.block_time AS occurred_at,
       COALESCE(o.category, a.category)::text AS category,
       ((CASE WHEN o.category IS NOT NULL THEN FALSE ELSE a.needs_review END)
-        OR COALESCE(m.any_review, FALSE)) AS needs_review,
+        OR COALESCE(mer.needs_review, FALSE)) AS needs_review,
       (CASE WHEN o.category IS NOT NULL THEN NULL ELSE a.review_reason END)::text AS review_reason,
       a.wallet_id,
       a.chain_id,
@@ -110,6 +145,12 @@ const ONCHAIN_CTE = `
       a.legs,
       a.fee_wei,
       a.confidence::text AS confidence,
+      -- At-the-time USD (043). Never recomputed here: the dollars are
+      -- denormalized onto the row by the valuation pass, so every reader agrees
+      -- on what a 2017 transfer was worth in 2017.
+      a.usd_value::text AS usd_value,
+      a.usd_fee::text AS usd_fee,
+      a.usd_basis::text AS usd_basis,
       a.category::text AS derived_category,
       o.category::text AS override_category,
       o.note::text AS override_note,
@@ -129,52 +170,38 @@ const ONCHAIN_CTE = `
       NULL::text AS external_id,
       NULL::text AS record_address,
       NULL::text AS record_source,
-      COALESCE(m.records, '[]'::jsonb) AS exchange_matches,
-      -- What the folded halves would have been filed under on their own. The
+      CASE WHEN em.id IS NULL THEN NULL ELSE ${matchJson('em', 'mer', 'mea', 'mv')} END AS exchange_match,
+      -- What the folded half would have been filed under on its own. The
       -- source/category/account filters read these too: a record suppressed
       -- from its own branch and then filtered out of its host would appear
       -- NOWHERE, which is a filter that silently DROPS an event rather than
       -- narrowing to it -- and the venue calls a deposit a "withdrawal", so
       -- that mismatch is the normal case, not the corner one.
-      COALESCE(m.match_categories, ARRAY[]::text[]) AS match_categories,
-      COALESCE(m.match_account_ids, ARRAY[]::int[]) AS match_account_ids
+      ${recordCategory('mer')}::text AS match_category,
+      mea.id AS match_account_id
     FROM eth_activity a
     JOIN eth_wallets w ON w.id = a.wallet_id
     LEFT JOIN eth_activity_overrides o
       ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash
-    LEFT JOIN LATERAL (
-      SELECT
-        jsonb_agg(jsonb_build_object(
-          'id', er.id,
-          'exchange_account_id', er.exchange_account_id,
-          'account_name', ea.name,
-          'exchange', ea.exchange,
-          'record_type', er.record_type,
-          'occurred_at', er.occurred_at,
-          -- ::text on every NUMERIC(38,18). jsonb_build_object would emit them
-          -- as JSON NUMBERS, and node-pg parses jsonb with JSON.parse -- so a
-          -- folded amount would arrive as a double, print in exponent notation
-          -- below 1e-6 and drop digits above 2^53. Nowhere else in this file
-          -- does a quantity leave Postgres as anything but a string.
-          'base_asset', er.base_asset, 'base_amount', er.base_amount::text,
-          'quote_asset', er.quote_asset, 'quote_amount', er.quote_amount::text,
-          'fee_asset', er.fee_asset, 'fee_amount', er.fee_amount::text,
-          'external_id', er.external_id,
-          'needs_review', er.needs_review,
-          'source', er.source
-        ) ORDER BY er.id) AS records,
-        bool_or(er.needs_review) AS any_review,
-        array_agg(DISTINCT ${recordCategory('er')}) AS match_categories,
-        array_agg(DISTINCT er.exchange_account_id) AS match_account_ids
-      FROM matched mm
-      JOIN exchange_records er ON er.id = mm.record_id
-      JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
-      WHERE mm.activity_id = a.id
-    ) m ON TRUE
+    -- At most one match per activity row (041's unique index says so), so none
+    -- of these can fan one row into two.
+    LEFT JOIN exchange_matches em ON em.activity_id = a.id
+    LEFT JOIN exchange_records mer ON mer.id = em.exchange_record_id
+    LEFT JOIN exchange_accounts mea ON mea.id = mer.exchange_account_id
+    LEFT JOIN exchange_match_verdicts mv
+      ON mv.exchange_record_id = em.exchange_record_id
+     AND mv.counter_record_id IS NULL
+     AND mv.wallet_id = a.wallet_id
+     AND mv.chain_id = a.chain_id
+     AND mv.tx_hash = a.tx_hash
     WHERE w.user_id = $1
   )`;
 
-// The venue branch: every record the fold did not absorb.
+// The venue branch: every record no other row already accounts for.
+//
+// A record that is the PRIMARY of a venue-to-venue pair keeps its row and folds
+// its counter in; a record that is somebody's counter, or that folded into an
+// on-chain row, is suppressed here.
 const EXCHANGE_CTE = `
   exch AS (
     SELECT
@@ -182,7 +209,7 @@ const EXCHANGE_CTE = `
       er.id AS row_id,
       er.occurred_at,
       ${recordCategory('er')}::text AS category,
-      er.needs_review,
+      (er.needs_review OR COALESCE(cer.needs_review, FALSE)) AS needs_review,
       NULL::text AS review_reason,
       NULL::int AS wallet_id,
       NULL::int AS chain_id,
@@ -195,6 +222,24 @@ const EXCHANGE_CTE = `
       '[]'::jsonb AS legs,
       NULL::numeric AS fee_wei,
       NULL::text AS confidence,
+      -- exchange_records carry no dated valuation: 043 values the on-chain
+      -- ledger, and a venue row is only in dollars when the venue itself quoted
+      -- it in dollars. That case is EXACT -- the venue wrote the number -- and
+      -- every other case is honestly unpriced rather than silently zero.
+      CASE WHEN UPPER(er.quote_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
+             AND er.quote_amount IS NOT NULL
+           THEN ABS(er.quote_amount)::text
+           WHEN UPPER(er.base_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
+             AND er.base_amount IS NOT NULL
+           THEN ABS(er.base_amount)::text
+      END AS usd_value,
+      CASE WHEN UPPER(er.fee_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
+             AND er.fee_amount IS NOT NULL
+           THEN ABS(er.fee_amount)::text
+      END AS usd_fee,
+      CASE WHEN UPPER(er.quote_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
+             OR UPPER(er.base_asset) IN ('USD', 'USDC', 'USDT', 'DAI', 'ZUSD')
+           THEN 'exact' ELSE 'unpriced' END AS usd_basis,
       NULL::text AS derived_category,
       NULL::text AS override_category,
       NULL::text AS override_note,
@@ -214,13 +259,21 @@ const EXCHANGE_CTE = `
       er.external_id::text AS external_id,
       er.address::text AS record_address,
       er.source::text AS record_source,
-      '[]'::jsonb AS exchange_matches,
-      ARRAY[]::text[] AS match_categories,
-      ARRAY[]::int[] AS match_account_ids
+      CASE WHEN cem.id IS NULL THEN NULL ELSE ${matchJson('cem', 'cer', 'cea', 'cmv')} END AS exchange_match,
+      ${recordCategory('cer')}::text AS match_category,
+      cea.id AS match_account_id
     FROM exchange_records er
     JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+    -- The venue-to-venue pair this record is the primary of, if any.
+    LEFT JOIN exchange_matches cem
+      ON cem.exchange_record_id = er.id AND cem.counter_record_id IS NOT NULL
+    LEFT JOIN exchange_records cer ON cer.id = cem.counter_record_id
+    LEFT JOIN exchange_accounts cea ON cea.id = cer.exchange_account_id
+    LEFT JOIN exchange_match_verdicts cmv
+      ON cmv.exchange_record_id = cem.exchange_record_id
+     AND cmv.counter_record_id = cem.counter_record_id
     WHERE ea.user_id = $1
-      AND NOT EXISTS (SELECT 1 FROM matched mm WHERE mm.record_id = er.id)
+      AND NOT EXISTS (SELECT 1 FROM matched_records mm WHERE mm.record_id = er.id)
   )`;
 
 const LEDGER_CTE = `WITH ${MATCHED_CTE},\n${ONCHAIN_CTE},\n${EXCHANGE_CTE}`;
@@ -268,6 +321,19 @@ function trimDecimal(value) {
   return trimmed === '' || trimmed === '-' ? '0' : trimmed;
 }
 
+// A whole-unit decimal string -> the base-unit integer and the scale that
+// produced it, so the client can render it with the SHARED formatTokenUnits
+// (which is BigInt end to end) instead of a second formatter of its own.
+// '0.5' -> {units: '5', decimals: 1}; '1832.412345' -> {'1832412345', 6}.
+function toBaseUnits(value) {
+  const text = trimDecimal(value);
+  if (text === null) return { units: null, decimals: 0 };
+  const negative = text.startsWith('-');
+  const [whole = '0', frac = ''] = text.replace(/^-/, '').split('.');
+  const digits = `${whole}${frac}`.replace(/^0+(?=\d)/, '') || '0';
+  return { units: `${negative && digits !== '0' ? '-' : ''}${digits}`, decimals: frac.length };
+}
+
 function isZero(value) {
   return value === null || value === undefined || Number.parseFloat(value) === 0;
 }
@@ -285,23 +351,40 @@ function absDecimal(value) {
 //
 // The exchange amounts are stored SIGNED as the venue wrote them (a sell's base
 // is negative), which is exactly the direction information a leg needs.
-function exchangeLegs(row) {
+function legsFromAmounts(pairs) {
   const legs = [];
-  if (row.base_asset && !isZero(row.base_amount)) {
+  for (const [asset, amount] of pairs) {
+    if (!asset || isZero(amount)) continue;
+    const magnitude = absDecimal(amount);
     legs.push({
-      asset: row.base_asset,
-      direction: String(row.base_amount).trim().startsWith('-') ? 'out' : 'in',
-      amount: absDecimal(row.base_amount),
-    });
-  }
-  if (row.quote_asset && !isZero(row.quote_amount)) {
-    legs.push({
-      asset: row.quote_asset,
-      direction: String(row.quote_amount).trim().startsWith('-') ? 'out' : 'in',
-      amount: absDecimal(row.quote_amount),
+      asset,
+      direction: String(amount).trim().startsWith('-') ? 'out' : 'in',
+      amount: magnitude,
+      ...toBaseUnits(magnitude),
     });
   }
   return legs;
+}
+
+function exchangeLegs(row) {
+  return legsFromAmounts([[row.base_asset, row.base_amount], [row.quote_asset, row.quote_amount]]);
+}
+
+// The legs a folded venue half contributes. Rendered on the SAME row: the
+// on-chain legs alone describe half the event -- the wallet's outflow without
+// the venue's credit.
+function matchLegs(match) {
+  if (!match) return [];
+  return legsFromAmounts([[match.base_asset, match.base_amount], [match.quote_asset, match.quote_amount]]);
+}
+
+// Every on-chain leg gets base units too, from the whole-unit `amount` the
+// activity builder wrote. Not from `amount_raw`: that is in the ASSET's own
+// base units and the legs JSONB carries no decimals column to interpret it
+// with, so scaling it would need a token lookup per leg. `amount` is already
+// full precision, and its own fraction length is the scale that renders it.
+function withBaseUnits(legs) {
+  return (legs || []).map((leg) => ({ ...leg, ...toBaseUnits(leg.amount) }));
 }
 
 // One JSON row shape for both sources. Every source-specific column stays on
@@ -310,7 +393,8 @@ function exchangeLegs(row) {
 // same place on both.
 function toLedgerRow(row) {
   const onChain = row.source === 'onchain';
-  const legs = onChain ? (row.legs || []) : exchangeLegs(row);
+  const legs = onChain ? withBaseUnits(row.legs) : exchangeLegs(row);
+  const feeAmount = onChain ? weiToDecimalString(row.fee_wei) : trimDecimal(row.fee_amount);
   return {
     // Composite, because neither id is unique across the union.
     //
@@ -334,8 +418,22 @@ function toLedgerRow(row) {
     // Fee, in the same shape on both sides: a whole-unit amount and its asset.
     // On-chain that is gas, always ETH; on a venue it is whatever the venue
     // charged in.
-    fee_amount: onChain ? weiToDecimalString(row.fee_wei) : trimDecimal(row.fee_amount),
+    fee_amount: feeAmount,
     fee_asset: onChain ? 'ETH' : row.fee_asset,
+    ...(() => {
+      const { units, decimals } = toBaseUnits(feeAmount);
+      return { fee_units: units, fee_decimals: decimals };
+    })(),
+    // At-the-time dollars (043 on-chain; the venue's own quote off-venue).
+    // NULL is "no price for this asset on that date", never zero -- which is
+    // why usd_basis rides along and GET /api/eth/prices/unpriced exists.
+    //
+    // Trimmed: a venue figure comes off NUMERIC(38,18), so an untrimmed
+    // "1832.400000000000000000" would land in the CSV's money column and read
+    // as a quantity rather than a price.
+    usd_value: trimDecimal(row.usd_value),
+    usd_fee: trimDecimal(row.usd_fee),
+    usd_basis: row.usd_basis,
     // On-chain only
     wallet_id: row.wallet_id,
     wallet_address: row.wallet_address,
@@ -365,14 +463,18 @@ function toLedgerRow(row) {
     external_id: row.external_id,
     record_address: row.record_address,
     record_source: row.record_source,
-    // The venue-side halves folded into this row, if any.
-    exchange_matches: row.exchange_matches || [],
+    // The other half of this movement (#61), folded in, with its own legs
+    // already shaped so a reader never has to know which side it came from.
+    exchange_match: row.exchange_match
+      ? { ...row.exchange_match, legs: matchLegs(row.exchange_match) }
+      : null,
   };
 }
 
 // Builds the WHERE for the union. `params` is mutated: it already holds $1
 // (userId) and grows one entry per active filter.
-// A FOLDED row answers to BOTH of its identities. The record was suppressed
+//
+// A FOLDED row answers to BOTH of its identities. The other half was suppressed
 // from its own branch, so if the filter only tested the host's own columns the
 // event would appear nowhere at all -- a filter that drops an event rather than
 // narrowing to it, which is the exact failure "no transaction unexplained"
@@ -383,15 +485,15 @@ function buildFilters({ category, needsReview, source, walletId, exchangeAccount
   if (source) {
     params.push(source);
     clauses.push(`(r.source = $${params.length}
-      OR ($${params.length} = 'exchange' AND jsonb_array_length(r.exchange_matches) > 0))`);
+      OR ($${params.length} = 'exchange' AND r.exchange_match IS NOT NULL))`);
   }
   if (category) {
     params.push(category);
-    clauses.push(`(r.category = $${params.length} OR $${params.length} = ANY(r.match_categories))`);
+    clauses.push(`(r.category = $${params.length} OR r.match_category = $${params.length})`);
   }
   if (needsReview !== null && needsReview !== undefined) {
-    // Already ORed across the pair inside the onchain branch, so this needs no
-    // second arm: a flagged half raises its host's flag.
+    // Already ORed across the pair inside each branch, so this needs no second
+    // arm: a flagged half raises its host's flag.
     params.push(needsReview);
     clauses.push(`r.needs_review = $${params.length}`);
   }
@@ -403,7 +505,7 @@ function buildFilters({ category, needsReview, source, walletId, exchangeAccount
   }
   if (exchangeAccountId != null) {
     params.push(exchangeAccountId);
-    clauses.push(`(r.exchange_account_id = $${params.length} OR $${params.length} = ANY(r.match_account_ids))`);
+    clauses.push(`(r.exchange_account_id = $${params.length} OR r.match_account_id = $${params.length})`);
   }
   return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 }
@@ -463,7 +565,7 @@ class CryptoLedger {
   }
 
   // The badge. Counts the SAME rows the feed renders -- folded pairs once, with
-  // the venue half's flag ORed in -- so "needs review" in the badge and in the
+  // the other half's flag ORed in -- so "needs review" in the badge and in the
   // filter can never disagree.
   //
   // No materiality floor, unlike the counterparty triage badge. That one counts
@@ -472,6 +574,10 @@ class CryptoLedger {
   // by hand in two clicks -- an override on the on-chain side, a resolve on the
   // venue side -- so the count already reaches zero, and a floor would only
   // hide rows the user is being asked to explain.
+  //
+  // `unpriced_count` is the honesty counter for the USD column: a row with no
+  // price is NOT worth zero, and a total that quietly omitted it would be a
+  // number nobody could reconcile.
   static async summaryForUser(userId) {
     if (!userId) throw new Error('CryptoLedger.summaryForUser requires a userId');
     const result = await pool.query(
@@ -484,10 +590,12 @@ class CryptoLedger {
          -- wrote, and this number sits next to Settings' per-account
          -- record_count where the two disagreeing reads as a lost import.
          (COUNT(*) FILTER (WHERE r.source = 'exchange')
-           + COALESCE(SUM(jsonb_array_length(r.exchange_matches)), 0))::int AS exchange_count,
+           + COUNT(*) FILTER (WHERE r.exchange_match IS NOT NULL))::int AS exchange_count,
          (COUNT(*) FILTER (WHERE r.needs_review AND r.source = 'onchain'))::int AS onchain_needs_review,
          (COUNT(*) FILTER (WHERE r.needs_review AND r.source = 'exchange'))::int AS exchange_needs_review,
-         COALESCE(SUM(jsonb_array_length(r.exchange_matches)), 0)::int AS matched_count,
+         (COUNT(*) FILTER (WHERE r.exchange_match IS NOT NULL))::int AS matched_count,
+         (COUNT(*) FILTER (WHERE r.usd_basis = 'unpriced'))::int AS unpriced_count,
+         (COUNT(*) FILTER (WHERE r.usd_basis = 'carried'))::int AS carried_count,
          MIN(r.occurred_at) AS first_at,
          MAX(r.occurred_at) AS last_at
        FROM ${UNION_SOURCE}`,
@@ -502,6 +610,8 @@ class CryptoLedger {
       onchain_needs_review: Number(row.onchain_needs_review) || 0,
       exchange_needs_review: Number(row.exchange_needs_review) || 0,
       matched_count: Number(row.matched_count) || 0,
+      unpriced_count: Number(row.unpriced_count) || 0,
+      carried_count: Number(row.carried_count) || 0,
       first_at: row.first_at || null,
       last_at: row.last_at || null,
     };
@@ -513,3 +623,4 @@ module.exports.LEDGER_CATEGORIES = LEDGER_CATEGORIES;
 module.exports.EXCHANGE_ONLY_CATEGORIES = EXCHANGE_ONLY_CATEGORIES;
 module.exports.weiToDecimalString = weiToDecimalString;
 module.exports.trimDecimal = trimDecimal;
+module.exports.toBaseUnits = toBaseUnits;

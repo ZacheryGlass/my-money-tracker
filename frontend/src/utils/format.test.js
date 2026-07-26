@@ -1,52 +1,89 @@
 import { describe, expect, it } from 'vitest';
-import { formatExactUnits } from './format';
+import { formatExactUnits, formatTokenUnits } from './format';
 
-// Crypto quantities are decimal STRINGS at 18 places. Number() rounds anything
-// past ~15 significant digits, so a ledger that formats through a float
-// silently disagrees with the chain about what moved.
+// Base-unit rendering for the on-chain balance audit (#62). The audit exists to
+// surface differences a float would round away, so the display path has to be
+// exact too -- a formatter that turns a real 1-wei discrepancy into "0" undoes
+// the entire feature at the last step.
+describe('formatTokenUnits', () => {
+  it('scales by the asset decimals', () => {
+    expect(formatTokenUnits('1000000000000000000', 18)).toBe('1');
+    expect(formatTokenUnits('1500000000000000000', 18)).toBe('1.5');
+    expect(formatTokenUnits('250000000', 6)).toBe('250');
+  });
+
+  it('defaults a missing decimals to 18, matching the shared unit helpers', () => {
+    // NULL token_decimals means 18 everywhere on the backend; diverging here
+    // would scale a real drift into or out of the display threshold.
+    expect(formatTokenUnits('1000000000000000000')).toBe('1');
+    expect(formatTokenUnits('1000000000000000000', null)).toBe('1');
+  });
+
+  it('treats a zero-decimal token as whole units', () => {
+    // NFT-style and 0-decimal ERC-20s: the smallest unit IS one token.
+    expect(formatTokenUnits('7', 0)).toBe('7');
+  });
+
+  it('keeps sign and magnitude on a negative delta', () => {
+    // A negative derived balance is the loudest evidence of a missed inbound
+    // transfer; swallowing the sign would report it as a surplus.
+    expect(formatTokenUnits('-1000000000000000000', 18)).toBe('-1');
+  });
+
+  it('never rounds a residual up into a clean zero', () => {
+    // 1 wei of drift. Rounding to six places would render '0', which is the one
+    // answer the audit must never give when the ledger and the chain disagree.
+    expect(formatTokenUnits('1', 18)).toBe('0');
+    expect(formatTokenUnits('1', 18, { maxFractionDigits: 18 })).toBe('0.000000000000000001');
+    // ...and truncation never inflates either.
+    expect(formatTokenUnits('1999999999999999999', 18, { maxFractionDigits: 2 })).toBe('1.99');
+  });
+
+  it('handles a whole part past Number precision without corrupting it', () => {
+    // A scam token can mint absurd supply; grouping via Number would silently
+    // rewrite the digits.
+    const huge = '123456789012345678901234567890000000000000000000';
+    expect(formatTokenUnits(huge, 18)).toBe('123,456,789,012,345,678,901,234,567,890');
+  });
+
+  it('returns null for values it cannot read rather than guessing a zero', () => {
+    expect(formatTokenUnits(null)).toBe(null);
+    expect(formatTokenUnits(undefined)).toBe(null);
+    expect(formatTokenUnits('')).toBe(null);
+    expect(formatTokenUnits('1.5')).toBe(null);
+    expect(formatTokenUnits('not a number')).toBe(null);
+  });
+});
+
+// The audit's own renderer. A mismatch row exists because two numbers differ,
+// so the one thing it may never do is print them as if they did not.
 describe('formatExactUnits', () => {
-  it('leaves an ordinary amount alone, grouped', () => {
-    expect(formatExactUnits('1832.4')).toBe('1,832.4');
-    expect(formatExactUnits('0.5')).toBe('0.5');
-    expect(formatExactUnits('1')).toBe('1');
-    expect(formatExactUnits('0')).toBe('0');
+  it('renders a sub-microether delta instead of collapsing it to zero', () => {
+    // The six-digit default would print '0' here, and the row would read
+    // "ledger is 0 ETH off (derived 1, chain 1)" -- three numbers all saying
+    // nothing is wrong, on a row raised because something is.
+    expect(formatExactUnits('1', 18)).toBe('0.000000000000000001');
+    expect(formatExactUnits('999999999999', 18)).toBe('0.000000999999999999');
   });
 
-  it('trims the padding a NUMERIC(38,18) column brings with it', () => {
-    expect(formatExactUnits('0.500000000000000000')).toBe('0.5');
-    expect(formatExactUnits('1832.400000000000000000')).toBe('1,832.4');
+  it('never prints a bare -0 for a negative delta', () => {
+    expect(formatExactUnits('-1', 18)).toBe('-0.000000000000000001');
+    expect(formatExactUnits('-1', 6)).toBe('-0.000001');
   });
 
-  it('rounds half-up through BigInt rather than a float', () => {
-    // 19 significant digits: not representable as a double.
-    expect(formatExactUnits('1234567.890123456789')).toBe('1,234,567.890123');
-    expect(formatExactUnits('0.9999999')).toBe('1');
-    expect(formatExactUnits('0.1234565')).toBe('0.123457');
-    expect(formatExactUnits('0.1234564')).toBe('0.123456');
+  it('scales by the asset decimals and keeps whole amounts readable', () => {
+    expect(formatExactUnits('250000000', 6)).toBe('250');
+    expect(formatExactUnits('1500000000000000000', 18)).toBe('1.5');
+    expect(formatExactUnits('7', 0)).toBe('7');
   });
 
-  it('says "smaller than the smallest digit" rather than rendering dust as zero', () => {
-    // A ledger row reading 0 for a real movement is a lie, and dust is exactly
-    // what a crypto ledger is full of.
-    expect(formatExactUnits('0.0000001')).toBe('<0.000001');
-    expect(formatExactUnits('0.000000000000000001')).toBe('<0.000001');
-    // A genuine zero still reads as zero.
-    expect(formatExactUnits('0.000000000000000000')).toBe('0');
+  it('defaults a missing decimals to 18, like the backend', () => {
+    expect(formatExactUnits('1')).toBe('0.000000000000000001');
+    expect(formatExactUnits('1', null)).toBe('0.000000000000000001');
   });
 
-  it('keeps a negative sign, and drops it when the value rounds away', () => {
-    expect(formatExactUnits('-0.5')).toBe('-0.5');
-    expect(formatExactUnits('-0.0000001')).toBe('-<0.000001');
-  });
-
-  it('honours a wider fraction for gas, where six places is not enough', () => {
-    expect(formatExactUnits('0.000000840000000000', { maxFractionDigits: 12 })).toBe('0.00000084');
-  });
-
-  it('passes anything that is not a decimal through untouched', () => {
-    expect(formatExactUnits(null)).toBe('0');
-    expect(formatExactUnits(undefined)).toBe('0');
-    expect(formatExactUnits('')).toBe('0');
-    expect(formatExactUnits('1e18')).toBe('1e18');
+  it('returns null for values it cannot read', () => {
+    expect(formatExactUnits(null, 18)).toBe(null);
+    expect(formatExactUnits('not a number', 18)).toBe(null);
   });
 });

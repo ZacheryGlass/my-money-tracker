@@ -146,7 +146,14 @@ const EXPORT_COLUMNS = [
   ['assets_out', 'assets_out'],
   ['fee_amount', 'fee_amount'],
   ['fee_asset', 'fee_asset'],
+  // At-the-time dollars (043), with the basis beside them. An empty usd_value
+  // is "no price for this asset on that date" and the basis says so -- a blank
+  // that a spreadsheet would sum as zero has to be readable as a gap.
+  ['usd_value', 'usd_value'],
+  ['usd_fee', 'usd_fee'],
+  ['usd_basis', 'usd_basis'],
   ['needs_review', 'needs_review'],
+  ['matched_with', 'matched_with'],
   ['tx_hash', 'tx_hash'],
   ['chain_id', 'chain_id'],
   ['external_id', 'external_id'],
@@ -171,22 +178,10 @@ function legsText(legs, direction) {
 }
 
 function exportRow(row) {
-  // A folded pair is one line, and its venue half's assets belong on it -- the
+  // A folded pair is one line, and the other half's assets belong on it -- the
   // on-chain legs alone would describe half the event.
-  const foldedLegs = (row.exchange_matches || []).flatMap((match) => {
-    const legs = [];
-    for (const [asset, amount] of [[match.base_asset, match.base_amount], [match.quote_asset, match.quote_amount]]) {
-      if (!asset || amount === null || amount === undefined || Number.parseFloat(amount) === 0) continue;
-      const text = String(amount).trim();
-      legs.push({
-        asset,
-        direction: text.startsWith('-') ? 'out' : 'in',
-        amount: CryptoLedger.trimDecimal(text.replace(/^-/, '')),
-      });
-    }
-    return legs;
-  });
-  const legs = [...(row.legs || []), ...foldedLegs];
+  const match = row.exchange_match;
+  const legs = [...(row.legs || []), ...(match?.legs || [])];
 
   return {
     date: row.occurred_at instanceof Date ? row.occurred_at.toISOString() : row.occurred_at,
@@ -197,7 +192,7 @@ function exportRow(row) {
     // venue the transaction was with, where 0xbbbb…bbbb is only a hex string
     // nobody has judged yet. A user label still beats both.
     counterparty: deformula(row.counterparty_name
-      || (row.exchange_matches?.[0]?.account_name ?? null)
+      || match?.account_name
       || (row.counterparty_address ? shortAddress(row.counterparty_address) : null)
       || row.record_address
       || ''),
@@ -205,7 +200,19 @@ function exportRow(row) {
     assets_out: legsText(legs, 'out'),
     fee_amount: row.fee_amount ?? '',
     fee_asset: row.fee_amount ? (row.fee_asset || '') : '',
+    // Left EMPTY when unpriced rather than written as 0: this column gets
+    // summed, and a fabricated zero is indistinguishable from a real one. The
+    // basis column beside it is what tells the two apart.
+    usd_value: row.usd_value ?? '',
+    usd_fee: row.usd_fee ?? '',
+    usd_basis: row.usd_basis || '',
     needs_review: row.needs_review ? 'yes' : 'no',
+    // Which other record this line already accounts for, and on what evidence.
+    // A reader summing the ledger has to be able to see that the pair is one
+    // movement and not two.
+    matched_with: match
+      ? deformula(`${match.account_name || match.exchange || 'exchange'} ${match.external_id || ''} (${match.match_method}${match.verdict ? `, ${match.verdict}` : ''})`.trim())
+      : '',
     tx_hash: row.tx_hash || '',
     chain_id: row.chain_id ?? '',
     external_id: deformula(row.external_id || ''),

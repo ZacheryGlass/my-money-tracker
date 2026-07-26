@@ -65,6 +65,10 @@ function onchainRow(overrides = {}) {
     ],
     // 21000 * 40 gwei, as NUMERIC(78,0) comes back: a string.
     fee_wei: '840000000000000',
+    // At-the-time dollars (043), NUMERIC -> string.
+    usd_value: '1832.40',
+    usd_fee: '2.35',
+    usd_basis: 'exact',
     confidence: 'high',
     derived_category: 'swap',
     override_category: null,
@@ -85,7 +89,9 @@ function onchainRow(overrides = {}) {
     external_id: null,
     record_address: null,
     record_source: null,
-    exchange_matches: [],
+    exchange_match: null,
+    match_category: null,
+    match_account_id: null,
     ...overrides,
   };
 }
@@ -154,7 +160,9 @@ function fakeQuery(text, params = []) {
         exchange_count: ledgerRows.filter((r) => r.source === 'exchange').length,
         onchain_needs_review: 0,
         exchange_needs_review: 0,
-        matched_count: ledgerRows.filter((r) => (r.exchange_matches || []).length > 0).length,
+        matched_count: ledgerRows.filter((r) => r.exchange_match).length,
+        unpriced_count: ledgerRows.filter((r) => r.usd_basis === 'unpriced').length,
+        carried_count: 0,
         first_at: null,
         last_at: null,
       }],
@@ -286,13 +294,13 @@ test('both sources are scoped to the caller inside the query', async () => {
 test('a folded record still answers to its own source, category and account', async () => {
   await request(app).get('/api/crypto/ledger?source=exchange');
   const bySource = lastLedgerQuery().sql;
-  assert.match(bySource, /r\.source = \$\d+ OR \(\$\d+ = 'exchange' AND jsonb_array_length\(r\.exchange_matches\) > 0\)/);
+  assert.match(bySource, /r\.source = \$\d+ OR \(\$\d+ = 'exchange' AND r\.exchange_match IS NOT NULL\)/);
 
   await request(app).get('/api/crypto/ledger?category=exchange_withdrawal');
-  assert.match(lastLedgerQuery().sql, /r\.category = \$\d+ OR \$\d+ = ANY\(r\.match_categories\)/);
+  assert.match(lastLedgerQuery().sql, /r\.category = \$\d+ OR r\.match_category = \$\d+/);
 
   await request(app).get(`/api/crypto/ledger?exchange_account_id=${OWNED_ACCOUNT_ID}`);
-  assert.match(lastLedgerQuery().sql, /r\.exchange_account_id = \$\d+ OR \$\d+ = ANY\(r\.match_account_ids\)/);
+  assert.match(lastLedgerQuery().sql, /r\.exchange_account_id = \$\d+ OR r\.match_account_id = \$\d+/);
 });
 
 test('a folded amount leaves Postgres as text, never a JSON number', async () => {
@@ -301,21 +309,48 @@ test('a folded amount leaves Postgres as text, never a JSON number', async () =>
   // jsonb_build_object emits a NUMERIC as a JSON number, and node-pg parses
   // jsonb with JSON.parse -- so without the cast a folded amount arrives as a
   // double: exponent notation below 1e-6, lost digits above 2^53.
-  assert.match(sql, /'base_amount', er\.base_amount::text/);
-  assert.match(sql, /'quote_amount', er\.quote_amount::text/);
-  assert.match(sql, /'fee_amount', er\.fee_amount::text/);
+  assert.match(sql, /'base_amount', mer\.base_amount::text/);
+  assert.match(sql, /'quote_amount', mer\.quote_amount::text/);
+  assert.match(sql, /'fee_amount', mer\.fee_amount::text/);
 });
 
-test('a matched exchange record is folded exactly once, by hash', async () => {
+// The fold is #61's matcher, not a hash comparison done here. Re-deriving one
+// would be a second matcher disagreeing with the first -- and it would lose the
+// evidence, the confidence and the user verdict that make a pairing judgeable.
+test('the fold reads exchange_matches rather than re-deriving a matcher', async () => {
   await request(app).get('/api/crypto/ledger');
   const { sql } = lastLedgerQuery();
-  // DISTINCT ON (er.id): the same hash can belong to two activity rows when
-  // two of the user's own wallets are both party to it, and exchange_records
-  // has no chain column. Without it the record renders once per match.
-  assert.match(sql, /SELECT DISTINCT ON \(er\.id\) er\.id AS record_id, a\.id AS activity_id/);
-  assert.match(sql, /LOWER\(a\.tx_hash\) = LOWER\(er\.tx_hash\)/);
-  // ... and is suppressed from its own branch, or it appears twice.
-  assert.match(sql, /NOT EXISTS \(SELECT 1 FROM matched mm WHERE mm\.record_id = er\.id\)/);
+  assert.match(sql, /LEFT JOIN exchange_matches em ON em\.activity_id = a\.id/);
+  assert.match(sql, /LEFT JOIN exchange_match_verdicts mv/);
+  assert.ok(!/LOWER\(a\.tx_hash\) = LOWER\(er\.tx_hash\)/.test(sql),
+    'no second hash matcher of our own');
+  // Both of 041's shapes are accounted for: a record folded into an on-chain
+  // row, and a counter record folded into its pair's primary.
+  assert.match(sql, /JOIN eth_activity a ON a\.id = em\.activity_id/);
+  assert.match(sql, /em\.counter_record_id IS NOT NULL/);
+  // ... and a folded record is suppressed from its own branch, or it renders
+  // twice.
+  assert.match(sql, /NOT EXISTS \(SELECT 1 FROM matched_records mm WHERE mm\.record_id = er\.id\)/);
+});
+
+// A venue pair shows the COUNTER record while 041 keys the verdict on the
+// primary, so the ids a confirm/reject must use are stated by the side that
+// knows rather than inferred from what is on screen.
+test('the match object names the ids a verdict must be addressed to', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  assert.match(sql, /'verdict_exchange_record_id', em\.exchange_record_id/);
+  assert.match(sql, /'verdict_counter_record_id', em\.counter_record_id/);
+});
+
+// The dollars are 043's, denormalized onto the row by the valuation pass. A
+// ledger that recomputed them here would price a 2017 send at today's ETH.
+test('USD rides along from the dated valuation, never recomputed', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  assert.match(sql, /a\.usd_value::text AS usd_value/);
+  assert.match(sql, /a\.usd_fee::text AS usd_fee/);
+  assert.match(sql, /a\.usd_basis::text AS usd_basis/);
 });
 
 // --- the row shape ---------------------------------------------------------
@@ -336,15 +371,44 @@ test('an on-chain row carries netted legs and gas scaled exactly', async () => {
   // The chain's own name, so the ledger says WHERE without shipping a registry
   // constant on every row.
   assert.equal(row.source_label, 'Arbitrum One');
+  // Base units + their scale ride beside the decimal string, so the client
+  // renders through the SHARED BigInt formatter rather than a second one.
   assert.deepEqual(row.legs, [
-    { asset: 'ETH', direction: 'out', amount: '0.5' },
-    { asset: 'USDC', direction: 'in', amount: '1832.4' },
+    { asset: 'ETH', direction: 'out', amount: '0.5', units: '5', decimals: 1 },
+    { asset: 'USDC', direction: 'in', amount: '1832.4', units: '18324', decimals: 1 },
   ]);
   // wei -> whole units through BigInt: Number('840000000000000')/1e18 is
   // 0.00084 only by luck, and most gas figures have more significant digits
   // than a double holds.
   assert.equal(row.fee_amount, '0.00084');
   assert.equal(row.fee_asset, 'ETH');
+  assert.equal(row.fee_units, '84');
+  assert.equal(row.fee_decimals, 5);
+  // At-the-time dollars, carried through with their basis. Trimmed: a venue
+  // figure comes off NUMERIC(38,18), and a money column must not carry
+  // eighteen places of a quantity's padding.
+  assert.equal(row.usd_value, '1832.4');
+  assert.equal(row.usd_basis, 'exact');
+});
+
+// A 2017 half-ETH send was worth ~$150. Recomputing at today's price would make
+// it a different transaction, so the ledger only ever passes 043's figure on --
+// and when there is none it says so rather than showing zero.
+test('an unpriced row reports no price, never a zero', async () => {
+  ledgerRows = [onchainRow({ usd_value: null, usd_fee: null, usd_basis: 'unpriced' })];
+  const response = await request(app).get('/api/crypto/ledger');
+  const [row] = response.body.data;
+  assert.equal(row.usd_value, null);
+  assert.equal(row.usd_basis, 'unpriced');
+
+  const csv = await request(app).get('/api/crypto/ledger/export');
+  const [header, line] = csv.text.trim().split('\n');
+  const columns = header.split(',');
+  const cells = line.split(',');
+  // Empty, not '0': this column gets summed, and a fabricated zero is
+  // indistinguishable from a real one. The basis beside it tells them apart.
+  assert.equal(cells[columns.indexOf('usd_value')], '');
+  assert.equal(cells[columns.indexOf('usd_basis')], 'unpriced');
 });
 
 test('an exchange row is turned into the same leg shape, signs intact', async () => {
@@ -359,8 +423,8 @@ test('an exchange row is turned into the same leg shape, signs intact', async ()
   assert.deepEqual(row.legs, [
     // Amounts are stored SIGNED as the venue wrote them; the sign IS the
     // direction, and the padding is stripped without going through a float.
-    { asset: 'ETH', direction: 'out', amount: '0.5' },
-    { asset: 'USD', direction: 'in', amount: '1832.4' },
+    { asset: 'ETH', direction: 'out', amount: '0.5', units: '5', decimals: 1 },
+    { asset: 'USD', direction: 'in', amount: '1832.4', units: '18324', decimals: 1 },
   ]);
   assert.equal(row.fee_amount, '4.76');
   assert.equal(row.fee_asset, 'USD');
@@ -413,22 +477,27 @@ test('the CSV export is columns, not a rendered sentence', async () => {
   const [header, first] = response.text.trim().split('\n');
   // Assets in and out get their own columns: "0.5 ETH -> 1,832.4 USDC" reads
   // well and cannot be summed, which is the whole point of a spreadsheet.
-  assert.equal(header, 'date,source,location,category,counterparty,assets_in,assets_out,fee_amount,fee_asset,needs_review,tx_hash,chain_id,external_id,note');
+  assert.equal(header, 'date,source,location,category,counterparty,assets_in,assets_out,fee_amount,fee_asset,usd_value,usd_fee,usd_basis,needs_review,matched_with,tx_hash,chain_id,external_id,note');
   assert.match(first, /1832\.4 USDC/);
   assert.match(first, /0\.5 ETH/);
   assert.match(first, /Arbitrum One/);
   assert.match(first, /,no,/);
+  assert.match(first, /,1832\.4,2\.35,exact,/);
 });
 
 test('the export carries a folded pair’s venue half onto the same line', async () => {
   ledgerRows = [onchainRow({
     category: 'exchange_deposit',
     legs: [{ asset: 'ETH', direction: 'out', amount: '1.25' }],
-    exchange_matches: [{
-      id: 55, exchange_account_id: OWNED_ACCOUNT_ID, account_name: 'Kraken', exchange: 'kraken',
-      record_type: 'deposit', base_asset: 'ETH', base_amount: '1.250000000000000000',
-      quote_asset: null, quote_amount: null, needs_review: false, external_id: 'DEP-1',
-    }],
+    exchange_match: {
+      match_id: 3, exchange_record_id: 55, verdict_exchange_record_id: 55,
+      verdict_counter_record_id: null, match_method: 'tx_hash', match_confidence: 'high',
+      verdict: null, exchange_account_id: OWNED_ACCOUNT_ID, account_name: 'Kraken',
+      exchange: 'kraken', record_type: 'deposit',
+      base_asset: 'ETH', base_amount: '1.250000000000000000',
+      quote_asset: null, quote_amount: null, fee_asset: null, fee_amount: null,
+      needs_review: false, external_id: 'DEP-1', category: 'exchange_deposit',
+    },
   })];
   const response = await request(app).get('/api/crypto/ledger/export');
   const [, line] = response.text.trim().split('\n');
@@ -437,6 +506,9 @@ test('the export carries a folded pair’s venue half onto the same line', async
   assert.equal(line.split('1.25 ETH').length - 1, 2, 'both halves belong on the folded line');
   // The venue account names the counterparty when the chain side has no label.
   assert.match(line, /Kraken/);
+  // ...and the line SAYS it already accounts for the other record, on what
+  // evidence. A reader summing the ledger has to see the pair is one movement.
+  assert.match(line, /Kraken DEP-1 \(tx_hash\)/);
 });
 
 // A counterparty NAME is attacker-reachable: it comes from a user label or

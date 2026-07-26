@@ -9,6 +9,8 @@ const chains = require('../config/chains');
 const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
 const EthActivity = require('../models/EthActivity');
+const EthReconciliation = require('../models/EthReconciliation');
+const AssetPriceHistory = require('../models/AssetPriceHistory');
 const EthWalletService = require('../services/EthWalletService');
 const EthActivityService = require('../services/EthActivityService');
 const logger = require('../config/logger');
@@ -42,6 +44,37 @@ const LABEL_KINDS = new Set(['exchange', 'external', 'own']);
 const ACTIVITY_CATEGORIES = new Set(EthActivityService.CATEGORIES);
 
 const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
+
+// The stored verdicts of the balance audit, as the reconciliation route filters
+// them. 'match'/'dust' are the two "nothing to do here" verdicts.
+const RECONCILIATION_STATUSES = new Set(['match', 'dust', 'mismatch', 'skipped', 'unavailable']);
+
+// One wallet's audit, shaped for the wallet card.
+//
+// `needs_review` is native-only on purpose. A nonzero ETH delta is a hard signal
+// of a missed movement -- blob fees, a self-destruct credit, a validator payout,
+// an unsynced feed -- while a token delta has entirely benign explanations
+// (rebasing supply, fee-on-transfer). Badging both would put a permanent number
+// on every wallet that ever touched a rebasing token, and a badge that cannot
+// reach zero gets ignored, which would cost us the ETH signal too.
+function buildReconciliationSummary(counts, issues) {
+  if (!counts) return null;
+  return {
+    checked_at: counts.checked_at,
+    assets_checked: counts.assets_checked,
+    matched: counts.matched,
+    dust: counts.dust,
+    mismatched: counts.mismatched,
+    native_mismatches: counts.native_mismatches,
+    skipped: counts.skipped,
+    unavailable: counts.unavailable,
+    needs_review: counts.native_mismatches > 0,
+    // Capped by the model; say so rather than letting a truncated list read as
+    // the whole story.
+    issues: issues || [],
+    truncated: (issues?.length || 0) < (counts.mismatched + counts.skipped + counts.unavailable),
+  };
+}
 
 // Resolves a wallet id from a request against the caller. Returns
 // { ok: false } when the id is absent-but-required, unparseable, or somebody
@@ -85,14 +118,22 @@ router.post('/wallets', async (req, res) => {
 router.get('/wallets', async (req, res) => {
   try {
     const wallets = await EthWallet.findAllByUser(req.user.id);
+    const walletIds = wallets.map((w) => w.id);
     // One batch read instead of a per-wallet query inside the map below.
-    const allChainStates = await EthWalletChain.findAllForWallets(wallets.map((w) => w.id));
+    const allChainStates = await EthWalletChain.findAllForWallets(walletIds);
     const chainStatesByWallet = new Map();
     for (const state of allChainStates) {
       const list = chainStatesByWallet.get(state.wallet_id) || [];
       list.push(state);
       chainStatesByWallet.set(state.wallet_id, list);
     }
+    // The balance audit rides along on the wallet status API, batched for the
+    // same reason the chain rows are: a summary fetched per wallet inside the
+    // map below is the N+1 this route already went out of its way to avoid.
+    const [reconciliationByWallet, reconciliationIssues] = await Promise.all([
+      EthReconciliation.summaryForWallets(req.user.id, walletIds),
+      EthReconciliation.openIssuesForWallets(req.user.id, walletIds),
+    ]);
     const withAccounts = await Promise.all(
       wallets.map(async (wallet) => {
         const chainStates = chainStatesByWallet.get(wallet.id) || [];
@@ -116,6 +157,13 @@ router.get('/wallets', async (req, res) => {
             name: chains.chainLabel(state.chain_id),
             enabled: chains.isEnabled(state.chain_id),
           })),
+          // Does the stored transfer ledger reproduce the balance the chain
+          // reports? `null` until the wallet has been audited at least once,
+          // which is distinct from an audit that found nothing wrong.
+          reconciliation: buildReconciliationSummary(
+            reconciliationByWallet.get(wallet.id),
+            reconciliationIssues.get(wallet.id)
+          ),
         };
       })
     );
@@ -277,6 +325,34 @@ router.get('/activity', async (req, res) => {
   }
 });
 
+// The assets in this user's on-chain history that no provider will price.
+//
+// The point of the endpoint is that "unpriced" is ENUMERABLE. A dead
+// EtherDelta-era token has no series anywhere, and the honest answer for its
+// rows is "not known", not $0 -- but an unexplained blank is only honest if the
+// user can ask what is behind it. Each entry carries the provider's own verdict
+// from asset_price_coverage (unlisted / range_limited / error / pending), so
+// "CoinGecko has never heard of this contract" is distinguishable from "your
+// API plan stops at 365 days", which is a fixable problem.
+//
+// Prices are global market data; WHICH assets a person holds is not, so this
+// reads through the user-scoped, fail-closed model entry point.
+//
+// NO UI CONSUMER YET. The unified ledger (#63) is the screen that surfaces
+// usd_value / usd_basis / the unpriced list together; until it lands this is
+// reachable only by hand. Deliberate, and stated here rather than implied: the
+// enumeration is what makes "unpriced, not $0" checkable today, and #63 is
+// where it becomes visible.
+router.get('/prices/unpriced', async (req, res) => {
+  try {
+    const assets = await AssetPriceHistory.unpricedAssetsForUser(req.user.id);
+    res.status(200).json({ data: assets, total: assets.length });
+  } catch (error) {
+    logger.error({ err: error }, 'Get unpriced assets error');
+    res.status(500).json({ error: 'Failed to retrieve unpriced assets' });
+  }
+});
+
 // A manual correction. Stored in its own table so the nightly rebuild cannot
 // erase it; every reader coalesces it over the derived verdict.
 router.post('/activity/override', async (req, res) => {
@@ -363,6 +439,61 @@ router.delete('/activity/override', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Remove ETH activity override error');
     res.status(500).json({ error: 'Failed to remove the override' });
+  }
+});
+
+// The full balance audit: every (wallet, chain, asset) the ledger has been
+// compared on, worst verdict first. The wallets route carries a capped summary
+// for the wallet card; this is the unabridged version.
+router.get('/reconciliation', async (req, res) => {
+  try {
+    const wallet = await loadWallet(req, req.query.wallet_id, { required: false });
+    if (!wallet.ok) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    // Fail-closed like the activity route's category filter, and for the same
+    // reason: `?status=drift` silently returning every row -- matched ones
+    // included -- reads as "nothing drifted", which is the opposite of what a
+    // filter on an audit must promise.
+    let status = null;
+    if (req.query.status !== undefined && req.query.status !== '') {
+      status = String(req.query.status).trim().toLowerCase();
+      if (!RECONCILIATION_STATUSES.has(status)) {
+        return res.status(400).json({ error: `Unknown status '${status}'` });
+      }
+    }
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    const { rows, total } = await EthReconciliation.findForUser(req.user.id, {
+      walletId: wallet.walletId,
+      status,
+      limit,
+      offset,
+    });
+    // Scoped to the same wallet as `data`. A headline that totals every wallet
+    // above rows filtered to one of them is a number nobody can reconcile with
+    // what they are looking at -- and it reads as drift on the wallet on screen.
+    const summary = await EthReconciliation.summaryForUser(req.user.id, {
+      walletId: wallet.walletId,
+    });
+
+    res.status(200).json({
+      data: rows.map((row) => ({ ...row, chain_name: chains.chainLabel(row.chain_id) })),
+      summary: {
+        native_mismatches: summary.nativeMismatches,
+        token_mismatches: summary.tokenMismatches,
+        unchecked: summary.unchecked,
+        assets_checked: summary.assetsChecked,
+        checked_at: summary.checkedAt,
+      },
+      pagination: { total, limit, offset },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Get ETH reconciliation error');
+    res.status(500).json({ error: 'Failed to retrieve the balance audit' });
   }
 });
 

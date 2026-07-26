@@ -28,12 +28,18 @@ const TRANSFER_TYPE_FILTERS = {
 // Params: $1 userId, $2 minUsd.
 //
 // USD comes from the mirrored ledger row rather than being recomputed from
-// value_wei. Two reasons: token prices are fetched from CoinGecko at mirror
-// rebuild time and never persisted, so SQL *cannot* recompute them; and
-// sourcing from `transactions` guarantees the queue's dollar figure equals the
-// number the user sees in the ledger, which is the whole point of triage.
+// value_wei, so the queue's dollar figure is exactly the number the user sees
+// in the ledger -- which is the whole point of triage.
 // transactions.eth_transfer_id carries a UNIQUE partial index, so the LEFT
 // JOIN can never fan a transfer out into two rows.
+//
+// Those amounts are AT-THE-TIME since #73: the mirror reads
+// eth_transfers.usd_at_time off the dated series in asset_price_history. That
+// changes what materiality means, and correctly -- a 2017 half-ETH send is now
+// weighed as the ~$150 it was rather than the ~$1,800 it would fetch today, so
+// the queue stops sorting a decade of small old flows above this year's real
+// ones. An unpriced leg contributes 0 to usd_volume and stays material through
+// the sent_count_valued arm below, which is exactly what that arm is for.
 const UNREVIEWED_COUNTERPARTIES_CTE = `
   WITH legs AS (
     SELECT
@@ -333,6 +339,50 @@ class EthTransfer {
          AND t.token_contract NOT IN (SELECT contract_address FROM eth_ignored_tokens WHERE user_id = w.user_id)
        GROUP BY t.chain_id, t.token_contract
        ORDER BY t.chain_id, t.token_contract`,
+      [walletId]
+    );
+    return result.rows;
+  }
+
+  // Net NATIVE (ETH) balance per chain, derived from the stored ledger alone --
+  // the number the balance audit (#62) compares against what the chain reports.
+  //
+  //   inbound native + inbound internal - outbound native - outbound internal - gas
+  //
+  // Every clause here is load-bearing:
+  //   * internal traces are counted because ETH arriving FROM A CONTRACT is
+  //     visible nowhere else; a chain missing that feed cannot be reconciled at
+  //     all, which is exactly what unsupported_feeds records.
+  //   * gas is its own term rather than folded into the outbound arm. A gas
+  //     row's from_address is always the wallet and its to_address is whatever
+  //     contract was called -- so on a self-send (from = to = wallet) the
+  //     inbound arm would ADD the fee back, turning every self-transfer into a
+  //     phantom credit of exactly one transaction fee.
+  //   * failed transfers moved nothing and are excluded, but their gas leg is
+  //     NOT: a reverted transaction still burns the fee, which is precisely why
+  //     gas rows are written is_error = FALSE (038).
+  //   * NFT legs (transfer_type 'nft'/'nft1155') never appear: their value_wei
+  //     is a COUNT OF UNITS (033), so summing them here would add token-id
+  //     counts to a wei total.
+  //
+  // Exact NUMERIC(78,0) throughout, cast to text on the way out: a uint256 total
+  // exceeds Number precision, and rounding it away is rounding away the drift.
+  static async nativeBalanceDeltas(walletId) {
+    const result = await pool.query(
+      `SELECT t.chain_id,
+              (SUM(CASE WHEN t.transfer_type IN ('native', 'internal')
+                         AND t.is_error = FALSE AND t.to_address = w.address
+                        THEN t.value_wei ELSE 0 END)
+             - SUM(CASE WHEN t.transfer_type IN ('native', 'internal')
+                         AND t.is_error = FALSE AND t.from_address = w.address
+                        THEN t.value_wei ELSE 0 END)
+             - SUM(CASE WHEN t.transfer_type = 'gas' THEN t.value_wei ELSE 0 END))::text AS balance_wei
+       FROM eth_transfers t
+       JOIN eth_wallets w ON w.id = t.wallet_id
+       WHERE t.wallet_id = $1
+         AND t.transfer_type IN ('native', 'internal', 'gas')
+       GROUP BY t.chain_id
+       ORDER BY t.chain_id`,
       [walletId]
     );
     return result.rows;

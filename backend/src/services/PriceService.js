@@ -5,6 +5,7 @@ const YahooFinance = require('yahoo-finance2').default;
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const PriceCache = require('../models/PriceCache');
 const SecretsService = require('./SecretsService');
+const coingecko = require('../utils/coingecko');
 const logger = require('../config/logger');
 
 let coinGeckoIdMapCache = null;
@@ -44,12 +45,17 @@ class PriceService {
         }
       };
 
+      // 'x-cg-api-key' is not a header CoinGecko reads on either tier, so the
+      // key was being sent and ignored and every call here ran anonymous. The
+      // header name and the host both depend on the plan -- see
+      // utils/coingecko; the URLs in this file are demo-host literals, so they
+      // are moved onto the pro host when CG_API_PLAN says so.
       const apiKey = await SecretsService.getAppSetting('cg_api_key');
       if (apiKey) {
-        config.headers['x-cg-api-key'] = apiKey;
+        config.headers[coingecko.keyHeader()] = apiKey;
       }
 
-      const response = await axios(url, config);
+      const response = await axios(coingecko.withPlanHost(url), config);
       if (response.status !== 200) {
         logger.warn({ status: response.status }, 'CoinGecko non-200 response');
         throw new Error(`CoinGecko HTTP ${response.status}`);

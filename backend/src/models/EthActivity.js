@@ -20,21 +20,64 @@ const RESOLVED_COLUMNS = `
     a.counterparty_address, a.counterparty_name,
     a.method_id, a.method_name,
     a.legs, a.fee_wei, a.confidence, a.classified_at,
+    -- At-the-time USD (043). Derived alongside the legs and rebuilt with them,
+    -- so an override changes what a transaction MEANS without touching what it
+    -- was worth: the dollars are a market fact, the category is a judgment.
+    a.usd_value, a.usd_fee, a.usd_basis,
     CASE WHEN o.category IS NOT NULL THEN FALSE ELSE a.needs_review END AS needs_review,
     CASE WHEN o.category IS NOT NULL THEN NULL ELSE a.review_reason END AS review_reason,
-    w.address AS wallet_address`;
+    w.address AS wallet_address,
+    -- The exchange's own record of this same movement (#61), or NULL when
+    -- nothing matched. Carries the venue's fee_asset/fee_amount because that is
+    -- the WITHDRAWAL fee: it is charged off-chain, so fee_wei (gas) does not
+    -- contain it and the on-chain legs never will.
+    CASE WHEN em.id IS NULL THEN NULL ELSE jsonb_build_object(
+      'id', em.id,
+      'exchange_record_id', em.exchange_record_id,
+      'match_method', em.match_method,
+      'confidence', em.confidence,
+      'exchange_account_id', mea.id,
+      'exchange_account_name', mea.name,
+      'exchange', mea.exchange,
+      'record_type', mer.record_type,
+      'occurred_at', mer.occurred_at,
+      'base_asset', mer.base_asset,
+      'base_amount', mer.base_amount,
+      'fee_asset', mer.fee_asset,
+      'fee_amount', mer.fee_amount,
+      'verdict', mv.verdict
+    ) END AS exchange_match`;
 
 const RESOLVED_FROM = `
     FROM eth_activity a
     JOIN eth_wallets w ON w.id = a.wallet_id
     LEFT JOIN eth_activity_overrides o
-      ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash`;
+      ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash
+    -- At most one match per activity row (041's unique index says so), so none
+    -- of these can fan one row into two.
+    LEFT JOIN exchange_matches em ON em.activity_id = a.id
+    LEFT JOIN exchange_records mer ON mer.id = em.exchange_record_id
+    LEFT JOIN exchange_accounts mea ON mea.id = mer.exchange_account_id
+    LEFT JOIN exchange_match_verdicts mv
+      ON mv.exchange_record_id = em.exchange_record_id
+     AND mv.counter_record_id IS NULL
+     AND mv.wallet_id = a.wallet_id
+     AND mv.chain_id = a.chain_id
+     AND mv.tx_hash = a.tx_hash`;
 
 const INSERT_COLUMNS = [
   'wallet_id', 'chain_id', 'tx_hash', 'block_number', 'block_time', 'category',
   'counterparty_address', 'counterparty_name', 'method_id', 'method_name',
   'legs', 'fee_wei', 'needs_review', 'review_reason', 'confidence',
+  // Appended, never inserted mid-list: `legs` needs its ::jsonb cast and the
+  // placeholder builder below finds it by index.
+  'usd_value', 'usd_fee', 'usd_basis',
 ];
+
+// The one column that needs a cast, found by name rather than by a hardcoded
+// ordinal -- appending a column used to silently move the cast onto the wrong
+// placeholder.
+const LEGS_COLUMN_INDEX = INSERT_COLUMNS.indexOf('legs');
 
 class EthActivity {
   // Delete-then-insert, like the ledger mirror. Scoped to eth_activity ONLY:
@@ -66,10 +109,14 @@ class EthActivity {
           row.fee_wei ?? '0',
           row.needs_review === true,
           row.review_reason ?? null,
-          row.confidence || 'high'
+          row.confidence || 'high',
+          // NULL is UNPRICED, never 0: a transaction whose asset had no close
+          // on its date is not a transaction worth nothing.
+          row.usd_value ?? null,
+          row.usd_fee ?? null,
+          row.usd_basis ?? null
         );
-        // legs is the eleventh column and needs its jsonb cast.
-        return `(${INSERT_COLUMNS.map((_, j) => (j === 10 ? `$${base + j + 1}::jsonb` : `$${base + j + 1}`)).join(', ')})`;
+        return `(${INSERT_COLUMNS.map((_, j) => (j === LEGS_COLUMN_INDEX ? `$${base + j + 1}::jsonb` : `$${base + j + 1}`)).join(', ')})`;
       });
       const result = await pool.query(
         `INSERT INTO eth_activity (${INSERT_COLUMNS.join(', ')})

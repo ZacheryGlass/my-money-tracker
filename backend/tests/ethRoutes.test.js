@@ -160,3 +160,29 @@ for (const kind of ['external', 'own']) {
     assert.notEqual(response.status, 400);
   });
 }
+
+// The balance audit (#62). Its filter is fail-closed for the same reason the
+// activity route's category is: `?status=drift` silently returning every row,
+// matched ones included, reads as "nothing drifted" -- the exact opposite of
+// what a filter on an audit must promise.
+test('GET /api/eth/reconciliation rejects an unknown status', async () => {
+  const response = await request(app).get('/api/eth/reconciliation?status=drift');
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /Unknown status/);
+});
+
+test('GET /api/eth/reconciliation accepts a known status', async () => {
+  const response = await request(app).get('/api/eth/reconciliation?status=mismatch');
+
+  // The fake pool throws, so this cannot reach 200; passing validation without
+  // being rejected as a bad request is the assertion, as elsewhere in this file.
+  assert.notEqual(response.status, 400);
+});
+
+test('GET /api/eth/reconciliation 404s on a wallet the caller does not own', async () => {
+  const response = await request(app).get('/api/eth/reconciliation?wallet_id=abc');
+
+  assert.equal(response.status, 404);
+  assert.match(response.body.error, /Wallet not found/);
+});

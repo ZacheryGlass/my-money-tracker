@@ -53,45 +53,41 @@ export const formatDayOrdinal = (day) => {
   return `${n}${suffix}`;
 };
 
-// Crypto quantities arrive as full-precision decimal STRINGS -- 18 decimals of
-// wei, or NUMERIC(38,18) off an exchange record -- and Number() silently
-// rounds anything past ~15 significant digits. This formats the string itself:
-// half-up rounding through BigInt, then trailing zeros trimmed and the whole
-// part grouped.
-//
-// A non-zero amount that rounds to zero renders as "<0.000001" rather than
-// "0": a ledger row reading 0 for a real (if tiny) movement is a lie, and dust
-// is exactly what a crypto ledger is full of.
-export const formatExactUnits = (value, { maxFractionDigits = 6 } = {}) => {
-  if (value === null || value === undefined || value === '') return '0';
-  const text = String(value).trim();
-  if (!/^-?\d*(\.\d*)?$/.test(text) || text === '' || text === '-' || text === '.') return text;
+// A base-unit integer (wei, or a token's own smallest unit) rendered as a
+// decimal amount. BigInt throughout: a uint256 is far past Number precision, and
+// the balance audit exists to surface differences that Number would round away
+// into agreement. `decimals` follows the backend convention -- null means 18.
+export const formatTokenUnits = (units, decimals = 18, { maxFractionDigits = 6 } = {}) => {
+  if (units === null || units === undefined || units === '') return null;
+  const text = String(units).trim();
+  if (!/^-?\d+$/.test(text)) return null;
+  const scale = Number.isInteger(decimals) && decimals >= 0 ? decimals : 18;
+  const value = BigInt(text);
+  const negative = value < 0n;
+  const magnitude = negative ? -value : value;
+  const base = 10n ** BigInt(scale);
+  const whole = (magnitude / base).toString();
+  // Truncated, never rounded: rounding a residual drift up to the next display
+  // digit is how a real 1-wei discrepancy comes to read as a clean zero.
+  const fraction = scale === 0
+    ? ''
+    : (magnitude % base).toString().padStart(scale, '0').slice(0, maxFractionDigits).replace(/0+$/, '');
+  // Grouped by regex on the digit string, not via Number: a scam token can mint
+  // a whole part past 2^53, and toLocaleString would quietly corrupt it.
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${negative ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}`;
+};
 
-  const negative = text.startsWith('-');
-  const [wholeRaw = '0', fracRaw = ''] = text.replace(/^-/, '').split('.');
-  const whole = wholeRaw || '0';
-
-  let outWhole = whole;
-  let outFrac = fracRaw.slice(0, maxFractionDigits);
-  if (fracRaw.length > maxFractionDigits && fracRaw.charCodeAt(maxFractionDigits) >= 53) {
-    // Carry through the decimal point without ever building a float.
-    const bumped = (BigInt(whole + outFrac.padEnd(maxFractionDigits, '0') || '0') + 1n)
-      .toString()
-      .padStart(maxFractionDigits + 1, '0');
-    outWhole = maxFractionDigits ? bumped.slice(0, -maxFractionDigits) : bumped;
-    outFrac = maxFractionDigits ? bumped.slice(-maxFractionDigits) : '';
-  }
-  outFrac = outFrac.replace(/0+$/, '');
-
-  const isZero = /^0*$/.test(outWhole) && outFrac === '';
-  const wasZero = /^0*$/.test(whole) && /^0*$/.test(fracRaw);
-  if (isZero && !wasZero) {
-    return `${negative ? '-' : ''}<0.${'0'.repeat(Math.max(0, maxFractionDigits - 1))}1`;
-  }
-
-  const grouped = BigInt(outWhole || '0').toLocaleString('en-US');
-  const sign = negative && !isZero ? '-' : '';
-  return `${sign}${grouped}${outFrac ? `.${outFrac}` : ''}`;
+// The same rendering at FULL precision: every digit the asset's decimals allow,
+// so truncation is impossible. This is what the balance audit's deltas use.
+// formatTokenUnits' six-digit default renders a sub-microether drift as '0',
+// which in the audit reads as "the ledger is 0 ETH off" beside two figures
+// printed identically -- the exact opposite of what a mismatch row means. And
+// because a nonzero magnitude always keeps a nonzero digit here, a bare '-0'
+// can never be printed either.
+export const formatExactUnits = (units, decimals = 18) => {
+  const scale = Number.isInteger(decimals) && decimals >= 0 ? decimals : 18;
+  return formatTokenUnits(units, scale, { maxFractionDigits: scale });
 };
 
 export const formatCompactCurrency = (value) => {
