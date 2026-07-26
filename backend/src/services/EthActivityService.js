@@ -31,6 +31,33 @@ const REVIEW_REASONS = {
   no_legs: 'No transfer legs found for this transaction',
 };
 
+// The at-the-time USD basis vocabulary (043's CHECK carries the same list),
+// weakest last. Folding a set of legs takes the WEAKEST basis among them: one
+// unpriced leg makes the total unpriced, because a partial sum presented as a
+// total is the silent-zero failure wearing a different hat.
+const USD_BASIS_RANK = { exact: 0, carried: 1, unpriced: 2, not_applicable: 3 };
+
+function weakestBasis(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return (USD_BASIS_RANK[a] ?? 2) >= (USD_BASIS_RANK[b] ?? 2) ? a : b;
+}
+
+// USD is accumulated in INTEGER CENTS, never in dollars.
+// eth_transfers.usd_at_time is NUMERIC(20,2) and arrives as a string; summing
+// the parsed dollars would drift by fractions of a cent across a swap's legs
+// and land a $3,000.00 trade at $2,999.99. Exact NUMERIC in SQL, exact cents
+// in JS -- floats value nothing here.
+function toCents(value) {
+  if (value == null) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number * 100) : null;
+}
+
+function fromCents(cents) {
+  return cents == null ? null : Number((cents / 100).toFixed(2));
+}
+
 // NUMERIC(78,0) arrives as a string. Tolerates null and a stray scale so one
 // malformed row cannot throw mid-rebuild.
 function toBigInt(value) {
@@ -299,7 +326,7 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
     // than assume a direction.
     if (!incoming && !outgoing) continue;
     const asset = assetOf(leg);
-    const entry = nets.get(asset.key) || { ...asset, raw: 0n };
+    const entry = nets.get(asset.key) || { ...asset, raw: 0n, usdCents: 0, usdBasis: null };
     // First NON-NULL token_decimals across the contract's legs wins, rather
     // than whichever leg happened to be first.
     if (!entry.decimals_known && asset.decimals_known) {
@@ -309,6 +336,24 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
     // A leg from the wallet to itself nets to zero, which is correct.
     if (incoming) entry.raw += toBigInt(leg.value_wei);
     if (outgoing) entry.raw -= toBigInt(leg.value_wei);
+
+    // USD nets the same way the quantity does, and it MUST: every leg of one
+    // transaction shares a date, so it shares a price, and the signed sum of
+    // leg dollars is the netted quantity times that price. Summing here rather
+    // than multiplying the net amount by a price also keeps this layer out of
+    // the pricing business entirely -- usd_at_time is written once, in SQL.
+    //
+    // Two `if`s, not a ternary on `incoming`: a leg from the wallet TO ITSELF
+    // has both flags set, and the quantity above nets it to zero. A ternary
+    // would add its dollars and never subtract them, so a self-leg riding
+    // alongside a real one (a rebase, a claim-and-restake) would understate the
+    // outflow by exactly the self-leg's value while showing the correct amount.
+    const cents = toCents(leg.usd_at_time);
+    entry.usdBasis = weakestBasis(entry.usdBasis, leg.usd_basis || 'unpriced');
+    if (cents != null) {
+      if (incoming) entry.usdCents += cents;
+      if (outgoing) entry.usdCents -= cents;
+    }
     nets.set(asset.key, entry);
   }
 
@@ -322,6 +367,13 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
       direction: entry.raw > 0n ? 'in' : 'out',
       amount: formatUnits(entry.raw, entry.decimals),
       amount_raw: (entry.raw < 0n ? -entry.raw : entry.raw).toString(),
+      // Magnitude, like `amount`: direction already carries the sign. NULL when
+      // the asset could not be priced on this date -- never 0, which would read
+      // as "worth nothing" rather than "not known".
+      usd: entry.usdBasis === 'exact' || entry.usdBasis === 'carried'
+        ? fromCents(Math.abs(entry.usdCents))
+        : null,
+      usd_basis: entry.usdBasis || 'unpriced',
     }))
     // Deterministic: out before in, then asset, then id. A rebuild that
     // reordered legs would show as a diff on every sync.
@@ -339,6 +391,7 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
   });
 
   const counterparty = resolveCounterparty(wallet, valueLegs, gasLegs);
+  const usd = rollUpUsd(netLegs, gasLegs, failed);
 
   return {
     chain_id: chainId,
@@ -356,7 +409,54 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts) {
     // A reverted transaction moved nothing, so it has no legs -- only the fee.
     legs: failed ? [] : netLegs,
     fee_wei: feeWei.toString(),
+    usd_value: usd.value,
+    usd_fee: usd.fee,
+    usd_basis: usd.basis,
   };
+}
+
+// The transaction-level dollar figure, at the time.
+//
+// ONE SIDE, not both. A swap of 1 ETH for 3,000 USDC is a $3,000 event, not a
+// $6,000 one, so the outbound side is the value when there is one and the
+// inbound side otherwise (a receive, an airdrop, a withdrawal). The netted legs
+// already collapsed a refund into its outflow, so this cannot double-count a
+// contract that handed part of the ETH back.
+//
+// NFT legs contribute nothing: their value is out of scope (#73) and their
+// amount is a COUNT OF UNITS (033). The ETH leg of a purchase already carries
+// what was actually paid, which IS the at-the-time value of the NFT.
+function rollUpUsd(netLegs, gasLegs, failed) {
+  let feeCents = 0;
+  let feeBasis = null;
+  for (const leg of gasLegs) {
+    feeBasis = weakestBasis(feeBasis, leg.usd_basis || 'unpriced');
+    const cents = toCents(leg.usd_at_time);
+    if (cents != null) feeCents += Math.abs(cents);
+  }
+  const fee = gasLegs.length && (feeBasis === 'exact' || feeBasis === 'carried')
+    ? fromCents(feeCents)
+    : null;
+
+  // A reverted transaction moved no value; only its fee is real. Reporting a
+  // dollar value for it would put a completed-looking amount on a transaction
+  // that never happened.
+  if (failed || !netLegs.length) {
+    return { value: null, fee, basis: 'not_applicable' };
+  }
+
+  const priced = netLegs.filter((leg) => leg.usd_basis !== 'not_applicable');
+  if (!priced.length) return { value: null, fee, basis: 'not_applicable' };
+
+  const outbound = priced.filter((leg) => leg.direction === 'out');
+  const side = outbound.length ? outbound : priced.filter((leg) => leg.direction === 'in');
+  if (!side.length) return { value: null, fee, basis: 'not_applicable' };
+
+  const basis = side.reduce((weakest, leg) => weakestBasis(weakest, leg.usd_basis), null);
+  if (basis !== 'exact' && basis !== 'carried') return { value: null, fee, basis };
+
+  const cents = side.reduce((sum, leg) => sum + Math.abs(toCents(leg.usd) ?? 0), 0);
+  return { value: fromCents(cents), fee, basis };
 }
 
 // Pure: a wallet's eth_transfers rows -> its eth_activity rows, one per

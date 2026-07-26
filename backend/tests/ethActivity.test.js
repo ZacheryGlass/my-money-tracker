@@ -48,6 +48,8 @@ const ACTIVITY_COLUMNS = [
   'wallet_id', 'chain_id', 'tx_hash', 'block_number', 'block_time', 'category',
   'counterparty_address', 'counterparty_name', 'method_id', 'method_name',
   'legs', 'fee_wei', 'needs_review', 'review_reason', 'confidence',
+  // At-the-time USD (043).
+  'usd_value', 'usd_fee', 'usd_basis',
 ];
 
 const walletRow = (id = OWNED_WALLET_ID) => ({

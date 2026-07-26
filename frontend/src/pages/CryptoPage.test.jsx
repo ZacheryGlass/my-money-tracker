@@ -143,6 +143,62 @@ describe('CryptoPage', () => {
     expect(screen.getAllByText(/^-1 ETH$/).length).toBeGreaterThan(0);
   });
 
+  it('shows what a transfer was worth on its own date, and says so when it cannot', async () => {
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '2' }],
+    });
+    const base = {
+      wallet_id: 1, wallet_address: '0xaaaa000000000000000000000000000000000001',
+      from_address: '0xaaaa000000000000000000000000000000000001',
+      to_address: '0xcccc000000000000000000000000000000000003',
+      is_error: false, counterparty_is_own: false, counterparty_exchange: null,
+    };
+    apiMocks.eth.getTransfers.mockResolvedValue({
+      data: [
+        // The issue's own example: 0.5 ETH in mid-2017 was ~$150, not today's
+        // ~$1,800. The client renders the server's dated valuation verbatim.
+        {
+          ...base, id: 11, transfer_type: 'external', tx_hash: '0xa1',
+          block_time: '2017-06-12T14:00:00Z', value_wei: '500000000000000000',
+          usd_at_time: '150.00', usd_basis: 'exact',
+        },
+        // A dead token with no series anywhere. Never $0 -- unknown is not
+        // worthless, and the difference is the whole point.
+        {
+          ...base, id: 12, transfer_type: 'token', tx_hash: '0xa2',
+          block_time: '2017-08-01T10:00:00Z', value_wei: '5000000000000000000',
+          token_contract: '0xdead000000000000000000000000000000000001',
+          token_symbol: 'DEAD', token_decimals: 18,
+          usd_at_time: null, usd_basis: 'unpriced',
+        },
+        // An NFT leg: value_wei is a count of units, so it carries no dollars
+        // at all rather than a wrong one.
+        {
+          ...base, id: 13, transfer_type: 'nft', tx_hash: '0xa3',
+          block_time: '2021-05-01T10:00:00Z', value_wei: '1',
+          token_contract: '0xd1d1000000000000000000000000000000000001',
+          token_symbol: 'PUNK', token_id: '42', token_standard: 'erc721',
+          usd_at_time: null, usd_basis: 'not_applicable',
+        },
+      ],
+      pagination: { total: 3 },
+    });
+
+    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+
+    await screen.findByText('On-chain Activity');
+    // 2017 dollars, not 2026 dollars.
+    expect(screen.getAllByText('$150').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/\$1,8\d\d/)).toBeNull();
+    expect(screen.getAllByText('No USD value').length).toBeGreaterThan(0);
+    // Exactly one unpriced row: the NFT leg shows no USD line at all rather
+    // than claiming its value is unknown.
+    expect(screen.getAllByText('No USD value').length).toBe(
+      screen.getAllByText(/^-5 DEAD$/).length
+    );
+  });
+
   it('reloads holdings after ignoring a token, so the totals drop with the row', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
     apiMocks.eth.getWallets.mockResolvedValue({

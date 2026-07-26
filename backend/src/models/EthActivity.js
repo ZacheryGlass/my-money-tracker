@@ -20,6 +20,10 @@ const RESOLVED_COLUMNS = `
     a.counterparty_address, a.counterparty_name,
     a.method_id, a.method_name,
     a.legs, a.fee_wei, a.confidence, a.classified_at,
+    -- At-the-time USD (043). Derived alongside the legs and rebuilt with them,
+    -- so an override changes what a transaction MEANS without touching what it
+    -- was worth: the dollars are a market fact, the category is a judgment.
+    a.usd_value, a.usd_fee, a.usd_basis,
     CASE WHEN o.category IS NOT NULL THEN FALSE ELSE a.needs_review END AS needs_review,
     CASE WHEN o.category IS NOT NULL THEN NULL ELSE a.review_reason END AS review_reason,
     w.address AS wallet_address`;
@@ -34,7 +38,15 @@ const INSERT_COLUMNS = [
   'wallet_id', 'chain_id', 'tx_hash', 'block_number', 'block_time', 'category',
   'counterparty_address', 'counterparty_name', 'method_id', 'method_name',
   'legs', 'fee_wei', 'needs_review', 'review_reason', 'confidence',
+  // Appended, never inserted mid-list: `legs` needs its ::jsonb cast and the
+  // placeholder builder below finds it by index.
+  'usd_value', 'usd_fee', 'usd_basis',
 ];
+
+// The one column that needs a cast, found by name rather than by a hardcoded
+// ordinal -- appending a column used to silently move the cast onto the wrong
+// placeholder.
+const LEGS_COLUMN_INDEX = INSERT_COLUMNS.indexOf('legs');
 
 class EthActivity {
   // Delete-then-insert, like the ledger mirror. Scoped to eth_activity ONLY:
@@ -66,10 +78,14 @@ class EthActivity {
           row.fee_wei ?? '0',
           row.needs_review === true,
           row.review_reason ?? null,
-          row.confidence || 'high'
+          row.confidence || 'high',
+          // NULL is UNPRICED, never 0: a transaction whose asset had no close
+          // on its date is not a transaction worth nothing.
+          row.usd_value ?? null,
+          row.usd_fee ?? null,
+          row.usd_basis ?? null
         );
-        // legs is the eleventh column and needs its jsonb cast.
-        return `(${INSERT_COLUMNS.map((_, j) => (j === 10 ? `$${base + j + 1}::jsonb` : `$${base + j + 1}`)).join(', ')})`;
+        return `(${INSERT_COLUMNS.map((_, j) => (j === LEGS_COLUMN_INDEX ? `$${base + j + 1}::jsonb` : `$${base + j + 1}`)).join(', ')})`;
       });
       const result = await pool.query(
         `INSERT INTO eth_activity (${INSERT_COLUMNS.join(', ')})

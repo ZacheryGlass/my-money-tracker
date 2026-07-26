@@ -7,10 +7,12 @@ const EthTransactionMirrorService = require('./EthTransactionMirrorService');
 const EthActivityService = require('./EthActivityService');
 const MethodSignatureService = require('./MethodSignatureService');
 const PriceService = require('./PriceService');
+const HistoricalPriceService = require('./HistoricalPriceService');
 const TransactionClassificationService = require('./TransactionClassificationService');
 const EthWallet = require('../models/EthWallet');
 const EthWalletChain = require('../models/EthWalletChain');
 const EthTransfer = require('../models/EthTransfer');
+const AssetPriceHistory = require('../models/AssetPriceHistory');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
@@ -433,6 +435,22 @@ class EthWalletService {
       // rebuild the same rows N times and briefly publish a wallet whose
       // holdings reflect only the chains synced so far.
       await EthTransfer.reclassifyCounterparties(wallet.user_id);
+
+      // At-the-time valuation (#73), BEFORE the mirror and the activity
+      // rebuild: both of those now read eth_transfers.usd_at_time instead of
+      // fetching a current price, so a stale valuation here would be baked into
+      // both derivations. Filling the series is best-effort -- a price provider
+      // being down must not fail a sync that already has every transfer, and
+      // the rows simply stay unpriced (never $0, never today's price) until the
+      // nightly job reaches them.
+      let priced = null;
+      try {
+        priced = await HistoricalPriceService.ensureAssetsForWallet(walletId);
+      } catch (err) {
+        logger.warn({ walletId, err }, 'Historical price fill failed; legs keep their previous valuation');
+      }
+      const valued = await AssetPriceHistory.applyToWallet(walletId);
+
       const holdings = await this.refreshHoldings(walletId);
       const mirror = await EthTransactionMirrorService.rebuildForWallet(walletId);
       // After reclassify: the ladder reads counterparty_is_own and
@@ -478,6 +496,8 @@ class EthWalletService {
         holdings,
         mirror,
         activity,
+        prices: priced,
+        valued,
         methods,
         skippedFeeds,
         unsupportedFeeds,
@@ -849,6 +869,19 @@ class EthWalletService {
         // Two independent derivations, so two independent catches: sharing one
         // made an activity failure log as "Mirror rebuild failed", and a mirror
         // failure skip the activity rebuild entirely.
+        // Re-value first, from the STORED series only -- no network. A label
+        // change cannot move a price, but a backfill that landed since the last
+        // rebuild can, and both derivations read these columns.
+        //
+        // Its OWN catch, like the two below: sharing the mirror's would let a
+        // valuation hiccup silently skip the reclassification the user's click
+        // was actually for, and log it as "Mirror rebuild failed". A stale
+        // valuation is stale dollars; a skipped rebuild is the wrong category.
+        try {
+          await AssetPriceHistory.applyToWallet(wallet.id);
+        } catch (err) {
+          logger.warn({ walletId: wallet.id, err }, 'Re-valuation failed during classification refresh');
+        }
         try {
           await EthTransactionMirrorService.rebuildForWallet(wallet.id);
         } catch (err) {
@@ -884,6 +917,14 @@ class EthWalletService {
           await this.refreshHoldings(wallet.id);
         } catch (err) {
           logger.warn({ walletId: wallet.id, err }, 'Holdings refresh failed during derived-data refresh');
+        }
+        // Stored series only -- no network on an ignore-list click -- and its
+        // own catch, so a valuation hiccup cannot swallow the rebuild the user
+        // clicked for.
+        try {
+          await AssetPriceHistory.applyToWallet(wallet.id);
+        } catch (err) {
+          logger.warn({ walletId: wallet.id, err }, 'Re-valuation failed during derived-data refresh');
         }
         try {
           await EthTransactionMirrorService.rebuildForWallet(wallet.id);
