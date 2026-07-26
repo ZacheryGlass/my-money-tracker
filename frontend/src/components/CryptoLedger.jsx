@@ -83,9 +83,13 @@ const shortTokenId = (id) => {
   return text.length > 10 ? `${text.slice(0, 8)}…` : text;
 };
 
+// Eight places, not the formatter's default six: a real 0.00000042 ETH receipt
+// is a row the user has to explain, and rendering it as "<0.000001" turns the
+// one fact that identifies it into a shrug. Wide enough for ETH dust, still
+// short enough that 1,832.412345 USDC reads at a glance.
 const legText = (leg) => {
   const id = leg.token_id != null ? ` #${shortTokenId(leg.token_id)}` : '';
-  return `${formatExactUnits(leg.amount)} ${leg.asset}${id}`;
+  return `${formatExactUnits(leg.amount, { maxFractionDigits: 8 })} ${leg.asset}${id}`;
 };
 
 // "0.5 ETH -> 1,832.4 USDC". One description built from netted legs, for both

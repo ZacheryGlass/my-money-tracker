@@ -105,6 +105,20 @@ describe('CryptoLedger', () => {
     apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
   });
 
+  it('renders a real dust receipt rather than shrugging at it', async () => {
+    // 0.00000042 ETH is a row the user has to explain; "<0.000001" throws away
+    // the one fact that identifies it.
+    setLedger([onchain({
+      category: 'receive',
+      needs_review: true,
+      legs: [{ asset: 'ETH', direction: 'in', amount: '0.000000420000000000' }],
+    })]);
+
+    render(<CryptoLedger />);
+
+    expect((await screen.findAllByText('+ 0.00000042 ETH')).length).toBeGreaterThan(0);
+  });
+
   it('interleaves both sources in one stream, newest first', async () => {
     setLedger([onchain(), exchange()]);
 
