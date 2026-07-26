@@ -112,7 +112,7 @@ function fakeQuery(text, params = []) {
   }
   // The owner's own label rows, which tell the quarantine which counterparties
   // already carry a verdict of any kind (including the inert 'external').
-  if (/^SELECT DISTINCT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
+  if (/^SELECT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
     // The user's own rows, plus builtin rows (user_id NULL) for addresses this
     // wallet has actually transacted with -- the bounded arm that makes a pack
     // 'external' count as a verdict without loading all 5k of them.

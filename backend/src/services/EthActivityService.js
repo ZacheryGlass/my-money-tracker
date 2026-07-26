@@ -6,6 +6,7 @@ const EthWallet = require('../models/EthWallet');
 const EthActivity = require('../models/EthActivity');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const { DEFAULT_CHAIN_ID } = require('../config/chains');
+const { tokenAssetKey } = require('../utils/assetPriceKey');
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -427,7 +428,7 @@ function walletInitiated(wallet, gasLegs, valueLegs) {
 // tokenDecimalsFallbacks: the questions are about the wallet's whole history
 // ("has this token ever been touched on purpose?"), so a per-transaction view
 // would answer them differently depending on which transaction was asked.
-function spamContext(wallet, transfers, ownAddresses = []) {
+function spamContext(wallet, transfers, ownAddresses = [], unlistedAssets = new Set()) {
   const initiatedTxs = new Set();
   const byTx = new Map();
   for (const transfer of transfers) {
@@ -508,7 +509,7 @@ function spamContext(wallet, transfers, ownAddresses = []) {
     }
   }
 
-  return { voluntaryContracts, familiarAddresses, familiarByAbbreviation };
+  return { voluntaryContracts, familiarAddresses, familiarByAbbreviation, unlistedAssets };
 }
 
 // How an address is shown everywhere -- here, in every explorer, in every
@@ -536,7 +537,7 @@ function lookalikeTarget(address, context) {
 // do. They run before any heuristic because a heuristic that has to remember to
 // check them is a heuristic that will eventually forget.
 function detectSpam({
-  wallet, category, failed, initiated, valueLegs, netLegs, labeledAddresses, context,
+  wallet, chainId, category, failed, initiated, valueLegs, netLegs, labeledAddresses, context,
 }) {
   // Gate 1: a verdict that asserts real money moved is never overruled.
   if (NEVER_SPAM_CATEGORIES.has(category)) return null;
@@ -548,10 +549,23 @@ function detectSpam({
   // real airdrop from a scam one. Every heuristic below runs on unsolicited
   // evidence only.
   if (initiated) return null;
-  // Gate 4: value left the wallet on net. Unreachable given gate 3 (nothing
-  // leaves a wallet without its signature) and kept anyway, because it is the
-  // property the issue states outright and it should not depend on gate 3
-  // staying correct.
+  // Gate 4: value left the wallet on net.
+  //
+  // NOT redundant with gate 3, and the reachable case is the interesting one: a
+  // netted outflow can be produced entirely by a forged Transfer event, since
+  // `from_address` on a token leg is attacker-written. So the fake-token
+  // variant -- a counterfeit USDT emitting Transfer(victim, lookalike, 1000e6)
+  // -- reaches here with gate 3 correctly saying "unsigned", and this gate lets
+  // it through unquarantined.
+  //
+  // That is deliberate, and it is the conservative half of a genuine ambiguity:
+  // from one wallet's feed, a forged nonzero Transfer is indistinguishable from
+  // a REAL outbound transfer on a chain whose `normal` feed is unsupported
+  // (039) and therefore emits no gas leg. Quarantining on that evidence would
+  // hide real outgoing money; leaving it visible costs one triage entry. The
+  // forgery is still defanged in the two places that matter -- it cannot mark
+  // its own contract voluntary, and it cannot make its lookalike a familiar
+  // address -- so every later airdrop of the counterfeit is quarantined.
   if (netLegs.some((leg) => leg.direction === 'out')) return null;
 
   // A counterparty with any verdict at all is not an unknown sender. Exchange
@@ -583,15 +597,35 @@ function detectSpam({
   // whole, ETH included, because the token dragged the basis down. Asking each
   // leg what it was worth cannot be gamed that way -- an attacker cannot make
   // the ETH leg unpriced.
-  const pricedInflow = netLegs.filter((leg) => leg.direction === 'in'
-    && leg.usd != null
+  const claimsPriced = netLegs.filter((leg) => leg.direction === 'in'
     && (leg.usd_basis === 'exact' || leg.usd_basis === 'carried'));
-  const pricedInflowUsd = pricedInflow.reduce((sum, leg) => sum + Math.abs(Number(leg.usd) || 0), 0);
+  const pricedInflow = claimsPriced.filter((leg) => Number.isFinite(Number(leg.usd)));
+  // A leg that says it is priced and then will not parse is not a zero. On a
+  // gate whose only job is to refuse to hide money, an unreadable figure has to
+  // stop the quarantine, not contribute nothing to the sum and let it proceed.
+  if (pricedInflow.length !== claimsPriced.length) return null;
+  const pricedInflowUsd = pricedInflow.reduce((sum, leg) => sum + Math.abs(Number(leg.usd)), 0);
 
   // THE GATE EVERY HEURISTIC BELOW SHARES: if we can see a dollar of real value
   // arriving, nothing here may hide this transaction. Stated once, so a rule
   // cannot be added later without it.
   if (pricedInflowUsd >= SPAM_DUST_USD) return null;
+
+  // "No market", as distinct from "no price on this row". A leg is unpriced
+  // whenever the dated series does not reach it -- and it does not reach a 2019
+  // transfer whose asset's series starts in 2021, or anything at all until the
+  // price job has walked the wallet. Treating that as evidence of worthlessness
+  // would quarantine a real 2019 payment in a real token.
+  //
+  // asset_price_coverage records the provider's own verdict, so the question
+  // can be asked properly: 'unlisted' (no series exists, ever) and 'empty' (the
+  // provider answered cleanly with no closes) are the two that mean the asset
+  // has no market. 'range_limited', 'error' and "never checked" do not, and a
+  // token in those states is never quarantined for being unpriced. The cost is
+  // that a fresh wallet quarantines nothing under rule 4 until the price job
+  // has reported on its assets -- fail-safe, and a night at most.
+  const noMarket = (leg) => leg.token_contract
+    && context.unlistedAssets.has(tokenAssetKey(leg.chain_id ?? chainId, leg.token_contract));
 
   // 1. ADDRESS POISONING. Reported first: it is the only verdict here that is
   //    also a security warning, and a poisoning transfer is usually zero-value
@@ -609,10 +643,21 @@ function detectSpam({
   //        this wallet has never voluntarily touched.
   //    An UNPRICED ETH transfer from a lookalike fails all three and stays --
   //    no price means the size is unknown, not small.
-  const nothingMoved = inbound.every((leg) => legUnits(leg) === 0n);
+  //
+  //    `nothingMoved` is stated over EVERY value leg, not just the inbound
+  //    ones, and that matters twice. It reads correctly for the spoofed
+  //    zero-value OUTBOUND shape (which has no inbound legs at all), and it
+  //    does not rely on `[].every()` being vacuously true -- which it would
+  //    have to, and which would silently start passing every outbound-only
+  //    transaction the moment gate 4 was ever loosened.
+  //
+  //    `unfamiliar(inbound)`, not the token legs alone: filtering the native
+  //    legs out first would let an ETH credit be quarantined by the token
+  //    beside it, which is the same hole rules 3 and 4 are written to avoid.
+  const nothingMoved = valueLegs.length > 0 && valueLegs.every((leg) => legUnits(leg) === 0n);
   const seenAndTiny = pricedInflow.length > 0;
   const unseenAndAlien = pricedInflow.length === 0
-    && unfamiliar(inbound.filter((leg) => leg.token_contract));
+    && unfamiliar(inbound) && inbound.every(noMarket);
   if (nothingMoved || seenAndTiny || unseenAndAlien) {
     const impostor = counterparties.find((address) => lookalikeTarget(address, context));
     if (impostor) return SPAM_REASONS.ADDRESS_POISONING;
@@ -668,7 +713,8 @@ function detectSpam({
   //    recipients. It is the closest observable proxy: a token nobody lists is
   //    a token with no market, and a token with no market was not sent to you
   //    as payment.
-  if (tokenLegs.length > 0 && pricedInflow.length === 0 && unfamiliar(inbound)) {
+  if (tokenLegs.length > 0 && pricedInflow.length === 0
+      && unfamiliar(inbound) && inbound.every(noMarket)) {
     return SPAM_REASONS.UNSOLICITED_TOKEN;
   }
 
@@ -684,6 +730,7 @@ const EMPTY_SPAM_INPUTS = Object.freeze({
     voluntaryContracts: new Set(),
     familiarAddresses: new Set(),
     familiarByAbbreviation: new Map(),
+    unlistedAssets: new Set(),
   }),
 });
 
@@ -803,6 +850,7 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decim
     initiated: walletInitiated(wallet, gasLegs, valueLegs),
     valueLegs,
     netLegs,
+    chainId,
     labeledAddresses: spamInputs.labeledAddresses,
     context: spamInputs.context,
   });
@@ -912,6 +960,10 @@ function buildActivityRows(walletAddress, transfers, {
   // 'external' -- reviewed, genuinely a third party -- is inert in
   // classification but must still keep the quarantine off a reviewed address.
   labeledAddresses = new Set(),
+  // Asset keys the price providers have reported as having no series at all
+  // ('unlisted'/'empty' in asset_price_coverage). "No market", as distinct from
+  // "this row happens to be unpriced" -- see noMarket in detectSpam.
+  unlistedAssets = new Set(),
   // Every address the OWNER has declared theirs -- their other tracked wallets
   // and their 'own'-labeled untracked addresses. Seeds the lookalike set; see
   // spamContext.
@@ -929,7 +981,9 @@ function buildActivityRows(walletAddress, transfers, {
   // evidence would let the ignore list quietly make its own past voluntary.
   const spamInputs = {
     labeledAddresses,
-    context: spamContext(wallet, transfers, ownAddresses.map((a) => String(a).toLowerCase())),
+    context: spamContext(
+      wallet, transfers, ownAddresses.map((a) => String(a).toLowerCase()), unlistedAssets
+    ),
   };
   const byTx = new Map();
   for (const transfer of transfers) {
@@ -956,7 +1010,7 @@ class EthActivityService {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
-    const [transfersResult, ignoredResult, labeledResult, ownWalletsResult] = await Promise.all([
+    const [transfersResult, ignoredResult, labeledResult, ownWalletsResult, coverageResult] = await Promise.all([
       pool.query(
         'SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id',
         [walletId]
@@ -978,19 +1032,30 @@ class EthActivityService {
       // `kind` and `user_id` ride along so this one query also yields the
       // own-address set below.
       pool.query(
-        `SELECT DISTINCT l.address, l.kind, l.user_id
+        // EXISTS rather than IN (SELECT ... UNION ...): correlated on the label
+        // address, so it stops at the first matching transfer instead of
+        // materializing and de-duplicating the wallet's whole counterparty set
+        // on every rebuild -- and this runs on every sync, every label write and
+        // every ignore-list change.
+        `SELECT l.address, l.kind, l.user_id
            FROM eth_address_labels l
           WHERE l.user_id = $1
-             OR (l.user_id IS NULL AND l.address IN (
-                   SELECT t.from_address FROM eth_transfers t WHERE t.wallet_id = $2
-                   UNION
-                   SELECT t.to_address FROM eth_transfers t WHERE t.wallet_id = $2))`,
+             OR (l.user_id IS NULL AND EXISTS (
+                   SELECT 1 FROM eth_transfers t
+                    WHERE t.wallet_id = $2
+                      AND (t.from_address = l.address OR t.to_address = l.address)))`,
         [wallet.user_id, walletId]
       ),
       // Every address the owner has declared theirs, across ALL their wallets --
       // the thing a poisoner most wants to imitate, and invisible to this
       // wallet's own transfers unless the two have transacted.
       pool.query('SELECT address FROM eth_wallets WHERE user_id = $1', [wallet.user_id]),
+      // Assets the price providers say have NO series at all. 'range_limited'
+      // and 'error' are deliberately excluded: they mean the series does not
+      // reach this row, which says nothing about whether the asset has a market.
+      pool.query(
+        "SELECT asset_key FROM asset_price_coverage WHERE status IN ('unlisted', 'empty')"
+      ),
     ]);
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
     const labeledAddresses = new Set(labeledResult.rows.map((row) => row.address));
@@ -1004,8 +1069,10 @@ class EthActivityService {
         .map((row) => row.address),
     ];
 
+    const unlistedAssets = new Set(coverageResult.rows.map((row) => row.asset_key));
+
     const rows = buildActivityRows(wallet.address, transfersResult.rows, {
-      ignoredContracts, labeledAddresses, ownAddresses,
+      ignoredContracts, labeledAddresses, ownAddresses, unlistedAssets,
     });
     await this._nameCounterparties(wallet.user_id, rows);
     const written = await EthActivity.replaceForWallet(walletId, rows);

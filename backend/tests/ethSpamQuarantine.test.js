@@ -54,6 +54,8 @@ const db = {
   transfers: [],
   ignoredTokens: [],
   labels: [],
+  // Asset keys asset_price_coverage reports as having no series at all.
+  unlistedAssets: [],
   // Every address the owner has declared theirs. WALLET is added in
   // beforeEach; a second entry stands in for a second tracked wallet.
   ownWallets: [],
@@ -122,7 +124,7 @@ function fakeQuery(text, params = []) {
     const wanted = new Set(params[0]);
     return { rows: db.labels.filter((l) => wanted.has(l.address)) };
   }
-  if (/^SELECT DISTINCT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
+  if (/^SELECT l\.address, l\.kind, l\.user_id FROM eth_address_labels/.test(sql)) {
     // The user's own rows, plus builtin rows (user_id NULL) for addresses this
     // wallet has actually transacted with -- the bounded arm that makes a pack
     // 'external' count as a verdict without loading all 5k of them.
@@ -136,6 +138,11 @@ function fakeQuery(text, params = []) {
   // Every address the owner has declared theirs, across all their wallets.
   if (/^SELECT address FROM eth_wallets WHERE user_id/.test(sql)) {
     return { rows: db.ownWallets.map((address) => ({ address })) };
+  }
+  // 'unlisted'/'empty' only -- 'range_limited' and 'error' say nothing about
+  // whether the asset has a market.
+  if (/^SELECT asset_key FROM asset_price_coverage/.test(sql)) {
+    return { rows: db.unlistedAssets.map((asset_key) => ({ asset_key })) };
   }
   if (/^DELETE FROM eth_activity WHERE wallet_id/.test(sql)) {
     db.activity = db.activity.filter((row) => row.wallet_id !== params[0]);
@@ -252,7 +259,15 @@ const app = require('../src/server');
 const EthTransfer = require('../src/models/EthTransfer');
 const EthActivityService = require('../src/services/EthActivityService');
 
+const { tokenAssetKey } = require('../src/utils/assetPriceKey');
+
 const { buildActivityRows, SPAM_REASONS } = EthActivityService;
+
+// The providers' verdict on the junk contracts these fixtures use: no series at
+// all. Rule 4 requires it, because 'unpriced' on its own ALSO means 'the dated
+// series does not reach this row' -- true of every 2019 transfer until the
+// backfill gets there, and not evidence that anything is worthless.
+const UNLISTED = [SPAM_TOKEN, SPAM_NFT].map((contract) => tokenAssetKey(1, contract));
 
 // --- leg fixtures ----------------------------------------------------------
 
@@ -320,7 +335,7 @@ const paidPayeeBefore = () => [
 ];
 
 const only = (legs, options) => {
-  const rows = buildActivityRows(WALLET, legs, options);
+  const rows = buildActivityRows(WALLET, legs, { unlistedAssets: new Set(UNLISTED), ...options });
   assert.equal(rows.length, 1, 'expected exactly one activity row');
   return rows[0];
 };
@@ -329,7 +344,8 @@ const only = (legs, options) => {
 // heuristics read wallet-wide evidence and a per-transaction build would answer
 // differently.
 const rowFor = (legs, txHash, options) => {
-  const row = buildActivityRows(WALLET, legs, options).find((r) => r.tx_hash === txHash);
+  const row = buildActivityRows(WALLET, legs, { unlistedAssets: new Set(UNLISTED), ...options })
+    .find((r) => r.tx_hash === txHash);
   assert.ok(row, `expected an activity row for ${txHash}`);
   return row;
 };
@@ -339,6 +355,7 @@ beforeEach(() => {
   db.ignoredTokens = [];
   db.labels = [];
   db.ownWallets = [WALLET];
+  db.unlistedAssets = [...UNLISTED];
   db.activity = [];
   db.overrides.clear();
   queries.length = 0;
@@ -394,6 +411,24 @@ test('the spoofed-outbound poisoning variant is caught, and cannot immunize itse
     }),
   ], TX2);
   assert.equal(second.spam_reason, SPAM_REASONS.ADDRESS_POISONING);
+});
+
+test('a lookalike cannot hide the ETH that arrived with the junk token', () => {
+  // Rule 1 asks `unfamiliar(inbound)` over EVERY arriving leg, not just the ones
+  // carrying a contract. Filtering the native legs out first would let an ETH
+  // credit be quarantined by the token beside it -- the same hole rules 3 and 4
+  // are written to avoid, reached through the poisoning rung instead.
+  const row = rowFor([
+    ...paidPayeeBefore(),
+    leg({ tx_hash: TX, from_address: LOOKALIKE, to_address: WALLET, value_wei: '1000000000000000000' }),
+    tokenLeg({
+      tx_hash: TX, token_contract: SPAM_TOKEN, from_address: LOOKALIKE,
+      to_address: WALLET, value_wei: '10000000000000000000000',
+    }),
+  ], TX);
+
+  assert.equal(row.spam, false);
+  assert.equal(row.needs_review, true);
 });
 
 test('a lookalike of the wallet\'s own address counts too', () => {
@@ -577,6 +612,26 @@ test('an unpriced token the wallet has never touched, arriving unbidden, is spam
   assert.equal(row.legs[0].amount, '10000');
 });
 
+test('GATE: "unpriced" is not enough -- the provider has to have SAID there is no market', () => {
+  // A leg is unpriced whenever the dated series does not reach it, and it does
+  // not reach a 2019 transfer whose asset's series starts in 2021, or anything
+  // at all until the price job has walked the wallet. Reading that as evidence
+  // of worthlessness would quarantine a real 2019 payment in a real token.
+  //
+  // asset_price_coverage carries the provider's own verdict, so the question is
+  // asked properly: 'unlisted'/'empty' mean no market; 'range_limited', 'error'
+  // and never-checked do not.
+  const legs = [tokenLeg({
+    token_contract: SPAM_TOKEN, token_symbol: 'OBSCURE',
+    from_address: STRANGER, to_address: WALLET, value_wei: '5000000000000000000',
+  })];
+
+  // No coverage row at all -- the price job has not reached this asset.
+  assert.equal(only(legs, { unlistedAssets: new Set() }).spam, false);
+  // A verdict of "no series exists, ever".
+  assert.equal(only(legs).spam_reason, SPAM_REASONS.UNSOLICITED_TOKEN);
+});
+
 test('GATE: a PRICED token arriving unbidden is never quarantined', () => {
   // Somebody paying you in USDC is not spam, however unexpected it was. Only
   // the first of the three conditions holds here, and one is not enough.
@@ -710,6 +765,7 @@ test('a forged NONZERO outbound token leg cannot switch off the heuristics', asy
   // leg is copied verbatim out of that event, so the victim's feed shows an
   // outbound leg they never signed.
   const FAKE_USDT = `0x${'9'.repeat(40)}`;
+  db.unlistedAssets = [...db.unlistedAssets, tokenAssetKey(1, FAKE_USDT)];
   db.transfers = [
     // The forgery. No gas leg: the wallet signed nothing.
     tokenLeg({
@@ -1064,10 +1120,13 @@ test('the activity summary answers about the wallet the feed was filtered to', a
 test('a wave of scam airdrops adds nothing to the activity review queue', async () => {
   // Twenty senders, twenty tokens, none of them ever touched, none of them
   // priced, none of them signed for.
+  const contractFor = (i) => `0x${String(i + 1).padStart(40, 'd')}`;
+  // The price providers have reported on all twenty: no series at all.
+  db.unlistedAssets = Array.from({ length: 20 }, (unused, i) => tokenAssetKey(1, contractFor(i)));
   db.transfers = Array.from({ length: 20 }, (unused, i) => tokenLeg({
     tx_hash: `0x${String(i + 1).padStart(64, 'e')}`,
     block_number: 2000 + i,
-    token_contract: `0x${String(i + 1).padStart(40, 'd')}`,
+    token_contract: contractFor(i),
     token_symbol: `AIRDROP${i}`,
     from_address: `0x${String(i + 1).padStart(40, 'c')}`,
     to_address: WALLET,
