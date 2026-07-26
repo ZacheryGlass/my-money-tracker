@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlaidLink } from 'react-plaid-link';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, ChevronDown, X, Check, Save, Undo2, Eye, EyeOff, Download, Upload, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag, ArrowLeftRight } from 'lucide-react';
+import { Link2, RefreshCw, Unlink, AlertTriangle, Building2, Plus, Clock, Trash2, ShieldCheck, ChevronRight, ChevronDown, X, Check, Save, Undo2, Eye, EyeOff, Download, Upload, Wallet, Landmark, TrendingUp, Briefcase, Receipt, Tag, Pencil, ArrowLeftRight } from 'lucide-react';
 import { plaid as plaidAPI, eth as ethAPI, exchanges as exchangesAPI, accounts as accountsAPI, holdings as holdingsAPI, exportData, history as historyAPI, keys as keysAPI, admin as adminAPI } from '../utils/api';
 import { getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
 import useAppearancePreferences from '../hooks/useAppearancePreferences';
@@ -573,6 +573,8 @@ const Settings = ({ user }) => {
   // Per account, so one failed upload does not blank another account's receipt.
   const [exchangeImportResults, setExchangeImportResults] = useState({});
   const [deletingExchangeId, setDeletingExchangeId] = useState(null);
+  const [renamingExchangeId, setRenamingExchangeId] = useState(null);
+  const [exchangeRenameValue, setExchangeRenameValue] = useState('');
   const [keyStatuses, setKeyStatuses] = useState(null);
   const [keyInputs, setKeyInputs] = useState({});
   const [savingKeyService, setSavingKeyService] = useState(null);
@@ -598,6 +600,13 @@ const Settings = ({ user }) => {
   const ethAttentionCount = useMemo(
     () => ethWallets.filter((wallet) => wallet.error_code).length + (counterpartyData?.summary?.count || 0),
     [ethWallets, counterpartyData]
+  );
+  // Summed from the accounts already loaded: flagged records deserve the same
+  // first-class badge as the Ethereum triage queue, not a count discovered
+  // only after navigating into the tab.
+  const exchangeAttentionCount = useMemo(
+    () => exchangeAccounts.reduce((sum, account) => sum + (account.needs_review_count || 0), 0),
+    [exchangeAccounts]
   );
 
   // Typeahead keeps every exchange name, builtins included.
@@ -877,6 +886,22 @@ const Settings = ({ user }) => {
       await fetchItems();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to delete exchange account');
+    }
+  };
+
+  const handleRenameExchangeAccount = async (account) => {
+    const name = exchangeRenameValue.trim();
+    if (!name || name === account.name) {
+      setRenamingExchangeId(null);
+      return;
+    }
+    try {
+      await exchangesAPI.update(account.id, { name });
+      showSuccess('Exchange account renamed');
+      setRenamingExchangeId(null);
+      await fetchItems();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to rename exchange account');
     }
   };
 
@@ -1349,7 +1374,9 @@ const Settings = ({ user }) => {
             ? institutionSummary.attentionCount
             : t.id === 'ethereum'
               ? ethAttentionCount
-              : 0;
+              : t.id === 'exchanges'
+                ? exchangeAttentionCount
+                : 0;
           const attention = attentionCount > 0;
           return {
             value: t.id,
@@ -2204,6 +2231,44 @@ const Settings = ({ user }) => {
                             onChange={(event) => handleExchangeImport(account, event)}
                           />
                         </label>
+                        {renamingExchangeId === account.id ? (
+                          <form
+                            onSubmit={(event) => { event.preventDefault(); handleRenameExchangeAccount(account); }}
+                            className="flex items-center gap-2"
+                          >
+                            <input
+                              type="text"
+                              value={exchangeRenameValue}
+                              onChange={(event) => setExchangeRenameValue(event.target.value)}
+                              maxLength={80}
+                              autoFocus
+                              aria-label={`New name for ${account.name}`}
+                              className="h-10 w-44 rounded border border-input-border bg-surface-2 px-3 text-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+                            />
+                            <button
+                              type="submit"
+                              className="rounded border border-border bg-surface-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRenamingExchangeId(null)}
+                              className="rounded border border-transparent p-2.5 text-tertiary transition-all hover:text-primary"
+                              title="Cancel rename"
+                            >
+                              <X size={18} />
+                            </button>
+                          </form>
+                        ) : (
+                          <button
+                            onClick={() => { setRenamingExchangeId(account.id); setExchangeRenameValue(account.name); }}
+                            className="rounded border border-transparent p-2.5 text-tertiary transition-all hover:bg-surface-3 hover:text-primary"
+                            title="Rename exchange account"
+                          >
+                            <Pencil size={18} />
+                          </button>
+                        )}
                         {deletingExchangeId === account.id ? (
                           <>
                             <button

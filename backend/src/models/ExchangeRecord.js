@@ -225,17 +225,6 @@ class ExchangeRecord {
     return result.rows[0];
   }
 
-  static async countForUser(userId) {
-    if (!userId) throw new Error('ExchangeRecord.countForUser requires a userId');
-    const result = await pool.query(
-      `SELECT COUNT(*)::int AS total
-       FROM exchange_records er
-       JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
-       WHERE ea.user_id = $1`,
-      [userId]
-    );
-    return result.rows[0]?.total ?? 0;
-  }
 }
 
 module.exports = ExchangeRecord;

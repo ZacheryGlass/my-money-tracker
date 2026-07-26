@@ -105,12 +105,11 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
   const [ignoringContract, setIgnoringContract] = useState(null);
   const [labelingId, setLabelingId] = useState(null);
   const [labelName, setLabelName] = useState('');
-  // null = follow the default for this address (keep an existing verdict, or
-  // 'exchange' for one that has never been labeled). Set once the user picks.
+  // null = follow the default ("keep") -- the server resolves the address's
+  // current verdict, hidden pack rows included. Set once the user picks.
   const [labelVerdictChoice, setLabelVerdictChoice] = useState(null);
   const [savingLabel, setSavingLabel] = useState(false);
   const [labelNames, setLabelNames] = useState([]);
-  // address -> kind, for addresses that already carry a label row.
   const [refreshKey, setRefreshKey] = useState(0);
   // Guards Load More responses that arrive after the filter changed.
   const typeFilterRef = useRef(typeFilter);

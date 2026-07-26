@@ -57,6 +57,7 @@ const apiMocks = vi.hoisted(() => ({
     remove: vi.fn(),
     importCsv: vi.fn(),
     getRecords: vi.fn(),
+    resolveRecord: vi.fn(),
   },
 }));
 

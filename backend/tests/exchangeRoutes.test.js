@@ -401,3 +401,24 @@ test('scoped reads fail closed when no user is supplied', async () => {
   await assert.rejects(() => ExchangeAccount.findByIdForUser(1, null), /requires a userId/);
   await assert.rejects(() => ExchangeAccount.delete(1, undefined), /requires a userId/);
 });
+
+test('PATCH /api/exchanges/:id renames an owned account', async () => {
+  const response = await request(app)
+    .patch(`/api/exchanges/${OWNED_ACCOUNT_ID}`)
+    .send({ name: 'Kraken Main' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.account.id, OWNED_ACCOUNT_ID);
+});
+
+test('importCsv itself refuses an account the caller does not own', async () => {
+  // The route's loadAccount is the first gate, but the service must be its
+  // own: bulkInsert keys on the raw account id, so a caller that skipped the
+  // route would otherwise write records into someone else's account and only
+  // the after-the-fact timestamp would fail.
+  const ExchangeImportService = require('../src/services/ExchangeImportService');
+  await assert.rejects(
+    () => ExchangeImportService.importCsv(2, OWNED_ACCOUNT_ID, 'a,b\n1,2'),
+    /not found/i
+  );
+});

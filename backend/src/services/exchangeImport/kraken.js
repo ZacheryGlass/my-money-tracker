@@ -279,4 +279,4 @@ function parse(rows) {
   };
 }
 
-module.exports = { FORMAT, detect, parse, normalizeAsset };
+module.exports = { FORMAT, detect, parse };

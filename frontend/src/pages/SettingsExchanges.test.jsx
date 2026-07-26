@@ -25,6 +25,7 @@ vi.mock('../utils/api', () => ({
   exchanges: {
     getAll: vi.fn(),
     create: vi.fn(),
+    update: vi.fn(),
     remove: vi.fn(),
     importCsv: vi.fn(),
     getRecords: vi.fn(),
@@ -124,6 +125,21 @@ describe('Settings -> Exchanges tab', () => {
     exchangesAPI.getAll.mockResolvedValue({ accounts: [ACCOUNT] });
     fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
     expect(await screen.findByText('Kraken Spot')).toBeInTheDocument();
+  });
+
+  it('renames an account through the PATCH vertical', async () => {
+    exchangesAPI.update.mockResolvedValue({ account: { ...ACCOUNT, name: 'Kraken Main' } });
+    await renderSettings();
+    await screen.findByText('Kraken Spot');
+
+    fireEvent.click(screen.getByTitle('Rename exchange account'));
+    const input = screen.getByLabelText('New name for Kraken Spot');
+    fireEvent.change(input, { target: { value: 'Kraken Main' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(exchangesAPI.update).toHaveBeenCalledWith(3, { name: 'Kraken Main' });
+    });
   });
 
   it('adds an account with the chosen venue', async () => {

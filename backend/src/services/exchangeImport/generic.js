@@ -178,4 +178,4 @@ function detect() {
   return false;
 }
 
-module.exports = { FORMAT, detect, parse, normalizeType, TIMESTAMP_CONVENTION };
+module.exports = { FORMAT, detect, parse, TIMESTAMP_CONVENTION };

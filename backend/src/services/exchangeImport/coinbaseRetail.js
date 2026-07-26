@@ -336,4 +336,4 @@ function parse(rows) {
   };
 }
 
-module.exports = { FORMAT, detect, parse, TYPE_MAP };
+module.exports = { FORMAT, detect, parse };

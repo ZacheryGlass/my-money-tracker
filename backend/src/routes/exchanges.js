@@ -47,6 +47,9 @@ function validateAccountInput({ name, exchange }, { partial = false } = {}) {
 router.get('/', async (req, res) => {
   try {
     const accounts = await ExchangeAccount.findAllByUser(req.user.id);
+    // formats (and the import route's format/mapping overrides) are API-level
+    // affordances: the Settings uploader auto-detects, but a direct API caller
+    // gets to name a parser or map columns for an export no parser knows.
     res.status(200).json({ accounts, formats: FORMATS });
   } catch (error) {
     logger.error({ err: error }, 'Get exchange accounts error');

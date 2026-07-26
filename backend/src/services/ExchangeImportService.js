@@ -2,16 +2,24 @@
 
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
-const { parseExchangeCsv, ImportFormatError, FORMATS } = require('./exchangeImport');
+const { parseExchangeCsv } = require('./exchangeImport');
 const logger = require('../config/logger');
 
 class ExchangeImportService {
   /**
    * Parse a CSV export and store what it describes against one exchange
-   * account. The account must already have been resolved against the caller --
-   * this method takes the id it was told and does not re-check ownership.
+   * account. Fail-closed like every other scoped entry point: the account is
+   * resolved under the caller's userId BEFORE anything is written, because
+   * bulkInsert keys on the raw account id and the only other scoped call
+   * (touchImport) runs after the insert -- too late to be the gate.
    */
   static async importCsv(userId, exchangeAccountId, csvText, { format = 'auto', mapping } = {}) {
+    const account = await ExchangeAccount.findByIdForUser(exchangeAccountId, userId);
+    if (!account) {
+      const error = new Error('Exchange account not found');
+      error.code = 'EXCHANGE_ACCOUNT_NOT_FOUND';
+      throw error;
+    }
     const parsed = parseExchangeCsv(csvText, { format, mapping });
     const result = await ExchangeRecord.bulkInsert(exchangeAccountId, parsed.records);
 
@@ -52,5 +60,3 @@ class ExchangeImportService {
 }
 
 module.exports = ExchangeImportService;
-module.exports.ImportFormatError = ImportFormatError;
-module.exports.FORMATS = FORMATS;

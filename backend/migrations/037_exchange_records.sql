@@ -96,6 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_exchange_records_account_time
 -- Partial: the review queue is a handful of rows against a full history.
 CREATE INDEX IF NOT EXISTS idx_exchange_records_needs_review
   ON exchange_records(exchange_account_id) WHERE needs_review;
--- Feeds the on-chain matching pass, which looks up records by hash.
+-- No reader yet: this pre-builds the by-hash lookup the on-chain matching
+-- pass (#61) needs. Until then it is write cost only.
 CREATE INDEX IF NOT EXISTS idx_exchange_records_tx_hash
   ON exchange_records(tx_hash) WHERE tx_hash IS NOT NULL;
