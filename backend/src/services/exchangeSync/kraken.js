@@ -255,13 +255,31 @@ const krakenConnector = {
 
     // Only ever advanced past rows that were actually read. A cursor that ran
     // ahead of the fetch would drop the gap silently and permanently.
+    //
+    // `end` is INCLUSIVE and `time` is a float, so the resume point rounds UP
+    // to the oldest row read: that row is re-read and the upsert absorbs it,
+    // which is the point. Rounding down instead (floor - 1) looks like a
+    // one-second overlap and is actually a one-second GAP -- every row in
+    // (floor(oldest)-1, oldest) falls between the two windows and is never
+    // fetched by this run or any later one, because the resume point only ever
+    // moves further down. That is worst for trades: Kraken's two legs share a
+    // refid AND an identical time, so a cut between them strands the surviving
+    // leg as a permanently half-known trade.
+    const resumePoint = oldestFetched === null ? null : Math.min(Math.ceil(oldestFetched), end - 1);
+    if (truncated && resumePoint !== null && resumePoint >= Math.ceil(oldestFetched)
+      && Math.ceil(oldestFetched) >= end) {
+      // Degenerate: a whole page budget's worth of rows inside one second, so
+      // rounding up cannot make progress and the clamp to end-1 skips the rest
+      // of that second. Astronomically unlikely on a personal account, but it
+      // must be said out loud rather than dropped silently.
+      logger.warn({ second: end, rows: rows.length },
+        'Kraken ledger has more rows in one second than a sync can page; some may be skipped');
+    }
     const nextCursor = truncated && oldestFetched !== null
       ? {
         newestTime: Math.max(Number(state.newestTime) || 0, newestFetched ?? 0) || null,
         pendingStart: start,
-        // `end` is inclusive, so resume one whole second below the oldest row
-        // read; the overlap re-reads a row or two and the upsert absorbs it.
-        pendingEnd: Math.floor(oldestFetched) - 1,
+        pendingEnd: resumePoint,
       }
       : {
         newestTime: Math.max(Number(state.newestTime) || 0, newestFetched ?? 0, resumingBackfill ? 0 : end) || null,

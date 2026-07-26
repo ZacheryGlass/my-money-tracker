@@ -5,6 +5,7 @@ const {
   UNKNOWN_RECORD_TYPE,
   cleanAmount,
   absAmount,
+  negateAmount,
   addAmounts,
   isNegativeAmount,
   parseTimestamp,
@@ -275,6 +276,16 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
   // it is the quote leg for a buy/sell. For a Convert the counter-leg is a
   // separate transaction and is paired below, not here.
   //
+  // The SIGN is rebuilt from the base leg rather than taken as Coinbase wrote
+  // it, exactly as the retail CSV importer does (coinbaseRetail.js emitSingle):
+  // native_amount values the event, so it carries the SAME sign as `amount`,
+  // while the quote leg has to carry the opposite one -- buying an asset spends
+  // the quote, selling it receives the quote. Copied verbatim, a $1,000 buy
+  // would record +1000 USD where the true effect is -1000, so derivedBalances
+  // (base + quote - fee) would be out by twice the notional on every trade, and
+  // the API and CSV readers would disagree about the body of a record they both
+  // key `cb:<transaction id>`.
+  //
   // UNVERIFIED AGAINST A LIVE ACCOUNT -- the first thing to check with a real
   // key. If Coinbase also writes an `advanced_trade_fill` transaction into the
   // FIAT account for the same fill, that leg imports as its own record and the
@@ -291,8 +302,11 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
   let quoteAsset = null;
   let quoteAmount = null;
   if (mapped === 'trade') {
-    quoteAsset = currencyOf(tx.native_amount);
-    quoteAmount = amountOf(tx.native_amount);
+    const magnitude = absAmount(amountOf(tx.native_amount));
+    if (magnitude !== null) {
+      quoteAsset = currencyOf(tx.native_amount);
+      quoteAmount = isNegativeAmount(baseAmount ?? '0') ? magnitude : negateAmount(magnitude);
+    }
   }
 
   let feeAsset = null;
@@ -336,11 +350,17 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
     fee_amount: feeAmount,
     tx_hash: typeof network.hash === 'string' && network.hash ? network.hash : null,
     address,
-    external_id: `cb:${tx.id}`,
+    // A widowed Convert leg takes the id the complete pair will carry, so the
+    // pair upgrades this placeholder instead of landing beside it.
+    external_id: tx._unpairedConversion ? conversionIdFor(tx._unpairedConversion) : `cb:${tx.id}`,
     // An uncategorized `tx`, a `request`, or a type Coinbase adds after this
     // was written all land here: stored, visible, and flagged -- never guessed
-    // into income or a deposit, and never dropped.
-    needs_review: isUnknown,
+    // into income or a deposit, and never dropped. A widowed Convert leg is
+    // flagged for a different reason: it is half an event, and the flag is what
+    // lets the complete pair upgrade it. Decided here rather than by the
+    // caller, so the id and the flag that depend on each other cannot be set
+    // apart.
+    needs_review: isUnknown || Boolean(tx._unpairedConversion),
     raw: { _format: 'coinbase', _source: 'api', ...tx },
   }, { line, amountCell });
 }
@@ -366,23 +386,34 @@ function foldConversions(transactions) {
   }
 
   const pairs = [];
-  for (const legs of byTradeId.values()) {
+  for (const [tradeId, legs] of byTradeId.entries()) {
     if (legs.length !== 2) {
-      // One leg fetched, or three: not a pair this code understands. They go
-      // through as individual records and are flagged by the caller, rather
-      // than being fused on a guess.
-      singles.push(...legs.map((leg) => ({ ...leg, _unpairedConversion: true })));
+      // One leg fetched, or three: not a pair this code understands. They are
+      // kept (the money moved) and flagged, rather than fused on a guess.
+      singles.push(...legs.map((leg) => ({ ...leg, _unpairedConversion: tradeId })));
       continue;
     }
     const from = legs.find((leg) => isNegativeAmount(amountOf(leg.amount) ?? '')) ?? legs[0];
     const to = legs.find((leg) => leg !== from);
-    pairs.push({ from, to });
+    pairs.push({ from, to, tradeId });
   }
 
   return { pairs, singles };
 }
 
-function recordFromConversion({ from, to }, { line }) {
+// A Convert's identity is the TRADE id, not either leg's transaction id.
+//
+// The two legs live in two different v2 accounts and the per-account walk
+// shares one page budget, so a budget boundary between them fetches only one.
+// Keyed on a leg, the orphan would land under its own id and the complete pair
+// under the other leg's -- two rows for one Convert, which nothing downstream
+// can collapse and which double-counts the position. Keyed on the trade id
+// they collide, so the complete pair upgrades the flagged orphan through the
+// existing ON CONFLICT arm. This is the same reason a widowed Kraken trade leg
+// keys its refid rather than its own ledger id.
+const conversionIdFor = (tradeId) => `cb:t:${tradeId}`;
+
+function recordFromConversion({ from, to, tradeId }, { line }) {
   return finalizeRecord({
     record_type: 'conversion',
     occurred_at: parseTimestamp(from.created_at),
@@ -394,7 +425,7 @@ function recordFromConversion({ from, to }, { line }) {
     fee_amount: null,
     tx_hash: null,
     address: null,
-    external_id: `cb:${from.id}`,
+    external_id: conversionIdFor(tradeId),
     needs_review: false,
     raw: { _format: 'coinbase', _source: 'api', from, to },
   }, { line, amountCell: [from.amount?.amount ?? '', to.amount?.amount ?? ''] });
@@ -458,23 +489,31 @@ const coinbaseConnector = {
     });
     const { byOrder: fillsByOrder, adjusted } = summarizeFills(fills);
 
-    const v2Accounts = await pageV2(client, '/v2/accounts', { maxPages: 10 });
+    const v2Accounts = await pageV2(client, '/v2/accounts', { maxPages: 25 });
 
     const pending = (state.pending && typeof state.pending === 'object') ? state.pending : {};
     const nextPending = {};
     const transactions = [];
-    let truncated = false;
+    // An account list that was itself cut short means accounts exist that have
+    // never been enumerated, let alone walked. Discarding this flag let the
+    // watermark advance and stamp the run 'ok' while whole accounts had never
+    // been read at all.
+    let truncated = v2Accounts.truncated;
     let pagesUsed = 0;
 
     for (const account of v2Accounts.rows) {
       if (!account?.id) continue;
-      const resumeAfter = pending[account.id] ?? null;
+      const carried = pending[account.id];
+      // `true` means "enumerated but never started". A string is a
+      // starting_after id to resume from.
+      const resumeAfter = typeof carried === 'string' ? carried : null;
+      const unfinished = carried !== undefined;
       if (pagesUsed >= maxPages) {
-        // Out of budget before this account was touched at all. Carrying its
-        // resume point forward unchanged is what stops the next run from
-        // treating it as finished.
+        // Out of budget before this account was touched. It has to be recorded
+        // as unfinished even when it has no resume id yet, or the next run
+        // treats it as up to date and its history is never read.
         truncated = true;
-        if (resumeAfter) nextPending[account.id] = resumeAfter;
+        nextPending[account.id] = carried ?? true;
         continue;
       }
       const result = await pageV2(client, `/v2/accounts/${account.id}/transactions`, {
@@ -482,7 +521,7 @@ const coinbaseConnector = {
         startAfter: resumeAfter,
         // While an account is still being backfilled the watermark must not
         // stop the walk: every remaining row is older than it by definition.
-        shouldStop: watermark && !resumeAfter
+        shouldStop: watermark && !unfinished
           ? (row) => {
             const at = Date.parse(row?.created_at ?? '');
             return Number.isFinite(at) && at < watermark;
@@ -492,7 +531,7 @@ const coinbaseConnector = {
       pagesUsed += result.pages;
       if (result.truncated) {
         truncated = true;
-        if (result.resumeAfter) nextPending[account.id] = result.resumeAfter;
+        nextPending[account.id] = result.resumeAfter ?? true;
       }
       transactions.push(...result.rows);
     }
@@ -510,7 +549,6 @@ const coinbaseConnector = {
     for (const tx of singles) {
       line += 1;
       const record = recordFromTransaction(tx, { line, fillsByOrder });
-      if (tx._unpairedConversion) record.needs_review = true;
       if (record.needs_review && TYPE_MAP[String(tx.type ?? '').toLowerCase()] === undefined) unknownTypes += 1;
       records.push(record);
     }
@@ -531,13 +569,19 @@ const coinbaseConnector = {
 
     return {
       records,
-      // `since` only advances when every account was walked to the end. A
-      // truncated pass keeps the old watermark and records where each
-      // unfinished account stopped, so the next run continues rather than
-      // starting over.
+      // `since` only advances when every account was walked to the end, and it
+      // advances to the moment the backfill STARTED, not the moment it
+      // finished.
+      //
+      // That distinction is the whole fix for a multi-run backfill: the head of
+      // each account was read on the first pass, and the resume passes
+      // deliberately skip the head (they start at a stored starting_after id).
+      // Stamping the completing pass's time would declare everything up to
+      // day 3 covered when the head was only read on day 1, and any row written
+      // in between falls in the band between the two and is never fetched.
       cursor: truncated
-        ? { since: state.since ?? null, pending: nextPending }
-        : { since: startedAt, pending: {} },
+        ? { since: state.since ?? null, headStartedAt: state.headStartedAt ?? startedAt, pending: nextPending }
+        : { since: state.headStartedAt ?? startedAt, headStartedAt: null, pending: {} },
       balances: Object.fromEntries(sortedEntries(balances)),
       stats: {
         rows: transactions.length,

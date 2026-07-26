@@ -195,6 +195,7 @@ const requests = [];
 let krakenLedgerPages = null;
 let krakenLedgerHistory = null;
 let coinbaseTransactionPages = null;
+let coinbaseAccountPages = null;
 let failNextKrakenWith = null;
 
 function krakenResponse(url, body) {
@@ -251,7 +252,14 @@ function coinbaseResponse(url, config) {
 
   if (path === '/api/v3/brokerage/accounts') return { status: 200, data: COINBASE.brokerageAccounts };
   if (path === '/api/v3/brokerage/orders/historical/fills') return { status: 200, data: COINBASE.fills };
-  if (path === '/v2/accounts') return { status: 200, data: COINBASE.v2Accounts };
+  if (path === '/v2/accounts') {
+    if (coinbaseAccountPages) {
+      const after = config?.params?.starting_after;
+      const index = after ? coinbaseAccountPages.findIndex((page) => page._after === after) : 0;
+      return { status: 200, data: coinbaseAccountPages[index] ?? { data: [], pagination: {} } };
+    }
+    return { status: 200, data: COINBASE.v2Accounts };
+  }
   if (/^\/v2\/accounts\/[^/]+\/transactions$/.test(path)) {
     if (coinbaseTransactionPages) {
       const after = config?.params?.starting_after;
@@ -322,6 +330,7 @@ beforeEach(() => {
   krakenLedgerPages = null;
   krakenLedgerHistory = null;
   coinbaseTransactionPages = null;
+  coinbaseAccountPages = null;
   failNextKrakenWith = null;
   process.env.SECRETS_ENCRYPTION_KEY = ENCRYPTION_KEY;
   asUser(undefined);
@@ -698,6 +707,42 @@ test('kraken: repeated syncs read a long history to the end, skipping nothing', 
   assert.ok(requests.filter((entry) => entry.endpoint === 'Ledgers').length <= 2);
 });
 
+test('kraken: a page-budget boundary inside one second loses nothing', async () => {
+  // Kraken's `time` is a float and its two trade legs share an IDENTICAL one,
+  // so the interesting boundary is sub-second. A resume point that rounds DOWN
+  // reads like a one-second overlap and is actually a one-second gap: every
+  // row between the two windows falls out and no later run can reach it,
+  // because the resume point only ever moves further down.
+  const template = Object.values(KRAKEN_LEDGERS.result.ledger)[0];
+  const newest = 1710093600;
+  krakenLedgerHistory = [];
+  for (let i = 0; i < 2600; i += 1) {
+    // Ten rows per second, so a 1,250-row budget necessarily cuts mid-second.
+    krakenLedgerHistory.push({
+      ...template,
+      ledgerId: `LFRAC${String(i).padStart(4, '0')}-0-F`,
+      refid: `RFRAC-${i}`,
+      type: 'deposit',
+      time: newest - Math.floor(i / 10) - ((i % 10) / 10),
+    });
+  }
+
+  const seen = new Set();
+  let cursor = null;
+  for (let run = 0; run < 10; run += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await krakenConnector.sync(
+      { apiKey: 'k', apiSecret: Buffer.alloc(32, 1).toString('base64') },
+      { cursor, interactive: true }
+    );
+    result.records.forEach((record) => seen.add(record.external_id));
+    cursor = result.cursor;
+    if (!result.stats.backfillPending) break;
+  }
+
+  assert.equal(seen.size, 2600, 'every row must survive a boundary that falls inside a second');
+});
+
 test('kraken: an incremental sync rewinds past the watermark rather than resuming exactly on it', async () => {
   await krakenConnector.sync(
     { apiKey: 'k', apiSecret: Buffer.alloc(32, 1).toString('base64') },
@@ -752,7 +797,7 @@ test('coinbase: buys, sends, rewards and conversions map to the right record typ
   assert.equal(byId.get('cb:cccccccc-0000-0000-0000-00000000000c').record_type, 'reward');
 });
 
-test('coinbase: a convert\'s two legs become one conversion keyed on the outgoing leg', async () => {
+test('coinbase: a convert\'s two legs become one conversion keyed on the trade', async () => {
   const result = await coinbaseConnector.sync(
     { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
     { cursor: null }
@@ -761,13 +806,128 @@ test('coinbase: a convert\'s two legs become one conversion keyed on the outgoin
 
   // A Convert writes two v2 transactions sharing a trade.id, one per account.
   // Imported separately they read as two unrelated moves.
-  const conversion = byId.get('cb:dddddddd-0000-0000-0000-00000000000d');
+  const conversion = byId.get('cb:t:trade-0000-0000-0000-000000000001');
   assert.equal(conversion.record_type, 'conversion');
   assert.equal(conversion.base_asset, 'USD');
   assert.equal(conversion.base_amount, '-100.00');
   assert.equal(conversion.quote_asset, 'BTC');
   assert.equal(conversion.quote_amount, '0.00160000');
-  assert.equal(byId.has('cb:eeeeeeee-0000-0000-0000-00000000000e'), false, 'the incoming leg is not its own record');
+  // Neither leg survives as a record of its own, under either id.
+  assert.equal(byId.has('cb:dddddddd-0000-0000-0000-00000000000d'), false);
+  assert.equal(byId.has('cb:eeeeeeee-0000-0000-0000-00000000000e'), false);
+});
+
+test('coinbase: a trade\'s quote leg is signed against the base, as the CSV reader signs it', async () => {
+  const { recordFromTransaction } = coinbaseConnector._internals;
+  // native_amount VALUES the event, so Coinbase writes it with the same sign as
+  // `amount`. The quote leg has to carry the opposite one: buying an asset
+  // spends the quote. Copied verbatim, a $1,000 buy records +1000 USD where the
+  // true effect is -1000, so derivedBalances (base + quote - fee) comes out by
+  // twice the notional on every single trade.
+  const buy = recordFromTransaction({
+    id: 'buy-1',
+    type: 'buy',
+    created_at: '2024-03-02T10:00:00Z',
+    amount: { amount: '1.00000000', currency: 'BTC' },
+    native_amount: { amount: '1000.00', currency: 'USD' },
+  }, { line: 1, fillsByOrder: new Map() });
+
+  assert.equal(buy.base_amount, '1.00000000');
+  assert.equal(buy.quote_asset, 'USD');
+  assert.equal(buy.quote_amount, '-1000.00', 'buying spends the quote');
+
+  const sell = recordFromTransaction({
+    id: 'sell-1',
+    type: 'sell',
+    created_at: '2024-03-02T10:00:00Z',
+    amount: { amount: '-1.00000000', currency: 'BTC' },
+    native_amount: { amount: '-1000.00', currency: 'USD' },
+  }, { line: 2, fillsByOrder: new Map() });
+
+  assert.equal(sell.quote_amount, '1000.00', 'selling receives the quote');
+});
+
+test('coinbase: a widowed convert leg is replaced by the pair, not duplicated by it', async () => {
+  const { foldConversions, recordFromTransaction, recordFromConversion } = coinbaseConnector._internals;
+  const from = {
+    id: 'leg-from', type: 'trade', created_at: '2024-03-07T15:00:00Z',
+    amount: { amount: '-100.00', currency: 'USD' }, trade: { id: 'trade-1' },
+  };
+  const to = {
+    id: 'leg-to', type: 'trade', created_at: '2024-03-07T15:00:00Z',
+    amount: { amount: '0.00160000', currency: 'BTC' }, trade: { id: 'trade-1' },
+  };
+
+  // The two legs live in two different v2 accounts sharing one page budget, so
+  // a boundary between them fetches only one.
+  const orphaned = foldConversions([to]);
+  assert.equal(orphaned.pairs.length, 0);
+  const orphan = recordFromTransaction(orphaned.singles[0], { line: 1, fillsByOrder: new Map() });
+
+  const complete = foldConversions([from, to]);
+  const paired = recordFromConversion(complete.pairs[0], { line: 1 });
+
+  // Keyed on either LEG the two rows would not collide and one Convert would be
+  // counted twice, permanently -- nothing downstream can collapse them. Keyed
+  // on the TRADE id the pair upgrades the flagged orphan through the existing
+  // ON CONFLICT arm, exactly as a widowed Kraken trade leg keys its refid.
+  assert.equal(orphan.external_id, paired.external_id);
+  assert.equal(orphan.external_id, 'cb:t:trade-1');
+  assert.equal(orphan.needs_review, true);
+  assert.equal(paired.needs_review, false);
+});
+
+test('coinbase: an account list that was cut short is not reported as a finished sync', async () => {
+  // >1 page of v2 accounts, all pointing onward: accounts exist that were never
+  // enumerated, let alone walked.
+  const account = COINBASE.v2Accounts.data[0];
+  coinbaseAccountPages = Array.from({ length: 40 }, (_, page) => ({
+    _after: page === 0 ? undefined : `acct-${page * 100 - 1}`,
+    data: Array.from({ length: 100 }, (_, i) => ({ ...account, id: `acct-${page * 100 + i}` })),
+    pagination: { next_uri: `/v2/accounts?starting_after=acct-${page * 100 + 99}` },
+  }));
+
+  const result = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: null, interactive: true }
+  );
+
+  // Advancing the watermark here would stamp the run 'ok' with whole accounts
+  // never read at all.
+  assert.equal(result.stats.backfillPending, true);
+  assert.equal(result.cursor.since, null);
+});
+
+test('coinbase: a multi-run backfill dates the watermark from when it started', async () => {
+  // The head of each account is read on the first pass; the resume passes start
+  // at a stored starting_after id and deliberately skip it. Stamping the
+  // COMPLETING pass's time would declare everything up to then covered, and any
+  // row written in between falls in the band and is never fetched.
+  const template = COINBASE.transactions.data[2];
+  coinbaseTransactionPages = Array.from({ length: 60 }, (_, index) => ({
+    _after: index === 0 ? undefined : `cb-tx-${index * 100 - 1}`,
+    data: Array.from({ length: 100 }, (_, i) => ({ ...template, id: `cb-tx-${index * 100 + i}` })),
+    pagination: { next_uri: `/v2/accounts/x/transactions?starting_after=cb-tx-${index * 100 + 99}` },
+  }));
+
+  const first = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: null, interactive: true }
+  );
+  assert.equal(first.stats.backfillPending, true);
+  const headStartedAt = first.cursor.headStartedAt;
+  assert.ok(headStartedAt, 'the pass that read the head has to record when it did');
+
+  // Now let the walk finish, and check the watermark is the FIRST pass's time.
+  coinbaseTransactionPages = [{ data: [], pagination: { next_uri: null } }];
+  const last = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: first.cursor, interactive: true }
+  );
+
+  assert.equal(last.stats.backfillPending, false);
+  assert.equal(last.cursor.since, headStartedAt);
+  assert.deepEqual(last.cursor.pending, {});
 });
 
 test('coinbase: a transaction type nobody recognizes imports flagged', async () => {
