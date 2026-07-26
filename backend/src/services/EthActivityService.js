@@ -655,6 +655,13 @@ function detectSpam({
   //    ETH credit riding alongside a junk token is still an ETH credit, and the
   //    junk token must not be able to speak for it.
   //
+  //    The accepted cost, stated so it is a decision rather than a surprise: a
+  //    scam airdrop that also sends a little ETH is NOT quarantined, and lands
+  //    in the review queue as it did before. Letting it through would mean
+  //    deciding that an unpriced ETH credit is small, which is the one thing no
+  //    evidence here supports -- and spammers pay per recipient to do it, so
+  //    the bundled variant is rare where the bare one is endemic.
+  //
   //    "Unpriced" stands in for the issue's mass-distribution signal, which a
   //    single wallet's feed genuinely cannot see -- Etherscan reports the legs
   //    that touched THIS address and nothing about the other ten thousand

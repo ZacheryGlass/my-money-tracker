@@ -669,6 +669,24 @@ test('GATE: a junk token cannot drag a priced transaction into the quarantine', 
   assert.equal(row.legs.find((l) => l.asset === 'ETH').usd, 4500);
 });
 
+test('the accepted cost: an airdrop bundled with ETH is not quarantined', () => {
+  // Stated as a decision rather than left as a surprise. Quarantining this
+  // would mean deciding that an unpriced ETH credit is small, which is the one
+  // thing no evidence here supports -- and spammers pay per recipient to send
+  // ETH, so the bundled variant is rare where the bare one is endemic. It lands
+  // in the review queue exactly as it did before #74.
+  const row = only([
+    tokenLeg({
+      token_contract: SPAM_TOKEN, from_address: STRANGER, to_address: WALLET,
+      value_wei: '10000000000000000000000',
+    }),
+    leg({ from_address: STRANGER, to_address: WALLET, value_wei: '1000000000000000' }),
+  ]);
+
+  assert.equal(row.spam, false);
+  assert.equal(row.needs_review, true);
+});
+
 test('GATE: an unpriced ETH credit beside a junk token is not quarantined either', () => {
   const row = only([
     leg({ from_address: STRANGER, to_address: WALLET, value_wei: '1000000000000000000' }),
