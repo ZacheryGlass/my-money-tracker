@@ -38,6 +38,7 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
     SELECT
       CASE WHEN t.from_address = w.address THEN t.to_address ELSE t.from_address END AS counterparty,
       t.id, t.tx_hash, t.block_time, t.token_symbol, t.token_contract,
+      t.transfer_type,
       w.address AS wallet_address,
       (t.from_address = w.address) AS outgoing,
       tx.amount
@@ -82,6 +83,15 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
       counterparty AS address,
       COUNT(*)::int AS transfer_count,
       (COUNT(*) FILTER (WHERE outgoing))::int AS sent_count,
+      -- Outbound legs that COULD carry a dollar value. NFT legs never can:
+      -- they get no mirror row, so their amount is always NULL and their
+      -- usd_volume always 0. Feeding them to materiality below made every
+      -- one-time NFT buyer permanently material at $0.00 -- a badge an active
+      -- seller can never clear, and a badge that cannot reach zero gets
+      -- ignored, which would also destroy its value for wallet sync errors.
+      -- sent_count above stays the TRUE outbound count, because that is what
+      -- the queue displays and hiding the NFT sends would be its own lie.
+      (COUNT(*) FILTER (WHERE outgoing AND transfer_type NOT IN ('nft', 'nft1155')))::int AS sent_count_valued,
       COALESCE(SUM(ABS(amount)), 0)::float8 AS usd_volume,
       MIN(block_time) AS first_seen,
       MAX(block_time) AS last_seen,
@@ -100,7 +110,15 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
     -- outbound transfer was a deliberate act and deserves a verdict regardless
     -- of dollar value (an unpriced token you genuinely own still needs one).
     -- Receive-only AND sub-threshold is the airdrop-spam signature.
-    SELECT g.*, (g.usd_volume >= $2::float8 OR g.sent_count > 0) AS material
+    --
+    -- NFT sends are excluded from that OR arm (sent_count_valued, not
+    -- sent_count): the arm exists to rescue an outbound transfer whose dollar
+    -- value merely FAILED to resolve, and an NFT leg's never resolves at all,
+    -- so it is a permanent pass rather than a rescue. An NFT-only counterparty
+    -- is still enqueued, still labelable, and still reachable with
+    -- include_dust=true -- it just does not pin the badge. The transaction
+    -- itself is not lost either: eth_activity explains it as nft_sale/send.
+    SELECT g.*, (g.usd_volume >= $2::float8 OR g.sent_count_valued > 0) AS material
     FROM grouped g
   )
 `;
@@ -122,7 +140,7 @@ class EthTransfer {
       'wallet_id', 'tx_hash', 'ordinal', 'transfer_type', 'block_number',
       'block_time', 'from_address', 'to_address', 'value_wei',
       'token_contract', 'token_symbol', 'token_decimals', 'token_standard',
-      'token_id', 'is_error', 'method_id', 'method_name',
+      'token_id', 'is_error', 'tx_is_error', 'method_id', 'method_name',
     ];
     // Chunked to stay far under Postgres' 65535-parameter cap on first syncs
     // of busy wallets.
@@ -138,7 +156,8 @@ class EthTransfer {
           row.block_number, row.block_time, row.from_address, row.to_address,
           row.value_wei, row.token_contract, row.token_symbol,
           row.token_decimals, row.token_standard ?? null, row.token_id ?? null,
-          row.is_error, row.method_id ?? null, row.method_name ?? null
+          row.is_error, row.tx_is_error ?? null,
+          row.method_id ?? null, row.method_name ?? null
         );
         return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`;
       });

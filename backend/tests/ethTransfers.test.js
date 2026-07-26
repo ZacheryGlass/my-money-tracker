@@ -245,8 +245,13 @@ test('unreviewed counterparties exclude gas, failures, own, and ignored tokens',
   // USD comes from the mirrored ledger row, which is the only place token
   // prices exist -- they are never persisted anywhere else.
   assert.match(sql, /LEFT JOIN transactions tx ON tx\.eth_transfer_id = t\.id/);
-  // Outbound transfers are always material: you cannot receive an airdrop you sent.
-  assert.match(sql, /usd_volume >= \$2::float8 OR g\.sent_count > 0/);
+  // Outbound transfers are material: you cannot receive an airdrop you sent.
+  // Outbound NFT legs are the exception (sent_count_valued, not sent_count) --
+  // they get no mirror row, so their usd_volume is 0 forever and the OR arm,
+  // which exists to rescue a value that merely failed to resolve, would pass
+  // permanently and pin the badge above zero. See ethActivity.test.js.
+  assert.match(sql, /usd_volume >= \$2::float8 OR g\.sent_count_valued > 0/);
+  assert.match(sql, /FILTER \(WHERE outgoing AND transfer_type NOT IN \('nft', 'nft1155'\)\)/);
 });
 
 test('unreviewed counterparties sort material rows above dust', async () => {
