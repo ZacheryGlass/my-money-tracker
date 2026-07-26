@@ -28,12 +28,18 @@ const TRANSFER_TYPE_FILTERS = {
 // Params: $1 userId, $2 minUsd.
 //
 // USD comes from the mirrored ledger row rather than being recomputed from
-// value_wei. Two reasons: token prices are fetched from CoinGecko at mirror
-// rebuild time and never persisted, so SQL *cannot* recompute them; and
-// sourcing from `transactions` guarantees the queue's dollar figure equals the
-// number the user sees in the ledger, which is the whole point of triage.
+// value_wei, so the queue's dollar figure is exactly the number the user sees
+// in the ledger -- which is the whole point of triage.
 // transactions.eth_transfer_id carries a UNIQUE partial index, so the LEFT
 // JOIN can never fan a transfer out into two rows.
+//
+// Those amounts are AT-THE-TIME since #73: the mirror reads
+// eth_transfers.usd_at_time off the dated series in asset_price_history. That
+// changes what materiality means, and correctly -- a 2017 half-ETH send is now
+// weighed as the ~$150 it was rather than the ~$1,800 it would fetch today, so
+// the queue stops sorting a decade of small old flows above this year's real
+// ones. An unpriced leg contributes 0 to usd_volume and stays material through
+// the sent_count_valued arm below, which is exactly what that arm is for.
 const UNREVIEWED_COUNTERPARTIES_CTE = `
   WITH legs AS (
     SELECT

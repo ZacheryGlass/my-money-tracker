@@ -7,6 +7,7 @@ const PlaidSyncJob = require('./plaidSyncJob');
 const EthSyncJob = require('./ethSyncJob');
 const ExchangeSyncJob = require('./exchangeSyncJob');
 const BenchmarkUpdateJob = require('./benchmarkUpdateJob');
+const HistoricalPriceJob = require('./historicalPriceJob');
 const ExpenseSyncJob = require('./expenseSyncJob');
 const JobLog = require('../models/JobLog');
 const logger = require('../config/logger');
@@ -18,6 +19,7 @@ let exchangeSyncTask = null;
 let priceUpdateTask = null;
 let snapshotTask = null;
 let benchmarkUpdateTask = null;
+let historicalPriceTask = null;
 let expenseSyncTask = null;
 
 function initializeJobs() {
@@ -83,6 +85,22 @@ function initializeJobs() {
     timezone: 'Etc/UTC'
   });
 
+  // Schedule the historical price backfill at 8:10 AM UTC daily -- AFTER the
+  // ETH sync (7:50), so today's new transfers and any newly-seen token are in
+  // the work list, and before snapshots (9:00). It also re-values stored legs
+  // and re-derives whatever moved, which is what heals a date that was unpriced
+  // yesterday.
+  historicalPriceTask = cron.schedule('10 8 * * *', async () => {
+    logger.info('[scheduler] Running scheduled historical price backfill...');
+    try {
+      await HistoricalPriceJob.run();
+    } catch (error) {
+      logger.error({ err: error }, '[scheduler] Historical price backfill failed');
+    }
+  }, {
+    timezone: 'Etc/UTC'
+  });
+
   // Schedule benchmark price update at 8:30 AM UTC daily (after price update)
   benchmarkUpdateTask = cron.schedule('30 8 * * *', async () => {
     logger.info('[scheduler] Running scheduled benchmark update...');
@@ -135,6 +153,10 @@ function stopJobs() {
     benchmarkUpdateTask.stop();
     benchmarkUpdateTask.destroy();
   }
+  if (historicalPriceTask) {
+    historicalPriceTask.stop();
+    historicalPriceTask.destroy();
+  }
   if (expenseSyncTask) {
     expenseSyncTask.stop();
     expenseSyncTask.destroy();
@@ -143,14 +165,15 @@ function stopJobs() {
 }
 
 async function getJobStatus() {
-  const [latestPlaidSync, latestEthSync, latestExchangeSync, latestPriceUpdate, latestSnapshot, latestBenchmarkUpdate, latestExpenseSync] = await Promise.all([
+  const [latestPlaidSync, latestEthSync, latestExchangeSync, latestPriceUpdate, latestSnapshot, latestBenchmarkUpdate, latestExpenseSync, latestHistoricalPrices] = await Promise.all([
     JobLog.getLatest(PlaidSyncJob.JOB_NAME),
     JobLog.getLatest(EthSyncJob.JOB_NAME),
     JobLog.getLatest(ExchangeSyncJob.JOB_NAME),
     JobLog.getLatest(PriceUpdateJob.JOB_NAME),
     JobLog.getLatest(SnapshotJob.JOB_NAME),
     JobLog.getLatest(BenchmarkUpdateJob.JOB_NAME),
-    JobLog.getLatest(ExpenseSyncJob.JOB_NAME)
+    JobLog.getLatest(ExpenseSyncJob.JOB_NAME),
+    JobLog.getLatest(HistoricalPriceJob.JOB_NAME)
   ]);
 
   return {
@@ -185,6 +208,12 @@ async function getJobStatus() {
         description: 'Fetches crypto prices from multiple providers',
         lastRun: latestPriceUpdate || null
       },
+      'historical-prices': {
+        schedule: '10 8 * * *',
+        timezone: 'Etc/UTC',
+        description: 'Backfills and extends the dated USD price series, then re-values on-chain history at its transaction dates',
+        lastRun: latestHistoricalPrices || null
+      },
       'benchmark-update': {
         schedule: '30 8 * * *',
         timezone: 'Etc/UTC',
@@ -211,5 +240,6 @@ module.exports = {
   PriceUpdateJob,
   SnapshotJob,
   BenchmarkUpdateJob,
+  HistoricalPriceJob,
   ExpenseSyncJob
 };

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const requireUser = require('../middleware/auth');
-const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, PlaidSyncJob, EthSyncJob, ExchangeSyncJob, ExpenseSyncJob } = require('../jobs');
+const { getJobStatus, PriceUpdateJob, SnapshotJob, BenchmarkUpdateJob, HistoricalPriceJob, PlaidSyncJob, EthSyncJob, ExchangeSyncJob, ExpenseSyncJob } = require('../jobs');
 const JobLog = require('../models/JobLog');
 
 // All routes require authentication
@@ -130,6 +130,21 @@ router.post('/trigger/price-update', async (req, res, next) => {
 router.post('/trigger/benchmark-update', requireAdmin, async (req, res, next) => {
   try {
     await runTrigger(res, { job: BenchmarkUpdateJob, label: 'Benchmark update job' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/jobs/trigger/historical-prices - Manually trigger the dated price
+// backfill and re-valuation.
+//
+// Admin-only, unlike price-update. asset_price_history is shared market data
+// like price_cache, but the second half of this job RE-DERIVES every user's
+// mirror and activity rows -- it touches their data, with their wallets, the
+// same way the Plaid and ETH triggers do.
+router.post('/trigger/historical-prices', requireAdmin, async (req, res, next) => {
+  try {
+    await runTrigger(res, { job: HistoricalPriceJob, label: 'Historical price job' });
   } catch (error) {
     next(error);
   }

@@ -10,6 +10,7 @@ const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
 const EthActivity = require('../models/EthActivity');
 const EthReconciliation = require('../models/EthReconciliation');
+const AssetPriceHistory = require('../models/AssetPriceHistory');
 const EthWalletService = require('../services/EthWalletService');
 const EthActivityService = require('../services/EthActivityService');
 const logger = require('../config/logger');
@@ -300,6 +301,34 @@ router.get('/activity', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get ETH activity error');
     res.status(500).json({ error: 'Failed to retrieve activity' });
+  }
+});
+
+// The assets in this user's on-chain history that no provider will price.
+//
+// The point of the endpoint is that "unpriced" is ENUMERABLE. A dead
+// EtherDelta-era token has no series anywhere, and the honest answer for its
+// rows is "not known", not $0 -- but an unexplained blank is only honest if the
+// user can ask what is behind it. Each entry carries the provider's own verdict
+// from asset_price_coverage (unlisted / range_limited / error / pending), so
+// "CoinGecko has never heard of this contract" is distinguishable from "your
+// API plan stops at 365 days", which is a fixable problem.
+//
+// Prices are global market data; WHICH assets a person holds is not, so this
+// reads through the user-scoped, fail-closed model entry point.
+//
+// NO UI CONSUMER YET. The unified ledger (#63) is the screen that surfaces
+// usd_value / usd_basis / the unpriced list together; until it lands this is
+// reachable only by hand. Deliberate, and stated here rather than implied: the
+// enumeration is what makes "unpriced, not $0" checkable today, and #63 is
+// where it becomes visible.
+router.get('/prices/unpriced', async (req, res) => {
+  try {
+    const assets = await AssetPriceHistory.unpricedAssetsForUser(req.user.id);
+    res.status(200).json({ data: assets, total: assets.length });
+  } catch (error) {
+    logger.error({ err: error }, 'Get unpriced assets error');
+    res.status(500).json({ error: 'Failed to retrieve unpriced assets' });
   }
 });
 
