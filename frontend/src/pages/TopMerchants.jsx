@@ -5,7 +5,7 @@ import { expenses as expensesAPI } from '../utils/api';
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import { formatTransactionCategory } from '../utils/dataLabels';
 import LoadingState from '../components/LoadingState';
-import FilterTabs from '../components/FilterTabs';
+import SegmentedControl from '../components/SegmentedControl';
 import buildTransactionRows from '../components/expenses/TransactionHistoryRows';
 import IgnoreConfirmModal from '../components/expenses/IgnoreConfirmModal';
 import IgnoredMerchantsModal from '../components/expenses/IgnoredMerchantsModal';
@@ -196,8 +196,7 @@ const TopMerchants = () => {
             </Motion.div>
           )}
 
-          <FilterTabs
-            id="merchant-period"
+          <SegmentedControl
             label="Period"
             options={PERIOD_OPTIONS}
             value={days}

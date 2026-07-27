@@ -7,6 +7,7 @@ import { getAccountDisplayName } from '../utils/accountDisplay';
 import { formatTransactionCategory } from '../utils/dataLabels';
 import DataTable from '../components/DataTable';
 import FilterTabs from '../components/FilterTabs';
+import SegmentedControl from '../components/SegmentedControl';
 import LoadingState from '../components/LoadingState';
 
 const PAGE_SIZE = 100;
@@ -183,9 +184,9 @@ export default function Spending() {
         onChange={setViewMode}
       />
 
-      <FilterTabs
-        id="account-filter"
+      <SegmentedControl
         label="Account"
+        mobile="select"
         options={[
           { value: '', label: 'All accounts' },
           ...accountList.map((account) => ({ value: String(account.id), label: getAccountDisplayName(account) })),

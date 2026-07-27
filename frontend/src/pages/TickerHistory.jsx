@@ -4,6 +4,7 @@ import { Check, X, Search } from 'lucide-react';
 import { holdings as holdingsAPI, history as historyAPI } from '../utils/api';
 import TickerHistoryChart from '../components/TickerHistoryChart';
 import FilterDisclosure from '../components/FilterDisclosure';
+import SegmentedControl from '../components/SegmentedControl';
 import LoadingState from '../components/LoadingState';
 
 const DEFAULT_HISTORY_LIMIT = 2000;
@@ -164,17 +165,13 @@ const TickerHistory = () => {
           <h1 className="text-display-md text-primary">Ticker History</h1>
           <p className="text-body-sm text-tertiary">Price trends of individual holdings</p>
         </div>
-        <div className="flex bg-surface border border-border">
-          {DATE_RANGE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => setDateRangeOption(option.value)}
-              className={`px-2 py-1 text-caption transition-colors ${
-                dateRangeOption === option.value ? 'bg-accent text-white' : 'text-tertiary hover:text-secondary'
-              }`}
-            >{option.label}</button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="Range"
+          mobile="select"
+          options={DATE_RANGE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+          value={dateRangeOption}
+          onChange={setDateRangeOption}
+        />
       </div>
 
       <FilterDisclosure

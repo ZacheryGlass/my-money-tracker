@@ -9,6 +9,7 @@ import useAppearancePreferences from '../hooks/useAppearancePreferences';
 import { APPEARANCE_THEMES, APPEARANCE_FONT_SIZES, APPEARANCE_FONT_FAMILIES } from '../utils/appearancePreferences';
 import HoldingForm from '../components/HoldingForm';
 import FilterTabs from '../components/FilterTabs';
+import SegmentedControl from '../components/SegmentedControl';
 import LoadingState from '../components/LoadingState';
 import useTransientMessage from '../hooks/useTransientMessage';
 import { formatRelativeTime } from '../utils/format';
@@ -214,31 +215,25 @@ const buildInstitutionSummary = (items, consentItems) => {
   };
 };
 
-function AppearanceOptions({ options, value, onChange, ariaLabel, previewFont = false }) {
+// Thin adapter over the shared SegmentedControl: appearance options are
+// id-keyed, and the font-family row previews each option in its own stack
+// (the mobile dropdown falls back to plain text, as selects always do).
+function AppearanceOptions({ options, value, onChange, ariaLabel, previewFont = false, mobile = 'segments' }) {
   return (
-    <div
-      role="group"
-      aria-label={ariaLabel}
-      className="flex shrink-0 flex-wrap gap-px overflow-hidden rounded border border-border bg-border"
-    >
-      {options.map((option) => {
-        const active = value === option.id;
-        return (
-          <button
-            key={option.id}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onChange(option.id)}
-            style={previewFont ? { fontFamily: option.stack } : undefined}
-            className={`px-4 py-2 text-caption font-semibold transition-colors ${
-              active ? 'bg-accent text-white' : 'bg-surface-2 text-tertiary hover:text-primary'
-            }`}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
+    <SegmentedControl
+      label={ariaLabel}
+      mobile={mobile}
+      className="shrink-0"
+      options={options.map((option) => ({
+        value: option.id,
+        label: previewFont
+          ? <span style={{ fontFamily: option.stack }}>{option.label}</span>
+          : option.label,
+        selectLabel: option.label,
+      }))}
+      value={value}
+      onChange={onChange}
+    />
   );
 }
 
@@ -694,6 +689,7 @@ const Settings = ({ user }) => {
               onChange={setFontFamily}
               ariaLabel="Interface font"
               previewFont
+              mobile="select"
             />
           </div>
         </div>

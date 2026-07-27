@@ -20,8 +20,11 @@ const SegmentedControl = ({ label, options, value, onChange, mobile = 'segments'
           {label}
         </span>
       )}
+      {/* Desktop scrolls instead of clipping when the option set is dynamic
+          (Spending's account filter); mobile keeps equal-part stretch, and
+          option counts that cannot fit a phone use mobile='select'. */}
       <div
-        className="flex min-w-0 flex-1 overflow-hidden rounded border border-input-border sm:flex-initial"
+        className="flex min-w-0 flex-1 overflow-hidden rounded border border-input-border sm:max-w-full sm:flex-initial sm:overflow-x-auto"
         role="group"
         aria-label={label}
       >
@@ -31,7 +34,7 @@ const SegmentedControl = ({ label, options, value, onChange, mobile = 'segments'
             type="button"
             aria-pressed={value === option.value}
             onClick={() => onChange(option.value)}
-            className={`inline-flex min-h-8 flex-1 items-center justify-center gap-1.5 px-2 text-center text-[10px] font-bold uppercase tracking-wide transition-colors sm:flex-initial sm:px-3 ${
+            className={`inline-flex min-h-8 flex-1 items-center justify-center gap-1.5 px-2 text-center text-[10px] font-bold uppercase tracking-wide transition-colors sm:flex-initial sm:whitespace-nowrap sm:px-3 ${
               index > 0 ? 'border-l border-input-border' : ''
             } ${
               value === option.value

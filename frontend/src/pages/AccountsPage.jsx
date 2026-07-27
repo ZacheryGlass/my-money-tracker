@@ -11,7 +11,7 @@ import { accounts as accountsAPI, holdings as holdingsAPI, history as historyApi
 import { formatCurrency, formatDateDisplay } from '../utils/format';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import DataTable, { DataTablePagination } from '../components/DataTable';
-import FilterTabs from '../components/FilterTabs';
+import SegmentedControl from '../components/SegmentedControl';
 import LoadingState from '../components/LoadingState';
 import SummaryStats from '../components/SummaryStats';
 import { buildAccountDisplayNameMap, getAccountDisplayName, hasAccountDisplayName } from '../utils/accountDisplay';
@@ -467,21 +467,23 @@ const AccountsPage = () => {
         </div>
       )}
 
-      <FilterTabs
-        id="account-type-filter"
-        label="Type"
-        className="mb-3"
-        options={[{ value: '', label: 'All' }, ...distinctTypes.map((type) => ({ value: type, label: type }))]}
-        value={typeFilter}
-        onChange={setTypeFilter}
-        actions={inactiveAccounts.length > 0 && (
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <SegmentedControl
+          label="Type"
+          mobile="select"
+          className="min-w-0 flex-1 sm:flex-initial"
+          options={[{ value: '', label: 'All' }, ...distinctTypes.map((type) => ({ value: type, label: type }))]}
+          value={typeFilter}
+          onChange={setTypeFilter}
+        />
+        {inactiveAccounts.length > 0 && (
           <button
             onClick={() => {
               setShowInactive((value) => !value);
               setPagination((prev) => ({ ...prev, pageIndex: 0 }));
             }}
             title="Zero-balance accounts with no assets are kept out of the list until shown."
-            className={`mb-1 shrink-0 rounded border px-2.5 py-1 text-caption font-semibold uppercase tracking-wide transition-colors ${
+            className={`shrink-0 rounded border px-2.5 py-1 text-caption font-semibold uppercase tracking-wide transition-colors ${
               showInactive
                 ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
                 : 'border-border bg-surface-2 text-tertiary hover:text-primary'
@@ -490,7 +492,7 @@ const AccountsPage = () => {
             {showInactive ? 'Hide' : 'Show'} {inactiveAccounts.length} inactive
           </button>
         )}
-      />
+      </div>
 
       <DataTable
         table={listTable}

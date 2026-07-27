@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { TrendingUp, TrendingDown, Check, Calendar } from 'lucide-react';
 import LoadingState from '../components/LoadingState';
+import SegmentedControl from '../components/SegmentedControl';
 import { dashboard as dashboardAPI, history as historyAPI } from '../utils/api';
 import { formatCurrency, formatPercent, formatDateAxis, formatDateDisplay } from '../utils/format';
 import { GRID_STYLE, AXIS_STYLE, areaGradient } from '../utils/chartTheme';
@@ -197,31 +198,32 @@ const PortfolioTimeline = () => {
           <h1 className="text-display-md text-primary">Portfolio Timeline</h1>
           <p className="text-body-sm text-tertiary">{visiblePeriodLabel}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex bg-surface border border-border">
-            {Object.keys(DATE_RANGES).map((range) => (
-              <button
-                key={range}
-                onClick={() => handleRangeChange(range)}
-                className={`px-2 py-1 text-caption transition-colors ${
-                  selectedRange === range && !useCustomRange
-                    ? 'bg-accent text-white'
-                    : 'text-tertiary hover:text-secondary'
-                }`}
-              >{range}</button>
-            ))}
-            <button
-              onClick={() => setCustomControlsOpen((open) => !open)}
-              className={`flex items-center gap-1 px-2 py-1 text-caption transition-colors ${
-                useCustomRange
-                  ? 'bg-accent text-white'
-                  : customControlsOpen ? 'bg-accent-muted text-accent' : 'text-tertiary hover:text-secondary'
-              }`}
-            >
-              <Calendar size={12} /> Custom
-            </button>
-          </div>
-        </div>
+        {/* Custom is a toggle for the controls panel, not a range by itself:
+            it reads selected only once a custom range is applied, and while
+            the panel is merely open the icon carries the accent instead. */}
+        <SegmentedControl
+          label="Range"
+          mobile="select"
+          options={[
+            ...Object.keys(DATE_RANGES).map((range) => ({
+              value: range,
+              label: range,
+              selectLabel: DATE_RANGES[range].label,
+            })),
+            {
+              value: 'custom',
+              label: (
+                <>
+                  <Calendar size={12} className={customControlsOpen && !useCustomRange ? 'text-accent' : undefined} />
+                  Custom
+                </>
+              ),
+              selectLabel: 'Custom',
+            },
+          ]}
+          value={useCustomRange ? 'custom' : selectedRange}
+          onChange={(value) => (value === 'custom' ? setCustomControlsOpen((open) => !open) : handleRangeChange(value))}
+        />
       </div>
 
       {/* Controls Panel */}
