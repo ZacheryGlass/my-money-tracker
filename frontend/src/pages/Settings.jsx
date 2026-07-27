@@ -3624,6 +3624,11 @@ const Settings = ({ user }) => {
                 </div>
 
                 <div className="space-y-4 p-5 sm:p-8 sm:pt-2">
+                  {/* A 42-character address on one line is what makes a pasted
+                      list scannable, so the type steps down from the form
+                      default and wrapping is off outright: at a larger text
+                      scale it would wrap again, and half an address on the
+                      next line reads as another entry. */}
                   <label className="block text-caption text-tertiary">
                     {walletAddressCount > 1 ? `Addresses (${walletAddressCount})` : 'Address'}
                     <textarea
@@ -3634,7 +3639,8 @@ const Settings = ({ user }) => {
                       autoComplete="off"
                       autoFocus
                       rows={walletAddressCount > 1 ? 6 : 3}
-                      className="mt-1 block w-full min-w-0 resize-y rounded border border-input-border bg-surface-2 px-3 py-2 font-mono text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+                      wrap="off"
+                      className="mt-1 block w-full min-w-0 resize-y overflow-x-auto rounded border border-input-border bg-surface-2 px-3 py-2 font-mono text-caption text-primary outline-none focus:ring-1 focus:ring-accent"
                       disabled={addingWallet}
                     />
                   </label>
