@@ -777,9 +777,11 @@ describe('CryptoLedger', () => {
     );
 
     // A guaranteed-empty combination must not be reachable: needs_review is
-    // masked on quarantined rows, so entering the quarantine view resets the
-    // review-status filter rather than intersecting with it.
+    // masked on quarantined rows and a venue record is never spam, so
+    // entering the quarantine view resets EVERY narrowing filter rather than
+    // intersecting with any of them.
     fireEvent.click(screen.getByRole('button', { name: /needs review/i }));
+    fireEvent.change(screen.getByLabelText('Ledger source'), { target: { value: 'exchange' } });
 
     // The way in is the count itself: the summary states how many rows the
     // quarantine is hiding, and clicking that number is what shows them.
@@ -791,9 +793,17 @@ describe('CryptoLedger', () => {
       expect(apiMocks.crypto.getLedger).toHaveBeenLastCalledWith(
         expect.not.objectContaining({ needsReview: expect.anything() })
       );
+      expect(apiMocks.crypto.getLedger).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ source: expect.anything() })
+      );
     });
     // The view says what it is: kept out of Needs Review, nothing deleted.
     expect(screen.getByText(/Nothing was deleted/)).toBeInTheDocument();
+    // The filter bar hides inside the view: its counts describe the non-spam
+    // ledger, and every Show/Source/Category narrowing of the quarantine is
+    // empty by construction.
+    expect(screen.queryByRole('button', { name: /everything/i })).toBeNull();
+    expect(screen.queryByLabelText('Ledger source')).toBeNull();
     // The same control is the way back out.
     expect(screen.getByRole('button', { name: /back to the ledger/i })).toBeInTheDocument();
   });

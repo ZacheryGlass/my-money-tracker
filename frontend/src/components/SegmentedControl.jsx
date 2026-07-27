@@ -10,7 +10,7 @@ import React from 'react';
 // orange). `mobile` picks the small-screen rendering: 'segments' stretches the
 // group to full-width equal parts -- fine for three options -- while 'select'
 // swaps in a labeled dropdown, because six segments cannot fit a phone.
-const SegmentedControl = ({ id, label, options, value, onChange, mobile = 'segments', className = '' }) => {
+const SegmentedControl = ({ label, options, value, onChange, mobile = 'segments', className = '' }) => {
   const segments = (visibility) => (
     <div className={`${visibility} w-full items-center gap-2 sm:w-auto`}>
       {/* The label is a courtesy on desktop; on a phone its 50px can be the
@@ -56,7 +56,6 @@ const SegmentedControl = ({ id, label, options, value, onChange, mobile = 'segme
       <label className="flex w-full items-center gap-2 sm:hidden">
         <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">{label}</span>
         <select
-          id={id}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           className="h-9 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"

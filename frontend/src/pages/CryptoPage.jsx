@@ -148,10 +148,15 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       setLedgerSummary(ledgerData?.summary || null);
       // The same two numbers the app shell fetched at boot, kept fresh by
       // every refetch here -- review actions call fetchData, so the sidebar
-      // badge drains with the queue.
+      // badge drains with the queue. A half whose fetch failed reports NULL,
+      // never zero: "unknown" downgrading a red badge to all-clear is the
+      // lossy direction for an attention signal, and the shell merges nulls
+      // against what it already knows.
       onAttentionChange?.({
-        errored: (walletsData?.wallets || []).filter((wallet) => wallet.error_code).length,
-        needsReview: ledgerData?.summary?.needs_review_count || 0,
+        errored: walletsData
+          ? (walletsData.wallets || []).filter((wallet) => wallet.error_code).length
+          : null,
+        needsReview: ledgerData ? (ledgerData.summary?.needs_review_count || 0) : null,
       });
       setError(null);
     } catch (err) {

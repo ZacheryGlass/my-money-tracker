@@ -14,13 +14,15 @@ import React from 'react';
 // creates a vertical scrollbar.
 const FilterTabs = ({ id, label, options, value, onChange, actions, className = '' }) => {
   // Partitioned once for the dropdown: options before the first divider are
-  // plain <option>s, each divider starts an <optgroup> named by its hint.
+  // plain <option>s, each divider starts an <optgroup> named by its hint. A
+  // hint-less divider yields bare options (no <optgroup label="">), and empty
+  // groups are dropped below rather than rendered as headings over nothing.
   const groups = [];
   let current = { hint: null, options: [] };
   for (const option of options) {
     if (option.divider) {
       groups.push(current);
-      current = { hint: option.hint || '', options: [] };
+      current = { hint: option.hint || null, options: [] };
     } else {
       current.options.push(option);
     }
@@ -40,7 +42,7 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
             onChange={(e) => onChange(e.target.value)}
             className="h-11 w-full rounded border border-border bg-surface-2 px-3 text-sm text-primary"
           >
-            {groups.map((group, groupIndex) => {
+            {groups.filter((group) => group.options.length > 0).map((group, groupIndex) => {
               const items = group.options.map((option) => (
                 <option key={String(option.value)} value={option.value}>{option.selectLabel || option.label}</option>
               ));

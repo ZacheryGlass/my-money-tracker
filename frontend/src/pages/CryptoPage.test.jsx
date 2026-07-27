@@ -377,6 +377,24 @@ describe('CryptoPage', () => {
     });
   });
 
+  it('reports unknown as null, never zero, for a half that failed to fetch', async () => {
+    // A red badge downgrading to all-clear because the wallets request
+    // happened to fail is the lossy direction for an attention signal; the
+    // shell merges nulls against what it already knows.
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockRejectedValue(new Error('backend blip'));
+    apiMocks.crypto.getLedgerSummary.mockResolvedValue({
+      summary: { total: 5, needs_review_count: 3, onchain_count: 5, exchange_count: 0, matched_count: 0 },
+    });
+    const onAttentionChange = vi.fn();
+
+    render(<CryptoPage tab="crypto-holdings" onTabChange={vi.fn()} onAttentionChange={onAttentionChange} />);
+
+    await vi.waitFor(() => {
+      expect(onAttentionChange).toHaveBeenCalledWith({ errored: null, needsReview: 3 });
+    });
+  });
+
   it('offers Add Holding, the only route to creating a manual crypto holding', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({
       accounts: [{ id: 12, name: 'Cold storage', effective_name: 'Cold storage', type: 'crypto', eth_wallet_id: null }],

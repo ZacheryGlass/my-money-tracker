@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { me, crypto as cryptoAPI, eth as ethAPI } from './utils/api';
 import lazyWithReload from './utils/lazyWithReload';
@@ -100,20 +100,37 @@ function App() {
   // badge live without polling. Both requests fail soft -- a badge may not
   // break the shell.
   const [cryptoAttention, setCryptoAttention] = useState({ errored: 0, needsReview: 0 });
+  // A report carries null for a half whose fetch FAILED: unknown must not
+  // downgrade a red badge to all-clear, so applying a report merges, keeping
+  // the previous value for any null half.
+  const applyCryptoAttention = useCallback((next) => {
+    setCryptoAttention((prev) => ({
+      errored: next.errored ?? prev.errored,
+      needsReview: next.needsReview ?? prev.needsReview,
+    }));
+  }, []);
+  // Once CryptoPage has reported live numbers, the boot fetch discards its
+  // own response: on a direct /crypto load the two race, and the boot copy
+  // (which can land late through the interceptor's 5xx retry) is the stale one.
+  const liveAttentionRef = useRef(false);
+  const handleCryptoAttention = useCallback((next) => {
+    liveAttentionRef.current = true;
+    applyCryptoAttention(next);
+  }, [applyCryptoAttention]);
   useEffect(() => {
     let cancelled = false;
     Promise.all([
       cryptoAPI.getLedgerSummary().catch(() => null),
       ethAPI.getWallets().catch(() => null),
     ]).then(([ledger, wallets]) => {
-      if (cancelled) return;
-      setCryptoAttention({
-        errored: (wallets?.wallets || []).filter((wallet) => wallet.error_code).length,
-        needsReview: ledger?.summary?.needs_review_count || 0,
+      if (cancelled || liveAttentionRef.current) return;
+      applyCryptoAttention({
+        errored: wallets ? (wallets.wallets || []).filter((wallet) => wallet.error_code).length : null,
+        needsReview: ledger ? (ledger.summary?.needs_review_count || 0) : null,
       });
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [applyCryptoAttention]);
 
   // Same precedence as the Transactions tab's own badge: a failed wallet sync
   // outranks the review count, because an incomplete feed makes that count
@@ -150,7 +167,7 @@ function App() {
           <CryptoPage
             tab={currentPage}
             onTabChange={handleNavigate}
-            onAttentionChange={setCryptoAttention}
+            onAttentionChange={handleCryptoAttention}
           />
         )}
         {currentPage === 'ticker-history' && <TickerHistory />}

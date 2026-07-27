@@ -480,7 +480,6 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
           the Transactions tab otherwise. Six values cannot fit a phone as
           segments, so the mobile rendering is a labeled dropdown. */}
       <SegmentedControl
-        id="eth-transfer-type"
         label="Type"
         mobile="select"
         className="mb-3"

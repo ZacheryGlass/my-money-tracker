@@ -599,13 +599,16 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
             {(summary?.spam_count > 0 || spam === 'only') && (
               <button
                 type="button"
-                // Entering the quarantine also resets the review-status
-                // filter: needs_review is MASKED on quarantined rows at read
-                // time, so "Needs review" over the quarantine is empty by
-                // construction -- a guaranteed-blank screen, not a filter.
+                // Entering the quarantine resets EVERY narrowing filter, and
+                // the filter bar hides while inside: needs_review is MASKED
+                // on quarantined rows at read time and a venue record is
+                // never spam, so Show/Source/Category combinations over the
+                // quarantine are empty by construction -- and the Show
+                // control's counts describe the non-spam ledger, which would
+                // sit lying above a twelve-row quarantine feed.
                 onClick={() => {
                   if (spam === 'only') setSpam('');
-                  else { setSpam('only'); setStatus(''); }
+                  else { setSpam('only'); setStatus(''); setSource(''); setCategory(''); }
                   setExpandedId(null);
                 }}
                 aria-pressed={spam === 'only'}
@@ -650,7 +653,9 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
           tabs above this mean navigation, so everything here has to look like
           what it is -- a filter with a visible name. Category stays a select
           (twenty values, and the server 400s an unknown one, so the options
-          are the shared vocabulary rather than free text). */}
+          are the shared vocabulary rather than free text). Hidden entirely in
+          the quarantine view -- see the chip above for why. */}
+      {spam !== 'only' && (
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 border border-border bg-surface p-2">
         <SegmentedControl
           label="Show"
@@ -714,6 +719,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
           </button>
         )}
       </div>
+      )}
 
       {/* Three ways this ledger can be less than the whole truth, each from
           its own source of truth -- stated separately because the fixes differ
