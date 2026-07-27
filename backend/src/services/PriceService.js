@@ -190,8 +190,37 @@ class PriceService {
     logger.info({ ticker, assetType }, 'Fetching price');
     const isCrypto = assetType === 'Crypto' || assetType === 'Cash';
 
+    // A chain's native asset SKIPS the symbol-matched providers.
+    //
+    // Yahoo answers `POL-USD` with "Proof Of Liquidity" -- a different token,
+    // and at the time of writing 9x off. Every provider here resolves a bare
+    // ticker to whatever it lists under that symbol, and short symbols collide;
+    // Yahoo going first meant its guess outranked the id the registry declares.
+    // A wrong price is worse than none: it is a real-looking number in a
+    // balance, so the registry's own identity wins and the providers that can
+    // be asked precisely go first. Coinbase is exact by product id (POL-USD
+    // there IS Polygon), then CoinGecko by the declared coin id.
+    const native = chains.nativeAssetInfo(ticker);
+    let price;
+    if (isCrypto && native) {
+      price = await this.getCoinbasePrice(ticker);
+      if (price !== null) return { price, source: 'coinbase' };
+      try {
+        const idMap = await this.buildCoinGeckoIdMap([ticker]);
+        price = await this.getCoinGeckoPrice(ticker, idMap);
+        if (price !== null) return { price, source: 'coingecko' };
+      } catch (error) {
+        logger.warn({ ticker, err: error }, 'CoinGecko lookup failed for a native asset');
+      }
+      // Deliberately no Yahoo fallback: for these symbols its answer is known
+      // to be a different asset, and reporting nothing is the honest outcome.
+      // Bare null is the "no provider had it" contract every caller tests.
+      logger.warn({ ticker }, 'No price for a chain native asset');
+      return null;
+    }
+
     // Yahoo Finance first -- works for both stocks and crypto (TICKER-USD)
-    let price = await this.getYahooFinancePrice(ticker, isCrypto);
+    price = await this.getYahooFinancePrice(ticker, isCrypto);
     if (price !== null) return { price, source: 'yahoo' };
 
     // Crypto fallbacks: Coinbase -> CoinGecko -> CMC
