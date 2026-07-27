@@ -69,7 +69,10 @@ const TRANSFERS_VIEW = 'transfers';
 // Sentinel for "sync every wallet"; real wallet ids are >= 1.
 const SYNC_ALL = 'all';
 
-const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange }) => {
+// `onAttentionChange` reports { errored, needsReview } up to the app shell,
+// which renders it as the sidebar's Crypto badge -- so resolving a row here
+// moves the badge without the shell polling for it.
+const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [wallets, setWallets] = useState([]);
   const [holdings, setHoldings] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -126,7 +129,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange }) => {
   // row 200 must not spring back to row 50 when something above it is rescued.
   const spamPagesRef = useRef(1);
 
-  const fetchData = async () => {
+  // useCallback because it closes over the onAttentionChange prop: the mount
+  // effect and handleManageChanged list it, and an unstable identity would
+  // refire the whole page fetch on every parent render.
+  const fetchData = useCallback(async () => {
     try {
       const [walletsData, holdingsData, accountsData, historyData, ledgerData] = await Promise.all([
         ethAPI.getWallets().catch(() => null),
@@ -140,15 +146,22 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange }) => {
       setAccounts(accountsData.accounts || []);
       setHistoryRows(historyData.data || []);
       setLedgerSummary(ledgerData?.summary || null);
+      // The same two numbers the app shell fetched at boot, kept fresh by
+      // every refetch here -- review actions call fetchData, so the sidebar
+      // badge drains with the queue.
+      onAttentionChange?.({
+        errored: (walletsData?.wallets || []).filter((wallet) => wallet.error_code).length,
+        needsReview: ledgerData?.summary?.needs_review_count || 0,
+      });
       setError(null);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load crypto data');
     } finally {
       setLoading(false);
     }
-  };
+  }, [onAttentionChange]);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   // Each list degrades on its own: a failed labels request must not blank the
   // exchange accounts beside it, and the two nullable ones say so themselves.
@@ -186,7 +199,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange }) => {
     // The ledger and the transfer feed are keyed on this: a label write
     // reclassifies rows they are already showing.
     setSyncNonce((nonce) => nonce + 1);
-  }, [fetchManageData]);
+  }, [fetchData, fetchManageData]);
 
   const cryptoAccounts = useMemo(
     () => accounts.filter((account) => account.type === 'crypto'),

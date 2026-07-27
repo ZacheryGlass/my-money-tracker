@@ -355,6 +355,28 @@ describe('CryptoPage', () => {
     expect(await screen.findByRole('option', { name: LONG })).toBeInTheDocument();
   });
 
+  it('reports the attention counts to the app shell for the sidebar badge', async () => {
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [
+        { id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '2', error_code: 'ETHERSCAN_RATE_LIMIT' },
+        { id: 2, address: '0xbbbb000000000000000000000000000000000002', label: 'Cold', eth_quantity: '0' },
+      ],
+    });
+    apiMocks.crypto.getLedgerSummary.mockResolvedValue({
+      summary: { total: 5, needs_review_count: 3, onchain_count: 5, exchange_count: 0, matched_count: 0 },
+    });
+    const onAttentionChange = vi.fn();
+
+    render(<CryptoPage tab="crypto-holdings" onTabChange={vi.fn()} onAttentionChange={onAttentionChange} />);
+
+    // Every fetchData reports both numbers up, which is what lets the sidebar
+    // badge drain live as review actions refetch this page's data.
+    await vi.waitFor(() => {
+      expect(onAttentionChange).toHaveBeenCalledWith({ errored: 1, needsReview: 3 });
+    });
+  });
+
   it('offers Add Holding, the only route to creating a manual crypto holding', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({
       accounts: [{ id: 12, name: 'Cold storage', effective_name: 'Cold storage', type: 'crypto', eth_wallet_id: null }],

@@ -1,15 +1,20 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
-import { me } from '../utils/api';
+import { me, crypto as cryptoAPI } from '../utils/api';
 
 // Login happens upstream (Azure Easy Auth); the app assumes it is already
-// authenticated and only fetches /api/me for the sidebar display name.
+// authenticated and only fetches /api/me for the sidebar display name, plus
+// the crypto attention counts for the sidebar badge.
 vi.mock('../utils/api', () => ({
   me: vi.fn().mockResolvedValue({ user: { id: 1, username: 'zachery' } }),
   holdings: { getAll: vi.fn() },
   accounts: { getAll: vi.fn() },
   dashboard: { getPortfolio: vi.fn() },
+  crypto: {
+    getLedgerSummary: vi.fn().mockResolvedValue({ summary: { needs_review_count: 0 } }),
+  },
+  eth: { getWallets: vi.fn().mockResolvedValue({ wallets: [] }) },
   history: {
     getPortfolio: vi.fn(),
     getTickers: vi.fn(),
@@ -61,5 +66,20 @@ describe('App smoke test', () => {
     // attribute and the active state is the accent background, not aria.
     const cryptoNav = screen.getByTitle('Crypto');
     expect(cryptoNav.className).toContain('bg-[#3994BC26]');
+  });
+
+  // The sidebar badge: the unexplained count is visible from anywhere, not
+  // only after entering the Crypto page. In jsdom the sidebar is collapsed to
+  // the icon rail, so the count rides in the tooltip.
+  it('badges the Crypto entry with the unexplained count from anywhere', async () => {
+    cryptoAPI.getLedgerSummary.mockResolvedValueOnce({ summary: { needs_review_count: 3 } });
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTitle('Crypto (3)')).toBeInTheDocument();
   });
 });

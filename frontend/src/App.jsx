@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { me } from './utils/api';
+import { me, crypto as cryptoAPI, eth as ethAPI } from './utils/api';
 import lazyWithReload from './utils/lazyWithReload';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
@@ -93,6 +93,37 @@ function App() {
       .catch(() => setUser(null));
   }, []);
 
+  // The sidebar's Crypto badge: the "something needs my attention" signal,
+  // visible from anywhere without entering the page. Fetched once at boot for
+  // the initial value; afterwards CryptoPage reports through onAttentionChange
+  // every time its own data refetches, so draining the review queue moves the
+  // badge live without polling. Both requests fail soft -- a badge may not
+  // break the shell.
+  const [cryptoAttention, setCryptoAttention] = useState({ errored: 0, needsReview: 0 });
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      cryptoAPI.getLedgerSummary().catch(() => null),
+      ethAPI.getWallets().catch(() => null),
+    ]).then(([ledger, wallets]) => {
+      if (cancelled) return;
+      setCryptoAttention({
+        errored: (wallets?.wallets || []).filter((wallet) => wallet.error_code).length,
+        needsReview: ledger?.summary?.needs_review_count || 0,
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Same precedence as the Transactions tab's own badge: a failed wallet sync
+  // outranks the review count, because an incomplete feed makes that count
+  // untrustworthy.
+  const cryptoBadge = cryptoAttention.errored > 0
+    ? { count: cryptoAttention.errored, tone: 'error' }
+    : cryptoAttention.needsReview > 0
+      ? { count: cryptoAttention.needsReview, tone: 'review' }
+      : null;
+
   const handleNavigate = (page, state) => {
     const path = pagePaths[page];
     if (path) {
@@ -116,7 +147,11 @@ function App() {
         {BALANCES_TABS.has(currentPage) && <BalancesPage tab={currentPage} onTabChange={handleNavigate} />}
         {currentPage === 'accounts' && <AccountsPage />}
         {CRYPTO_TABS.has(currentPage) && (
-          <CryptoPage tab={currentPage} onTabChange={handleNavigate} />
+          <CryptoPage
+            tab={currentPage}
+            onTabChange={handleNavigate}
+            onAttentionChange={setCryptoAttention}
+          />
         )}
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
@@ -140,6 +175,7 @@ function App() {
         onLogout={handleLogout}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
+        badges={cryptoBadge ? { crypto: cryptoBadge } : {}}
       />
       <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
         {/* Mobile Header */}

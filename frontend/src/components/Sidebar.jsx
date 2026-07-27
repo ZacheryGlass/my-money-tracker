@@ -49,7 +49,17 @@ function getStoredExpanded() {
   }
 }
 
-export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobileOpen, onMobileClose }) {
+// Attention badges, matching the tones the pages themselves use: 'error' for
+// a failed sync (red), 'review' for the unexplained count (orange).
+const BADGE_TONES = {
+  error: 'border-loss/20 bg-loss/10 text-loss',
+  review: 'border-orange-500/30 bg-orange-500/10 text-orange-400',
+};
+const BADGE_DOT_TONES = { error: 'bg-loss', review: 'bg-orange-400' };
+
+// `badges` is { [navItemId]: { count, tone } } -- expanded, a count pill on
+// the entry; collapsed to the icon rail, a dot plus the count in the tooltip.
+export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobileOpen, onMobileClose, badges = {} }) {
   const isMobile = useMediaQuery('(max-width: 1023px)');
   const isDesktop = useIsDesktop();
   const [expanded, setExpanded] = useState(getStoredExpanded);
@@ -133,6 +143,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
 
             const Icon = item.icon;
             const isActive = currentPage === item.id;
+            const badge = badges[item.id];
 
             return (
               <button
@@ -144,7 +155,9 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
                     ? 'bg-[#3994BC26] text-primary'
                     : 'text-secondary hover:bg-surface-2 hover:text-primary'}
                 `}
-                title={(!showExpanded && !isMobile) ? item.label : undefined}
+                title={(!showExpanded && !isMobile)
+                  ? (badge ? `${item.label} (${badge.count.toLocaleString()})` : item.label)
+                  : undefined}
               >
                 <Icon size={16} strokeWidth={isActive ? 2 : 1.5} className="flex-shrink-0" />
 
@@ -152,6 +165,18 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
                   <span className="text-body-sm whitespace-nowrap truncate">
                     {item.label}
                   </span>
+                )}
+
+                {(showExpanded || isMobile) && badge && (
+                  <span className={`ml-auto shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-bold leading-none ${BADGE_TONES[badge.tone] || BADGE_TONES.review}`}>
+                    {badge.count.toLocaleString()}
+                  </span>
+                )}
+
+                {/* The rail has no room for a number; the dot says "something
+                    here", and the tooltip above carries the count. */}
+                {!showExpanded && !isMobile && badge && (
+                  <span className={`absolute right-1.5 top-1 h-1.5 w-1.5 rounded-full ${BADGE_DOT_TONES[badge.tone] || BADGE_DOT_TONES.review}`} />
                 )}
 
                 {isActive && (
