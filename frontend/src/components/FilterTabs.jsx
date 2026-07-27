@@ -1,18 +1,18 @@
 import React from 'react';
 
-// Single-choice control that renders as an underline tab strip on desktop and
-// as a labeled dropdown on mobile. `options` is [{ value, label, badge?,
-// selectLabel?, title? }] — `badge` is an element shown on the desktop tab,
-// `selectLabel` is its text fallback for the dropdown (options are text-only),
-// and `title` is hover text for labels that had to be truncated to fit.
+// PAGE NAVIGATION control: an underline tab strip on desktop, a labeled
+// dropdown on mobile. Filters use SegmentedControl instead -- two strips
+// stacked over one table read as one broken control. `options` is
+// [{ value, label, badge?, selectLabel? }] — `badge` is an element shown on
+// the desktop tab and `selectLabel` is its text fallback for the dropdown
+// (options are text-only).
 // An entry of { divider: true, hint } draws a separator in the strip (with the
 // hint as a tiny caption) and opens an <optgroup> in the dropdown, so one strip
 // can hold two families of tabs without reading as one flat list.
-// `actions` is an optional element pinned to the right on both layouts.
 // In the strip, the -mb-px overlap lives on the scroll wrapper, not the
 // buttons: putting it on the buttons inside an overflow-x-auto container
 // creates a vertical scrollbar.
-const FilterTabs = ({ id, label, options, value, onChange, actions, className = '' }) => {
+const FilterTabs = ({ id, label, options, value, onChange, className = '' }) => {
   // Partitioned once for the dropdown: options before the first divider are
   // plain <option>s, each divider starts an <optgroup> named by its hint. A
   // hint-less divider yields bare options (no <optgroup label="">), and empty
@@ -31,31 +31,28 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
 
   return (
     <div className={className}>
-      <div className="flex items-end gap-3 sm:hidden">
-        <div className="min-w-0 flex-1">
-          <label htmlFor={id} className="mb-2 block text-[10px] font-bold uppercase tracking-wide text-tertiary">
-            {label}
-          </label>
-          <select
-            id={id}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            className="h-11 w-full rounded border border-border bg-surface-2 px-3 text-sm text-primary"
-          >
-            {groups.filter((group) => group.options.length > 0).map((group, groupIndex) => {
-              const items = group.options.map((option) => (
-                <option key={String(option.value)} value={option.value}>{option.selectLabel || option.label}</option>
-              ));
-              return group.hint != null
-                ? <optgroup key={`group-${groupIndex}`} label={group.hint}>{items}</optgroup>
-                : <React.Fragment key={`group-${groupIndex}`}>{items}</React.Fragment>;
-            })}
-          </select>
-        </div>
-        {actions}
+      <div className="sm:hidden">
+        <label htmlFor={id} className="mb-2 block text-[10px] font-bold uppercase tracking-wide text-tertiary">
+          {label}
+        </label>
+        <select
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-11 w-full rounded border border-border bg-surface-2 px-3 text-sm text-primary"
+        >
+          {groups.filter((group) => group.options.length > 0).map((group, groupIndex) => {
+            const items = group.options.map((option) => (
+              <option key={String(option.value)} value={option.value}>{option.selectLabel || option.label}</option>
+            ));
+            return group.hint != null
+              ? <optgroup key={`group-${groupIndex}`} label={group.hint}>{items}</optgroup>
+              : <React.Fragment key={`group-${groupIndex}`}>{items}</React.Fragment>;
+          })}
+        </select>
       </div>
 
-      <div className="hidden items-center justify-between gap-3 border-b border-border sm:flex">
+      <div className="hidden border-b border-border sm:block">
         <div className="-mb-px flex min-w-0 overflow-x-auto" role="tablist" aria-label={label}>
           {options.map((option, index) => (
             option.divider ? (
@@ -73,7 +70,6 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
                 type="button"
                 role="tab"
                 aria-selected={value === option.value}
-                title={option.title}
                 onClick={() => onChange(option.value)}
                 className={`whitespace-nowrap border-b-2 px-4 py-2 text-caption font-semibold uppercase tracking-wide transition-colors ${
                   value === option.value
@@ -87,7 +83,6 @@ const FilterTabs = ({ id, label, options, value, onChange, actions, className = 
             )
           ))}
         </div>
-        {actions}
       </div>
     </div>
   );

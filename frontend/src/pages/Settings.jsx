@@ -218,10 +218,12 @@ const buildInstitutionSummary = (items, consentItems) => {
 // Thin adapter over the shared SegmentedControl: appearance options are
 // id-keyed, and the font-family row previews each option in its own stack
 // (the mobile dropdown falls back to plain text, as selects always do).
+// `ariaLabel`, not `label` -- each row's <h3> already names the control on
+// screen, and a visible label would print that name twice.
 function AppearanceOptions({ options, value, onChange, ariaLabel, previewFont = false, mobile = 'segments' }) {
   return (
     <SegmentedControl
-      label={ariaLabel}
+      ariaLabel={ariaLabel}
       mobile={mobile}
       className="shrink-0"
       options={options.map((option) => ({

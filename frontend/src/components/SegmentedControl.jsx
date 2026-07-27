@@ -10,7 +10,20 @@ import React from 'react';
 // orange). `mobile` picks the small-screen rendering: 'segments' stretches the
 // group to full-width equal parts -- fine for three options -- while 'select'
 // swaps in a labeled dropdown, because six segments cannot fit a phone.
-const SegmentedControl = ({ label, options, value, onChange, mobile = 'segments', className = '' }) => {
+// `label` is VISIBLE text; a caller whose row already names the control (a
+// Settings heading) passes `ariaLabel` instead, which names the group for
+// assistive tech without printing the name on screen twice.
+const SegmentedControl = ({ label, ariaLabel, options, value, onChange, mobile = 'segments', className = '' }) => {
+  const groupLabel = ariaLabel || label;
+  // The select hands back a STRING; the segments hand back the value the caller
+  // authored. Resolving through the option list keeps both renderings emitting
+  // one identity, so a numeric-valued control does not start reporting strings
+  // the day it grows past four options and gains mobile='select'.
+  const handleSelect = (raw) => {
+    const picked = options.find((option) => String(option.value) === raw);
+    onChange(picked ? picked.value : raw);
+  };
+
   const segments = (visibility) => (
     <div className={`${visibility} w-full items-center gap-2 sm:w-auto`}>
       {/* The label is a courtesy on desktop; on a phone its 50px can be the
@@ -22,15 +35,18 @@ const SegmentedControl = ({ label, options, value, onChange, mobile = 'segments'
       )}
       {/* Desktop scrolls instead of clipping when the option set is dynamic
           (Spending's account filter); mobile keeps equal-part stretch, and
-          option counts that cannot fit a phone use mobile='select'. */}
+          option counts that cannot fit a phone use mobile='select'. The
+          scrollbar is hidden because index.css styles ::-webkit-scrollbar,
+          which opts Chrome out of overlay bars -- a real 8px gutter inside a
+          32px control would sit under the segments and misalign the row. */}
       <div
-        className="flex min-w-0 flex-1 overflow-hidden rounded border border-input-border sm:max-w-full sm:flex-initial sm:overflow-x-auto"
+        className="flex min-w-0 flex-1 overflow-hidden rounded border border-input-border [scrollbar-width:none] sm:max-w-full sm:flex-initial sm:overflow-x-auto [&::-webkit-scrollbar]:hidden"
         role="group"
-        aria-label={label}
+        aria-label={groupLabel}
       >
         {options.map((option, index) => (
           <button
-            key={String(option.value) || 'all'}
+            key={`opt-${String(option.value)}`}
             type="button"
             aria-pressed={value === option.value}
             onClick={() => onChange(option.value)}
@@ -54,22 +70,31 @@ const SegmentedControl = ({ label, options, value, onChange, mobile = 'segments'
 
   // Like FilterTabs, both renderings mount and CSS picks one -- so anything
   // asserting on the segments must expect the dropdown beside them.
+  const dropdown = (
+    <select
+      value={value}
+      onChange={(event) => handleSelect(event.target.value)}
+      aria-label={label ? undefined : groupLabel}
+      className="h-9 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+    >
+      {options.map((option) => (
+        <option key={`opt-${String(option.value)}`} value={option.value}>
+          {option.selectLabel || option.label}
+        </option>
+      ))}
+    </select>
+  );
+
   return (
     <div className={className}>
-      <label className="flex w-full items-center gap-2 sm:hidden">
-        <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">{label}</span>
-        <select
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          className="h-9 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
-        >
-          {options.map((option) => (
-            <option key={String(option.value) || 'all'} value={option.value}>
-              {option.selectLabel || option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      {label ? (
+        <label className="flex w-full items-center gap-2 sm:hidden">
+          <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">{label}</span>
+          {dropdown}
+        </label>
+      ) : (
+        <div className="flex w-full sm:hidden">{dropdown}</div>
+      )}
       {segments('hidden sm:flex')}
     </div>
   );

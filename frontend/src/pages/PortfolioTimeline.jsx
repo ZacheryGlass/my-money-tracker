@@ -198,32 +198,41 @@ const PortfolioTimeline = () => {
           <h1 className="text-display-md text-primary">Portfolio Timeline</h1>
           <p className="text-body-sm text-tertiary">{visiblePeriodLabel}</p>
         </div>
-        {/* Custom is a toggle for the controls panel, not a range by itself:
-            it reads selected only once a custom range is applied, and while
-            the panel is merely open the icon carries the accent instead. */}
-        <SegmentedControl
-          label="Range"
-          mobile="select"
-          options={[
-            ...Object.keys(DATE_RANGES).map((range) => ({
+        {/* Custom stays OUTSIDE the segmented control: it toggles the date
+            panel rather than naming a range, and a <select> can express
+            neither half of that (it cannot re-fire on the option already
+            showing, and it snaps back when the parent declines the value).
+            Six 2-3 character presets fit a phone, so this one keeps segments.
+            While a custom range is applied no preset is the answer, hence the
+            empty value. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <SegmentedControl
+            label="Range"
+            options={Object.keys(DATE_RANGES).map((range) => ({
               value: range,
               label: range,
               selectLabel: DATE_RANGES[range].label,
-            })),
-            {
-              value: 'custom',
-              label: (
-                <>
-                  <Calendar size={12} className={customControlsOpen && !useCustomRange ? 'text-accent' : undefined} />
-                  Custom
-                </>
-              ),
-              selectLabel: 'Custom',
-            },
-          ]}
-          value={useCustomRange ? 'custom' : selectedRange}
-          onChange={(value) => (value === 'custom' ? setCustomControlsOpen((open) => !open) : handleRangeChange(value))}
-        />
+            }))}
+            value={useCustomRange ? '' : selectedRange}
+            onChange={handleRangeChange}
+          />
+          <button
+            type="button"
+            onClick={() => setCustomControlsOpen((open) => !open)}
+            aria-pressed={useCustomRange}
+            aria-expanded={customControlsOpen}
+            aria-controls="timeline-custom-range"
+            className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded border border-input-border px-3 text-[10px] font-bold uppercase tracking-wide transition-colors ${
+              useCustomRange
+                ? 'bg-accent/15 text-accent'
+                : customControlsOpen
+                  ? 'bg-accent-muted text-accent'
+                  : 'bg-surface-2 text-tertiary hover:text-primary'
+            }`}
+          >
+            <Calendar size={12} /> Custom
+          </button>
+        </div>
       </div>
 
       {/* Controls Panel */}
@@ -280,7 +289,7 @@ const PortfolioTimeline = () => {
           </div>
 
           {customControlsOpen && (
-            <div className="grid grid-cols-1 gap-2 border-t border-border pt-3 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+            <div id="timeline-custom-range" className="grid grid-cols-1 gap-2 border-t border-border pt-3 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
               <div>
                 <label className="text-caption text-tertiary uppercase block mb-1">Custom Start</label>
                 <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="w-full bg-surface-3 border-border px-2 py-1 text-caption" />
