@@ -23,6 +23,7 @@ import {
 } from '../utils/dataLabels';
 import DataTable from './DataTable';
 import LoadingState from './LoadingState';
+import SegmentedControl from './SegmentedControl';
 
 const PAGE_SIZE = 100;
 // GET /api/crypto/ledger clamps `limit` to 500, and asking past it is a 400.
@@ -651,43 +652,27 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
           (twenty values, and the server 400s an unknown one, so the options
           are the shared vocabulary rather than free text). */}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 border border-border bg-surface p-2">
-        {/* Full-width thirds on a phone, compact on desktop: fixed-width
-            segments overflow a 375px viewport and clip the third option. */}
-        <div className="flex w-full items-center gap-2 sm:w-auto">
-          {/* The label is a courtesy on desktop; on a phone its 50px is the
-              difference between the third segment fitting and clipping. */}
-          <span className="hidden shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary sm:inline">Show</span>
-          <div className="flex min-w-0 flex-1 overflow-hidden rounded border border-input-border sm:flex-initial" role="group" aria-label="Review status">
-            {STATUS_OPTIONS.map((option, index) => (
-              <button
-                key={option.value || 'all'}
-                type="button"
-                aria-pressed={status === option.value}
-                onClick={() => { setStatus(option.value); setExpandedId(null); }}
-                className={`inline-flex min-h-8 flex-1 items-center justify-center gap-1.5 px-2 text-center text-[10px] font-bold uppercase tracking-wide transition-colors sm:flex-initial sm:px-3 ${
-                  index > 0 ? 'border-l border-input-border' : ''
-                } ${
-                  status === option.value
-                    ? option.value === 'true'
-                      ? 'bg-orange-500/15 text-orange-400'
-                      : 'bg-accent/15 text-accent'
-                    : 'bg-surface-2 text-tertiary hover:text-primary'
-                }`}
-              >
-                {option.label}
-                {statusCounts && (
-                  <span className={`px-1 text-[9px] font-bold ${
-                    option.value === 'true' && statusCounts[option.value] > 0
-                      ? 'bg-orange-500/15 text-orange-400'
-                      : 'bg-surface-3 text-tertiary'
-                  }`}>
-                    {Number(statusCounts[option.value]).toLocaleString()}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
+        <SegmentedControl
+          label="Show"
+          value={status}
+          onChange={(next) => { setStatus(next); setExpandedId(null); }}
+          options={STATUS_OPTIONS.map((option) => ({
+            ...option,
+            // Needs review is the queue, so its selected state runs the same
+            // orange as the review chips; the count beside it stays orange
+            // even unselected while it is nonzero.
+            activeClassName: option.value === 'true' ? 'bg-orange-500/15 text-orange-400' : undefined,
+            badge: statusCounts ? (
+              <span className={`px-1 text-[9px] font-bold ${
+                option.value === 'true' && statusCounts[option.value] > 0
+                  ? 'bg-orange-500/15 text-orange-400'
+                  : 'bg-surface-3 text-tertiary'
+              }`}>
+                {Number(statusCounts[option.value]).toLocaleString()}
+              </span>
+            ) : null,
+          }))}
+        />
 
         <label className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">Source</span>

@@ -11,7 +11,7 @@ import {
   labelVerdictNeedsName,
 } from '../utils/dataLabels';
 import DataTable from './DataTable';
-import FilterTabs from './FilterTabs';
+import SegmentedControl from './SegmentedControl';
 import LoadingState from './LoadingState';
 
 export const EthWalletBadge = () => (
@@ -27,7 +27,7 @@ export const EthWalletBadge = () => (
 const TRANSFER_PAGE_SIZE = 100;
 
 const TRANSFER_TYPE_OPTIONS = [
-  { value: '', label: 'All' },
+  { value: '', label: 'All', selectLabel: 'All types' },
   { value: 'external', label: 'External' },
   { value: 'exchange', label: 'Exchange' },
   { value: 'self', label: 'Self' },
@@ -475,9 +475,14 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
         <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">On-chain Activity</h2>
       </div>
 
-      <FilterTabs
+      {/* A labeled segmented control, not a tab strip: the same filter grammar
+          as the unified ledger's Show control, and the last unlabeled strip on
+          the Transactions tab otherwise. Six values cannot fit a phone as
+          segments, so the mobile rendering is a labeled dropdown. */}
+      <SegmentedControl
         id="eth-transfer-type"
-        label="Transfer type"
+        label="Type"
+        mobile="select"
         className="mb-3"
         options={TRANSFER_TYPE_OPTIONS}
         value={typeFilter}
