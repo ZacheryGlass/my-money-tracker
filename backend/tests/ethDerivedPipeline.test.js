@@ -260,9 +260,13 @@ const gate = () => {
 };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-test('work for one user is serialized in FIFO order', async () => {
+test('work for one user is serialized in FIFO order', async (t) => {
   const events = [];
   const g = gate();
+  // Releasing twice is a no-op; the after-hook guarantees a failed assertion
+  // while the gate is held cannot leave the lane unsettled and hang the tests
+  // behind it on this lane.
+  t.after(g.release);
   const first = EthDerivedPipeline.serializedForUser(1, async () => {
     events.push('a-start'); await g.promise; events.push('a-end');
   });
@@ -274,9 +278,10 @@ test('work for one user is serialized in FIFO order', async () => {
   assert.deepEqual(events, ['a-start', 'a-end', 'b']);
 });
 
-test('two users run in parallel lanes', async () => {
+test('two users run in parallel lanes', async (t) => {
   const events = [];
   const g = gate();
+  t.after(g.release);
   const slow = EthDerivedPipeline.serializedForUser(1, async () => {
     events.push('u1-start'); await g.promise; events.push('u1-end');
   });
@@ -313,6 +318,7 @@ test('the global backfill chokepoint keeps two users\' backfills from overlappin
   const { stub } = harness(t);
   const events = [];
   const g = gate();
+  t.after(g.release);
   let firstEntered;
   const entered = new Promise((resolve) => { firstEntered = resolve; });
   stub(TransactionClassificationService, 'backfill', async () => {

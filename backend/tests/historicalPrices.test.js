@@ -985,18 +985,24 @@ async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = n
   try {
     if (holdLaneFor != null) {
       // Occupy the user's rebuild lane the way an in-flight sync would, start
-      // the job, and prove it waits instead of racing.
+      // the job, and prove it waits instead of racing. The finally releases
+      // even if the job throws mid-hold, so a failure cannot leave the lane
+      // unsettled and hang whatever queues on it next.
       let release;
       const gatePromise = new Promise((resolve) => { release = resolve; });
       const held = EthDerivedPipeline.serializedForUser(holdLaneFor, () => gatePromise);
-      const running = historicalPriceJob.run();
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
-      const callsWhileHeld = calls.slice();
-      release();
-      await held;
-      const result = await running;
-      return { calls, callsWhileHeld, result };
+      try {
+        const running = historicalPriceJob.run();
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        const callsWhileHeld = calls.slice();
+        release();
+        await held;
+        const result = await running;
+        return { calls, callsWhileHeld, result };
+      } finally {
+        release();
+      }
     }
     const result = await historicalPriceJob.run();
     return { calls, result };
