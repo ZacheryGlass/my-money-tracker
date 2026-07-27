@@ -4,7 +4,7 @@ const axios = require('axios');
 const AssetPriceHistory = require('../models/AssetPriceHistory');
 const SecretsService = require('./SecretsService');
 const chains = require('../config/chains');
-const { parseAssetKey, NATIVE_ASSET_KEY } = require('../utils/assetPriceKey');
+const { parseAssetKey } = require('../utils/assetPriceKey');
 const {
   baseUrl: coinGeckoBase, keyHeader: coinGeckoKeyHeader, isPro: coinGeckoIsPro,
 } = require('../utils/coingecko');
@@ -73,7 +73,9 @@ const COINBASE_PAGE_DAYS = COINBASE_MAX_CANDLES - 1;
 
 // Earliest date any provider here can answer for ETH (Coinbase's ETH-USD
 // listing). Requesting older only burns calls to be told nothing, and a
-// backfill window is clamped to it.
+// backfill window is clamped to it. PER NATIVE ASSET, since a chain added later
+// may have listed a decade after ether did -- chains.NATIVE_ASSETS carries each
+// symbol's floor and this is the ETH default for a symbol with no entry.
 const NATIVE_HISTORY_START = '2016-05-18';
 
 const REQUEST_TIMEOUT_MS = 15000;
@@ -402,24 +404,27 @@ class HistoricalPriceService {
       return { assetKey: asset.asset_key, status: 'unlisted', detail: 'Unrecognized asset key form' };
     }
 
-    // NATIVE_HISTORY_START is Coinbase's ETH-USD listing date, so it bounds the
-    // NATIVE window only. Applying it to tokens would clamp a 2015-era ERC-20
-    // (REP, DGD) out of its own fetch window and -- since the stored earliest
-    // would then equal the wanted one -- never re-ask, leaving those legs
-    // unpriced even on a paid key that has the data.
+    // The native floor is the fallback provider's listing date for THAT symbol,
+    // so it bounds the NATIVE window only. Applying it to tokens would clamp a
+    // 2015-era ERC-20 (REP, DGD) out of its own fetch window and -- since the
+    // stored earliest would then equal the wanted one -- never re-ask, leaving
+    // those legs unpriced even on a paid key that has the data.
     const earliest = asset.first_date ? toDateString(asset.first_date) : todayUtc();
-    const neededFrom = parsed.kind === 'native' ? maxDate(earliest, NATIVE_HISTORY_START) : earliest;
+    const nativeFloor = parsed.kind === 'native'
+      ? (chains.nativeAssetInfo(parsed.symbol)?.historyStart || NATIVE_HISTORY_START)
+      : null;
+    const neededFrom = nativeFloor ? maxDate(earliest, nativeFloor) : earliest;
     const window = await this.missingWindow(asset.asset_key, neededFrom, todayUtc(), {
       providerFloor: coverage?.status === 'range_limited' ? coverage.earliest_date : null,
     });
 
     const outcome = parsed.kind === 'native'
-      ? await this._fetchNative(window)
+      ? await this._fetchNative(parsed, window)
       : await this._fetchToken(parsed, window);
 
     const base = {
       assetKey: asset.asset_key,
-      assetSymbol: asset.asset_symbol || (parsed.kind === 'native' ? NATIVE_ASSET_KEY : null),
+      assetSymbol: asset.asset_symbol || (parsed.kind === 'native' ? parsed.symbol : null),
       chainId: parsed.chainId,
       contractAddress: parsed.contract,
       provider: outcome.provider || null,
@@ -462,12 +467,27 @@ class HistoricalPriceService {
     };
   }
 
-  // ETH. CoinGecko first (the issue's stated source, and one call covers any
-  // window on a paid key), Coinbase Exchange when the plan refuses the dates --
-  // which on a free key is every date older than a year, i.e. exactly the
-  // history this feature exists to value.
-  static async _fetchNative(window) {
-    const cg = await coinGeckoRange('coins/ethereum', window.from, window.to);
+  // A native asset (ETH, POL). CoinGecko first (the issue's stated source, and
+  // one call covers any window on a paid key), Coinbase Exchange when the plan
+  // refuses the dates -- which on a free key is every date older than a year,
+  // i.e. exactly the history this feature exists to value.
+  //
+  // Both provider ids come from the registry rather than being hardcoded: a
+  // symbol with no entry has no way to be priced, and saying so is the only
+  // honest answer -- fetching ether's series for it would price the asset
+  // wrongly and look completely healthy doing it.
+  static async _fetchNative(parsed, window) {
+    const info = chains.nativeAssetInfo(parsed.symbol);
+    if (!info) {
+      return {
+        status: 'unlisted',
+        provider: null,
+        detail: `Native asset ${parsed.symbol} has no price source in the registry`,
+      };
+    }
+    const coinGeckoPath = `coins/${info.coingeckoId}`;
+
+    const cg = await coinGeckoRange(coinGeckoPath, window.from, window.to);
     if (cg.points && cg.points.length) return { ...cg, provider: 'coingecko' };
 
     const reason = cg.rangeLimited
@@ -478,7 +498,7 @@ class HistoricalPriceService {
     // WHOLE window back to 2016, so the series stays on one source and one
     // convention instead of splicing a year of CoinGecko onto a decade of
     // Coinbase at an invisible seam.
-    const cb = await coinbaseDailyCandles('ETH-USD', window.from, window.to);
+    const cb = await coinbaseDailyCandles(info.coinbaseProduct, window.from, window.to);
     if (cb.points && cb.points.length) {
       return {
         ...cb,
@@ -497,7 +517,7 @@ class HistoricalPriceService {
     if (cg.rangeLimited) {
       const narrowed = maxDate(window.from, addDays(todayUtc(), -COINGECKO_FREE_HISTORY_DAYS));
       if (narrowed > window.from && narrowed <= window.to) {
-        const retry = await coinGeckoRange('coins/ethereum', narrowed, window.to);
+        const retry = await coinGeckoRange(coinGeckoPath, narrowed, window.to);
         if (retry.points && retry.points.length) {
           return {
             ...retry,

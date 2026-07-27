@@ -10,22 +10,29 @@
 // platform). So a token's identity here is its (chain, contract) pair.
 //
 // Two forms, and only two:
-//   'ETH'                       -- the native asset, on EVERY chain. Every chain
-//                                  in the registry is ETH-native, which is the
-//                                  same fact that lets one shared price_cache
-//                                  'ETH' row value every chain's balance.
+//   '<SYMBOL>'                  -- a native asset, keyed by its SYMBOL and not
+//                                  by chain: 'ETH' covers mainnet, Arbitrum and
+//                                  Linea alike (one asset, one series), 'POL'
+//                                  covers Polygon. Keying natives per chain
+//                                  would fetch and store the same ETH series
+//                                  once per chain; keying them all 'ETH' would
+//                                  price POL as ether.
 //   'erc20:<chain_id>:<0xaddr>' -- an ERC-20, lowercased.
 //
 // NFTs get no key at all. Their valuation is out of scope (#73) and their
 // value_wei is a COUNT OF UNITS (033), so a key would invite exactly the
 // units-as-wei confusion the rest of the codebase works to prevent.
 
-const { DEFAULT_CHAIN_ID } = require('../config/chains');
+const { DEFAULT_CHAIN_ID, nativeSymbol, isNativeSymbol } = require('../config/chains');
 
+// The native key on a chain that is ETH-native, and the historical spelling of
+// every native row written before Polygon. Kept as a named export because it is
+// still the right default for a caller with no chain in hand.
 const NATIVE_ASSET_KEY = 'ETH';
 
 // Types that carry no fungible value to price: an NFT leg (count of units, out
-// of scope) and nothing else -- gas, native and internal legs are all ETH.
+// of scope) and nothing else -- gas, native and internal legs all carry the
+// chain's native asset.
 const UNPRICEABLE_TRANSFER_TYPES = new Set(['nft', 'nft1155']);
 
 function tokenAssetKey(chainId, contract) {
@@ -42,16 +49,19 @@ function assetKeyForTransfer(transfer) {
   if (transfer.transfer_type === 'token') {
     return tokenAssetKey(transfer.chain_id ?? DEFAULT_CHAIN_ID, transfer.token_contract);
   }
-  return NATIVE_ASSET_KEY;
+  return nativeSymbol(transfer.chain_id ?? DEFAULT_CHAIN_ID);
 }
 
 // Inverse of the two builders, for the price job: it reads asset keys out of
 // the ledger and has to turn each back into a provider request. Returns null
 // for anything that is not one of the two forms, so a key written by a future
 // migration cannot be silently mistaken for a mainnet contract.
+//
+// `chainId` stays null on the native branch: the symbol IS the asset, and the
+// chain it happened to move on says nothing about how to price it.
 function parseAssetKey(assetKey) {
-  if (assetKey === NATIVE_ASSET_KEY) {
-    return { kind: 'native', chainId: null, contract: null };
+  if (isNativeSymbol(assetKey)) {
+    return { kind: 'native', symbol: String(assetKey).toUpperCase(), chainId: null, contract: null };
   }
   const match = /^erc20:(\d+):(0x[0-9a-f]{40})$/.exec(String(assetKey || ''));
   if (!match) return null;

@@ -5,7 +5,7 @@
 // logger -- everything here is a function of the transfer rows it is handed,
 // which is what keeps the whole policy surface unit-testable.
 
-const { DEFAULT_CHAIN_ID } = require('../../config/chains');
+const { DEFAULT_CHAIN_ID, nativeSymbol } = require('../../config/chains');
 const { NFT_TRANSFER_TYPES, USD_BASIS_RANK } = require('../../utils/ethActivityVocabulary');
 
 function weakestBasis(a, b) {
@@ -117,10 +117,13 @@ function assetOf(transfer, decimalsFallbacks = new Map()) {
       symbol_known: hasSymbol(transfer),
     };
   }
-  // native + internal are both ETH, and netting them together is the point: a
-  // contract that refunds part of the ETH you sent is one net outflow.
+  // native + internal are both the chain's native asset, and netting them
+  // together is the point: a contract that refunds part of what you sent is one
+  // net outflow. The symbol comes from the registry, so a POL leg on Polygon
+  // never nets against -- or renders as -- ether.
+  const symbol = nativeSymbol(transfer.chain_id ?? DEFAULT_CHAIN_ID);
   return {
-    key: 'ETH', asset: 'ETH', contract: null, token_id: null, token_standard: null,
+    key: symbol, asset: symbol, contract: null, token_id: null, token_standard: null,
     decimals: 18, symbol_known: true,
   };
 }

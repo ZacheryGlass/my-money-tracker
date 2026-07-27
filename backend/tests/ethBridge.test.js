@@ -397,13 +397,35 @@ test('the bridge-set query filters kind OUTSIDE the DISTINCT ON', async () => {
   const inner = sql.slice(sql.indexOf('SELECT DISTINCT ON'), sql.indexOf(') resolved'));
   assert.doesNotMatch(inner, /kind =/);
   assert.match(inner, /ORDER BY address, user_id NULLS LAST/);
-  assert.match(sql, /\) resolved WHERE kind = 'bridge'/);
+  // The kind is bound rather than interpolated since 046 generalized this to
+  // serve every kind, but it must still be tested AFTER precedence resolves.
+  assert.match(sql, /\) resolved WHERE kind = \$2/);
 });
 
-test('a bridge label drains the counterparty triage queue like any other verdict', () => {
+test('the service set is fetched by the same precedence-resolving query as bridge', async () => {
+  // 046 shares one query between the two kinds precisely so a second kind
+  // cannot grow its own precedence rules. If these ever diverge, a user's
+  // 'external' override would stop suppressing a builtin on one of them.
+  const seen = [];
+  const original = require('../src/config/database').query;
+  require('../src/config/database').query = async (text, params) => {
+    seen.push({ text: String(text).replace(/\s+/g, ' ').trim(), params });
+    return original(text, params);
+  };
+  await EthActivityService._bridgeAddressesForUser(OWNER_ID);
+  await EthActivityService._serviceAddressesForUser(OWNER_ID);
+  require('../src/config/database').query = original;
+
+  assert.equal(seen[0].text, seen[1].text, 'both kinds must use the identical query');
+  assert.deepEqual(seen[0].params, [OWNER_ID, 'bridge']);
+  assert.deepEqual(seen[1].params, [OWNER_ID, 'service']);
+});
+
+test('any label kind drains the counterparty triage queue, bridge and service included', () => {
   // The queue's population is "no label row of ANY kind", so a new kind needs
   // no change there -- but that has to stay true, and a kind predicate creeping
-  // into the CTE is exactly how it would stop being.
+  // into the CTE is exactly how it would stop being. This is what lets 046's
+  // 'service' verdict clear the queue with no query change at all.
   const cte = EthTransfer.UNREVIEWED_COUNTERPARTIES_CTE
     || fs.readFileSync(path.join(__dirname, '../src/models/EthTransfer.js'), 'utf-8')
       .split('const UNREVIEWED_COUNTERPARTIES_CTE = `')[1]
@@ -862,6 +884,9 @@ test('every source is a first-party domain, never an aggregator', () => {
     // Optimism's docs page renders its L1 table client-side from this exact
     // first-party registry file; no static docs.optimism.io page prints them.
     /^https:\/\/raw\.githubusercontent\.com\/ethereum-optimism\/superchain-registry\//,
+    // Polygon's own static network registry, in its own GitHub org -- the file
+    // its SDKs resolve mainnet addresses from.
+    /^https:\/\/raw\.githubusercontent\.com\/maticnetwork\/static\//,
   ];
   for (const [protocol, url] of Object.entries(PACK.sources)) {
     assert.ok(ALLOWED.some((re) => re.test(url)), `${protocol} cites a non-first-party source: ${url}`);
@@ -920,7 +945,18 @@ test('both CHECK swaps are guarded on the DEFINITION, with a bumped sentinel', (
   // perfectly applied on a fresh one -- 032's kind CHECK is exactly that shape,
   // which is why this file has to drop and re-add rather than ALTER in place.
   assert.match(SEED_SQL, /conname = 'eth_address_labels_kind_check'\s*\n\s*AND pg_get_constraintdef\(oid\) LIKE '%bridge%'/);
-  assert.match(SEED_SQL, /CHECK \(kind IN \('exchange', 'external', 'own', 'bridge'\)\)/);
+  // The UNION of every kind, 046's 'service' included -- the same rule the
+  // source CHECK below follows, applied to the kind CHECK so a reader never has
+  // to work out which sentinel happens to survive which widening.
+  assert.match(SEED_SQL, /CHECK \(kind IN \('exchange', 'external', 'own', 'bridge', 'service'\)\)/);
+  const serviceSql = fs.readFileSync(
+    path.join(__dirname, '..', 'migrations', '046_service_label_kind.sql'), 'utf8'
+  );
+  assert.match(serviceSql, /conname = 'eth_address_labels_kind_check'\s*\n\s*AND pg_get_constraintdef\(oid\) LIKE '%service%'/);
+  assert.match(serviceSql, /CHECK \(kind IN \('exchange', 'external', 'own', 'bridge', 'service'\)\)/);
+  // 'exchange_trade' has been in 038's category CHECK since 038; 046 adds no
+  // category and must not touch that constraint.
+  assert.doesNotMatch(serviceSql, /eth_activity_category_check/);
   assert.match(SEED_SQL, /conname = 'eth_address_labels_source_check'\s*\n\s*AND pg_get_constraintdef\(oid\) LIKE '%builtin-bridge%'/);
   // The UNION of every source, 041's 'auto-match' included. 041 owns this same
   // constraint under its own sentinel, so two narrower lists take turns

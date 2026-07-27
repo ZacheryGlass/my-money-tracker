@@ -141,6 +141,7 @@ function LabelsPanel({ addressLabels, ignoredTokens, onChanged, onError, showSuc
       // arrives with kind 'bridge', so this branch claims every one of them and
       // there is no 'builtin-bridge' source pill to fall through to.
       : label.kind === 'bridge' ? 'Bridge'
+      : label.kind === 'service' ? 'Swap service'
       : label.kind === 'own' ? 'Yours'
       : label.kind === 'external' ? 'Outside party'
       : null;

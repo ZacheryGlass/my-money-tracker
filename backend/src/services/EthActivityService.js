@@ -37,7 +37,8 @@ class EthActivityService {
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
     const [
-      transfersResult, ignoredResult, labeledResult, ownWalletsResult, coverageResult, bridgeAddresses,
+      transfersResult, ignoredResult, labeledResult, ownWalletsResult, coverageResult,
+      bridgeAddresses, serviceAddresses,
     ] = await Promise.all([
       pool.query(
         'SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id',
@@ -96,6 +97,8 @@ class EthActivityService {
       ),
       // The owner's bridge-labeled counterparties (#59), driving rule 3.
       this._bridgeAddressesForUser(wallet.user_id),
+      // The owner's swap-service counterparties (046), driving rule 4.
+      this._serviceAddressesForUser(wallet.user_id),
     ]);
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
     const labeledAddresses = new Set(labeledResult.rows.map((row) => row.address));
@@ -112,7 +115,8 @@ class EthActivityService {
     const unlistedAssets = new Set(coverageResult.rows.map((row) => row.asset_key));
 
     const rows = buildActivityRows(wallet.address, transfersResult.rows, {
-      ignoredContracts, labeledAddresses, ownAddresses, unlistedAssets, bridgeAddresses,
+      ignoredContracts, labeledAddresses, ownAddresses, unlistedAssets,
+      bridgeAddresses, serviceAddresses,
     });
     await this._nameCounterparties(wallet.user_id, rows);
     const written = await EthActivity.replaceForWallet(walletId, rows);
@@ -133,19 +137,24 @@ class EthActivityService {
     return { activity: written, matches };
   }
 
-  // The owner's bridge-labeled addresses, precedence already resolved.
+  // The owner's addresses carrying one label kind, precedence already resolved.
   //
   // The DISTINCT ON picks the winning row per address (user shadows builtin,
   // ORDER BY user_id NULLS LAST) and the kind test sits OUTSIDE it -- the same
   // shape as EthAddressLabel.findAllForUser, and for the same reason. Filtering
   // on kind INSIDE would drop a user's 'external' override out of the candidate
-  // set and let the builtin 'bridge' row it was written to overrule resurface
-  // underneath it, which is exactly how a correction stops working.
+  // set and let the builtin row it was written to overrule resurface underneath
+  // it, which is exactly how a correction stops working.
   //
-  // 'own' beating 'bridge' needs nothing here: kind is one column on the
-  // winning row, so an address the user declared theirs is simply not in this
-  // set (and rule 1 claims the transaction before this rung anyway).
-  static async _bridgeAddressesForUser(userId) {
+  // 'own' beating these needs nothing here: kind is one column on the winning
+  // row, so an address the user declared theirs is simply not in the set (and
+  // rule 1 claims the transaction before either rung anyway).
+  //
+  // NOT derived from the labeledAddresses query above, which deliberately
+  // returns BOTH the user row and the builtin row for an address so the spam
+  // gate can ask "has this been judged at all". Reading a kind off that
+  // unresolved set would let a builtin verdict outvote the user's override.
+  static async _addressesOfKindForUser(userId, kind) {
     const result = await pool.query(
       `SELECT address FROM (
          SELECT DISTINCT ON (address) address, kind
@@ -153,10 +162,18 @@ class EthActivityService {
          WHERE user_id = $1 OR user_id IS NULL
          ORDER BY address, user_id NULLS LAST
        ) resolved
-       WHERE kind = 'bridge'`,
-      [userId]
+       WHERE kind = $2`,
+      [userId, kind]
     );
     return new Set(result.rows.map((row) => row.address));
+  }
+
+  static _bridgeAddressesForUser(userId) {
+    return this._addressesOfKindForUser(userId, 'bridge');
+  }
+
+  static _serviceAddressesForUser(userId) {
+    return this._addressesOfKindForUser(userId, 'service');
   }
 
   // Pairs each bridge_out with the bridge_in that completes it, across chains

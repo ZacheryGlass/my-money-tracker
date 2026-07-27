@@ -27,7 +27,8 @@ const verdict = (category, extra = {}) => ({
 //
 // NOTHING here reads method_id or method_name. They ride along for display.
 function classifyActivity({
-  wallet, failed, valueLegs, hadValueLegs, netLegs, gasLegs, bridgeAddresses = new Set(),
+  wallet, failed, valueLegs, hadValueLegs, netLegs, gasLegs,
+  bridgeAddresses = new Set(), serviceAddresses = new Set(),
 }) {
   if (failed) return verdict('failed');
 
@@ -84,6 +85,36 @@ function classifyActivity({
       confidence: 'medium',
     });
   }
+
+  // 3b. Counterparty labeled service (046). Inserted rather than renumbered:
+  // rules 1-8 are the issue's own numbering and are cited by name across the
+  // services, the tests and CLAUDE.md, so shifting five of them by one would
+  // silently rewrite every one of those references.
+  //
+  // An instant-swap service issues a
+  // single-use deposit address per order: value goes in, and what comes back
+  // arrives somewhere else entirely -- another chain, another asset, an address
+  // named at order time. On THIS chain the movement is one-way and terminal.
+  //
+  // exchange_trade rather than a direction pair, because the direction is not
+  // the interesting fact and the vocabulary has no second value for it: outbound
+  // is a disposal, inbound an acquisition, and both are the same event type seen
+  // from one side. The row is NOT flagged: unlike a bridge, there is no far side
+  // to wait for -- the label already said what the counterparty is, and what was
+  // received cannot be learned from this chain no matter how long the row stays
+  // in the queue.
+  //
+  // PRECEDENCE, same reasoning as rule 3:
+  //   * BELOW rules 1-3, so no transaction that classifies today changes.
+  //   * ABOVE rules 4-8, which is the whole point: without this rung a swap
+  //     deposit is rule 8's `send`, flagged as possible spending forever -- and
+  //     the alternative label a user reaches for, 'exchange', is worse than
+  //     leaving it flagged: it books a disposal as an internal transfer and
+  //     deletes it from the record.
+  const serviceLegs = valueLegs.filter(
+    (leg) => !leg.counterparty_is_own && serviceAddresses.has(counterpartyAddress(wallet, leg))
+  );
+  if (serviceLegs.length > 0) return verdict('exchange_trade');
 
   // 4. Zero-address legs. Scoped to NFT legs deliberately: an ERC-20 minted
   // from 0x0 into the wallet is a claim or an airdrop, which is a judgment

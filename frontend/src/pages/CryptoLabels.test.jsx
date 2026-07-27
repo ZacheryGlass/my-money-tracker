@@ -152,6 +152,37 @@ describe('Crypto -> Labels tab', () => {
       });
     });
 
+    it('marks an address as a swap service with no name typed', async () => {
+      // The verdict for an instant-swap deposit address: what was sent there
+      // was SOLD. Labeling it 'exchange' instead would book the disposal as an
+      // internal transfer and delete it from the record, which is why this is
+      // its own verdict rather than a naming convention on an exchange label.
+      const form = await openLabelForm();
+      fireEvent.change(form.address, { target: { value: '0x5555555555555555555555555555555555555555' } });
+      fireEvent.change(form.verdict, { target: { value: 'service' } });
+      fireEvent.click(form.submit);
+
+      await waitFor(() => {
+        expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
+          '0x5555555555555555555555555555555555555555', null, { kind: 'service' }
+        );
+      });
+    });
+
+    it('shows a swap-service label its own pill, not an exchange one', async () => {
+      await openLabelForm([
+        {
+          address: '0x263388e56bdb89ed680eec82f472098a732ccd02',
+          name: 'Changelly',
+          kind: 'service',
+          source: 'user',
+        },
+      ]);
+      expect(await screen.findByText('Changelly')).toBeInTheDocument();
+      // The verdict <option> carries the same words, so match the pill itself.
+      expect(screen.getAllByText('Swap service').some((el) => el.tagName === 'SPAN')).toBe(true);
+    });
+
     it('lists a seeded bridge label so a wrong one is correctable', async () => {
       // The 5k scraped rows are hidden from this list; the few dozen bridge
       // rows are not. A wrong bridge address has to be visible to be fixed.

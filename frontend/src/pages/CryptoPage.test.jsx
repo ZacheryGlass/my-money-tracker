@@ -325,8 +325,8 @@ describe('CryptoPage', () => {
       counterparty_is_own: false, counterparty_exchange: null,
     });
     apiMocks.eth.getTransfers.mockResolvedValue({
-      data: [leg(41, '0xarb00000', 42161), leg(42, '0xold00000', null)],
-      pagination: { total: 2 },
+      data: [leg(41, '0xarb00000', 42161), leg(42, '0xold00000', null), leg(43, '0xpol00000', 137)],
+      pagination: { total: 3 },
     });
 
     render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
@@ -337,6 +337,39 @@ describe('CryptoPage', () => {
       .toHaveAttribute('href', 'https://arbiscan.io/tx/0xarb00000');
     expect(screen.getByTitle('0xold00000').closest('a'))
       .toHaveAttribute('href', 'https://etherscan.io/tx/0xold00000');
+    expect(screen.getByTitle('0xpol00000').closest('a'))
+      .toHaveAttribute('href', 'https://polygonscan.com/tx/0xpol00000');
+  });
+
+  it('renders a Polygon transfer in POL, not in ether', async () => {
+    // The amount and the symbol come from different places -- the value from
+    // the row, the symbol from the chain -- so a missing chain lookup prints a
+    // POL amount with an ETH ticker beside it, which is a wrong number as far
+    // as any reader is concerned.
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '2' }],
+    });
+    apiMocks.eth.getTransfers.mockResolvedValue({
+      data: [{
+        id: 51, chain_id: 137, wallet_id: 1,
+        wallet_address: '0xaaaa000000000000000000000000000000000001',
+        transfer_type: 'native', tx_hash: '0xpol11111', block_time: '2026-07-01T00:00:00Z',
+        from_address: '0xaaaa000000000000000000000000000000000001',
+        to_address: '0xcccc000000000000000000000000000000000003',
+        value_wei: '3000000000000000000', is_error: false,
+        counterparty_is_own: false, counterparty_exchange: null,
+      }],
+      pagination: { total: 1 },
+    });
+
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
+    await showTransferLegs();
+    await screen.findByText('On-chain Activity');
+
+    // Both layouts mount (the table and the mobile card), so this appears twice.
+    expect((await screen.findAllByText(/3 POL/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/3 ETH/)).toBeNull();
   });
 
   it('shows a sentence-length wallet label whole in the wallet picker', async () => {

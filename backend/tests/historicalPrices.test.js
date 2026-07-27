@@ -182,6 +182,13 @@ test('an asset key is a chain-scoped contract, never a ticker', () => {
   assert.equal(assetKeyForTransfer({ transfer_type: 'native' }), 'ETH');
   assert.equal(assetKeyForTransfer({ transfer_type: 'internal' }), 'ETH');
   assert.equal(assetKeyForTransfer({ transfer_type: 'gas' }), 'ETH');
+  // Every ETH-native chain shares the one key: same asset, one series.
+  assert.equal(assetKeyForTransfer({ transfer_type: 'native', chain_id: 42161 }), 'ETH');
+  assert.equal(assetKeyForTransfer({ transfer_type: 'internal', chain_id: 59144 }), 'ETH');
+  // Polygon does not. Keying its gas and native legs 'ETH' would value POL at
+  // ether's price -- roughly four orders of magnitude, silently.
+  assert.equal(assetKeyForTransfer({ transfer_type: 'native', chain_id: 137 }), 'POL');
+  assert.equal(assetKeyForTransfer({ transfer_type: 'gas', chain_id: 137 }), 'POL');
 
   // Same contract address, two chains, two assets. Pooling them is the 039
   // trap: the wrong platform answers "unknown", which reads as a pricing
@@ -206,7 +213,12 @@ test('an asset key is a chain-scoped contract, never a ticker', () => {
 });
 
 test('parseAssetKey is the exact inverse, and rejects anything else', () => {
-  assert.deepEqual(parseAssetKey('ETH'), { kind: 'native', chainId: null, contract: null });
+  // chainId stays null on a native key: the symbol IS the asset, and which
+  // chain a leg moved on says nothing about how to price it.
+  assert.deepEqual(parseAssetKey('ETH'),
+    { kind: 'native', symbol: 'ETH', chainId: null, contract: null });
+  assert.deepEqual(parseAssetKey('POL'),
+    { kind: 'native', symbol: 'POL', chainId: null, contract: null });
   assert.deepEqual(parseAssetKey(`erc20:42161:${USDC}`),
     { kind: 'erc20', chainId: 42161, contract: USDC });
   assert.equal(parseAssetKey('erc20:1:not-an-address'), null);
@@ -223,6 +235,22 @@ test('the SQL key expression is built from the same parts as the JS one', () => 
   assert.ok(sql.includes(`ELSE '${NATIVE_ASSET_KEY}'`));
   assert.ok(sql.includes("'erc20:' || t.chain_id || ':' || LOWER(t.token_contract)"));
   assert.ok(sql.includes("t.transfer_type IN ('nft', 'nft1155') THEN NULL"));
+
+  // The native arm is now a CASE over the registry, so the strongest form of
+  // this check is to run BOTH halves over every chain and compare the answers.
+  // A chain whose SQL arm went missing would silently key its gas and native
+  // legs to ether -- the one drift that produces a number instead of a gap.
+  const chains = require('../src/config/chains');
+  for (const chain of chains.allChains()) {
+    const expected = assetKeyForTransfer({ transfer_type: 'native', chain_id: chain.id });
+    if (chain.nativeAsset === NATIVE_ASSET_KEY) {
+      assert.ok(!sql.includes(`t.chain_id = ${chain.id} THEN`),
+        `chain ${chain.id} is ETH-native and belongs in the ELSE, not its own arm`);
+    } else {
+      assert.ok(sql.includes(`WHEN t.chain_id = ${chain.id} THEN '${expected}'`),
+        `chain ${chain.id} needs a SQL arm keying its native legs to ${expected}`);
+    }
+  }
 });
 
 // --- the daily convention --------------------------------------------------

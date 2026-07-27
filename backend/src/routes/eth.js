@@ -42,13 +42,17 @@ function parseId(raw) {
 // reads it as bridge_out/bridge_in instead of unexplained spending, and the
 // matching pass pairs the two halves. It is user-settable because bridges are
 // deployed and redeployed faster than any seed can track.
-const LABEL_KINDS = new Set(['exchange', 'external', 'own', 'bridge']);
+// 'service' (046) says the address is an instant-swap service's one-time
+// deposit address: value sent there was DISPOSED OF, and what came back is not
+// on this chain to find. Classified exchange_trade, not an internal transfer --
+// which is exactly why it cannot just be labeled 'exchange'.
+const LABEL_KINDS = new Set(['exchange', 'external', 'own', 'bridge', 'service']);
 
 // The kinds whose NAME never reaches a classification decision, so a typed name
 // is optional and a short address will do. An 'exchange' name is different in
 // kind: it becomes counterparty_exchange, the text in the ledger AND the
 // assertion that rewrites spending as an internal transfer.
-const NAME_OPTIONAL_KINDS = new Set(['external', 'own', 'bridge']);
+const NAME_OPTIONAL_KINDS = new Set(['external', 'own', 'bridge', 'service']);
 
 // The activity layer's category vocabulary, single-sourced from the shared
 // module so the route and the CHECK constraint in 038 can never drift apart.

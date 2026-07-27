@@ -108,13 +108,14 @@ function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() 
     };
   }
 
+  const native = chains.nativeSymbol(transfer.chain_id ?? chains.DEFAULT_CHAIN_ID);
   return {
     category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER'
       : exchange ? exchangeCategory
       : 'CRYPTO_EXTERNAL',
     name: outgoing
-      ? `ETH → ${exchange || shortAddress(transfer.to_address)}`
-      : `ETH ← ${exchange || shortAddress(transfer.from_address)}`,
+      ? `${native} → ${exchange || shortAddress(transfer.to_address)}`
+      : `${native} ← ${exchange || shortAddress(transfer.from_address)}`,
     amount,
   };
 }

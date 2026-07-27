@@ -53,7 +53,10 @@ export function WalletReconciliation({ report, chainNames }) {
   // three numbers that all say nothing is wrong, on a row that exists only
   // because something is.
   const amount = (row) => formatExactUnits(row.delta_units, row.token_decimals ?? 18) ?? '?';
-  const symbolOf = (row) => row.token_symbol || 'tokens';
+  // The server names every asset it audits, native rows included (POL on
+  // Polygon, ETH everywhere else), so this renders what it was told rather
+  // than assuming the chain's native asset is ether.
+  const symbolOf = (row) => row.token_symbol || (row.asset_type === 'native' ? 'ETH' : 'tokens');
 
   return (
     <div className="mt-5 space-y-3">
@@ -62,15 +65,15 @@ export function WalletReconciliation({ report, chainNames }) {
           <div className="flex items-start gap-3">
             <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
             <div className="min-w-0">
-              <p className="font-bold uppercase tracking-wide">Balance audit: ETH unaccounted for</p>
+              <p className="font-bold uppercase tracking-wide">Balance audit: coins unaccounted for</p>
               <p className="mt-1">
-                Transfer history is synced from the first block, so the ETH it adds up to should match the
-                chain exactly. It does not, which means a movement is missing from the ledger.
+                Transfer history is synced from the first block, so the balance it adds up to should match
+                the chain exactly. It does not, which means a movement is missing from the ledger.
               </p>
               <ul className="mt-2 space-y-1 font-mono text-[11px]">
                 {nativeDrift.map((row) => (
                   <li key={`${row.chain_id}-${row.asset_key}`}>
-                    {chainName(row.chain_id)}: ledger is {amount(row)} ETH off
+                    {chainName(row.chain_id)}: ledger is {amount(row)} {symbolOf(row)} off
                     {' '}(derived {formatExactUnits(row.derived_units, 18)}, chain {formatExactUnits(row.live_units, 18)})
                   </li>
                 ))}
@@ -115,7 +118,7 @@ export function WalletReconciliation({ report, chainNames }) {
         <p className="text-[10px] text-tertiary">
           Not checked this run:{' '}
           {unchecked.slice(0, 4).map((row) => (
-            `${row.asset_type === 'native' ? 'ETH' : symbolOf(row)} on ${chainName(row.chain_id)} (${RECONCILIATION_SKIP_TEXT[row.skip_reason] || 'not compared'})`
+            `${symbolOf(row)} on ${chainName(row.chain_id)} (${RECONCILIATION_SKIP_TEXT[row.skip_reason] || 'not compared'})`
           )).join('; ')}
           {unchecked.length > 4 ? ` and ${unchecked.length - 4} more` : ''}
           {report.truncated ? '. More assets are listed in the audit API.' : ''}

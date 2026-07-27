@@ -235,9 +235,12 @@ class EthReconciliationService {
 
       await this._store(wallet.id, {
         chain_id: chainId,
-        asset_key: 'ETH',
+        // The native symbol, matching the asset_price_history key. Rows are
+        // stored per (wallet, chain, asset_key), so every pre-Polygon 'ETH'
+        // row keeps its identity and needs no migration.
+        asset_key: chains.nativeSymbol(chainId),
         asset_type: 'native',
-        token_symbol: chains.getChain(chainId)?.nativeAsset || 'ETH',
+        token_symbol: chains.nativeSymbol(chainId),
         token_decimals: DEFAULT_DECIMALS,
         derived_units: derived.toString(),
         live_units: live == null ? null : live.toString(),

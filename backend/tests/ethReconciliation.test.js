@@ -384,6 +384,29 @@ test('a fully explained wallet reports delta 0 for ETH and for each token', asyn
   assert.equal(rowFor(calls, 1, DAI).status, 'match');
 });
 
+test('a non-ether chain audits under its OWN native key, not ETH', async (t) => {
+  // eth_reconciliation is keyed (wallet, chain, asset_key), so a Polygon row
+  // keyed 'ETH' would not collide with mainnet's -- it would just label POL as
+  // ether everywhere the audit is read, and the ledger's native-drift banner
+  // would report the wrong asset for a real missing transfer.
+  const { calls } = harness(t, {
+    chainSet: '137',
+    native: { 137: ONE_ETH.toString() },
+  });
+
+  await EthReconciliationService.reconcileWallet(WALLET, {
+    liveWeiByChain: { 137: ONE_ETH.toString() },
+    chainResults: [{ chainId: 137, unavailable: false, skippedFeeds: [], unsupportedFeeds: [] }],
+    apiKey: 'key',
+  });
+
+  const row = rowFor(calls, 137, 'POL');
+  assert.ok(row, 'the Polygon native row must be keyed POL');
+  assert.equal(row.asset_type, 'native');
+  assert.equal(row.token_symbol, 'POL');
+  assert.equal(rowFor(calls, 137, 'ETH'), undefined, 'nothing may be keyed ETH on Polygon');
+});
+
 test('a synthetic missing transfer produces a nonzero delta and a wallet-level flag', async (t) => {
   // The ledger is short one 1 ETH deposit: the chain says 3 ETH, the stored
   // transfers only add up to 2.

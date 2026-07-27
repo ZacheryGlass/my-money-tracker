@@ -136,7 +136,7 @@ test('zkSync Era is absent, not disabled: Etherscan V2 does not serve chain 324'
   const ids = chains.allChains().map((chain) => chain.id);
   assert.ok(!ids.includes(324), 'chain 324 is not served and must not be in the registry');
   assert.ok(ids.includes(59144), 'Linea replaces zkSync Era as the fifth chain');
-  assert.deepEqual(ids.sort((a, b) => a - b), [1, 10, 8453, 42161, 59144]);
+  assert.deepEqual(ids.sort((a, b) => a - b), [1, 10, 137, 8453, 42161, 59144]);
 });
 
 test('paid-plan-only chains ship present but disabled', () => {
@@ -149,19 +149,47 @@ test('paid-plan-only chains ship present but disabled', () => {
     assert.equal(byId.get(id).enabled, false, `chain ${id} must default to off`);
     assert.match(byId.get(id).disabledReason, /paid/i);
   }
-  // Full feed parity on the probed key, txlistinternal included.
-  for (const id of [1, 42161, 59144]) {
+  // Full feed parity on the probed key, txlistinternal included. Polygon (137)
+  // was probed the same way and answered on balance, txlist and txlistinternal.
+  for (const id of [1, 137, 42161, 59144]) {
     assert.equal(byId.get(id).enabled, true, `chain ${id} passed every feed probe and defaults on`);
   }
 });
 
-test('every chain is ETH-native, which is what lets one price_cache row value them all', () => {
+test('every chain names a native asset that the price layer knows how to fetch', () => {
+  // Was "every chain is ETH-native" until Polygon. The invariant that replaced
+  // it is the one that actually matters: a chain whose native symbol has no
+  // NATIVE_ASSETS entry cannot be priced at all, and -- worse -- a native leg
+  // keyed to an unknown symbol looks exactly like an honestly unpriced one.
   for (const chain of chains.allChains()) {
-    assert.equal(chain.nativeAsset, 'ETH');
+    assert.ok(chain.nativeAsset, `chain ${chain.id} needs a native asset`);
+    const info = chains.nativeAssetInfo(chain.nativeAsset);
+    assert.ok(info, `native asset ${chain.nativeAsset} needs a NATIVE_ASSETS entry`);
+    assert.ok(info.coingeckoId, `${chain.nativeAsset} needs a CoinGecko id`);
+    assert.ok(info.coinbaseProduct, `${chain.nativeAsset} needs a Coinbase product`);
+    assert.match(info.historyStart, /^\d{4}-\d{2}-\d{2}$/);
     // Verified against CoinGecko /asset_platforms by chain_identifier: a token
     // priced on the wrong platform comes back unknown, not wrong, so an
     // unverified slug reads as a permanent pricing outage.
     assert.ok(chain.coingeckoPlatform, `chain ${chain.id} needs an asset platform`);
+  }
+  // The three ETH-native chains still share one series and one price_cache row.
+  for (const id of [1, 42161, 59144]) {
+    assert.equal(chains.nativeSymbol(id), 'ETH');
+  }
+  assert.equal(chains.nativeSymbol(137), 'POL');
+  // An id the registry has never heard of is mainnet's, and mainnet is ether.
+  assert.equal(chains.nativeSymbol(999999), 'ETH');
+});
+
+test('a native asset that is not ether must be classified as crypto, or it prices as a stock', () => {
+  // Wallet holdings are inserted with no category, so classifyTicker falls
+  // through to CRYPTO_SET. A miss there does not fail loudly: it asks Yahoo for
+  // a bare equity symbol and skips every crypto fallback.
+  const { classifyTicker } = require('../src/utils/assetClassifier');
+  for (const chain of chains.allChains()) {
+    assert.equal(classifyTicker(chain.nativeAsset, null), 'Crypto',
+      `${chain.nativeAsset} must be in CRYPTO_SET`);
   }
 });
 

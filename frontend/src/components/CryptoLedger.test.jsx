@@ -688,18 +688,35 @@ describe('CryptoLedger', () => {
     // above it are short and saying "everything is explained" would be false.
     apiMocks.eth.getReconciliation.mockResolvedValue({
       data: [
-        { wallet_id: 1, chain_id: 1, asset_key: 'ETH', status: 'mismatch' },
+        { wallet_id: 1, chain_id: 1, asset_key: 'ETH', asset_type: 'native', status: 'mismatch' },
         // A token delta is NOT counted: rebasing and fee-on-transfer contracts
         // drift with no transfer to record, and a warning that cannot clear
-        // gets ignored -- taking the ETH signal with it.
-        { wallet_id: 1, chain_id: 1, asset_key: '0xabc', status: 'mismatch' },
+        // gets ignored -- taking the native signal with it.
+        { wallet_id: 1, chain_id: 1, asset_key: '0xabc', asset_type: 'token', status: 'mismatch' },
       ],
       summary: {},
     });
 
     render(<CryptoLedger />);
 
-    expect(await screen.findByText(/does not reproduce the ETH balance/)).toBeInTheDocument();
+    expect(await screen.findByText(/does not reproduce the coin balance/)).toBeInTheDocument();
+    expect(screen.getByText(/on 1 wallet\/chain/)).toBeInTheDocument();
+  });
+
+  it('counts a non-ether native drift, which an asset_key === ETH filter would drop', async () => {
+    // Polygon's native rows are keyed 'POL'. Selecting native rows by their key
+    // would silently stop warning about an entire chain -- the failure mode this
+    // banner exists to prevent, applied to itself.
+    apiMocks.eth.getReconciliation.mockResolvedValue({
+      data: [
+        { wallet_id: 1, chain_id: 137, asset_key: 'POL', asset_type: 'native', status: 'mismatch' },
+      ],
+      summary: {},
+    });
+
+    render(<CryptoLedger />);
+
+    expect(await screen.findByText(/does not reproduce the coin balance/)).toBeInTheDocument();
     expect(screen.getByText(/on 1 wallet\/chain/)).toBeInTheDocument();
   });
 

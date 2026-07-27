@@ -672,12 +672,13 @@ class EthWalletService {
     return { wallet, account };
   }
 
-  // Rebuilds the wallet account's holdings: one ETH position PER CHAIN, priced
-  // later by the regular price job (they all carry ticker ETH, so they all read
-  // the single shared price_cache 'ETH' row), plus one row per non-ignored
-  // token per chain. Token symbols never become tickers -- a scam token named
-  // "AAPL" must not inherit Apple's stock price -- so tokens are NULL-ticker
-  // holdings valued via manual_value at sync time.
+  // Rebuilds the wallet account's holdings: one NATIVE position PER CHAIN,
+  // priced later by the regular price job (each carries its chain's native
+  // ticker, so every ETH-native chain reads the one shared price_cache 'ETH'
+  // row and Polygon reads 'POL'), plus one row per non-ignored token per chain.
+  // Token symbols never become tickers -- a scam token named "AAPL" must not
+  // inherit Apple's stock price -- so tokens are NULL-ticker holdings valued
+  // via manual_value at sync time.
   //
   // Rows are matched by NAME rather than by ticker. Post-#58 one account holds
   // several ticker='ETH' rows, so the old ticker matcher would return them all
@@ -762,7 +763,7 @@ class EthWalletService {
       if (chain.id === chains.DEFAULT_CHAIN_ID || BigInt(wei) > 0n || existingByName.has(name)) {
         desired.push({
           chain_id: chain.id,
-          ticker: 'ETH',
+          ticker: chain.nativeAsset,
           name,
           quantity: unitsToDecimalString(wei, 18),
           manual_value: null,
@@ -852,6 +853,10 @@ class EthWalletService {
       [account.id, chains.DEFAULT_CHAIN_ID, refreshedChainIds, desired.map((h) => h.name)]
     );
 
+    // ETH-only by design, not by oversight: these two report the ETH figure the
+    // UI shows under an ETH heading, and a chain with a different native asset
+    // has no business being summed into it. Reconciliation reads
+    // liveWeiByChain, which is chain-keyed and covers every chain.
     return {
       eth: desired.find((h) => h.chain_id === chains.DEFAULT_CHAIN_ID && h.ticker === 'ETH')?.quantity ?? null,
       ethByChain: Object.fromEntries(

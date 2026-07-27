@@ -51,7 +51,10 @@ BEGIN
     ALTER TABLE eth_address_labels DROP CONSTRAINT IF EXISTS eth_address_labels_kind_check;
     ALTER TABLE eth_address_labels
       ADD CONSTRAINT eth_address_labels_kind_check
-      CHECK (kind IN ('exchange', 'external', 'own', 'bridge'));
+      -- The UNION of every kind, 046's 'service' included, for the same reason
+      -- the source CHECK below carries every source: two widening lists that
+      -- disagree take turns dropping and re-adding each other's constraint.
+      CHECK (kind IN ('exchange', 'external', 'own', 'bridge', 'service'));
   END IF;
 END $$;
 
@@ -125,12 +128,13 @@ CREATE TABLE IF NOT EXISTS eth_activity_links (
 );
 
 -- BEGIN GENERATED SEED (backend/scripts/generate-bridge-seed.js)
--- 29 addresses, researched 2026-07-26. Sources, one per protocol:
+-- 32 addresses, researched 2026-07-26. Sources, one per protocol:
 --   arbitrum  https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses
 --   linea     https://docs.linea.build/network/build/contracts
 --   optimism  https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json
 --   base      https://docs.base.org/base-chain/network-information/base-contracts
 --   across    https://docs.across.to/chains-and-contracts
+--   polygon   https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json
 --
 -- ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING -- never DO UPDATE.
 -- Migrations re-run on every boot; DO UPDATE would re-stamp a name, a kind or
@@ -164,5 +168,8 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0xe35e9842fceaca96570b734083f4a58e8f7c5f2a', 'Across: Arbitrum Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 42161. Source: https://docs.across.to/chains-and-contracts'),
   (NULL, '0x6f26bf09b1c792e3228e5467807a900a503c0281', 'Across: OP Mainnet Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 10. Source: https://docs.across.to/chains-and-contracts'),
   (NULL, '0x09aea4b2242abc8bb4bb78d537a67a245a7bec64', 'Across: Base Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 8453. Source: https://docs.across.to/chains-and-contracts'),
-  (NULL, '0x7e63a5f1a8f0b4d0934b2f2327daed3f6bb2ee75', 'Across: Linea Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 59144. Source: https://docs.across.to/chains-and-contracts')
+  (NULL, '0x7e63a5f1a8f0b4d0934b2f2327daed3f6bb2ee75', 'Across: Linea Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 59144. Source: https://docs.across.to/chains-and-contracts'),
+  (NULL, '0xa0c68c638235ee32657e8f720a23cec1bfc77c77', 'Polygon: PoS Bridge (RootChainManager)', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),
+  (NULL, '0x8484ef722627bf18ca5ae6bcf031c23e6e922b30', 'Polygon: PoS Ether Predicate', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),
+  (NULL, '0x40ec5b33f54e0e8a33a975908c5ba1c14e5bbbdf', 'Polygon: PoS ERC20 Predicate', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json')
 ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING;

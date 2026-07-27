@@ -30,9 +30,9 @@
 //     free key is not silently broken either -- the sync records
 //     CHAIN_UNAVAILABLE on that chain's eth_wallet_chains row, freezes its
 //     cursors, and leaves every other chain alone.
-//
-// Native asset is ETH on all of them, which is what lets one shared price_cache
-// 'ETH' row value every chain's balance.
+//   * Polygon PoS (137) is served on the FREE key -- balance, txlist and
+//     txlistinternal all answered on a live probe, so it ships enabled. It is
+//     also the first chain here that is NOT ETH-native (see NATIVE_ASSETS).
 //
 // !! `shortName` IS DATA, NOT A LABEL. It is baked into holding names by
 // ethHoldingName/holdingSuffix, and holdings are matched by NAME (one account
@@ -43,6 +43,10 @@
 // (date, account, name) -- fork into two series at the rename. Rename a chain's
 // display text via `name`, which nothing matches on. Mainnet's empty suffix is
 // load-bearing for the same reason: pre-#58 names must stay byte-identical.
+//
+// `nativeAsset` IS DATA TOO, for the same reason and one more: it is the
+// asset_price_history key for every native/internal/gas leg on the chain, and
+// it is the holding's ticker. Changing an existing chain's would strand both.
 //
 // Explorer links live on the client (frontend/src/utils/chains.js): they are
 // presentation derived from a chain id the API already sends.
@@ -78,6 +82,16 @@ const REGISTRY = [
     enabledByDefault: true,
   },
   {
+    id: 137,
+    name: 'Polygon',
+    shortName: 'Polygon',
+    // NOT ETH. Every price, holding ticker and reconciliation key on this chain
+    // follows this symbol -- see NATIVE_ASSETS for how it is priced.
+    nativeAsset: 'POL',
+    coingeckoPlatform: 'polygon-pos',
+    enabledByDefault: true,
+  },
+  {
     id: 10,
     name: 'OP Mainnet',
     shortName: 'Optimism',
@@ -97,11 +111,48 @@ const REGISTRY = [
   },
 ];
 
+// How each native asset is PRICED, keyed by the symbol chains carry in
+// `nativeAsset`. Keyed by symbol rather than by chain because the asset is the
+// thing being priced: ETH is one asset whether it moved on mainnet, Arbitrum or
+// Linea, and pricing it per chain would fetch the same series four times and
+// store four copies of it under four keys.
+//
+// The symbol IS the asset_price_history key (see utils/assetPriceKey.js), which
+// is what makes adding a chain free of any data migration: every stored 'ETH'
+// row stays correct, and a new symbol simply has no rows yet.
+//
+// `historyStart` is the earliest date the FALLBACK provider serves, not the
+// asset's launch date -- it exists so the price job does not spend a run
+// requesting a decade Coinbase will never return and then permanently mark the
+// asset range_limited. Both were probed live against the candles endpoint.
+const NATIVE_ASSETS = {
+  ETH: {
+    coingeckoId: 'ethereum',
+    coinbaseProduct: 'ETH-USD',
+    historyStart: '2016-05-18',
+  },
+  POL: {
+    coingeckoId: 'polygon-ecosystem-token',
+    coinbaseProduct: 'POL-USD',
+    // Coinbase's first POL-USD daily candle. MATIC-USD history before the 2024
+    // rename is a DIFFERENT product and is deliberately not stitched on: the
+    // two are the same money, but a stitched series would be indistinguishable
+    // from a real one while resting on an assumption nothing here verifies.
+    historyStart: '2024-09-04',
+  },
+};
+
 // Mainnet. The default for every chain-aware call, so that a caller which has
 // no chain to pass keeps behaving exactly as it did before #58.
 const DEFAULT_CHAIN_ID = 1;
 
 const BY_ID = new Map(REGISTRY.map((chain) => [chain.id, chain]));
+
+// Every native symbol in the registry. The price-key parser needs this to tell
+// a native key from anything else, and it must come from the registry rather
+// than a second list, or a chain could be added whose native asset no reader
+// recognises.
+const NATIVE_SYMBOLS = new Set(REGISTRY.map((chain) => chain.nativeAsset));
 
 // `ETH_CHAINS=1` restores strict mainnet-only sync; `ETH_CHAINS=1,42161,8453`
 // picks an explicit set. Parsed on every call rather than memoized: it is a
@@ -158,13 +209,32 @@ function chainLabel(chainId) {
   return getChain(chainId)?.name || `Chain ${chainId}`;
 }
 
-// The ETH holding's name on a given chain. Mainnet returns 'Ethereum'
+// The native asset's symbol on a chain. Defaults to ETH for an id that is not
+// in the registry: those are rows stored before a chain was removed, and every
+// chain this app has ever synced but does not list today was ETH-native.
+function nativeSymbol(chainId) {
+  return getChain(chainId)?.nativeAsset || 'ETH';
+}
+
+// How to price a native symbol. Null for a symbol with no entry, which the
+// price job reads as "no provider" rather than guessing one.
+function nativeAssetInfo(symbol) {
+  return NATIVE_ASSETS[String(symbol || '').toUpperCase()] || null;
+}
+
+function isNativeSymbol(symbol) {
+  return NATIVE_SYMBOLS.has(String(symbol || '').toUpperCase());
+}
+
+// The native holding's name on a given chain. Mainnet returns 'Ethereum'
 // verbatim -- the name every existing wallet's ETH holding already has, and
 // holdings are matched by name, so changing it would strand the old row and
-// insert a duplicate beside it for every user on earth.
+// insert a duplicate beside it for every user on earth. Every other chain reads
+// its own native symbol, which is byte-identical to the old hardcoded 'ETH' for
+// every chain that existed before Polygon.
 function ethHoldingName(chainId) {
   if (Number(chainId) === DEFAULT_CHAIN_ID) return 'Ethereum';
-  return `ETH (${getChain(chainId)?.shortName || `Chain ${chainId}`})`;
+  return `${nativeSymbol(chainId)} (${getChain(chainId)?.shortName || `Chain ${chainId}`})`;
 }
 
 // Chain context appended to a token holding's name. Empty on mainnet for the
@@ -176,12 +246,16 @@ function holdingSuffix(chainId) {
 
 module.exports = {
   DEFAULT_CHAIN_ID,
+  NATIVE_ASSETS,
   enabledChains,
   enabledChainIds,
   allChains,
   getChain,
   isEnabled,
   chainLabel,
+  nativeSymbol,
+  nativeAssetInfo,
+  isNativeSymbol,
   ethHoldingName,
   holdingSuffix,
 };

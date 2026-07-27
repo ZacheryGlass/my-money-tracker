@@ -3,7 +3,7 @@ import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../utils/api';
 import { formatDateDisplay, formatUsdAtTime, shortEthAddress } from '../utils/format';
-import { explorerTxUrl } from '../utils/chains';
+import { explorerTxUrl, nativeSymbol } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
   LABEL_VERDICT_OPTIONS,
@@ -79,7 +79,9 @@ const formatTransferQuantity = (transfer) => {
     ? (transfer.token_decimals != null ? Number(transfer.token_decimals) : 18)
     : 18;
   const quantity = Number(transfer.value_wei) / 10 ** decimals;
-  const symbol = transfer.transfer_type === 'token' ? (transfer.token_symbol || 'TOKEN') : 'ETH';
+  const symbol = transfer.transfer_type === 'token'
+    ? (transfer.token_symbol || 'TOKEN')
+    : nativeSymbol(transfer.chain_id);
   return `${quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${symbol}`;
 };
 

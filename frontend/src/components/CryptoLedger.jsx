@@ -310,9 +310,12 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
   // Native-only, matching the audit's own badge rule: a token delta has benign
   // explanations (rebasing supply, fee-on-transfer) and badging those would pin
   // a permanent number on every wallet that ever held one -- a warning that
-  // cannot clear gets ignored, taking the ETH signal with it.
+  // cannot clear gets ignored, taking the native signal with it.
+  //
+  // Keyed on asset_type, not on the key being 'ETH': the native key is the
+  // chain's own symbol, so an asset_key test would silently drop Polygon.
   const nativeDrift = useMemo(
-    () => (reconciliation?.data || []).filter((row) => row.asset_key === 'ETH'),
+    () => (reconciliation?.data || []).filter((row) => row.asset_type === 'native'),
     [reconciliation]
   );
 
@@ -734,7 +737,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
             <span className="flex items-center gap-1.5 text-loss">
               <AlertTriangle size={13} className="shrink-0" />
               <span>
-                The stored ledger does not reproduce the ETH balance the chain reports
+                The stored ledger does not reproduce the coin balance the chain reports
                 on {nativeDrift.length} {nativeDrift.length === 1 ? 'wallet/chain' : 'wallet/chain pairs'} — a
                 transfer is missing here, so these totals are short.
               </span>

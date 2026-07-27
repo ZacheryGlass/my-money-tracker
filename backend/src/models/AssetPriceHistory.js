@@ -2,6 +2,7 @@
 
 const pool = require('../config/database');
 const { NATIVE_ASSET_KEY } = require('../utils/assetPriceKey');
+const chains = require('../config/chains');
 
 // How far a close may be carried FORWARD to value a date that has none.
 //
@@ -23,6 +24,23 @@ const MAX_CARRY_DAYS = 7;
 // overflow -- an error whose blast radius is every OTHER row in that UPDATE.
 const USD_CLAMP = '9999999999999.99';
 
+// A native leg's key, expressed in SQL and GENERATED FROM THE REGISTRY rather
+// than written out: chains.nativeSymbol is the JS half of exactly this, and a
+// hand-maintained second list is the drift this file's next comment warns
+// about. Chains whose native asset is ETH need no arm -- they are the ELSE, so
+// the emitted SQL is byte-identical to the pre-Polygon literal when no chain
+// overrides it.
+const nativeKeySql = (t) => {
+  const overrides = chains
+    .allChains()
+    .filter((chain) => chain.nativeAsset !== NATIVE_ASSET_KEY);
+  if (!overrides.length) return `'${NATIVE_ASSET_KEY}'`;
+  const whens = overrides
+    .map((chain) => `WHEN ${t}.chain_id = ${chain.id} THEN '${chain.nativeAsset}'`)
+    .join(' ');
+  return `CASE ${whens} ELSE '${NATIVE_ASSET_KEY}' END`;
+};
+
 // The asset key of an eth_transfers row, expressed in SQL. Mirrors
 // utils/assetPriceKey.js assetKeyForTransfer exactly, and the tests assert the
 // two agree: a drift here values every token row against a key nothing ever
@@ -33,7 +51,7 @@ const assetKeySql = (t = 't') => `
     WHEN ${t}.transfer_type = 'token' THEN
       CASE WHEN ${t}.token_contract IS NULL THEN NULL
            ELSE 'erc20:' || ${t}.chain_id || ':' || LOWER(${t}.token_contract) END
-    ELSE '${NATIVE_ASSET_KEY}'
+    ELSE ${nativeKeySql(t)}
   END`;
 
 // Whole units from base units. NFT legs never reach here (their key is NULL
@@ -83,9 +101,10 @@ const PRICEABLE_LEG_SQL = `
   t.transfer_type NOT IN ('nft', 'nft1155')
   AND (t.transfer_type <> 'token' OR t.token_contract IS NOT NULL)`;
 
-// Chain and contract describe TOKEN assets only. The native key is one asset
-// across every chain (all registry chains are ETH-native), so aggregating a
-// chain id onto it would label 'ETH' with whichever chain sorted first.
+// Chain and contract describe TOKEN assets only. A native key is one asset
+// across every chain that shares its symbol (ETH on mainnet, Arbitrum and
+// Linea is one series), so aggregating a chain id onto it would label 'ETH'
+// with whichever chain sorted first.
 const TOKEN_FACET_SQL = `
   MIN(t.chain_id) FILTER (WHERE t.token_contract IS NOT NULL) AS chain_id,
   MIN(LOWER(t.token_contract)) AS contract_address`;

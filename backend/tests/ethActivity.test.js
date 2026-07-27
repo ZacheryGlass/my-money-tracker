@@ -499,6 +499,97 @@ test('rule 8: a one-way receive from an unlabeled counterparty is flagged', () =
   assert.equal(row.fee_wei, '0', 'an inbound transfer costs the wallet no gas');
 });
 
+// --- rule 3b: the swap-service rung (046) ----------------------------------
+
+const SERVICE = '0xf5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5';
+const swapping = (extra = {}) => ({ serviceAddresses: new Set([SERVICE]), ...extra });
+
+test('rule 3b: value out to a service-labeled counterparty is a settled exchange_trade', () => {
+  const row = only([leg({ to_address: SERVICE }), gasLeg({ to_address: SERVICE })], swapping());
+
+  assert.equal(row.category, 'exchange_trade');
+  assert.equal(row.counterparty_address, SERVICE);
+  // NOT flagged, and that is the difference from the bridge rung: a bridge has
+  // a far side to wait for, a swap does not. What came back left this chain, so
+  // no amount of time in the review queue can resolve it.
+  assert.equal(row.needs_review, false);
+  assert.equal(row.review_reason, null);
+  assert.equal(row.confidence, 'high');
+});
+
+test('rule 3b: value in from a service-labeled counterparty is the same category', () => {
+  // Direction is not encoded: outbound is a disposal, inbound an acquisition,
+  // and the vocabulary has one value for the pair. Splitting it would invent a
+  // category 038's CHECK does not carry.
+  const row = only([leg({ from_address: SERVICE, to_address: WALLET })], swapping());
+
+  assert.equal(row.category, 'exchange_trade');
+  assert.equal(row.needs_review, false);
+});
+
+test('rule 3b beats rule 8: without the label the same send is flagged as possible spending', () => {
+  // The reason the kind exists. 164 ETH of 2017 swap deposits sat here.
+  const legs = [leg({ to_address: SERVICE }), gasLeg({ to_address: SERVICE })];
+
+  assert.equal(only(legs, swapping()).category, 'exchange_trade');
+  const unlabeled = only(legs, { serviceAddresses: new Set() });
+  assert.equal(unlabeled.category, 'send');
+  assert.equal(unlabeled.review_reason, REVIEW_REASONS.unlabeled_send);
+});
+
+test('rule 1 beats rule 3b: own wins over service', () => {
+  const row = only([
+    leg({ to_address: OWN_OTHER, counterparty_is_own: true }),
+  ], swapping({ serviceAddresses: new Set([OWN_OTHER]) }));
+
+  assert.equal(row.category, 'self_transfer');
+});
+
+test('rule 2 beats rule 3b: a labeled exchange keeps the rung it has always had', () => {
+  const row = only([
+    leg({ to_address: SERVICE, counterparty_exchange: 'Coinbase' }),
+  ], swapping());
+
+  assert.equal(row.category, 'exchange_deposit',
+    'inserting the service rung must not change any verdict that already existed');
+});
+
+test('rule 3b does not claim a reverted transaction', () => {
+  // The failed gate runs before every rung. A swap deposit that reverted moved
+  // nothing, so calling it a trade would book a disposal that never happened.
+  const row = only([
+    leg({ to_address: SERVICE, is_error: true }),
+    gasLeg({ to_address: SERVICE, tx_is_error: true }),
+  ], swapping());
+
+  assert.equal(row.category, 'failed');
+});
+
+test('rule 3b reads the label, never the calldata selector', () => {
+  // Same standing decision as every other rung: method_id is attacker-chosen.
+  const row = only([
+    leg({ to_address: SERVICE, method_id: '0xa9059cbb', method_name: 'transfer(address,uint256)' }),
+  ], swapping());
+
+  assert.equal(row.category, 'exchange_trade');
+  const unlabeled = only([
+    leg({ to_address: SERVICE, method_id: '0xa9059cbb', method_name: 'transfer(address,uint256)' }),
+  ], { serviceAddresses: new Set() });
+  assert.equal(unlabeled.category, 'send', 'the selector alone must decide nothing');
+});
+
+test('a service-labeled counterparty is never quarantined as spam', () => {
+  // Two independent gates say so and both must hold: exchange_trade is in
+  // NEVER_SPAM_CATEGORIES, and a labeled address has a verdict already.
+  const row = only([
+    leg({ from_address: SERVICE, to_address: WALLET, value_wei: '1' }),
+  ], swapping({ labeledAddresses: new Set([SERVICE]) }));
+
+  assert.equal(row.category, 'exchange_trade');
+  assert.equal(row.spam, false);
+  assert.equal(row.spam_reason, null);
+});
+
 test('the failed gate: a reverted tx is failed, moved nothing, and still burned gas', () => {
   const row = only([
     // A reverted send to an exchange would read as a completed deposit if the

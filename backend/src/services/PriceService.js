@@ -6,6 +6,7 @@ const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const PriceCache = require('../models/PriceCache');
 const SecretsService = require('./SecretsService');
 const coingecko = require('../utils/coingecko');
+const chains = require('../config/chains');
 const logger = require('../config/logger');
 
 let coinGeckoIdMapCache = null;
@@ -140,6 +141,14 @@ class PriceService {
         for (const coin of fullCoinList) {
           const symbol = (coin.symbol || '').toUpperCase();
           if (symbol) symbolToId[symbol] = coin.id;
+        }
+
+        // Chain native assets win over the last-match-wins scan above. These
+        // are the symbols whose price is a balance on someone's screen, and
+        // short ones collide with copycat listings -- 'POL' in particular --
+        // so the registry's declared id settles it rather than list order.
+        for (const [symbol, info] of Object.entries(chains.NATIVE_ASSETS)) {
+          if (info.coingeckoId) symbolToId[symbol] = info.coingeckoId;
         }
 
         coinGeckoIdMapCache = symbolToId;

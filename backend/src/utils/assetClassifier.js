@@ -4,9 +4,13 @@ const STABLECOIN_SET = new Set([
   'USD', 'USDC', 'USDT', 'DAI', 'TUSD', 'FDUSD', 'BUSD'
 ]);
 
+// Wallet holdings are inserted with no category, so a native asset that is
+// missing here classifies as a STOCK: the price lookup then asks Yahoo for a
+// bare equity symbol and skips every crypto fallback. Every chain's
+// nativeAsset in config/chains.js must appear in this set.
 const CRYPTO_SET = new Set([
   'BTC', 'ETH', 'SOL', 'XMR', 'ALGO', 'DOT', 'ADA', 'ICP', 'EOS',
-  'MATIC', 'LRC', 'DASH', 'MIOTA', 'XNO', 'BCH', 'LTC', 'NANO',
+  'MATIC', 'POL', 'LRC', 'DASH', 'MIOTA', 'XNO', 'BCH', 'LTC', 'NANO',
   'LINK', 'TON', 'DOGE', 'PEPE'
 ]);
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
+const chains = require('../config/chains');
 const { CATEGORIES: ACTIVITY_CATEGORIES } = require('../utils/ethActivityVocabulary');
 
 // The unified crypto ledger (#63): one chronological stream over the two places
@@ -785,10 +786,10 @@ function toLedgerRow(row) {
     review_reason: row.review_reason,
     legs,
     // Fee, in the same shape on both sides: a whole-unit amount and its asset.
-    // On-chain that is gas, always ETH; on a venue it is whatever the venue
-    // charged in.
+    // On-chain that is gas, paid in the chain's native asset (POL on Polygon,
+    // not ETH); on a venue it is whatever the venue charged in.
     fee_amount: feeAmount,
-    fee_asset: onChain ? 'ETH' : row.fee_asset,
+    fee_asset: onChain ? chains.nativeSymbol(row.chain_id) : row.fee_asset,
     ...(() => {
       const { units, decimals } = toBaseUnits(feeAmount);
       return { fee_units: units, fee_decimals: decimals };

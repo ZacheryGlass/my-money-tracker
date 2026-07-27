@@ -121,7 +121,7 @@ test('POST /api/eth/address-labels rejects a non-string kind rather than coercin
 // A <select> sends its value verbatim; ' OWN ' only shows up via a caller that
 // pads or shouts, and normalizing it here is what keeps the allowlist the
 // single definition of a valid verdict.
-for (const kind of ['exchange', 'external', 'own', 'bridge', ' OWN ']) {
+for (const kind of ['exchange', 'external', 'own', 'bridge', 'service', ' OWN ']) {
   test(`POST /api/eth/address-labels accepts the verdict '${kind}'`, async () => {
     const response = await request(app)
       .post('/api/eth/address-labels')

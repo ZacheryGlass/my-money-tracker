@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, EyeOff, Plus, RefreshCw, Tag, Undo2, Wallet } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, EyeOff, Plus, RefreshCw, Repeat, Tag, Undo2, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import {
   formatCompactCurrency, formatDateDisplay, formatRelativeTime,
@@ -100,6 +100,15 @@ export function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackA
           <button
             type="button"
             disabled={busy}
+            aria-label={`Swap service — ${short}`}
+            onClick={() => openPanel('service')}
+            className={`${TRIAGE_ACTION_CLASS} hover:border-teal-500/30 hover:text-teal-400`}
+          >
+            <Repeat size={10} /> Swap service
+          </button>
+          <button
+            type="button"
+            disabled={busy}
             aria-label={`Outside party — ${short}`}
             onClick={() => onTriage(counterparty.address, 'external')}
             className={`${TRIAGE_ACTION_CLASS} hover:border-accent hover:text-accent`}
@@ -152,6 +161,47 @@ export function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackA
             {active && <RefreshCw size={10} className="animate-spin" />} Save
           </button>
           <button type="button" onClick={() => setPanel(null)} className={TRIAGE_ACTION_CLASS}>Cancel</button>
+        </form>
+      )}
+
+      {panel === 'service' && (
+        // The name is optional here, unlike the exchange panel: an exchange
+        // name becomes the counterparty text AND the internal-transfer
+        // assertion, while a service name is display only. These arrive dozens
+        // at a time (one deposit address per order), so requiring a typed name
+        // would be dozens of times the work for no extra meaning.
+        <form
+          className="mt-3 space-y-2 border-t border-border pt-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onTriage(counterparty.address, 'service', name.trim());
+          }}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              list="crypto-eth-label-names"
+              maxLength={64}
+              placeholder="Optional name, e.g. Changelly"
+              aria-label={`Swap service name for ${short}`}
+              className="h-8 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent sm:w-56"
+            />
+            <button
+              type="submit"
+              disabled={busy}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[9px] font-bold uppercase tracking-wide text-teal-400 disabled:opacity-40"
+            >
+              {active && <RefreshCw size={10} className="animate-spin" />} Save
+            </button>
+            <button type="button" onClick={() => setPanel(null)} className={`${TRIAGE_ACTION_CLASS} h-8 px-3`}>Cancel</button>
+          </div>
+          <p className="text-[10px] leading-relaxed text-tertiary">
+            For an instant-swap deposit address (Changelly, ShapeShift). What you sent was sold, so it books
+            as a trade rather than as a transfer between your own accounts — and what you bought will not
+            appear on this chain.
+          </p>
         </form>
       )}
 
@@ -249,21 +299,29 @@ function ReviewPanel({
   const materialCounterparties = rows.filter((cp) => cp.material);
   const dustCounterparties = rows.filter((cp) => !cp.material);
 
-  // Triage verdicts. All three are label writes and all three are reversible
-  // with one click from the Labels tab, so none of them confirms -- matching
-  // the label list's Remove. The full refetch is mandatory: one action drops a
+  // Triage verdicts. All of them are label writes and all are reversible with
+  // one click from the Labels tab, so none of them confirms -- matching the
+  // label list's Remove. The full refetch is mandatory: one action drops a
   // queue row, adds a label row, and moves the tab badge.
+  //
+  // The message names the verdict that was recorded, so every kind needs its
+  // own arm: a default that says "outside party" for anything unrecognised
+  // reports the wrong verdict rather than none.
+  const TRIAGE_MESSAGES = {
+    exchange: (short, name) => `Labeled ${short} as ${name}`,
+    own: (short) => `${short} marked as yours`,
+    service: (short, name) => `${short} marked as a swap service${name ? ` (${name})` : ''}`,
+    external: (short) => `${short} marked as an outside party`,
+  };
+
   const handleTriage = async (address, kind, name) => {
     if (triagingAddress) return;
     setTriagingAddress(address);
     onError(null);
     try {
       await ethAPI.labelAddress(address, name || null, { kind });
-      showSuccess(
-        kind === 'exchange' ? `Labeled ${shortEthAddress(address)} as ${name}`
-          : kind === 'own' ? `${shortEthAddress(address)} marked as yours`
-          : `${shortEthAddress(address)} marked as an outside party`
-      );
+      const short = shortEthAddress(address);
+      showSuccess((TRIAGE_MESSAGES[kind] || TRIAGE_MESSAGES.external)(short, name));
       await onChanged();
     } catch (err) {
       onError(err.response?.data?.error || 'Failed to review counterparty');

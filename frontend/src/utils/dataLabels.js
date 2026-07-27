@@ -27,6 +27,11 @@ export const LABEL_VERDICT_OPTIONS = [
   // chains this app syncs, but offered by hand because bridges redeploy far
   // faster than a seed can follow.
   { value: 'bridge', label: 'Bridge (cross-chain)' },
+  // An instant-swap service's deposit address (Changelly, ShapeShift and the
+  // like). Money sent there was SOLD, and what came back is not on this chain
+  // to find -- so it books as a trade rather than as an internal transfer,
+  // which is what labeling it Exchange would wrongly do.
+  { value: 'service', label: 'Swap service' },
 ];
 
 // undefined omits `kind` from the request body entirely; any other verdict is
@@ -35,10 +40,10 @@ export const labelVerdictKind = (verdict) => (verdict === LABEL_VERDICT_KEEP ? u
 
 // Mirrors the API rule: an exchange NAME is the text that appears in the ledger
 // AND the assertion that turns spending into a transfer, so it must be typed.
-// External/own/bridge names never reach classification and fall back to a short
-// address. KEEP is held to the exchange bar because that is what a fresh row
-// becomes.
-const NAME_OPTIONAL_VERDICTS = new Set(['external', 'own', 'bridge']);
+// External/own/bridge/service names never reach classification and fall back to
+// a short address. KEEP is held to the exchange bar because that is what a
+// fresh row becomes.
+const NAME_OPTIONAL_VERDICTS = new Set(['external', 'own', 'bridge', 'service']);
 export const labelVerdictNeedsName = (verdict) => !NAME_OPTIONAL_VERDICTS.has(verdict);
 
 // Why a transaction was quarantined as spam (#74). The server stores a REASON

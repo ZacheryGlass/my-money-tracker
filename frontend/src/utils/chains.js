@@ -8,15 +8,30 @@
 const EXPLORERS = {
   1: 'https://etherscan.io',
   10: 'https://optimistic.etherscan.io',
+  137: 'https://polygonscan.com',
   8453: 'https://basescan.org',
   42161: 'https://arbiscan.io',
   59144: 'https://lineascan.build',
+};
+
+// Chains whose gas and native balance are NOT ether. Only the exceptions are
+// listed: every other chain here is ETH-native, and defaulting keeps a row with
+// a NULL or unknown chain_id reading as ETH -- which is what every such row is.
+const NATIVE_ASSETS = {
+  137: 'POL',
 };
 
 // Mainnet. Rows ingested before multi-chain sync carry a NULL chain_id, and
 // every one of them is mainnet's -- so an unknown or missing id must resolve
 // here rather than produce a dead link.
 export const DEFAULT_CHAIN_ID = 1;
+
+// The native asset's symbol for a chain, for rows the API sends as raw amounts
+// (a transfer leg's value, a wallet's balance drift). Rows that already carry a
+// symbol from the server should render THAT rather than call this.
+export function nativeSymbol(chainId) {
+  return NATIVE_ASSETS[Number(chainId)] || 'ETH';
+}
 
 export function explorerBase(chainId) {
   return EXPLORERS[Number(chainId)] || EXPLORERS[DEFAULT_CHAIN_ID];
