@@ -22,41 +22,27 @@ import {
   spamReasonLabel,
 } from '../utils/dataLabels';
 import DataTable from './DataTable';
-import FilterTabs from './FilterTabs';
 import LoadingState from './LoadingState';
 
 const PAGE_SIZE = 100;
 // GET /api/crypto/ledger clamps `limit` to 500, and asking past it is a 400.
 const MAX_PAGE_SIZE = 500;
 
-// The two dimensions that are worth a tab strip. Category has twenty values and
-// belongs in a select; these have three each and are the ones a user flips
-// between while draining the queue.
-const SOURCE_OPTIONS = [
-  { value: '', label: 'All' },
-  { value: 'onchain', label: 'On-chain' },
-  { value: 'exchange', label: 'Exchange' },
-];
-
+// Review status is THE workflow dimension -- the one a user flips while
+// draining the queue -- so it gets the one prominent segmented control.
+// Source is a rare flip and Category has twenty values; both are labeled
+// selects. Underline tabs are reserved for the page navigation above: three
+// unlabeled strips that all read "ALL ..." was three competing navigations.
 const STATUS_OPTIONS = [
-  { value: '', label: 'All' },
-  { value: 'true', label: 'Needs Review' },
+  { value: '', label: 'Everything' },
+  { value: 'true', label: 'Needs review' },
   { value: 'false', label: 'Explained' },
 ];
 
-// The spam quarantine (#74), three-valued exactly like GET /api/crypto/ledger's
-// ?spam=. The default HIDES quarantined rows -- that is what a quarantine is,
-// and this screen is the one that promises no transaction goes unexplained, so
-// rendering scam airdrops here as ordinary events would re-surface precisely
-// the noise the quarantine removed.
-//
-// "Quarantined" and "Not spam" are the words the Review tab's quarantine
-// uses; the rescue button on a spam row here calls the same endpoint, so the
-// two surfaces cannot drift into two different vocabularies for one verdict.
-const SPAM_OPTIONS = [
-  { value: '', label: 'Hidden' },
-  { value: 'only', label: 'Quarantined' },
-  { value: 'all', label: 'Include' },
+const SOURCE_OPTIONS = [
+  { value: '', label: 'All sources' },
+  { value: 'onchain', label: 'On-chain' },
+  { value: 'exchange', label: 'Exchange' },
 ];
 
 // Tone by what the category MEANS for the portfolio, not one colour per value:
@@ -194,7 +180,12 @@ const DetailField = ({ label, children }) => (
 // `onDataChanged` fires after a mutation that re-derives data the parent also
 // renders: labelling an address rewrites the mirrored transactions and every
 // classification downstream of it.
-const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
+//
+// `onShowTransferLegs` swaps the parent to the raw per-leg feed. A quiet link
+// on the filter bar rather than a sibling mode toggle: the raw feed is a
+// power-user drill-down (and the one place a token can be ignored in context),
+// not an equal way to read the ledger.
+const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTransferLegs }) => {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState(null);
@@ -572,6 +563,17 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
     ? `${formatDateDisplay(summary.first_at)} — ${formatDateDisplay(summary.last_at)}`
     : null;
 
+  // Counts ride ON the segmented control, so the number and the filter are the
+  // same thing -- the old "N need review" badge looked clickable and was not.
+  // Wallet-scoped like the summary, and deliberately NOT view-filtered: a
+  // needs-review count that dropped to zero because the user filtered those
+  // rows away is a count that lies.
+  const statusCounts = summary ? {
+    '': summary.total ?? 0,
+    true: summary.needs_review_count ?? 0,
+    false: Math.max(0, (summary.total ?? 0) - (summary.needs_review_count ?? 0)),
+  } : null;
+
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
@@ -583,27 +585,54 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
               // venues wrote, folded halves included, so it deliberately does
               // not add up with the event total beside it -- it is the number
               // that reconciles with the Exchanges tab's per-account record_count.
-              // The quarantine says how much it swallowed, always: hiding rows
-              // without stating the number is indistinguishable from a sync
-              // that never fetched them. The Spam tab is where they are.
-              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange records${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched pairs shown once` : ''}${summary.bridge_matched_count ? ` · ${summary.bridge_matched_count.toLocaleString()} bridged pairs shown once` : ''}${summary.spam_count ? ` · ${summary.spam_count.toLocaleString()} quarantined` : ''}${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} unpriced` : ''}`
+              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange records${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched pairs shown once` : ''}${summary.bridge_matched_count ? ` · ${summary.bridge_matched_count.toLocaleString()} bridged pairs shown once` : ''}${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} unpriced` : ''}`
               : 'Loading…'}
             {rangeText ? ` · ${rangeText}` : ''}
+            {/* The quarantine says how much it swallowed, always: hiding rows
+                without stating the number is indistinguishable from a sync
+                that never fetched them. The count IS the way into that view --
+                the old three-way Spam strip ("Hidden / Quarantined / Include")
+                was three answers to a question the screen never asked, with
+                the default state lit up reading "HIDDEN". The spam=all mode
+                stays in the API and the CSV export; it earns no control. */}
+            {(summary?.spam_count > 0 || spam === 'only') && (
+              <button
+                type="button"
+                // Entering the quarantine also resets the review-status
+                // filter: needs_review is MASKED on quarantined rows at read
+                // time, so "Needs review" over the quarantine is empty by
+                // construction -- a guaranteed-blank screen, not a filter.
+                onClick={() => {
+                  if (spam === 'only') setSpam('');
+                  else { setSpam('only'); setStatus(''); }
+                  setExpandedId(null);
+                }}
+                aria-pressed={spam === 'only'}
+                title={spam === 'only'
+                  ? 'Return to the ledger'
+                  : 'Rows hidden as spam: address poisoning, dust and scam airdrops. Nothing was deleted.'}
+                className={`ml-2 inline-flex items-center gap-1 border px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide transition-colors ${
+                  spam === 'only'
+                    ? 'border-accent/40 bg-accent/10 text-accent'
+                    : 'border-border bg-surface-3 text-tertiary hover:border-accent hover:text-accent'
+                }`}
+              >
+                <ShieldAlert size={9} />
+                {spam === 'only'
+                  ? 'Back to the ledger'
+                  : `${(summary?.spam_count ?? 0).toLocaleString()} quarantined · view`}
+              </button>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {summary && (
-            <span
-              className={`inline-flex items-center gap-1.5 border px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${
-                summary.needs_review_count > 0
-                  ? 'border-orange-500/30 bg-orange-500/10 text-orange-400'
-                  : 'border-gain/20 bg-gain/10 text-gain'
-              }`}
-            >
-              <AlertTriangle size={11} />
-              {summary.needs_review_count > 0
-                ? `${summary.needs_review_count.toLocaleString()} need review`
-                : 'Nothing unexplained'}
+          {/* Only the all-clear renders here now; when something needs review
+              the count sits on the segmented control below, where clicking it
+              actually does something. */}
+          {summary && summary.needs_review_count === 0 && (
+            <span className="inline-flex items-center gap-1.5 border border-gain/20 bg-gain/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gain">
+              <Check size={11} />
+              Nothing unexplained
             </span>
           )}
           <a
@@ -616,82 +645,130 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
         </div>
       </div>
 
-      <div className="mb-3 grid gap-3 md:grid-cols-2">
-        <FilterTabs
-          id="crypto-ledger-source"
-          label="Source"
-          options={SOURCE_OPTIONS}
-          value={source}
-          onChange={(next) => { setSource(next); setExpandedId(null); }}
-        />
-        <FilterTabs
-          id="crypto-ledger-status"
-          label="Status"
-          options={STATUS_OPTIONS}
-          value={status}
-          onChange={(next) => { setStatus(next); setExpandedId(null); }}
-        />
-        <FilterTabs
-          id="crypto-ledger-spam"
-          label="Spam"
-          options={SPAM_OPTIONS}
-          value={spam}
-          onChange={(next) => { setSpam(next); setExpandedId(null); }}
-        />
+      {/* ONE labeled filter bar, not three unlabeled tab strips: underline
+          tabs above this mean navigation, so everything here has to look like
+          what it is -- a filter with a visible name. Category stays a select
+          (twenty values, and the server 400s an unknown one, so the options
+          are the shared vocabulary rather than free text). */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 border border-border bg-surface p-2">
+        {/* Full-width thirds on a phone, compact on desktop: fixed-width
+            segments overflow a 375px viewport and clip the third option. */}
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          {/* The label is a courtesy on desktop; on a phone its 50px is the
+              difference between the third segment fitting and clipping. */}
+          <span className="hidden shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary sm:inline">Show</span>
+          <div className="flex min-w-0 flex-1 overflow-hidden rounded border border-input-border sm:flex-initial" role="group" aria-label="Review status">
+            {STATUS_OPTIONS.map((option, index) => (
+              <button
+                key={option.value || 'all'}
+                type="button"
+                aria-pressed={status === option.value}
+                onClick={() => { setStatus(option.value); setExpandedId(null); }}
+                className={`inline-flex min-h-8 flex-1 items-center justify-center gap-1.5 px-2 text-center text-[10px] font-bold uppercase tracking-wide transition-colors sm:flex-initial sm:px-3 ${
+                  index > 0 ? 'border-l border-input-border' : ''
+                } ${
+                  status === option.value
+                    ? option.value === 'true'
+                      ? 'bg-orange-500/15 text-orange-400'
+                      : 'bg-accent/15 text-accent'
+                    : 'bg-surface-2 text-tertiary hover:text-primary'
+                }`}
+              >
+                {option.label}
+                {statusCounts && (
+                  <span className={`px-1 text-[9px] font-bold ${
+                    option.value === 'true' && statusCounts[option.value] > 0
+                      ? 'bg-orange-500/15 text-orange-400'
+                      : 'bg-surface-3 text-tertiary'
+                  }`}>
+                    {Number(statusCounts[option.value]).toLocaleString()}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <label className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">Source</span>
+          <select
+            value={source}
+            onChange={(event) => { setSource(event.target.value); setExpandedId(null); }}
+            aria-label="Ledger source"
+            className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+          >
+            {SOURCE_OPTIONS.map((option) => (
+              <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">Category</span>
+          <select
+            value={category}
+            onChange={(event) => { setCategory(event.target.value); setExpandedId(null); }}
+            aria-label="Ledger category"
+            className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+          >
+            <option value="">All categories</option>
+            {LEDGER_CATEGORIES.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+
+        {onShowTransferLegs && (
+          <button
+            type="button"
+            onClick={onShowTransferLegs}
+            title="The raw per-leg feed behind these events — the place to ignore a token in context"
+            className="ml-auto shrink-0 text-caption text-tertiary underline underline-offset-2 transition-colors hover:text-accent"
+          >
+            Raw transfer legs →
+          </button>
+        )}
       </div>
 
-      {/* A select, not a third strip: twenty categories cannot be a tab bar,
-          and the server 400s an unknown value, so the options are the shared
-          vocabulary rather than free text. */}
-      <label className="mb-3 flex min-w-0 items-center gap-2">
-        <span className="shrink-0 text-caption font-semibold uppercase tracking-wide text-tertiary">Category</span>
-        <select
-          value={category}
-          onChange={(event) => { setCategory(event.target.value); setExpandedId(null); }}
-          aria-label="Ledger category"
-          className="h-9 w-full min-w-0 border border-border bg-surface px-2 text-body-sm text-primary sm:w-[240px]"
-        >
-          <option value="">All categories</option>
-          {LEDGER_CATEGORIES.map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
-        </select>
-      </label>
-
-      {/* Three ways this ledger can be less than the whole truth, each from its
-          own source. Stated separately because the fixes are different: a
-          balance drift means a transfer is missing, an unpriced asset means the
-          dollars are absent (not zero), and a stalled import means rows are. */}
-      {nativeDrift.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 border border-loss/20 bg-loss/5 p-2 text-body-sm text-loss">
-          <AlertTriangle size={14} className="shrink-0" />
-          <span>
-            The stored ledger does not reproduce the ETH balance the chain reports
-            on {nativeDrift.length} {nativeDrift.length === 1 ? 'wallet/chain' : 'wallet/chain pairs'} — a
-            transfer is missing here, so these totals are short.
-          </span>
-        </div>
-      )}
-
-      {unpriced.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 border border-orange-500/20 bg-orange-500/5 p-2 text-body-sm text-orange-400">
-          <DollarSign size={14} className="shrink-0" />
-          <span>
-            {unpriced.length} {unpriced.length === 1 ? 'asset has' : 'assets have'} no
-            price for the dates they moved ({unpriced.slice(0, 4).map((a) => a.asset_symbol || a.asset_key).join(', ')}
-            {unpriced.length > 4 ? `, +${unpriced.length - 4} more` : ''}) — their rows read
-            &quot;No price&quot;, which is not the same as $0.
-          </span>
-        </div>
-      )}
-
-      {incompleteAccounts.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 border border-orange-500/20 bg-orange-500/5 p-2 text-body-sm text-orange-400">
-          <AlertTriangle size={14} className="shrink-0" />
-          <span>
-            {incompleteAccounts.length} exchange {incompleteAccounts.length === 1 ? 'account has' : 'accounts have'} not
-            finished syncing, or did not reconcile with the venue&apos;s own balances — this ledger may be incomplete.
-          </span>
+      {/* Three ways this ledger can be less than the whole truth, each from
+          its own source of truth -- stated separately because the fixes differ
+          (a balance drift means a transfer is missing, an unpriced asset means
+          the dollars are absent rather than zero, a stalled import means rows
+          are) -- but on ONE strip: three full-width banners stacked here
+          pushed the table below the fold. */}
+      {(nativeDrift.length > 0 || unpriced.length > 0 || incompleteAccounts.length > 0) && (
+        <div className="mb-3 flex flex-wrap items-start gap-x-6 gap-y-1.5 border border-orange-500/20 bg-orange-500/5 p-2 text-body-sm">
+          <span className="mt-0.5 shrink-0 text-[9px] font-bold uppercase tracking-wide text-orange-400">Completeness</span>
+          {nativeDrift.length > 0 && (
+            <span className="flex items-center gap-1.5 text-loss">
+              <AlertTriangle size={13} className="shrink-0" />
+              <span>
+                The stored ledger does not reproduce the ETH balance the chain reports
+                on {nativeDrift.length} {nativeDrift.length === 1 ? 'wallet/chain' : 'wallet/chain pairs'} — a
+                transfer is missing here, so these totals are short.
+              </span>
+            </span>
+          )}
+          {unpriced.length > 0 && (
+            <span className="flex items-center gap-1.5 text-orange-400">
+              <DollarSign size={13} className="shrink-0" />
+              <span>
+                {unpriced.length} {unpriced.length === 1 ? 'asset has' : 'assets have'} no
+                price for the dates they moved ({unpriced.slice(0, 4).map((a) => a.asset_symbol || a.asset_key).join(', ')}
+                {unpriced.length > 4 ? `, +${unpriced.length - 4} more` : ''}) — their rows read
+                &quot;No price&quot;, which is not the same as $0.
+              </span>
+            </span>
+          )}
+          {incompleteAccounts.length > 0 && (
+            <span className="flex items-center gap-1.5 text-orange-400">
+              <AlertTriangle size={13} className="shrink-0" />
+              <span>
+                {incompleteAccounts.length} exchange {incompleteAccounts.length === 1 ? 'account has' : 'accounts have'} not
+                finished syncing, or did not reconcile with the venue&apos;s own balances — this ledger may be incomplete.
+              </span>
+            </span>
+          )}
         </div>
       )}
 

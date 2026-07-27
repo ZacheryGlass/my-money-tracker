@@ -500,7 +500,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange }) => {
           : null,
     }] : []),
     // The management tabs are always offered, empty portfolio included: adding
-    // the first wallet or exchange account is what they are for.
+    // the first wallet or exchange account is what they are for. The divider
+    // splits the strip into what the user READS (Overview, Holdings,
+    // Transactions) and what they MANAGE, so seven tabs scan as 3 + 4.
+    { divider: true, hint: 'Manage' },
     {
       value: WALLETS_TAB,
       label: 'Wallets',
@@ -718,26 +721,6 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange }) => {
                     </select>
                   </label>
                 )}
-                {/* Two small buttons rather than a FilterTabs strip: the page
-                    tab bar is directly above and a third strip in view at once
-                    reads as three competing navigations. */}
-                <div className="flex items-center gap-1" role="group" aria-label="Transactions view">
-                  {[[LEDGER_VIEW, 'Ledger'], [TRANSFERS_VIEW, 'Transfer legs']].map(([id, label]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setTxView(id)}
-                      aria-pressed={txView === id}
-                      className={`inline-flex h-8 items-center rounded border px-3 text-[9px] font-bold uppercase tracking-wide transition-all ${
-                        txView === id
-                          ? 'border-accent bg-accent/10 text-accent'
-                          : 'border-border bg-surface-3 text-tertiary hover:text-primary'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
                 {wallets.length > 0 && (
                   <button
                     onClick={handleSyncClick}
@@ -774,14 +757,34 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange }) => {
                   walletId={selectedWalletId}
                   refreshKey={syncNonce}
                   onDataChanged={fetchData}
+                  // The raw feed is entered from a quiet link on the ledger's
+                  // filter bar, not a sibling mode toggle: it is a drill-down
+                  // (and the one place a token can be ignored in context), not
+                  // an equal way to read the ledger.
+                  onShowTransferLegs={() => setTxView(TRANSFERS_VIEW)}
                 />
               ) : (
-                <OnChainActivity
-                  key={`${selectedWalletId ?? 'all'}:${syncNonce}`}
-                  walletId={selectedWalletId}
-                  walletNames={selectedWalletId == null ? walletNames : undefined}
-                  onDataChanged={fetchData}
-                />
+                <>
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-caption text-tertiary">
+                      Every per-leg transfer as the chain recorded it — the raw feed behind the
+                      ledger&apos;s events, and the place to ignore a token in context.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setTxView(LEDGER_VIEW)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:border-accent hover:text-accent"
+                    >
+                      ← Back to ledger
+                    </button>
+                  </div>
+                  <OnChainActivity
+                    key={`${selectedWalletId ?? 'all'}:${syncNonce}`}
+                    walletId={selectedWalletId}
+                    walletNames={selectedWalletId == null ? walletNames : undefined}
+                    onDataChanged={fetchData}
+                  />
+                </>
               )}
             </section>
           ))}

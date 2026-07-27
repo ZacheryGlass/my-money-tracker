@@ -187,7 +187,7 @@ describe('CryptoLedger', () => {
     expect(screen.getAllByText('Kraken').length).toBeGreaterThan(0);
   });
 
-  it('flags what needs review and badges the total honestly', async () => {
+  it('flags what needs review and counts it on the control that filters to it', async () => {
     setLedger([exchange()]);
     apiMocks.crypto.getLedgerSummary.mockResolvedValue({
       summary: {
@@ -198,7 +198,11 @@ describe('CryptoLedger', () => {
 
     render(<CryptoLedger />);
 
-    expect(await screen.findByText('3 need review')).toBeInTheDocument();
+    // The count rides ON the segmented control, so the number and the filter
+    // are one thing -- the old badge looked clickable and was not.
+    expect(await screen.findByRole('button', { name: /needs review 3/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /everything 12/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /explained 9/i })).toBeInTheDocument();
     // First transaction to today, which is the ledger's whole claim.
     expect(screen.getByText(/May 1, 2021 — Mar 2, 2026/)).toBeInTheDocument();
   });
@@ -235,15 +239,14 @@ describe('CryptoLedger', () => {
     render(<CryptoLedger />);
     await screen.findAllByText('Arbitrum One');
 
-    // Desktop tab strip and mobile select render together, CSS-hidden.
-    fireEvent.click(screen.getAllByRole('tab', { name: 'Exchange' })[0]);
+    fireEvent.change(screen.getByLabelText('Ledger source'), { target: { value: 'exchange' } });
     await vi.waitFor(() => {
       expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'exchange', offset: 0 })
       );
     });
 
-    fireEvent.click(screen.getAllByRole('tab', { name: 'Needs Review' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: /needs review/i }));
     await vi.waitFor(() => {
       expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
         expect.objectContaining({ needsReview: 'true' })
@@ -758,6 +761,12 @@ describe('CryptoLedger', () => {
   // --- the spam quarantine (#74) --------------------------------------------
 
   it('asks for the quarantine only when the Spam view is chosen', async () => {
+    apiMocks.crypto.getLedgerSummary.mockResolvedValue({
+      summary: {
+        total: 12, needs_review_count: 0, onchain_count: 8, exchange_count: 4,
+        matched_count: 0, spam_count: 5, first_at: null, last_at: null,
+      },
+    });
     render(<CryptoLedger />);
     await vi.waitFor(() => expect(apiMocks.crypto.getLedger).toHaveBeenCalled());
 
@@ -767,14 +776,26 @@ describe('CryptoLedger', () => {
       expect.not.objectContaining({ spam: expect.anything() })
     );
 
-    fireEvent.click(screen.getAllByRole('tab', { name: 'Quarantined' })[0]);
+    // A guaranteed-empty combination must not be reachable: needs_review is
+    // masked on quarantined rows, so entering the quarantine view resets the
+    // review-status filter rather than intersecting with it.
+    fireEvent.click(screen.getByRole('button', { name: /needs review/i }));
+
+    // The way in is the count itself: the summary states how many rows the
+    // quarantine is hiding, and clicking that number is what shows them.
+    fireEvent.click(await screen.findByRole('button', { name: /5 quarantined/i }));
     await vi.waitFor(() => {
       expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
         expect.objectContaining({ spam: 'only', offset: 0 })
       );
+      expect(apiMocks.crypto.getLedger).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ needsReview: expect.anything() })
+      );
     });
     // The view says what it is: kept out of Needs Review, nothing deleted.
     expect(screen.getByText(/Nothing was deleted/)).toBeInTheDocument();
+    // The same control is the way back out.
+    expect(screen.getByRole('button', { name: /back to the ledger/i })).toBeInTheDocument();
   });
 
   it('says how many rows the quarantine is hiding', async () => {
@@ -883,7 +904,7 @@ describe('CryptoLedger', () => {
     render(<CryptoLedger walletId={4} />);
     await screen.findAllByText('Arbitrum One');
 
-    fireEvent.click(screen.getAllByRole('tab', { name: 'Exchange' })[0]);
+    fireEvent.change(screen.getByLabelText('Ledger source'), { target: { value: 'exchange' } });
 
     await vi.waitFor(() => {
       expect(apiMocks.crypto.ledgerExportUrl).toHaveBeenCalledWith(
