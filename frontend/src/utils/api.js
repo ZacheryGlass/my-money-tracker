@@ -321,6 +321,10 @@ export const eth = {
     const response = await api.post('/api/eth/wallets', { address, label });
     return response.data;
   },
+  addWallets: async (addresses) => {
+    const response = await api.post('/api/eth/wallets/bulk', { addresses });
+    return response.data;
+  },
   getWallets: async () => {
     const response = await api.get('/api/eth/wallets');
     return response.data;

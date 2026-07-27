@@ -19,6 +19,7 @@ const apiMocks = vi.hoisted(() => ({
   },
   eth: {
     addWallet: vi.fn(),
+    addWallets: vi.fn(),
     getWallets: vi.fn(),
     syncWallet: vi.fn(),
     removeWallet: vi.fn(),
@@ -780,6 +781,75 @@ describe('Settings display names', () => {
 
     await waitFor(() => {
       expect(apiMocks.accounts.updateVisibility).toHaveBeenCalledWith(7, true);
+    });
+  });
+  // Bulk wallet add: one textbox, one address per line.
+  describe('connect crypto wallet', () => {
+    const openWalletModal = async () => {
+      renderSettings();
+      fireEvent.click(await screen.findByRole('button', { name: /connect crypto/i }));
+      return screen.findByPlaceholderText(/one per line/i);
+    };
+
+    it('sends a pasted list through the bulk endpoint', async () => {
+      apiMocks.eth.addWallets.mockResolvedValue({
+        summary: { added: 2, duplicate: 0, failed: 0 },
+        results: [],
+      });
+      const input = await openWalletModal();
+
+      fireEvent.change(input, {
+        target: { value: `0x${'1'.repeat(40)}\n0x${'2'.repeat(40)}\n` },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /track 2 wallets/i }));
+
+      await waitFor(() => expect(apiMocks.eth.addWallets).toHaveBeenCalledWith([
+        `0x${'1'.repeat(40)}`,
+        `0x${'2'.repeat(40)}`,
+      ]));
+      expect(apiMocks.eth.addWallet).not.toHaveBeenCalled();
+    });
+
+    // A single address keeps the original one-shot path, label included --
+    // the bulk endpoint takes no labels.
+    it('keeps the single-address path on the single-add endpoint', async () => {
+      apiMocks.eth.addWallet.mockResolvedValue({});
+      const input = await openWalletModal();
+
+      fireEvent.change(input, { target: { value: `  0x${'3'.repeat(40)}  ` } });
+      fireEvent.click(screen.getByRole('button', { name: /^track wallet$/i }));
+
+      await waitFor(() => expect(apiMocks.eth.addWallet).toHaveBeenCalledWith(`0x${'3'.repeat(40)}`, undefined));
+      expect(apiMocks.eth.addWallets).not.toHaveBeenCalled();
+    });
+
+    // A typo must name itself rather than be dropped from the batch.
+    it('refuses the batch and names the malformed line', async () => {
+      const input = await openWalletModal();
+
+      fireEvent.change(input, { target: { value: `0x${'1'.repeat(40)}\nnope` } });
+      fireEvent.click(screen.getByRole('button', { name: /track 2 wallets/i }));
+
+      expect(await screen.findByText(/not a valid ethereum address: nope/i)).toBeInTheDocument();
+      expect(apiMocks.eth.addWallets).not.toHaveBeenCalled();
+    });
+
+    // Anything the server refused is reported per address, not summarized away.
+    it('lists the addresses the server did not add', async () => {
+      apiMocks.eth.addWallets.mockResolvedValue({
+        summary: { added: 1, duplicate: 1, failed: 0 },
+        results: [
+          { address: `0x${'1'.repeat(40)}`, status: 'added' },
+          { address: `0x${'2'.repeat(40)}`, status: 'duplicate', error: 'That address is already tracked' },
+        ],
+      });
+      const input = await openWalletModal();
+
+      fireEvent.change(input, { target: { value: `0x${'1'.repeat(40)}\n0x${'2'.repeat(40)}` } });
+      fireEvent.click(screen.getByRole('button', { name: /track 2 wallets/i }));
+
+      expect(await screen.findByText(/already tracked/i)).toBeInTheDocument();
+      expect(screen.getByText(`0x${'2'.repeat(40)}`)).toBeInTheDocument();
     });
   });
 });

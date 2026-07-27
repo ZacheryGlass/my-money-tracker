@@ -186,3 +186,98 @@ test('GET /api/eth/reconciliation 404s on a wallet the caller does not own', asy
   assert.equal(response.status, 404);
   assert.match(response.body.error, /Wallet not found/);
 });
+
+// Bulk wallet add. The contract worth pinning is per-address verdicts: a bad
+// line must not reject the good ones, and a line must never be silently
+// dropped.
+test('POST /api/eth/wallets/bulk rejects a non-array body', async () => {
+  const response = await request(app)
+    .post('/api/eth/wallets/bulk')
+    .send({ addresses: '0x1111111111111111111111111111111111111111' })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /non-empty array/);
+});
+
+test('POST /api/eth/wallets/bulk rejects an empty list', async () => {
+  const response = await request(app)
+    .post('/api/eth/wallets/bulk')
+    .send({ addresses: [] })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 400);
+});
+
+test('POST /api/eth/wallets/bulk caps the batch size', async () => {
+  const addresses = Array.from({ length: 101 }, (_, i) => `0x${String(i).padStart(40, '0')}`);
+  const response = await request(app)
+    .post('/api/eth/wallets/bulk')
+    .send({ addresses })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /At most 100/);
+});
+
+// The key belongs to the user, not to any one line, so it answers the whole
+// request once instead of failing every address with the same message.
+test('POST /api/eth/wallets/bulk without ETHERSCAN_API_KEY returns 503', async () => {
+  const response = await request(app)
+    .post('/api/eth/wallets/bulk')
+    .send({ addresses: ['0x1111111111111111111111111111111111111111'] })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 503);
+  assert.match(response.body.error, /Etherscan is not configured/);
+});
+
+test('POST /api/eth/wallets/bulk reports each address and adds the good ones', async () => {
+  const SecretsService = require('../src/services/SecretsService');
+  const EthWalletService = require('../src/services/EthWalletService');
+  const originalGetUserKey = SecretsService.getUserKey;
+  const originalAddWallet = EthWalletService.addWallet;
+  const originalSyncWallet = EthWalletService.syncWallet;
+
+  const good = '0x1111111111111111111111111111111111111111';
+  const tracked = '0x2222222222222222222222222222222222222222';
+  const bad = 'not-an-address';
+  const synced = [];
+
+  SecretsService.getUserKey = async () => 'test-key';
+  EthWalletService.addWallet = async (userId, address) => {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      const error = new Error('address must be a 0x-prefixed 40-hex-character Ethereum address');
+      error.code = 'INVALID_ADDRESS';
+      throw error;
+    }
+    if (address.toLowerCase() === tracked) {
+      const error = new Error('That address is already tracked');
+      error.code = 'DUPLICATE_WALLET';
+      throw error;
+    }
+    return { wallet: { id: 7, address }, account: { id: 9 } };
+  };
+  EthWalletService.syncWallet = async (id) => { synced.push(id); };
+
+  try {
+    const response = await request(app)
+      .post('/api/eth/wallets/bulk')
+      // The repeated `good` is the in-paste duplicate: it must be reported as
+      // repeated, not added twice and not reported as already tracked.
+      .send({ addresses: [good, bad, tracked, good, '   '] })
+      .set('Content-Type', 'application/json');
+
+    assert.equal(response.status, 201);
+    assert.deepEqual(response.body.summary, { added: 1, duplicate: 2, failed: 1 });
+    assert.deepEqual(
+      response.body.results.map((r) => [r.address, r.status]),
+      [[good, 'added'], [bad, 'failed'], [tracked, 'duplicate'], [good, 'duplicate']]
+    );
+    assert.match(response.body.results[1].error, /0x-prefixed/);
+  } finally {
+    SecretsService.getUserKey = originalGetUserKey;
+    EthWalletService.addWallet = originalAddWallet;
+    EthWalletService.syncWallet = originalSyncWallet;
+  }
+});

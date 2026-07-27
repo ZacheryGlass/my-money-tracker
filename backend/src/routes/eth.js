@@ -12,6 +12,7 @@ const EthActivity = require('../models/EthActivity');
 const EthReconciliation = require('../models/EthReconciliation');
 const AssetPriceHistory = require('../models/AssetPriceHistory');
 const EthWalletService = require('../services/EthWalletService');
+const SecretsService = require('../services/SecretsService');
 const { CATEGORIES } = require('../utils/ethActivityVocabulary');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
@@ -128,6 +129,94 @@ router.post('/wallets', async (req, res) => {
     logger.error({ err: error }, 'Add ETH wallet error');
     const status = statusFor(error);
     res.status(status).json({ error: status === 500 ? 'Failed to add wallet' : error.message });
+  }
+});
+
+const MAX_BULK_ADDRESSES = 100;
+
+// Bulk add: one address per line, pasted from a wallet manager or a note.
+// Per-address results rather than all-or-nothing -- a single typo in line 7
+// must not reject the six good addresses above it, and a silently dropped line
+// would be worse still, so every input line comes back with a verdict.
+router.post('/wallets/bulk', async (req, res) => {
+  try {
+    const { addresses } = req.body || {};
+    if (!Array.isArray(addresses) || addresses.length === 0) {
+      return res.status(400).json({ error: 'addresses must be a non-empty array' });
+    }
+    if (addresses.length > MAX_BULK_ADDRESSES) {
+      return res.status(400).json({ error: `At most ${MAX_BULK_ADDRESSES} addresses can be added at once` });
+    }
+
+    // The key is a property of the USER, not of any one address, so it is a
+    // verdict on the whole request -- reporting it once beats repeating the
+    // same 503 message on every line.
+    const apiKey = await SecretsService.getUserKey(req.user.id, 'etherscan');
+    if (!apiKey) {
+      return res.status(503).json({
+        error: 'Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.',
+      });
+    }
+
+    const results = [];
+    const added = [];
+    const seen = new Set();
+    for (const raw of addresses) {
+      const address = typeof raw === 'string' ? raw.trim() : '';
+      if (!address) continue;
+      // Duplicates WITHIN the paste are reported, not added twice: the second
+      // one would otherwise come back as DUPLICATE_WALLET and read as though
+      // the address was already tracked before this request.
+      const key = address.toLowerCase();
+      if (seen.has(key)) {
+        results.push({ address, status: 'duplicate', error: 'Repeated in the pasted list' });
+        continue;
+      }
+      seen.add(key);
+
+      try {
+        const { wallet, account } = await EthWalletService.addWallet(req.user.id, address, null);
+        added.push(wallet);
+        results.push({ address, status: 'added', wallet, account });
+      } catch (error) {
+        const status = statusFor(error);
+        results.push({
+          address,
+          status: status === 409 ? 'duplicate' : 'failed',
+          error: status === 500 ? 'Failed to add wallet' : error.message,
+        });
+        if (status === 500) logger.error({ err: error }, 'Bulk add ETH wallet error');
+      }
+    }
+
+    // Same background-sync contract as the single add, but SERIAL: the initial
+    // sync walks every feed from block 0, and firing a hundred of them at once
+    // would just pile up behind the one global Etherscan throttle while holding
+    // that many rebuild lanes open.
+    if (added.length) {
+      (async () => {
+        for (const wallet of added) {
+          try {
+            await EthWalletService.syncWallet(wallet.id);
+          } catch (err) {
+            logger.error({ walletId: wallet.id, err }, 'Initial ETH wallet sync failed');
+          }
+        }
+      })();
+    }
+
+    res.status(added.length ? 201 : 200).json({
+      results,
+      summary: {
+        added: added.length,
+        duplicate: results.filter((r) => r.status === 'duplicate').length,
+        failed: results.filter((r) => r.status === 'failed').length,
+      },
+      syncStarted: added.length > 0,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Bulk add ETH wallets error');
+    res.status(500).json({ error: 'Failed to add wallets' });
   }
 });
 

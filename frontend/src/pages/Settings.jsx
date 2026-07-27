@@ -666,6 +666,7 @@ const Settings = ({ user }) => {
   const [walletAddress, setWalletAddress] = useState('');
   const [walletLabel, setWalletLabel] = useState('');
   const [walletFormError, setWalletFormError] = useState(null);
+  const [walletBulkResults, setWalletBulkResults] = useState(null);
   const [addingWallet, setAddingWallet] = useState(false);
   const [ethSyncingId, setEthSyncingId] = useState(null);
   const [disconnectingWallet, setDisconnectingWallet] = useState(null);
@@ -948,31 +949,63 @@ const Settings = ({ user }) => {
     }
   };
 
+  // Same split the submit handler uses, so the count in the label and the
+  // number of wallets actually created can never disagree.
+  const walletAddressCount = walletAddress.split(/[\s,;]+/).filter(Boolean).length;
+
   const openCryptoModal = () => {
     setWalletAddress('');
     setWalletLabel('');
     setWalletFormError(null);
+    setWalletBulkResults(null);
     setCryptoModalOpen(true);
   };
 
   const handleAddWallet = async (event) => {
     event.preventDefault();
     if (addingWallet) return;
-    const address = walletAddress.trim();
-    if (!ETH_ADDRESS_RE.test(address)) {
-      setWalletFormError('Enter a valid Ethereum address (0x followed by 40 hex characters)');
+    // One address per line is the documented format, but a pasted list often
+    // arrives comma- or space-separated; an address contains neither, so
+    // splitting on any of them cannot merge or truncate one.
+    const entries = walletAddress.split(/[\s,;]+/).map((line) => line.trim()).filter(Boolean);
+    if (entries.length === 0) {
+      setWalletFormError('Enter at least one Ethereum address');
+      return;
+    }
+    const invalid = entries.filter((entry) => !ETH_ADDRESS_RE.test(entry));
+    if (invalid.length) {
+      setWalletFormError(entries.length === 1
+        ? 'Enter a valid Ethereum address (0x followed by 40 hex characters)'
+        : `Not a valid Ethereum address: ${invalid.slice(0, 3).join(', ')}${invalid.length > 3 ? ` (+${invalid.length - 3} more)` : ''}`);
       return;
     }
     setAddingWallet(true);
     setWalletFormError(null);
+    setWalletBulkResults(null);
     try {
-      await ethAPI.addWallet(address, walletLabel.trim() || undefined);
-      // The first sync runs in the background; its result surfaces on the
-      // wallet card (balance, last-synced, or an error badge).
-      showSuccess('Wallet added. Syncing on-chain history in the background.');
-      setCryptoModalOpen(false);
-      setWalletAddress('');
-      setWalletLabel('');
+      if (entries.length === 1) {
+        await ethAPI.addWallet(entries[0], walletLabel.trim() || undefined);
+        // The first sync runs in the background; its result surfaces on the
+        // wallet card (balance, last-synced, or an error badge).
+        showSuccess('Wallet added. Syncing on-chain history in the background.');
+        setCryptoModalOpen(false);
+        setWalletAddress('');
+        setWalletLabel('');
+      } else {
+        const { summary, results } = await ethAPI.addWallets(entries);
+        if (summary.added) {
+          showSuccess(`${summary.added} wallet${summary.added === 1 ? '' : 's'} added. Syncing on-chain history in the background.`);
+        }
+        if (summary.duplicate || summary.failed) {
+          // Keep the modal open on a partial result: the per-address verdicts
+          // are the only place the skipped lines are named.
+          setWalletBulkResults(results.filter((r) => r.status !== 'added'));
+        } else {
+          setCryptoModalOpen(false);
+          setWalletAddress('');
+          setWalletLabel('');
+        }
+      }
       await fetchItems();
     } catch (err) {
       setWalletFormError(err.response?.data?.error || 'Failed to add wallet');
@@ -3586,25 +3619,27 @@ const Settings = ({ user }) => {
                   </div>
                   <h2 id="crypto-modal-title" className="text-2xl font-bold text-primary mb-2 tracking-tight">Connect Crypto Wallet</h2>
                   <p className="text-sm text-secondary leading-relaxed">
-                    Paste an Ethereum address to track its balance and full transfer history via Etherscan.
+                    Paste an Ethereum address to track its balance and full transfer history via Etherscan. Paste several, one per line, to add them all at once.
                   </p>
                 </div>
 
                 <div className="space-y-4 p-5 sm:p-8 sm:pt-2">
                   <label className="block text-caption text-tertiary">
-                    Address
-                    <input
-                      type="text"
+                    {walletAddressCount > 1 ? `Addresses (${walletAddressCount})` : 'Address'}
+                    <textarea
                       value={walletAddress}
                       onChange={(event) => setWalletAddress(event.target.value)}
-                      placeholder="0x…"
+                      placeholder="0x…&#10;0x… (one per line)"
                       spellCheck={false}
                       autoComplete="off"
                       autoFocus
-                      className="mt-1 block h-11 w-full min-w-0 rounded border border-input-border bg-surface-2 px-3 font-mono text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+                      rows={walletAddressCount > 1 ? 6 : 3}
+                      className="mt-1 block w-full min-w-0 resize-y rounded border border-input-border bg-surface-2 px-3 py-2 font-mono text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
                       disabled={addingWallet}
                     />
                   </label>
+                  {/* A label names ONE wallet, so it is disabled for a pasted
+                      batch rather than applied to every address in it. */}
                   <label className="block text-caption text-tertiary">
                     Label (optional)
                     <input
@@ -3612,9 +3647,9 @@ const Settings = ({ user }) => {
                       value={walletLabel}
                       onChange={(event) => setWalletLabel(event.target.value)}
                       maxLength={100}
-                      placeholder="Cold storage"
-                      className="mt-1 block h-11 w-full min-w-0 rounded border border-input-border bg-surface-2 px-3 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
-                      disabled={addingWallet}
+                      placeholder={walletAddressCount > 1 ? 'Not used when adding several addresses' : 'Cold storage'}
+                      className="mt-1 block h-11 w-full min-w-0 rounded border border-input-border bg-surface-2 px-3 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent disabled:opacity-40"
+                      disabled={addingWallet || walletAddressCount > 1}
                     />
                   </label>
 
@@ -3622,6 +3657,18 @@ const Settings = ({ user }) => {
                     <div role="alert" className="flex items-start gap-2 rounded border border-loss/20 bg-loss/5 p-3 text-caption text-loss">
                       <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                       <span>{walletFormError}</span>
+                    </div>
+                  )}
+
+                  {walletBulkResults?.length > 0 && (
+                    <div role="alert" className="space-y-1 rounded border border-border bg-surface-2 p-3 text-caption text-tertiary">
+                      <p className="text-secondary">These addresses were not added:</p>
+                      {walletBulkResults.map((result) => (
+                        <p key={result.address} className="flex flex-wrap items-baseline gap-2">
+                          <span className="font-mono text-primary">{result.address}</span>
+                          <span>{result.error}</span>
+                        </p>
+                      ))}
                     </div>
                   )}
 
@@ -3644,7 +3691,7 @@ const Settings = ({ user }) => {
                     className="flex-1 inline-flex items-center justify-center gap-2 py-4 bg-crypto-bg-hover text-crypto border border-crypto-border rounded text-xs font-bold uppercase tracking-wider hover:bg-crypto-bg-strong hover:text-crypto-hover transition-all disabled:opacity-40"
                   >
                     {addingWallet ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
-                    Track Wallet
+                    {walletAddressCount > 1 ? `Track ${walletAddressCount} Wallets` : 'Track Wallet'}
                   </button>
                 </div>
               </form>
