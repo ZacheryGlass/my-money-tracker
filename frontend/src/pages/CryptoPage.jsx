@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -11,6 +11,7 @@ import {
   holdings as holdingsAPI,
   history as historyApi,
   eth as ethAPI,
+  exchanges as exchangesAPI,
   crypto as cryptoAPI,
 } from '../utils/api';
 import { formatCurrency, formatRelativeTime, shortEthAddress } from '../utils/format';
@@ -25,6 +26,10 @@ import MetricCard from '../components/MetricCard';
 import FilterTabs from '../components/FilterTabs';
 import OnChainActivity, { EthWalletBadge } from '../components/OnChainActivity';
 import SummaryStats from '../components/SummaryStats';
+import WalletsPanel from '../components/crypto/WalletsPanel';
+import ExchangesPanel from '../components/crypto/ExchangesPanel';
+import ReviewPanel, { SPAM_PAGE_SIZE, SPAM_MAX_LIMIT } from '../components/crypto/ReviewPanel';
+import LabelsPanel from '../components/crypto/LabelsPanel';
 import useTransientMessage from '../hooks/useTransientMessage';
 
 const getHoldingValue = (holding) => parseFloat(holding.current_value ?? holding.manual_value ?? 0) || 0;
@@ -39,7 +44,19 @@ const formatEthQuantity = (quantity) =>
 const OVERVIEW_TAB = 'crypto';
 const HOLDINGS_TAB = 'crypto-holdings';
 const TRANSACTIONS_TAB = 'crypto-transactions';
-const CRYPTO_TAB_IDS = [OVERVIEW_TAB, HOLDINGS_TAB, TRANSACTIONS_TAB];
+// The management tabs, moved off Settings with #75: a wallet, an exchange
+// account, a counterparty verdict and an ignored token are all crypto data, and
+// living under Settings put each of them several clicks from the feed it
+// changes. The Ethereum tab's five stacked sections became three tabs on the
+// split that already existed between them -- what is tracked (Wallets), what
+// needs a decision (Review), and the reference lists those decisions write
+// (Labels).
+const WALLETS_TAB = 'crypto-wallets';
+const EXCHANGES_TAB = 'crypto-exchanges';
+const REVIEW_TAB = 'crypto-review';
+const LABELS_TAB = 'crypto-labels';
+const MANAGE_TAB_IDS = [WALLETS_TAB, EXCHANGES_TAB, REVIEW_TAB, LABELS_TAB];
+const CRYPTO_TAB_IDS = [OVERVIEW_TAB, HOLDINGS_TAB, TRANSACTIONS_TAB, ...MANAGE_TAB_IDS];
 
 // Inside the Transactions tab. The unified ledger (#63) is the tab -- one
 // chronological line per EVENT across wallets, chains and exchange accounts.
@@ -52,7 +69,7 @@ const TRANSFERS_VIEW = 'transfers';
 // Sentinel for "sync every wallet"; real wallet ids are >= 1.
 const SYNC_ALL = 'all';
 
-const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
+const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange }) => {
   const [wallets, setWallets] = useState([]);
   const [holdings, setHoldings] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -75,6 +92,39 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
   // selected wallet, which a sync does not change, so without this the rows
   // sitting right under the Sync button would stay stale.
   const [syncNonce, setSyncNonce] = useState(0);
+
+  // Everything the four management tabs read. Fetched separately from the page
+  // data and only once a management tab is opened: none of it is needed to
+  // render Overview, Holdings or the ledger, and six extra requests on every
+  // landing would be paid by the users who never manage anything.
+  const [ignoredTokens, setIgnoredTokens] = useState([]);
+  const [addressLabels, setAddressLabels] = useState([]);
+  // null = not loaded or the fetch failed; [] = loaded and genuinely empty.
+  // The distinction matters: never claim "all clear" on a failed request.
+  const [counterpartyData, setCounterpartyData] = useState(null);
+  // Quarantined spam (#74), same rule as counterpartyData: "nothing was hidden"
+  // must never be the way a failed request looks, because the whole promise of
+  // a quarantine is that it says what it swallowed.
+  const [spamActivity, setSpamActivity] = useState(null);
+  const [exchangeAccounts, setExchangeAccounts] = useState([]);
+  // Loaded-and-empty and failed-to-load must not look alike: "No Exchange
+  // Accounts" after a failed request invites the user to add one they already
+  // have, and hides the imports they made.
+  const [exchangeLoadFailed, setExchangeLoadFailed] = useState(false);
+  // What each venue's credential form should ask for, and which read-only
+  // permissions to grant. Served by the API rather than hardcoded so the
+  // guidance cannot drift from the connector that depends on it.
+  const [credentialFields, setCredentialFields] = useState({});
+  const [exchangeEncryptionConfigured, setExchangeEncryptionConfigured] = useState(true);
+  const [manageLoaded, setManageLoaded] = useState(false);
+  // How many pages of the quarantine are currently on screen. A REF, not state:
+  // fetchManageData reads it, and putting it in that useCallback's deps would
+  // make "show more" refetch every management list instead of one.
+  //
+  // It also has to survive the refetch that follows a "Not spam" click, the
+  // only surface with that button: a wave that buried a real transaction at
+  // row 200 must not spring back to row 50 when something above it is rescued.
+  const spamPagesRef = useRef(1);
 
   const fetchData = async () => {
     try {
@@ -100,6 +150,44 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
 
   useEffect(() => { fetchData(); }, []);
 
+  // Each list degrades on its own: a failed labels request must not blank the
+  // exchange accounts beside it, and the two nullable ones say so themselves.
+  const fetchManageData = useCallback(async () => {
+    const [ignoredResult, labelsResult, counterpartyResult, spamResult, exchangeResult] = await Promise.all([
+      ethAPI.getIgnoredTokens().catch(() => null),
+      ethAPI.getAddressLabels().catch(() => null),
+      ethAPI.getUnreviewedCounterparties().catch(() => null),
+      // Paged, not capped: the first page is all anyone usually needs, and
+      // "Show more" walks the rest. summary.spam_count is the honest total and
+      // the header renders it, not the array's length.
+      ethAPI.getActivity({
+        spam: 'only',
+        limit: Math.min(SPAM_PAGE_SIZE * spamPagesRef.current, SPAM_MAX_LIMIT),
+      }).catch(() => null),
+      exchangesAPI.getAll().catch(() => null),
+    ]);
+    setIgnoredTokens(ignoredResult?.tokens || []);
+    setAddressLabels(labelsResult?.labels || []);
+    setCounterpartyData(counterpartyResult || null);
+    setSpamActivity(spamResult || null);
+    setExchangeAccounts(exchangeResult?.accounts || []);
+    setExchangeLoadFailed(!exchangeResult);
+    setCredentialFields(exchangeResult?.credential_fields || {});
+    // Only treated as unavailable on a response that actually said so: a
+    // failed request must not read as "the server cannot store keys".
+    setExchangeEncryptionConfigured(exchangeResult ? exchangeResult.encryption_configured !== false : true);
+    setManageLoaded(true);
+  }, []);
+
+  // A management action changes both halves -- labelling an address rewrites
+  // the ledger behind it, ignoring a token drops holdings -- so both refetch.
+  const handleManageChanged = useCallback(async () => {
+    await Promise.all([fetchData(), fetchManageData()]);
+    // The ledger and the transfer feed are keyed on this: a label write
+    // reclassifies rows they are already showing.
+    setSyncNonce((nonce) => nonce + 1);
+  }, [fetchManageData]);
+
   const cryptoAccounts = useMemo(
     () => accounts.filter((account) => account.type === 'crypto'),
     [accounts]
@@ -111,6 +199,12 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
   const cryptoHoldings = useMemo(
     () => holdings.filter((holding) => holding.account_type === 'crypto'),
     [holdings]
+  );
+  // Wallet-backed accounts are rebuilt by every sync, so a manual holding can
+  // only go in an account the user made themselves.
+  const manualCryptoAccounts = useMemo(
+    () => cryptoAccounts.filter((account) => !account.eth_wallet_id),
+    [cryptoAccounts]
   );
   const cryptoHistory = useMemo(
     () => historyRows.filter((row) => cryptoAccountIds.has(row.account_id)),
@@ -158,6 +252,31 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
 
   const erroredWallets = useMemo(() => wallets.filter((wallet) => wallet.error_code), [wallets]);
 
+  // A wallet whose ETH ledger does not reproduce the chain's balance counts
+  // here too, but only ONCE even when it also carries a sync error -- the two
+  // are the same wallet asking for the same look. Token drift deliberately does
+  // not count: rebasing and fee-on-transfer contracts drift with no missed
+  // transfer behind it, so badging them would pin the number above zero for
+  // anyone who ever held one.
+  const walletAttentionCount = useMemo(
+    () => wallets.filter((wallet) => wallet.error_code || wallet.reconciliation?.needs_review).length,
+    [wallets]
+  );
+  // Material only, deliberately. A badge that cannot reach zero -- because a
+  // single airdrop wave parked 40 dust counterparties behind it -- teaches the
+  // user to ignore the badge.
+  const reviewAttentionCount = counterpartyData?.summary?.count || 0;
+  const exchangeAttentionCount = useMemo(
+    () => exchangeAccounts.reduce((sum, account) => sum + (account.needs_review_count || 0), 0),
+    [exchangeAccounts]
+  );
+
+  // Typeahead for the triage form keeps every exchange name, builtins included.
+  const exchangeNameOptions = useMemo(
+    () => [...new Set(addressLabels.filter((l) => !l.kind || l.kind === 'exchange').map((l) => l.name))],
+    [addressLabels]
+  );
+
   // Falls back to Overview for an unknown tab, and for Transactions when there
   // are no wallets to show -- covers a bookmarked /crypto/transactions after
   // the last wallet is disconnected. Everything downstream reads activeTab,
@@ -170,11 +289,20 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
   // The ledger spans wallets AND exchange accounts, so the tab exists whenever
   // either has anything in it.
   const hasLedger = wallets.length > 0 || (ledgerSummary?.total || 0) > 0;
+  const isEmpty = wallets.length === 0 && cryptoAccounts.length === 0 && !hasLedger;
 
+  // Transactions falls back to Overview when there is no ledger, which covers a
+  // bookmarked /crypto/transactions after the last wallet is disconnected.
+  // Every other tab always exists -- a condition here that depends on data
+  // arriving later would fall back on the first, still-loading render and mount
+  // Overview permanently, since tab bodies are mounted once and then hidden.
   const activeTab = CRYPTO_TAB_IDS.includes(tab)
     && (tab !== TRANSACTIONS_TAB || hasLedger)
     ? tab
     : OVERVIEW_TAB;
+  // Set by the Overview empty state and the failed-sync banner, which point at
+  // a management tab rather than at Settings now that both live here.
+  const goToTab = (id) => onTabChange?.(id);
 
   // Tab bodies are hidden with CSS, never unmounted: unmounting OnChainActivity
   // would throw away its accumulated Load More pages, transfer-type filter and
@@ -189,6 +317,14 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
   // cleared on the next attempt, so without this a sync failure would follow
   // the user onto every other tab.
   useEffect(() => { setError(null); }, [activeTab]);
+
+  // The management lists load the first time one of their tabs is opened, and
+  // once only -- every later refresh runs through handleManageChanged, which is
+  // tied to an action rather than to arriving on a tab.
+  useEffect(() => {
+    if (manageLoaded || !MANAGE_TAB_IDS.includes(activeTab)) return;
+    fetchManageData();
+  }, [activeTab, manageLoaded, fetchManageData]);
 
   const handleSync = async (walletId) => {
     if (syncingWalletId) return;
@@ -333,8 +469,6 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
     return <LoadingState label="Loading Crypto" />;
   }
 
-  const isEmpty = wallets.length === 0 && cryptoAccounts.length === 0 && !hasLedger;
-
   const countBadge = (count, tone) => (
     <span className={`ml-1 rounded border px-1.5 py-0.5 text-[10px] font-bold ${tone}`}>{count}</span>
   );
@@ -365,6 +499,30 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
           ? countBadge(needsReviewCount, 'border-orange-500/30 bg-orange-500/10 text-orange-400')
           : null,
     }] : []),
+    // The management tabs are always offered, empty portfolio included: adding
+    // the first wallet or exchange account is what they are for.
+    {
+      value: WALLETS_TAB,
+      label: 'Wallets',
+      badge: walletAttentionCount > 0
+        ? countBadge(walletAttentionCount, 'border-loss/20 bg-loss/10 text-loss')
+        : null,
+    },
+    {
+      value: EXCHANGES_TAB,
+      label: 'Exchanges',
+      badge: exchangeAttentionCount > 0
+        ? countBadge(exchangeAttentionCount, 'border-loss/20 bg-loss/10 text-loss')
+        : null,
+    },
+    {
+      value: REVIEW_TAB,
+      label: 'Review',
+      badge: reviewAttentionCount > 0
+        ? countBadge(reviewAttentionCount, 'border-orange-500/30 bg-orange-500/10 text-orange-400')
+        : null,
+    },
+    { value: LABELS_TAB, label: 'Labels' },
   ];
 
   // Body wrapper: mounted once visited, then hidden rather than unmounted.
@@ -397,16 +555,16 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
       {/* Header -> tabs -> banners, following BalancesPage. The banners are
           transient (useTransientMessage clears after 3s); above the strip they
           would jump the tab bar vertically as they come and go. */}
-      {!isEmpty && tabOptions.length >= 2 && (
-        <FilterTabs
-          id="crypto-section"
-          label="Section"
-          className="mb-6"
-          options={tabOptions}
-          value={activeTab}
-          onChange={(id) => onTabChange?.(id)}
-        />
-      )}
+      {/* Always rendered, empty portfolio included: the management tabs are how
+          the first wallet or exchange account gets added. */}
+      <FilterTabs
+        id="crypto-section"
+        label="Section"
+        className="mb-6"
+        options={tabOptions}
+        value={activeTab}
+        onChange={goToTab}
+      />
 
       {successMessage && (
         <div className="mb-4 border border-gain/20 bg-gain-bg p-3 text-body-sm text-gain">
@@ -419,25 +577,25 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
         </div>
       )}
 
-      {isEmpty ? (
-        <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
-          <Wallet size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
-          <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Crypto Tracked</h3>
-          <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed mb-5">
-            Connect an Ethereum wallet from Settings to pull its balance and full transfer
-            history, or add a manual crypto account.
-          </p>
-          <button
-            onClick={() => onNavigate('settings', { tab: 'ethereum' })}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-crypto bg-crypto-bg border border-crypto-border hover:bg-crypto-bg-hover hover:text-crypto-hover transition-all"
-          >
-            <Wallet size={14} />
-            Connect Crypto
-          </button>
-        </div>
-      ) : (
-        <>
-          {tabBody(OVERVIEW_TAB, (
+      <>
+          {tabBody(OVERVIEW_TAB, isEmpty ? (
+            <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
+              <Wallet size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
+              <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Crypto Tracked</h3>
+              <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed mb-5">
+                Track an Ethereum wallet to pull its balance and full transfer history, add an
+                exchange account for activity that never touched a wallet, or add a manual crypto
+                account.
+              </p>
+              <button
+                onClick={() => goToTab(WALLETS_TAB)}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-crypto bg-crypto-bg border border-crypto-border hover:bg-crypto-bg-hover hover:text-crypto-hover transition-all"
+              >
+                <Wallet size={14} />
+                Connect Crypto
+              </button>
+            </div>
+          ) : (
             <>
               <div className="grid grid-cols-1 gap-px bg-border sm:grid-cols-2 xl:grid-cols-4">
                 <MetricCard compact label="Total Value" value={formatCurrency(totalCryptoValue)} valueColor="accent" icon={Coins} />
@@ -486,7 +644,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
                 </div>
                 {/* The only route to holdingsAPI.create on this page: row
                     clicks open the edit form and bail on sync-managed rows, and
-                    Balances no longer lists crypto accounts at all. */}
+                    Balances no longer lists crypto accounts at all. Hidden when
+                    there is no manual crypto account to add to -- the form's
+                    account select would open empty. */}
+                {manualCryptoAccounts.length > 0 && (
                 <button
                   onClick={handleAdd}
                   className="inline-flex h-8 items-center gap-2 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:border-accent hover:text-accent"
@@ -494,6 +655,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
                   <Plus size={12} />
                   Add Holding
                 </button>
+                )}
               </div>
 
               <DataTable
@@ -590,7 +752,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
 
               {/* One line, not one banner per wallet: in the default all-wallets
                   view a stack of these would push the feed off the screen. The
-                  full message per wallet already lives in Settings. */}
+                  full message per wallet is on the Wallets tab. */}
               {erroredWallets.length > 0 && (
                 <div className="mb-4 flex flex-wrap items-center gap-2 border border-loss/20 bg-loss/5 p-2 text-body-sm text-loss">
                   <AlertTriangle size={14} className="shrink-0" />
@@ -599,7 +761,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
                     their last sync — this feed may be incomplete.
                   </span>
                   <button
-                    onClick={() => onNavigate('settings', { tab: 'ethereum' })}
+                    onClick={() => goToTab(WALLETS_TAB)}
                     className="underline hover:text-primary"
                   >
                     View details
@@ -623,8 +785,53 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
               )}
             </section>
           ))}
-        </>
-      )}
+
+          {tabBody(WALLETS_TAB, (
+            <WalletsPanel
+              wallets={wallets}
+              onChanged={handleManageChanged}
+              onError={setError}
+              showSuccess={showSuccess}
+            />
+          ))}
+
+          {tabBody(EXCHANGES_TAB, (
+            <ExchangesPanel
+              accounts={exchangeAccounts}
+              loadFailed={exchangeLoadFailed}
+              credentialFields={credentialFields}
+              encryptionConfigured={exchangeEncryptionConfigured}
+              onChanged={handleManageChanged}
+              onError={setError}
+              showSuccess={showSuccess}
+              onRetry={fetchManageData}
+            />
+          ))}
+
+          {tabBody(REVIEW_TAB, (
+            <ReviewPanel
+              counterpartyData={counterpartyData}
+              spamActivity={spamActivity}
+              onSpamPageLoaded={(next) => { spamPagesRef.current += 1; setSpamActivity(next); }}
+              exchangeNameOptions={exchangeNameOptions}
+              hasWallets={wallets.length > 0}
+              onChanged={handleManageChanged}
+              onError={setError}
+              showSuccess={showSuccess}
+              onRetry={fetchManageData}
+            />
+          ))}
+
+          {tabBody(LABELS_TAB, (
+            <LabelsPanel
+              addressLabels={addressLabels}
+              ignoredTokens={ignoredTokens}
+              onChanged={handleManageChanged}
+              onError={setError}
+              showSuccess={showSuccess}
+            />
+          ))}
+      </>
 
       <HoldingForm
         isOpen={isFormOpen}
@@ -632,7 +839,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onNavigate }) => {
         onSave={handleSave}
         onDelete={handleDelete}
         holding={editingHolding}
-        accounts={cryptoAccounts.filter((account) => !account.eth_wallet_id)}
+        accounts={manualCryptoAccounts}
       />
     </div>
   );

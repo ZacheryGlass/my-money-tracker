@@ -1,21 +1,16 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import Settings from './Settings';
+import CryptoPage from './CryptoPage';
 import { exchanges as exchangesAPI } from '../utils/api';
 
-// Plaid Link injects a remote script; the Settings page only needs it to exist.
-vi.mock('react-plaid-link', () => ({
-  usePlaidLink: () => ({ open: vi.fn(), ready: false }),
-}));
-
 vi.mock('../utils/api', () => ({
-  plaid: { getItems: vi.fn().mockResolvedValue({ items: [] }) },
   accounts: { getAll: vi.fn().mockResolvedValue({ accounts: [] }) },
-  holdings: { getAll: vi.fn() },
-  history: { getPortfolio: vi.fn() },
-  exportData: { downloadHoldings: vi.fn(), downloadHistory: vi.fn() },
-  keys: { getAll: vi.fn().mockResolvedValue(null) },
-  admin: { getOverview: vi.fn() },
+  holdings: { getAll: vi.fn().mockResolvedValue({ holdings: [] }) },
+  history: { getAccounts: vi.fn().mockResolvedValue({ data: [] }) },
+  crypto: {
+    getLedger: vi.fn().mockResolvedValue({ data: [], pagination: { total: 0 } }),
+    getLedgerSummary: vi.fn().mockResolvedValue({ summary: { total: 0, needs_review_count: 0 } }),
+    ledgerExportUrl: vi.fn(),
+  },
   eth: {
     getWallets: vi.fn().mockResolvedValue({ wallets: [] }),
     getIgnoredTokens: vi.fn().mockResolvedValue({ tokens: [] }),
@@ -101,16 +96,11 @@ const FLAGGED = [
   },
 ];
 
+// Exchange accounts live on the Crypto page's Exchanges tab (#75); App routes
+// /crypto/exchanges to it, which is what the `tab` prop stands in for here.
 const renderSettings = async () => {
-  render(
-    <MemoryRouter>
-      <Settings user={{ id: 1, username: 'tester' }} />
-    </MemoryRouter>
-  );
-  // The tab strip only appears once the initial fetch settles.
-  const tab = await screen.findByRole('tab', { name: /Exchanges/ });
-  fireEvent.click(tab);
-  return tab;
+  render(<CryptoPage tab="crypto-exchanges" onTabChange={vi.fn()} />);
+  return screen.findByRole('tab', { name: /Exchanges/ });
 };
 
 beforeEach(() => {
@@ -120,7 +110,7 @@ beforeEach(() => {
   exchangesAPI.resolveRecord.mockResolvedValue({ record: { id: 11, needs_review: false } });
 });
 
-describe('Settings -> Exchanges tab', () => {
+describe('Crypto -> Exchanges tab', () => {
   it('lists each account with its record count and last import', async () => {
     await renderSettings();
 

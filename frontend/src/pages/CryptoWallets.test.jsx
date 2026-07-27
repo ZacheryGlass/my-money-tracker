@@ -1,0 +1,332 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import CryptoPage from './CryptoPage';
+
+// The on-chain balance audit as the user meets it (#62). Sync starts at block 0,
+// so a nonzero ETH delta can only mean a movement was never recorded -- these
+// tests are about that reading loudly, a token delta reading plainly with its
+// contract named, and an unchecked asset never reading as a pass.
+
+const apiMocks = vi.hoisted(() => ({
+  accounts: { getAll: vi.fn() },
+  holdings: { getAll: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
+  history: { getAccounts: vi.fn() },
+  crypto: { getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn() },
+  eth: {
+    addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), syncWallet: vi.fn(), removeWallet: vi.fn(),
+    getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
+    getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
+    getUnreviewedCounterparties: vi.fn(), getReconciliation: vi.fn(),
+    getActivity: vi.fn(), setActivitySpam: vi.fn(),
+  },
+  exchanges: {
+    getAll: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(),
+    importCsv: vi.fn(), getRecords: vi.fn(), resolveRecord: vi.fn(),
+  },
+}));
+
+vi.mock('../utils/api', () => ({
+  accounts: apiMocks.accounts,
+  holdings: apiMocks.holdings,
+  history: apiMocks.history,
+  crypto: apiMocks.crypto,
+  eth: apiMocks.eth,
+  exchanges: apiMocks.exchanges,
+}));
+
+const ONE_ETH = '1000000000000000000';
+const DAI = '0x6b175474e89094c44da98b954eedeac495271d0f';
+
+const wallet = (reconciliation) => ({
+  id: 1,
+  address: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+  label: 'Main',
+  last_synced_at: new Date().toISOString(),
+  error_code: null,
+  eth_quantity: '2',
+  account: null,
+  chains: [
+    { chain_id: 1, name: 'Ethereum', enabled: true, unsupported_feeds: [], error_code: null },
+    { chain_id: 42161, name: 'Arbitrum One', enabled: true, unsupported_feeds: [], error_code: null },
+  ],
+  reconciliation,
+});
+
+const report = (overrides = {}) => ({
+  checked_at: new Date().toISOString(),
+  assets_checked: 2,
+  matched: 2,
+  dust: 0,
+  mismatched: 0,
+  native_mismatches: 0,
+  skipped: 0,
+  unavailable: 0,
+  needs_review: false,
+  issues: [],
+  truncated: false,
+  ...overrides,
+});
+
+describe('Crypto -> Wallets tab', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMocks.eth.getWallets.mockResolvedValue({ wallets: [] });
+    apiMocks.eth.getIgnoredTokens.mockResolvedValue({ tokens: [] });
+    apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
+    apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
+      data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 },
+    });
+    apiMocks.eth.getActivity.mockResolvedValue({
+      data: [], summary: { spam_count: 0, needs_review_count: 0 }, pagination: { total: 0 },
+    });
+    apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [] });
+    apiMocks.holdings.getAll.mockResolvedValue({ holdings: [] });
+    apiMocks.history.getAccounts.mockResolvedValue({ data: [] });
+    apiMocks.crypto.getLedgerSummary.mockResolvedValue({ summary: { total: 0, needs_review_count: 0 } });
+    apiMocks.crypto.getLedger.mockResolvedValue({ data: [], pagination: { total: 0 } });
+  });
+
+  const openEthereumTab = async (wallets) => {
+    apiMocks.eth.getWallets.mockResolvedValue({ wallets });
+    render(<CryptoPage tab="crypto-wallets" onTabChange={vi.fn()} />);
+    await screen.findByText('Ethereum Wallets');
+  };
+
+  // The on-chain balance audit as the user meets it (#62). Sync starts at
+  // block 0, so a nonzero ETH delta can only mean a movement was never
+  // recorded.
+  it('states plainly when the ledger reproduces the chain', async () => {
+    await openEthereumTab([wallet(report())]);
+    expect(await screen.findByText(/ledger matches the chain across 2 of 2 assets/i)).toBeInTheDocument();
+  });
+
+  it('raises an alert when the derived ETH balance is short', async () => {
+    await openEthereumTab([wallet(report({
+      mismatched: 1,
+      native_mismatches: 1,
+      matched: 1,
+      needs_review: true,
+      issues: [{
+        id: 1, chain_id: 1, asset_key: 'ETH', asset_type: 'native', token_symbol: 'ETH',
+        token_decimals: 18, derived_units: '2000000000000000000', live_units: '3000000000000000000',
+        delta_units: '-1000000000000000000', status: 'mismatch', skip_reason: null,
+      }],
+    }))]);
+
+    expect(await screen.findByText(/ETH unaccounted for/i)).toBeInTheDocument();
+    // The chain and the size of the hole, not just "something is wrong".
+    expect(screen.getByText(/Ethereum: ledger is -1 ETH off/)).toBeInTheDocument();
+  });
+
+  it('counts a drifting wallet in the Wallets tab badge', async () => {
+    await openEthereumTab([wallet(report({
+      mismatched: 1, native_mismatches: 1, needs_review: true,
+      issues: [{
+        id: 1, chain_id: 1, asset_key: 'ETH', asset_type: 'native', token_symbol: 'ETH',
+        token_decimals: 18, derived_units: '0', live_units: ONE_ETH,
+        delta_units: `-${ONE_ETH}`, status: 'mismatch', skip_reason: null,
+      }],
+    }))]);
+
+    // The tab carries the attention count; a silent drift would defeat the
+    // point of auditing at all.
+    const tab = await screen.findByRole('tab', { name: /Wallets/ });
+    await waitFor(() => expect(within(tab).getByText('1')).toBeInTheDocument());
+  });
+
+  it('names the offending contract on a token mismatch rather than a bare number', async () => {
+    await openEthereumTab([wallet(report({
+      mismatched: 1, native_mismatches: 0, matched: 1,
+      issues: [{
+        id: 2, chain_id: 42161, asset_key: DAI, asset_type: 'token', token_symbol: 'DAI',
+        token_decimals: 18, derived_units: '2000000000000000000', live_units: ONE_ETH,
+        delta_units: ONE_ETH, status: 'mismatch', skip_reason: null,
+      }],
+    }))]);
+
+    expect(await screen.findByText(/Token balances that do not add up/i)).toBeInTheDocument();
+    // Four contracts can call themselves DAI; the symbol alone is unactionable.
+    expect(screen.getByTitle(DAI)).toBeInTheDocument();
+    expect(screen.getByText(/on Arbitrum One is 1 off/)).toBeInTheDocument();
+  });
+
+  it('does not badge the tab for token drift alone', async () => {
+    await openEthereumTab([wallet(report({
+      mismatched: 1, native_mismatches: 0, needs_review: false,
+      issues: [{
+        id: 2, chain_id: 1, asset_key: DAI, asset_type: 'token', token_symbol: 'DAI',
+        token_decimals: 18, derived_units: '2000000000000000000', live_units: ONE_ETH,
+        delta_units: ONE_ETH, status: 'mismatch', skip_reason: null,
+      }],
+    }))]);
+
+    // Rebasing and fee-on-transfer contracts drift with no missed transfer
+    // behind them; badging those pins the count above zero permanently, and a
+    // badge that cannot reach zero gets ignored -- taking the ETH signal with it.
+    await screen.findByText(/Token balances that do not add up/i);
+    const tab = screen.getByRole('tab', { name: /Wallets/ });
+    expect(within(tab).queryByText('1')).toBeNull();
+  });
+
+  it('says what it could not check instead of implying everything passed', async () => {
+    await openEthereumTab([wallet(report({
+      assets_checked: 2, matched: 1, mismatched: 0, skipped: 1,
+      issues: [{
+        id: 3, chain_id: 42161, asset_key: 'ETH', asset_type: 'native', token_symbol: 'ETH',
+        token_decimals: 18, derived_units: '0', live_units: null,
+        delta_units: null, status: 'skipped', skip_reason: 'feed_gap',
+      }],
+    }))]);
+
+    expect(await screen.findByText(/Not checked this run/i)).toBeInTheDocument();
+    expect(screen.getByText(/a data feed this chain could not serve/i)).toBeInTheDocument();
+    // The positive line still appears, but it reports 1 of 2 rather than a
+    // clean bill of health -- a partial audit must count itself honestly, and
+    // both numbers being on screen is what makes the gap legible.
+    expect(screen.getByText(/ledger matches the chain across/i).textContent.replace(/\s+/g, ' '))
+      .toMatch(/across 1 of 2 assets/);
+  });
+
+  it('renders nothing for a wallet that has never been audited', async () => {
+    // Never audited and audited-clean are different claims; a wallet added
+    // moments ago must not appear to have passed.
+    await openEthereumTab([wallet(null)]);
+    await screen.findByText('Ethereum Wallets');
+    expect(screen.queryByText(/ledger matches the chain/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ETH unaccounted for/i)).not.toBeInTheDocument();
+  });
+  // Per-chain sync state (039). The wallet badge carries transient failures
+  // only, so a standing gap has to be reported here or not at all.
+  const CHAIN_WALLET = {
+    id: 1,
+    address: '0xaaaa000000000000000000000000000000000001',
+    label: 'Main',
+    account: null,
+    error_code: null,
+    reconciliation: null,
+  };
+
+  it('shows per-chain state, including gaps the wallet badge deliberately omits', async () => {
+    await openEthereumTab([{
+      ...CHAIN_WALLET,
+      chains: [
+        { chain_id: 1, name: 'Ethereum', enabled: true, error_code: null, unsupported_feeds: [], last_synced_at: '2026-07-26T09:00:00Z' },
+        { chain_id: 42161, name: 'Arbitrum One', enabled: true, error_code: 'FEED_UNSUPPORTED', error_message: 'internal unavailable on Arbitrum One; derived balances there may drift', unsupported_feeds: ['internal'], last_synced_at: '2026-07-26T09:00:00Z' },
+        { chain_id: 8453, name: 'Base', enabled: false, error_code: null, unsupported_feeds: [], last_synced_at: null },
+      ],
+    }]);
+
+    expect(await screen.findByText('Arbitrum One')).toBeInTheDocument();
+    // The gap is named, not just flagged: "no internal" is what tells the user
+    // (and #62) which derived numbers may drift.
+    expect(screen.getByText('no internal')).toBeInTheDocument();
+    // A switched-off chain reads as off while keeping its row -- disabling
+    // stops the sync, it does not delete history.
+    expect(screen.getByText('Base')).toBeInTheDocument();
+    expect(screen.getByText('off')).toBeInTheDocument();
+    // And none of this touches the wallet-level attention badge.
+    const tab = screen.getByRole('tab', { name: /Wallets/ });
+    expect(within(tab).queryByText('1')).toBeNull();
+  });
+
+  it('shows a single chain\u2019s standing gap, which a chain-count gate hid entirely', async () => {
+    // ETH_CHAINS=1 (or any wallet down to one chain) still has to report a
+    // feed its key cannot serve: the wallet badge deliberately omits standing
+    // gaps, so gating the strip on "more than one chain" made the only
+    // surface that reports them disappear.
+    await openEthereumTab([{
+      ...CHAIN_WALLET,
+      chains: [
+        { chain_id: 1, name: 'Ethereum', enabled: true, error_code: 'FEED_UNSUPPORTED', error_message: 'internal unavailable on Ethereum; derived balances there may drift', unsupported_feeds: ['internal'], last_synced_at: '2026-07-26T09:00:00Z' },
+      ],
+    }]);
+
+    expect(await screen.findByText('no internal')).toBeInTheDocument();
+  });
+
+  it('stays quiet for a single healthy chain', async () => {
+    // Nothing to say: one chain, no gap, no error. The strip would just be
+    // a permanent "Ethereum" chip.
+    await openEthereumTab([{
+      ...CHAIN_WALLET,
+      chains: [
+        { chain_id: 1, name: 'Ethereum', enabled: true, error_code: null, unsupported_feeds: [], last_synced_at: '2026-07-26T09:00:00Z' },
+      ],
+    }]);
+
+    // The wallet card is rendered; the chain strip inside it is not.
+    await screen.findByRole('button', { name: /sync/i });
+    expect(screen.queryByText('Ethereum', { selector: 'span' })).toBeNull();
+  });
+
+  // Adding wallets. One textbox takes a pasted list, one address per line.
+  describe('connect crypto wallet', () => {
+    const openWalletModal = async () => {
+      await openEthereumTab([]);
+      fireEvent.click(await screen.findByRole('button', { name: /connect crypto/i }));
+      return screen.findByPlaceholderText(/one per line/i);
+    };
+
+    it('sends a pasted list through the bulk endpoint', async () => {
+      apiMocks.eth.addWallets.mockResolvedValue({
+        summary: { added: 2, duplicate: 0, failed: 0 },
+        results: [],
+      });
+      const input = await openWalletModal();
+
+      fireEvent.change(input, {
+        target: { value: `0x${'1'.repeat(40)}\n0x${'2'.repeat(40)}\n` },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /track 2 wallets/i }));
+
+      await waitFor(() => expect(apiMocks.eth.addWallets).toHaveBeenCalledWith([
+        `0x${'1'.repeat(40)}`,
+        `0x${'2'.repeat(40)}`,
+      ]));
+      expect(apiMocks.eth.addWallet).not.toHaveBeenCalled();
+    });
+
+    // A single address keeps the original one-shot path, label included --
+    // the bulk endpoint takes no labels.
+    it('keeps the single-address path on the single-add endpoint', async () => {
+      apiMocks.eth.addWallet.mockResolvedValue({});
+      const input = await openWalletModal();
+
+      fireEvent.change(input, { target: { value: `  0x${'3'.repeat(40)}  ` } });
+      fireEvent.click(screen.getByRole('button', { name: /^track wallet$/i }));
+
+      await waitFor(() => expect(apiMocks.eth.addWallet).toHaveBeenCalledWith(`0x${'3'.repeat(40)}`, undefined));
+      expect(apiMocks.eth.addWallets).not.toHaveBeenCalled();
+    });
+
+    // A typo must name itself rather than be dropped from the batch.
+    it('refuses the batch and names the malformed line', async () => {
+      const input = await openWalletModal();
+
+      fireEvent.change(input, { target: { value: `0x${'1'.repeat(40)}\nnope` } });
+      fireEvent.click(screen.getByRole('button', { name: /track 2 wallets/i }));
+
+      expect(await screen.findByText(/not a valid ethereum address: nope/i)).toBeInTheDocument();
+      expect(apiMocks.eth.addWallets).not.toHaveBeenCalled();
+    });
+
+    // Anything the server refused is reported per address, not summarized away.
+    it('lists the addresses the server did not add', async () => {
+      apiMocks.eth.addWallets.mockResolvedValue({
+        summary: { added: 1, duplicate: 1, failed: 0 },
+        results: [
+          { address: `0x${'1'.repeat(40)}`, status: 'added' },
+          { address: `0x${'2'.repeat(40)}`, status: 'duplicate', error: 'That address is already tracked' },
+        ],
+      });
+      const input = await openWalletModal();
+
+      fireEvent.change(input, { target: { value: `0x${'1'.repeat(40)}\n0x${'2'.repeat(40)}` } });
+      fireEvent.click(screen.getByRole('button', { name: /track 2 wallets/i }));
+
+      expect(await screen.findByText(/already tracked/i)).toBeInTheDocument();
+      expect(screen.getByText(`0x${'2'.repeat(40)}`)).toBeInTheDocument();
+    });
+  });
+});

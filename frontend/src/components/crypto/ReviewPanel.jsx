@@ -1,0 +1,586 @@
+import React, { useState } from 'react';
+import { AlertTriangle, Check, ChevronDown, EyeOff, Plus, RefreshCw, Tag, Undo2, Wallet } from 'lucide-react';
+import { eth as ethAPI } from '../../utils/api';
+import {
+  formatCompactCurrency, formatDateDisplay, formatRelativeTime,
+  shortEthAddress as shortEthAddressOrUnknown,
+} from '../../utils/format';
+import { explorerAddressUrl, explorerTxUrl } from '../../utils/chains';
+import { spamReasonLabel } from '../../utils/dataLabels';
+
+const shortEthAddress = (address) => shortEthAddressOrUnknown(address, '');
+
+// One page of the spam quarantine (#74). The section is the only place the
+// "Not spam" button exists, so the list has to be walkable to the end rather
+// than truncated at a round number: during a spam wave the transaction worth
+// rescuing is exactly the one a cap would hide.
+export const SPAM_PAGE_SIZE = 50;
+// GET /api/eth/activity clamps `limit` to 500, so a refetch cannot restore more
+// than that in one request however many pages are open. Beyond it the appended
+// pages are re-walked by offset instead; the clamp only bounds the single call.
+export const SPAM_MAX_LIMIT = 500;
+
+const TRIAGE_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all disabled:opacity-40';
+
+// One unreviewed counterparty. Defined at module scope, not inside the panel:
+// a component redefined every render remounts, which would close the open
+// naming panel on each keystroke.
+// busy disables EVERY row while any verdict is in flight -- the handlers take
+// one at a time, so leaving other rows clickable produced silent no-ops in the
+// exact rapid-triage workflow this feature is built around. active spins only
+// the row actually being worked on.
+export function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackAsWallet, onIgnoreToken }) {
+  const [panel, setPanel] = useState(null); // 'exchange' | 'mine' | null
+  const [name, setName] = useState('');
+  const short = shortEthAddress(counterparty.address);
+  const openPanel = (next) => { setPanel((prev) => (prev === next ? null : next)); setName(''); };
+  const symbol = counterparty.token_symbols?.[0];
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="font-mono text-body-sm font-semibold text-primary" title={counterparty.address}>{short}</span>
+            {/* Counterparties are chain-agnostic (one verdict covers every
+                chain the address is reached on), so there is no chain here to
+                key the explorer on: mainnet it is. */}
+            <a
+              href={explorerAddressUrl(counterparty.address)}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] text-tertiary transition-colors hover:text-accent"
+            >
+              Etherscan
+            </a>
+            {counterparty.sent_count > 0 && (
+              // The single most decision-relevant fact on the row: you cannot
+              // receive a scam airdrop that you sent.
+              <span className="inline-flex shrink-0 items-center rounded-full border border-accent/20 bg-accent/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent">
+                You sent
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-3 text-[10px] text-tertiary">
+            <span className="font-mono">
+              {counterparty.transfer_count} transfer{counterparty.transfer_count === 1 ? '' : 's'}
+            </span>
+            {/* Unpriced is not the same as worthless -- never render this as $0. */}
+            <span className="font-mono">
+              {Number(counterparty.usd_volume) > 0
+                ? formatCompactCurrency(Number(counterparty.usd_volume))
+                : 'No USD value'}
+            </span>
+            {counterparty.token_symbols?.length > 0 && (
+              <span className="font-mono">{counterparty.token_symbols.slice(0, 3).join(' · ')}</span>
+            )}
+            <span>{formatDateDisplay(counterparty.first_seen)} → {formatRelativeTime(counterparty.last_seen)}</span>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={`It's an exchange — ${short}`}
+            onClick={() => openPanel('exchange')}
+            className={`${TRIAGE_ACTION_CLASS} hover:border-teal-500/30 hover:text-teal-400`}
+          >
+            <Tag size={10} /> It&apos;s an exchange
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={`It's mine — ${short}`}
+            onClick={() => openPanel('mine')}
+            className={`${TRIAGE_ACTION_CLASS} hover:border-accent hover:text-accent`}
+          >
+            <Wallet size={10} /> It&apos;s mine
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={`Outside party — ${short}`}
+            onClick={() => onTriage(counterparty.address, 'external')}
+            className={`${TRIAGE_ACTION_CLASS} hover:border-accent hover:text-accent`}
+          >
+            {active ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />} Outside party
+          </button>
+          {counterparty.sole_token_contract && (
+            // Airdrop spam arrives from many addresses but one contract, so
+            // ignoring the token clears a whole class at once. Confirmed, not
+            // one-click: sole_token_contract only says THIS counterparty deals
+            // in one token, while the ignore list is user-global -- if the same
+            // token was also acquired legitimately elsewhere, ignoring it
+            // deletes that real holding and drops net worth with no undo.
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Ignore ${symbol || 'token'} — ${short}`}
+              onClick={() => openPanel('ignore')}
+              className={`${TRIAGE_ACTION_CLASS} hover:border-loss/30 hover:text-loss`}
+            >
+              <EyeOff size={10} /> Ignore {symbol || 'token'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {panel === 'exchange' && (
+        <form
+          className="mt-3 flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (name.trim()) onTriage(counterparty.address, 'exchange', name.trim());
+          }}
+        >
+          <input
+            type="text"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            list="crypto-eth-label-names"
+            maxLength={64}
+            placeholder="e.g. Coinbase"
+            aria-label={`Exchange name for ${short}`}
+            className="h-8 w-44 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+          />
+          <button
+            type="submit"
+            disabled={busy || !name.trim()}
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[9px] font-bold uppercase tracking-wide text-teal-400 disabled:opacity-40"
+          >
+            {active && <RefreshCw size={10} className="animate-spin" />} Save
+          </button>
+          <button type="button" onClick={() => setPanel(null)} className={TRIAGE_ACTION_CLASS}>Cancel</button>
+        </form>
+      )}
+
+      {panel === 'mine' && (
+        // "Mine" means two different things, and the split matters: tracking
+        // keeps the value in net worth, the label only stops the transfer
+        // counting as spending. This panel is also the confirmation step for
+        // tracking, which is far heavier than the other verdicts (creates an
+        // account, full Etherscan sync, can fail on rate limits).
+        <div className="mt-3 space-y-2 border-t border-border pt-3">
+          <input
+            type="text"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={64}
+            placeholder="Optional name, e.g. Ledger cold storage"
+            aria-label={`Name for ${short}`}
+            className="h-8 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent sm:w-72"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Track as a wallet — ${short}`}
+              onClick={() => onTrackAsWallet(counterparty.address, name.trim())}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-3 text-[9px] font-bold uppercase tracking-wide text-accent transition-all hover:bg-accent/20 disabled:opacity-40"
+            >
+              {active ? <RefreshCw size={10} className="animate-spin" /> : <Plus size={10} />} Track as a wallet
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Mine, don't track it — ${short}`}
+              onClick={() => onTriage(counterparty.address, 'own', name.trim())}
+              className={`${TRIAGE_ACTION_CLASS} h-8 px-3 hover:border-accent hover:text-accent`}
+            >
+              Mine, don&apos;t track it
+            </button>
+            <button type="button" onClick={() => setPanel(null)} className={`${TRIAGE_ACTION_CLASS} h-8 px-3`}>Cancel</button>
+          </div>
+          <p className="text-[10px] leading-relaxed text-tertiary">
+            Tracking creates an account, pulls the full history, and counts the balance toward net worth.
+            Labelling it only stops its transfers counting as spending — use that for addresses on another
+            chain, ones already counted elsewhere, or ones you would rather not sync.
+          </p>
+        </div>
+      )}
+
+      {panel === 'ignore' && (
+        <div className="mt-3 space-y-2 border-t border-border pt-3">
+          <p className="text-[10px] leading-relaxed text-tertiary">
+            Ignoring {symbol || 'this token'} removes it from holdings and activity in <strong>every</strong> wallet,
+            not just this counterparty. If you also hold it legitimately, that position disappears too.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Ignore ${symbol || 'token'} everywhere — ${short}`}
+              onClick={() => onIgnoreToken(counterparty)}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-loss/30 bg-loss-bg px-3 text-[9px] font-bold uppercase tracking-wide text-loss transition-all disabled:opacity-40"
+            >
+              {active ? <RefreshCw size={10} className="animate-spin" /> : <EyeOff size={10} />} Ignore everywhere
+            </button>
+            <button type="button" onClick={() => setPanel(null)} className={`${TRIAGE_ACTION_CLASS} h-8 px-3`}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The two triage queues, side by side because they are the same job: deciding
+// what an unexplained counterparty was. Needs Review is what the ladder could
+// not name; Quarantined is what the spam heuristics named for you and might
+// have got wrong.
+function ReviewPanel({
+  counterpartyData,
+  spamActivity,
+  onSpamPageLoaded,
+  exchangeNameOptions,
+  hasWallets,
+  onChanged,
+  onError,
+  showSuccess,
+  onRetry,
+}) {
+  const [triagingAddress, setTriagingAddress] = useState(null);
+  const [showDust, setShowDust] = useState(false);
+  const [showSpam, setShowSpam] = useState(false);
+  const [unquarantiningTx, setUnquarantiningTx] = useState(null);
+  const [loadingMoreSpam, setLoadingMoreSpam] = useState(false);
+
+  const rows = counterpartyData?.data || [];
+  const materialCounterparties = rows.filter((cp) => cp.material);
+  const dustCounterparties = rows.filter((cp) => !cp.material);
+
+  // Triage verdicts. All three are label writes and all three are reversible
+  // with one click from the Labels tab, so none of them confirms -- matching
+  // the label list's Remove. The full refetch is mandatory: one action drops a
+  // queue row, adds a label row, and moves the tab badge.
+  const handleTriage = async (address, kind, name) => {
+    if (triagingAddress) return;
+    setTriagingAddress(address);
+    onError(null);
+    try {
+      await ethAPI.labelAddress(address, name || null, { kind });
+      showSuccess(
+        kind === 'exchange' ? `Labeled ${shortEthAddress(address)} as ${name}`
+          : kind === 'own' ? `${shortEthAddress(address)} marked as yours`
+          : `${shortEthAddress(address)} marked as an outside party`
+      );
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to review counterparty');
+    } finally {
+      setTriagingAddress(null);
+    }
+  };
+
+  // The heavy verdict: creates an account, pulls full history, and counts the
+  // balance toward net worth. Reuses the normal add-wallet path, which already
+  // reclassifies every existing transfer against the new own-address.
+  const handleTrackAsWallet = async (address, label) => {
+    if (triagingAddress) return;
+    setTriagingAddress(address);
+    onError(null);
+    try {
+      await ethAPI.addWallet(address, label || null);
+      showSuccess(`Now tracking ${shortEthAddress(address)} as a wallet`);
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to track that address as a wallet');
+    } finally {
+      setTriagingAddress(null);
+    }
+  };
+
+  const handleIgnoreCounterpartyToken = async (counterparty) => {
+    if (triagingAddress) return;
+    setTriagingAddress(counterparty.address);
+    onError(null);
+    try {
+      await ethAPI.ignoreToken(counterparty.sole_token_contract, counterparty.token_symbols?.[0] || undefined);
+      showSuccess('Token ignored');
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to ignore token');
+    } finally {
+      setTriagingAddress(null);
+    }
+  };
+
+  // One click, and the transaction comes back exactly as it was: the ladder's
+  // category, its legs, its dollars and its review flag. The verdict is written
+  // to the overrides table, so it outlives every resync -- and the counterparty
+  // rejoins the triage queue, which is where it belongs the moment the user
+  // says this was not junk.
+  const handleUnquarantine = async (row) => {
+    if (unquarantiningTx) return;
+    setUnquarantiningTx(row.tx_hash);
+    onError(null);
+    try {
+      await ethAPI.setActivitySpam(row.wallet_id, row.tx_hash, false, { chainId: row.chain_id });
+      showSuccess('Restored to the ledger');
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to restore that transaction');
+    } finally {
+      setUnquarantiningTx(null);
+    }
+  };
+
+  // The next page of the quarantine, appended. Offset pagination against the
+  // feed the section already uses -- no new endpoint, and the header keeps
+  // reporting summary.spam_count, so "showing 100 of 412" stays true throughout.
+  //
+  // De-duplicated on the way in: the feed is ordered, but a row rescued from an
+  // earlier page shifts everything below it up by one, and the same transaction
+  // arriving twice is a duplicate React key and a second "Not spam" button for
+  // a transaction already restored.
+  const handleShowMoreSpam = async () => {
+    if (loadingMoreSpam) return;
+    const loaded = spamActivity?.data || [];
+    setLoadingMoreSpam(true);
+    onError(null);
+    try {
+      const next = await ethAPI.getActivity({
+        spam: 'only', limit: SPAM_PAGE_SIZE, offset: loaded.length,
+      });
+      const seen = new Set(loaded.map((row) => `${row.chain_id}:${row.tx_hash}`));
+      const added = (next.data || []).filter((row) => !seen.has(`${row.chain_id}:${row.tx_hash}`));
+      onSpamPageLoaded({ ...next, data: [...loaded, ...added] });
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to load more quarantined transactions');
+    } finally {
+      setLoadingMoreSpam(false);
+    }
+  };
+
+  if (!hasWallets) {
+    return (
+      <p className="text-body-sm text-tertiary">
+        Nothing to review yet. Counterparties and quarantined transactions appear once a wallet has synced.
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <section aria-labelledby="eth-review-heading">
+        <div className="mb-3 px-2">
+          <h2 id="eth-review-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Needs Review</h2>
+          <p className="mt-1 text-xs text-secondary">
+            Addresses you have transacted with but never given a verdict on. Until you do, their transfers
+            count as external activity — so a hot wallet an exchange rotated to, or one of your own
+            addresses, quietly reads as real spending. Marking an address as an exchange or as yours takes
+            its transfers out of spending, which is only right if that money is still counted somewhere
+            else: a linked account, or a wallet tracked here.
+          </p>
+        </div>
+
+        <datalist id="crypto-eth-label-names">
+          {exchangeNameOptions.map((name) => <option key={name} value={name} />)}
+        </datalist>
+
+        <div className="card overflow-hidden">
+          {!counterpartyData ? (
+            // Loaded-and-empty and failed-to-load must not look alike. Showing
+            // "all reviewed" after a failed request is the same silence this
+            // whole section exists to break, and the badge drops too.
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-secondary">
+              <span className="flex items-center gap-2 text-loss">
+                <AlertTriangle size={14} />
+                Couldn&apos;t load the review queue.
+              </span>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent"
+              >
+                <RefreshCw size={10} /> Retry
+              </button>
+            </div>
+          ) : materialCounterparties.length === 0 && dustCounterparties.length === 0 ? (
+            <div className="p-6 text-center text-sm text-secondary">Every counterparty has been reviewed.</div>
+          ) : (
+            <div className="divide-y divide-border">
+              {materialCounterparties.map((counterparty) => (
+                <CounterpartyRow
+                  key={counterparty.address}
+                  counterparty={counterparty}
+                  busy={Boolean(triagingAddress)}
+                  active={triagingAddress === counterparty.address}
+                  onTriage={handleTriage}
+                  onTrackAsWallet={handleTrackAsWallet}
+                  onIgnoreToken={handleIgnoreCounterpartyToken}
+                />
+              ))}
+            </div>
+          )}
+
+          {dustCounterparties.length > 0 && (
+            // Collapsed rather than paginated: the distribution is bimodal
+            // (a few real counterparties, a long tail of $0 inbound-only
+            // airdrop senders), and pagination would interleave the two.
+            <>
+              <button
+                type="button"
+                aria-expanded={showDust}
+                onClick={() => setShowDust((open) => !open)}
+                className="flex w-full items-center justify-between gap-2 border-t border-border px-4 py-3 text-caption text-tertiary transition-colors hover:text-primary"
+              >
+                {/* The server's count, not the page's: the response is capped,
+                    so the rendered array can be smaller than the real total. */}
+                <span>{counterpartyData?.summary?.dust_count ?? dustCounterparties.length} low-value counterparties</span>
+                <ChevronDown size={14} className={showDust ? 'rotate-180 transition-transform' : 'transition-transform'} />
+              </button>
+              {showDust && (
+                <div className="divide-y divide-border">
+                  {dustCounterparties.map((counterparty) => (
+                    <CounterpartyRow
+                      key={counterparty.address}
+                      counterparty={counterparty}
+                      busy={Boolean(triagingAddress)}
+                      active={triagingAddress === counterparty.address}
+                      onTriage={handleTriage}
+                      onTrackAsWallet={handleTrackAsWallet}
+                      onIgnoreToken={handleIgnoreCounterpartyToken}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+
+      <section aria-labelledby="eth-spam-heading">
+        <div className="mb-3 px-2">
+          <h2 id="eth-spam-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Quarantined wallet transactions</h2>
+          <p className="mt-1 text-xs text-secondary">
+            Address-poisoning attempts, dust and scam airdrops, recognized automatically and kept out of
+            Needs Review — a queue that fills with junk faster than anyone can drain it is a queue that gets
+            ignored. Nothing is deleted: these transactions keep their amounts and still count toward the
+            balance checks, they are just out of the way. If one of them is real, restore it in a click and
+            the choice sticks through every future sync.
+          </p>
+          <p className="mt-1 text-xs text-tertiary">
+            Counted per wallet transaction: a transfer that touched two of your wallets is listed once for
+            each. The Ledger folds those into single movements, so its quarantine count can be lower.
+          </p>
+        </div>
+
+        <div className="card overflow-hidden">
+          {!spamActivity ? (
+            // Loaded-and-empty and failed-to-load must not look alike here
+            // either: "nothing was hidden" is exactly the claim a failed
+            // request must not be allowed to make.
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-secondary">
+              <span className="flex items-center gap-2 text-loss">
+                <AlertTriangle size={14} />
+                Couldn&apos;t load the quarantine.
+              </span>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent"
+              >
+                <RefreshCw size={10} /> Retry
+              </button>
+            </div>
+          ) : (spamActivity.summary?.spam_count || 0) === 0 ? (
+            <div className="p-6 text-center text-sm text-secondary">Nothing has been quarantined.</div>
+          ) : (
+            <>
+              <button
+                type="button"
+                aria-expanded={showSpam}
+                onClick={() => setShowSpam((open) => !open)}
+                className="flex w-full items-center justify-between gap-2 px-4 py-3 text-caption text-tertiary transition-colors hover:text-primary"
+              >
+                {/* The server's count, not the page's: the list is capped, so
+                    the rendered array can be smaller than the real total. */}
+                <span>
+                  {/* Per WALLET-transaction, which is the unit
+                      /api/eth/activity counts. The unified ledger collapses
+                      cross-wallet duplicates, so its count is not this one --
+                      see the BOOL_AND note in models/CryptoLedger.js. */}
+                  {spamActivity.summary.spam_count} quarantined wallet transaction{spamActivity.summary.spam_count === 1 ? '' : 's'}
+                </span>
+                <ChevronDown size={14} className={showSpam ? 'rotate-180 transition-transform' : 'transition-transform'} />
+              </button>
+              {showSpam && (
+                <div className="divide-y divide-border border-t border-border">
+                  {(spamActivity.data || []).map((row) => {
+                    const reason = spamReasonLabel(row.spam_reason);
+                    return (
+                      <div key={`${row.chain_id}:${row.tx_hash}`} className="flex flex-wrap items-start justify-between gap-3 p-4">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex items-center border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${reason.warn ? 'border-loss/20 bg-loss/10 text-loss' : 'border-border bg-surface-3 text-tertiary'}`}>
+                              {reason.title}
+                            </span>
+                            <span className="text-[10px] uppercase tracking-wider text-tertiary">
+                              {formatDateDisplay(row.block_time)}
+                            </span>
+                            <a
+                              href={explorerTxUrl(row.tx_hash, row.chain_id)}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={row.tx_hash}
+                              className="font-mono text-[10px] text-tertiary transition-colors hover:text-accent"
+                            >
+                              {row.tx_hash.slice(0, 10)}…
+                            </a>
+                          </div>
+                          <p className="mt-1 text-xs text-secondary">{reason.detail}</p>
+                          {/* What actually moved is still on the row, and
+                              saying so is the difference between a hidden
+                              transaction and a deleted one. */}
+                          {(row.legs || []).length > 0 && (
+                            <p className="mt-1 font-mono text-[10px] text-tertiary">
+                              {row.legs.map((legRow) => `${legRow.direction === 'out' ? '-' : '+'}${legRow.amount} ${legRow.asset}`).join(', ')}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleUnquarantine(row)}
+                          disabled={Boolean(unquarantiningTx)}
+                          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+                        >
+                          {unquarantiningTx === row.tx_hash
+                            ? <RefreshCw size={14} className="animate-spin" />
+                            : <Undo2 size={14} />}
+                          Not spam
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {/* The list is walkable to the end, not truncated: this is
+                      the only surface carrying "Not spam", so a transaction
+                      the heuristics got wrong has to stay reachable however
+                      much junk arrived above it. */}
+                  {(spamActivity.pagination?.total || 0) > (spamActivity.data || []).length && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 p-3">
+                      <span className="text-[10px] uppercase tracking-wider text-tertiary">
+                        Showing the {(spamActivity.data || []).length} most recent of {spamActivity.pagination.total}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleShowMoreSpam}
+                        disabled={loadingMoreSpam}
+                        className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+                      >
+                        {loadingMoreSpam && <RefreshCw size={10} className="animate-spin" />}
+                        Show more
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
+
+export default ReviewPanel;

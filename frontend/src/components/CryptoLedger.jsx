@@ -50,7 +50,7 @@ const STATUS_OPTIONS = [
 // rendering scam airdrops here as ordinary events would re-surface precisely
 // the noise the quarantine removed.
 //
-// "Quarantined" and "Not spam" are the words Settings' own quarantine section
+// "Quarantined" and "Not spam" are the words the Review tab's quarantine
 // uses; the rescue button on a spam row here calls the same endpoint, so the
 // two surfaces cannot drift into two different vocabularies for one verdict.
 const SPAM_OPTIONS = [
@@ -582,7 +582,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged }) => {
               // "exchange records", not "exchange": the count is RECORDS the
               // venues wrote, folded halves included, so it deliberately does
               // not add up with the event total beside it -- it is the number
-              // that reconciles with Settings' per-account record_count.
+              // that reconciles with the Exchanges tab's per-account record_count.
               // The quarantine says how much it swallowed, always: hiding rows
               // without stating the number is indistinguishable from a sync
               // that never fetched them. The Spam tab is where they are.
@@ -850,7 +850,7 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
     note: note.trim() || undefined,
   }));
 
-  // The one-click un-quarantine, against the endpoint Settings' quarantine
+  // The one-click un-quarantine, against the endpoint the Review tab's
   // section already owns. `false` is explicit: the API refuses anything but a
   // boolean, because a coerced 'false' would quarantine the row being rescued.
   const rescueFromSpam = () => run('spam', () => ethAPI.setActivitySpam(
@@ -1180,7 +1180,7 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
               </button>
             )}
             {/* The rescue, on the row that shows the mistake. It posts the SAME
-                verdict Settings' quarantine section posts (POST
+                verdict the Review tab's quarantine section posts (POST
                 /api/eth/activity/spam with spam:false), so there is one
                 endpoint, one wording and one stored answer -- a second rescue
                 path with its own semantics is how two screens start disagreeing

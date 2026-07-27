@@ -68,13 +68,14 @@ describe('CryptoPage', () => {
     apiMocks.eth.getUnpricedAssets.mockResolvedValue({ data: [], total: 0 });
   });
 
-  it('sends the user to the Ethereum settings tab when nothing is tracked', async () => {
-    const onNavigate = vi.fn();
-    render(<CryptoPage onNavigate={onNavigate} />);
+  // Wallets are added on this page now (#75), not in Settings.
+  it('sends the user to the Wallets tab when nothing is tracked', async () => {
+    const onTabChange = vi.fn();
+    render(<CryptoPage onTabChange={onTabChange} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /connect crypto/i }));
 
-    expect(onNavigate).toHaveBeenCalledWith('settings', { tab: 'ethereum' });
+    expect(onTabChange).toHaveBeenCalledWith('crypto-wallets');
   });
 
   it('totals only crypto holdings and leaves other accounts out', async () => {
@@ -93,7 +94,7 @@ describe('CryptoPage', () => {
       wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', account: CRYPTO_ACCOUNT, eth_quantity: '2', last_synced_at: '2026-07-24T08:00:00Z' }],
     });
 
-    render(<CryptoPage tab="crypto-holdings" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-holdings" onTabChange={vi.fn()} />);
 
     // Headline only: the Total Value card lives on the Overview tab.
     expect(await screen.findByText('$6,250')).toBeInTheDocument();
@@ -110,7 +111,7 @@ describe('CryptoPage', () => {
       wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '1' }],
     });
 
-    render(<CryptoPage onTabChange={onTabChange} onNavigate={vi.fn()} />);
+    render(<CryptoPage onTabChange={onTabChange} />);
 
     fireEvent.click(await screen.findByRole('tab', { name: /^Transactions/ }));
 
@@ -122,7 +123,7 @@ describe('CryptoPage', () => {
   it('falls back to Overview when a wallet-less user deep-links to Transactions', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [{ ...CRYPTO_ACCOUNT, eth_wallet_id: null }] });
 
-    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
 
     // Overview's content, not an empty activity feed.
     await screen.findByText('Total Value');
@@ -154,7 +155,7 @@ describe('CryptoPage', () => {
       pagination: { total: 1 },
     });
 
-    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
     await showTransferLegs();
 
     await screen.findByText('On-chain Activity');
@@ -212,7 +213,7 @@ describe('CryptoPage', () => {
       pagination: { total: 3 },
     });
 
-    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
     await showTransferLegs();
 
     await screen.findByText('On-chain Activity');
@@ -248,7 +249,7 @@ describe('CryptoPage', () => {
     });
     apiMocks.eth.ignoreToken.mockResolvedValue({ token: {} });
 
-    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
     await showTransferLegs();
 
     await screen.findByText('On-chain Activity');
@@ -285,7 +286,7 @@ describe('CryptoPage', () => {
     });
     apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
 
-    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
     await showTransferLegs();
     await screen.findByText('On-chain Activity');
 
@@ -328,7 +329,7 @@ describe('CryptoPage', () => {
       pagination: { total: 2 },
     });
 
-    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
     await showTransferLegs();
     await screen.findByText('On-chain Activity');
 
@@ -348,7 +349,7 @@ describe('CryptoPage', () => {
       ],
     });
 
-    render(<CryptoPage tab="crypto-transactions" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
 
     // A <select> shows the label whole; the old tab strip had to truncate it.
     expect(await screen.findByRole('option', { name: LONG })).toBeInTheDocument();
@@ -359,7 +360,7 @@ describe('CryptoPage', () => {
       accounts: [{ id: 12, name: 'Cold storage', effective_name: 'Cold storage', type: 'crypto', eth_wallet_id: null }],
     });
 
-    render(<CryptoPage tab="crypto-holdings" onNavigate={vi.fn()} />);
+    render(<CryptoPage tab="crypto-holdings" onTabChange={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /add holding/i }));
 

@@ -261,7 +261,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
         ? 'Gas fee'
         : `${outbound ? 'To' : 'From'} ${exchangeName || shortEthAddress(counterparty)}`,
       // Rows already showing an exchange name stay labelable: the scraped
-      // pack is low-confidence and hidden from the Settings list, so this
+      // pack is low-confidence and hidden from the Labels list, so this
       // button is the only two-click path to correct a wrong pack verdict.
       labelable: transfer.transfer_type !== 'gas'
         && !transfer.counterparty_is_own

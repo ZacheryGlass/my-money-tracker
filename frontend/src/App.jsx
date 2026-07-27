@@ -31,6 +31,10 @@ const navItems = [
   { id: 'crypto', label: 'Crypto', path: '/crypto' },
   { id: 'crypto-holdings', label: 'Crypto Holdings', path: '/crypto/holdings' },
   { id: 'crypto-transactions', label: 'Crypto Transactions', path: '/crypto/transactions' },
+  { id: 'crypto-wallets', label: 'Crypto Wallets', path: '/crypto/wallets' },
+  { id: 'crypto-exchanges', label: 'Crypto Exchanges', path: '/crypto/exchanges' },
+  { id: 'crypto-review', label: 'Crypto Review', path: '/crypto/review' },
+  { id: 'crypto-labels', label: 'Crypto Labels', path: '/crypto/labels' },
   { id: 'ticker-history', label: 'Ticker History', path: '/ticker-history' },
   { id: 'account-history', label: 'Account History', path: '/account-history' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', path: '/portfolio-timeline' },
@@ -52,7 +56,11 @@ pagePaths.balances = pagePaths.assets;
 
 // Crypto's sub-tabs. Unlike balances these need no pagePaths alias: 'crypto' is
 // itself a registered nav item, and it is the tab the page lands on.
-const CRYPTO_TABS = new Set(['crypto', 'crypto-holdings', 'crypto-transactions']);
+const CRYPTO_TABS = new Set([
+  'crypto', 'crypto-holdings', 'crypto-transactions',
+  // The management tabs, moved off Settings with #75.
+  'crypto-wallets', 'crypto-exchanges', 'crypto-review', 'crypto-labels',
+]);
 
 // The remount key and the sidebar highlight both work in collapsed ids: every
 // tab of a multi-tab page must map to its one sidebar entry. Miss it on the key
@@ -108,7 +116,7 @@ function App() {
         {BALANCES_TABS.has(currentPage) && <BalancesPage tab={currentPage} onTabChange={handleNavigate} />}
         {currentPage === 'accounts' && <AccountsPage />}
         {CRYPTO_TABS.has(currentPage) && (
-          <CryptoPage tab={currentPage} onTabChange={handleNavigate} onNavigate={handleNavigate} />
+          <CryptoPage tab={currentPage} onTabChange={handleNavigate} />
         )}
         {currentPage === 'ticker-history' && <TickerHistory />}
         {currentPage === 'account-history' && <AccountHistory />}
