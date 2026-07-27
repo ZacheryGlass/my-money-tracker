@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Clock, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
+import { useReactTable, getCoreRowModel, getSortedRowModel } from '@tanstack/react-table';
+import { AlertTriangle, ChevronDown, ChevronRight, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import { formatExactUnits, formatRelativeTime, shortEthAddress as shortEthAddressOrUnknown } from '../../utils/format';
 import { getAccountDisplayName } from '../../utils/accountDisplay';
 import { explorerAddressUrl } from '../../utils/chains';
+import DataTable from '../DataTable';
+import { useIsMobile } from '../../hooks/useMediaQuery';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
@@ -32,12 +35,16 @@ const RECONCILIATION_SKIP_TEXT = {
 // never recorded), and a token delta is stated plainly with the offending
 // contract named -- rebasing and fee-on-transfer tokens do this legitimately, so
 // alarming about them would train the user to ignore the ETH case too.
+const splitAuditIssues = (report) => ({
+  nativeDrift: report.issues.filter((row) => row.status === 'mismatch' && row.asset_type === 'native'),
+  tokenDrift: report.issues.filter((row) => row.status === 'mismatch' && row.asset_type === 'token'),
+  unchecked: report.issues.filter((row) => row.status === 'skipped' || row.status === 'unavailable'),
+});
+
 export function WalletReconciliation({ report, chainNames }) {
   if (!report) return null;
   const chainName = (chainId) => chainNames?.get(Number(chainId)) || `Chain ${chainId}`;
-  const nativeDrift = report.issues.filter((row) => row.status === 'mismatch' && row.asset_type === 'native');
-  const tokenDrift = report.issues.filter((row) => row.status === 'mismatch' && row.asset_type === 'token');
-  const unchecked = report.issues.filter((row) => row.status === 'skipped' || row.status === 'unavailable');
+  const { nativeDrift, tokenDrift, unchecked } = splitAuditIssues(report);
   const clean = !nativeDrift.length && !tokenDrift.length;
 
   // Every digit, never six. A drift under 1e-6 rendered at the default
@@ -118,6 +125,39 @@ export function WalletReconciliation({ report, chainNames }) {
   );
 }
 
+// One line per wallet answering "can I trust this wallet's numbers?". The row
+// carries the verdict and the expanded panel carries the evidence -- a table
+// cannot hold the audit's several lines, but it must never round the audit down
+// to silence either, so every state has words rather than only a colour.
+const walletStatus = (wallet) => {
+  if (wallet.error_code) return { label: 'Sync failed', tone: 'text-loss' };
+  const report = wallet.reconciliation;
+  if (!report) return { label: 'Not audited', tone: 'text-tertiary' };
+  const { nativeDrift, tokenDrift } = splitAuditIssues(report);
+  // Sync starts at block 0, so an ETH gap can only mean a movement was never
+  // recorded. Token drift is often a rebasing contract, hence the quieter tone.
+  if (nativeDrift.length) return { label: 'ETH unaccounted for', tone: 'text-loss' };
+  if (tokenDrift.length) return { label: 'Token drift', tone: 'text-secondary' };
+  if (report.assets_checked > 0) return { label: 'Matches chain', tone: 'text-tertiary' };
+  return { label: 'Not audited', tone: 'text-tertiary' };
+};
+
+// A chain that is off keeps its history, so it is not counted as live here.
+// The warning covers a chain this key cannot serve as well as one that failed:
+// both mean the figures derived from it are incomplete, not merely stale.
+const chainSummary = (wallet) => {
+  const chains = wallet.chains || [];
+  const live = chains.filter((chain) => chain.enabled);
+  return {
+    label: chains.length === 0 ? '—'
+      : live.length === 1 ? live[0].name
+      : `${live.length} chains`,
+    degraded: chains.some((chain) => chain.enabled && (chain.error_code || chain.unsupported_feeds?.length > 0)),
+  };
+};
+
+const ROW_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40';
+
 // The tracked-wallet list and everything that changes it: add, sync, disconnect.
 // Moved off Settings with #75 -- a wallet is crypto data, not an app preference,
 // and the add form was three clicks from the feed it fills.
@@ -131,6 +171,9 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
   const [syncingId, setSyncingId] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
   const [removeData, setRemoveData] = useState(true);
+  const [expandedId, setExpandedId] = useState(null);
+  const [sorting, setSorting] = useState([{ id: 'eth', desc: true }]);
+  const isMobile = useIsMobile();
 
   // Same split the submit handler uses, so the count in the label and the
   // number of wallets actually created can never disagree.
@@ -229,6 +272,193 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
     }
   };
 
+  const walletName = (wallet) => wallet.label
+    || (wallet.account ? getAccountDisplayName(wallet.account) : shortEthAddress(wallet.address));
+
+  const toggleRow = (wallet) => setExpandedId((open) => (open === wallet.id ? null : wallet.id));
+
+  // Every action sits inside a row that expands on click, so each one stops
+  // the click reaching the row -- syncing a wallet and opening its audit are
+  // different intentions.
+  const rowActions = (wallet) => (
+    <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+      {/* One address, several chains: the wallet has no single chain to link
+          against, and an address page exists on every explorer anyway. */}
+      <a
+        href={explorerAddressUrl(wallet.address)}
+        target="_blank"
+        rel="noreferrer"
+        className={ROW_ACTION_CLASS}
+      >
+        Etherscan
+      </a>
+      <button
+        type="button"
+        onClick={() => handleSync(wallet.id)}
+        disabled={syncingId === wallet.id}
+        aria-label={`Sync ${walletName(wallet)}`}
+        className={ROW_ACTION_CLASS}
+      >
+        <RefreshCw size={10} className={syncingId === wallet.id ? 'animate-spin' : ''} />
+        Sync
+      </button>
+      <button
+        type="button"
+        onClick={() => { setRemoveData(true); setDisconnecting(wallet); }}
+        aria-label={`Disconnect ${walletName(wallet)}`}
+        className="rounded border border-transparent p-1.5 text-tertiary transition-all hover:bg-loss/10 hover:text-loss"
+        title="Disconnect Wallet"
+      >
+        <Unlink size={14} />
+      </button>
+    </div>
+  );
+
+  const columns = useMemo(() => [
+    {
+      id: 'wallet',
+      accessorFn: (wallet) => walletName(wallet),
+      header: 'Wallet',
+      meta: { cellClassName: 'min-w-0' },
+      cell: ({ row }) => {
+        const wallet = row.original;
+        return (
+          <div className="flex min-w-0 items-center gap-1.5">
+            {expandedId === wallet.id
+              ? <ChevronDown size={11} className="shrink-0 text-accent" />
+              : <ChevronRight size={11} className="shrink-0 text-tertiary" />}
+            <div className="min-w-0">
+              <span className="block truncate text-body-sm font-semibold text-primary">{walletName(wallet)}</span>
+              <span className="block truncate font-mono text-[10px] text-tertiary" title={wallet.address}>
+                {shortEthAddress(wallet.address)}
+              </span>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      id: 'chains',
+      accessorFn: (wallet) => chainSummary(wallet).label,
+      header: 'Chains',
+      meta: { width: '9rem', cellClassName: 'whitespace-nowrap' },
+      cell: ({ row }) => {
+        const { label, degraded } = chainSummary(row.original);
+        return (
+          <span className={`inline-flex items-center gap-1.5 text-caption ${degraded ? 'text-loss' : 'text-secondary'}`}>
+            {degraded && <AlertTriangle size={11} className="shrink-0" />}
+            {label}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'eth',
+      accessorFn: (wallet) => (wallet.eth_quantity != null ? parseFloat(wallet.eth_quantity) : null),
+      header: 'ETH',
+      meta: { width: '8rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+      cell: ({ getValue }) => {
+        const quantity = getValue();
+        return quantity != null
+          ? <span className="font-money text-body-sm text-secondary">{quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+          : <span className="text-tertiary">—</span>;
+      },
+    },
+    {
+      id: 'synced',
+      accessorFn: (wallet) => wallet.last_synced_at || '',
+      header: 'Synced',
+      meta: { width: '8rem', cellClassName: 'whitespace-nowrap text-caption text-tertiary' },
+      cell: ({ row }) => formatRelativeTime(row.original.last_synced_at),
+    },
+    {
+      id: 'status',
+      accessorFn: (wallet) => walletStatus(wallet).label,
+      header: 'Status',
+      meta: { width: '11rem', cellClassName: 'whitespace-nowrap' },
+      cell: ({ row }) => {
+        const status = walletStatus(row.original);
+        return <span className={`text-caption ${status.tone}`}>{status.label}</span>;
+      },
+    },
+    {
+      id: 'actions',
+      header: '',
+      enableSorting: false,
+      meta: { width: '13rem', headerClassName: 'text-right', cellClassName: 'text-right' },
+      cell: ({ row }) => rowActions(row.original),
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [expandedId, syncingId]);
+
+  const table = useReactTable({
+    data: wallets,
+    columns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+
+  // Everything a row cannot hold: the per-chain strip, the sync error in full,
+  // and the balance audit. The row states the verdict; this states the case.
+  const walletDetail = (wallet) => (
+    <div className="space-y-3 px-4 py-4">
+      {wallet.chains?.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          {wallet.chains.map((chain) => (
+            <span
+              key={chain.chain_id}
+              title={chain.error_message
+                || (chain.enabled ? `Last synced ${formatRelativeTime(chain.last_synced_at)}` : 'Chain turned off; stored history kept')}
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold uppercase tracking-wide ${
+                !chain.enabled ? 'bg-surface-3 border-border text-tertiary'
+                  : chain.error_code ? 'bg-loss/5 border-loss/20 text-loss'
+                  : 'bg-surface-3 border-border text-secondary'
+              }`}
+            >
+              {chain.enabled && chain.error_code && <AlertTriangle size={10} />}
+              {chain.name}
+              {!chain.enabled && <span className="font-normal normal-case">off</span>}
+              {chain.unsupported_feeds?.length > 0 && (
+                <span className="font-normal normal-case">
+                  no {chain.unsupported_feeds.join(', ')}
+                </span>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {wallet.error_code && (
+        <div className="rounded border border-loss/20 bg-loss/5 p-3 text-xs leading-relaxed text-loss">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+            <p>{wallet.error_message || `Wallet sync reported an error: ${wallet.error_code}`}</p>
+          </div>
+        </div>
+      )}
+
+      {/* The audit rides along on the wallets response, so this needs no second
+          request and cannot disagree with the row's status. Chain names come
+          from the wallet's own chain rows, which the server already labelled
+          from the registry. */}
+      {wallet.reconciliation ? (
+        <WalletReconciliation
+          report={wallet.reconciliation}
+          chainNames={new Map((wallet.chains || []).map((chain) => [Number(chain.chain_id), chain.name]))}
+        />
+      ) : (
+        // Never audited and audited-clean are different claims, and the row
+        // says "Not audited" for both a fresh wallet and one whose audit
+        // failed -- so the panel says which.
+        <p className="text-[10px] text-tertiary">
+          No balance audit yet. It runs with the wallet&apos;s next sync.
+        </p>
+      )}
+    </div>
+  );
+
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3 px-2">
@@ -264,124 +494,51 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
           </button>
         </div>
       ) : (
-        <div className="space-y-4">
-          {wallets.map((wallet) => (
-            <Motion.div layout key={wallet.id} className="card overflow-hidden border-border">
-              <div className="p-5 md:p-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className="w-12 h-12 rounded bg-surface-3 border border-border flex items-center justify-center flex-shrink-0 shadow-sm">
-                      <Wallet size={24} className="text-accent" />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="text-base font-bold text-primary truncate leading-tight">
-                        {wallet.label || (wallet.account ? getAccountDisplayName(wallet.account) : shortEthAddress(wallet.address))}
-                      </h3>
-                      <div className="flex flex-wrap items-center gap-4 mt-1">
-                        <span className="font-mono text-[10px] text-tertiary" title={wallet.address}>
-                          {shortEthAddress(wallet.address)}
-                        </span>
-                        {wallet.eth_quantity != null && (
-                          <span className="font-mono text-[10px] font-bold text-secondary">
-                            {parseFloat(wallet.eth_quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })} ETH
-                          </span>
-                        )}
-                        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
-                          <Clock size={12} />
-                          {formatRelativeTime(wallet.last_synced_at)}
-                        </span>
-                      </div>
-                    </div>
+        <DataTable
+          table={table}
+          breakpoint="md"
+          emptyMessage="No wallets tracked."
+          onRowClick={toggleRow}
+          rowClassName={() => 'cursor-pointer'}
+          // ONE mount, never two. DataTable keeps the desktop table and the
+          // mobile list both in the DOM and hides one with CSS, so rendering
+          // the panel from both paths would duplicate every aria label in it.
+          renderRowDetail={(row) => (!isMobile && expandedId === row.original.id
+            ? walletDetail(row.original)
+            : null)}
+          renderMobileRow={(row) => {
+            const wallet = row.original;
+            const status = walletStatus(wallet);
+            const open = expandedId === wallet.id;
+            return (
+              <div key={row.id} className="bg-surface p-3" onClick={() => toggleRow(wallet)}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-body-sm font-semibold text-primary">{walletName(wallet)}</p>
+                    <p className="truncate font-mono text-[10px] text-tertiary">{shortEthAddress(wallet.address)}</p>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    {/* One address, several chains: the wallet has no single
-                        chain to link against, and an address page exists on
-                        every explorer anyway. */}
-                    <a
-                      href={explorerAddressUrl(wallet.address)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all"
-                    >
-                      Etherscan
-                    </a>
-                    <button
-                      onClick={() => handleSync(wallet.id)}
-                      disabled={syncingId === wallet.id}
-                      className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-xs font-bold uppercase tracking-wider text-secondary bg-surface-3 border border-border hover:border-accent hover:text-accent transition-all disabled:opacity-50"
-                    >
-                      <RefreshCw size={14} className={syncingId === wallet.id ? 'animate-spin' : ''} />
-                      Sync
-                    </button>
-                    <button
-                      onClick={() => { setRemoveData(true); setDisconnecting(wallet); }}
-                      className="p-2.5 rounded text-tertiary hover:text-loss hover:bg-loss/10 border border-transparent transition-all"
-                      title="Disconnect Wallet"
-                    >
-                      <Unlink size={18} />
-                    </button>
+                  <div className="shrink-0 text-right">
+                    {wallet.eth_quantity != null && (
+                      <p className="font-money text-body-sm text-secondary">
+                        {parseFloat(wallet.eth_quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })} ETH
+                      </p>
+                    )}
+                    <p className={`text-[10px] ${status.tone}`}>{status.label}</p>
                   </div>
                 </div>
-
-                {/* Per-chain sync state. The wallet badge above deliberately
-                    carries only transient failures, so a chain (or a feed on
-                    one) that this Etherscan key simply cannot serve would be
-                    invisible without this -- and an unfetched feed means the
-                    figures derived from it are incomplete, not just stale.
-
-                    Shown for a multi-chain wallet, and ALWAYS when any chain
-                    row carries a gap: a mainnet-only wallet (ETH_CHAINS=1)
-                    whose one chain is degraded still has to say so, and
-                    gating purely on chain count hid exactly that case. */}
-                {(wallet.chains?.length > 1
-                  || wallet.chains?.some((chain) => chain.error_code || chain.unsupported_feeds?.length > 0)) && (
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {wallet.chains.map((chain) => (
-                      <span
-                        key={chain.chain_id}
-                        title={chain.error_message
-                          || (chain.enabled ? `Last synced ${formatRelativeTime(chain.last_synced_at)}` : 'Chain turned off; stored history kept')}
-                        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold uppercase tracking-wide ${
-                          !chain.enabled ? 'bg-surface-3 border-border text-tertiary'
-                            : chain.error_code ? 'bg-loss/5 border-loss/20 text-loss'
-                            : 'bg-surface-3 border-border text-secondary'
-                        }`}
-                      >
-                        {chain.enabled && chain.error_code && <AlertTriangle size={10} />}
-                        {chain.name}
-                        {!chain.enabled && <span className="font-normal normal-case">off</span>}
-                        {chain.unsupported_feeds?.length > 0 && (
-                          <span className="font-normal normal-case">
-                            no {chain.unsupported_feeds.join(', ')}
-                          </span>
-                        )}
-                      </span>
-                    ))}
-                  </div>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-tertiary">
+                    {formatRelativeTime(wallet.last_synced_at)}
+                  </span>
+                  {rowActions(wallet)}
+                </div>
+                {open && isMobile && (
+                  <div onClick={(event) => event.stopPropagation()}>{walletDetail(wallet)}</div>
                 )}
-
-                {wallet.error_code && (
-                  <div className="mt-5 p-4 rounded border text-xs leading-relaxed bg-loss/5 border-loss/20 text-loss">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                      <p>{wallet.error_message || `Wallet sync reported an error: ${wallet.error_code}`}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* The audit rides along on the wallets response, so this
-                    needs no second request and cannot disagree with the badge
-                    above it. Chain names come from the wallet's own chain
-                    rows, which the server already labelled from the registry. */}
-                <WalletReconciliation
-                  report={wallet.reconciliation}
-                  chainNames={new Map((wallet.chains || []).map((chain) => [Number(chain.chain_id), chain.name]))}
-                />
               </div>
-            </Motion.div>
-          ))}
-        </div>
+            );
+          }}
+        />
       )}
 
       {/* Connect Crypto Modal */}

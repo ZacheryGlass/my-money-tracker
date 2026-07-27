@@ -93,11 +93,23 @@ describe('Crypto -> Wallets tab', () => {
     await screen.findByText('Ethereum Wallets');
   };
 
+  // The list is a table now: the row states the verdict and the expanded panel
+  // carries the evidence. DataTable renders the desktop table and the mobile
+  // list together (CSS hides one), so [0] is always the desktop row.
+  const expandWallet = async (name = 'Main') => {
+    const cells = await screen.findAllByText(name);
+    fireEvent.click(cells[0]);
+  };
+
   // The on-chain balance audit as the user meets it (#62). Sync starts at
   // block 0, so a nonzero ETH delta can only mean a movement was never
   // recorded.
   it('states plainly when the ledger reproduces the chain', async () => {
     await openEthereumTab([wallet(report())]);
+    // The row's own verdict, before anything is opened.
+    expect(screen.getAllByText('Matches chain').length).toBeGreaterThan(0);
+
+    await expandWallet();
     expect(await screen.findByText(/ledger matches the chain across 2 of 2 assets/i)).toBeInTheDocument();
   });
 
@@ -114,9 +126,13 @@ describe('Crypto -> Wallets tab', () => {
       }],
     }))]);
 
-    expect(await screen.findByText(/ETH unaccounted for/i)).toBeInTheDocument();
+    // The row says so without being opened -- a drift the user has to click to
+    // discover is a drift they will not discover.
+    expect(screen.getAllByText(/ETH unaccounted for/i).length).toBeGreaterThan(0);
+
+    await expandWallet();
     // The chain and the size of the hole, not just "something is wrong".
-    expect(screen.getByText(/Ethereum: ledger is -1 ETH off/)).toBeInTheDocument();
+    expect(await screen.findByText(/Ethereum: ledger is -1 ETH off/)).toBeInTheDocument();
   });
 
   it('counts a drifting wallet in the Wallets tab badge', async () => {
@@ -145,6 +161,9 @@ describe('Crypto -> Wallets tab', () => {
       }],
     }))]);
 
+    expect(screen.getAllByText('Token drift').length).toBeGreaterThan(0);
+
+    await expandWallet();
     expect(await screen.findByText(/Token balances that do not add up/i)).toBeInTheDocument();
     // Four contracts can call themselves DAI; the symbol alone is unactionable.
     expect(screen.getByTitle(DAI)).toBeInTheDocument();
@@ -164,6 +183,7 @@ describe('Crypto -> Wallets tab', () => {
     // Rebasing and fee-on-transfer contracts drift with no missed transfer
     // behind them; badging those pins the count above zero permanently, and a
     // badge that cannot reach zero gets ignored -- taking the ETH signal with it.
+    await expandWallet();
     await screen.findByText(/Token balances that do not add up/i);
     const tab = screen.getByRole('tab', { name: /Wallets/ });
     expect(within(tab).queryByText('1')).toBeNull();
@@ -179,6 +199,7 @@ describe('Crypto -> Wallets tab', () => {
       }],
     }))]);
 
+    await expandWallet();
     expect(await screen.findByText(/Not checked this run/i)).toBeInTheDocument();
     expect(screen.getByText(/a data feed this chain could not serve/i)).toBeInTheDocument();
     // The positive line still appears, but it reports 1 of 2 rather than a
@@ -192,7 +213,10 @@ describe('Crypto -> Wallets tab', () => {
     // Never audited and audited-clean are different claims; a wallet added
     // moments ago must not appear to have passed.
     await openEthereumTab([wallet(null)]);
-    await screen.findByText('Ethereum Wallets');
+    expect(screen.getAllByText('Not audited').length).toBeGreaterThan(0);
+
+    await expandWallet();
+    expect(await screen.findByText(/No balance audit yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/ledger matches the chain/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/ETH unaccounted for/i)).not.toBeInTheDocument();
   });
@@ -217,6 +241,9 @@ describe('Crypto -> Wallets tab', () => {
       ],
     }]);
 
+    // The row warns without being opened; the chips name the gap.
+    expect(screen.getAllByText('2 chains').length).toBeGreaterThan(0);
+    await expandWallet();
     expect(await screen.findByText('Arbitrum One')).toBeInTheDocument();
     // The gap is named, not just flagged: "no internal" is what tells the user
     // (and #62) which derived numbers may drift.
@@ -242,12 +269,13 @@ describe('Crypto -> Wallets tab', () => {
       ],
     }]);
 
+    await expandWallet();
     expect(await screen.findByText('no internal')).toBeInTheDocument();
   });
 
   it('stays quiet for a single healthy chain', async () => {
-    // Nothing to say: one chain, no gap, no error. The strip would just be
-    // a permanent "Ethereum" chip.
+    // Nothing to warn about: one chain, no gap, no error. The row names the
+    // chain and stops there.
     await openEthereumTab([{
       ...CHAIN_WALLET,
       chains: [
@@ -255,9 +283,9 @@ describe('Crypto -> Wallets tab', () => {
       ],
     }]);
 
-    // The wallet card is rendered; the chain strip inside it is not.
-    await screen.findByRole('button', { name: /sync/i });
-    expect(screen.queryByText('Ethereum', { selector: 'span' })).toBeNull();
+    expect(await screen.findAllByText('Ethereum')).not.toHaveLength(0);
+    expect(screen.queryByText(/no internal/)).toBeNull();
+    expect(screen.queryByText('off')).toBeNull();
   });
 
   // Adding wallets. One textbox takes a pasted list, one address per line.
