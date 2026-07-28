@@ -90,11 +90,19 @@ describe('unknown counterparty triage', () => {
     expect(screen.getByText('You sent')).toBeInTheDocument();
   });
 
-  it('marks a counterparty as an outside party in one click', async () => {
+  const chooseVerdict = async (value) => {
+    fireEvent.change(await screen.findByRole('combobox', { name: /verdict for 0xbbbb/i }), { target: { value } });
+  };
+  const apply = () => fireEvent.click(screen.getByRole('button', { name: /apply verdict — 0xbbbb/i }));
+
+  it('marks a counterparty as an outside party from the verdict dropdown', async () => {
     apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
     await openReviewTab();
 
-    fireEvent.click(await screen.findByRole('button', { name: /outside party — 0xbbbb/i }));
+    await chooseVerdict('external');
+    // Choosing is not deciding: nothing is written until Apply.
+    expect(apiMocks.eth.labelAddress).not.toHaveBeenCalled();
+    apply();
     await waitFor(() => {
       expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(MATERIAL.address, null, { kind: 'external' });
     });
@@ -102,23 +110,19 @@ describe('unknown counterparty triage', () => {
     await waitFor(() => expect(apiMocks.eth.getUnreviewedCounterparties).toHaveBeenCalledTimes(2));
   });
 
-  it('requires a second click to act on "It\'s mine", then splits track from label', async () => {
+  it('keeps "mine, do not track" and "track as a wallet" separate verdicts', async () => {
     apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
     apiMocks.eth.addWallet.mockResolvedValue({});
     await openReviewTab();
 
-    // Opening the panel must not itself be a verdict -- tracking creates an
-    // account and runs a full sync, so it has to confirm.
-    fireEvent.click(await screen.findByRole('button', { name: /it's mine — 0xbbbb/i }));
-    expect(apiMocks.eth.labelAddress).not.toHaveBeenCalled();
-    expect(apiMocks.eth.addWallet).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: /mine, don't track it — 0xbbbb/i }));
+    await chooseVerdict('own');
+    apply();
     await waitFor(() => {
       // An empty optional name goes as null, so the backend falls back to the
       // short address rather than storing a blank label.
       expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(MATERIAL.address, null, { kind: 'own' });
     });
+    // Labelling must never create an account or run a sync.
     expect(apiMocks.eth.addWallet).not.toHaveBeenCalled();
   });
 
@@ -126,10 +130,28 @@ describe('unknown counterparty triage', () => {
     apiMocks.eth.addWallet.mockResolvedValue({});
     await openReviewTab();
 
-    fireEvent.click(await screen.findByRole('button', { name: /it's mine — 0xbbbb/i }));
-    fireEvent.click(screen.getByRole('button', { name: /track as a wallet — 0xbbbb/i }));
+    await chooseVerdict('track');
+    // Tracking creates an account and runs a full sync, so the consequence is
+    // stated before Apply is pressed.
+    expect(screen.getByText(/pulls the full history/i)).toBeInTheDocument();
+    apply();
     await waitFor(() => expect(apiMocks.eth.addWallet).toHaveBeenCalledWith(MATERIAL.address, null));
     expect(apiMocks.eth.labelAddress).not.toHaveBeenCalled();
+  });
+
+  it('will not submit an exchange verdict without a name', async () => {
+    await openReviewTab();
+
+    await chooseVerdict('exchange');
+    // The exchange name is the counterparty text AND the internal-transfer
+    // assertion, so it is the one required field.
+    expect(screen.getByRole('button', { name: /apply verdict — 0xbbbb/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/name for 0xbbbb/i), { target: { value: 'Coinbase' } });
+    apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
+    apply();
+    await waitFor(() => {
+      expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(MATERIAL.address, 'Coinbase', { kind: 'exchange' });
+    });
   });
 
   it('counts only material counterparties in the Review tab badge', async () => {
@@ -157,7 +179,7 @@ describe('unknown counterparty triage', () => {
     expect(screen.getByText('0xdddd…0004')).toBeInTheDocument();
   });
 
-  it('confirms before ignoring a token, since the ignore list is user-global', async () => {
+  it('warns before ignoring a token, since the ignore list is user-global', async () => {
     apiMocks.eth.ignoreToken.mockResolvedValue({});
     await openReviewTab({
       data: [{ ...MATERIAL, token_symbols: ['SCAM'], sole_token_contract: '0xc0ffee' }],
@@ -166,13 +188,20 @@ describe('unknown counterparty triage', () => {
 
     // sole_token_contract only proves THIS counterparty deals in one token.
     // Ignoring drops the position from every wallet, so if the same token was
-    // also acquired legitimately, one stray click would delete a real holding.
-    fireEvent.click(await screen.findByRole('button', { name: /^ignore scam — 0xbbbb/i }));
+    // also acquired legitimately it would delete a real holding -- the warning
+    // has to be readable while Apply is still unpressed.
+    await chooseVerdict('ignore');
     expect(apiMocks.eth.ignoreToken).not.toHaveBeenCalled();
-    expect(screen.getByText(/removes it from holdings and activity in/i)).toBeInTheDocument();
+    expect(screen.getByText(/removes it from holdings and activity in every wallet/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /ignore scam everywhere — 0xbbbb/i }));
+    apply();
     await waitFor(() => expect(apiMocks.eth.ignoreToken).toHaveBeenCalledWith('0xc0ffee', 'SCAM'));
+  });
+
+  it('offers the ignore verdict only where a single token is in play', async () => {
+    await openReviewTab();
+    const select = await screen.findByRole('combobox', { name: /verdict for 0xbbbb/i });
+    expect(within(select).queryByText(/ignore/i)).toBeNull();
   });
 
   it('shows a retry state when the queue fetch fails rather than claiming all clear', async () => {

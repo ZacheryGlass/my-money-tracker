@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, EyeOff, Plus, RefreshCw, Repeat, Tag, Undo2, Wallet } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, RefreshCw, Undo2 } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import {
   formatCompactCurrency, formatDateDisplay, formatRelativeTime,
@@ -22,6 +22,39 @@ export const SPAM_MAX_LIMIT = 500;
 
 const TRIAGE_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all disabled:opacity-40';
 
+// Every verdict a counterparty row can record, as ONE list -- the row used to
+// carry a button per verdict, which pushed the heavier ones ("track this as a
+// wallet", "ignore this token everywhere") into second-level panels where they
+// read as afterthoughts. Flattened here so the choice is made once and the
+// submit is the only click that writes anything.
+//
+// `own` and `track` are separate entries rather than one "It's mine" that then
+// asks again: they are genuinely different actions (a label vs. an account plus
+// a full history sync), and a dropdown can say so up front.
+const VERDICT_OPTIONS = [
+  { value: 'external', label: 'Outside party' },
+  { value: 'exchange', label: "It's an exchange" },
+  { value: 'service', label: 'Swap service' },
+  { value: 'own', label: "Mine — don't track it" },
+  { value: 'track', label: 'Mine — track as a wallet' },
+];
+
+// Which verdicts take a name, and whether it is required. An exchange name
+// becomes the counterparty text AND the internal-transfer assertion, so it is
+// mandatory; every other name is display only.
+const NAME_FIELDS = {
+  exchange: { required: true, placeholder: 'e.g. Coinbase', datalist: true },
+  service: { required: false, placeholder: 'Optional name, e.g. Changelly', datalist: true },
+  own: { required: false, placeholder: 'Optional name, e.g. Ledger cold storage', datalist: false },
+  track: { required: false, placeholder: 'Optional name, e.g. Ledger cold storage', datalist: false },
+};
+
+const VERDICT_HINTS = {
+  service: 'For an instant-swap deposit address (Changelly, ShapeShift). What you sent was sold, so it books as a trade rather than as a transfer between your own accounts — and what you bought will not appear on this chain.',
+  own: 'Labelling only stops its transfers counting as spending — use that for addresses on another chain, ones already counted elsewhere, or ones you would rather not sync.',
+  track: 'Tracking creates an account, pulls the full history, and counts the balance toward net worth.',
+};
+
 // One unreviewed counterparty. Defined at module scope, not inside the panel:
 // a component redefined every render remounts, which would close the open
 // naming panel on each keystroke.
@@ -30,11 +63,28 @@ const TRIAGE_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border
 // exact rapid-triage workflow this feature is built around. active spins only
 // the row actually being worked on.
 export function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackAsWallet, onIgnoreToken }) {
-  const [panel, setPanel] = useState(null); // 'exchange' | 'mine' | null
+  const [verdict, setVerdict] = useState('');
   const [name, setName] = useState('');
   const short = shortEthAddress(counterparty.address);
-  const openPanel = (next) => { setPanel((prev) => (prev === next ? null : next)); setName(''); };
   const symbol = counterparty.token_symbols?.[0];
+  const nameField = NAME_FIELDS[verdict];
+  // Ignoring a token is a verdict on the TOKEN, not on the address, and it is
+  // the one entry here with no undo, so it is only offered where it is actually
+  // actionable.
+  const canIgnoreToken = Boolean(counterparty.sole_token_contract);
+  const hint = verdict === 'ignore'
+    ? `Ignoring ${symbol || 'this token'} removes it from holdings and activity in every wallet, not just this counterparty. If you also hold it legitimately, that position disappears too.`
+    : VERDICT_HINTS[verdict];
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (busy || !verdict) return;
+    const trimmed = name.trim();
+    if (verdict === 'ignore') onIgnoreToken(counterparty);
+    else if (verdict === 'track') onTrackAsWallet(counterparty.address, trimmed);
+    else if (verdict === 'exchange') { if (trimmed) onTriage(counterparty.address, 'exchange', trimmed); }
+    else onTriage(counterparty.address, verdict, trimmed);
+  };
 
   return (
     <div className="px-4 py-3">
@@ -78,197 +128,60 @@ export function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackA
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <button
-            type="button"
+        {/* One verdict picker, one submit. The name field appears beside it
+            only for the verdicts that take one, so the row stays a single
+            line for the common case and never hides an action behind a
+            first click that records nothing. */}
+        <form className="flex shrink-0 flex-wrap items-center gap-2" onSubmit={submit}>
+          <select
+            value={verdict}
             disabled={busy}
-            aria-label={`It's an exchange — ${short}`}
-            onClick={() => openPanel('exchange')}
-            className={`${TRIAGE_ACTION_CLASS} hover:border-teal-500/30 hover:text-teal-400`}
+            aria-label={`Verdict for ${short}`}
+            onChange={(event) => { setVerdict(event.target.value); setName(''); }}
+            className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent disabled:opacity-40"
           >
-            <Tag size={10} /> It&apos;s an exchange
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            aria-label={`It's mine — ${short}`}
-            onClick={() => openPanel('mine')}
-            className={`${TRIAGE_ACTION_CLASS} hover:border-accent hover:text-accent`}
-          >
-            <Wallet size={10} /> It&apos;s mine
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            aria-label={`Swap service — ${short}`}
-            onClick={() => openPanel('service')}
-            className={`${TRIAGE_ACTION_CLASS} hover:border-teal-500/30 hover:text-teal-400`}
-          >
-            <Repeat size={10} /> Swap service
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            aria-label={`Outside party — ${short}`}
-            onClick={() => onTriage(counterparty.address, 'external')}
-            className={`${TRIAGE_ACTION_CLASS} hover:border-accent hover:text-accent`}
-          >
-            {active ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />} Outside party
-          </button>
-          {counterparty.sole_token_contract && (
-            // Airdrop spam arrives from many addresses but one contract, so
-            // ignoring the token clears a whole class at once. Confirmed, not
-            // one-click: sole_token_contract only says THIS counterparty deals
-            // in one token, while the ignore list is user-global -- if the same
-            // token was also acquired legitimately elsewhere, ignoring it
-            // deletes that real holding and drops net worth with no undo.
-            <button
-              type="button"
-              disabled={busy}
-              aria-label={`Ignore ${symbol || 'token'} — ${short}`}
-              onClick={() => openPanel('ignore')}
-              className={`${TRIAGE_ACTION_CLASS} hover:border-loss/30 hover:text-loss`}
-            >
-              <EyeOff size={10} /> Ignore {symbol || 'token'}
-            </button>
-          )}
-        </div>
-      </div>
+            <option value="">What is this address?</option>
+            {VERDICT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+            {canIgnoreToken && <option value="ignore">Ignore {symbol || 'token'} everywhere</option>}
+          </select>
 
-      {panel === 'exchange' && (
-        <form
-          className="mt-3 flex flex-wrap items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (name.trim()) onTriage(counterparty.address, 'exchange', name.trim());
-          }}
-        >
-          <input
-            type="text"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            list="crypto-eth-label-names"
-            maxLength={64}
-            placeholder="e.g. Coinbase"
-            aria-label={`Exchange name for ${short}`}
-            className="h-8 w-44 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
-          />
-          <button
-            type="submit"
-            disabled={busy || !name.trim()}
-            className="inline-flex h-8 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[9px] font-bold uppercase tracking-wide text-teal-400 disabled:opacity-40"
-          >
-            {active && <RefreshCw size={10} className="animate-spin" />} Save
-          </button>
-          <button type="button" onClick={() => setPanel(null)} className={TRIAGE_ACTION_CLASS}>Cancel</button>
-        </form>
-      )}
-
-      {panel === 'service' && (
-        // The name is optional here, unlike the exchange panel: an exchange
-        // name becomes the counterparty text AND the internal-transfer
-        // assertion, while a service name is display only. These arrive dozens
-        // at a time (one deposit address per order), so requiring a typed name
-        // would be dozens of times the work for no extra meaning.
-        <form
-          className="mt-3 space-y-2 border-t border-border pt-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onTriage(counterparty.address, 'service', name.trim());
-          }}
-        >
-          <div className="flex flex-wrap items-center gap-2">
+          {nameField && (
             <input
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
-              list="crypto-eth-label-names"
+              list={nameField.datalist ? 'crypto-eth-label-names' : undefined}
               maxLength={64}
-              placeholder="Optional name, e.g. Changelly"
-              aria-label={`Swap service name for ${short}`}
-              className="h-8 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent sm:w-56"
+              placeholder={nameField.placeholder}
+              aria-label={`Name for ${short}`}
+              className="h-8 w-44 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
             />
-            <button
-              type="submit"
-              disabled={busy}
-              className="inline-flex h-8 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[9px] font-bold uppercase tracking-wide text-teal-400 disabled:opacity-40"
-            >
-              {active && <RefreshCw size={10} className="animate-spin" />} Save
-            </button>
-            <button type="button" onClick={() => setPanel(null)} className={`${TRIAGE_ACTION_CLASS} h-8 px-3`}>Cancel</button>
-          </div>
-          <p className="text-[10px] leading-relaxed text-tertiary">
-            For an instant-swap deposit address (Changelly, ShapeShift). What you sent was sold, so it books
-            as a trade rather than as a transfer between your own accounts — and what you bought will not
-            appear on this chain.
-          </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={busy || !verdict || (nameField?.required && !name.trim())}
+            aria-label={`Apply verdict — ${short}`}
+            className={`inline-flex h-8 items-center gap-1.5 rounded border px-3 text-[9px] font-bold uppercase tracking-wide transition-all disabled:opacity-40 ${
+              verdict === 'ignore'
+                ? 'border-loss/30 bg-loss-bg text-loss'
+                : 'border-accent/30 bg-accent/10 text-accent hover:bg-accent/20'
+            }`}
+          >
+            {active ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />} Apply
+          </button>
         </form>
-      )}
+      </div>
 
-      {panel === 'mine' && (
-        // "Mine" means two different things, and the split matters: tracking
-        // keeps the value in net worth, the label only stops the transfer
-        // counting as spending. This panel is also the confirmation step for
-        // tracking, which is far heavier than the other verdicts (creates an
-        // account, full Etherscan sync, can fail on rate limits).
-        <div className="mt-3 space-y-2 border-t border-border pt-3">
-          <input
-            type="text"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            maxLength={64}
-            placeholder="Optional name, e.g. Ledger cold storage"
-            aria-label={`Name for ${short}`}
-            className="h-8 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent sm:w-72"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              aria-label={`Track as a wallet — ${short}`}
-              onClick={() => onTrackAsWallet(counterparty.address, name.trim())}
-              className="inline-flex h-8 items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-3 text-[9px] font-bold uppercase tracking-wide text-accent transition-all hover:bg-accent/20 disabled:opacity-40"
-            >
-              {active ? <RefreshCw size={10} className="animate-spin" /> : <Plus size={10} />} Track as a wallet
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              aria-label={`Mine, don't track it — ${short}`}
-              onClick={() => onTriage(counterparty.address, 'own', name.trim())}
-              className={`${TRIAGE_ACTION_CLASS} h-8 px-3 hover:border-accent hover:text-accent`}
-            >
-              Mine, don&apos;t track it
-            </button>
-            <button type="button" onClick={() => setPanel(null)} className={`${TRIAGE_ACTION_CLASS} h-8 px-3`}>Cancel</button>
-          </div>
-          <p className="text-[10px] leading-relaxed text-tertiary">
-            Tracking creates an account, pulls the full history, and counts the balance toward net worth.
-            Labelling it only stops its transfers counting as spending — use that for addresses on another
-            chain, ones already counted elsewhere, or ones you would rather not sync.
-          </p>
-        </div>
-      )}
-
-      {panel === 'ignore' && (
-        <div className="mt-3 space-y-2 border-t border-border pt-3">
-          <p className="text-[10px] leading-relaxed text-tertiary">
-            Ignoring {symbol || 'this token'} removes it from holdings and activity in <strong>every</strong> wallet,
-            not just this counterparty. If you also hold it legitimately, that position disappears too.
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              aria-label={`Ignore ${symbol || 'token'} everywhere — ${short}`}
-              onClick={() => onIgnoreToken(counterparty)}
-              className="inline-flex h-8 items-center gap-1.5 rounded border border-loss/30 bg-loss-bg px-3 text-[9px] font-bold uppercase tracking-wide text-loss transition-all disabled:opacity-40"
-            >
-              {active ? <RefreshCw size={10} className="animate-spin" /> : <EyeOff size={10} />} Ignore everywhere
-            </button>
-            <button type="button" onClick={() => setPanel(null)} className={`${TRIAGE_ACTION_CLASS} h-8 px-3`}>Cancel</button>
-          </div>
-        </div>
+      {/* The consequence of the selected verdict, before it is applied. The
+          heavy ones -- tracking creates an account and runs a full sync,
+          ignoring a token is user-global with no undo -- were previously
+          gated behind a confirm panel; choosing them here shows the same
+          warning while Apply is still unpressed. */}
+      {hint && (
+        <p className="mt-2 text-[10px] leading-relaxed text-tertiary">{hint}</p>
       )}
     </div>
   );
