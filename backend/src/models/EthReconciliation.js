@@ -97,6 +97,35 @@ class EthReconciliation {
     return result.rows[0];
   }
 
+  // One stored verdict, by its natural key. Wallet-keyed like upsert: the
+  // caller (the adjustment routes, via EthReconciliationService) has already
+  // resolved the wallet against the user.
+  static async findByKey(walletId, chainId, assetKey) {
+    const result = await pool.query(
+      `SELECT * FROM eth_reconciliation
+       WHERE wallet_id = $1 AND chain_id = $2 AND asset_key = $3`,
+      [walletId, chainId, assetKey]
+    );
+    return result.rows[0] || null;
+  }
+
+  // Re-decides a stored verdict from stored figures -- the adjustment routes'
+  // write path (immediate, no Etherscan call). Deliberately narrow: only
+  // delta_units and status move. derived_units stays the RAW ledger figure
+  // (the thing under test), live_units stays the balance actually read, and
+  // checked_at stays the time that comparison happened -- an adjustment
+  // re-decides the verdict, it does not re-run the comparison.
+  static async updateVerdict(walletId, chainId, assetKey, { delta_units, status }) {
+    const result = await pool.query(
+      `UPDATE eth_reconciliation
+       SET delta_units = $4, status = $5, skip_reason = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE wallet_id = $1 AND chain_id = $2 AND asset_key = $3
+       RETURNING *`,
+      [walletId, chainId, assetKey, delta_units, status]
+    );
+    return result.rows[0] || null;
+  }
+
   // Drops verdicts for assets this run no longer tracks -- a token sold to zero,
   // or one added to the ignore list.
   //

@@ -133,6 +133,15 @@
       "explorer_name_tag": null
     },
     {
+      "address": "0x000000000000000000000000000000000000006e",
+      "name": "Arbitrum: ArbRetryableTx",
+      "chain_id": 42161,
+      "protocol": "arbitrum",
+      "source_url": "https://docs.arbitrum.io/build-decentralized-apps/precompiles/reference",
+      "docs_name": "ArbRetryableTx (precompile), 'Precompile address: 0x...006E' on the precompiles reference (source_url) -- the address lives there, not on the protocol's contract-addresses page. The counterparty of every reshaped classic-era L1->L2 ETH deposit (config/chains.js classicRetryableDeposits), so this label is what classifies those credits bridge_in and lets the matcher pair them with the L1 Delayed Inbox leg.",
+      "explorer_name_tag": null
+    },
+    {
       "address": "0xd19d4b5d358258f05d7b411e21a1460d11b0876f",
       "name": "Linea: L1 Message Service",
       "chain_id": 1,

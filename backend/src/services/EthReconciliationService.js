@@ -3,6 +3,7 @@
 const EtherscanService = require('./EtherscanService');
 const EthTransfer = require('../models/EthTransfer');
 const EthReconciliation = require('../models/EthReconciliation');
+const EthReconciliationAdjustment = require('../models/EthReconciliationAdjustment');
 const EthWalletChain = require('../models/EthWalletChain');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
@@ -210,6 +211,18 @@ class EthReconciliationService {
     const nativeByChain = new Map(nativeRows.map((row) => [Number(row.chain_id), row.balance_wei]));
     const tokenRows = await EthTransfer.tokenBalanceDeltas(wallet.id);
     const lastChecked = await EthReconciliation.lastCheckedByAsset(wallet.id);
+    // Documented corrections (048), summed per (chain, asset) into the derived
+    // figure BEFORE the verdict -- and only there. The stored derived_units
+    // stays the raw ledger figure; a failed read here falls back to "no
+    // adjustments" (a verdict decided without them is exactly what stood
+    // before 048, never a wrong number).
+    let adjustmentSums = new Map();
+    try {
+      adjustmentSums = await EthReconciliationAdjustment.sumsForWallet(wallet.id);
+    } catch (err) {
+      logger.warn({ walletId: wallet.id, err },
+        'Could not read reconciliation adjustments; auditing without them');
+    }
 
     const summary = {
       assets: 0, checked: 0, matched: 0, dust: 0, mismatches: 0,
@@ -237,7 +250,10 @@ class EthReconciliationService {
         // the ledger is fine, the live side is what is missing.
         verdict = { status: 'unavailable', delta: null, skipReason: SKIP_REASONS.LIVE_FETCH_FAILED };
       } else {
-        verdict = this.classify({ assetType: 'native', derived, live, decimals: DEFAULT_DECIMALS });
+        // ETH keeps its zero tolerance: the adjustment shifts the derived
+        // figure by a documented, exact amount, it does not widen the band.
+        const adjusted = derived + (adjustmentSums.get(`${chainId}:${chains.nativeSymbol(chainId)}`) ?? 0n);
+        verdict = this.classify({ assetType: 'native', derived: adjusted, live, decimals: DEFAULT_DECIMALS });
       }
 
       await this._store(wallet.id, {
@@ -347,9 +363,10 @@ class EthReconciliationService {
             'Token balance lookup failed; that asset is reported unchecked');
           live = null;
         }
+        const adjusted = token.derived + (adjustmentSums.get(`${token.chainId}:${token.contract}`) ?? 0n);
         verdict = live == null
           ? { status: 'unavailable', delta: null, skipReason: SKIP_REASONS.LIVE_FETCH_FAILED }
-          : this.classify({ assetType: 'token', derived: token.derived, live, decimals: token.decimals });
+          : this.classify({ assetType: 'token', derived: adjusted, live, decimals: token.decimals });
       }
 
       await this._store(wallet.id, {
@@ -381,6 +398,38 @@ class EthReconciliationService {
     }
     logger.info({ walletId: wallet.id, ...summary }, 'ETH balance reconciliation');
     return summary;
+  }
+
+  // Re-decides ONE stored verdict from stored figures plus the current
+  // adjustments -- the write path behind POST/DELETE on adjustments, so a
+  // correction lands immediately instead of at the next sync, and it costs no
+  // Etherscan call: derived and live are both already on the row.
+  //
+  // Only a row that was actually COMPARED is touched. A skipped or unavailable
+  // row has no live figure, so there is no comparison to re-decide -- it is
+  // returned as-is and the next real sync applies the adjustment normally.
+  // Returns null when no verdict row exists for the key at all (a legitimate
+  // state: an adjustment may be filed before the first audit reaches the
+  // asset).
+  static async recomputeStoredVerdict(walletId, chainId, assetKey) {
+    const row = await EthReconciliation.findByKey(walletId, chainId, assetKey);
+    if (!row) return null;
+    const derived = toBigIntOrNull(row.derived_units);
+    const live = toBigIntOrNull(row.live_units);
+    if (derived == null || live == null) return row;
+
+    const sums = await EthReconciliationAdjustment.sumsForWallet(walletId);
+    const adjusted = derived + (sums.get(`${chainId}:${assetKey}`) ?? 0n);
+    const verdict = this.classify({
+      assetType: row.asset_type,
+      derived: adjusted,
+      live,
+      decimals: row.token_decimals != null ? Number(row.token_decimals) : DEFAULT_DECIMALS,
+    });
+    return EthReconciliation.updateVerdict(walletId, chainId, assetKey, {
+      delta_units: verdict.delta.toString(),
+      status: verdict.status,
+    });
   }
 
   // One row's write plus its tally. Wrapped so a single failed INSERT (a value

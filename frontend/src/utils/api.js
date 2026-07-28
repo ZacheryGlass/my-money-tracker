@@ -446,6 +446,19 @@ export const eth = {
     const response = await api.get('/api/eth/prices/unpriced');
     return response.data;
   },
+  // A documented audit-side correction (reconciliation only, never holdings or
+  // spending). amountWei is a signed base-unit integer STRING -- these values
+  // exceed Number precision. The response carries the recomputed verdict row.
+  addReconciliationAdjustment: async ({ walletId, chainId, assetKey, amountWei, note }) => {
+    const response = await api.post('/api/eth/reconciliation/adjustments', {
+      wallet_id: walletId, chain_id: chainId, asset_key: assetKey, amount_wei: amountWei, note,
+    });
+    return response.data;
+  },
+  removeReconciliationAdjustment: async (id) => {
+    const response = await api.delete(`/api/eth/reconciliation/adjustments/${id}`);
+    return response.data;
+  },
 };
 
 // The unified crypto ledger (#63): on-chain activity and exchange records

@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS eth_activity_links (
 );
 
 -- BEGIN GENERATED SEED (backend/scripts/generate-bridge-seed.js)
--- 34 addresses, researched 2026-07-27. Sources, one per protocol:
+-- 35 addresses, researched 2026-07-27. Sources, one per protocol:
 --   arbitrum  https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses
 --   linea     https://docs.linea.build/network/build/contracts
 --   optimism  https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json
@@ -152,6 +152,7 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0x096760f208390250649e3e8763348e783aef5562', 'Arbitrum One: L2 Arb-Custom Gateway', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 42161. Source: https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses'),
   (NULL, '0x6c411ad3e74de3e7bd422b94a27770f5b86c623b', 'Arbitrum One: L2 WETH Gateway', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 42161. Source: https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses'),
   (NULL, '0x0000000000000000000000000000000000000064', 'Arbitrum: ArbSys', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 42161. Source: https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses'),
+  (NULL, '0x000000000000000000000000000000000000006e', 'Arbitrum: ArbRetryableTx', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 42161. Source: https://docs.arbitrum.io/build-decentralized-apps/precompiles/reference'),
   (NULL, '0xd19d4b5d358258f05d7b411e21a1460d11b0876f', 'Linea: L1 Message Service', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.linea.build/network/build/contracts'),
   (NULL, '0x051f1d88f0af5763fb888ec4378b4d8b29ea3319', 'Linea: L1 Token Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.linea.build/network/build/contracts'),
   (NULL, '0x508ca82df566dcd1b0de8296e70a96332cd644ec', 'Linea: L2 Message Service', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 59144. Source: https://docs.linea.build/network/build/contracts'),

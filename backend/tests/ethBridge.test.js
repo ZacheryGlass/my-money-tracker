@@ -867,8 +867,11 @@ test('every seeded bridge carries a cited official source URL', () => {
     assert.ok(entry, `seeded address is not in the JSON pack: ${row.address}`);
     assert.equal(row.name, entry.name);
     // The provenance travels IN the row (note renders as the label's tooltip),
-    // not only in a file nobody opens.
-    const url = PACK.sources[entry.protocol];
+    // not only in a file nobody opens. The citation is the page the address
+    // was actually read from: the entry's own source_url when it has one (the
+    // ArbRetryableTx precompile lives on the precompiles reference, not the
+    // contract-addresses page), else the protocol's source.
+    const url = entry.source_url || PACK.sources[entry.protocol];
     assert.ok(url, `no source URL for protocol ${entry.protocol}`);
     assert.equal(row.note, `Cross-chain bridge on chain ${entry.chain_id}. Source: ${url}`);
     assert.match(url, /^https:\/\//);
@@ -890,6 +893,13 @@ test('every source is a first-party domain, never an aggregator', () => {
   ];
   for (const [protocol, url] of Object.entries(PACK.sources)) {
     assert.ok(ALLOWED.some((re) => re.test(url)), `${protocol} cites a non-first-party source: ${url}`);
+  }
+  // Per-entry overrides are held to the same standard as the protocol sources:
+  // a source_url is still a citation, and an aggregator is still not one.
+  for (const entry of PACK.labels) {
+    if (entry.source_url === undefined) continue;
+    assert.ok(ALLOWED.some((re) => re.test(entry.source_url)),
+      `${entry.address} cites a non-first-party source_url: ${entry.source_url}`);
   }
 });
 
@@ -936,6 +946,35 @@ test('the Polygon state-sync bridge halves are both seeded on their own chains',
   const seeded = new Set(parseSeededRows().map((r) => r.address));
   assert.ok(seeded.has(depositManager.address));
   assert.ok(seeded.has(mrc20.address));
+});
+
+test('the Arbitrum classic-deposit halves are both seeded on their own chains', () => {
+  // Classic-era L1->L2 ETH deposits: the L1 leg's `to` is the Delayed Inbox,
+  // and the reshaped L2 credit's `from` is the ArbRetryableTx precompile
+  // (config/chains.js classicRetryableDeposits). Both must be seeded 'bridge'
+  // or the deposit falls to rung 8 as a possible spend and the reshaped credit
+  // never classifies bridge_in, so the two halves never pair.
+  const byAddress = new Map(PACK.labels.map((l) => [l.address, l]));
+  const delayedInbox = byAddress.get('0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f');
+  const arbRetryableTx = byAddress.get('0x000000000000000000000000000000000000006e');
+
+  assert.ok(delayedInbox, 'the L1 Delayed Inbox must be seeded');
+  assert.equal(delayedInbox.chain_id, 1);
+  assert.equal(delayedInbox.protocol, 'arbitrum');
+
+  assert.ok(arbRetryableTx, 'the ArbRetryableTx precompile must be seeded');
+  assert.equal(arbRetryableTx.chain_id, 42161);
+  assert.equal(arbRetryableTx.protocol, 'arbitrum');
+
+  // The precompile is the exact address the reshape stamps as from_address, so
+  // the two must agree byte for byte or the credit classifies as a plain
+  // receive.
+  const { getChain } = require('../src/config/chains');
+  assert.equal(arbRetryableTx.address, getChain(42161).classicRetryableDeposits.arbRetryableTx);
+
+  const seeded = new Set(parseSeededRows().map((r) => r.address));
+  assert.ok(seeded.has(delayedInbox.address));
+  assert.ok(seeded.has(arbRetryableTx.address));
 });
 
 test('the scraped pack cannot swallow a bridge address', () => {

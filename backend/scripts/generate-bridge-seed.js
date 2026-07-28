@@ -43,6 +43,15 @@ function validate(pack) {
     if (!label.name || label.name.length > NAME_MAX) throw new Error(`bad name: ${label.name}`);
     if (!/^[\x20-\x7e]+$/.test(label.name)) throw new Error(`non-ASCII name: ${label.name}`);
     if (!pack.sources[label.protocol]) throw new Error(`no source URL for protocol: ${label.protocol}`);
+    // Optional per-entry source, preferred over the protocol source: some
+    // addresses live on a different first-party page than the protocol's
+    // contract table (the ArbRetryableTx precompile lives on the precompiles
+    // reference, not the contract-addresses page). Same allowlist rules as the
+    // name: the URL lands inside a quoted SQL literal.
+    if (label.source_url !== undefined
+      && (typeof label.source_url !== 'string' || !/^https:\/\/[\x20-\x7e]+$/.test(label.source_url))) {
+      throw new Error(`bad source_url: ${label.source_url}`);
+    }
     if (!Number.isInteger(label.chain_id)) throw new Error(`bad chain_id: ${label.chain_id}`);
   }
   return pack;
@@ -50,7 +59,9 @@ function validate(pack) {
 
 function buildSeed(pack) {
   const rows = pack.labels.map((label, i) => {
-    const url = pack.sources[label.protocol];
+    // The entry's own source wins over the protocol's: the citation must be
+    // the page the address was actually read from.
+    const url = label.source_url || pack.sources[label.protocol];
     // The note column IS the provenance record in the database: it renders as
     // the label pill's tooltip, so the citation travels with the row instead of
     // living only in a file nobody opens.

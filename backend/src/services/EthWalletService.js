@@ -88,12 +88,55 @@ function maxBlock(rows) {
 }
 
 class EthWalletService {
+  // Decides whether a txlist row is a mis-served classic-era Arbitrum bridge
+  // deposit (config/chains.js classicRetryableDeposits), and if so, who the
+  // deposit credited. Returns the calldata destination address, or null when
+  // the row is not one -- every test below is a fail-safe: an off-shape row
+  // simply ingests through the normal path, where rule 8 flags it, rather than
+  // being guessed into a credit.
+  //
+  // The shape being matched: Etherscan serves a MIGRATED pre-Nitro L1->L2 ETH
+  // deposit as an outbound call from the wallet to the ArbRetryableTx
+  // precompile, methodId createRetryableTicket, with gasUsed and gasPrice both
+  // zero (the wallet signed nothing on this chain and paid no L2 gas). The
+  // money actually moved the OTHER way: the deposit credited
+  // createRetryableTicket's first argument, `destAddr` -- the last 20 bytes of
+  // calldata word 0.
+  static classicRetryableDestination(raw, config) {
+    if (!config) return null;
+    if ((raw.to || '').toLowerCase() !== config.arbRetryableTx) return null;
+    // Parse once and require an actual integer in the classic range. '' and
+    // null coerce to 0 through Number(), which would pass the cutover gate and
+    // store block_number 0 -- below every future resume window, so the row
+    // could never be re-derived by its own feed's delete window.
+    const block = raw.blockNumber == null || raw.blockNumber === '' ? NaN : Number(raw.blockNumber);
+    if (!Number.isInteger(block) || block < 0 || block > config.lastClassicBlock) return null;
+    if ((raw.methodId || '').toLowerCase() !== config.depositMethodId) return null;
+    // The zero gas fields are part of the signature: a real (post-migration
+    // shaped) call that spent gas is not this row, and reshaping it would
+    // delete a genuine fee from the ledger.
+    if (raw.gasUsed !== '0' || raw.gasPrice !== '0') return null;
+    // A reverted ticket credited nothing; the normal path already handles it.
+    // Success must be affirmative: Etherscan writes isError as a string, so
+    // the NUMBER 1 (or any other unrecognized shape) slips past a strict '1'
+    // comparison and must decline rather than reshape.
+    if (String(raw.isError ?? '0') !== '0') return null;
+    const input = typeof raw.input === 'string' ? raw.input.toLowerCase() : '';
+    // Selector (4 bytes) + at least word 0. An ABI-encoded address is 12 zero
+    // bytes then the 20 address bytes; anything else is off-shape calldata and
+    // off-shape means "do not guess".
+    if (!/^0x[0-9a-f]+$/.test(input) || input.length < 2 + 8 + 64) return null;
+    const word0 = input.slice(10, 74);
+    if (!/^0{24}[0-9a-f]{40}$/.test(word0)) return null;
+    return `0x${word0.slice(24)}`;
+  }
+
   // Pure: raw Etherscan feed rows -> eth_transfers rows (without wallet_id).
   // Gas rows are synthesized here, one per normal tx sent by the wallet --
   // including failed txs, which still burn gas. Zero-value normal/internal
   // rows (contract calls, approvals) are dropped as noise; their economic
   // content is the gas row and/or the token row from the token feed.
-  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [], statesync = [] } = {}, { stateSyncContract = null } = {}) {
+  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [], statesync = [] } = {}, { stateSyncContract = null, classicDeposits = null } = {}) {
     const wallet = walletAddress.toLowerCase();
     const rows = [];
     const ordinals = new Map();
@@ -159,6 +202,39 @@ class EthWalletService {
       // leaves work for the decode pass.
       const methodId = MethodSignatureService.normalizeSelector(raw.methodId);
       const methodName = MethodSignatureService.normalizeMethodName(raw.functionName);
+
+      // A classic-era Arbitrum bridge deposit served BACKWARDS (config/chains.js
+      // classicRetryableDeposits): reshape it into the ONE inbound native credit
+      // it actually was -- from the precompile, to the wallet, full value, real
+      // hash, and NO gas leg (the zero gas fields are part of the matched shape;
+      // the wallet paid nothing on this chain). Only when the calldata says this
+      // wallet is the deposit's destination: a ticket that credited someone else
+      // stays untouched and flags through rule 8 -- flag, never guess.
+      //
+      // transfer_type is 'native', NOT 'internal', deliberately: the row comes
+      // from txlist, and the normal feed's delete window covers ['native','gas']
+      // -- so the reshaped credit is cleared and re-derived by exactly the feed
+      // that produced it. Stored as 'internal' it would sit inside the internal
+      // feed's delete window while never being in the internal feed's fetch, and
+      // the first internal resync over its block would delete it forever.
+      //
+      // FORWARD-ONLY like 034's method capture and 038's tx_is_error: an
+      // existing wallet's normal cursor already sits past every classic block,
+      // so stored backwards rows stay as ingested. Healing them is remove +
+      // re-add the wallet, which restarts ingest from block 0.
+      const classicDest = classicDeposits ? this.classicRetryableDestination(raw, classicDeposits) : null;
+      if (classicDest === wallet && raw.value !== '0') {
+        rows.push({
+          ...baseRow(raw, 'native'),
+          from_address: classicDeposits.arbRetryableTx,
+          to_address: wallet,
+          value_wei: raw.value,
+          method_id: methodId,
+          method_name: methodName,
+        });
+        continue;
+      }
+
       const hasNativeLeg = raw.value !== '0';
       if (hasNativeLeg) {
         rows.push({
@@ -207,6 +283,15 @@ class EthWalletService {
       // symmetric, and this filter is also what keeps the two feeds' ordinal
       // namespaces from ever colliding on a shared tx hash.
       if (stateSyncContract && (raw.from || '').toLowerCase() === stateSyncContract) continue;
+      // The symmetric filter for the classic-deposit precompile (chains.js
+      // classicRetryableDeposits): the reshape stores that credit as a NATIVE
+      // leg from the precompile, owned by the normal feed's delete window.
+      // txlistinternal serves no trace from the precompile today, but if
+      // Etherscan ever starts, an unfiltered insert here would double-count
+      // every reshaped deposit -- native and internal are the same inbound arm
+      // of the balance derivation, in ordinal namespaces no UNIQUE ties
+      // together.
+      if (classicDeposits && (raw.from || '').toLowerCase() === classicDeposits.arbRetryableTx) continue;
       rows.push({ ...baseRow(raw, 'internal'), value_wei: raw.value });
     }
 
@@ -316,6 +401,11 @@ class EthWalletService {
     // exclude them and the state-sync feed can scope its own delete to them.
     // Null on every chain that does not declare the feed.
     const stateSyncContract = chain[STATE_SYNC_SPEC.chainFeed]?.contract || null;
+    // Classic-era Arbitrum deposits Etherscan serves backwards; read off the
+    // chain object like stateSyncDeposits, never a chain-id branch. Unlike the
+    // state-sync feed this is not a feed of its own: it RESHAPES txlist rows in
+    // place, so it needs no cursor, no delete scoping, and no gap accounting.
+    const classicDeposits = chain.classicRetryableDeposits || null;
 
     const feeds = {};
     const fetchedOk = {};
@@ -370,7 +460,7 @@ class EthWalletService {
       }
     }
 
-    const rows = this.normalizeFeeds(wallet.address, feeds, { stateSyncContract })
+    const rows = this.normalizeFeeds(wallet.address, feeds, { stateSyncContract, classicDeposits })
       .map((row) => ({ ...row, wallet_id: wallet.id, chain_id: chain.id }));
 
     for (const spec of FEED_SPECS) {

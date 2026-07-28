@@ -18,6 +18,7 @@ const apiMocks = vi.hoisted(() => ({
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getReconciliation: vi.fn(),
     getActivity: vi.fn(), setActivitySpam: vi.fn(),
+    addReconciliationAdjustment: vi.fn(), removeReconciliationAdjustment: vi.fn(),
   },
   exchanges: {
     getAll: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(),
@@ -207,6 +208,99 @@ describe('Crypto -> Wallets tab', () => {
     // both numbers being on screen is what makes the gap legible.
     expect(screen.getByText(/ledger matches the chain across/i).textContent.replace(/\s+/g, ' '))
       .toMatch(/across 1 of 2 assets/);
+  });
+
+  // Reconciliation adjustments (048): documented audit-side corrections. The
+  // UI's whole contract is that an adjusted verdict is never silent -- the
+  // note shows beside the audit -- and that absorbing a known drift is one
+  // required note away.
+  describe('audit adjustments', () => {
+    const DRIFT = '123456789';
+    const driftReport = (overrides = {}) => report({
+      mismatched: 1, native_mismatches: 1, matched: 1, needs_review: true,
+      issues: [{
+        id: 1, chain_id: 42161, asset_key: 'ETH', asset_type: 'native', token_symbol: 'ETH',
+        token_decimals: 18, derived_units: '1000000000123456789', live_units: ONE_ETH,
+        delta_units: DRIFT, status: 'mismatch', skip_reason: null,
+      }],
+      ...overrides,
+    });
+
+    it('opens an add form prefilled with the amount that zeroes the delta, and requires the note', async () => {
+      apiMocks.eth.addReconciliationAdjustment.mockResolvedValue({ adjustment: { id: 3 }, reconciliation: { status: 'match' } });
+      await openEthereumTab([wallet(driftReport())]);
+      await expandWallet();
+
+      fireEvent.click(await screen.findByRole('button', { name: /^adjust$/i }));
+      // Prefilled with the negated delta: saving as-is is exactly what absorbs
+      // the drift, so the one thing left to type is the explanation.
+      const amount = await screen.findByLabelText(/amount \(base units/i);
+      expect(amount.value).toBe(`-${DRIFT}`);
+      // The prefill is labeled as absorbing the ENTIRE remaining drift, so a
+      // large real loss is never one unlabeled click from being absorbed.
+      expect(screen.getByText(/absorbs the entire remaining drift/i)).toBeInTheDocument();
+
+      // No note, no save -- an adjustment without its explanation is
+      // indistinguishable from fudging the audit.
+      const save = screen.getByRole('button', { name: /save adjustment/i });
+      expect(save).toBeDisabled();
+
+      fireEvent.change(screen.getByLabelText(/why \(required\)/i), {
+        target: { value: 'Classic-era L2 fees Etherscan does not report' },
+      });
+      expect(save).not.toBeDisabled();
+      fireEvent.click(save);
+
+      await waitFor(() => expect(apiMocks.eth.addReconciliationAdjustment).toHaveBeenCalledWith({
+        walletId: 1,
+        chainId: 42161,
+        assetKey: 'ETH',
+        amountWei: `-${DRIFT}`,
+        note: 'Classic-era L2 fees Etherscan does not report',
+      }));
+      // The list refetches so the recomputed verdict (and the badge) update.
+      await waitFor(() => expect(apiMocks.eth.getWallets.mock.calls.length).toBeGreaterThan(1));
+    });
+
+    it('prints the adjusted derived beside the raw figure once an adjustment exists', async () => {
+      await openEthereumTab([wallet(driftReport({
+        adjustments: [{
+          id: 3, wallet_id: 1, chain_id: 42161, asset_key: 'ETH',
+          amount_wei: '-100000000', note: 'Part of the gap is classic-era fees',
+          created_at: new Date().toISOString(),
+        }],
+      }))]);
+      await expandWallet();
+
+      // Raw derived, adjusted derived, chain -- three figures whose arithmetic
+      // now checks out on sight. The server's delta already includes the
+      // adjustment, so printing it beside the RAW derived/live pair visibly
+      // failed to add up.
+      const line = await screen.findByText((content, element) =>
+        element?.tagName === 'LI' && /with adjustments 1\.000000000023456789/.test(element.textContent));
+      expect(line.textContent).toMatch(/derived 1\.000000000123456789/);
+    });
+
+    it('shows each adjustment with its note beside the audit, and removes one on demand', async () => {
+      apiMocks.eth.removeReconciliationAdjustment.mockResolvedValue({ message: 'Adjustment removed' });
+      // A clean report WITH an adjustment: the match only holds because of the
+      // correction, so the correction must be on display.
+      await openEthereumTab([wallet(report({
+        adjustments: [{
+          id: 3, wallet_id: 1, chain_id: 42161, asset_key: 'ETH',
+          amount_wei: `-${DRIFT}`, note: 'Classic-era L2 fees Etherscan does not report',
+          created_at: new Date().toISOString(),
+        }],
+      }))]);
+      await expandWallet();
+
+      expect(await screen.findByText(/audit adjustments/i)).toBeInTheDocument();
+      expect(screen.getByText(/Classic-era L2 fees Etherscan does not report/)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+      await waitFor(() => expect(apiMocks.eth.removeReconciliationAdjustment).toHaveBeenCalledWith(3));
+      await waitFor(() => expect(apiMocks.eth.getWallets.mock.calls.length).toBeGreaterThan(1));
+    });
   });
 
   it('renders nothing for a wallet that has never been audited', async () => {

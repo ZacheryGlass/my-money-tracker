@@ -41,7 +41,21 @@ const splitAuditIssues = (report) => ({
   unchecked: report.issues.filter((row) => row.status === 'skipped' || row.status === 'unavailable'),
 });
 
-export function WalletReconciliation({ report, chainNames }) {
+// A signed base-unit string, negated -- the adjustment that zeroes a delta is
+// its negation, and these values exceed Number precision, so this stays string
+// arithmetic end to end.
+const negateUnits = (units) => {
+  const text = String(units ?? '');
+  return text.startsWith('-') ? text.slice(1) : `-${text}`;
+};
+
+export function WalletReconciliation({ report, chainNames, walletId, onChanged, onError }) {
+  // The adjustment form's state. Declared before the early return -- hooks
+  // must run on every render.
+  const [adjusting, setAdjusting] = useState(null);
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustNote, setAdjustNote] = useState('');
+  const [savingAdjustment, setSavingAdjustment] = useState(false);
   if (!report) return null;
   const chainName = (chainId) => chainNames?.get(Number(chainId)) || `Chain ${chainId}`;
   const { nativeDrift, tokenDrift, unchecked } = splitAuditIssues(report);
@@ -58,6 +72,71 @@ export function WalletReconciliation({ report, chainNames }) {
   // than assuming the chain's native asset is ether.
   const symbolOf = (row) => row.token_symbol || (row.asset_type === 'native' ? 'ETH' : 'tokens');
 
+  // Adjustments are keyed like verdict rows; a native key is a symbol, a token
+  // key a contract. A token adjustment's decimals are not stored on it, so it
+  // renders in base units rather than guessing a scale.
+  const adjustmentAmount = (adj) => (adj.asset_key.startsWith('0x')
+    ? `${adj.amount_wei} base units of ${shortEthAddress(adj.asset_key)}`
+    : `${formatExactUnits(adj.amount_wei, 18)} ${adj.asset_key}`);
+
+  const canAdjust = walletId != null && typeof onChanged === 'function';
+  const amountValid = /^-?\d+$/.test(adjustAmount.trim()) && !/^-?0+$/.test(adjustAmount.trim());
+
+  // The server's delta already includes adjustments, but derived_units stays
+  // the RAW ledger figure -- so once an adjustment exists, delta beside raw
+  // derived/live is three numbers whose arithmetic visibly fails. Sum this
+  // row's adjustments as BigInt (these values exceed Number precision) and
+  // show the adjusted derived beside the raw one, only where one exists.
+  const adjustedDerived = (row) => {
+    const forKey = (report.adjustments || []).filter(
+      (adj) => Number(adj.chain_id) === Number(row.chain_id) && adj.asset_key === row.asset_key
+    );
+    if (!forKey.length) return null;
+    try {
+      return forKey.reduce((sum, adj) => sum + BigInt(adj.amount_wei), BigInt(row.derived_units)).toString();
+    } catch {
+      return null;
+    }
+  };
+
+  const openAdjustForm = (row) => {
+    setAdjusting(row);
+    // Prefilled from the row's current delta: the adjustment that zeroes it is
+    // the delta negated, so absorbing a known, explained drift is one note away.
+    setAdjustAmount(negateUnits(row.delta_units));
+    setAdjustNote('');
+  };
+
+  const submitAdjustment = async (event) => {
+    event.preventDefault();
+    if (savingAdjustment || !amountValid || !adjustNote.trim()) return;
+    setSavingAdjustment(true);
+    try {
+      await ethAPI.addReconciliationAdjustment({
+        walletId,
+        chainId: adjusting.chain_id,
+        assetKey: adjusting.asset_key,
+        amountWei: adjustAmount.trim(),
+        note: adjustNote.trim(),
+      });
+      setAdjusting(null);
+      await onChanged();
+    } catch (err) {
+      onError?.(err.response?.data?.error || 'Failed to save the adjustment');
+    } finally {
+      setSavingAdjustment(false);
+    }
+  };
+
+  const removeAdjustment = async (adjustment) => {
+    try {
+      await ethAPI.removeReconciliationAdjustment(adjustment.id);
+      await onChanged();
+    } catch (err) {
+      onError?.(err.response?.data?.error || 'Failed to remove the adjustment');
+    }
+  };
+
   return (
     <div className="mt-5 space-y-3">
       {nativeDrift.length > 0 && (
@@ -71,13 +150,83 @@ export function WalletReconciliation({ report, chainNames }) {
                 the chain exactly. It does not, which means a movement is missing from the ledger.
               </p>
               <ul className="mt-2 space-y-1 font-mono text-[11px]">
-                {nativeDrift.map((row) => (
+                {nativeDrift.map((row) => {
+                  const adjusted = adjustedDerived(row);
+                  return (
                   <li key={`${row.chain_id}-${row.asset_key}`}>
                     {chainName(row.chain_id)}: ledger is {amount(row)} {symbolOf(row)} off
-                    {' '}(derived {formatExactUnits(row.derived_units, 18)}, chain {formatExactUnits(row.live_units, 18)})
+                    {' '}(derived {formatExactUnits(row.derived_units, 18)}
+                    {adjusted != null ? `, with adjustments ${formatExactUnits(adjusted, 18)}` : ''}
+                    , chain {formatExactUnits(row.live_units, 18)})
+                    {canAdjust && (
+                      <button
+                        type="button"
+                        onClick={() => openAdjustForm(row)}
+                        className="ml-2 rounded border border-loss/30 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase tracking-wide hover:bg-loss/10"
+                      >
+                        Adjust
+                      </button>
+                    )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
+              {adjusting && (
+                // A documented correction to the AUDIT ONLY: holdings, the
+                // ledger and spending never read it. The note is mandatory --
+                // an adjustment without its explanation is indistinguishable
+                // from fudging the audit until it stops talking.
+                <form onSubmit={submitAdjustment} className="mt-3 space-y-2 rounded border border-loss/20 bg-surface p-3 text-secondary">
+                  <p className="text-[11px]">
+                    Absorb a known, explained drift on {chainName(adjusting.chain_id)} ({adjusting.asset_key}).
+                    This adjusts the balance audit only; holdings and spending are untouched.
+                  </p>
+                  <label className="block text-[10px] uppercase tracking-wide text-tertiary">
+                    Amount (base units, signed)
+                    <input
+                      type="text"
+                      value={adjustAmount}
+                      onChange={(event) => setAdjustAmount(event.target.value)}
+                      spellCheck={false}
+                      className="mt-1 block w-full rounded border border-input-border bg-surface-2 px-2 py-1 font-mono text-caption text-primary outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  </label>
+                  {/* The prefill is deliberately the WHOLE gap, and it must say
+                      so: a large real loss should not be one unlabeled click
+                      from being absorbed as "explained". */}
+                  <p className="text-[10px] text-tertiary">
+                    Prefilled with the amount that absorbs the entire remaining drift.
+                    Lower it if only part of the gap is explained &mdash; the rest stays on display.
+                  </p>
+                  <label className="block text-[10px] uppercase tracking-wide text-tertiary">
+                    Why (required)
+                    <input
+                      type="text"
+                      value={adjustNote}
+                      onChange={(event) => setAdjustNote(event.target.value)}
+                      maxLength={500}
+                      placeholder="e.g. Arbitrum classic-era fees Etherscan does not report"
+                      className="mt-1 block w-full rounded border border-input-border bg-surface-2 px-2 py-1 text-caption text-primary outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={savingAdjustment || !amountValid || !adjustNote.trim()}
+                      className="rounded border border-border bg-surface-3 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-secondary hover:border-accent hover:text-accent disabled:opacity-40"
+                    >
+                      Save adjustment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdjusting(null)}
+                      className="rounded px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-tertiary hover:text-primary"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         </div>
@@ -109,6 +258,36 @@ export function WalletReconciliation({ report, chainNames }) {
           Balance audit: ledger matches the chain across {report.matched + report.dust} of{' '}
           {report.assets_checked} assets &middot; {formatRelativeTime(report.checked_at)}
         </p>
+      )}
+
+      {report.adjustments?.length > 0 && (
+        // Always on display, matched rows included: a verdict that only
+        // matches because of a correction must show the correction and its
+        // note beside it, or the audit reads as having simply passed.
+        <div className="rounded border border-border bg-surface-3 p-4 text-xs leading-relaxed text-secondary">
+          <p className="font-bold uppercase tracking-wide text-primary">Audit adjustments</p>
+          <p className="mt-1">
+            Documented corrections summed into the audit&apos;s derived figure. They change the
+            balance audit only; holdings, the ledger and spending never read them.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {report.adjustments.map((adjustment) => (
+              <li key={adjustment.id} className="font-mono text-[11px]">
+                {chainName(adjustment.chain_id)}: {adjustmentAmount(adjustment)}
+                <span className="font-sans text-tertiary"> &mdash; {adjustment.note}</span>
+                {canAdjust && (
+                  <button
+                    type="button"
+                    onClick={() => removeAdjustment(adjustment)}
+                    className="ml-2 rounded border border-border px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase tracking-wide text-tertiary hover:border-loss/40 hover:text-loss"
+                  >
+                    Remove
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {unchecked.length > 0 && (
@@ -450,6 +629,9 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
         <WalletReconciliation
           report={wallet.reconciliation}
           chainNames={new Map((wallet.chains || []).map((chain) => [Number(chain.chain_id), chain.name]))}
+          walletId={wallet.id}
+          onChanged={onChanged}
+          onError={onError}
         />
       ) : (
         // Never audited and audited-clean are different claims, and the row

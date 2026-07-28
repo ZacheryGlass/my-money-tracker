@@ -10,8 +10,11 @@ const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
 const EthActivity = require('../models/EthActivity');
 const EthReconciliation = require('../models/EthReconciliation');
+const EthReconciliationAdjustment = require('../models/EthReconciliationAdjustment');
 const AssetPriceHistory = require('../models/AssetPriceHistory');
 const EthWalletService = require('../services/EthWalletService');
+const EthReconciliationService = require('../services/EthReconciliationService');
+const EthDerivedPipeline = require('../services/EthDerivedPipeline');
 const SecretsService = require('../services/SecretsService');
 const { CATEGORIES } = require('../utils/ethActivityVocabulary');
 const logger = require('../config/logger');
@@ -78,8 +81,28 @@ const RECONCILIATION_STATUSES = new Set(['match', 'dust', 'mismatch', 'skipped',
 // (rebasing supply, fee-on-transfer). Badging both would put a permanent number
 // on every wallet that ever touched a rebasing token, and a badge that cannot
 // reach zero gets ignored, which would cost us the ETH signal too.
-function buildReconciliationSummary(counts, issues) {
-  if (!counts) return null;
+function buildReconciliationSummary(counts, issues, adjustments) {
+  if (!counts) {
+    // Never audited -- but an adjustment can legitimately be filed before the
+    // first audit reaches the asset, and returning null here would make it
+    // invisible (its Remove button would never exist). A shell that says
+    // "never audited" in every count still carries the adjustments.
+    if (!adjustments?.length) return null;
+    return {
+      checked_at: null,
+      assets_checked: 0,
+      matched: 0,
+      dust: 0,
+      mismatched: 0,
+      native_mismatches: 0,
+      skipped: 0,
+      unavailable: 0,
+      needs_review: false,
+      issues: [],
+      truncated: false,
+      adjustments,
+    };
+  }
   return {
     checked_at: counts.checked_at,
     assets_checked: counts.assets_checked,
@@ -94,8 +117,20 @@ function buildReconciliationSummary(counts, issues) {
     // the whole story.
     issues: issues || [],
     truncated: (issues?.length || 0) < (counts.mismatched + counts.skipped + counts.unavailable),
+    // Documented audit-side corrections (048), listed in full: they are
+    // hand-entered and rare, and an adjusted verdict whose adjustment is not
+    // visible beside it would read as an audit that simply passed.
+    adjustments: adjustments || [],
   };
 }
+
+// An adjustment's asset key: the chain's native symbol (matching the verdict
+// row it lands on) or a token contract. Anything else is a typo that would
+// store an adjustment no audit row can ever consume. The native arm is checked
+// against chains.nativeSymbol -- the audit's own key source -- because a loose
+// symbol pattern accepts '0X1234' (a truncated contract paste) and any typo as
+// a "native symbol".
+const CONTRACT_RE = /^0x[0-9a-f]{40}$/i;
 
 // Resolves a wallet id from a request against the caller. Returns
 // { ok: false } when the id is absent-but-required, unparseable, or somebody
@@ -239,10 +274,17 @@ router.get('/wallets', async (req, res) => {
     // The balance audit rides along on the wallet status API, batched for the
     // same reason the chain rows are: a summary fetched per wallet inside the
     // map below is the N+1 this route already went out of its way to avoid.
-    const [reconciliationByWallet, reconciliationIssues] = await Promise.all([
+    const [reconciliationByWallet, reconciliationIssues, allAdjustments] = await Promise.all([
       EthReconciliation.summaryForWallets(req.user.id, walletIds),
       EthReconciliation.openIssuesForWallets(req.user.id, walletIds),
+      EthReconciliationAdjustment.findForUser(req.user.id),
     ]);
+    const adjustmentsByWallet = new Map();
+    for (const adjustment of allAdjustments) {
+      const list = adjustmentsByWallet.get(adjustment.wallet_id) || [];
+      list.push(adjustment);
+      adjustmentsByWallet.set(adjustment.wallet_id, list);
+    }
     const withAccounts = await Promise.all(
       wallets.map(async (wallet) => {
         const chainStates = chainStatesByWallet.get(wallet.id) || [];
@@ -271,7 +313,8 @@ router.get('/wallets', async (req, res) => {
           // which is distinct from an audit that found nothing wrong.
           reconciliation: buildReconciliationSummary(
             reconciliationByWallet.get(wallet.id),
-            reconciliationIssues.get(wallet.id)
+            reconciliationIssues.get(wallet.id),
+            adjustmentsByWallet.get(wallet.id)
           ),
         };
       })
@@ -677,6 +720,10 @@ router.get('/reconciliation', async (req, res) => {
       walletId: wallet.walletId,
     });
 
+    // Adjustments are NOT joined onto these rows: the one client of this feed
+    // (CryptoLedger's completeness banner) reads asset_type only, and
+    // WalletsPanel takes the flat per-wallet list from the wallets API. A
+    // per-row join here would be a second shape nothing renders.
     res.status(200).json({
       data: rows.map((row) => ({ ...row, chain_name: chains.chainLabel(row.chain_id) })),
       summary: {
@@ -691,6 +738,116 @@ router.get('/reconciliation', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get ETH reconciliation error');
     res.status(500).json({ error: 'Failed to retrieve the balance audit' });
+  }
+});
+
+// A documented, audit-side correction (048). Adjustments touch RECONCILIATION
+// ONLY -- holdings, the mirror, activity and Spending never read them -- and
+// ETH keeps its zero tolerance: the adjustment shifts the derived figure by an
+// exact, explained amount rather than widening the comparison.
+//
+// The stored verdict is recomputed IMMEDIATELY from stored figures (derived
+// and live are both on the row), so the correction lands without a sync and
+// without an Etherscan call.
+//
+// Token adjustments are accepted here but stay API-only BY DESIGN: the UI's
+// Adjust button rides the native drift list, because token drift gets the dust
+// band and never badges, so there is no token alarm for a correction to clear.
+router.post('/reconciliation/adjustments', async (req, res) => {
+  try {
+    const { wallet_id: walletIdRaw, chain_id: chainIdRaw, asset_key: assetKeyRaw, amount_wei: amountRaw, note } = req.body || {};
+
+    const wallet = await loadWallet(req, walletIdRaw, { required: true });
+    if (!wallet.ok) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+    // Any positive integer, not just enabled chains: a since-disabled chain's
+    // verdict rows stay stored, so their corrections must stay writable.
+    const chainId = Number(chainIdRaw);
+    if (!Number.isInteger(chainId) || chainId < 1) {
+      return res.status(400).json({ error: 'chain_id must be a positive integer' });
+    }
+    // The verdict row's key, exactly: a native symbol ('ETH', 'POL') or a
+    // token contract. Anything else would store an adjustment no audit row
+    // can ever consume -- saved, silently inert, impossible to notice.
+    if (typeof assetKeyRaw !== 'string' || !assetKeyRaw.trim()) {
+      return res.status(400).json({ error: 'asset_key is required' });
+    }
+    let assetKey = assetKeyRaw.trim();
+    if (CONTRACT_RE.test(assetKey)) {
+      assetKey = assetKey.toLowerCase();
+    } else if (assetKey.toUpperCase() === chains.nativeSymbol(chainId)) {
+      // THIS chain's native symbol exactly, from the registry the audit keys
+      // its own rows on. A loose pattern here accepted '0X1234' and every typo
+      // as a "native symbol" and stored it silently inert.
+      assetKey = assetKey.toUpperCase();
+    } else {
+      return res.status(400).json({
+        error: `asset_key must be ${chains.nativeSymbol(chainId)} (chain ${chainId}'s native symbol) or a 0x token contract`,
+      });
+    }
+    // A signed base-unit integer, as a string end to end: these are wei-scale
+    // quantities past Number precision, and a float here would round the one
+    // number whose exactness is the point. Zero is refused -- it documents
+    // nothing while making the audit look hand-touched.
+    const amountWei = typeof amountRaw === 'number' && Number.isSafeInteger(amountRaw)
+      ? String(amountRaw)
+      : typeof amountRaw === 'string' ? amountRaw.trim() : '';
+    if (!/^-?\d{1,77}$/.test(amountWei) || /^-?0+$/.test(amountWei)) {
+      return res.status(400).json({ error: 'amount_wei must be a nonzero signed integer in base units' });
+    }
+    // Mandatory. An adjustment is only distinguishable from fudging the audit
+    // by the explanation it carries.
+    const trimmedNote = typeof note === 'string' ? note.trim() : '';
+    if (!trimmedNote || trimmedNote.length > 500) {
+      return res.status(400).json({ error: 'note is required (max 500 characters)' });
+    }
+
+    const adjustment = await EthReconciliationAdjustment.create(req.user.id, {
+      walletId: wallet.walletId, chainId, assetKey, amountWei, note: trimmedNote,
+    });
+    // The wallet vanished between the check and the write.
+    if (!adjustment) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    // On the same per-user lane every other derived write takes: the recompute
+    // is a read-modify-write of the stored verdict, and a concurrent audit (the
+    // nightly sync runs inside this lane) could otherwise overwrite it from a
+    // stale window. The lane key is the wallet OWNER, which loadWallet has just
+    // proven is the caller. Late-bound off the module object, like every
+    // pipeline dependency.
+    const reconciliation = await EthDerivedPipeline.serializedForUser(req.user.id, () =>
+      EthReconciliationService.recomputeStoredVerdict(wallet.walletId, chainId, assetKey));
+    res.status(201).json({ adjustment, reconciliation });
+  } catch (error) {
+    logger.error({ err: error }, 'Add reconciliation adjustment error');
+    res.status(500).json({ error: 'Failed to save the adjustment' });
+  }
+});
+
+router.delete('/reconciliation/adjustments/:id', async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) {
+      return res.status(404).json({ error: 'Adjustment not found' });
+    }
+    // User-scoped inside the DELETE: a foreign id removes nothing and is
+    // indistinguishable from a made-up one.
+    const removed = await EthReconciliationAdjustment.deleteForUser(req.user.id, id);
+    if (!removed) {
+      return res.status(404).json({ error: 'Adjustment not found' });
+    }
+    // Same immediate recompute as the add: removing a correction must put the
+    // drift back on display now, not at the next sync. Same lane too --
+    // deleteForUser has proven the wallet is the caller's, so the caller IS
+    // the owner the lane is keyed on.
+    const reconciliation = await EthDerivedPipeline.serializedForUser(req.user.id, () =>
+      EthReconciliationService.recomputeStoredVerdict(removed.wallet_id, removed.chain_id, removed.asset_key));
+    res.status(200).json({ message: 'Adjustment removed', removed, reconciliation });
+  } catch (error) {
+    logger.error({ err: error }, 'Remove reconciliation adjustment error');
+    res.status(500).json({ error: 'Failed to remove the adjustment' });
   }
 });
 
