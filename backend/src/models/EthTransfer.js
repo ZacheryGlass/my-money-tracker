@@ -166,11 +166,35 @@ class EthTransfer {
   // so a delete without the chain predicate would wipe another chain's rows
   // from a block window it never synced, and the reorg overlap makes that
   // happen on every single sync.
-  static async deleteFromBlock(walletId, chainId, transferTypes, block) {
+  //
+  // `fromAddress` / `excludeFromAddress` are the #76 state-sync feed's boundary
+  // (mutually exclusive; a caller passes at most one). The state-sync deposit
+  // feed stores transfer_type='internal' rows -- the same type txlistinternal
+  // owns -- but it is a SEPARATE feed with its own cursor, so the two must not
+  // clear each other's rows:
+  //   * the state-sync feed deletes only from_address = the precompile that
+  //     emits its rows (`fromAddress`), so it never touches a txlistinternal
+  //     trace it did not insert;
+  //   * the internal feed deletes everything EXCEPT that precompile
+  //     (`excludeFromAddress`), so a state-sync credit survives an internal
+  //     resync even when the state-sync feed failed transiently this run and its
+  //     own delete was skipped -- preserving the "a failed feed keeps its rows"
+  //     invariant across the shared transfer_type.
+  // Both are no-ops on every other feed and chain, which pass neither.
+  static async deleteFromBlock(walletId, chainId, transferTypes, block, { fromAddress = null, excludeFromAddress = null } = {}) {
+    const params = [walletId, chainId, transferTypes, block];
+    let addressClause = '';
+    if (fromAddress) {
+      params.push(fromAddress.toLowerCase());
+      addressClause = ` AND from_address = $${params.length}`;
+    } else if (excludeFromAddress) {
+      params.push(excludeFromAddress.toLowerCase());
+      addressClause = ` AND from_address <> $${params.length}`;
+    }
     await pool.query(
       `DELETE FROM eth_transfers
-       WHERE wallet_id = $1 AND chain_id = $2 AND transfer_type = ANY($3) AND block_number >= $4`,
-      [walletId, chainId, transferTypes, block]
+       WHERE wallet_id = $1 AND chain_id = $2 AND transfer_type = ANY($3) AND block_number >= $4${addressClause}`,
+      params
     );
   }
 

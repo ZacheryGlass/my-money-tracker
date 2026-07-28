@@ -55,8 +55,10 @@ class EthWalletChain {
 
   // One cursor per feed. A NULL means that feed produced nothing this run --
   // either genuinely empty or skipped -- which must leave its cursor where it
-  // was rather than reset it to 0.
-  static async updateCursors(walletId, chainId, { normal, internal, token, nft, nft1155 }) {
+  // was rather than reset it to 0. `statesync` is the #76 sixth feed; a chain
+  // that does not declare it never runs it, so it always passes NULL here and
+  // last_block_statesync stays at its 0 default, unread.
+  static async updateCursors(walletId, chainId, { normal, internal, token, nft, nft1155, statesync }) {
     const result = await pool.query(
       `UPDATE eth_wallet_chains
        SET last_block_normal = COALESCE($3, last_block_normal),
@@ -64,10 +66,11 @@ class EthWalletChain {
            last_block_token = COALESCE($5, last_block_token),
            last_block_nft = COALESCE($6, last_block_nft),
            last_block_1155 = COALESCE($7, last_block_1155),
+           last_block_statesync = COALESCE($8, last_block_statesync),
            updated_at = CURRENT_TIMESTAMP
        WHERE wallet_id = $1 AND chain_id = $2
        RETURNING *`,
-      [walletId, chainId, normal ?? null, internal ?? null, token ?? null, nft ?? null, nft1155 ?? null]
+      [walletId, chainId, normal ?? null, internal ?? null, token ?? null, nft ?? null, nft1155 ?? null, statesync ?? null]
     );
     return result.rows[0];
   }

@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS eth_activity_links (
 );
 
 -- BEGIN GENERATED SEED (backend/scripts/generate-bridge-seed.js)
--- 32 addresses, researched 2026-07-26. Sources, one per protocol:
+-- 34 addresses, researched 2026-07-27. Sources, one per protocol:
 --   arbitrum  https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses
 --   linea     https://docs.linea.build/network/build/contracts
 --   optimism  https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json
@@ -171,5 +171,7 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0x7e63a5f1a8f0b4d0934b2f2327daed3f6bb2ee75', 'Across: Linea Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 59144. Source: https://docs.across.to/chains-and-contracts'),
   (NULL, '0xa0c68c638235ee32657e8f720a23cec1bfc77c77', 'Polygon: PoS Bridge (RootChainManager)', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),
   (NULL, '0x8484ef722627bf18ca5ae6bcf031c23e6e922b30', 'Polygon: PoS Ether Predicate', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),
-  (NULL, '0x40ec5b33f54e0e8a33a975908c5ba1c14e5bbbdf', 'Polygon: PoS ERC20 Predicate', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json')
+  (NULL, '0x40ec5b33f54e0e8a33a975908c5ba1c14e5bbbdf', 'Polygon: PoS ERC20 Predicate', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),
+  (NULL, '0x401f6c983ea34274ec46f84d70b31c151321188b', 'Polygon: Plasma Deposit Manager', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),
+  (NULL, '0x0000000000000000000000000000000000001010', 'Polygon: MRC20 (Native POL / State Sync)', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 137. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json')
 ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING;

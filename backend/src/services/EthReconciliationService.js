@@ -71,9 +71,16 @@ const SKIP_REASONS = {
 
 // The feeds each asset class is derived from. A gap in ANY of them makes that
 // asset's derived figure incomplete:
-//   * native ETH needs `normal` (value transfers plus the gas rows synthesized
-//     from txlist) and `internal` (ETH arriving from a contract, which the
-//     normal feed cannot see at all)
+//   * native ETH/POL needs `normal` (value transfers plus the gas rows
+//     synthesized from txlist), `internal` (native arriving from a contract,
+//     which the normal feed cannot see at all), and -- where a chain declares
+//     it -- `statesync` (#76: bridged-in native POL, which Polygon credits
+//     through the Bor state sync and no account feed reports). `statesync` is
+//     safe to list unconditionally: a chain that does not declare the feed never
+//     runs it, so its key never appears in unsupported_feeds/skippedFeeds and
+//     feedGap can never falsely fire on it. On Polygon a skipped state-sync feed
+//     leaves the derived native balance short by exactly the missed deposit, so
+//     the audit must skip rather than report that as drift.
 //   * ERC-20 balances need `token`
 // Note what is deliberately absent: 034's method capture and 038's tx_is_error
 // are forward-only gaps, but neither enters balance math -- method_id is a
@@ -81,7 +88,7 @@ const SKIP_REASONS = {
 // reverted -- so a pre-034/pre-038 row reconciles exactly like a fresh one.
 // The NFT feeds are absent for the same reason: NFTs are not reconciled.
 const REQUIRED_FEEDS = {
-  native: ['normal', 'internal'],
+  native: ['normal', 'internal', 'statesync'],
   token: ['token'],
 };
 

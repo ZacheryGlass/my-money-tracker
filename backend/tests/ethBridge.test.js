@@ -914,6 +914,30 @@ test('every seeded row is a storable builtin on a chain this app knows', () => {
   }
 });
 
+test('the Polygon state-sync bridge halves are both seeded on their own chains', () => {
+  // #76: POL bridges via PLASMA, so the two counterparties the ladder classifies
+  // on are the L1 DepositManager (the deposit's `to`) and the Polygon MRC20
+  // precompile (the state-sync credit's `from`). Both must be seeded 'bridge' or
+  // the deposit falls to rung 8 as a possible spend and the credit never pairs.
+  const byAddress = new Map(PACK.labels.map((l) => [l.address, l]));
+  const depositManager = byAddress.get('0x401f6c983ea34274ec46f84d70b31c151321188b');
+  const mrc20 = byAddress.get('0x0000000000000000000000000000000000001010');
+
+  assert.ok(depositManager, 'the L1 Plasma DepositManager must be seeded');
+  assert.equal(depositManager.chain_id, 1);
+  assert.equal(depositManager.protocol, 'polygon');
+
+  assert.ok(mrc20, 'the Polygon MRC20 precompile must be seeded');
+  assert.equal(mrc20.chain_id, 137);
+  assert.equal(mrc20.protocol, 'polygon');
+
+  // Both land in the seed as builtin 'bridge' rows (parseSeededRows asserts the
+  // 'builtin-bridge','bridge','high' shape on every row it returns).
+  const seeded = new Set(parseSeededRows().map((r) => r.address));
+  assert.ok(seeded.has(depositManager.address));
+  assert.ok(seeded.has(mrc20.address));
+});
+
 test('the scraped pack cannot swallow a bridge address', () => {
   // 036 runs FIRST every boot and 044's conflict arm is DO NOTHING, so an
   // address in both packs would keep the scraped 'exchange' verdict and the

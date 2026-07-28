@@ -16,9 +16,17 @@ const { shortAddress } = require('../utils/ethAddress');
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 
-// The five Etherscan account feeds, each with the cursor it resumes from and
-// the transfer_types it owns. `normal` owns two: gas rows are synthesized from
+// The Etherscan feeds, each with the cursor it resumes from and the
+// transfer_types it owns. `normal` owns two: gas rows are synthesized from
 // txlist, so they share its resume window.
+//
+// The first five are the account feeds and run on every chain. The sixth,
+// `statesync` (#76), is declared PER CHAIN: it runs only where the chain object
+// carries the config named by `chainFeed` (config/chains.js `stateSyncDeposits`,
+// Polygon only). It stores transfer_type='internal' rows -- the same type the
+// `internal` feed owns -- so native balance math, the mirror, activity and
+// valuation read it unchanged; the two feeds are kept from clearing each other's
+// rows by from_address (see the delete loop in _syncWalletChain).
 //
 // Order matters only for throttle fairness -- the feeds are independent, and
 // each one's failure is isolated from the others (see _syncWalletChain).
@@ -28,7 +36,22 @@ const FEED_SPECS = [
   { key: 'token', fetch: 'fetchTokenTxs', types: ['token'] },
   { key: 'nft', fetch: 'fetchNftTxs', types: ['nft'] },
   { key: 'nft1155', fetch: 'fetch1155Txs', types: ['nft1155'] },
+  { key: 'statesync', fetch: 'fetchStateSyncDeposits', types: ['internal'], chainFeed: 'stateSyncDeposits' },
 ];
+
+// The transfer_type the state-sync feed shares with the `internal` feed, and the
+// feed whose config declares the precompile. Named once so the delete-scoping in
+// _syncWalletChain reads as intent rather than string literals.
+//
+// Exactly ONE per-chain feed is assumed: the internal feed's insert filter and
+// both delete-scoping arms are built around this single contract address, so a
+// second chainFeed spec would silently take the wrong exclusion. Fail at load,
+// where the spec is added, not later in production data.
+const CHAIN_FEED_SPECS = FEED_SPECS.filter((spec) => spec.chainFeed);
+if (CHAIN_FEED_SPECS.length !== 1) {
+  throw new Error('FEED_SPECS declares more than one per-chain feed; generalize the internal/statesync insert and delete scoping first');
+}
+const STATE_SYNC_SPEC = CHAIN_FEED_SPECS[0];
 
 // holdings.quantity is DECIMAL(20,8): 12 integer digits, 8 fractional.
 // Scam-token airdrops mint absurd quantities that would overflow the column
@@ -70,7 +93,7 @@ class EthWalletService {
   // including failed txs, which still burn gas. Zero-value normal/internal
   // rows (contract calls, approvals) are dropped as noise; their economic
   // content is the gas row and/or the token row from the token feed.
-  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [] } = {}) {
+  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [], statesync = [] } = {}, { stateSyncContract = null } = {}) {
     const wallet = walletAddress.toLowerCase();
     const rows = [];
     const ordinals = new Map();
@@ -175,6 +198,30 @@ class EthWalletService {
 
     for (const raw of internal) {
       if (raw.value === '0') continue;
+      // A trace FROM the precompile belongs to the STATE-SYNC feed. Today
+      // txlistinternal does not serve such traces (that absence is the sixth
+      // feed's whole premise), but the internal feed's delete already excludes
+      // the precompile -- so if Etherscan ever starts returning them, an
+      // unfiltered insert here would double-count every deposit under a second
+      // ordinal its own delete can never remove. Insert and delete must stay
+      // symmetric, and this filter is also what keeps the two feeds' ordinal
+      // namespaces from ever colliding on a shared tx hash.
+      if (stateSyncContract && (raw.from || '').toLowerCase() === stateSyncContract) continue;
+      rows.push({ ...baseRow(raw, 'internal'), value_wei: raw.value });
+    }
+
+    // State-sync native deposits (#76). EtherscanService.fetchStateSyncDeposits
+    // has already shaped these getLogs rows exactly like an internal trace
+    // ({hash, blockNumber, timeStamp, from = the precompile, to = the wallet,
+    // value}), so they ingest as transfer_type='internal' through the identical
+    // path -- which is what lets nativeBalanceDeltas count them and every derived
+    // reader treat the credit like any other inbound native movement. The
+    // ordinal map keys on (transfer_type, tx_hash), which the two feeds SHARE --
+    // the internal loop above filters out precompile-from traces precisely so
+    // they can never emit rows for the same hash and their ordinals stay
+    // independent.
+    for (const raw of statesync) {
+      if (raw.value === '0') continue;
       rows.push({ ...baseRow(raw, 'internal'), value_wei: raw.value });
     }
 
@@ -255,7 +302,20 @@ class EthWalletService {
       token: resumeFrom(state?.last_block_token),
       nft: resumeFrom(state?.last_block_nft),
       nft1155: resumeFrom(state?.last_block_1155),
+      statesync: resumeFrom(state?.last_block_statesync),
     };
+
+    // Which feeds this chain actually runs: the five account feeds always, plus
+    // any per-chain feed the chain object declares (#76's state-sync deposits,
+    // Polygon only). A feed a chain does not declare is never fetched, never
+    // cursor-advanced, and never a gap -- so `activeCount` (not FEED_SPECS.length)
+    // is what "every feed came back unreadable" is measured against below.
+    const feedActive = (spec) => !spec.chainFeed || Boolean(chain[spec.chainFeed]);
+    const activeCount = FEED_SPECS.filter(feedActive).length;
+    // The from_address that marks state-sync rows, so the internal feed can
+    // exclude them and the state-sync feed can scope its own delete to them.
+    // Null on every chain that does not declare the feed.
+    const stateSyncContract = chain[STATE_SYNC_SPEC.chainFeed]?.contract || null;
 
     const feeds = {};
     const fetchedOk = {};
@@ -272,14 +332,24 @@ class EthWalletService {
 
     for (const spec of FEED_SPECS) {
       feeds[spec.key] = [];
+      // A per-chain feed this chain does not declare: not fetched, not a gap,
+      // not counted toward the whole-chain unavailable verdict. Placed before
+      // the chainUnreadable cascade so an unavailable chain does not mark an
+      // inactive feed as unsupported.
+      if (!feedActive(spec)) {
+        fetchedOk[spec.key] = false;
+        continue;
+      }
       if (chainUnreadable) {
         fetchedOk[spec.key] = false;
         unsupported.push(spec.key);
         continue;
       }
       try {
+        // The trailing arg is the per-chain feed config (state-sync's
+        // {contract, topic0}); the account feeds ignore it.
         feeds[spec.key] = await EtherscanService[spec.fetch](
-          wallet.address, resume[spec.key], apiKey, chain.id
+          wallet.address, resume[spec.key], apiKey, chain.id, spec.chainFeed ? chain[spec.chainFeed] : undefined
         );
         fetchedOk[spec.key] = true;
       } catch (err) {
@@ -300,12 +370,24 @@ class EthWalletService {
       }
     }
 
-    const rows = this.normalizeFeeds(wallet.address, feeds)
+    const rows = this.normalizeFeeds(wallet.address, feeds, { stateSyncContract })
       .map((row) => ({ ...row, wallet_id: wallet.id, chain_id: chain.id }));
 
     for (const spec of FEED_SPECS) {
       if (!fetchedOk[spec.key]) continue;
-      await EthTransfer.deleteFromBlock(wallet.id, chain.id, spec.types, resume[spec.key]);
+      // The state-sync feed shares transfer_type='internal' with the internal
+      // feed but has its own cursor, so their delete windows are separated by
+      // from_address: the state-sync feed clears only its own precompile rows,
+      // and the internal feed clears everything except them (so a state-sync
+      // credit survives an internal resync even when the state-sync feed itself
+      // was skipped this run). On every other feed and chain both are null.
+      const deleteOpts = {};
+      if (spec.chainFeed) {
+        deleteOpts.fromAddress = chain[spec.chainFeed].contract;
+      } else if (spec.key === 'internal' && stateSyncContract) {
+        deleteOpts.excludeFromAddress = stateSyncContract;
+      }
+      await EthTransfer.deleteFromBlock(wallet.id, chain.id, spec.types, resume[spec.key], deleteOpts);
     }
     const inserted = await EthTransfer.bulkInsert(rows);
 
@@ -315,12 +397,13 @@ class EthWalletService {
       token: fetchedOk.token ? maxBlock(feeds.token) : null,
       nft: fetchedOk.nft ? maxBlock(feeds.nft) : null,
       nft1155: fetchedOk.nft1155 ? maxBlock(feeds.nft1155) : null,
+      statesync: fetchedOk.statesync ? maxBlock(feeds.statesync) : null,
     });
     // Written every time, empty array included, so a feed that starts working
     // again (a plan upgrade) stops being reported as a gap.
     await EthWalletChain.setUnsupportedFeeds(wallet.id, chain.id, unsupported);
 
-    if (unsupported.length === FEED_SPECS.length) {
+    if (unsupported.length === activeCount) {
       await EthWalletChain.setError(wallet.id, chain.id, 'CHAIN_UNAVAILABLE',
         `${chain.name} is not readable with this Etherscan key. Upgrade the plan or remove ${chain.id} from ETH_CHAINS.`);
     } else if (skipped.length) {
@@ -340,7 +423,7 @@ class EthWalletService {
       inserted,
       skippedFeeds: skipped,
       unsupportedFeeds: unsupported,
-      unavailable: unsupported.length === FEED_SPECS.length,
+      unavailable: unsupported.length === activeCount,
       fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, feeds[spec.key].length])),
     };
   }

@@ -8,6 +8,26 @@ const logger = require('../config/logger');
 // walk a block cursor instead of page numbers (see _fetchPaged).
 const PAGE_SIZE = 1000;
 
+// The logs (getLogs) endpoint caps a single response at 1000 rows, so the
+// state-sync fetch walks a block cursor the same way _fetchPaged does. A wallet
+// has a handful of bridge deposits over its whole life, so this almost never
+// pages -- but a correct paginator costs little and a wrong one drops credits.
+const LOG_PAGE_SIZE = 1000;
+
+// Bounds the state-sync log walk. Hitting it means the API is not honouring
+// fromBlock (or pages that never advance) -- a walk that spins would sit
+// INSIDE the per-user rebuild lane holding the global throttle, blocking every
+// label write and sync for that user. Exhaustion is a transport failure: the
+// feed is skipped, the cursor stays frozen, and the next sync retries.
+const MAX_LOG_PAGES = 200;
+
+// An EVM address as a 32-byte indexed log topic: 12 zero bytes then the 20
+// address bytes. This is how getLogs matches on an indexed `address` argument
+// (the Deposit event's `from`/user in topic2).
+function addressTopic(address) {
+  return `0x${'0'.repeat(24)}${String(address).toLowerCase().replace(/^0x/, '')}`;
+}
+
 // A chain this key cannot read AT ALL, as opposed to a request that failed.
 // Both observed live: an id outside /v2/chainlist answers "Missing or
 // unsupported chainid parameter", and a chainlist chain outside the key's plan
@@ -56,8 +76,11 @@ class EtherscanService {
     const { status, message, result } = response.data || {};
     if (status === '1') return result;
 
-    // "No transactions found" is a normal empty feed, not an error.
-    if (message === 'No transactions found' || (Array.isArray(result) && result.length === 0)) {
+    // "No transactions found" is a normal empty feed, not an error. The logs
+    // module (getLogs, #76) answers an empty match with "No records found"
+    // instead; both mean the same thing -- nothing to ingest, not a failure.
+    if (message === 'No transactions found' || message === 'No records found'
+        || (Array.isArray(result) && result.length === 0)) {
       return [];
     }
     if (typeof result === 'string' && result.includes('rate limit') && attempt === 0) {
@@ -186,9 +209,11 @@ class EtherscanService {
     return all;
   }
 
-  // All five feeds take the chain as a trailing argument that defaults to
-  // mainnet: the same five actions serve every chain in the registry (verified
-  // live per chain), so the only thing that varies is the chainid param.
+  // The five ACCOUNT feeds take the chain as a trailing argument that defaults
+  // to mainnet: the same five actions serve every chain in the registry
+  // (verified live per chain), so the only thing that varies is the chainid
+  // param. The sixth feed (fetchStateSyncDeposits, below) is per-chain-declared
+  // and does not share this shape.
   static fetchNormalTxs(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID) {
     return this._fetchPaged('txlist', address, startBlock, apiKey, chainId);
   }
@@ -212,6 +237,142 @@ class EtherscanService {
   // and Etherscan emits one row per id for a batch transfer.
   static fetch1155Txs(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID) {
     return this._fetchPaged('token1155tx', address, startBlock, apiKey, chainId);
+  }
+
+  // The SIXTH feed (#76), declared per chain in config/chains.js rather than
+  // hardcoded here: `feedConfig` is `chain.stateSyncDeposits` ({contract,
+  // topic0}), so a chain that does not declare it never reaches this method.
+  //
+  // Native deposits credited by the Bor state sync are visible only as a
+  // `Deposit` log on the MRC20 precompile, in NONE of the account feeds. This
+  // fetches those logs filtered to the WALLET (topic2) and returns them shaped
+  // exactly like an internal-trace row -- {hash, blockNumber, timeStamp, from,
+  // to, value}, all decimal strings -- so normalizeFeeds ingests them through
+  // the SAME path as txlistinternal, as transfer_type='internal'. That is what
+  // makes nativeBalanceDeltas, the mirror, activity classification and dated
+  // valuation all read the credit with no change of their own.
+  //
+  // Runs under the ONE global throttle like every other Etherscan call: five
+  // chains and a sixth feed still share one key's rate limit.
+  static async fetchStateSyncDeposits(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID, feedConfig = null) {
+    if (!feedConfig || !feedConfig.contract || !feedConfig.topic0) return [];
+    const userTopic = addressTopic(address);
+    const seen = new Set();
+    const out = [];
+    let cursor = Math.max(0, Number(startBlock) || 0);
+
+    for (let page = 1; ; page++) {
+      if (page > MAX_LOG_PAGES) {
+        throw new Error(`statesync getLogs walk exceeded ${MAX_LOG_PAGES} pages without completing; skipping the feed this sync`);
+      }
+      const rows = await this._request({
+        module: 'logs',
+        action: 'getLogs',
+        address: feedConfig.contract,
+        topic0: feedConfig.topic0,
+        topic2: userTopic,
+        // topic0 AND topic2: the Deposit signature and this wallet, which is what
+        // excludes the co-emitted LogTransfer log (a different topic0) and every
+        // other wallet's deposits.
+        topic0_2_opr: 'and',
+        fromBlock: cursor,
+        toBlock: 'latest',
+        page: 1,
+        offset: LOG_PAGE_SIZE,
+      }, { apiKey, chainId });
+      // An off-shape 200 is a transport failure, never an empty feed. This is
+      // the one feed whose rows exist nowhere else, and a successful return is
+      // what authorizes the destructive delete of the resume window -- reading
+      // garbage as "no deposits" would wipe stored credits and insert nothing.
+      if (!Array.isArray(rows)) {
+        throw new Error('statesync getLogs returned a non-array result; treated as a transport failure');
+      }
+      if (rows.length === 0) break;
+
+      // _parseStateSyncLog THROWS on a malformed log rather than dropping it:
+      // the cursor advances past everything this walk returns, so a silently
+      // dropped deposit would sit behind the cursor, lost forever. Ascending by
+      // (block, logIndex) matches the account feeds' contract and makes the
+      // boundary refetch below deterministic.
+      const parsed = rows
+        .map((log) => this._parseStateSyncLog(log, address, feedConfig.contract))
+        .sort((a, b) => (a._block - b._block) || (a._logIndex - b._logIndex));
+
+      let maxSeen = cursor;
+      for (const row of parsed) {
+        if (seen.has(row._key)) continue;
+        seen.add(row._key);
+        out.push(row);
+        if (row._block > maxSeen) maxSeen = row._block;
+      }
+
+      if (rows.length < LOG_PAGE_SIZE) break;
+      if (maxSeen > cursor) {
+        // A full page means more may follow. Resume from the last block seen
+        // (refetched whole, its already-taken rows dropped by `seen`).
+        cursor = maxSeen;
+      } else {
+        // A full page that advanced nothing: a single block saturating the page
+        // (getLogs caps offset at 1000, so unlike _fetchPaged there is no
+        // bigger-offset refetch to recover rows past the cap) or an API not
+        // honouring fromBlock. Step one block so the walk cannot stall; the
+        // page budget above bounds the pathological case.
+        logger.warn({ chainId, block: cursor, feed: 'statesync' },
+          'getLogs page advanced no blocks; stepping past it (rows beyond the page cap in this block, if any, are dropped)');
+        cursor += 1;
+      }
+    }
+
+    // The internal cursor fields (_block/_logIndex/_key) stay here; only the
+    // account-feed-shaped columns leave, so normalizeFeeds sees an internal row.
+    return out.map((row) => ({
+      hash: row.hash,
+      blockNumber: row.blockNumber,
+      timeStamp: row.timeStamp,
+      from: row.from,
+      to: row.to,
+      value: row.value,
+    }));
+  }
+
+  // One getLogs Deposit log -> an internal-trace-shaped row. A log this cannot
+  // read is a TRANSPORT FAILURE for the whole feed, never a row to drop: the
+  // caller advances the cursor past everything the walk returns, so a silently
+  // dropped deposit would be permanently lost (same rule as getEthBalance -- a
+  // malformed response must not silently zero a balance). The amount is the
+  // FIRST 32 bytes of `data` (the event's `amount`; `input1`/`output1` follow
+  // and are ignored). from = the precompile that emitted the log; to = the
+  // wallet. Cursor helpers (_block/_logIndex/_key) are stripped by the caller
+  // before the row leaves.
+  static _parseStateSyncLog(log, walletAddress, contract) {
+    const fail = (why) => {
+      throw new Error(`statesync Deposit log is malformed (${why}); treated as a transport failure`);
+    };
+    const data = typeof log?.data === 'string' ? log.data : '';
+    const amountHex = data.slice(0, 66);
+    if (!/^0x[0-9a-fA-F]{64}$/.test(amountHex)) fail('bad amount word');
+    // getLogs returns these as HEX, unlike the account feeds' decimal strings.
+    // The format is ENFORCED because a decimal still parses "successfully" --
+    // parseInt('84421264', 16) is 2.2 billion, past any real tip -- which would
+    // poison the cursor and stamp block_time centuries ahead.
+    if (!/^0x[0-9a-fA-F]+$/.test(String(log.blockNumber || ''))) fail('non-hex blockNumber');
+    if (!/^0x[0-9a-fA-F]+$/.test(String(log.timeStamp || ''))) fail('non-hex timeStamp');
+    const block = parseInt(log.blockNumber, 16);
+    const timeStamp = parseInt(log.timeStamp, 16);
+    if (!Number.isFinite(block) || !Number.isFinite(timeStamp)) fail('unreadable blockNumber/timeStamp');
+    const logIndex = /^0x[0-9a-fA-F]+$/.test(String(log.logIndex || '')) ? parseInt(log.logIndex, 16) : 0;
+    if (!log.transactionHash) fail('missing transactionHash');
+    return {
+      hash: log.transactionHash,
+      blockNumber: String(block),
+      timeStamp: String(timeStamp),
+      from: String(log.address || contract).toLowerCase(),
+      to: String(walletAddress).toLowerCase(),
+      value: BigInt(amountHex).toString(),
+      _block: block,
+      _logIndex: logIndex,
+      _key: `${log.transactionHash}:${logIndex}`,
+    };
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "about": "Canonical cross-chain bridge contracts for the chains config/chains.js knows about, seeded as builtin 'bridge' labels by migration 044. Every address was read byte-for-byte out of raw source fetched from the protocol's own site (never a summarizer, never an aggregator, never model memory) and cross-checked against its public block-explorer name tag where the explorer would answer. See backend/scripts/generate-bridge-seed.js.",
-  "researchedOn": "2026-07-26",
+  "researchedOn": "2026-07-27",
   "rowDefaults": {
     "user_id": null,
     "source": "builtin-bridge",
@@ -21,7 +21,7 @@
     "optimism": "docs.optimism.io/superchain/addresses renders its L1 table CLIENT-SIDE from this file -- the URL is hardcoded in the page payload. It is Optimism's own first-party registry, and it is the only official source: no static docs.optimism.io page prints OP Mainnet's L1 addresses.",
     "base": "Coinbase's own docs. Also the source for the OP Stack L2 predeploys, which are identical on OP Mainnet and Base (both explorers confirm the same two addresses).",
     "across": "Across' own docs. The per-chain subpage URLs in issue #59 do not exist; the site serves one consolidated table.",
-    "polygon": "Polygon's own static network registry, the file its SDKs and docs resolve mainnet addresses from. The three seeded rows are the PROXY addresses under POSContracts (RootChainManagerProxy, EtherPredicateProxy, ERC20PredicateProxy) -- the proxies are what a user transacts with; the implementations behind them are never called directly and are not seeded."
+    "polygon": "Polygon's own static network registry, the file its SDKs and docs resolve mainnet addresses from. Five seeded rows: the three PoS PROXY addresses under POSContracts (RootChainManagerProxy, EtherPredicateProxy, ERC20PredicateProxy), plus the Plasma DepositManagerProxy (Main.Contracts.DepositManagerProxy) and the MRC20 native-token precompile (Matic.Contracts.Tokens.MaticToken, 0x0000000000000000000000000000000000001010). POL bridges via PLASMA, not the PoS RootChainManager: the deposit's L1 counterparty is the DepositManager, and its Polygon counterparty is the MRC20, which credits the bridged-in POL through the Bor state sync (#76). The proxies -- and the precompile the state sync writes from -- are what a user (or the system transaction) transacts with; the implementations behind them are never called directly and are not seeded."
   },
   "excluded": {
     "zksync-era": "Chain 324 is ABSENT from Etherscan's V2 chainlist (config/chains.js), so no zkSync transfer can ever be ingested. Its L1 contracts are omitted with it; an L1 deposit into zkSync stays a flagged send, which is the visible failure, not the silent one.",
@@ -291,6 +291,22 @@
       "protocol": "polygon",
       "docs_name": "ERC20PredicateProxy",
       "explorer_name_tag": "Polygon (Matic): ERC20 Bridge"
+    },
+    {
+      "address": "0x401f6c983ea34274ec46f84d70b31c151321188b",
+      "name": "Polygon: Plasma Deposit Manager",
+      "chain_id": 1,
+      "protocol": "polygon",
+      "docs_name": "Main.Contracts.DepositManagerProxy",
+      "explorer_name_tag": null
+    },
+    {
+      "address": "0x0000000000000000000000000000000000001010",
+      "name": "Polygon: MRC20 (Native POL / State Sync)",
+      "chain_id": 137,
+      "protocol": "polygon",
+      "docs_name": "Matic.Contracts.Tokens.MaticToken (MRC20 precompile)",
+      "explorer_name_tag": null
     }
   ]
 }
