@@ -1,0 +1,26 @@
+-- 047: a sixth per-(wallet, chain) feed cursor, `last_block_statesync` (#76).
+--
+-- Polygon credits bridged-in native POL through the Bor STATE SYNC, a system
+-- transaction that appears in none of the five Etherscan account feeds
+-- (txlist, txlistinternal, tokentx, tokennfttx, token1155tx). The credit is
+-- on-chain only as a `Deposit` event on the MRC20 precompile, so #76 ingests it
+-- as a SIXTH feed fetched via module=logs action=getLogs (config/chains.js
+-- stateSyncDeposits, declared on chain 137 only). This column is that feed's
+-- resume cursor, alongside the five 039 added.
+--
+-- DEFAULT 0, exactly like 039's NFT cursors: 0 = backfill from genesis on the
+-- next sync, which is what makes a chain that already synced its five account
+-- feeds pick the state-sync credits up without a full re-add. Non-declaring
+-- chains never run the feed, so their cursor sits at 0 forever, unread.
+--
+-- 'statesync' also joins eth_wallet_chains.unsupported_feeds where a chain
+-- cannot serve it -- 039's comment enumerates only the five account feeds, and
+-- 039's statements are frozen, so the wider value set is recorded here instead.
+--
+-- Re-runs on every boot, so the statement is idempotent: ADD COLUMN IF NOT
+-- EXISTS with a NOT NULL DEFAULT converges from any starting state, and a table
+-- that predates this column (a fresh 039 create) gets it here rather than in
+-- 039 itself -- 039 is frozen, and widening it would rewrite the create for
+-- databases that already ran it.
+ALTER TABLE eth_wallet_chains
+  ADD COLUMN IF NOT EXISTS last_block_statesync BIGINT NOT NULL DEFAULT 0;

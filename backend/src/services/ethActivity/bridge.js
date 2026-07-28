@@ -46,6 +46,7 @@ function scaleAmount(text) {
 
 // Two spellings of one asset, both 1:1 by construction:
 //   WETH  -- wrapped ETH; bridges deliver either side of the wrapper freely.
+//   MATIC -- renamed POL in Sept 2024, 1:1; pre-rename L1 legs carry MATIC.
 //   FOO.e -- the bridged-representation suffix (Arbitrum's USDC.e), which is
 //            what the canonical bridge MINTS for FOO, so refusing to match it
 //            would leave every canonical ERC-20 deposit unpaired.
@@ -60,7 +61,13 @@ function bridgeAsset(symbol) {
   const upper = String(symbol ?? '').trim().toUpperCase();
   const base = upper.replace(/\.E$/, '');
   if (!base) return null;
-  return base === 'WETH' ? 'ETH' : base;
+  if (base === 'WETH') return 'ETH';
+  // MATIC -> POL: the Sept-2024 1:1 rename. nativeSymbol(137) says POL
+  // unconditionally, while the L1 half of a pre-rename Plasma deposit carries
+  // the old MATIC token symbol -- without this map every historical Polygon
+  // deposit pairs with nothing and both halves stay flagged forever.
+  if (base === 'MATIC') return 'POL';
+  return base;
 }
 
 // One bridge activity row -> the single fungible movement it represents, or
