@@ -18,6 +18,10 @@ const WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const OTHER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 const DEAD_TOKEN = '0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead';
+// The EOS ERC-20 crowdsale token -- a public, well-known contract, and the
+// one entry in config/tokenPriceAliases.js.
+const EOS = '0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0';
+const EOS_KEY = `erc20:1:${EOS}`;
 const NFT_CONTRACT = '0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1';
 const TX = '0x1111111111111111111111111111111111111111111111111111111111111111';
 const TX2 = '0x2222222222222222222222222222222222222222222222222222222222222222';
@@ -147,6 +151,7 @@ const SecretsService = require('../src/services/SecretsService');
 const {
   assetKeyForTransfer, tokenAssetKey, parseAssetKey, NATIVE_ASSET_KEY,
 } = require('../src/utils/assetPriceKey');
+const { TOKEN_PRICE_ALIASES, validateAliases } = require('../src/config/tokenPriceAliases');
 const { buildActivityRows } = require('../src/services/EthActivityService');
 const { buildMirrorRow } = require('../src/services/EthTransactionMirrorService');
 
@@ -162,6 +167,7 @@ const SHIPPED_SPACING = { ...HistoricalPriceService.PROVIDER_SPACING_MS };
 HistoricalPriceService.PROVIDER_SPACING_MS.coingecko = 0;
 HistoricalPriceService.PROVIDER_SPACING_MS.coingeckoPro = 0;
 HistoricalPriceService.PROVIDER_SPACING_MS.coinbase = 0;
+HistoricalPriceService.PROVIDER_SPACING_MS.bitfinex = 0;
 
 beforeEach(() => {
   db.prices = [];
@@ -538,6 +544,209 @@ test('an off-shape 200 is a transient error, never a cached "no series"', async 
   assert.equal(HistoricalPriceService.shouldFetch({ status: 'error' }), true);
 });
 
+// --- the alias path ----------------------------------------------------------
+//
+// config/tokenPriceAliases.js: a hand-declared route for a token CoinGecko's
+// contract endpoint can NEVER price (the EOS ERC-20 answers "coin not found",
+// and a demo key 401s beyond 365 days anyway). The alias fetches a keyless
+// Bitfinex daily series and stores it under the SAME asset key.
+
+test('an aliased token skips CoinGecko for the keyless venue series', async () => {
+  handleGet = async (url) => {
+    // The whole point of the alias: the contract endpoint is never asked.
+    assert.ok(url.includes('api-pub.bitfinex.com'), `alias must not call ${url}`);
+    return {
+      status: 200,
+      // [MTS, OPEN, CLOSE, HIGH, LOW, VOLUME]; MTS is the candle START in ms.
+      data: [
+        [Date.parse('2017-11-01T00:00:00Z'), 0.78064, 1.0416, 1.3295, 0.752, 999],
+        [Date.parse('2017-11-02T00:00:00Z'), 1.046, 1.116, 1.3, 0.9151, 999],
+        // A gap the venue reported as "no close" is dropped, never stored $0.
+        [Date.parse('2017-11-03T00:00:00Z'), 1.1159, null, 1.4196, 1.057, 999],
+      ],
+    };
+  };
+  db.ledgerAssets = [{
+    asset_key: EOS_KEY, asset_symbol: 'EOS', first_date: '2017-11-01', transfer_count: 20,
+  }];
+
+  const summary = await HistoricalPriceService.backfillLedgerAssets();
+
+  assert.equal(summary.covered, 1);
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0].url.includes('/v2/candles/trade:1D:tEOSUSD/hist'));
+  assert.ok(requests[0].url.includes('sort=1'), 'oldest-first, so the fold sees ascending time');
+  // Same asset key the normal path would have written -- the valuation SQL
+  // joins on it and must not care which provider filled the series.
+  assert.deepEqual(db.prices.map((p) => [p.asset_key, p.price_date, p.price_usd, p.source]), [
+    [EOS_KEY, '2017-11-01', '1.0416', 'bitfinex'],
+    [EOS_KEY, '2017-11-02', '1.116', 'bitfinex'],
+  ]);
+  const coverage = db.coverage.find((c) => c.asset_key === EOS_KEY);
+  assert.equal(coverage.status, 'covered');
+  assert.equal(coverage.provider, 'bitfinex');
+});
+
+test('a non-aliased token takes exactly the old path, never the alias venue', async () => {
+  handleGet = async () => ({
+    status: 200, data: { prices: [[Date.parse('2024-01-02T00:00:00Z'), 1.0]] },
+  });
+
+  await HistoricalPriceService.ensureAsset({
+    asset_key: `erc20:1:${USDC}`, asset_symbol: 'USDC', first_date: '2024-01-01',
+  });
+
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0].url.includes(`/coins/ethereum/contract/${USDC}/market_chart/range`));
+  assert.equal(requests.filter((r) => r.url.includes('bitfinex')).length, 0);
+});
+
+test("a ledger older than the venue's series gets range_limited, never invented prices", async () => {
+  const asked = [];
+  handleGet = async (url) => {
+    asked.push(Number(/start=(\d+)/.exec(url)[1]));
+    return {
+      status: 200,
+      data: [[Date.parse('2017-07-01T00:00:00Z'), 1.2, 1.135, 1.6479, 0.5, 9]],
+    };
+  };
+
+  // The ledger reaches back to June 2017; tEOSUSD's first candle is July 1.
+  const entry = await HistoricalPriceService.ensureAsset({
+    asset_key: EOS_KEY, asset_symbol: 'EOS', first_date: '2017-06-01',
+  });
+
+  assert.equal(asked[0], Date.parse('2017-07-01T00:00:00Z'),
+    'the fetch clamps to the series start instead of asking for dates that predate it');
+  // NOT covered: June's rows stay honestly unpriced, exactly like a plan cap.
+  assert.equal(entry.status, 'range_limited');
+  assert.match(entry.detail, /starts 2017-07-01/);
+  assert.equal(db.prices.length, 1, 'the closes that DO exist are still stored');
+});
+
+test('an off-shape Bitfinex 200 is a transient error, never a cached verdict', async () => {
+  // Bitfinex's own error payload is an ARRAY: ["error", code, message]. Read
+  // as a page of zero candles it would cache `empty` -- a 30-day freeze --
+  // off a maintenance response.
+  handleGet = async () => ({ status: 200, data: ['error', 10020, 'symbol: invalid'] });
+  const errorArray = await HistoricalPriceService.ensureAsset({
+    asset_key: EOS_KEY, asset_symbol: 'EOS', first_date: '2017-11-01',
+  });
+  assert.equal(errorArray.status, 'error');
+
+  handleGet = async () => ({ status: 200, data: { message: 'maintenance' } });
+  const object = await HistoricalPriceService.ensureAsset({
+    asset_key: EOS_KEY, asset_symbol: 'EOS', first_date: '2017-11-01',
+  });
+  assert.equal(object.status, 'error');
+
+  assert.equal(db.prices.length, 0);
+  assert.equal(HistoricalPriceService.shouldFetch({ status: 'error' }), true,
+    'transient: retried next run rather than written off');
+});
+
+test('the alias registry is validated at require time, and the shipped map passes', () => {
+  // The suite loading at all proves the shipped entries passed the require-time
+  // call; asserting it directly keeps the invariant visible here.
+  assert.equal(validateAliases(TOKEN_PRICE_ALIASES), TOKEN_PRICE_ALIASES);
+});
+
+test('a checksummed alias key throws at load, never a silent no-match', () => {
+  // The work list emits lowercase asset keys, so a checksummed key would
+  // simply never match and the token would quietly take the CoinGecko path
+  // the alias exists to escape. The source file stays canonical: throw, do
+  // not normalize.
+  assert.throws(() => validateAliases({
+    'erc20:1:0x86Fa049857E0209aa7D9e616F7eb3b3B78ECfdb0':
+      { bitfinexSymbol: 'tEOSUSD', historyStart: '2017-07-01' },
+  }), /lowercase/);
+  // A key that is not an erc20 asset key at all throws too -- the alias path
+  // is only reached from the erc20 branch, so a native key is dead weight.
+  assert.throws(() => validateAliases({
+    ETH: { bitfinexSymbol: 'tETHUSD', historyStart: '2016-05-18' },
+  }), /erc20/);
+});
+
+test('a missing or non-ISO historyStart throws at load', () => {
+  // Without it the fetch window clamps to `undefined` and every run records a
+  // permanent range_limited with detail "series starts undefined".
+  assert.throws(() => validateAliases({
+    [EOS_KEY]: { bitfinexSymbol: 'tEOSUSD' },
+  }), /historyStart/);
+  assert.throws(() => validateAliases({
+    [EOS_KEY]: { bitfinexSymbol: 'tEOSUSD', historyStart: 'July 2017' },
+  }), /historyStart/);
+});
+
+test('a bad bitfinexSymbol throws at load, never a GET of trade:1D:undefined', () => {
+  assert.throws(() => validateAliases({
+    [EOS_KEY]: { historyStart: '2017-07-01' },
+  }), /bitfinexSymbol/);
+  // Missing the leading 't' the candles endpoint requires.
+  assert.throws(() => validateAliases({
+    [EOS_KEY]: { bitfinexSymbol: 'EOSUSD', historyStart: '2017-07-01' },
+  }), /bitfinexSymbol/);
+  assert.throws(() => validateAliases({
+    [EOS_KEY]: { bitfinexSymbol: 'teosusd', historyStart: '2017-07-01' },
+  }), /bitfinexSymbol/);
+});
+
+test("zero candles over a window including the declared series start is an error, never 'empty'", async () => {
+  // The live venue answers HTTP 200 [] for an UNKNOWN symbol, and an `empty`
+  // coverage verdict enters asset_price_coverage's unlisted/empty set -- the
+  // spam quarantine's "provider says no market" evidence. The registry
+  // asserts a candle EXISTS at historyStart (probed live), so its absence is
+  // a contradiction: a transient error that stays due, and a typo'd symbol
+  // can never make real inbound transfers quarantine-eligible.
+  handleGet = async () => ({ status: 200, data: [] });
+  db.ledgerAssets = [{
+    // The ledger reaches back before the series, so the fetched window starts
+    // exactly at the declared 2017-07-01 first candle.
+    asset_key: EOS_KEY, asset_symbol: 'EOS', first_date: '2017-06-01', transfer_count: 20,
+  }];
+
+  const summary = await HistoricalPriceService.backfillLedgerAssets();
+
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.empty, 0, "never 'empty': that verdict feeds the quarantine's unlisted set");
+  const coverage = db.coverage.find((c) => c.asset_key === EOS_KEY);
+  assert.equal(coverage.status, 'error');
+  assert.match(coverage.detail, /tEOSUSD/, 'the detail names the symbol');
+  // `error` is retried every run and never enters the unlisted/empty cadence.
+  assert.equal(HistoricalPriceService.shouldFetch(coverage), true);
+});
+
+test('a Bitfinex 429 pauses the venue for the run and writes NO coverage row', async () => {
+  // Same rule as the CoinGecko queue: a rate limit is a verdict on the RUN,
+  // not the asset. An `error` row would both invent a verdict and refresh
+  // checked_at, rotating the asset to the back of the staleness order for a
+  // run that learned nothing.
+  handleGet = async () => { throw httpError(429, ['error', 11010, 'ratelimit: error']); };
+  db.ledgerAssets = [{
+    asset_key: EOS_KEY, asset_symbol: 'EOS', first_date: '2017-11-01', transfer_count: 20,
+  }];
+
+  const summary = await HistoricalPriceService.backfillLedgerAssets();
+
+  assert.equal(summary.rateLimited, 1);
+  assert.equal(summary.failed, 0, 'not an error: the asset was never examined');
+  assert.equal(db.coverage.length, 0, 'no verdict is written, so the asset stays due');
+  assert.equal(requests.length, 1);
+
+  // The pause holds for the rest of the run: a later aliased call answers
+  // rate_limited without spending network, even if the venue has recovered.
+  handleGet = async () => ({
+    status: 200,
+    data: [[Date.parse('2017-11-01T00:00:00Z'), 0.78, 1.04, 1.33, 0.75, 999]],
+  });
+  const again = await HistoricalPriceService.ensureAsset({
+    asset_key: EOS_KEY, asset_symbol: 'EOS', first_date: '2017-11-01',
+  });
+  assert.equal(again.status, 'rate_limited');
+  assert.equal(again.skipCoverage, true);
+  assert.equal(requests.length, 1, 'the shut queue short-circuits: no network call went out');
+});
+
 test('the backfill skips assets already written off and reports what it deferred', async () => {
   db.ledgerAssets = [
     { asset_key: 'ETH', asset_symbol: 'ETH', first_date: '2024-01-01', transfer_count: 50 },
@@ -576,6 +785,10 @@ test('the request spacing shipped is the one the provider limits allow', () => {
   // A paid key buys 500+/min; keeping it at 2.1 s would make a 200-asset budget
   // a seven-minute walk for no reason.
   assert.ok(SHIPPED_SPACING.coingeckoPro <= 250);
+  // The alias venue gets its OWN queue (one alias call must never wait behind
+  // a 2.1 s CoinGecko walk), but NOT a faster one: the candles route documents
+  // ~30 req/min -- CoinGecko-demo sized -- and 250 ms was 240/min.
+  assert.ok(SHIPPED_SPACING.bitfinex >= 2100, 'Bitfinex candles route is ~30 req/min');
 });
 
 test('a 429 pauses CoinGecko for the run and writes NO coverage verdict', async () => {
