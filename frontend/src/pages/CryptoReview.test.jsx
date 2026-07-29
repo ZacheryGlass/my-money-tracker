@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
     addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), syncWallet: vi.fn(), removeWallet: vi.fn(),
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
+    getAddressNotes: vi.fn(), saveAddressNote: vi.fn(), deleteAddressNote: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getActivity: vi.fn(), setActivitySpam: vi.fn(),
   },
   exchanges: {
@@ -60,6 +61,7 @@ beforeEach(() => {
   apiMocks.eth.getWallets.mockResolvedValue({ wallets: [WALLET] });
   apiMocks.eth.getIgnoredTokens.mockResolvedValue({ tokens: [] });
   apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
+  apiMocks.eth.getAddressNotes.mockResolvedValue({ notes: [] });
   apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
     data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 },
   });
@@ -88,6 +90,23 @@ describe('unknown counterparty triage', () => {
     expect(await screen.findByText('0xbbbb…0002')).toBeInTheDocument();
     expect(screen.getByText('3 transfers')).toBeInTheDocument();
     expect(screen.getByText('You sent')).toBeInTheDocument();
+  });
+
+  it('notes an uncertain address without applying a verdict', async () => {
+    apiMocks.eth.saveAddressNote.mockResolvedValue({ note: {} });
+    await openReviewTab();
+    fireEvent.change(screen.getByLabelText(/note for 0xbbbb/i), {
+      target: { value: 'Likely cold storage; confirm on device' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save note/i }));
+
+    await waitFor(() => {
+      expect(apiMocks.eth.saveAddressNote).toHaveBeenCalledWith(
+        MATERIAL.address,
+        'Likely cold storage; confirm on device'
+      );
+      expect(apiMocks.eth.labelAddress).not.toHaveBeenCalled();
+    });
   });
 
   const chooseVerdict = async (value) => {

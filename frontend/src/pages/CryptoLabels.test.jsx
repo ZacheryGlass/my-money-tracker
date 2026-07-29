@@ -17,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
     addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), syncWallet: vi.fn(), removeWallet: vi.fn(),
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
+    getAddressNotes: vi.fn(), saveAddressNote: vi.fn(), deleteAddressNote: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getActivity: vi.fn(), setActivitySpam: vi.fn(),
   },
   exchanges: {
@@ -39,6 +40,7 @@ beforeEach(() => {
   apiMocks.eth.getWallets.mockResolvedValue({ wallets: [] });
   apiMocks.eth.getIgnoredTokens.mockResolvedValue({ tokens: [] });
   apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
+  apiMocks.eth.getAddressNotes.mockResolvedValue({ notes: [] });
   apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
     data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 },
   });

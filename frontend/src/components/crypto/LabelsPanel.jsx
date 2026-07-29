@@ -10,12 +10,62 @@ import {
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
+function AddressNoteEditor({ address, initialNote = '', onChanged, onError, showSuccess }) {
+  const [note, setNote] = useState(initialNote);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    onError(null);
+    try {
+      if (note.trim()) await ethAPI.saveAddressNote(address, note.trim());
+      else if (initialNote) await ethAPI.deleteAddressNote(address);
+      showSuccess(note.trim() ? 'Address note saved' : 'Address note removed');
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to save address note');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 flex min-w-0 items-center gap-2">
+      <textarea
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        rows={2}
+        placeholder="What this address is and how you know"
+        aria-label={`Note for ${address}`}
+        className="min-h-12 flex-1 resize-y rounded border border-input-border bg-surface-2 px-2 py-1.5 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+      />
+      <button
+        type="button"
+        onClick={save}
+        disabled={saving || note === initialNote}
+        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:text-primary disabled:opacity-40"
+      >
+        {saving && <RefreshCw size={10} className="animate-spin" />}
+        Save note
+      </button>
+    </div>
+  );
+}
+
 // The two reference lists a user maintains by hand: who an address is, and
 // which tokens to pretend do not exist. Both change how every past transfer is
 // read, which is why they sit together and away from the queues on Review.
-function LabelsPanel({ addressLabels, ignoredTokens, onChanged, onError, showSuccess }) {
+function LabelsPanel({
+  addressLabels,
+  addressNotes = [],
+  ignoredTokens,
+  onChanged,
+  onError,
+  showSuccess,
+}) {
   const [labelAddressInput, setLabelAddressInput] = useState('');
   const [labelNameInput, setLabelNameInput] = useState('');
+  const [labelNoteInput, setLabelNoteInput] = useState('');
   // null = follow the default for the typed address. Only a deliberate pick
   // sets it, so the default can keep tracking what the user types.
   const [labelVerdictChoice, setLabelVerdictChoice] = useState(null);
@@ -33,6 +83,18 @@ function LabelsPanel({ addressLabels, ignoredTokens, onChanged, onError, showSuc
   // 'exchange' on a plain rename, silently rewriting that spending as an
   // internal transfer.
   const labelVerdict = labelVerdictChoice || LABEL_VERDICT_KEEP;
+  const notesByAddress = useMemo(
+    () => new Map(addressNotes.map((item) => [item.address, item.note])),
+    [addressNotes]
+  );
+  const labeledAddresses = useMemo(
+    () => new Set(addressLabels.map((label) => label.address)),
+    [addressLabels]
+  );
+  const noteOnlyAddresses = useMemo(
+    () => addressNotes.filter((item) => !labeledAddresses.has(item.address)),
+    [addressNotes, labeledAddresses]
+  );
 
   // Rows written before migration 031 have no kind and meant "exchange".
   // 'own' rows stay in the main list -- a cold-storage address is worth seeing.
@@ -67,9 +129,11 @@ function LabelsPanel({ addressLabels, ignoredTokens, onChanged, onError, showSuc
     onError(null);
     try {
       await ethAPI.labelAddress(address, name || null, { kind: labelVerdictKind(labelVerdict) });
+      if (labelNoteInput.trim()) await ethAPI.saveAddressNote(address, labelNoteInput.trim());
       showSuccess('Address labeled');
       setLabelAddressInput('');
       setLabelNameInput('');
+      setLabelNoteInput('');
       setLabelVerdictChoice(null);
       await onChanged();
     } catch (err) {
@@ -146,8 +210,9 @@ function LabelsPanel({ addressLabels, ignoredTokens, onChanged, onError, showSuc
       : label.kind === 'external' ? 'Outside party'
       : null;
     return (
-      <div key={label.address} className="flex items-center justify-between gap-4 px-4 py-3">
-        <div className="min-w-0">
+      <div key={label.address} className="px-4 py-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
           <span className="flex items-center gap-2 text-body-sm font-semibold text-primary">
             {label.name}
             {pill && (
@@ -159,17 +224,29 @@ function LabelsPanel({ addressLabels, ignoredTokens, onChanged, onError, showSuc
           <span className="block truncate font-mono text-[10px] text-tertiary" title={label.address}>
             {label.address}
           </span>
+            {label.note && (
+              <p className="mt-1 text-[10px] leading-relaxed text-tertiary">{label.note}</p>
+            )}
+          </div>
+          {label.source !== 'builtin' && (
+            <button
+              onClick={() => handleUnlabelAddress(label.address)}
+              disabled={updatingLabels}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+            >
+              <Undo2 size={14} />
+              Remove
+            </button>
+          )}
         </div>
-        {label.source !== 'builtin' && (
-          <button
-            onClick={() => handleUnlabelAddress(label.address)}
-            disabled={updatingLabels}
-            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
-          >
-            <Undo2 size={14} />
-            Remove
-          </button>
-        )}
+        <AddressNoteEditor
+          key={`${label.address}:${notesByAddress.get(label.address) || ''}`}
+          address={label.address}
+          initialNote={notesByAddress.get(label.address) || ''}
+          onChanged={onChanged}
+          onError={onError}
+          showSuccess={showSuccess}
+        />
       </div>
     );
   };
@@ -236,6 +313,17 @@ function LabelsPanel({ addressLabels, ignoredTokens, onChanged, onError, showSuc
                 Label Address
               </button>
             </div>
+            <label className="mt-2 block min-w-0 text-caption text-tertiary">
+              Note (optional)
+              <textarea
+                value={labelNoteInput}
+                onChange={(event) => setLabelNoteInput(event.target.value)}
+                rows={2}
+                placeholder="What this address is and what its transactions represent"
+                className="mt-1 block min-h-14 w-full resize-y border border-input-border bg-surface-2 px-2 py-1.5 text-body-sm text-primary"
+                disabled={updatingLabels}
+              />
+            </label>
           </form>
 
           {addressLabels.length === 0 ? (
@@ -243,6 +331,31 @@ function LabelsPanel({ addressLabels, ignoredTokens, onChanged, onError, showSuc
           ) : (
             <div className="divide-y divide-border">
               {primaryLabels.map(renderAddressLabelRow)}
+            </div>
+          )}
+
+          {noteOnlyAddresses.length > 0 && (
+            <div className="border-t border-border">
+              <div className="bg-surface-2 px-4 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
+                  Notes awaiting a verdict
+                </p>
+              </div>
+              <div className="divide-y divide-border">
+                {noteOnlyAddresses.map((item) => (
+                  <div key={item.address} className="px-4 py-3">
+                    <span className="block font-mono text-[10px] text-tertiary">{item.address}</span>
+                    <AddressNoteEditor
+                      key={`${item.address}:${item.note}`}
+                      address={item.address}
+                      initialNote={item.note}
+                      onChanged={onChanged}
+                      onError={onError}
+                      showSuccess={showSuccess}
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

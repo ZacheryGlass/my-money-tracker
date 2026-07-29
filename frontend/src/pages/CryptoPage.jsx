@@ -102,6 +102,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // landing would be paid by the users who never manage anything.
   const [ignoredTokens, setIgnoredTokens] = useState([]);
   const [addressLabels, setAddressLabels] = useState([]);
+  const [addressNotes, setAddressNotes] = useState([]);
   // null = not loaded or the fetch failed; [] = loaded and genuinely empty.
   // The distinction matters: never claim "all clear" on a failed request.
   const [counterpartyData, setCounterpartyData] = useState(null);
@@ -134,18 +135,22 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // refire the whole page fetch on every parent render.
   const fetchData = useCallback(async () => {
     try {
-      const [walletsData, holdingsData, accountsData, historyData, ledgerData] = await Promise.all([
+      const [walletsData, holdingsData, accountsData, historyData, ledgerData, notesData] = await Promise.all([
         ethAPI.getWallets().catch(() => null),
         holdingsAPI.getAll(),
         accountsAPI.getAll(),
         historyApi.getAccounts({ limit: 10000, withCount: false }),
         cryptoAPI.getLedgerSummary().catch(() => null),
+        typeof ethAPI.getAddressNotes === 'function'
+          ? ethAPI.getAddressNotes().catch(() => null)
+          : Promise.resolve(null),
       ]);
       setWallets(walletsData?.wallets || []);
       setHoldings(holdingsData.holdings || []);
       setAccounts(accountsData.accounts || []);
       setHistoryRows(historyData.data || []);
       setLedgerSummary(ledgerData?.summary || null);
+      if (notesData) setAddressNotes(notesData.notes || []);
       // The same two numbers the app shell fetched at boot, kept fresh by
       // every refetch here -- review actions call fetchData, so the sidebar
       // badge drains with the queue. A half whose fetch failed reports NULL,
@@ -774,6 +779,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                 <CryptoLedger
                   walletId={selectedWalletId}
                   refreshKey={syncNonce}
+                  addressNotes={addressNotes}
                   onDataChanged={fetchData}
                   // The raw feed is entered from a quiet link on the ledger's
                   // filter bar, not a sibling mode toggle: it is a drill-down
@@ -831,7 +837,13 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
           {tabBody(REVIEW_TAB, (
             <ReviewPanel
-              counterpartyData={counterpartyData}
+              counterpartyData={counterpartyData && {
+                ...counterpartyData,
+                data: (counterpartyData.data || []).map((counterparty) => ({
+                  ...counterparty,
+                  note: addressNotes.find((item) => item.address === counterparty.address)?.note || '',
+                })),
+              }}
               spamActivity={spamActivity}
               onSpamPageLoaded={(next) => { spamPagesRef.current += 1; setSpamActivity(next); }}
               exchangeNameOptions={exchangeNameOptions}
@@ -846,6 +858,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
           {tabBody(LABELS_TAB, (
             <LabelsPanel
               addressLabels={addressLabels}
+              addressNotes={addressNotes}
               ignoredTokens={ignoredTokens}
               onChanged={handleManageChanged}
               onError={setError}

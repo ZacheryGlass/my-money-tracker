@@ -168,28 +168,70 @@ function fakeQuery(text, params = []) {
     db.overrides.set(k, row);
     return { rows: [row] };
   }
+  if (/^INSERT INTO eth_activity_overrides \(wallet_id, chain_id, tx_hash, note\)/.test(sql)) {
+    const [walletId, chainId, txHash, note, userId] = params;
+    if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
+    const k = key(walletId, chainId, txHash);
+    const existing = db.overrides.get(k);
+    const row = existing
+      ? { ...existing, note }
+      : { wallet_id: walletId, chain_id: chainId, tx_hash: txHash, category: null, note, spam: null };
+    db.overrides.set(k, row);
+    return { rows: [row] };
+  }
   if (/^INSERT INTO eth_activity_overrides/.test(sql)) {
-    const [walletId, chainId, txHash, category, note, userId] = params;
+    const [walletId, chainId, txHash, category, note, userId, noteProvided = true] = params;
     // The INSERT ... SELECT FROM eth_wallets WHERE user_id is the ownership
     // gate: a foreign wallet selects nothing, so nothing is written.
     if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
     // Naming a category LIFTS the quarantine: the SQL writes spam = FALSE on
     // both the insert and the DO UPDATE. A correction that stayed hidden was
     // stored, acted on by the matcher, and invisible.
+    const existing = db.overrides.get(key(walletId, chainId, txHash));
     const row = {
-      wallet_id: walletId, chain_id: chainId, tx_hash: txHash, category, note,
+      wallet_id: walletId,
+      chain_id: chainId,
+      tx_hash: txHash,
+      category,
+      note: noteProvided ? note : existing?.note ?? null,
       spam: false,
     };
     db.overrides.set(key(walletId, chainId, txHash), row);
     return { rows: [row] };
   }
-  if (/^DELETE FROM eth_activity_overrides/.test(sql)) {
+  if (/^UPDATE eth_activity_overrides o SET note = NULL/.test(sql)) {
+    const [walletId, chainId, txHash, userId] = params;
+    if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
+    const k = key(walletId, chainId, txHash);
+    const existing = db.overrides.get(k);
+    if (!existing) return { rows: [] };
+    const row = { ...existing, note: null };
+    db.overrides.set(k, row);
+    return { rows: [row] };
+  }
+  if (/^DELETE FROM eth_activity_overrides o USING eth_wallets w/.test(sql)) {
     const [walletId, chainId, txHash, userId] = params;
     if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
     const k = key(walletId, chainId, txHash);
     const row = db.overrides.get(k);
-    if (!row) return { rows: [] };
+    const deletesNoteOnly = /o\.note IS NOT NULL AND o\.category IS NULL/.test(sql);
+    const deletesCorrection = /o\.category IS NOT NULL AND o\.note IS NULL/.test(sql);
+    if (!row
+        || (deletesNoteOnly && !(row.note != null && row.category == null && row.spam == null))
+        || (deletesCorrection && !(row.category != null && row.note == null))) {
+      return { rows: [] };
+    }
     db.overrides.delete(k);
+    return { rows: [row] };
+  }
+  if (/^UPDATE eth_activity_overrides o SET category = NULL, spam = NULL/.test(sql)) {
+    const [walletId, chainId, txHash, userId] = params;
+    if (walletId !== OWNED_WALLET_ID || userId !== OWNER_ID) return { rows: [] };
+    const k = key(walletId, chainId, txHash);
+    const existing = db.overrides.get(k);
+    if (!existing?.category) return { rows: [] };
+    const row = { ...existing, category: null, spam: null };
+    db.overrides.set(k, row);
     return { rows: [row] };
   }
   if (/^WITH resolved AS/.test(sql)) {
@@ -787,6 +829,50 @@ test('an override clears needs_review, so the queue can drain', async () => {
   const after = await request(app).get('/api/eth/activity?needs_review=true');
   assert.equal(after.body.data.length, 0);
   assert.equal(after.body.pagination.total, 0);
+});
+
+test('a transaction note survives rebuilds without clearing needs_review', async () => {
+  db.transfers = [leg({ tx_hash: TX })];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
+  const saved = await request(app).post('/api/eth/activity/note')
+    .send({ wallet_id: OWNED_WALLET_ID, tx_hash: TX, note: 'Likely cold storage; confirm first' });
+  assert.equal(saved.status, 200);
+
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+  const listed = await request(app).get('/api/eth/activity?needs_review=true');
+  assert.equal(listed.body.data.length, 1, 'prose alone must not resolve the review question');
+  assert.equal(listed.body.data[0].override_note, 'Likely cold storage; confirm first');
+  assert.equal(listed.body.data[0].is_overridden, false);
+});
+
+test('adding a category verdict does not erase an existing transaction note', async () => {
+  db.transfers = [leg({ tx_hash: TX })];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+  await request(app).post('/api/eth/activity/note')
+    .send({ wallet_id: OWNED_WALLET_ID, tx_hash: TX, note: 'Recovered from old records' });
+  await request(app).post('/api/eth/activity/override')
+    .send({ wallet_id: OWNED_WALLET_ID, tx_hash: TX, category: 'spend' });
+
+  const listed = await request(app).get('/api/eth/activity');
+  assert.equal(listed.body.data[0].category, 'spend');
+  assert.equal(listed.body.data[0].override_note, 'Recovered from old records');
+});
+
+test('reverting a category correction preserves its transaction note', async () => {
+  db.transfers = [leg({ tx_hash: TX })];
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+  await request(app).post('/api/eth/activity/override')
+    .send({ wallet_id: OWNED_WALLET_ID, tx_hash: TX, category: 'spend', note: 'Legacy note' });
+
+  const removed = await request(app)
+    .delete(`/api/eth/activity/override?wallet_id=${OWNED_WALLET_ID}&tx_hash=${TX}`);
+  assert.equal(removed.status, 200);
+
+  const listed = await request(app).get('/api/eth/activity');
+  assert.equal(listed.body.data[0].category, 'send');
+  assert.equal(listed.body.data[0].needs_review, true);
+  assert.equal(listed.body.data[0].override_note, 'Legacy note');
 });
 
 test('an override can be undone, which uncovers the derived verdict again', async () => {

@@ -8,6 +8,7 @@ const EthTransfer = require('../models/EthTransfer');
 const chains = require('../config/chains');
 const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
+const EthAddressNote = require('../models/EthAddressNote');
 const EthActivity = require('../models/EthActivity');
 const EthReconciliation = require('../models/EthReconciliation');
 const EthReconciliationAdjustment = require('../models/EthReconciliationAdjustment');
@@ -575,7 +576,7 @@ router.post('/activity/override', async (req, res) => {
       req.user.id,
       wallet.walletId,
       txHash,
-      { category, note: note?.trim() || null, chainId }
+      { category, note: note === undefined ? undefined : note?.trim() || null, chainId }
     );
     // The model's wallet join is the second ownership gate; a null here means
     // the wallet vanished between the check and the write.
@@ -587,6 +588,41 @@ router.post('/activity/override', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Set ETH activity override error');
     res.status(500).json({ error: 'Failed to save the override' });
+  }
+});
+
+// Save explanatory prose without changing what the transaction is. Unlike a
+// category correction this does not clear needs_review, unquarantine spam or
+// affect bridge/exchange matching.
+router.post('/activity/note', async (req, res) => {
+  try {
+    const { wallet_id: walletIdRaw, tx_hash: txHashRaw, chain_id: chainIdRaw, note } = req.body || {};
+    const wallet = await loadWallet(req, walletIdRaw, { required: true });
+    if (!wallet.ok) return res.status(404).json({ error: 'Wallet not found' });
+    if (typeof txHashRaw !== 'string' || !TX_HASH_RE.test(txHashRaw.trim())) {
+      return res.status(400).json({ error: 'tx_hash must be a 0x-prefixed 64-hex-character transaction hash' });
+    }
+    const chainId = chainIdRaw === undefined || chainIdRaw === null ? chains.DEFAULT_CHAIN_ID : Number(chainIdRaw);
+    if (!Number.isInteger(chainId) || chainId < 1) {
+      return res.status(400).json({ error: 'chain_id must be a positive integer' });
+    }
+    if (typeof note !== 'string') return res.status(400).json({ error: 'note must be a string' });
+
+    const txHash = txHashRaw.trim().toLowerCase();
+    const targetExists = await EthActivity.overrideTargetExists(req.user.id, wallet.walletId, txHash, { chainId });
+    if (!targetExists) {
+      return res.status(404).json({ error: 'No activity found for that transaction on this wallet' });
+    }
+    const override = await EthActivity.setNote(
+      req.user.id,
+      wallet.walletId,
+      txHash,
+      { note, chainId }
+    );
+    res.status(200).json({ override, note: note.trim() || null });
+  } catch (error) {
+    logger.error({ err: error }, 'Set ETH activity note error');
+    res.status(500).json({ error: 'Failed to save the note' });
   }
 });
 
@@ -898,6 +934,50 @@ router.get('/address-labels', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get address labels error');
     res.status(500).json({ error: 'Failed to retrieve address labels' });
+  }
+});
+
+// Notes are deliberately independent from verdicts. A user can document an
+// address that looks like cold storage or an exchange forwarder without the
+// note itself removing the address from Needs Review or changing cash flow.
+router.get('/address-notes', async (req, res) => {
+  try {
+    const notes = await EthAddressNote.findAllForUser(req.user.id);
+    res.status(200).json({ notes });
+  } catch (error) {
+    logger.error({ err: error }, 'Get address notes error');
+    res.status(500).json({ error: 'Failed to retrieve address notes' });
+  }
+});
+
+router.post('/address-notes', async (req, res) => {
+  try {
+    const { address, note } = req.body || {};
+    if (typeof address !== 'string' || !/^0x[0-9a-f]{40}$/i.test(address.trim())) {
+      return res.status(400).json({ error: 'address must be a 0x-prefixed 40-hex-character address' });
+    }
+    if (typeof note !== 'string' || !note.trim()) {
+      return res.status(400).json({ error: 'note is required' });
+    }
+    const saved = await EthAddressNote.upsert(req.user.id, address.trim().toLowerCase(), note.trim());
+    res.status(201).json({ note: saved });
+  } catch (error) {
+    logger.error({ err: error }, 'Save address note error');
+    res.status(500).json({ error: 'Failed to save address note' });
+  }
+});
+
+router.delete('/address-notes/:address', async (req, res) => {
+  try {
+    if (!/^0x[0-9a-f]{40}$/i.test(req.params.address || '')) {
+      return res.status(400).json({ error: 'address must be a 0x-prefixed 40-hex-character address' });
+    }
+    const note = await EthAddressNote.delete(req.user.id, req.params.address);
+    if (!note) return res.status(404).json({ error: 'Address note not found' });
+    res.status(200).json({ message: 'Address note removed' });
+  } catch (error) {
+    logger.error({ err: error }, 'Delete address note error');
+    res.status(500).json({ error: 'Failed to remove address note' });
   }
 });
 

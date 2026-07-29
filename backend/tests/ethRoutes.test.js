@@ -81,6 +81,21 @@ test('POST /api/eth/address-labels validates the address', async () => {
   assert.match(response.body.error, /0x-prefixed/);
 });
 
+test('POST /api/eth/address-notes validates both address and note before writing', async () => {
+  const badAddress = await request(app)
+    .post('/api/eth/address-notes')
+    .send({ address: '0x123', note: 'Known service' })
+    .set('Content-Type', 'application/json');
+  assert.equal(badAddress.status, 400);
+
+  const blankNote = await request(app)
+    .post('/api/eth/address-notes')
+    .send({ address: '0x1111111111111111111111111111111111111111', note: '   ' })
+    .set('Content-Type', 'application/json');
+  assert.equal(blankNote.status, 400);
+  assert.match(blankNote.body.error, /note is required/);
+});
+
 test('POST /api/eth/address-labels requires a name', async () => {
   const response = await request(app)
     .post('/api/eth/address-labels')

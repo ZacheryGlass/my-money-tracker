@@ -62,9 +62,18 @@ const VERDICT_HINTS = {
 // one at a time, so leaving other rows clickable produced silent no-ops in the
 // exact rapid-triage workflow this feature is built around. active spins only
 // the row actually being worked on.
-export function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackAsWallet, onIgnoreToken }) {
+export function CounterpartyRow({
+  counterparty,
+  busy,
+  active,
+  onTriage,
+  onTrackAsWallet,
+  onIgnoreToken,
+  onSaveNote,
+}) {
   const [verdict, setVerdict] = useState('');
   const [name, setName] = useState('');
+  const [note, setNote] = useState(counterparty.note || '');
   const short = shortEthAddress(counterparty.address);
   const symbol = counterparty.token_symbols?.[0];
   const nameField = NAME_FIELDS[verdict];
@@ -183,6 +192,25 @@ export function CounterpartyRow({ counterparty, busy, active, onTriage, onTrackA
       {hint && (
         <p className="mt-2 text-[10px] leading-relaxed text-tertiary">{hint}</p>
       )}
+      <div className="mt-2 flex items-center gap-2">
+        <textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          rows={2}
+          placeholder="Add evidence or a reminder without choosing a verdict"
+          aria-label={`Note for ${short}`}
+          className="min-h-12 min-w-0 flex-1 resize-y rounded border border-input-border bg-surface-2 px-2 py-1.5 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+        />
+        <button
+          type="button"
+          onClick={() => onSaveNote(counterparty.address, note)}
+          disabled={busy || note === (counterparty.note || '')}
+          className={TRIAGE_ACTION_CLASS}
+        >
+          {active ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />}
+          Save note
+        </button>
+      </div>
     </div>
   );
 }
@@ -238,6 +266,22 @@ function ReviewPanel({
       await onChanged();
     } catch (err) {
       onError(err.response?.data?.error || 'Failed to review counterparty');
+    } finally {
+      setTriagingAddress(null);
+    }
+  };
+
+  const handleSaveNote = async (address, note) => {
+    if (triagingAddress) return;
+    setTriagingAddress(address);
+    onError(null);
+    try {
+      if (note.trim()) await ethAPI.saveAddressNote(address, note.trim());
+      else if (rows.find((item) => item.address === address)?.note) await ethAPI.deleteAddressNote(address);
+      showSuccess(note.trim() ? `Note saved for ${shortEthAddress(address)}` : 'Address note removed');
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to save address note');
     } finally {
       setTriagingAddress(null);
     }
@@ -380,6 +424,7 @@ function ReviewPanel({
                   onTriage={handleTriage}
                   onTrackAsWallet={handleTrackAsWallet}
                   onIgnoreToken={handleIgnoreCounterpartyToken}
+                  onSaveNote={handleSaveNote}
                 />
               ))}
             </div>
@@ -412,6 +457,7 @@ function ReviewPanel({
                       onTriage={handleTriage}
                       onTrackAsWallet={handleTrackAsWallet}
                       onIgnoreToken={handleIgnoreCounterpartyToken}
+                      onSaveNote={handleSaveNote}
                     />
                   ))}
                 </div>

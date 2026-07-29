@@ -8,6 +8,7 @@ const apiMocks = vi.hoisted(() => ({
   eth: {
     getTransfers: vi.fn(),
     setActivityOverride: vi.fn(),
+    setActivityNote: vi.fn(),
     clearActivityOverride: vi.fn(),
     setActivitySpam: vi.fn(),
     labelAddress: vi.fn(),
@@ -317,6 +318,29 @@ describe('CryptoLedger', () => {
       // feeling like it is draining.
       expect(apiMocks.crypto.getLedger.mock.calls.length).toBeGreaterThan(1);
       expect(apiMocks.crypto.getLedgerSummary.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  it('saves a transaction note separately from the category verdict', async () => {
+    setLedger([onchain()]);
+    apiMocks.eth.setActivityNote.mockResolvedValue({ override: {} });
+    render(<CryptoLedger addressNotes={[{ address: COUNTERPARTY, note: 'Protocol address' }]} />);
+
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USDC'))[0]);
+    expect(await screen.findByText('Protocol address')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Transaction note'), {
+      target: { value: 'Gas-sponsored swap fee' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save note/i }));
+
+    await vi.waitFor(() => {
+      expect(apiMocks.eth.setActivityNote).toHaveBeenCalledWith({
+        walletId: 1,
+        txHash: TX,
+        chainId: 42161,
+        note: 'Gas-sponsored swap fee',
+      });
+      expect(apiMocks.eth.setActivityOverride).not.toHaveBeenCalled();
     });
   });
 

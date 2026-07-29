@@ -186,7 +186,13 @@ const DetailField = ({ label, children }) => (
 // on the filter bar rather than a sibling mode toggle: the raw feed is a
 // power-user drill-down (and the one place a token can be ignored in context),
 // not an equal way to read the ledger.
-const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTransferLegs }) => {
+const CryptoLedger = ({
+  walletId = null,
+  refreshKey = 0,
+  onDataChanged,
+  onShowTransferLegs,
+  addressNotes = [],
+}) => {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState(null);
@@ -201,6 +207,10 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const addressNoteByAddress = useMemo(
+    () => new Map(addressNotes.map((item) => [item.address, item.note])),
+    [addressNotes]
+  );
   const [reload, setReload] = useState(0);
   const isMobile = useIsMobile();
 
@@ -810,6 +820,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
               row={row.original}
               onError={setError}
               onChanged={() => { refresh(); onDataChanged?.(); }}
+              addressNote={addressNoteByAddress.get(row.original.counterparty_address) || ''}
             />
           ) : null)}
           header={rows.length > 0 && (
@@ -860,6 +871,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
                       row={entry}
                       onError={setError}
                       onChanged={() => { refresh(); onDataChanged?.(); }}
+                      addressNote={addressNoteByAddress.get(entry.counterparty_address) || ''}
                     />
                   </div>
                 )}
@@ -876,7 +888,7 @@ const CryptoLedger = ({ walletId = null, refreshKey = 0, onDataChanged, onShowTr
 // it. Every action calls an endpoint that already exists -- an override on the
 // on-chain side, a counterparty label (which reclassifies ALL history for that
 // address, so one label can drain many rows), and a resolve on the venue side.
-const LedgerRowDetail = ({ row, onError, onChanged }) => {
+const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
   const onChain = row.source === 'onchain';
   const [category, setCategory] = useState(row.category);
   const [note, setNote] = useState(row.override_note || '');
@@ -918,7 +930,13 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
     txHash: row.tx_hash,
     chainId: row.chain_id,
     category,
-    note: note.trim() || undefined,
+  }));
+
+  const saveNote = () => run('note', () => ethAPI.setActivityNote({
+    walletId: row.wallet_id,
+    txHash: row.tx_hash,
+    chainId: row.chain_id,
+    note,
   }));
 
   // The one-click un-quarantine, against the endpoint the Review tab's
@@ -1024,7 +1042,8 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
         )}
         {row.external_id && <DetailField label="Exchange record">{row.external_id}</DetailField>}
         {row.review_reason && <DetailField label="Why flagged">{row.review_reason}</DetailField>}
-        {row.override_note && <DetailField label="Note">{row.override_note}</DetailField>}
+        {addressNote && <DetailField label="Address note">{addressNote}</DetailField>}
+        {row.override_note && <DetailField label="Transaction note">{row.override_note}</DetailField>}
       </div>
 
       {/* A pairing this row was rejected against. Rejecting DELETES the match,
@@ -1225,10 +1244,19 @@ const LedgerRowDetail = ({ row, onError, onChanged }) => {
               type="text"
               value={note}
               onChange={(event) => setNote(event.target.value)}
-              placeholder="Note (optional)"
-              aria-label="Correction note"
+              placeholder="What this transaction did"
+              aria-label="Transaction note"
               className="h-8 w-40 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
             />
+            <button
+              type="button"
+              onClick={saveNote}
+              disabled={saving != null}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-2.5 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:text-primary disabled:opacity-40"
+            >
+              {saving === 'note' && <RefreshCw size={10} className="animate-spin" />}
+              Save note
+            </button>
             <button
               type="button"
               onClick={saveOverride}

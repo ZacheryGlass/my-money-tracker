@@ -3,10 +3,9 @@
 const pool = require('../config/database');
 const { DEFAULT_CHAIN_ID } = require('../config/chains');
 
-// Every read resolves the manual override over the derived verdict in ONE
-// place. An override is the user's own explanation of a transaction, so it also
-// clears needs_review and its reason -- the row has been reviewed, by hand, and
-// leaving it in the queue would make the queue undrainable.
+// Every read resolves a manual CATEGORY override over the derived verdict in
+// one place. A category override clears needs_review because it is a verdict;
+// a note-only row does not, because prose can preserve uncertainty.
 //
 // The join is on the full key (wallet, chain, tx_hash), which both tables carry
 // a UNIQUE index on, so it can never fan one activity row into two.
@@ -294,8 +293,9 @@ class EthActivity {
   // so the INSERT writes nothing and the caller gets null. The route checks
   // ownership too -- this is the half that holds if anything ever calls the
   // model directly.
-  static async upsertOverride(userId, walletId, txHash, { category, note = null, chainId = DEFAULT_CHAIN_ID } = {}) {
+  static async upsertOverride(userId, walletId, txHash, { category, note, chainId = DEFAULT_CHAIN_ID } = {}) {
     if (!userId) throw new Error('EthActivity.upsertOverride requires a userId');
+    const noteProvided = note !== undefined;
     const result = await pool.query(
       `INSERT INTO eth_activity_overrides (wallet_id, chain_id, tx_hash, category, note, spam)
        SELECT w.id, $2, $3, $4, $5, FALSE
@@ -311,13 +311,80 @@ class EthActivity {
        --
        -- One click re-quarantines it if that is genuinely what they meant.
        DO UPDATE SET category = EXCLUDED.category,
-                     note = EXCLUDED.note,
+                     note = CASE WHEN $7 THEN EXCLUDED.note ELSE eth_activity_overrides.note END,
                      spam = FALSE,
                      updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [walletId, chainId, txHash, category, note, userId]
+      [walletId, chainId, txHash, category, noteProvided ? note : null, userId, noteProvided]
     );
     return result.rows[0] || null;
+  }
+
+  // Prose is not a verdict. A note-only row preserves the ladder's category,
+  // needs_review flag and spam answer; if another override already exists this
+  // changes only its note. Clearing the last remaining field removes the row
+  // so migration 049's not-empty invariant remains true.
+  static async setNote(userId, walletId, txHash, { note, chainId = DEFAULT_CHAIN_ID } = {}) {
+    if (!userId) throw new Error('EthActivity.setNote requires a userId');
+    const normalized = typeof note === 'string' && note.trim() ? note.trim() : null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      let row = null;
+      if (normalized) {
+        const result = await client.query(
+          `INSERT INTO eth_activity_overrides (wallet_id, chain_id, tx_hash, note)
+           SELECT w.id, $2, $3, $4
+           FROM eth_wallets w
+           WHERE w.id = $1 AND w.user_id = $5
+           ON CONFLICT (wallet_id, chain_id, tx_hash)
+           DO UPDATE SET note = EXCLUDED.note, updated_at = CURRENT_TIMESTAMP
+           RETURNING *`,
+          [walletId, chainId, txHash, normalized, userId]
+        );
+        row = result.rows[0] || null;
+      } else {
+        // Delete a note-only row directly. Updating it to NULL first would
+        // violate the table's not-empty CHECK before a following DELETE could
+        // run; constraints are checked per statement, not at COMMIT.
+        const deleted = await client.query(
+          `DELETE FROM eth_activity_overrides o
+           USING eth_wallets w
+           WHERE o.wallet_id = w.id
+             AND w.user_id = $4
+             AND o.wallet_id = $1
+             AND o.chain_id = $2
+             AND o.tx_hash = $3
+             AND o.note IS NOT NULL
+             AND o.category IS NULL
+             AND o.spam IS NULL
+           RETURNING o.*`,
+          [walletId, chainId, txHash, userId]
+        );
+        const result = deleted.rows.length ? deleted : await client.query(
+          `UPDATE eth_activity_overrides o
+           SET note = NULL, updated_at = CURRENT_TIMESTAMP
+           FROM eth_wallets w
+           WHERE o.wallet_id = w.id
+             AND w.user_id = $4
+             AND o.wallet_id = $1
+             AND o.chain_id = $2
+             AND o.tx_hash = $3
+             AND o.note IS NOT NULL
+             AND (o.category IS NOT NULL OR o.spam IS NOT NULL)
+           RETURNING o.*`,
+          [walletId, chainId, txHash, userId]
+        );
+        row = result.rows[0] || null;
+      }
+      await client.query('COMMIT');
+      return row;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // The one-click un-quarantine, and its inverse.
@@ -351,18 +418,46 @@ class EthActivity {
   // uncovers the derived verdict again.
   static async deleteOverride(userId, walletId, txHash, { chainId = DEFAULT_CHAIN_ID } = {}) {
     if (!userId) throw new Error('EthActivity.deleteOverride requires a userId');
-    const result = await pool.query(
-      `DELETE FROM eth_activity_overrides o
-       USING eth_wallets w
-       WHERE o.wallet_id = w.id
-         AND w.user_id = $4
-         AND o.wallet_id = $1
-         AND o.chain_id = $2
-         AND o.tx_hash = $3
-       RETURNING o.*`,
-      [walletId, chainId, txHash, userId]
-    );
-    return result.rows[0] || null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Same constraint boundary as setNote: delete a correction with no note
+      // directly; only UPDATE rows whose note will keep them non-empty.
+      const deleted = await client.query(
+        `DELETE FROM eth_activity_overrides o
+         USING eth_wallets w
+         WHERE o.wallet_id = w.id
+           AND w.user_id = $4
+           AND o.wallet_id = $1
+           AND o.chain_id = $2
+           AND o.tx_hash = $3
+           AND o.category IS NOT NULL
+           AND o.note IS NULL
+         RETURNING o.*`,
+        [walletId, chainId, txHash, userId]
+      );
+      const result = deleted.rows.length ? deleted : await client.query(
+        `UPDATE eth_activity_overrides o
+         SET category = NULL, spam = NULL, updated_at = CURRENT_TIMESTAMP
+         FROM eth_wallets w
+         WHERE o.wallet_id = w.id
+           AND w.user_id = $4
+           AND o.wallet_id = $1
+           AND o.chain_id = $2
+           AND o.tx_hash = $3
+           AND o.category IS NOT NULL
+           AND o.note IS NOT NULL
+         RETURNING o.*`,
+        [walletId, chainId, txHash, userId]
+      );
+      await client.query('COMMIT');
+      return result.rows[0] || null;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

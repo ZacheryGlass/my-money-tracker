@@ -360,6 +360,18 @@ export const eth = {
     const response = await api.get('/api/eth/address-labels');
     return response.data;
   },
+  getAddressNotes: async () => {
+    const response = await api.get('/api/eth/address-notes');
+    return response.data;
+  },
+  saveAddressNote: async (address, note) => {
+    const response = await api.post('/api/eth/address-notes', { address, note });
+    return response.data;
+  },
+  deleteAddressNote: async (address) => {
+    const response = await api.delete(`/api/eth/address-notes/${address}`);
+    return response.data;
+  },
   // kind: 'exchange' (default) | 'external' | 'own' | 'bridge' | 'service'. A
   // name is required only for 'exchange', where it becomes the counterparty
   // text in the ledger.
@@ -404,6 +416,12 @@ export const eth = {
   setActivityOverride: async ({ walletId, txHash, chainId, category, note }) => {
     const response = await api.post('/api/eth/activity/override', {
       wallet_id: walletId, tx_hash: txHash, chain_id: chainId, category, note,
+    });
+    return response.data;
+  },
+  setActivityNote: async ({ walletId, txHash, chainId, note }) => {
+    const response = await api.post('/api/eth/activity/note', {
+      wallet_id: walletId, tx_hash: txHash, chain_id: chainId, note,
     });
     return response.data;
   },
