@@ -78,6 +78,15 @@ describe('CryptoPage', () => {
     expect(onTabChange).toHaveBeenCalledWith('crypto-wallets');
   });
 
+  it('renders the Crypto workspace without waiting for the ledger summary', async () => {
+    apiMocks.crypto.getLedgerSummary.mockReturnValue(new Promise(() => {}));
+
+    render(<CryptoPage onTabChange={vi.fn()} />);
+
+    expect(await screen.findByRole('button', { name: /connect crypto/i })).toBeInTheDocument();
+    expect(screen.queryByText('Loading Crypto')).toBeNull();
+  });
+
   it('totals only crypto holdings and leaves other accounts out', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({
       accounts: [CRYPTO_ACCOUNT, { id: 3, name: 'Brokerage', type: 'investment' }],

@@ -129,18 +129,23 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // only surface with that button: a wave that buried a real transaction at
   // row 200 must not spring back to row 50 when something above it is rescued.
   const spamPagesRef = useRef(1);
+  // The unified ledger summary is much heavier than the portfolio reads. It
+  // must never hold the whole Crypto page on a loading screen; this sequence
+  // also prevents an older summary from overwriting a newer post-action one.
+  const ledgerSummaryRequestRef = useRef(0);
 
   // useCallback because it closes over the onAttentionChange prop: the mount
   // effect and handleManageChanged list it, and an unstable identity would
   // refire the whole page fetch on every parent render.
   const fetchData = useCallback(async () => {
     try {
-      const [walletsData, holdingsData, accountsData, historyData, ledgerData, notesData] = await Promise.all([
+      const summaryRequest = ++ledgerSummaryRequestRef.current;
+      const ledgerPromise = cryptoAPI.getLedgerSummary().catch(() => null);
+      const [walletsData, holdingsData, accountsData, historyData, notesData] = await Promise.all([
         ethAPI.getWallets().catch(() => null),
         holdingsAPI.getAll(),
         accountsAPI.getAll(),
         historyApi.getAccounts({ limit: 10000, withCount: false }),
-        cryptoAPI.getLedgerSummary().catch(() => null),
         typeof ethAPI.getAddressNotes === 'function'
           ? ethAPI.getAddressNotes().catch(() => null)
           : Promise.resolve(null),
@@ -149,19 +154,21 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       setHoldings(holdingsData.holdings || []);
       setAccounts(accountsData.accounts || []);
       setHistoryRows(historyData.data || []);
-      setLedgerSummary(ledgerData?.summary || null);
       if (notesData) setAddressNotes(notesData.notes || []);
-      // The same two numbers the app shell fetched at boot, kept fresh by
-      // every refetch here -- review actions call fetchData, so the sidebar
-      // badge drains with the queue. A half whose fetch failed reports NULL,
-      // never zero: "unknown" downgrading a red badge to all-clear is the
-      // lossy direction for an attention signal, and the shell merges nulls
-      // against what it already knows.
-      onAttentionChange?.({
-        errored: walletsData
-          ? (walletsData.wallets || []).filter((wallet) => wallet.error_code).length
-          : null,
-        needsReview: ledgerData ? (ledgerData.summary?.needs_review_count || 0) : null,
+      // The summary keeps running after the portfolio is renderable. Review
+      // actions still refresh the badge, but a slow fold query cannot hide the
+      // Notes/Labels/Wallets surfaces behind "Loading Crypto".
+      void ledgerPromise.then((ledgerData) => {
+        if (summaryRequest !== ledgerSummaryRequestRef.current) return;
+        setLedgerSummary(ledgerData?.summary || null);
+        // A half whose fetch failed reports NULL, never zero: "unknown"
+        // downgrading a red badge to all-clear is the lossy direction.
+        onAttentionChange?.({
+          errored: walletsData
+            ? (walletsData.wallets || []).filter((wallet) => wallet.error_code).length
+            : null,
+          needsReview: ledgerData ? (ledgerData.summary?.needs_review_count || 0) : null,
+        });
       });
       setError(null);
     } catch (err) {
