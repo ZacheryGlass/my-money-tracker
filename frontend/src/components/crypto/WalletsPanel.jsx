@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useReactTable, getCoreRowModel, getSortedRowModel } from '@tanstack/react-table';
-import { AlertTriangle, ChevronDown, ChevronRight, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Download, FileCheck2, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import { formatExactUnits, formatRelativeTime, shortEthAddress as shortEthAddressOrUnknown } from '../../utils/format';
 import { getAccountDisplayName } from '../../utils/accountDisplay';
@@ -353,6 +353,8 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
   const [syncingId, setSyncingId] = useState(null);
   const [recapturing, setRecapturing] = useState(null);
   const [recaptureStartingId, setRecaptureStartingId] = useState(null);
+  const [coverageReport, setCoverageReport] = useState(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
   const [disconnecting, setDisconnecting] = useState(null);
   const [removeData, setRemoveData] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
@@ -457,6 +459,30 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
     } finally {
       setRecaptureStartingId(null);
     }
+  };
+
+  const openCoverageReport = async () => {
+    setCoverageLoading(true);
+    onError(null);
+    try {
+      setCoverageReport(await ethAPI.getCoverage());
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to load source coverage');
+    } finally {
+      setCoverageLoading(false);
+    }
+  };
+
+  const downloadCoverageReport = () => {
+    const blob = new Blob([`${JSON.stringify(coverageReport, null, 2)}\n`], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `evm-feed-coverage-${coverageReport.generated_at.slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleDisconnectConfirm = async () => {
@@ -683,13 +709,25 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
           <p className="mt-1 text-xs text-secondary">Track any EVM address across configured chain explorers: native and token balances, transfers between your own wallets, external transfers, and gas fees.</p>
         </div>
         {wallets.length > 0 && (
-          <button
-            onClick={openAddModal}
-            className="inline-flex items-center justify-center gap-2 rounded border border-crypto-border bg-crypto-bg px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-crypto transition-all hover:bg-crypto-bg-hover hover:text-crypto-hover"
-          >
-            <Plus size={14} />
-            Add Wallet
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={openCoverageReport}
+              disabled={coverageLoading}
+              className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+            >
+              <FileCheck2 size={14} />
+              {coverageLoading ? 'Loading…' : 'Coverage report'}
+            </button>
+            <button
+              type="button"
+              onClick={openAddModal}
+              className="inline-flex items-center justify-center gap-2 rounded border border-crypto-border bg-crypto-bg px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-crypto transition-all hover:bg-crypto-bg-hover hover:text-crypto-hover"
+            >
+              <Plus size={14} />
+              Add Wallet
+            </button>
+          </div>
         )}
       </div>
 
@@ -756,6 +794,83 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
           }}
         />
       )}
+
+      <AnimatePresence>
+        {coverageReport && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setCoverageReport(null)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} role="dialog" aria-modal="true" aria-labelledby="coverage-report-title" className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded border border-border bg-surface p-6 shadow-2xl">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 id="coverage-report-title" className="text-2xl font-bold tracking-tight text-primary">EVM source coverage</h2>
+                  <p className="mt-1 text-xs text-tertiary">
+                    Generated {new Date(coverageReport.generated_at).toLocaleString()}
+                  </p>
+                </div>
+                <button type="button" onClick={downloadCoverageReport} className={ROW_ACTION_CLASS}>
+                  <Download size={11} />
+                  Download JSON
+                </button>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  ['Complete', coverageReport.summary.complete],
+                  ['Gaps', coverageReport.summary.gaps],
+                  ['Unsupported', coverageReport.summary.unsupported],
+                  ['Unverified', coverageReport.summary.unverified],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded border border-border bg-surface-2 p-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-tertiary">{label}</p>
+                    <p className="mt-1 font-money text-xl text-primary">{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-secondary">
+                  Enabled-feed gaps
+                </h3>
+                {coverageReport.coverage.filter((row) => (
+                  row.enabled && ['failed', 'unsupported', 'unverified'].includes(row.status)
+                )).length === 0 ? (
+                  <p className="mt-2 rounded border border-gain/20 bg-gain/5 p-3 text-sm text-gain">
+                    Every enabled feed has a verified boundary.
+                  </p>
+                ) : (
+                  <div className="mt-2 divide-y divide-border overflow-hidden rounded border border-border">
+                    {coverageReport.coverage.filter((row) => (
+                      row.enabled && ['failed', 'unsupported', 'unverified'].includes(row.status)
+                    )).map((row) => (
+                      <div key={`${row.wallet_id}:${row.chain_id}:${row.feed}`} className="bg-surface-2 p-3">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <p className="text-sm font-semibold text-primary">
+                            {row.wallet_label || shortEthAddress(row.wallet_address)} · {row.chain_name} · {row.feed}
+                          </p>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-loss">{row.status}</span>
+                        </div>
+                        <p className="mt-1 break-words text-xs text-secondary">
+                          {row.error_message || 'A pre-report cursor exists, but this feed has not completed a post-report sync yet.'}
+                        </p>
+                        <p className="mt-1 text-[10px] text-tertiary">
+                          Provider: {row.provider}
+                          {row.covered_through_block != null ? ` · last proven block ${row.covered_through_block}` : ''}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 flex justify-end">
+                <button type="button" onClick={() => setCoverageReport(null)} className="rounded border border-border px-4 py-2 text-sm font-semibold text-secondary hover:text-primary">
+                  Close
+                </button>
+              </div>
+            </Motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Connect Crypto Modal */}
       <AnimatePresence>

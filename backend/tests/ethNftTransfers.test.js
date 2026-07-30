@@ -270,6 +270,7 @@ test('the NFT feeds hit the documented Etherscan actions', async () => {
 test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged', async (t) => {
   const EthWallet = require('../src/models/EthWallet');
   const EthWalletChain = require('../src/models/EthWalletChain');
+  const EthFeedCoverage = require('../src/models/EthFeedCoverage');
   const SecretsService = require('../src/services/SecretsService');
   const MirrorService = require('../src/services/EthTransactionMirrorService');
   const TransactionClassificationService = require('../src/services/TransactionClassificationService');
@@ -294,15 +295,26 @@ test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged
     last_block_nft: 500, last_block_1155: 500,
   }));
   stub(SecretsService, 'getUserKey', async () => 'key');
+  stub(EtherscanService, 'coverageBoundary', async () => ({
+    fromBlock: 0,
+    throughBlock: 700,
+    fromAt: new Date('2015-07-30T00:00:00Z'),
+    throughAt: new Date('2026-07-30T00:00:00Z'),
+  }));
+  stub(EthFeedCoverage, 'recordAttempts', async () => []);
   stub(EtherscanService, 'fetchNormalTxs', async () => []);
   stub(EtherscanService, 'fetchInternalTxs', async () => []);
   stub(EtherscanService, 'fetchTokenTxs', async () => []);
   stub(EtherscanService, 'fetchNftTxs', async () => { throw new Error('rate limit reached'); });
-  stub(EtherscanService, 'fetch1155Txs', async () => [{
-    blockNumber: '600', timeStamp: '1700000000', hash: '0x1',
-    from: '0xabc', to: '0xdef', contractAddress: '0xc0',
-    tokenSymbol: 'X', tokenID: '5', tokenValue: '2',
-  }]);
+  stub(EtherscanService, 'fetch1155Txs', async () => {
+    const rows = [{
+      blockNumber: '600', timeStamp: '1700000000', hash: '0x1',
+      from: '0xabc', to: '0xdef', contractAddress: '0xc0',
+      tokenSymbol: 'X', tokenID: '5', tokenValue: '2',
+    }];
+    Object.defineProperty(rows, 'scannedThroughBlock', { value: 700 });
+    return rows;
+  });
   const deleted = [];
   stub(EthTransfer, 'deleteFromBlock', async (walletId, chainId, types) => { deleted.push(types.join(',')); });
   stub(EthTransfer, 'bulkInsert', async () => 1);
@@ -329,7 +341,7 @@ test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged
   assert.ok(!deleted.includes('nft'), 'failed feed must not delete its stored rows');
   assert.ok(deleted.includes('nft1155'), 'healthy feed still refreshes its window');
   assert.equal(cursors.nft, null, 'failed feed cursor must not advance');
-  assert.equal(cursors.nft1155, 600, 'healthy feed cursor advances normally');
+  assert.equal(cursors.nft1155, 700, 'healthy feed advances to the explicit indexed head');
   // A frozen cursor behind a green wallet row is silent data loss: the skip
   // must reach the job log and the wallet badge, not just a warn line. The
   // label carries its chain now, because the same feed can be healthy on one

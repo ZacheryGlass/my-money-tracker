@@ -793,6 +793,7 @@ test('a chain whose live balance never arrived is unavailable, not drifting', as
 // ---------------------------------------------------------------------------
 
 test('a failing audit leaves the sync itself successful', async (t) => {
+  const EthFeedCoverage = require('../src/models/EthFeedCoverage');
   const restore = [];
   const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
   const priorChains = process.env.ETH_CHAINS;
@@ -805,6 +806,13 @@ test('a failing audit leaves the sync itself successful', async (t) => {
 
   stub(EthWallet, 'findById', async () => WALLET);
   stub(SecretsService, 'getUserKey', async () => 'key');
+  stub(EtherscanService, 'coverageBoundary', async () => ({
+    fromBlock: 0,
+    throughBlock: 1000,
+    fromAt: new Date('2015-07-30T00:00:00Z'),
+    throughAt: new Date('2026-07-30T00:00:00Z'),
+  }));
+  stub(EthFeedCoverage, 'recordAttempts', async () => []);
   stub(EthWalletChain, 'ensure', async (walletId, chainId) => ({
     wallet_id: walletId, chain_id: chainId,
     last_block_normal: 0, last_block_internal: 0, last_block_token: 0,

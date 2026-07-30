@@ -41,6 +41,7 @@ const EthWalletService = require('../src/services/EthWalletService');
 const EtherscanService = require('../src/services/EtherscanService');
 const EthWallet = require('../src/models/EthWallet');
 const EthWalletChain = require('../src/models/EthWalletChain');
+const EthFeedCoverage = require('../src/models/EthFeedCoverage');
 const EthTransfer = require('../src/models/EthTransfer');
 const SecretsService = require('../src/services/SecretsService');
 const MirrorService = require('../src/services/EthTransactionMirrorService');
@@ -77,7 +78,7 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' 
 
   const calls = {
     fetches: [], heads: [], deletes: [], cursors: [], unsupported: [],
-    chainErrors: [], cleared: [], inserted: [],
+    chainErrors: [], cleared: [], inserted: [], coverage: [],
   };
   const chainStates = new Map();
   const stateFor = (walletId, chainId, ingestVersion) => {
@@ -125,9 +126,18 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' 
     chainStates.set(chainId, reset);
     return { ...reset };
   });
-  stub(EtherscanService, '_latestBlockNumber', async (requestApiKey, chainId) => {
+  stub(EtherscanService, 'coverageBoundary', async (requestApiKey, chainId) => {
     calls.heads.push({ chainId, apiKey: requestApiKey });
-    return 50000000;
+    return {
+      fromBlock: 0,
+      throughBlock: 50000000,
+      fromAt: new Date('2015-07-30T00:00:00Z'),
+      throughAt: new Date('2026-07-30T00:00:00Z'),
+    };
+  });
+  stub(EthFeedCoverage, 'recordAttempts', async (walletId, chainId, entries) => {
+    calls.coverage.push({ walletId, chainId, entries });
+    return entries;
   });
 
   const feeds = {
@@ -503,7 +513,7 @@ test('an unsupported feed freezes its cursor, keeps its rows, and records the ga
 
   const arb = calls.cursors.find((c) => c.chainId === 42161);
   assert.equal(arb.internal, null, 'an unfetched feed must not advance its cursor');
-  assert.equal(arb.normal, 6000, 'its neighbours on the same chain still advance');
+  assert.equal(arb.normal, 50000000, 'its neighbours advance to the explicit indexed head');
   assert.ok(
     !calls.deletes.some((d) => d.chainId === 42161 && d.types === 'internal'),
     'the unfetched feed keeps its stored rows: no delete without a refetch'
@@ -626,7 +636,7 @@ test('a chain that throws outright is isolated: the chains that landed still reb
   // Mainnet's cursor advances; Arbitrum's is never written at all, so it
   // resumes exactly where it left off. Advancing past rows that were never
   // stored would drop them silently and forever.
-  assert.equal(calls.cursors.find((c) => c.chainId === 1).normal, 2000);
+  assert.equal(calls.cursors.find((c) => c.chainId === 1).normal, 50000000);
   assert.equal(calls.cursors.find((c) => c.chainId === 42161), undefined);
 
   // Recorded in the same error slot, with the same convention, as every other

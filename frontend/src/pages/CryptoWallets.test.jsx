@@ -13,7 +13,7 @@ const apiMocks = vi.hoisted(() => ({
   history: { getAccounts: vi.fn() },
   crypto: { getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn() },
   eth: {
-    addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), syncWallet: vi.fn(), recaptureWallet: vi.fn(), removeWallet: vi.fn(),
+    addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), getCoverage: vi.fn(), syncWallet: vi.fn(), recaptureWallet: vi.fn(), removeWallet: vi.fn(),
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getReconciliation: vi.fn(),
@@ -393,6 +393,38 @@ describe('Crypto -> Wallets tab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /start recapture/i }));
     await waitFor(() => expect(apiMocks.eth.recaptureWallet).toHaveBeenCalledWith(1));
+  });
+
+  it('shows exact feed gaps in the downloadable source coverage report', async () => {
+    apiMocks.eth.getCoverage.mockResolvedValue({
+      generated_at: '2026-07-30T22:00:00.000Z',
+      summary: {
+        rows: 2, enabled_rows: 2, complete: 1, failed: 0,
+        unsupported: 1, not_applicable: 0, unverified: 0, gaps: 1,
+      },
+      coverage: [
+        {
+          wallet_id: 1, wallet_label: 'Main', wallet_address: wallet().address,
+          chain_id: 1, chain_name: 'Ethereum', feed: 'normal',
+          status: 'complete', enabled: true, provider: 'Etherscan V2',
+        },
+        {
+          wallet_id: 1, wallet_label: 'Main', wallet_address: wallet().address,
+          chain_id: 100, chain_name: 'Gnosis Chain', feed: 'internal',
+          status: 'unsupported', enabled: true, provider: 'Blockscout',
+          error_message: 'Internal traces unavailable for blocks 0-123',
+          covered_through_block: 99,
+        },
+      ],
+    });
+    await openEthereumTab([wallet(report())]);
+
+    fireEvent.click(screen.getByRole('button', { name: /coverage report/i }));
+
+    expect(await screen.findByRole('dialog', { name: /evm source coverage/i })).toBeInTheDocument();
+    expect(screen.getByText(/main · gnosis chain · internal/i)).toBeInTheDocument();
+    expect(screen.getByText(/internal traces unavailable for blocks 0-123/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /download json/i })).toBeInTheDocument();
   });
 
   // Adding wallets. One textbox takes a pasted list, one address per line.

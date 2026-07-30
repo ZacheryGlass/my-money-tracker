@@ -329,6 +329,10 @@ export const eth = {
     const response = await api.get('/api/eth/wallets');
     return response.data;
   },
+  getCoverage: async () => {
+    const response = await api.get('/api/eth/coverage');
+    return response.data;
+  },
   syncWallet: async (id) => {
     const response = await api.post(`/api/eth/wallets/${id}/sync`);
     return response.data;

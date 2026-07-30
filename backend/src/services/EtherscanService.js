@@ -31,6 +31,13 @@ const LOG_PAGE_SIZE = 1000;
 // feed is skipped, the cursor stays frozen, and the next sync retries.
 const MAX_LOG_PAGES = 200;
 
+// Coverage dates are block facts, not wallet facts. A nightly run walks many
+// wallets over the same small chain set, so cache the genesis/head timestamp
+// lookups rather than spending two provider requests per wallet. Bound the map
+// because a new indexed head arrives every night in a long-running process.
+const BLOCK_TIMESTAMP_CACHE_MAX = 500;
+const blockTimestampCache = new Map();
+
 // An EVM address as a 32-byte indexed log topic: 12 zero bytes then the 20
 // address bytes. This is how getLogs matches on an indexed `address` argument
 // (the Deposit event's `from`/user in topic2).
@@ -275,6 +282,61 @@ class EtherscanService {
       throw error;
     }
     return block;
+  }
+
+  static async _blockTimestamp(apiKey, chainId, blockNumber) {
+    if (!Number.isSafeInteger(blockNumber) || blockNumber < 0) {
+      const error = new Error(`Cannot read timestamp for invalid block ${blockNumber}`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    const cacheKey = `${chainId}:${blockNumber}`;
+    if (blockTimestampCache.has(cacheKey)) return blockTimestampCache.get(cacheKey);
+    const tag = `0x${blockNumber.toString(16)}`;
+    const rpcResult = await this._rpcRequest(chainId, 'eth_getBlockByNumber', [tag, false]);
+    const block = rpcResult === null
+      ? await this._request({
+        module: 'proxy',
+        action: 'eth_getBlockByNumber',
+        tag,
+        boolean: 'false',
+      }, { apiKey, chainId })
+      : rpcResult;
+    const timestamp = String(block?.timestamp || '');
+    if (!/^0x[0-9a-f]+$/i.test(timestamp)) {
+      const error = new Error(
+        `Chain provider returned no valid timestamp for block ${blockNumber}`
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    const milliseconds = Number(BigInt(timestamp)) * 1000;
+    const date = new Date(milliseconds);
+    if (!Number.isFinite(milliseconds) || Number.isNaN(date.getTime())) {
+      const error = new Error(
+        `Chain provider returned an unsafe timestamp for block ${blockNumber}`
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    if (blockTimestampCache.size >= BLOCK_TIMESTAMP_CACHE_MAX) {
+      blockTimestampCache.delete(blockTimestampCache.keys().next().value);
+    }
+    blockTimestampCache.set(cacheKey, date);
+    return date;
+  }
+
+  // One authoritative explorer head and its exact chain timestamps. The head
+  // is passed to every account/log feed, including Etherscan V2 feeds, so a
+  // successful empty result has a durable upper boundary instead of leaving a
+  // zero cursor that rescans genesis forever.
+  static async coverageBoundary(apiKey, chainId, indexedHead = null) {
+    const head = indexedHead ?? await this._latestBlockNumber(apiKey, chainId);
+    const [fromAt, throughAt] = await Promise.all([
+      this._blockTimestamp(apiKey, chainId, 0),
+      this._blockTimestamp(apiKey, chainId, head),
+    ]);
+    return { fromBlock: 0, throughBlock: head, fromAt, throughAt };
   }
 
   // Blockscout's legacy txlist drops OP Stack's deposit-only fields. A zero

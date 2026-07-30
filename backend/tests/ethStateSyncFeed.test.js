@@ -43,6 +43,7 @@ const EthWalletService = require('../src/services/EthWalletService');
 const EtherscanService = require('../src/services/EtherscanService');
 const EthWallet = require('../src/models/EthWallet');
 const EthWalletChain = require('../src/models/EthWalletChain');
+const EthFeedCoverage = require('../src/models/EthFeedCoverage');
 const EthTransfer = require('../src/models/EthTransfer');
 const SecretsService = require('../src/services/SecretsService');
 const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
@@ -280,6 +281,8 @@ test('the nightly prefetch shares one Base scan across every wallet', async (t) 
   assert.equal(seen[0].head, 50000);
   assert.equal(prefetched.get(1).get(8453).rows.scannedThroughBlock, 50000);
   assert.equal(prefetched.get(2).get(8453).rows.scannedThroughBlock, 50000);
+  assert.equal(prefetched.get(1).get(8453).indexedHead, 50000);
+  assert.equal(prefetched.get(2).get(8453).indexedHead, 50000);
 });
 
 test('Gnosis AddedReceiver filters topic1 and becomes a native inbound row', async (t) => {
@@ -453,14 +456,23 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
 
   const calls = {
     fetches: [], heads: [], deletes: [], cursors: [], unsupported: [],
-    chainErrors: [], cleared: [], inserted: [],
+    chainErrors: [], cleared: [], inserted: [], coverage: [],
   };
 
   stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
   stub(SecretsService, 'getUserKey', async () => 'key');
-  stub(EtherscanService, '_latestBlockNumber', async (apiKey, chainId) => {
+  stub(EtherscanService, 'coverageBoundary', async (apiKey, chainId) => {
     calls.heads.push({ chainId, apiKey });
-    return 50000000;
+    return {
+      fromBlock: 0,
+      throughBlock: 90000000,
+      fromAt: new Date('2015-07-30T00:00:00Z'),
+      throughAt: new Date('2026-07-30T00:00:00Z'),
+    };
+  });
+  stub(EthFeedCoverage, 'recordAttempts', async (walletId, chainId, entries) => {
+    calls.coverage.push({ walletId, chainId, entries });
+    return entries;
   });
   stub(EthWalletChain, 'ensure', async (walletId, chainId, ingestVersion = 0) => ({
     wallet_id: walletId,
@@ -698,7 +710,7 @@ test('the state-sync cursor resumes and advances independently of the internal o
   assert.equal(startOf('internal'), 90000000 - overlap);
 
   const cursorUpdate = calls.cursors.find((c) => c.chainId === 137);
-  assert.equal(cursorUpdate.statesync, 84000001, 'the cursor advances to the deposit block');
+  assert.equal(cursorUpdate.statesync, 90000000, 'the cursor advances to the explicit indexed head');
 });
 
 test('an empty successful native-credit scan advances to the scanned chain head', async (t) => {

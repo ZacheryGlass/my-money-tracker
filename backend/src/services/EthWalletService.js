@@ -10,6 +10,7 @@ const MethodSignatureService = require('./MethodSignatureService');
 const PriceService = require('./PriceService');
 const EthWallet = require('../models/EthWallet');
 const EthWalletChain = require('../models/EthWalletChain');
+const EthFeedCoverage = require('../models/EthFeedCoverage');
 const EthTransfer = require('../models/EthTransfer');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
@@ -102,6 +103,25 @@ function scannedThroughBlock(rows) {
   return rows.scannedThroughBlock ?? maxBlock(rows);
 }
 
+function providerName(chain, spec = null) {
+  if (chain.historyProvider === 'zksync-lite') {
+    return 'Matter Labs zkSync Lite archive';
+  }
+  if (spec?.chainFeed && chain[spec.chainFeed]?.rpcScan) {
+    return `JSON-RPC (${chain.rpcUrl})`;
+  }
+  if (chain.accountApi) {
+    return `${chain.accountApi.provider || 'chain explorer'} (${chain.accountApi.baseUrl})`;
+  }
+  return 'Etherscan V2';
+}
+
+function coverageFailureStatus(error) {
+  return ['ETHERSCAN_CHAIN_UNAVAILABLE', 'ETHERSCAN_FEED_UNSUPPORTED'].includes(error?.code)
+    ? 'unsupported'
+    : 'failed';
+}
+
 class EthWalletService {
   static async _syncZkSyncLiteWalletChain(wallet, chain) {
     const ingestVersion = Number(chain.ingestVersion || 0);
@@ -113,17 +133,42 @@ class EthWalletService {
       0,
       Number(state?.last_block_normal ?? 0) - REORG_OVERLAP_BLOCKS
     );
-    const [history, account, tokens] = await Promise.all([
-      ZkSyncLiteService.fetchHistory(wallet.address, resume),
-      ZkSyncLiteService.getAccount(wallet.address),
-      ZkSyncLiteService.getTokens(),
-    ]);
-    const normalized = ZkSyncLiteService.normalizeTransactions(
-      wallet.address,
-      history.transactions,
-      tokens,
-      { accountId: account.committed.accountId }
-    );
+    let history;
+    let normalized;
+    try {
+      const [account, tokens] = await Promise.all([
+        ZkSyncLiteService.getAccount(wallet.address),
+        ZkSyncLiteService.getTokens(),
+      ]);
+      history = await ZkSyncLiteService.fetchHistory(wallet.address, resume);
+      normalized = ZkSyncLiteService.normalizeTransactions(
+        wallet.address,
+        history.transactions,
+        tokens,
+        { accountId: account.committed.accountId }
+      );
+    } catch (error) {
+      await EthFeedCoverage.recordAttempts(wallet.id, chain.id, FEED_SPECS.map((spec) => (
+        spec.key === 'normal'
+          ? {
+            feed: spec.key,
+            cursorKind: 'archive_serial',
+            provider: providerName(chain),
+            status: coverageFailureStatus(error),
+            attemptedFromBlock: resume,
+            errorCode: error.code || 'ZKSYNC_LITE_ARCHIVE_ERROR',
+            errorMessage: error.message,
+          }
+          : {
+            feed: spec.key,
+            cursorKind: 'archive_serial',
+            provider: providerName(chain),
+            status: 'not_applicable',
+          }
+      )));
+      throw error;
+    }
+
     const rows = normalized.rows.map((row) => ({
       ...row,
       wallet_id: wallet.id,
@@ -140,6 +185,34 @@ class EthWalletService {
       resume
     );
     const inserted = await EthTransfer.bulkInsert(rows);
+    const historyDates = history.transactions
+      .map((row) => new Date(row.createdAt || Number(row.timeStamp) * 1000))
+      .filter((date) => !Number.isNaN(date.getTime()));
+    await EthFeedCoverage.recordAttempts(wallet.id, chain.id, FEED_SPECS.map((spec) => (
+      spec.key === 'normal'
+        ? {
+          feed: spec.key,
+          cursorKind: 'archive_serial',
+          provider: providerName(chain),
+          status: 'complete',
+          coveredFromBlock: 0,
+          coveredThroughBlock: history.scannedThroughBlock,
+          coveredFromAt: historyDates.length
+            ? new Date(Math.min(...historyDates.map((date) => date.getTime())))
+            : null,
+          coveredThroughAt: historyDates.length
+            ? new Date(Math.max(...historyDates.map((date) => date.getTime())))
+            : null,
+          indexedHead: history.scannedThroughBlock,
+          attemptedFromBlock: resume,
+        }
+        : {
+          feed: spec.key,
+          cursorKind: 'archive_serial',
+          provider: providerName(chain),
+          status: 'not_applicable',
+        }
+    )));
     await EthWalletChain.updateCursors(wallet.id, chain.id, {
       normal: history.scannedThroughBlock,
       internal: null,
@@ -598,16 +671,45 @@ class EthWalletService {
     // place, so it needs no cursor, no delete scoping, and no gap accounting.
     const classicDeposits = chain.classicRetryableDeposits || null;
     const opStackDeposits = chain.opStackDeposits || null;
-    // Snapshot a custom Blockscout provider's indexed head once and use it as
-    // the common end block for all active feeds:
+    // Snapshot the explorer's indexed head once and use it as the common end
+    // block for all active feeds:
     // successful empty feeds then have durable coverage, while a failed head
     // lookup aborts this chain before any destructive overlap delete.
-    const indexedHead = chain.accountApi?.provider === 'Blockscout'
-      ? await EtherscanService._latestBlockNumber(apiKey, chain.id)
-      : null;
+    let boundary;
+    try {
+      // A shared Base native-credit scan already snapped its own explorer head.
+      // Bound the other five feeds at that SAME head: taking a newer one here
+      // would make the prefetched feed stop short while the report claimed one
+      // common boundary.
+      boundary = await EtherscanService.coverageBoundary(
+        apiKey,
+        chain.id,
+        prefetchedStateSync?.indexedHead ?? null
+      );
+    } catch (error) {
+      await EthFeedCoverage.recordAttempts(wallet.id, chain.id, FEED_SPECS.map((spec) => (
+        feedActive(spec)
+          ? {
+            feed: spec.key,
+            provider: providerName(chain, spec),
+            status: coverageFailureStatus(error),
+            attemptedFromBlock: resume[spec.key],
+            errorCode: error.code || 'ETHERSCAN_API_ERROR',
+            errorMessage: error.message,
+          }
+          : {
+            feed: spec.key,
+            provider: providerName(chain, spec),
+            status: 'not_applicable',
+          }
+      )));
+      throw error;
+    }
+    const indexedHead = boundary.throughBlock;
 
     const feeds = {};
     const fetchedOk = {};
+    const feedErrors = {};
     const skipped = [];
     const unsupported = [];
 
@@ -632,6 +734,7 @@ class EthWalletService {
       if (chainUnreadable) {
         fetchedOk[spec.key] = false;
         unsupported.push(spec.key);
+        feedErrors[spec.key] = chainUnreadable;
         continue;
       }
       try {
@@ -661,11 +764,12 @@ class EthWalletService {
         fetchedOk[spec.key] = true;
       } catch (err) {
         fetchedOk[spec.key] = false;
+        feedErrors[spec.key] = err;
         if (err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE' || err.code === 'ETHERSCAN_FEED_UNSUPPORTED') {
           // Only the whole-chain verdict cascades. A single missing feed says
           // nothing about its neighbours, and assuming otherwise would freeze
           // four healthy cursors and report four gaps that do not exist.
-          chainUnreadable = err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE';
+          chainUnreadable = err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE' ? err : false;
           unsupported.push(spec.key);
           logger.warn({ walletId: wallet.id, chainId: chain.id, feed: spec.key, code: err.code, err: err.message },
             'Etherscan cannot serve this feed; cursor frozen and gap recorded');
@@ -702,6 +806,41 @@ class EthWalletService {
     }
     const inserted = await EthTransfer.bulkInsert(rows);
 
+    await EthFeedCoverage.recordAttempts(wallet.id, chain.id, FEED_SPECS.map((spec) => {
+      if (!feedActive(spec)) {
+        return {
+          feed: spec.key,
+          provider: providerName(chain, spec),
+          status: 'not_applicable',
+        };
+      }
+      if (fetchedOk[spec.key]) {
+        return {
+          feed: spec.key,
+          provider: providerName(chain, spec),
+          status: 'complete',
+          coveredFromBlock: boundary.fromBlock,
+          coveredThroughBlock: scannedThroughBlock(feeds[spec.key]),
+          coveredFromAt: boundary.fromAt,
+          coveredThroughAt: boundary.throughAt,
+          indexedHead,
+          attemptedFromBlock: resume[spec.key],
+        };
+      }
+      const error = feedErrors[spec.key];
+      return {
+        feed: spec.key,
+        provider: providerName(chain, spec),
+        status: coverageFailureStatus(error),
+        indexedHead,
+        attemptedFromBlock: resume[spec.key],
+        errorCode: error?.code || 'ETHERSCAN_API_ERROR',
+        errorMessage: error?.message || 'Feed was not attempted after the chain provider became unavailable',
+      };
+    }));
+    // Coverage lands before the resume cursor. If that audit write fails, the
+    // cursor remains at its old boundary and the next sync safely refetches the
+    // source window instead of advancing past an unrecorded proof.
     await EthWalletChain.updateCursors(wallet.id, chain.id, {
       normal: fetchedOk.normal ? scannedThroughBlock(feeds.normal) : null,
       internal: fetchedOk.internal ? scannedThroughBlock(feeds.internal) : null,
@@ -1005,6 +1144,7 @@ class EthWalletService {
           const entry = byWallet.get(wallet.id) || new Map();
           entry.set(chain.id, {
             rows: rowsByAddress.get(wallet.address.toLowerCase()),
+            indexedHead: head,
           });
           byWallet.set(wallet.id, entry);
         }

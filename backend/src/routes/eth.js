@@ -4,6 +4,7 @@ const express = require('express');
 const requireUser = require('../middleware/auth');
 const EthWallet = require('../models/EthWallet');
 const EthWalletChain = require('../models/EthWalletChain');
+const EthFeedCoverage = require('../models/EthFeedCoverage');
 const EthTransfer = require('../models/EthTransfer');
 const chains = require('../config/chains');
 const EthIgnoredToken = require('../models/EthIgnoredToken');
@@ -325,6 +326,44 @@ router.get('/wallets', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get ETH wallets error');
     res.status(500).json({ error: 'Failed to retrieve wallets' });
+  }
+});
+
+// Auditable source boundaries, separate from the compact cursor/error state on
+// the wallet card. A provider error stays attached to the exact feed and its
+// last successful boundary, so an empty result and a failed request can never
+// look alike in the final history manifest.
+router.get('/coverage', async (req, res) => {
+  try {
+    const rows = (await EthFeedCoverage.findForUser(req.user.id)).map((row) => ({
+      ...row,
+      chain_name: chains.chainLabel(row.chain_id),
+      enabled: chains.isEnabled(row.chain_id),
+    }));
+    const summary = {
+      rows: rows.length,
+      enabled_rows: rows.filter((row) => row.enabled).length,
+      complete: 0,
+      failed: 0,
+      unsupported: 0,
+      not_applicable: 0,
+      unverified: 0,
+      gaps: 0,
+    };
+    for (const row of rows) {
+      if (Object.hasOwn(summary, row.status)) summary[row.status] += 1;
+      if (row.enabled && ['failed', 'unsupported', 'unverified'].includes(row.status)) {
+        summary.gaps += 1;
+      }
+    }
+    res.status(200).json({
+      generated_at: new Date().toISOString(),
+      summary,
+      coverage: rows,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Get ETH feed coverage error');
+    res.status(500).json({ error: 'Failed to retrieve feed coverage' });
   }
 });
 
