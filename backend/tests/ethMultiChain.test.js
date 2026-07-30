@@ -745,6 +745,62 @@ test('an account feed freezes when the indexed head falls behind its resume bloc
   );
 });
 
+test('an account feed freezes when the explorer repeats a page outside the advanced range', async (t) => {
+  const original = EtherscanService._request;
+  let calls = 0;
+  const firstPage = Array.from({ length: 1000 }, (_, i) => ({
+    blockNumber: String(100 + i),
+    hash: `0x${i}`,
+  }));
+  EtherscanService._request = async () => {
+    calls += 1;
+    return firstPage.map((row) => ({ ...row }));
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    () => EtherscanService.fetchTokenTxs(WALLET, 100, null, 8453, 5000),
+    (err) => err.code === 'ETHERSCAN_API_ERROR'
+      && /outside requested range 1099-5000/.test(err.message)
+      && /cursor frozen/.test(err.message)
+  );
+  assert.equal(calls, 2, 'a provider that ignores startblock is rejected immediately');
+});
+
+test('an account feed freezes on malformed or out-of-range block numbers', async (t) => {
+  const original = EtherscanService._request;
+  EtherscanService._request = async () => [{ blockNumber: 'not-a-block', hash: '0xbad' }];
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    () => EtherscanService.fetchNormalTxs(WALLET, 100, null, 8453, 5000),
+    (err) => err.code === 'ETHERSCAN_API_ERROR'
+      && /block "not-a-block" outside requested range/.test(err.message)
+  );
+});
+
+test('a block at the provider 10000-row ceiling freezes instead of dropping an unknown tail', async (t) => {
+  const original = EtherscanService._request;
+  let calls = 0;
+  EtherscanService._request = async () => {
+    calls += 1;
+    const size = calls === 1 ? 1000 : 10000;
+    return Array.from({ length: size }, (_, i) => ({
+      blockNumber: '42',
+      hash: `0x${i}`,
+    }));
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    () => EtherscanService.fetchNormalTxs(WALLET, 42, null, 8453, 5000),
+    (err) => err.code === 'ETHERSCAN_API_ERROR'
+      && /block 42 reached the 10000-row provider limit/.test(err.message)
+      && /cursor frozen/.test(err.message)
+  );
+  assert.equal(calls, 2);
+});
+
 test('a keyless-only chain set syncs without an Etherscan credential', async (t) => {
   const { calls } = harness(t, {
     chainSet: '100',

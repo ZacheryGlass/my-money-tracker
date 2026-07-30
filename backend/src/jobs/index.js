@@ -21,8 +21,18 @@ let snapshotTask = null;
 let benchmarkUpdateTask = null;
 let historicalPriceTask = null;
 let expenseSyncTask = null;
+const PROCESS_STARTED_AT = new Date();
 
-function initializeJobs() {
+async function initializeJobs() {
+  const interrupted = await JobLog.failInterruptedRuns(PROCESS_STARTED_AT);
+  if (interrupted.length > 0) {
+    logger.warn({
+      jobs: interrupted.map(({ id, job_name: jobName, started_at: startedAt }) => ({
+        id, jobName, startedAt,
+      })),
+    }, 'Marked jobs interrupted by the previous application process as failed');
+  }
+
   // Schedule Plaid sync at 7:30 AM UTC daily (before price update)
   plaidSyncTask = cron.schedule('30 7 * * *', async () => {
     logger.info('[scheduler] Running scheduled Plaid sync...');

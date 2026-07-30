@@ -137,10 +137,15 @@ app.use(errorHandler);
 
 // Start server only when run directly (not when imported by tests)
 if (require.main === module) {
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, async () => {
     logger.info({ port: PORT }, 'Server running');
     if (process.env.RUN_SCHEDULED_JOBS !== 'false') {
-      initializeJobs();
+      try {
+        await initializeJobs();
+      } catch (error) {
+        logger.fatal({ err: error }, 'Scheduled job initialization failed');
+        server.close(() => process.exit(1));
+      }
     } else {
       logger.info('Scheduled jobs disabled by RUN_SCHEDULED_JOBS=false');
     }

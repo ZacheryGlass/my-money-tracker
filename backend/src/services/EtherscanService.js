@@ -10,6 +10,14 @@ const ZkSyncLiteService = require('./ZkSyncLiteService');
 // walk a block cursor instead of page numbers (see _fetchPaged).
 const PAGE_SIZE = 1000;
 
+// Bounds the account-feed walk for the same reason MAX_LOG_PAGES bounds
+// getLogs below. A provider that ignores startblock can otherwise keep one
+// wallet inside the global throttle forever. Two hundred full pages is
+// 200,000 rows for ONE wallet/feed/chain; exceeding that is unusual enough to
+// require a deliberate provider/export path rather than silently tying up the
+// nightly job.
+const MAX_ACCOUNT_PAGES = 200;
+
 // The logs (getLogs) endpoint caps a single response at 1000 rows, so the
 // state-sync fetch walks a block cursor the same way _fetchPaged does. A wallet
 // has a handful of bridge deposits over its whole life, so this almost never
@@ -362,8 +370,17 @@ class EtherscanService {
       throw error;
     }
 
+    let page = 0;
     for (;;) {
       if (cursor > endBlock) break;
+      page += 1;
+      if (page > MAX_ACCOUNT_PAGES) {
+        const error = new Error(
+          `${action} account walk exceeded ${MAX_ACCOUNT_PAGES} pages without completing; cursor frozen`
+        );
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
       const rows = await this._request({
         module: 'account',
         action,
@@ -379,6 +396,22 @@ class EtherscanService {
         sort: 'asc',
       }, { apiKey, chainId });
       if (!Array.isArray(rows) || rows.length === 0) break;
+
+      // Pagination is safe only when the explorer honours the requested
+      // range. A repeated first page used to move the cursor one block at a
+      // time (or loop forever), while accepting an out-of-range short page
+      // could authorize destructive overlap deletion despite incomplete
+      // coverage. Validate before mutating the accumulated result.
+      for (const row of rows) {
+        const block = Number(row?.blockNumber);
+        if (!Number.isSafeInteger(block) || block < cursor || block > endBlock) {
+          const error = new Error(
+            `${action} returned block ${JSON.stringify(row?.blockNumber)} outside requested range ${cursor}-${endBlock}; cursor frozen`
+          );
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+      }
       // The dedupe logic depends on ascending order; do not trust the API.
       rows.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber));
 
@@ -401,10 +434,28 @@ class EtherscanService {
           offset: 10000,
           sort: 'asc',
         }, { apiKey, chainId });
-        all.push(...(Array.isArray(blockRows) ? blockRows : []));
-        if (Array.isArray(blockRows) && blockRows.length >= 10000) {
-          logger.warn({ action, address, chainId, block: cursor }, 'Etherscan block exceeds 10k rows; excess rows dropped');
+        const normalizedBlockRows = Array.isArray(blockRows) ? blockRows : [];
+        for (const row of normalizedBlockRows) {
+          const block = Number(row?.blockNumber);
+          if (!Number.isSafeInteger(block) || block !== cursor) {
+            const error = new Error(
+              `${action} single-block fallback returned block ${JSON.stringify(row?.blockNumber)} for requested block ${cursor}; cursor frozen`
+            );
+            error.code = 'ETHERSCAN_API_ERROR';
+            throw error;
+          }
         }
+        // At the provider's hard maximum there is no proof that the block is
+        // complete. Dropping the unknown tail would make reconciliation
+        // impossible, so retain the old rows/cursor and expose the feed gap.
+        if (normalizedBlockRows.length >= 10000) {
+          const error = new Error(
+            `${action} block ${cursor} reached the 10000-row provider limit; cursor frozen`
+          );
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        all.push(...normalizedBlockRows);
         cursor += 1;
         continue;
       }
