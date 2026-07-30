@@ -26,6 +26,7 @@ const ZkSyncLiteService = require('../src/services/ZkSyncLiteService');
 const EthWalletService = require('../src/services/EthWalletService');
 const EthWalletChain = require('../src/models/EthWalletChain');
 const EthTransfer = require('../src/models/EthTransfer');
+const { buildActivityRows } = require('../src/services/ethActivity/rows');
 
 // Fixtures must remain synthetic: never commit a tracked user's address.
 const WALLET = '0x2222222222222222222222222222222222222222';
@@ -193,6 +194,101 @@ test('Lite swaps emit both wallet asset effects plus the submitter fee', () => {
       ['token', ZkSyncLiteService.BRIDGE_ADDRESS, WALLET, '2500000000'],
       ['gas', WALLET, ZkSyncLiteService.BRIDGE_ADDRESS, '10'],
     ]
+  );
+});
+
+test('rejected Lite operations stay visible but never create fee debits', () => {
+  const rejected = { status: 'rejected', failReason: 'invalid nonce' };
+  const result = ZkSyncLiteService.normalizeTransactions(WALLET, [
+    tx(`0x${'1'.repeat(64)}`, 450, {
+      type: 'Transfer',
+      from: WALLET,
+      to: OTHER,
+      token: 2,
+      amount: '12500000',
+      fee: '2500',
+    }, rejected),
+    tx(`0x${'2'.repeat(64)}`, 451, {
+      type: 'Withdraw',
+      from: WALLET,
+      to: WALLET,
+      tokenId: 0,
+      amount: '100000000000000000',
+      fee: '10',
+    }, rejected),
+    tx(`0x${'3'.repeat(64)}`, 452, {
+      type: 'Swap',
+      submitterAddress: WALLET,
+      feeToken: 0,
+      fee: '12',
+      orders: [
+        { accountId: 22, recipient: WALLET, tokenSell: 0, tokenBuy: 2 },
+        { accountId: 33, recipient: OTHER, tokenSell: 2, tokenBuy: 0 },
+      ],
+      amounts: ['1000000000000000000', '2500000000'],
+    }, rejected),
+    tx(`0x${'4'.repeat(64)}`, 453, {
+      type: 'ChangePubKey',
+      account: WALLET,
+      feeTokenId: 2,
+      fee: '13',
+    }, rejected),
+  ], TOKENS, { accountId: 22 });
+
+  assert.deepEqual(
+    [...new Set(result.rows.map((row) => row.tx_hash))],
+    ['1', '2', '3', '4'].map((digit) => `0x${digit.repeat(64)}`)
+  );
+  assert.ok(result.rows.every((row) => row.is_error === true));
+  assert.ok(result.rows.every(
+    (row) => row.transfer_type !== 'gas' || row.value_wei === '0'
+  ));
+  assert.equal(
+    result.rows.filter((row) => row.transfer_type === 'token' && row.value_wei === '2500').length,
+    0
+  );
+  const marker = result.rows.find((row) => row.method_name === 'zkSync Lite ChangePubKey');
+  assert.equal(marker.value_wei, '0');
+  assert.equal(marker.tx_is_error, true);
+  assert.equal(
+    buildActivityRows(WALLET, [marker])[0].category,
+    'failed'
+  );
+});
+
+test('zero-fee Lite operations remain contract interactions, not bridge transfers', () => {
+  const result = ZkSyncLiteService.normalizeTransactions(WALLET, [
+    tx(HASH_A, 454, {
+      type: 'ChangePubKey',
+      account: WALLET,
+      feeTokenId: 0,
+      fee: '0',
+    }),
+  ], TOKENS, { accountId: 22 });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].transfer_type, 'gas');
+  const [activity] = buildActivityRows(WALLET, result.rows, {
+    bridgeAddresses: new Set([ZkSyncLiteService.BRIDGE_ADDRESS]),
+  });
+  assert.equal(activity.category, 'contract_interaction');
+  assert.equal(activity.fee_wei, '0');
+  assert.deepEqual(activity.legs, []);
+});
+
+test('Lite rejects a missing archive timestamp instead of inventing the Unix epoch', () => {
+  assert.throws(
+    () => ZkSyncLiteService.normalizeTransactions(WALLET, [
+      tx(HASH_A, 499, {
+        type: 'Transfer',
+        from: OTHER,
+        to: WALLET,
+        token: 0,
+        amount: '1',
+        fee: '0',
+      }, { createdAt: null }),
+    ], TOKENS),
+    /invalid transaction timestamp/
   );
 });
 

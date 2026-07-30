@@ -43,6 +43,9 @@ function tokenIdFrom(op, ...keys) {
 }
 
 function blockTime(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`zkSync Lite returned an invalid transaction timestamp: ${JSON.stringify(value)}`);
+  }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     throw new Error(`zkSync Lite returned an invalid transaction timestamp: ${JSON.stringify(value)}`);
@@ -271,6 +274,10 @@ class ZkSyncLiteService {
     };
 
     const addFee = (tx, id, payerValue) => {
+      // A rejected Lite operation was never executed. The archive retains the
+      // proposed fee in the submitted payload, but no balance update consumed
+      // it; treating that proposal as paid creates a phantom debit.
+      if (tx.status === 'rejected' || tx.failReason) return;
       const payer = address(payerValue);
       const fee = uint(tx.op.fee ?? 0, `${tx.op.type} fee`);
       if (!payer || payer !== wallet || fee === '0') return;
@@ -285,10 +292,8 @@ class ZkSyncLiteService {
         token_symbol: type === 'token' ? info.symbol : null,
         token_decimals: type === 'token' ? info.decimals : null,
         token_standard: type === 'token' ? 'erc20' : null,
-        // A failed Lite transaction does not execute its asset movement, but
-        // its explicit fee is still the economic leg represented here.
         is_error: false,
-        tx_is_error: tx.status === 'rejected' || Boolean(tx.failReason),
+        tx_is_error: false,
         method_name: `zkSync Lite ${tx.op.type}`,
       });
     };
@@ -307,6 +312,7 @@ class ZkSyncLiteService {
     for (const tx of transactions) {
       const op = tx.op;
       const method = `zkSync Lite ${op.type}`;
+      const firstRow = rows.length;
       switch (op.type) {
         case 'Deposit': {
           const id = tokenIdFrom(op, 'tokenId', 'token');
@@ -396,6 +402,18 @@ class ZkSyncLiteService {
           break;
         default:
           addLimitation(tx, 'unsupported operation shape');
+      }
+      // Fee-only operations with a zero fee, or rejected fee-only operations,
+      // still belong in complete transaction history. Preserve a zero-value
+      // marker without claiming an economic balance effect.
+      if (rows.length === firstRow) {
+        rows.push({
+          // Use the non-value leg shape so a bridge-labeled synthetic endpoint
+          // cannot turn this marker into a bridge_out classification.
+          ...base(tx, 'gas'),
+          tx_is_error: tx.status === 'rejected' || Boolean(tx.failReason),
+          method_name: method,
+        });
       }
     }
 
