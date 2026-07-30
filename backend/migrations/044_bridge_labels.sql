@@ -128,18 +128,21 @@ CREATE TABLE IF NOT EXISTS eth_activity_links (
 );
 
 -- BEGIN GENERATED SEED (backend/scripts/generate-bridge-seed.js)
--- 35 addresses, researched 2026-07-27. Sources, one per protocol:
+-- 37 addresses, researched 2026-07-27. Sources, one per protocol:
 --   arbitrum  https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses
 --   linea     https://docs.linea.build/network/build/contracts
 --   optimism  https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json
 --   base      https://docs.base.org/base-chain/network-information/base-contracts
 --   across    https://docs.across.to/chains-and-contracts
 --   polygon   https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json
+--   gnosis    https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge
 --
 -- ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING -- never DO UPDATE.
 -- Migrations re-run on every boot; DO UPDATE would re-stamp a name, a kind or
 -- a note the user had already corrected, every boot, forever.
 INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence, note) VALUES
+  (NULL, '0x4aa42145aa6ebf72e164c9bbc74fbd3788045016', 'Gnosis: xDAI Bridge (Ethereum)', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge'),
+  (NULL, '0x7301cfa0e1756b71869e93d4e4dca5c7d0eb0aa6', 'Gnosis: xDAI Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 100. Source: https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge'),
   (NULL, '0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f', 'Arbitrum: Delayed Inbox', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses'),
   (NULL, '0x8315177ab297ba92a06054ce80a67ed4dbd7ed3a', 'Arbitrum: Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses'),
   (NULL, '0x0b9857ae2d4a3dbe74ffe1d7df045bb7f96e4840', 'Arbitrum: Outbox', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses'),

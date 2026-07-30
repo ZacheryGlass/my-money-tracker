@@ -1,7 +1,7 @@
 'use strict';
 
 const STABLECOIN_SET = new Set([
-  'USD', 'USDC', 'USDT', 'DAI', 'TUSD', 'FDUSD', 'BUSD'
+  'USD', 'USDC', 'USDT', 'DAI', 'XDAI', 'TUSD', 'FDUSD', 'BUSD'
 ]);
 
 // Wallet holdings are inserted with no category, so a native asset that is

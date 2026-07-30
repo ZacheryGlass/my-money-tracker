@@ -551,6 +551,8 @@ test('different assets never pair, but the two spellings of one asset do', () =>
   assert.equal(bridgeAsset('WETH'), 'ETH');
   assert.equal(bridgeAsset('USDC.e'), 'USDC');
   assert.equal(bridgeAsset('usdc'), 'USDC');
+  assert.equal(bridgeAsset('DAI'), 'XDAI');
+  assert.equal(bridgeAsset('xdai'), 'XDAI');
   assert.equal(bridgeAsset(''), null);
   // Not over-normalized: these are different money.
   assert.notEqual(bridgeAsset('USDT'), bridgeAsset('USDC'));
@@ -575,6 +577,13 @@ test('the two normalizations COMPOSE, in the order suffix-then-wrapper', () => {
 
   // A symbol that is nothing BUT the suffix normalizes to nothing, not to '.E'.
   assert.equal(bridgeAsset('.e'), null);
+});
+
+test('Ethereum DAI pairs with native xDAI across the canonical Gnosis bridge', () => {
+  assert.equal(pairBridgeLegs(
+    [candidate(1, 1, bridgeAsset('DAI'), '25', T0)],
+    [candidate(2, 100, bridgeAsset('XDAI'), '25', T0 + HOUR)]
+  ).length, 1);
 });
 
 // --- the stateful matching pass --------------------------------------------
@@ -884,6 +893,7 @@ test('every source is a first-party domain, never an aggregator', () => {
     /^https:\/\/docs\.linea\.build\//,
     /^https:\/\/docs\.base\.org\//,
     /^https:\/\/docs\.across\.to\//,
+    /^https:\/\/docs\.gnosischain\.com\//,
     // Optimism's docs page renders its L1 table client-side from this exact
     // first-party registry file; no static docs.optimism.io page prints them.
     /^https:\/\/raw\.githubusercontent\.com\/ethereum-optimism\/superchain-registry\//,

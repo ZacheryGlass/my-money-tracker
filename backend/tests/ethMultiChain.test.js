@@ -128,7 +128,7 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
 // The registry, as probed live
 // ---------------------------------------------------------------------------
 
-test('zkSync Era is absent, not disabled: Etherscan V2 does not serve chain 324', () => {
+test('Gnosis uses a keyless Blockscout account API while zkSync Era remains absent', () => {
   // /v2/chainlist returned 64 chains and none of them was 324 (or any zkSync
   // entry); every request against it answers "Missing or unsupported chainid
   // parameter". A disabled entry would advertise "you may turn this on", so it
@@ -136,7 +136,12 @@ test('zkSync Era is absent, not disabled: Etherscan V2 does not serve chain 324'
   const ids = chains.allChains().map((chain) => chain.id);
   assert.ok(!ids.includes(324), 'chain 324 is not served and must not be in the registry');
   assert.ok(ids.includes(59144), 'Linea replaces zkSync Era as the fifth chain');
-  assert.deepEqual(ids.sort((a, b) => a - b), [1, 10, 137, 8453, 42161, 59144]);
+  assert.deepEqual(ids.sort((a, b) => a - b), [1, 10, 100, 137, 8453, 42161, 59144]);
+  const gnosis = chains.getChain(100);
+  assert.equal(gnosis.nativeAsset, 'XDAI');
+  assert.equal(gnosis.accountApi.provider, 'Blockscout');
+  assert.equal(gnosis.accountApi.requiresApiKey, false);
+  assert.equal(gnosis.enabledByDefault, true);
 });
 
 test('paid-plan-only chains ship present but disabled', () => {
@@ -149,9 +154,10 @@ test('paid-plan-only chains ship present but disabled', () => {
     assert.equal(byId.get(id).enabled, false, `chain ${id} must default to off`);
     assert.match(byId.get(id).disabledReason, /paid/i);
   }
-  // Full feed parity on the probed key, txlistinternal included. Polygon (137)
-  // was probed the same way and answered on balance, txlist and txlistinternal.
-  for (const id of [1, 137, 42161, 59144]) {
+  // Etherscan full-feed chains default on after live probes. Gnosis also
+  // defaults on through its keyless provider; any explicitly partial
+  // Blockscout internal range becomes a visible per-feed gap.
+  for (const id of [1, 100, 137, 42161, 59144]) {
     assert.equal(byId.get(id).enabled, true, `chain ${id} passed every feed probe and defaults on`);
   }
 });
@@ -166,7 +172,7 @@ test('every chain names a native asset that the price layer knows how to fetch',
     const info = chains.nativeAssetInfo(chain.nativeAsset);
     assert.ok(info, `native asset ${chain.nativeAsset} needs a NATIVE_ASSETS entry`);
     assert.ok(info.coingeckoId, `${chain.nativeAsset} needs a CoinGecko id`);
-    assert.ok(info.coinbaseProduct, `${chain.nativeAsset} needs a Coinbase product`);
+    assert.ok(info.coinbaseProduct, `${chain.nativeAsset} needs a declared fallback product`);
     assert.match(info.historyStart, /^\d{4}-\d{2}-\d{2}$/);
     // Verified against CoinGecko /asset_platforms by chain_identifier: a token
     // priced on the wrong platform comes back unknown, not wrong, so an
@@ -177,6 +183,7 @@ test('every chain names a native asset that the price layer knows how to fetch',
   for (const id of [1, 42161, 59144]) {
     assert.equal(chains.nativeSymbol(id), 'ETH');
   }
+  assert.equal(chains.nativeSymbol(100), 'XDAI');
   assert.equal(chains.nativeSymbol(137), 'POL');
   // An id the registry has never heard of is mainnet's, and mainnet is ether.
   assert.equal(chains.nativeSymbol(999999), 'ETH');
@@ -188,8 +195,8 @@ test('a native asset that is not ether must be classified as crypto, or it price
   // a bare equity symbol and skips every crypto fallback.
   const { classifyTicker } = require('../src/utils/assetClassifier');
   for (const chain of chains.allChains()) {
-    assert.equal(classifyTicker(chain.nativeAsset, null), 'Crypto',
-      `${chain.nativeAsset} must be in CRYPTO_SET`);
+    assert.ok(['Crypto', 'Cash'].includes(classifyTicker(chain.nativeAsset, null)),
+      `${chain.nativeAsset} must be crypto or cash, never a stock`);
   }
 });
 
@@ -559,6 +566,22 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
     (err) => err.code === 'ETHERSCAN_FEED_UNSUPPORTED'
   );
 
+  // Blockscout returns status=2 with partial internal rows while a requested
+  // range is not completely indexed. Treating those rows as complete would
+  // advance the cursor beyond transfers that have not appeared yet. Reporting
+  // the feed gap preserves stored history and makes the limitation visible.
+  axios.get = async () => ({
+    data: {
+      status: '2',
+      message: 'Some internal transactions within this block range have not yet been processed',
+      result: [{ transactionHash: '0xpartial', blockNumber: '1' }],
+    },
+  });
+  await assert.rejects(
+    () => EtherscanService.fetchInternalTxs(WALLET, 0, null, 100),
+    (err) => err.code === 'ETHERSCAN_FEED_UNSUPPORTED' && err.chainId === 100
+  );
+
   // A genuine transient error keeps its own code.
   axios.get = async () => ({ data: { status: '0', message: 'NOTOK', result: 'Something went wrong' } });
   await assert.rejects(
@@ -583,6 +606,48 @@ test('the chain id reaches Etherscan as the chainid param', async (t) => {
   assert.equal(seen[0].chainid, 42161);
   // Default is mainnet, so every pre-#58 call site behaves exactly as it did.
   assert.equal(seen[1].chainid, 1);
+});
+
+test('a chain-declared account API omits Etherscan key and chainid parameters', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  const seen = [];
+  axios.get = async (url, config) => {
+    seen.push({ url, params: config.params });
+    return { data: { status: '1', result: '42' } };
+  };
+  t.after(() => { axios.get = original; });
+
+  await EtherscanService.getEthBalance(WALLET, null, 100);
+
+  assert.equal(seen[0].url, 'https://gnosis.blockscout.com/api');
+  assert.equal(seen[0].params.chainid, undefined);
+  assert.equal(seen[0].params.apikey, undefined);
+  assert.equal(seen[0].params.action, 'balance');
+});
+
+test('Blockscout internal transactionHash is normalized to the ingestion hash field', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  axios.get = async () => ({
+    data: {
+      status: '1',
+      message: 'OK',
+      result: [{
+        transactionHash: '0xblockscout',
+        blockNumber: '42',
+        timeStamp: '1700000000',
+        from: WALLET,
+        to: '0xdef',
+        value: '1',
+      }],
+    },
+  });
+  t.after(() => { axios.get = original; });
+
+  const rows = await EtherscanService.fetchInternalTxs(WALLET, 0, null, 100);
+  assert.equal(rows[0].hash, '0xblockscout');
+  assert.equal(rows[0].transactionHash, '0xblockscout');
 });
 
 // ---------------------------------------------------------------------------

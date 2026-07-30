@@ -47,6 +47,8 @@ function scaleAmount(text) {
 // Two spellings of one asset, both 1:1 by construction:
 //   WETH  -- wrapped ETH; bridges deliver either side of the wrapper freely.
 //   MATIC -- renamed POL in Sept 2024, 1:1; pre-rename L1 legs carry MATIC.
+//   DAI   -- the Ethereum-side token that the Gnosis bridge represents as its
+//            native xDAI balance on the destination chain.
 //   FOO.e -- the bridged-representation suffix (Arbitrum's USDC.e), which is
 //            what the canonical bridge MINTS for FOO, so refusing to match it
 //            would leave every canonical ERC-20 deposit unpaired.
@@ -67,6 +69,10 @@ function bridgeAsset(symbol) {
   // the old MATIC token symbol -- without this map every historical Polygon
   // deposit pairs with nothing and both halves stay flagged forever.
   if (base === 'MATIC') return 'POL';
+  // DAI -> XDAI: the canonical Gnosis bridge locks DAI on Ethereum and mints
+  // native xDAI on Gnosis. They must share one matching key or the two halves
+  // of every canonical deposit remain unrelated, review-only rows.
+  if (base === 'DAI') return 'XDAI';
   return base;
 }
 

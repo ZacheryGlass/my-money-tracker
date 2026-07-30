@@ -8,6 +8,7 @@
 const EXPLORERS = {
   1: 'https://etherscan.io',
   10: 'https://optimistic.etherscan.io',
+  100: 'https://gnosis.blockscout.com',
   137: 'https://polygonscan.com',
   8453: 'https://basescan.org',
   42161: 'https://arbiscan.io',
@@ -18,6 +19,7 @@ const EXPLORERS = {
 // listed: every other chain here is ETH-native, and defaulting keeps a row with
 // a NULL or unknown chain_id reading as ETH -- which is what every such row is.
 const NATIVE_ASSETS = {
+  100: 'XDAI',
   137: 'POL',
 };
 

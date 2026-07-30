@@ -2,6 +2,7 @@
 
 const axios = require('axios');
 const etherscan = require('../config/etherscan');
+const chains = require('../config/chains');
 const logger = require('../config/logger');
 
 // Etherscan caps any single query window at 10k results, so paged fetches
@@ -50,24 +51,47 @@ const CHAIN_UNAVAILABLE_RE = /free api access is not supported for this chain|mi
 // handled anyway because the alternative, if Etherscan ever drops a feed on one
 // chain, is a permanent transient-looking error that retries nightly forever and
 // never records the gap that explains the drift.
-const FEED_UNSUPPORTED_RE = /missing or invalid (action|module) name/i;
+const FEED_UNSUPPORTED_RE = /missing or invalid (action|module) name|internal transactions .*not yet been processed/i;
 
 class EtherscanService {
+  // Preserve the public service contract while allowing a chain to route its
+  // Etherscan-shaped account feeds through a different explorer. The caller
+  // still passes one chain id and receives the same normalized raw rows; only
+  // transport selection lives here.
+  static _provider(chainId) {
+    const custom = chains.getChain(chainId)?.accountApi;
+    if (custom) {
+      return {
+        name: custom.provider || 'chain explorer',
+        baseUrl: custom.baseUrl,
+        requiresApiKey: custom.requiresApiKey !== false,
+        params: {},
+      };
+    }
+    return {
+      name: 'Etherscan',
+      baseUrl: etherscan.BASE_URL,
+      requiresApiKey: true,
+      params: { chainid: chainId },
+    };
+  }
+
   // Keys are per-user (Settings -> API Keys, env fallback), resolved by the
   // caller and threaded through every fetch. chainId defaults to mainnet so
   // every pre-#58 call site keeps its exact behavior.
   static async _request(params, { apiKey, chainId = etherscan.CHAIN_ID, attempt = 0 }) {
-    if (!apiKey) {
+    const provider = this._provider(chainId);
+    if (provider.requiresApiKey && !apiKey) {
       const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
       throw error;
     }
     const response = await etherscan.throttled(() =>
-      axios.get(etherscan.BASE_URL, {
+      axios.get(provider.baseUrl, {
         timeout: 15000,
         params: {
-          chainid: chainId,
-          apikey: apiKey,
+          ...provider.params,
+          ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
           ...params,
         },
       })
@@ -84,26 +108,27 @@ class EtherscanService {
       return [];
     }
     if (typeof result === 'string' && result.includes('rate limit') && attempt === 0) {
-      logger.warn({ chainId, params: { module: params.module, action: params.action } }, 'Etherscan rate limited, retrying once');
+      logger.warn({ chainId, provider: provider.name, params: { module: params.module, action: params.action } },
+        'Chain explorer rate limited, retrying once');
       await new Promise((resolve) => setTimeout(resolve, 1100));
       return this._request(params, { apiKey, chainId, attempt: 1 });
     }
 
     const detail = `${message || ''} ${typeof result === 'string' ? result : ''}`;
     if (CHAIN_UNAVAILABLE_RE.test(detail)) {
-      const error = new Error(`Etherscan cannot serve chain ${chainId} with this API key: ${detail.trim()}`);
+      const error = new Error(`${provider.name} cannot serve chain ${chainId} with this API key: ${detail.trim()}`);
       error.code = 'ETHERSCAN_CHAIN_UNAVAILABLE';
       error.chainId = chainId;
       throw error;
     }
     if (FEED_UNSUPPORTED_RE.test(detail)) {
-      const error = new Error(`Etherscan does not serve ${params.action} on chain ${chainId}: ${detail.trim()}`);
+      const error = new Error(`${provider.name} does not serve ${params.action} on chain ${chainId}: ${detail.trim()}`);
       error.code = 'ETHERSCAN_FEED_UNSUPPORTED';
       error.chainId = chainId;
       throw error;
     }
 
-    const error = new Error(`Etherscan error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());
+    const error = new Error(`${provider.name} error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());
     error.code = 'ETHERSCAN_API_ERROR';
     throw error;
   }
@@ -206,7 +231,15 @@ class EtherscanService {
       cursor = lastBlock;
     }
 
-    return all;
+    // Blockscout's Etherscan-compatible txlistinternal response calls this
+    // field `transactionHash`; Etherscan and the rest of our ingestion path
+    // call it `hash`. Normalize only that documented alias and preserve every
+    // original field so pagination and ordinal construction stay unchanged.
+    return all.map((row) => (
+      action === 'txlistinternal' && !row.hash && row.transactionHash
+        ? { ...row, hash: row.transactionHash }
+        : row
+    ));
   }
 
   // The five ACCOUNT feeds take the chain as a trailing argument that defaults

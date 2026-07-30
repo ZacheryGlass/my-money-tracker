@@ -1,9 +1,11 @@
 'use strict';
 
-// The chains an Ethereum wallet address is synced across. Etherscan API V2
-// serves all of them from one host and one key, selected per request by the
-// `chainid` param, so multi-chain sync costs no extra credentials -- only
-// requests, which all share the single global throttle in ./etherscan.js.
+// The chains an Ethereum wallet address is synced across. Most use Etherscan
+// API V2 from one host and one key, selected per request by the `chainid`
+// param. A chain may instead declare `accountApi`: the same five account-feed
+// contract is then served by that per-chain explorer. Every provider still
+// shares the single global throttle in ./etherscan.js; adding chains must not
+// multiply the request rate.
 //
 // EVERY ENTRY BELOW WAS PROBED LIVE, not taken from documentation:
 // GET https://api.etherscan.io/v2/chainlist (64 chains served), then each of
@@ -143,6 +145,28 @@ const REGISTRY = [
     },
   },
   {
+    id: 100,
+    name: 'Gnosis Chain',
+    shortName: 'Gnosis',
+    // Gnosis' fee token is xDAI, minted 1:1 when DAI/USDS crosses the canonical
+    // bridge. Keep the identity distinct from ERC-20 DAI: it is a native
+    // balance with its own CoinGecko series and reconciliation key.
+    nativeAsset: 'XDAI',
+    coingeckoPlatform: 'xdai',
+    enabledByDefault: true,
+    // Gnosis' own documentation names this Blockscout instance as an execution
+    // explorer. Its legacy account API was live-probed against balance,
+    // txlist, txlistinternal, tokentx, tokennfttx and token1155tx on
+    // 2026-07-29. Blockscout explicitly reports incompletely indexed internal
+    // ranges; those are recorded as a visible feed gap rather than ingested as
+    // complete history.
+    accountApi: {
+      provider: 'Blockscout',
+      baseUrl: 'https://gnosis.blockscout.com/api',
+      requiresApiKey: false,
+    },
+  },
+  {
     id: 10,
     name: 'OP Mainnet',
     shortName: 'Optimism',
@@ -190,6 +214,15 @@ const NATIVE_ASSETS = {
     // two are the same money, but a stitched series would be indistinguishable
     // from a real one while resting on an assumption nothing here verifies.
     historyStart: '2024-09-04',
+  },
+  XDAI: {
+    coingeckoId: 'xdai',
+    // xDAI is minted and redeemed 1:1 against DAI/USDS by the canonical
+    // bridge. Coinbase has no XDAI market; DAI-USD is the declared fallback,
+    // never an accidental symbol match.
+    coinbaseProduct: 'DAI-USD',
+    // First DAI-USD daily candle observed on Coinbase Exchange.
+    historyStart: '2020-04-30',
   },
 };
 

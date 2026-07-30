@@ -13,7 +13,8 @@
     "optimism": "https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json",
     "base": "https://docs.base.org/base-chain/network-information/base-contracts",
     "across": "https://docs.across.to/chains-and-contracts",
-    "polygon": "https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json"
+    "polygon": "https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json",
+    "gnosis": "https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge"
   },
   "sourceNotes": {
     "arbitrum": "Offchain Labs' own docs. The URL published in issue #59 (/build-decentralized-apps/reference/contract-addresses) 301s here.",
@@ -21,7 +22,8 @@
     "optimism": "docs.optimism.io/superchain/addresses renders its L1 table CLIENT-SIDE from this file -- the URL is hardcoded in the page payload. It is Optimism's own first-party registry, and it is the only official source: no static docs.optimism.io page prints OP Mainnet's L1 addresses.",
     "base": "Coinbase's own docs. Also the source for the OP Stack L2 predeploys, which are identical on OP Mainnet and Base (both explorers confirm the same two addresses).",
     "across": "Across' own docs. The per-chain subpage URLs in issue #59 do not exist; the site serves one consolidated table.",
-    "polygon": "Polygon's own static network registry, the file its SDKs and docs resolve mainnet addresses from. Five seeded rows: the three PoS PROXY addresses under POSContracts (RootChainManagerProxy, EtherPredicateProxy, ERC20PredicateProxy), plus the Plasma DepositManagerProxy (Main.Contracts.DepositManagerProxy) and the MRC20 native-token precompile (Matic.Contracts.Tokens.MaticToken, 0x0000000000000000000000000000000000001010). POL bridges via PLASMA, not the PoS RootChainManager: the deposit's L1 counterparty is the DepositManager, and its Polygon counterparty is the MRC20, which credits the bridged-in POL through the Bor state sync (#76). The proxies -- and the precompile the state sync writes from -- are what a user (or the system transaction) transacts with; the implementations behind them are never called directly and are not seeded."
+    "polygon": "Polygon's own static network registry, the file its SDKs and docs resolve mainnet addresses from. Five seeded rows: the three PoS PROXY addresses under POSContracts (RootChainManagerProxy, EtherPredicateProxy, ERC20PredicateProxy), plus the Plasma DepositManagerProxy (Main.Contracts.DepositManagerProxy) and the MRC20 native-token precompile (Matic.Contracts.Tokens.MaticToken, 0x0000000000000000000000000000000000001010). POL bridges via PLASMA, not the PoS RootChainManager: the deposit's L1 counterparty is the DepositManager, and its Polygon counterparty is the MRC20, which credits the bridged-in POL through the Bor state sync (#76). The proxies -- and the precompile the state sync writes from -- are what a user (or the system transaction) transacts with; the implementations behind them are never called directly and are not seeded.",
+    "gnosis": "Gnosis Chain's own xDai Bridge page. It identifies the Ethereum foreign bridge and Gnosis home bridge proxy used to mint and redeem the chain's native xDAI."
   },
   "excluded": {
     "zksync-era": "Chain 324 is ABSENT from Etherscan's V2 chainlist (config/chains.js), so no zkSync transfer can ever be ingested. Its L1 contracts are omitted with it; an L1 deposit into zkSync stays a flagged send, which is the visible failure, not the silent one.",
@@ -36,6 +38,22 @@
     "arbiscan.io": "blocked -- HTTP 403 Cloudflare interstitial on every address, so no Arbitrum-side name tag was readable and none was substituted from elsewhere"
   },
   "labels": [
+    {
+      "address": "0x4aa42145aa6ebf72e164c9bbc74fbd3788045016",
+      "name": "Gnosis: xDAI Bridge (Ethereum)",
+      "chain_id": 1,
+      "protocol": "gnosis",
+      "docs_name": "xDAI Bridge Contract",
+      "explorer_name_tag": "Gnosis: xDAI Bridge"
+    },
+    {
+      "address": "0x7301cfa0e1756b71869e93d4e4dca5c7d0eb0aa6",
+      "name": "Gnosis: xDAI Bridge",
+      "chain_id": 100,
+      "protocol": "gnosis",
+      "docs_name": "xDAI Bridge Contract",
+      "explorer_name_tag": "Gnosis: xDAI Bridge"
+    },
     {
       "address": "0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f",
       "name": "Arbitrum: Delayed Inbox",
