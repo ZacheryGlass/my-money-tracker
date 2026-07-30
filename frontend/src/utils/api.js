@@ -573,6 +573,11 @@ export const exchanges = {
     const response = await api.get(`/api/exchanges/${id}/records`, { params });
     return response.data;
   },
+  getMatches: async (params = {}) => {
+    const response = await api.get('/api/exchanges/matches', { params });
+    return response.data;
+  },
+  matchesExportUrl: () => `${API_URL}/api/exchanges/matches/export`,
   // Clears needs_review on one record. Nothing else ever writes that flag to
   // false, so this is the only thing that can empty the review queue.
   resolveRecord: async (id, recordId) => {

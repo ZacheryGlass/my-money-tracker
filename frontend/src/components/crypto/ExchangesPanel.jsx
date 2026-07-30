@@ -87,6 +87,8 @@ function ExchangesPanel({
   const [reviewQueues, setReviewQueues] = useState({});
   const [openReviewAccountId, setOpenReviewAccountId] = useState(null);
   const [resolvingRecordId, setResolvingRecordId] = useState(null);
+  const [matchAudit, setMatchAudit] = useState(null);
+  const [loadingMatchAudit, setLoadingMatchAudit] = useState(false);
 
   const handleAddAccount = async (event) => {
     event.preventDefault();
@@ -305,10 +307,40 @@ function ExchangesPanel({
     }
   };
 
+  const handleLoadMatchAudit = async () => {
+    if (loadingMatchAudit) return;
+    setLoadingMatchAudit(true);
+    try {
+      setMatchAudit(await exchangesAPI.getMatches({ limit: 100 }));
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to load exchange match audit');
+    } finally {
+      setLoadingMatchAudit(false);
+    }
+  };
+
   return (
     <section aria-labelledby="exchange-accounts-heading">
       <div className="mb-3 px-2">
-        <h2 id="exchange-accounts-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Exchange Accounts</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 id="exchange-accounts-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Exchange Accounts</h2>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleLoadMatchAudit}
+              disabled={loadingMatchAudit}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+            >
+              <Link2 size={11} /> {loadingMatchAudit ? 'Loading…' : 'Match audit'}
+            </button>
+            <a
+              href={exchangesAPI.matchesExportUrl()}
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent"
+            >
+              <Upload size={11} /> Export pairings
+            </a>
+          </div>
+        </div>
         <p className="mt-1 text-xs text-secondary">
           Trades, moves between exchanges and fiat on and off ramps never touch a tracked wallet, so no
           on-chain source can show them. Connect a <span className="font-semibold text-primary">read-only
@@ -321,6 +353,37 @@ function ExchangesPanel({
           duplicated.
         </p>
       </div>
+
+      {matchAudit && (
+        <div className="card mb-4 overflow-hidden border-border">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-tight text-primary">Exchange match audit</h3>
+              <p className="mt-1 text-xs text-secondary">Pairings are derived evidence; confirm or reject them from the ledger before treating them as final.</p>
+            </div>
+            <button type="button" onClick={() => setMatchAudit(null)} className="rounded border border-transparent p-1.5 text-tertiary hover:text-primary" aria-label="Close match audit"><X size={15} /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-3 border-b border-border px-5 py-4 text-xs md:grid-cols-4">
+            <div><p className="text-tertiary">Matched</p><p className="mt-1 font-mono font-semibold text-primary">{(matchAudit.summary?.matched || 0).toLocaleString()}</p></div>
+            <div><p className="text-tertiary">Unmatched exchange</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.summary?.unmatchedRecords || 0).toLocaleString()}</p></div>
+            <div><p className="text-tertiary">Unmatched on-chain</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.summary?.unmatchedActivities || 0).toLocaleString()}</p></div>
+            <div><p className="text-tertiary">Shown below</p><p className="mt-1 font-mono font-semibold text-primary">{(matchAudit.data || []).length.toLocaleString()}</p></div>
+          </div>
+          {(matchAudit.data || []).length > 0 ? (
+            <ul className="divide-y divide-border">
+              {matchAudit.data.map((match) => (
+                <li key={match.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-xs">
+                  <div className="min-w-0">
+                    <p className="text-primary">{formatDateDisplay(match.occurred_at)} · {match.exchange_account_name} · {match.record_type} · {match.base_amount} {match.base_asset}</p>
+                    <p className="mt-0.5 text-caption text-tertiary">{match.match_method} · {match.confidence} · {match.category || 'venue-only movement'}</p>
+                  </div>
+                  <span className={`rounded px-2 py-1 text-[9px] font-bold uppercase tracking-wide ${match.verdict === 'confirmed' ? 'bg-gain/10 text-gain' : match.verdict === 'rejected' ? 'bg-loss/10 text-loss' : 'bg-surface-3 text-tertiary'}`}>{match.verdict || 'unreviewed'}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="px-5 py-4 text-xs text-secondary">No derived pairings yet. The unmatched counts above are the current gaps.</p>}
+        </div>
+      )}
 
       <form onSubmit={handleAddAccount} className="card mb-4 p-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-end">

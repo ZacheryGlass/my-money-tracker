@@ -12,6 +12,7 @@ const chains = require('../config/chains');
 const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
 const { CREDENTIAL_FIELDS, connectorFor } = require('../services/exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
+const { toCsv } = require('../utils/csv');
 const logger = require('../config/logger');
 
 const router = express.Router();
@@ -197,9 +198,8 @@ function parseVerdictTarget(source) {
 // record and the deposit record, side by side, with no on-chain leg because
 // there never was one.
 //
-// No UI consumer yet -- the list endpoint is unrendered (see CLAUDE.md Open
-// Work); the ledger surfaces matches through the activity feed instead, and
-// POST/DELETE /matches/verdict are what the inline confirm/reject buttons call.
+// The Crypto Exchanges panel consumes this list for its match-audit drawer;
+// POST/DELETE /matches/verdict remain the durable confirm/reject controls.
 router.get('/matches', async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
@@ -214,6 +214,53 @@ router.get('/matches', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get exchange matches error');
     return res.status(500).json({ error: 'Failed to retrieve exchange matches' });
+  }
+});
+
+// A repeatable, reviewable export of the derived pairings. Unmatched sides are
+// intentionally not fabricated into rows here: the JSON summary beside this
+// export reports those counts, while this file contains only pairings with the
+// exact evidence the matcher stored. That keeps a spreadsheet audit from
+// reading an unmatched exchange record as if it had an on-chain partner.
+router.get('/matches/export', async (req, res) => {
+  try {
+    const { matches } = await ExchangeMatch.findForUser(req.user.id, { limit: 50000, offset: 0 });
+    const headers = [
+      ['id', 'match_id'],
+      ['exchange_record_id', 'exchange_record_id'],
+      ['counter_record_id', 'counter_record_id'],
+      ['activity_id', 'activity_id'],
+      ['match_method', 'match_method'],
+      ['confidence', 'confidence'],
+      ['verdict', 'verdict'],
+      ['verdict_note', 'verdict_note'],
+      ['record_type', 'record_type'],
+      ['occurred_at', 'exchange_occurred_at'],
+      ['base_asset', 'exchange_asset'],
+      ['base_amount', 'exchange_amount'],
+      ['record_tx_hash', 'exchange_tx_hash'],
+      ['record_address', 'exchange_address'],
+      ['record_network', 'exchange_network'],
+      ['record_chain_id', 'exchange_chain_id'],
+      ['exchange_account_name', 'exchange_account'],
+      ['counter_record_type', 'counter_record_type'],
+      ['counter_occurred_at', 'counter_occurred_at'],
+      ['counter_base_asset', 'counter_asset'],
+      ['counter_base_amount', 'counter_amount'],
+      ['counter_account_name', 'counter_exchange_account'],
+      ['wallet_id', 'wallet_id'],
+      ['chain_id', 'on_chain_chain_id'],
+      ['tx_hash', 'on_chain_tx_hash'],
+      ['block_time', 'on_chain_block_time'],
+      ['category', 'on_chain_category'],
+    ];
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="exchange-match-audit.csv"');
+    res.setHeader('X-Match-Count', String(matches.length));
+    return res.status(200).send(toCsv(matches, headers));
+  } catch (error) {
+    logger.error({ err: error }, 'Export exchange matches error');
+    return res.status(500).json({ error: 'Failed to export exchange matches' });
   }
 });
 
