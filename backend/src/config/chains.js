@@ -261,6 +261,14 @@ const REGISTRY = [
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
+      // mainnet.base.org rejects eth_getLogs ranges above 10,000 blocks.
+      // Batch several bounded filters into one JSON-RPC POST, and OR all
+      // tracked receiver topics within each filter so a full-history rebuild
+      // scans the chain once rather than once per wallet.
+      rpcScan: {
+        blockRange: 10000,
+        batchSize: 50,
+      },
     },
   },
 ];

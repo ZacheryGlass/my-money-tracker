@@ -182,6 +182,44 @@ class EtherscanService {
     return payload.result;
   }
 
+  // JSON-RPC batch transport for bounded historical log walks. IDs are local
+  // to this POST and results may arrive in any order, so every item is matched
+  // back by id and validated before its result is returned.
+  static async _rpcBatchRequest(chainId, calls) {
+    const rpcUrl = chains.getChain(chainId)?.rpcUrl;
+    if (!rpcUrl) {
+      const error = new Error(`Chain ${chainId} has no JSON-RPC endpoint configured`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    if (!Array.isArray(calls) || calls.length === 0) return [];
+    const body = calls.map(({ method, params }, index) => ({
+      jsonrpc: '2.0',
+      id: index + 1,
+      method,
+      params,
+    }));
+    const response = await etherscan.throttled(() =>
+      axios.post(rpcUrl, body, { timeout: 30000 })
+    );
+    if (!Array.isArray(response.data)) {
+      const error = new Error('Chain RPC batch returned a non-array response');
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    const byId = new Map(response.data.map((item) => [item?.id, item]));
+    return body.map(({ id, method }) => {
+      const item = byId.get(id);
+      if (!item || item.error || item.result == null) {
+        const detail = item?.error?.message || 'missing or invalid batch item';
+        const error = new Error(`Chain RPC ${method} error: ${detail}`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      return item.result;
+    });
+  }
+
   static async _latestBlockNumber(apiKey, chainId) {
     const chain = chains.getChain(chainId);
     let result;
@@ -587,6 +625,15 @@ class EtherscanService {
     indexedHead = null
   ) {
     if (!feedConfig || !feedConfig.contract || !feedConfig.topic0) return [];
+    if (feedConfig.rpcScan) {
+      const rowsByAddress = await this.fetchStateSyncDepositsBatch(
+        [{ address, startBlock }],
+        chainId,
+        feedConfig,
+        indexedHead
+      );
+      return rowsByAddress.get(String(address).toLowerCase());
+    }
     // Snapshot the head before the log walk and query only through that block.
     // The returned coverage cursor can then advance even when this wallet has
     // no matching logs; using "latest" with an empty result provides no block
@@ -661,14 +708,15 @@ class EtherscanService {
         // (refetched whole, its already-taken rows dropped by `seen`).
         cursor = maxSeen;
       } else {
-        // A full page that advanced nothing: a single block saturating the page
-        // (getLogs caps offset at 1000, so unlike _fetchPaged there is no
-        // bigger-offset refetch to recover rows past the cap) or an API not
-        // honouring fromBlock. Step one block so the walk cannot stall; the
-        // page budget above bounds the pathological case.
-        logger.warn({ chainId, block: cursor, feed: 'statesync' },
-          'getLogs page advanced no blocks; stepping past it (rows beyond the page cap in this block, if any, are dropped)');
-        cursor += 1;
+        // A full page that advanced nothing means either one block exceeds the
+        // endpoint's 1,000-log ceiling or the provider ignored fromBlock.
+        // Stepping past it drops an unknown tail and falsely certifies
+        // coverage, so fail the feed and preserve both stored rows and cursor.
+        const error = new Error(
+          `statesync getLogs returned a full page without advancing past block ${cursor}; cursor frozen`
+        );
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
       }
     }
 
@@ -687,6 +735,171 @@ class EtherscanService {
       enumerable: false,
     });
     return result;
+  }
+
+  // Some public explorers cannot answer a whole-history getLogs query, while
+  // Base's authoritative RPC explicitly caps each eth_getLogs filter at
+  // 10,000 blocks. Scan those bounded windows in JSON-RPC batches and OR all
+  // tracked receiver topics in each filter. The provider already sees the same
+  // wallets through sequential balance/account requests; batching prevents a
+  // 21x repeat of the identical public block walk.
+  //
+  // Returns one account-feed-shaped array per lower-cased address. Every array
+  // carries the same non-enumerable scannedThroughBlock boundary, including
+  // empty arrays, so callers can advance safely only after every batch passed.
+  static async fetchStateSyncDepositsBatch(
+    requests,
+    chainId,
+    feedConfig,
+    indexedHead = null
+  ) {
+    if (!Array.isArray(requests) || requests.length === 0) return new Map();
+    const scan = feedConfig?.rpcScan;
+    const blockRange = Number(scan?.blockRange);
+    const batchSize = Number(scan?.batchSize);
+    if (!Number.isSafeInteger(blockRange) || blockRange < 1
+        || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 100) {
+      const error = new Error('statesync rpcScan requires blockRange >= 1 and batchSize between 1 and 100');
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    const normalized = requests.map(({ address, startBlock }) => {
+      const normalizedAddress = String(address).toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(normalizedAddress)) {
+        const error = new Error(`Invalid state-sync wallet address: ${address}`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      return {
+        address: normalizedAddress,
+        topic: addressTopic(normalizedAddress),
+        startBlock: Math.max(0, Number(startBlock) || 0),
+      };
+    });
+    const head = indexedHead ?? await this._latestBlockNumber(null, chainId);
+    for (const request of normalized) {
+      if (head < request.startBlock) {
+        const error = new Error(
+          `statesync provider head ${head} is behind requested block ${request.startBlock}; cursor frozen`
+        );
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+    }
+
+    const userTopicIndex = Number(feedConfig.userTopicIndex ?? 2);
+    if (![1, 2, 3].includes(userTopicIndex)) {
+      const error = new Error('statesync feed userTopicIndex must be 1, 2, or 3');
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    const minStart = Math.min(...normalized.map((request) => request.startBlock));
+    const topicToRequest = new Map(normalized.map((request) => [request.topic, request]));
+    const topics = Array(userTopicIndex + 1).fill(null);
+    topics[0] = feedConfig.topic0;
+    topics[userTopicIndex] = [...topicToRequest.keys()];
+
+    const filters = [];
+    for (let from = minStart; from <= head; from += blockRange) {
+      const to = Math.min(head, from + blockRange - 1);
+      filters.push({
+        method: 'eth_getLogs',
+        params: [{
+          fromBlock: `0x${from.toString(16)}`,
+          toBlock: `0x${to.toString(16)}`,
+          address: feedConfig.contract,
+          topics,
+        }],
+      });
+    }
+    // A bad config or corrupt head must not allocate/run an unbounded scan.
+    if (filters.length > 10000) {
+      const error = new Error(`statesync RPC walk would require ${filters.length} windows; cursor frozen`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+
+    const logs = [];
+    for (let offset = 0; offset < filters.length; offset += batchSize) {
+      const chunk = filters.slice(offset, offset + batchSize);
+      const results = await this._rpcBatchRequest(chainId, chunk);
+      for (const result of results) {
+        if (!Array.isArray(result)) {
+          const error = new Error('statesync eth_getLogs returned a non-array result');
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        logs.push(...result);
+      }
+    }
+
+    // eth_getLogs does not carry timestamps. Hydrate one block per distinct
+    // matched block (normally only a handful) through the same batch transport.
+    const uniqueBlocks = [...new Set(logs.map((log) => String(log?.blockNumber || '').toLowerCase()))];
+    if (uniqueBlocks.some((block) => !/^0x[0-9a-f]+$/.test(block))) {
+      const error = new Error('statesync RPC log returned an invalid blockNumber');
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    const timestamps = new Map();
+    for (let offset = 0; offset < uniqueBlocks.length; offset += batchSize) {
+      const blockChunk = uniqueBlocks.slice(offset, offset + batchSize);
+      const blocks = await this._rpcBatchRequest(
+        chainId,
+        blockChunk.map((block) => ({
+          method: 'eth_getBlockByNumber',
+          params: [block, false],
+        }))
+      );
+      blocks.forEach((block, index) => {
+        if (!/^0x[0-9a-f]+$/i.test(String(block?.timestamp || ''))) {
+          const error = new Error('statesync block timestamp hydration returned an invalid block');
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        timestamps.set(blockChunk[index], block.timestamp);
+      });
+    }
+
+    const parsedByAddress = new Map(normalized.map((request) => [request.address, []]));
+    const seen = new Set();
+    for (const log of logs) {
+      const receiverTopic = String(log?.topics?.[userTopicIndex] || '').toLowerCase();
+      const request = topicToRequest.get(receiverTopic);
+      if (!request) {
+        const error = new Error('statesync RPC returned a receiver outside the requested topic set');
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      const blockHex = String(log.blockNumber).toLowerCase();
+      const block = parseInt(blockHex, 16);
+      if (block < request.startBlock) continue;
+      const parsed = this._parseStateSyncLog({
+        ...log,
+        timeStamp: timestamps.get(blockHex),
+      }, request.address, feedConfig);
+      if (seen.has(parsed._key)) continue;
+      seen.add(parsed._key);
+      parsedByAddress.get(request.address).push(parsed);
+    }
+
+    for (const [address, parsed] of parsedByAddress) {
+      parsed.sort((a, b) => (a._block - b._block) || (a._logIndex - b._logIndex));
+      const result = parsed.map((row) => ({
+        hash: row.hash,
+        blockNumber: row.blockNumber,
+        timeStamp: row.timeStamp,
+        from: row.from,
+        to: row.to,
+        value: row.value,
+      }));
+      Object.defineProperty(result, 'scannedThroughBlock', {
+        value: head,
+        enumerable: false,
+      });
+      parsedByAddress.set(address, result);
+    }
+    return parsedByAddress;
   }
 
   // One getLogs Deposit log -> an internal-trace-shaped row. A log this cannot

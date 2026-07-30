@@ -491,14 +491,14 @@ class EthWalletService {
   // and would spend a provider budget on exactly the assets the historical
   // price job re-walks at 8:10, twenty minutes later. Same series, same
   // providers, same rate limit, twice.
-  static async syncWallet(walletId, { fillPrices = true } = {}) {
+  static async syncWallet(walletId, { fillPrices = true, prefetchedStateSync = null } = {}) {
     // The rebuild lane is keyed by OWNER (EthDerivedPipeline.serializedForUser),
     // so the wallet row is read before enqueueing just to pick the lane;
     // _syncWallet re-reads it inside the slot for fresh state.
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     return EthDerivedPipeline.serializedForUser(wallet.user_id,
-      () => this._syncWallet(walletId, { fillPrices }));
+      () => this._syncWallet(walletId, { fillPrices, prefetchedStateSync }));
   }
 
   // One chain's ingest for one wallet: fetch each feed, replace that feed's
@@ -519,7 +519,7 @@ class EthWalletService {
   // wrong: contribute no rows, SKIP that feed's delete so its stored rows
   // survive, and leave its cursor untouched. Advancing a cursor past blocks
   // that were never fetched drops those rows silently and forever.
-  static async _syncWalletChain(wallet, chain, apiKey) {
+  static async _syncWalletChain(wallet, chain, apiKey, { prefetchedStateSync = null } = {}) {
     if (chain.historyProvider === 'zksync-lite') {
       return this._syncZkSyncLiteWalletChain(wallet, chain);
     }
@@ -596,14 +596,19 @@ class EthWalletService {
       }
       try {
         if (spec.chainFeed) {
-          feeds[spec.key] = await EtherscanService[spec.fetch](
-            wallet.address,
-            resume[spec.key],
-            apiKey,
-            chain.id,
-            chain[spec.chainFeed],
-            indexedHead
-          );
+          if (spec.key === STATE_SYNC_SPEC.key && prefetchedStateSync) {
+            if (prefetchedStateSync.error) throw prefetchedStateSync.error;
+            feeds[spec.key] = prefetchedStateSync.rows;
+          } else {
+            feeds[spec.key] = await EtherscanService[spec.fetch](
+              wallet.address,
+              resume[spec.key],
+              apiKey,
+              chain.id,
+              chain[spec.chainFeed],
+              indexedHead
+            );
+          }
         } else {
           feeds[spec.key] = await EtherscanService[spec.fetch](
             wallet.address,
@@ -694,7 +699,7 @@ class EthWalletService {
     };
   }
 
-  static async _syncWallet(walletId, { fillPrices = true } = {}) {
+  static async _syncWallet(walletId, { fillPrices = true, prefetchedStateSync = null } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     // Credentials belong to the wallet's owner (the nightly job has no
@@ -727,7 +732,9 @@ class EthWalletService {
       // the throw runs), so it resumes exactly where it left off next sync.
       for (const chain of enabled) {
         try {
-          perChain.push(await this._syncWalletChain(wallet, chain, apiKey));
+          perChain.push(await this._syncWalletChain(wallet, chain, apiKey, {
+            prefetchedStateSync: prefetchedStateSync?.get(chain.id) || null,
+          }));
         } catch (err) {
           logger.error({ walletId, chainId: chain.id, err },
             'Chain sync failed; other chains continue and this chain retries next sync');
@@ -883,11 +890,15 @@ class EthWalletService {
   static async syncAllWallets({ fillPrices = false } = {}) {
     const wallets = await EthWallet.findAllForJobs();
     const summary = { processed: 0, succeeded: 0, failed: 0, results: [] };
+    const stateSyncPrefetch = await this._prefetchStateSyncForWallets(wallets);
 
     for (const wallet of wallets) {
       summary.processed++;
       try {
-        const result = await this.syncWallet(wallet.id, { fillPrices });
+        const result = await this.syncWallet(wallet.id, {
+          fillPrices,
+          prefetchedStateSync: stateSyncPrefetch.get(wallet.id) || null,
+        });
         summary.succeeded++;
         summary.results.push({ walletId: wallet.id, address: wallet.address, ...result });
       } catch (err) {
@@ -904,6 +915,70 @@ class EthWalletService {
     }
 
     return summary;
+  }
+
+  // Base's public RPC limits eth_getLogs to 10,000 blocks. A nightly sync over
+  // many wallets must scan those public windows once, not repeat the same
+  // 49-million-block walk for every address. EtherscanService ORs the tracked
+  // receiver topics and returns one feed-shaped array per wallet.
+  //
+  // A batch failure is copied to each affected wallet's state-sync slot. The
+  // normal per-feed catch then preserves every cursor and stored row while
+  // recording the visible gap; it must not fall back to N identical retries.
+  static async _prefetchStateSyncForWallets(wallets) {
+    const byWallet = new Map();
+    if (!wallets.length) return byWallet;
+    const rpcScanChains = chains.enabledChains().filter(
+      (chain) => chain.stateSyncDeposits?.rpcScan
+    );
+    if (!rpcScanChains.length) return byWallet;
+
+    const states = await EthWalletChain.findAllForWallets(wallets.map((wallet) => wallet.id));
+    const stateByKey = new Map(states.map((state) => [
+      `${state.wallet_id}:${state.chain_id}`,
+      state,
+    ]));
+    const resumeFrom = (cursor) => Math.max(
+      0,
+      Number(cursor ?? 0) - REORG_OVERLAP_BLOCKS
+    );
+
+    for (const chain of rpcScanChains) {
+      const requests = wallets.map((wallet) => {
+        const state = stateByKey.get(`${wallet.id}:${chain.id}`);
+        const currentVersion = Number(chain.ingestVersion || 0);
+        const staleVersion = Number(state?.ingest_version || 0) < currentVersion;
+        return {
+          address: wallet.address,
+          startBlock: staleVersion ? 0 : resumeFrom(state?.last_block_statesync),
+        };
+      });
+      try {
+        const head = await EtherscanService._latestBlockNumber(null, chain.id);
+        const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+          requests,
+          chain.id,
+          chain.stateSyncDeposits,
+          head
+        );
+        for (const wallet of wallets) {
+          const entry = byWallet.get(wallet.id) || new Map();
+          entry.set(chain.id, {
+            rows: rowsByAddress.get(wallet.address.toLowerCase()),
+          });
+          byWallet.set(wallet.id, entry);
+        }
+      } catch (error) {
+        logger.warn({ chainId: chain.id, err: error },
+          'Shared state-sync RPC scan failed; every affected cursor remains frozen');
+        for (const wallet of wallets) {
+          const entry = byWallet.get(wallet.id) || new Map();
+          entry.set(chain.id, { error });
+          byWallet.set(wallet.id, entry);
+        }
+      }
+    }
+    return byWallet;
   }
 
   static async addWallet(userId, address, label) {

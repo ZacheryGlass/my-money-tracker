@@ -66,6 +66,7 @@ const OP_STACK_BRIDGE = '0x4200000000000000000000000000000000000010';
 const ETH_BRIDGE_FINALIZED_TOPIC0 = '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d';
 const DEPOSIT_TX = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd';
 const DEPOSIT_WEI = '47250000000000000000'; // 47.25 POL
+const WALLET_2 = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
 
 const sqlOf = (query) => query.text.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
 
@@ -103,11 +104,18 @@ function addedReceiverLog({ amountWei = DEPOSIT_WEI, block = 13903200, ts = 1609
   };
 }
 
-function ethBridgeFinalizedLog({ amountWei = DEPOSIT_WEI, block = 49293680, ts = 1785370265, hash = DEPOSIT_TX, logIndex = 1 } = {}) {
+function ethBridgeFinalizedLog({
+  amountWei = DEPOSIT_WEI,
+  block = 49293680,
+  ts = 1785370265,
+  hash = DEPOSIT_TX,
+  logIndex = 1,
+  wallet = WALLET,
+} = {}) {
   const topicAddress = (address) => `0x${'0'.repeat(24)}${address.slice(2)}`;
   return {
     address: OP_STACK_BRIDGE,
-    topics: [ETH_BRIDGE_FINALIZED_TOPIC0, topicAddress(WALLET), topicAddress(WALLET)],
+    topics: [ETH_BRIDGE_FINALIZED_TOPIC0, topicAddress(wallet), topicAddress(wallet)],
     data: `0x${BigInt(amountWei).toString(16).padStart(64, '0')}${'0'.repeat(64)}`,
     blockNumber: `0x${block.toString(16)}`,
     timeStamp: `0x${ts.toString(16)}`,
@@ -134,6 +142,12 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
       assert.equal(chain.stateSyncDeposits.contract, OP_STACK_BRIDGE);
       assert.equal(chain.stateSyncDeposits.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
+      if (chain.id === 8453) {
+        assert.deepEqual(chain.stateSyncDeposits.rpcScan, {
+          blockRange: 10000,
+          batchSize: 50,
+        });
+      }
     } else {
       assert.equal(chain.stateSyncDeposits, undefined,
         `chain ${chain.id} must NOT declare a state-sync feed`);
@@ -141,7 +155,7 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
   }
 });
 
-test('OP Stack ETHBridgeFinalized filters topic2 and becomes a native inbound row', async (t) => {
+test('the legacy OP Stack log feed filters topic2 and becomes a native inbound row', async (t) => {
   stubScanHead(t, 50000000);
   const axios = require('axios');
   const original = axios.get;
@@ -153,10 +167,10 @@ test('OP Stack ETHBridgeFinalized filters topic2 and becomes a native inbound ro
   t.after(() => { axios.get = original; });
 
   const rows = await EtherscanService.fetchStateSyncDeposits(
-    WALLET, 0, null, 8453, chains.getChain(8453).stateSyncDeposits
+    WALLET, 0, null, 10, chains.getChain(10).stateSyncDeposits
   );
 
-  assert.equal(seen[0].url, 'https://base.blockscout.com/api');
+  assert.equal(seen[0].url, 'https://explorer.optimism.io/api');
   assert.equal(seen[0].params.topic2, `0x${'0'.repeat(24)}${WALLET.slice(2)}`);
   assert.equal(seen[0].params.topic0_2_opr, 'and');
   assert.deepEqual(rows, [{
@@ -167,6 +181,105 @@ test('OP Stack ETHBridgeFinalized filters topic2 and becomes a native inbound ro
     to: WALLET,
     value: DEPOSIT_WEI,
   }]);
+});
+
+test('Base scans bounded RPC windows once for several wallet receiver topics', async (t) => {
+  const original = EtherscanService._rpcBatchRequest;
+  const calls = [];
+  EtherscanService._rpcBatchRequest = async (chainId, batch) => {
+    calls.push({ chainId, batch });
+    if (batch[0].method === 'eth_getLogs') {
+      return batch.map((call) => {
+        const from = parseInt(call.params[0].fromBlock, 16);
+        if (from === 0) {
+          return [
+            ethBridgeFinalizedLog({
+              block: 5000, wallet: WALLET, hash: '0xwallet1', logIndex: 1,
+            }),
+            // Below WALLET_2's requested cursor: the shared scan may see it,
+            // but that wallet's overlap replacement must not.
+            ethBridgeFinalizedLog({
+              block: 5000, wallet: WALLET_2, hash: '0xwallet2old', logIndex: 2,
+            }),
+          ];
+        }
+        return [ethBridgeFinalizedLog({
+          block: 15000, wallet: WALLET_2, hash: '0xwallet2new', logIndex: 3,
+        })];
+      });
+    }
+    return batch.map((call) => ({
+      timestamp: `0x${(1700000000 + parseInt(call.params[0], 16)).toString(16)}`,
+    }));
+  };
+  t.after(() => { EtherscanService._rpcBatchRequest = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [
+      { address: WALLET, startBlock: 0 },
+      { address: WALLET_2, startBlock: 10000 },
+    ],
+    8453,
+    {
+      ...chains.getChain(8453).stateSyncDeposits,
+      rpcScan: { blockRange: 10000, batchSize: 50 },
+    },
+    19999
+  );
+
+  assert.equal(calls[0].chainId, 8453);
+  assert.equal(calls[0].batch.length, 2, 'two 10k filters share one JSON-RPC POST');
+  assert.deepEqual(calls[0].batch.map((call) => call.params[0].fromBlock), ['0x0', '0x2710']);
+  assert.equal(calls[0].batch[0].params[0].topics[2].length, 2,
+    'both receiver topics are OR-ed inside each bounded filter');
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xwallet1']);
+  assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), ['0xwallet2new']);
+  assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
+  assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 19999);
+});
+
+test('the nightly prefetch shares one Base scan across every wallet', async (t) => {
+  const priorChains = process.env.ETH_CHAINS;
+  process.env.ETH_CHAINS = '8453';
+  const originalStates = EthWalletChain.findAllForWallets;
+  const originalHead = EtherscanService._latestBlockNumber;
+  const originalBatch = EtherscanService.fetchStateSyncDepositsBatch;
+  const seen = [];
+  EthWalletChain.findAllForWallets = async () => [
+    { wallet_id: 1, chain_id: 8453, ingest_version: 1, last_block_statesync: 20000 },
+    { wallet_id: 2, chain_id: 8453, ingest_version: 1, last_block_statesync: 30000 },
+  ];
+  EtherscanService._latestBlockNumber = async () => 50000;
+  EtherscanService.fetchStateSyncDepositsBatch = async (requests, chainId, config, head) => {
+    seen.push({ requests, chainId, config, head });
+    const one = [];
+    const two = [];
+    Object.defineProperty(one, 'scannedThroughBlock', { value: head });
+    Object.defineProperty(two, 'scannedThroughBlock', { value: head });
+    return new Map([[WALLET, one], [WALLET_2, two]]);
+  };
+  t.after(() => {
+    EthWalletChain.findAllForWallets = originalStates;
+    EtherscanService._latestBlockNumber = originalHead;
+    EtherscanService.fetchStateSyncDepositsBatch = originalBatch;
+    if (priorChains === undefined) delete process.env.ETH_CHAINS;
+    else process.env.ETH_CHAINS = priorChains;
+  });
+
+  const prefetched = await EthWalletService._prefetchStateSyncForWallets([
+    { id: 1, address: WALLET },
+    { id: 2, address: WALLET_2 },
+  ]);
+
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].requests, [
+    { address: WALLET, startBlock: 19936 },
+    { address: WALLET_2, startBlock: 29936 },
+  ]);
+  assert.equal(seen[0].chainId, 8453);
+  assert.equal(seen[0].head, 50000);
+  assert.equal(prefetched.get(1).get(8453).rows.scannedThroughBlock, 50000);
+  assert.equal(prefetched.get(2).get(8453).rows.scannedThroughBlock, 50000);
 });
 
 test('Gnosis AddedReceiver filters topic1 and becomes a native inbound row', async (t) => {
@@ -824,16 +937,16 @@ test('an off-shape 200 is a transport failure, not an empty feed', async (t) => 
   );
 });
 
-test('a walk that cannot progress is bounded, not infinite', async (t) => {
+test('a walk that cannot progress freezes immediately instead of dropping an unknown tail', async (t) => {
   stubScanHead(t);
   const axios = require('axios');
   const etherscanConfig = require('../src/config/etherscan');
   const original = axios.get;
   const originalThrottled = etherscanConfig.throttled;
   // An API that ignores fromBlock: every request answers the same FULL page.
-  // The unbounded paginator span forever INSIDE the per-user rebuild lane;
-  // the fix steps one block per stalled page and throws at the page budget.
-  // The throttle is bypassed so ~200 stubbed requests do not take 50 seconds.
+  // The unbounded paginator spun forever INSIDE the per-user rebuild lane.
+  // Stepping over the page would be bounded but incomplete, so the safe result
+  // is an immediate cursor-frozen feed failure.
   const page = Array.from({ length: 1000 }, (_, i) =>
     depositLog({ block: 100 + i, hash: `0x${(100 + i).toString(16)}`, logIndex: 0 }));
   let requests = 0;
@@ -842,9 +955,9 @@ test('a walk that cannot progress is bounded, not infinite', async (t) => {
   t.after(() => { axios.get = original; etherscanConfig.throttled = originalThrottled; });
   await assert.rejects(
     EtherscanService.fetchStateSyncDeposits(WALLET, 0, 'key', 137, chains.getChain(137).stateSyncDeposits),
-    /exceeded 200 pages/
+    /full page without advancing past block 1099; cursor frozen/
   );
-  assert.ok(requests <= 201, `bounded request count, got ${requests}`);
+  assert.equal(requests, 2);
 });
 
 test('an internal trace from the precompile is filtered so the two feeds never double-ingest', () => {
