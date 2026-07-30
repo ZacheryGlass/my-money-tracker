@@ -10,6 +10,7 @@ const chains = require('../config/chains');
 const EthIgnoredToken = require('../models/EthIgnoredToken');
 const EthAddressLabel = require('../models/EthAddressLabel');
 const EthAddressNote = require('../models/EthAddressNote');
+const EthDiscoveryCandidate = require('../models/EthDiscoveryCandidate');
 const EthActivity = require('../models/EthActivity');
 const EthReconciliation = require('../models/EthReconciliation');
 const EthReconciliationAdjustment = require('../models/EthReconciliationAdjustment');
@@ -17,6 +18,7 @@ const AssetPriceHistory = require('../models/AssetPriceHistory');
 const EthWalletService = require('../services/EthWalletService');
 const EthReconciliationService = require('../services/EthReconciliationService');
 const EthDerivedPipeline = require('../services/EthDerivedPipeline');
+const EthDiscoveryService = require('../services/EthDiscoveryService');
 const SecretsService = require('../services/SecretsService');
 const { CATEGORIES } = require('../utils/ethActivityVocabulary');
 const logger = require('../config/logger');
@@ -64,6 +66,48 @@ const NAME_OPTIONAL_KINDS = new Set(['external', 'own', 'bridge', 'service']);
 const ACTIVITY_CATEGORIES = new Set(CATEGORIES);
 
 const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
+
+router.get('/discovery/candidates', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const status = req.query.status || null;
+    const result = await EthDiscoveryCandidate.findForUser(req.user.id, { status, limit, offset });
+    return res.status(200).json({ ...result, pagination: { total: result.total, limit, offset } });
+  } catch (error) {
+    logger.error({ err: error }, 'Get ETH discovery candidates error');
+    return res.status(500).json({ error: 'Failed to retrieve discovery candidates' });
+  }
+});
+
+router.post('/discovery/run', async (req, res) => {
+  try {
+    const result = await EthDiscoveryService.run(req.user.id);
+    return res.status(200).json(result);
+  } catch (error) {
+    logger.error({ err: error }, 'Run ETH discovery error');
+    return res.status(500).json({ error: 'Failed to run forgotten-wallet discovery' });
+  }
+});
+
+router.post('/discovery/:id/decision', async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    const candidate = id && await EthDiscoveryCandidate.findByIdForUser(req.user.id, id);
+    if (!candidate) return res.status(404).json({ error: 'Discovery candidate not found' });
+    const decision = typeof req.body?.decision === 'string' ? req.body.decision.trim().toLowerCase() : '';
+    const label = typeof req.body?.label === 'string' ? req.body.label.trim() : null;
+    const result = await EthDiscoveryService.decide(req.user.id, candidate, decision, label);
+    return res.status(200).json(result);
+  } catch (error) {
+    if (error.code === 'INVALID_ADDRESS' || error.code === 'INVALID_DISCOVERY_DECISION') {
+      return res.status(400).json({ error: error.message });
+    }
+    if (error.code === 'ETHERSCAN_NOT_CONFIGURED') return res.status(503).json({ error: error.message });
+    logger.error({ err: error }, 'Set ETH discovery decision error');
+    return res.status(500).json({ error: 'Failed to save discovery decision' });
+  }
+});
 
 // How the activity feed treats quarantined spam (#74). The default hides it --
 // that IS the quarantine -- and 'only' is the Spam filter. Fail-closed like

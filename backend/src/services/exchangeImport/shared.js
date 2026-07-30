@@ -259,6 +259,52 @@ function trimTo(value, max) {
 // A 20-hex-byte address, with or without the prefix some exports drop.
 const HEX_ADDRESS = /^(0x)?[0-9a-fA-F]{40}$/;
 
+// Provider spellings observed in Coinbase's documented network_name field and
+// Kraken's funding-status network field. The original string is stored beside
+// this normalized id, so an unfamiliar value stays visible instead of being
+// coerced to Ethereum.
+const EVM_NETWORK_CHAIN_IDS = new Map([
+  ['ethereum', 1],
+  ['ethereum mainnet', 1],
+  ['mainnet', 1],
+  ['erc20', 1],
+  ['optimism', 10],
+  ['op mainnet', 10],
+  ['gnosis', 100],
+  ['xdai', 100],
+  ['gnosis chain', 100],
+  ['polygon', 137],
+  ['polygon pos', 137],
+  ['matic', 137],
+  ['zksync era', 324],
+  ['zksync', 324],
+  ['base', 8453],
+  ['arbitrum', 42161],
+  ['arbitrum one', 42161],
+  ['linea', 59144],
+]);
+
+function normalizeNetwork(value) {
+  return trimTo(value, 80);
+}
+
+function normalizeChainId(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const parsed = Number(String(value).trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function chainIdForNetwork(value) {
+  const network = normalizeNetwork(value);
+  if (!network) return null;
+  const key = network.toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return EVM_NETWORK_CHAIN_IDS.get(key) ?? null;
+}
+
 // One spelling per address, so an exchange withdrawal can be matched against
 // the on-chain deposit it produced: eth_transfers stores lowercase 0x-prefixed
 // addresses, and a checksummed or bare-hex export would never join to it.
@@ -299,6 +345,9 @@ function finalizeRecord(record, { line, amountCell } = {}) {
 
   const amount = record.base_amount ?? null;
   const unreadableAmount = amount === null && hasText(amountCell);
+  const network = normalizeNetwork(record.network);
+  const suppliedChainId = normalizeChainId(record.chain_id);
+  const invalidChainId = hasText(record.chain_id) && suppliedChainId === null;
 
   return {
     record_type: record.record_type,
@@ -314,8 +363,10 @@ function finalizeRecord(record, { line, amountCell } = {}) {
     fee_amount: record.fee_amount ?? null,
     tx_hash: trimTo(record.tx_hash, 80),
     address: trimTo(normalizeAddress(record.address), 80),
+    network,
+    chain_id: suppliedChainId ?? chainIdForNetwork(network),
     external_id: trimTo(record.external_id, 120),
-    needs_review: Boolean(record.needs_review) || unreadableAmount,
+    needs_review: Boolean(record.needs_review) || unreadableAmount || invalidChainId,
     raw: record.raw ?? null,
   };
 }
@@ -383,6 +434,9 @@ module.exports = {
   subtractAmounts,
   compareAmounts,
   scaleByPowerOfTen,
+  normalizeNetwork,
+  normalizeChainId,
+  chainIdForNetwork,
   parseTimestamp,
   contentId,
   makeDupCounter,

@@ -183,6 +183,8 @@ function buildRecords(parsedRows) {
         // network id or destination at all. Both stay null on the CSV path.
         tx_hash: row.txHash ?? null,
         address: row.address ?? null,
+        network: row.network ?? null,
+        chain_id: null,
         external_id: externalIdFor(row, { solo }),
         needs_review: !mapped || unpaired,
         raw: row.raw,
@@ -214,6 +216,8 @@ function buildRecords(parsedRows) {
         fee_amount: feeAmount,
         tx_hash: null,
         address: null,
+        network: null,
+        chain_id: null,
         external_id: `kraken:${first.refid}`,
         needs_review: needsReview,
         raw: { _format: 'kraken', rows: legs.map((leg) => leg.raw) },

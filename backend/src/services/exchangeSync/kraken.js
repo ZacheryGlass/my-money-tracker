@@ -203,6 +203,7 @@ function toRecordRows(ledgerRows, fundingByRefid) {
       fee: cleanAmount(entry.fee),
       txHash: funding?.txHash ?? null,
       address: funding?.address ?? null,
+      network: funding?.network ?? null,
       raw: {
         _format: EXCHANGE,
         _source: 'api',

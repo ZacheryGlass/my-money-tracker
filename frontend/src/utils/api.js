@@ -333,6 +333,20 @@ export const eth = {
     const response = await api.get('/api/eth/coverage');
     return response.data;
   },
+  getDiscoveryCandidates: async ({ status, limit, offset } = {}) => {
+    const response = await api.get('/api/eth/discovery/candidates', {
+      params: { ...(status ? { status } : {}), ...(limit ? { limit } : {}), ...(offset ? { offset } : {}) },
+    });
+    return response.data;
+  },
+  runDiscovery: async () => {
+    const response = await api.post('/api/eth/discovery/run');
+    return response.data;
+  },
+  decideDiscovery: async (id, decision, label) => {
+    const response = await api.post(`/api/eth/discovery/${id}/decision`, { decision, label });
+    return response.data;
+  },
   syncWallet: async (id) => {
     const response = await api.post(`/api/eth/wallets/${id}/sync`);
     return response.data;

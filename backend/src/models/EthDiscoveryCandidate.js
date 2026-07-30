@@ -1,0 +1,182 @@
+'use strict';
+
+const pool = require('../config/database');
+
+const STATUSES = new Set(['pending', 'confirmed_own', 'dismissed']);
+
+function assertUser(userId, method) {
+  if (!Number.isInteger(userId) || userId < 1) {
+    throw new Error(`EthDiscoveryCandidate.${method} requires a userId`);
+  }
+}
+
+class EthDiscoveryCandidate {
+  static async seed(userId) {
+    assertUser(userId, 'seed');
+    // The path arm is deliberately one intermediary: both legs are already in
+    // the user's ledger, so it is proof-backed and does not require an API
+    // expansion. Amount and token identity must be conserved within a small
+    // window; the tolerance covers gas and ordinary fee-on-transfer dust.
+    const result = await pool.query(
+      `WITH known AS (
+         SELECT id, address FROM eth_wallets WHERE user_id = $1
+       ), inbound AS (
+         SELECT t.id, t.chain_id, t.tx_hash, t.block_time, t.from_address,
+                t.to_address AS candidate, t.token_contract, t.token_symbol,
+                ABS(t.value_wei::numeric) AS amount
+         FROM eth_transfers t
+         JOIN known w ON w.address = t.from_address
+         WHERE t.transfer_type <> 'gas' AND t.is_error = FALSE
+           AND t.to_address IS NOT NULL
+           AND t.to_address ~ '^0x[0-9a-fA-F]{40}$'
+           AND t.to_address <> '0x0000000000000000000000000000000000000000'
+       ), outbound AS (
+         SELECT t.id, t.chain_id, t.tx_hash, t.block_time, t.from_address AS candidate,
+                t.to_address, t.token_contract, t.token_symbol,
+                ABS(t.value_wei::numeric) AS amount
+         FROM eth_transfers t
+         JOIN known w ON w.address = t.to_address
+         WHERE t.transfer_type <> 'gas' AND t.is_error = FALSE
+           AND t.from_address IS NOT NULL
+           AND t.from_address ~ '^0x[0-9a-fA-F]{40}$'
+           AND t.from_address <> '0x0000000000000000000000000000000000000000'
+       ), paths AS (
+         SELECT i.candidate, i.chain_id,
+                jsonb_build_object(
+                  'type', 'one_hop',
+                  'inbound', jsonb_build_object(
+                    'transfer_id', i.id, 'tx_hash', i.tx_hash,
+                    'block_time', i.block_time, 'from_address', i.from_address,
+                    'amount', i.amount, 'token_contract', i.token_contract,
+                    'token_symbol', i.token_symbol),
+                  'outbound', jsonb_build_object(
+                    'transfer_id', o.id, 'tx_hash', o.tx_hash,
+                    'block_time', o.block_time, 'to_address', o.to_address,
+                    'amount', o.amount, 'token_contract', o.token_contract,
+                    'token_symbol', o.token_symbol)
+                ) AS evidence,
+                CASE WHEN i.amount = 0 THEN 0.5
+                     ELSE GREATEST(0.5, 1 - ABS(i.amount - o.amount) / i.amount)
+                END AS score
+         FROM inbound i
+         JOIN outbound o
+           ON o.candidate = i.candidate
+          AND o.chain_id = i.chain_id
+          AND o.block_time > i.block_time
+          AND o.block_time <= i.block_time + INTERVAL '30 days'
+          AND o.token_contract IS NOT DISTINCT FROM i.token_contract
+          AND ABS(i.amount - o.amount) <= GREATEST(i.amount * 0.02, 1)
+         WHERE NOT EXISTS (
+           SELECT 1 FROM eth_wallets w
+           WHERE w.user_id = $1 AND w.address = i.candidate
+         )
+           AND NOT EXISTS (
+             SELECT 1 FROM eth_address_labels l
+             WHERE l.address = i.candidate AND (l.user_id = $1 OR l.user_id IS NULL)
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM eth_ignored_tokens it
+             WHERE it.user_id = $1 AND it.contract_address = i.token_contract
+           )
+       ), exchange_seeds AS (
+         SELECT LOWER(er.address) AS candidate,
+                COALESCE(er.chain_id, 0)::int AS chain_id,
+                jsonb_build_object(
+                  'type', 'exchange_withdrawal',
+                  'exchange_record_id', er.id,
+                  'exchange_account_id', er.exchange_account_id,
+                  'occurred_at', er.occurred_at,
+                  'asset', er.base_asset,
+                  'amount', er.base_amount,
+                  'network', er.network,
+                  'chain_id', er.chain_id
+                ) AS evidence
+         FROM exchange_records er
+         JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+         WHERE ea.user_id = $1 AND er.record_type = 'withdrawal'
+           AND er.address ~* '^0x[0-9a-f]{40}$'
+           AND NOT EXISTS (
+             SELECT 1 FROM eth_wallets w
+             WHERE w.user_id = $1 AND w.address = LOWER(er.address)
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM eth_address_labels l
+             WHERE l.address = LOWER(er.address) AND (l.user_id = $1 OR l.user_id IS NULL)
+           )
+       ), all_candidates AS (
+         SELECT candidate, chain_id, 'path' AS source, evidence, score FROM paths
+         UNION ALL
+         SELECT candidate, chain_id, 'exchange_withdrawal' AS source, evidence, 0.95::numeric FROM exchange_seeds
+       )
+       INSERT INTO eth_discovery_candidates (user_id, address, chain_id, source, score, evidence)
+       SELECT $1, candidate, chain_id, source, MAX(score), jsonb_agg(evidence)
+       FROM all_candidates
+       GROUP BY candidate, chain_id, source
+       ON CONFLICT (user_id, address, chain_id) DO UPDATE SET
+         source = CASE WHEN eth_discovery_candidates.status = 'pending'
+                       THEN EXCLUDED.source ELSE eth_discovery_candidates.source END,
+         score = CASE WHEN eth_discovery_candidates.status = 'pending'
+                      THEN GREATEST(eth_discovery_candidates.score, EXCLUDED.score)
+                      ELSE eth_discovery_candidates.score END,
+         evidence = CASE WHEN eth_discovery_candidates.status = 'pending'
+                         THEN EXCLUDED.evidence ELSE eth_discovery_candidates.evidence END,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [userId]
+    );
+    return result.rows;
+  }
+
+  static async findForUser(userId, { status = null, limit = 100, offset = 0 } = {}) {
+    assertUser(userId, 'findForUser');
+    const params = [userId];
+    const filters = ['user_id = $1'];
+    if (status !== null) {
+      if (!STATUSES.has(status)) throw new Error(`Invalid discovery status: ${status}`);
+      params.push(status);
+      filters.push(`status = $${params.length}`);
+    }
+    params.push(limit, offset);
+    const result = await pool.query(
+      `SELECT *, COUNT(*) OVER() AS total_count
+         FROM eth_discovery_candidates
+        WHERE ${filters.join(' AND ')}
+        ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, score DESC NULLS LAST, id DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    return {
+      candidates: result.rows.map((row) => {
+        const clean = { ...row };
+        delete clean.total_count;
+        return clean;
+      }),
+      total: result.rows.length ? Number(result.rows[0].total_count) : 0,
+    };
+  }
+
+  static async findByIdForUser(userId, id) {
+    assertUser(userId, 'findByIdForUser');
+    if (!Number.isInteger(id) || id < 1) return null;
+    const result = await pool.query(
+      'SELECT * FROM eth_discovery_candidates WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    return result.rows[0] || null;
+  }
+
+  static async decide(userId, id, status) {
+    assertUser(userId, 'decide');
+    if (!Number.isInteger(id) || id < 1 || !STATUSES.has(status) || status === 'pending') return null;
+    const result = await pool.query(
+      `UPDATE eth_discovery_candidates
+          SET status = $3, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND user_id = $2
+        RETURNING *`,
+      [id, userId, status]
+    );
+    return result.rows[0] || null;
+  }
+}
+
+module.exports = EthDiscoveryCandidate;

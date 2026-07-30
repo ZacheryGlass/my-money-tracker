@@ -364,6 +364,9 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
   // -- and even then it is absent while the send is pending, so it is treated
   // as nullable rather than expected.
   const network = tx.network || {};
+  const networkName = typeof network === 'string'
+    ? network
+    : (network.network_name || network.name || null);
   const to = tx.to || {};
   // `to` is polymorphic: an address for an on-chain send, but an email, a user
   // or another account otherwise. Only an address belongs in the address
@@ -381,6 +384,8 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
     fee_amount: feeAmount,
     tx_hash: typeof network.hash === 'string' && network.hash ? network.hash : null,
     address,
+    network: networkName,
+    chain_id: null,
     // ALWAYS the v2 transaction id, including for a widowed Convert leg --
     // see the note above foldConversions for why a Convert cannot be keyed on
     // anything the retail CSV export does not also carry.

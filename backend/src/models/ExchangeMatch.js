@@ -97,7 +97,8 @@ const SCOPED_RECORDS = `
            -- is what covers a rounded display amount anyway.
            CASE WHEN er.fee_asset IS NULL OR UPPER(er.fee_asset) = UPPER(er.base_asset)
                 THEN COALESCE(ABS(er.fee_amount), 0) ELSE 0 END AS base_fee_amount,
-           LOWER(er.tx_hash) AS tx_hash, LOWER(er.address) AS address
+           LOWER(er.tx_hash) AS tx_hash, LOWER(er.address) AS address,
+           er.network, er.chain_id
     FROM exchange_records er
     JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
     WHERE ea.user_id = $1
@@ -113,6 +114,7 @@ const MATCH_COLUMNS = `
     m.match_method, m.confidence, m.matched_at,
     er.record_type, er.occurred_at, er.base_asset, er.base_amount,
     er.fee_asset, er.fee_amount, er.tx_hash AS record_tx_hash, er.address AS record_address,
+    er.network AS record_network, er.chain_id AS record_chain_id,
     ea.id AS exchange_account_id, ea.name AS exchange_account_name, ea.exchange,
     counter.record_type AS counter_record_type, counter.occurred_at AS counter_occurred_at,
     counter.base_asset AS counter_base_asset, counter.base_amount AS counter_base_amount,
@@ -152,12 +154,8 @@ class ExchangeMatch {
    *    this is identity, not a guess. exchange_records has no chain column
    *    while eth_activity is chain-keyed (039), which makes a stored hash
    *    chain-AMBIGUOUS -- but a 32-byte hash is not reproduced by accident, and
-   *    the one way the same hash exists on two chains is a deliberate
-   *    cross-chain replay of the same account's own transaction, which is the
-   *    same money either way. So hash equality is treated as identity across
-   *    chains and the chain is simply carried through from the activity row.
-   *    A chain column on exchange_records would narrow it further and is what
-   *    #72 wants anyway; nothing here breaks when it arrives.
+   *    old rows can still have no chain, but a source-backed chain id narrows
+   *    the join and prevents a cross-chain replay from claiming the wrong leg.
    *
    *  - asset + amount + window, for the records that carry no hash (a Kraken
    *    ledgers CSV has neither a txid nor a destination). Restricted to
@@ -179,7 +177,9 @@ class ExchangeMatch {
               sa.single_net_leg, sr.exchange_account_name,
               'tx_hash' AS match_method, 'high' AS confidence, 0::bigint AS time_delta
        FROM scoped_activity sa
-       JOIN scoped_records sr ON sr.tx_hash = sa.tx_hash
+       JOIN scoped_records sr
+         ON sr.tx_hash = sa.tx_hash
+        AND (sr.chain_id IS NULL OR sr.chain_id = sa.chain_id)
        -- A row with no single net leg (a revert, a multi-asset call) has no
        -- direction to check; the hash already settled identity.
        WHERE sa.leg_direction IS NULL
@@ -203,6 +203,7 @@ class ExchangeMatch {
        FROM scoped_activity sa
        JOIN scoped_records sr
          ON sr.tx_hash IS NULL
+        AND (sr.chain_id IS NULL OR sr.chain_id = sa.chain_id)
         -- DEFERRED: raw symbol equality. WETH and stETH read as different
         -- assets from the ETH the venue recorded (false negatives), and a spam
         -- token minted with a real ticker reads as the same one (false
@@ -259,6 +260,8 @@ class ExchangeMatch {
         -- on-chain arm: WETH/stETH are false negatives, a spoofed ticker a
         -- false positive.
         AND sent.base_asset = received.base_asset
+        AND (sent.chain_id IS NULL OR received.chain_id IS NULL
+             OR sent.chain_id = received.chain_id)
         AND (
           (sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash)
           OR (

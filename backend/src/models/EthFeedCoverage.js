@@ -55,7 +55,7 @@ class EthFeedCoverage {
         $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8},
         $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12},
         $${offset + 13}, $${offset + 14},
-        CASE WHEN $${offset + 6} = 'complete' THEN CURRENT_TIMESTAMP ELSE NULL END
+        CASE WHEN $${offset + 6}::text = 'complete' THEN CURRENT_TIMESTAMP ELSE NULL END
       )`);
     }
 

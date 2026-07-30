@@ -37,6 +37,8 @@ const CANDIDATES = {
   fee_amount: ['fee', 'fees', 'fee amount', 'commission'],
   tx_hash: ['tx hash', 'txhash', 'transaction hash', 'hash', 'txid'],
   address: ['address', 'destination', 'destination address', 'to address', 'recipient address', 'wallet address'],
+  network: ['network', 'chain', 'blockchain', 'network name', 'chain name'],
+  chain_id: ['chain id', 'chain_id', 'evm chain id'],
   external_id: ['id', 'external id', 'reference', 'refid', 'transaction id', 'trade id'],
 };
 
@@ -158,6 +160,8 @@ function parse(rows, { mapping = {} } = {}) {
       fee_amount: fee && fee !== '0' ? absAmount(fee) : null,
       tx_hash: cellOf(row, 'tx_hash') || null,
       address: cellOf(row, 'address') || null,
+      network: cellOf(row, 'network') || null,
+      chain_id: cellOf(row, 'chain_id') || null,
       external_id: nativeId
         ? `gen:${nativeId}`
         : contentId('gen', [contentKey], dupIndexFor(contentKey)),

@@ -10,6 +10,9 @@ const COLUMNS = [
   // only: nothing keys, dedupes or votes on it, so an API row and a CSV row
   // describing the same event still collapse onto one record.
   'source',
+  // Provider network spelling plus normalized EVM chain id when known. Both
+  // are nullable for legacy rows and non-EVM records.
+  'network', 'chain_id',
 ];
 
 // Everything the upgrade rewrites: the whole record except its identity
@@ -17,7 +20,7 @@ const COLUMNS = [
 const UPGRADE_COLUMNS = COLUMNS.filter((column) => column !== 'external_id');
 
 // Rows per INSERT. Postgres caps a statement at 65535 bind parameters, and at
-// 14 columns per row that is ~4600 rows; 250 keeps each statement small enough
+// 16 columns per row that is ~3800 rows; 250 keeps each statement small enough
 // to stay readable in a log without making a 1200-row ledger chatty.
 const CHUNK_SIZE = 250;
 
@@ -210,7 +213,7 @@ class ExchangeRecord {
     return { records: result.rows, total: countResult.rows[0]?.total ?? 0 };
   }
 
-  // Fill in an on-chain hash or destination address the stored row is missing.
+  // Fill in on-chain identity fields the stored row is missing.
   //
   // This exists because the ON CONFLICT upgrade above is deliberately
   // one-directional: it only fires on a review-flagged row, so a CSV import
@@ -226,7 +229,8 @@ class ExchangeRecord {
   // anything a previous import decided.
   static async backfillChainDetails(exchangeAccountId, rows) {
     if (!exchangeAccountId) throw new Error('ExchangeRecord.backfillChainDetails requires an exchangeAccountId');
-    const fillable = (rows || []).filter((row) => row.external_id && (row.tx_hash || row.address));
+    const fillable = (rows || []).filter((row) => row.external_id
+      && (row.tx_hash || row.address || row.network || row.chain_id));
     if (fillable.length === 0) return { filled: 0 };
 
     let filled = 0;
@@ -234,18 +238,28 @@ class ExchangeRecord {
       const chunk = fillable.slice(start, start + CHUNK_SIZE);
       const values = [exchangeAccountId];
       const tuples = chunk.map((row) => {
-        values.push(row.external_id, row.tx_hash ?? null, row.address ?? null);
-        return `($${values.length - 2}, $${values.length - 1}, $${values.length})`;
+        values.push(
+          row.external_id,
+          row.tx_hash ?? null,
+          row.address ?? null,
+          row.network ?? null,
+          row.chain_id ?? null
+        );
+        return `($${values.length - 4}::text, $${values.length - 3}::text, $${values.length - 2}::text, $${values.length - 1}::varchar(80), $${values.length}::bigint)`;
       });
       const result = await pool.query(
         `UPDATE exchange_records er
          SET tx_hash = COALESCE(er.tx_hash, incoming.tx_hash),
-             address = COALESCE(er.address, incoming.address)
-         FROM (VALUES ${tuples.join(', ')}) AS incoming(external_id, tx_hash, address)
+             address = COALESCE(er.address, incoming.address),
+             network = COALESCE(er.network, incoming.network),
+             chain_id = COALESCE(er.chain_id, incoming.chain_id)
+         FROM (VALUES ${tuples.join(', ')}) AS incoming(external_id, tx_hash, address, network, chain_id)
          WHERE er.exchange_account_id = $1
            AND er.external_id = incoming.external_id
            AND ((er.tx_hash IS NULL AND incoming.tx_hash IS NOT NULL)
-             OR (er.address IS NULL AND incoming.address IS NOT NULL))`,
+             OR (er.address IS NULL AND incoming.address IS NOT NULL)
+             OR (er.network IS NULL AND incoming.network IS NOT NULL)
+             OR (er.chain_id IS NULL AND incoming.chain_id IS NOT NULL))`,
         values
       );
       filled += result.rowCount || 0;

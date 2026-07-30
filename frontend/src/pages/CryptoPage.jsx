@@ -30,6 +30,7 @@ import WalletsPanel from '../components/crypto/WalletsPanel';
 import ExchangesPanel from '../components/crypto/ExchangesPanel';
 import ReviewPanel, { SPAM_PAGE_SIZE, SPAM_MAX_LIMIT } from '../components/crypto/ReviewPanel';
 import LabelsPanel from '../components/crypto/LabelsPanel';
+import DiscoveryPanel from '../components/crypto/DiscoveryPanel';
 import useTransientMessage from '../hooks/useTransientMessage';
 
 const getHoldingValue = (holding) => parseFloat(holding.current_value ?? holding.manual_value ?? 0) || 0;
@@ -55,7 +56,8 @@ const WALLETS_TAB = 'crypto-wallets';
 const EXCHANGES_TAB = 'crypto-exchanges';
 const REVIEW_TAB = 'crypto-review';
 const LABELS_TAB = 'crypto-labels';
-const MANAGE_TAB_IDS = [WALLETS_TAB, EXCHANGES_TAB, REVIEW_TAB, LABELS_TAB];
+const DISCOVERY_TAB = 'crypto-discovery';
+const MANAGE_TAB_IDS = [WALLETS_TAB, EXCHANGES_TAB, REVIEW_TAB, LABELS_TAB, DISCOVERY_TAB];
 const CRYPTO_TAB_IDS = [OVERVIEW_TAB, HOLDINGS_TAB, TRANSACTIONS_TAB, ...MANAGE_TAB_IDS];
 
 // Inside the Transactions tab. The unified ledger (#63) is the tab -- one
@@ -556,6 +558,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         : null,
     },
     { value: LABELS_TAB, label: 'Labels' },
+    { value: DISCOVERY_TAB, label: 'Discovery' },
   ];
 
   // Body wrapper: mounted once visited, then hidden rather than unmounted.
@@ -867,6 +870,14 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
               addressLabels={addressLabels}
               addressNotes={addressNotes}
               ignoredTokens={ignoredTokens}
+              onChanged={handleManageChanged}
+              onError={setError}
+              showSuccess={showSuccess}
+            />
+          ))}
+
+          {tabBody(DISCOVERY_TAB, (
+            <DiscoveryPanel
               onChanged={handleManageChanged}
               onError={setError}
               showSuccess={showSuccess}

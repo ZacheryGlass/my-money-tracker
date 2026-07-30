@@ -58,7 +58,7 @@ function accountRow(overrides = {}) {
   };
 }
 
-const PARAMS_PER_ROW = 15;
+const PARAMS_PER_ROW = 17;
 const EXTERNAL_ID_OFFSET = 11;
 const NEEDS_REVIEW_OFFSET = 12;
 
@@ -81,12 +81,18 @@ function fakeQuery(text, params) {
   }
   if (/^UPDATE exchange_records er SET tx_hash = COALESCE/.test(sql)) {
     let filled = 0;
-    for (let i = 1; i < params.length; i += 3) {
+    for (let i = 1; i < params.length; i += 5) {
       const key = `${params[0]}|${params[i]}`;
       if (!stored.has(key)) continue;
       const existing = chainDetails.get(key) || {};
-      const next = { tx_hash: existing.tx_hash ?? params[i + 1], address: existing.address ?? params[i + 2] };
-      if (next.tx_hash !== existing.tx_hash || next.address !== existing.address) {
+      const next = {
+        tx_hash: existing.tx_hash ?? params[i + 1],
+        address: existing.address ?? params[i + 2],
+        network: existing.network ?? params[i + 3],
+        chain_id: existing.chain_id ?? params[i + 4],
+      };
+      if (next.tx_hash !== existing.tx_hash || next.address !== existing.address
+          || next.network !== existing.network || next.chain_id !== existing.chain_id) {
         chainDetails.set(key, next);
         filled += 1;
       }
@@ -668,6 +674,8 @@ test('kraken: a withdrawal keeps the network txid and destination address', asyn
   // joined on refid. Forgotten-wallet discovery reads the address column.
   assert.equal(withdrawal.tx_hash, 'b7a1c3d5e7f90123456789abcdef0123456789abcdef0123456789abcdef0123');
   assert.equal(withdrawal.address, 'bc1qsynthetic0000000000000000000000000test');
+  assert.equal(withdrawal.network, 'Bitcoin');
+  assert.equal(withdrawal.chain_id, null, 'non-EVM networks stay explicit but un-normalized');
 
   // DepositStatus answers with the WRAPPED shape in the fixture and
   // WithdrawStatus with a bare array; both have to read.
@@ -676,6 +684,8 @@ test('kraken: a withdrawal keeps the network txid and destination address', asyn
   // Addresses are stored lowercase so an exchange withdrawal can join to the
   // on-chain transfer it produced.
   assert.equal(deposit.address, '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  assert.equal(deposit.network, 'Ethereum');
+  assert.equal(deposit.chain_id, 1);
 });
 
 test('kraken: paging walks ofs until a short page, then stops', async () => {
@@ -1324,6 +1334,7 @@ test('a CSV-first import still gains the addresses only the API can see', async 
   assert.ok(synced.body.chain_details_filled >= 2);
   const withdrawal = chainDetails.get(`${OWNED_ACCOUNT_ID}|kraken:LKKKKK-11111-KKKKKK`);
   assert.equal(withdrawal.address, 'bc1qsynthetic0000000000000000000000000test');
+  assert.equal(withdrawal.network, 'Bitcoin');
 });
 
 test('a failed sync leaves the resume point exactly where it was', async () => {

@@ -42,11 +42,12 @@ function accountRow(overrides = {}) {
 }
 
 // The INSERT built by ExchangeRecord.bulkInsert binds one account id followed
-// by the 14 record columns per row, with external_id eleventh among them and
-// needs_review twelfth. `source` (migration 040) is the fourteenth and is
+// by the 16 record columns per row, with external_id eleventh among them and
+// needs_review twelfth. `source` (migration 040) is the fourteenth and network
+// plus chain_id are the fifteenth and sixteenth; they are
 // provenance only -- it deliberately takes no part in the conflict key, which
 // is what lets an API row and a CSV row for the same event dedupe.
-const PARAMS_PER_ROW = 15;
+const PARAMS_PER_ROW = 17;
 const EXTERNAL_ID_OFFSET = 11;
 const NEEDS_REVIEW_OFFSET = 12;
 
