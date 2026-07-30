@@ -76,29 +76,68 @@ function bridgeAsset(symbol) {
   return base;
 }
 
-// One bridge activity row -> the single fungible movement it represents, or
-// null if it is not a shape we will pair. Exactly one net leg is required: a
-// transaction that also moved a second asset (or an NFT) is not a plain value
-// bridge, and guessing which leg crossed the chain is the kind of guess that
-// writes a wrong number into someone's ledger.
+// One bridge activity row -> the fungible movement bundle it represents, or
+// null if it is not a shape we will pair. A canonical bridge can carry more
+// than one fungible asset in a single transaction (for example POL and USDC
+// in one Polygon bundle). We only accept a bundle when every net leg has the
+// same direction, a readable symbol and a non-zero amount; NFTs, mixed
+// directions and unreadable tokens remain reviewable rather than guessed.
 function bridgeMovement(row, direction) {
   const legs = Array.isArray(row.legs) ? row.legs : [];
-  if (legs.length !== 1) return null;
-  const [leg] = legs;
-  if (leg.direction !== direction) return null;
-  if (NFT_STANDARDS.has(leg.token_standard)) return null;
-  // A leg we cannot read is a leg we do not pair. `asset` is a display string
-  // and 'TOKEN' is what an ERC-20 whose symbol the feed never supplied renders
-  // as -- so two DIFFERENT unnamed tokens would compare equal here and fuse
-  // into one "movement", which is precisely the wrong-pairing failure this
-  // whole section is bounded against.
-  if (leg.symbol_known === false) return null;
-  const asset = bridgeAsset(leg.asset);
-  const amount = scaleAmount(leg.amount);
-  if (!asset || amount === null || amount === 0n) return null;
+  if (!legs.length) return null;
+  const byAsset = new Map();
+  for (const leg of legs) {
+    if (leg.direction !== direction || NFT_STANDARDS.has(leg.token_standard)) return null;
+    // A leg we cannot read is a leg we do not pair. `asset` is a display string
+    // and 'TOKEN' is what an ERC-20 whose symbol the feed never supplied renders
+    // as -- so two DIFFERENT unnamed tokens would compare equal here and fuse
+    // into one movement, which is precisely the wrong-pairing failure this
+    // whole section is bounded against.
+    if (leg.symbol_known === false) return null;
+    const asset = bridgeAsset(leg.asset);
+    const amount = scaleAmount(leg.amount);
+    if (!asset || amount === null || amount === 0n) return null;
+    const current = byAsset.get(asset) || { asset, amount: 0n };
+    current.amount += amount;
+    byAsset.set(asset, current);
+  }
   const time = new Date(row.block_time).getTime();
   if (!Number.isFinite(time)) return null;
-  return { asset, amount, time };
+  const assets = [...byAsset.values()]
+    .sort((a, b) => a.asset.localeCompare(b.asset))
+    .map((entry) => ({
+      asset: entry.asset,
+      amount: entry.amount,
+      // A bridge link stores the normalized whole-unit amount. The legacy
+      // primary columns below retain the first asset for old readers; bundle
+      // readers use `assets` instead.
+      rawAmount: formatUnits(entry.amount, 18),
+    }));
+  return {
+    asset: assets[0].asset,
+    amount: assets[0].amount,
+    rawAmount: assets[0].rawAmount,
+    assets,
+    time,
+  };
+}
+
+function movementAssets(movement) {
+  return Array.isArray(movement.assets) && movement.assets.length
+    ? movement.assets
+    : [{ asset: movement.asset, amount: movement.amount, rawAmount: movement.rawAmount }];
+}
+
+function bundleMatches(out, candidate) {
+  const outs = movementAssets(out);
+  const ins = movementAssets(candidate);
+  if (outs.length !== ins.length) return false;
+  const inByAsset = new Map(ins.map((entry) => [entry.asset, entry]));
+  return outs.every((entry) => {
+    const incoming = inByAsset.get(entry.asset);
+    if (!incoming || incoming.amount > entry.amount) return false;
+    return (entry.amount - incoming.amount) * 10000n <= entry.amount * BRIDGE_MAX_FEE_BPS;
+  });
 }
 
 // Pure so the whole pairing policy is testable without a database. `outs` and
@@ -114,20 +153,19 @@ function pairBridgeLegs(outs, ins) {
       // Cross-chain by definition. Same-chain would pair a send with an
       // unrelated receive on the same chain, which is not a bridge at all.
       if (candidate.chain_id === out.chain_id) return false;
-      if (candidate.asset !== out.asset) return false;
       // Money cannot arrive before it left.
       if (candidate.time < out.time) return false;
       const window = out.chain_id === DEFAULT_CHAIN_ID
         ? BRIDGE_DEPOSIT_WINDOW_MS
         : BRIDGE_WITHDRAWAL_WINDOW_MS;
       if (candidate.time - out.time > window) return false;
-      // The fee comes out of the amount, so the far side is never larger.
-      if (candidate.amount > out.amount) return false;
-      return (out.amount - candidate.amount) * 10000n <= out.amount * BRIDGE_MAX_FEE_BPS;
+      // The fee comes out of each asset's amount, so the far side is never
+      // larger for any asset in the bundle.
+      return bundleMatches(out, candidate);
     });
     if (!match) continue;
     claimed.add(match.id);
-    links.push({
+    const link = {
       out_activity_id: out.id,
       in_activity_id: match.id,
       asset: out.asset,
@@ -137,7 +175,23 @@ function pairBridgeLegs(outs, ins) {
       // scaled integers rather than the display strings so it never inherits a
       // float's rounding.
       fee_amount: formatUnits(out.amount - match.amount, 18),
-    });
+    };
+    // Keep the established scalar columns for compatibility. Multi-asset
+    // bridges additionally carry the complete per-asset accounting so a
+    // two-asset bundle is not reduced to whichever asset sorted first.
+    if (movementAssets(out).length > 1) {
+      const incomingByAsset = new Map(movementAssets(match).map((entry) => [entry.asset, entry]));
+      link.asset_details = movementAssets(out).map((entry) => {
+        const incoming = incomingByAsset.get(entry.asset);
+        return {
+          asset: entry.asset,
+          out_amount: entry.rawAmount,
+          in_amount: incoming.rawAmount,
+          fee_amount: formatUnits(entry.amount - incoming.amount, 18),
+        };
+      });
+    }
+    links.push(link);
   }
   return links;
 }

@@ -30,17 +30,23 @@ class EthActivityLink {
     if (!links.length) return 0;
 
     const values = [];
+    const hasBundleDetails = links.some((link) => Array.isArray(link.asset_details));
+    const columns = hasBundleDetails
+      ? '(out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount, asset_details)'
+      : '(out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount)';
+    const width = hasBundleDetails ? 7 : 6;
     const placeholders = links.map((link, i) => {
-      const base = i * 6;
+      const base = i * width;
       values.push(
         link.out_activity_id,
         link.in_activity_id,
         link.asset,
         link.out_amount,
         link.in_amount,
-        link.fee_amount
+        link.fee_amount,
+        ...(hasBundleDetails ? [link.asset_details ? JSON.stringify(link.asset_details) : null] : [])
       );
-      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+      return `(${Array.from({ length: width }, (_, j) => `$${base + j + 1}${hasBundleDetails && j === 6 ? '::jsonb' : ''}`).join(', ')})`;
     });
 
     // No ON CONFLICT clause on purpose. Both endpoints carry a UNIQUE index, so
@@ -50,7 +56,7 @@ class EthActivityLink {
     // warning rather than a failed sync.
     const result = await pool.query(
       `INSERT INTO eth_activity_links
-         (out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount)
+         ${columns}
        VALUES ${placeholders.join(', ')}`,
       values
     );

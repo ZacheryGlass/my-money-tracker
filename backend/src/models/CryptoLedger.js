@@ -253,7 +253,8 @@ const ONCHAIN_RAW_CTE = `
       lo.asset::text AS bridge_asset,
       lo.out_amount AS bridge_out_amount,
       lo.in_amount AS bridge_in_amount,
-      lo.fee_amount AS bridge_fee_amount
+      lo.fee_amount AS bridge_fee_amount,
+      lo.asset_details AS bridge_asset_details
     FROM eth_activity a
     JOIN eth_wallets w ON w.id = a.wallet_id
     LEFT JOIN eth_activity_overrides o
@@ -355,7 +356,8 @@ const ONCHAIN_CTE = `
       r.group_spam AS spam,
       r.spam_reason,
       r.bridge_link_id, r.bridge_role, r.bridge_asset,
-      r.bridge_out_amount, r.bridge_in_amount, r.bridge_fee_amount
+      r.bridge_out_amount, r.bridge_in_amount, r.bridge_fee_amount,
+      r.bridge_asset_details
     FROM (
       SELECT q.*,
         ROW_NUMBER() OVER (
@@ -477,7 +479,16 @@ const ONCHAIN_BRIDGE_CTE = `
         'in_amount', h.bridge_in_amount::text,
         -- What the bridge took, in units of the asset. The gas on each side is
         -- on its own row's fee_wei and is NOT part of this.
-        'fee_amount', h.bridge_fee_amount::text
+        'fee_amount', h.bridge_fee_amount::text,
+        'assets', COALESCE(
+          h.bridge_asset_details,
+          jsonb_build_array(jsonb_build_object(
+            'asset', h.bridge_asset,
+            'out_amount', h.bridge_out_amount::text,
+            'in_amount', h.bridge_in_amount::text,
+            'fee_amount', h.bridge_fee_amount::text
+          ))
+        )
       ) END AS bridge_match,
       -- The folded half's own category, so ?category=bridge_in still finds the
       -- event through its host instead of returning nothing -- the same rule

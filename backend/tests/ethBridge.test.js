@@ -53,6 +53,7 @@ const ACTIVITY_COLUMNS = [
   'legs', 'fee_wei', 'needs_review', 'review_reason', 'confidence',
 ];
 const LINK_COLUMNS = ['out_activity_id', 'in_activity_id', 'asset', 'out_amount', 'in_amount', 'fee_amount'];
+const LINK_COLUMNS_WITH_DETAILS = [...LINK_COLUMNS, 'asset_details'];
 
 const walletRow = (id = OWNED_WALLET_ID) => ({
   id, user_id: OWNER_ID, address: WALLET, label: 'Main', last_block_normal: 0,
@@ -137,9 +138,11 @@ function fakeQuery(text, params = []) {
   }
   if (/^INSERT INTO eth_activity_links/.test(sql)) {
     let inserted = 0;
-    for (let i = 0; i < params.length; i += LINK_COLUMNS.length) {
+    const columns = /asset_details/.test(sql) ? LINK_COLUMNS_WITH_DETAILS : LINK_COLUMNS;
+    for (let i = 0; i < params.length; i += columns.length) {
       const row = {};
-      LINK_COLUMNS.forEach((col, j) => { row[col] = params[i + j]; });
+      columns.forEach((col, j) => { row[col] = params[i + j]; });
+      if (row.asset_details) row.asset_details = JSON.parse(row.asset_details);
       // The two UNIQUE constraints: a leg can be claimed once from each side.
       if (db.links.some((l) => l.out_activity_id === row.out_activity_id)) {
         throw new Error('duplicate key value violates unique constraint "eth_activity_links_out_unique"');
@@ -459,6 +462,33 @@ test('a canonical L1 -> L2 deposit pairs into one movement, fee recorded', () =>
   }]);
 });
 
+test('a matching multi-asset bundle preserves every asset and its fee', () => {
+  const links = pairBridgeLegs(
+    [{
+      id: 1, chain_id: 1, time: T0,
+      assets: [
+        { asset: 'POL', amount: scaled('52.520717'), rawAmount: '52.520717' },
+        { asset: 'USDC', amount: scaled('200.996804'), rawAmount: '200.996804' },
+      ],
+      asset: 'POL', amount: scaled('52.520717'), rawAmount: '52.520717',
+    }],
+    [{
+      id: 2, chain_id: 137, time: T0 + HOUR,
+      assets: [
+        { asset: 'POL', amount: scaled('52.5'), rawAmount: '52.5' },
+        { asset: 'USDC', amount: scaled('200'), rawAmount: '200' },
+      ],
+      asset: 'POL', amount: scaled('52.5'), rawAmount: '52.5',
+    }]
+  );
+
+  assert.equal(links.length, 1);
+  assert.deepEqual(links[0].asset_details, [
+    { asset: 'POL', out_amount: '52.520717', in_amount: '52.5', fee_amount: '0.020717' },
+    { asset: 'USDC', out_amount: '200.996804', in_amount: '200', fee_amount: '0.996804' },
+  ]);
+});
+
 test('a fast bridge that takes a cut still pairs, and the delta is the fee', () => {
   const links = pairBridgeLegs(
     [candidate(1, 1, 'ETH', '1', T0)],
@@ -697,6 +727,28 @@ test('a multi-asset bridge transaction is left unpaired rather than guessed', as
   const result = await EthActivityService.matchBridgeTransfersForUser(OWNER_ID);
   assert.equal(result.matched, 0);
   assert.equal(db.activity[0].needs_review, true);
+});
+
+test('a multi-asset bridge transaction pairs when both sides carry the bundle', async () => {
+  const out = [
+    ...ethLeg('1'),
+    { ...ethLeg('500')[0], asset: 'USDC', direction: 'out' },
+  ];
+  const incoming = [
+    ...ethLegIn('0.99'),
+    { ...ethLeg('495')[0], asset: 'USDC', direction: 'in' },
+  ];
+  await seedBridgeActivity([
+    { chain_id: 1, category: 'bridge_out', block_time: '2026-03-01T00:00:00.000Z', legs: out },
+    { chain_id: 42161, category: 'bridge_in', block_time: '2026-03-01T00:05:00.000Z', legs: incoming },
+  ]);
+
+  const result = await EthActivityService.matchBridgeTransfersForUser(OWNER_ID);
+  assert.deepEqual(result, { matched: 1, unmatched: 0 });
+  assert.deepEqual(db.links[0].asset_details, [
+    { asset: 'ETH', out_amount: '1', in_amount: '0.99', fee_amount: '0.01' },
+    { asset: 'USDC', out_amount: '500', in_amount: '495', fee_amount: '5' },
+  ]);
 });
 
 test('two DIFFERENT unnamed ERC-20s are never fused into one movement', async () => {
@@ -1069,6 +1121,9 @@ test('the links table cannot let one leg be claimed twice', () => {
   // money moved.
   assert.match(SEED_SQL, /out_amount NUMERIC NOT NULL/);
   assert.doesNotMatch(SEED_SQL, /NUMERIC\(\d+, ?\d+\)/);
+  const bundleSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '053_bridge_bundle_details.sql'), 'utf8');
+  assert.match(bundleSql, /ADD COLUMN IF NOT EXISTS asset_details JSONB/);
+  assert.match(bundleSql, /jsonb_typeof\(asset_details\) = 'array'/);
 });
 
 test('the committed migration is a regeneration of the committed JSON pack', () => {

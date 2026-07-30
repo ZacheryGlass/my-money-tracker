@@ -74,6 +74,7 @@ const RESOLVED_COLUMNS = `
     COALESCE(lo.out_amount, li.out_amount) AS bridge_out_amount,
     COALESCE(lo.in_amount, li.in_amount) AS bridge_in_amount,
     COALESCE(lo.fee_amount, li.fee_amount) AS bridge_fee_amount,
+    COALESCE(lo.asset_details, li.asset_details) AS bridge_asset_details,
     pair.chain_id AS bridge_counterpart_chain_id,
     pair.tx_hash AS bridge_counterpart_tx_hash,
     pair.category AS bridge_counterpart_category`;

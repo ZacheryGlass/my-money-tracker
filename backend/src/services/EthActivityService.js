@@ -223,7 +223,7 @@ class EthActivityService {
       .map((row) => {
         const movement = bridgeMovement(row, direction);
         if (!movement) return null;
-        return { id: row.id, chain_id: row.chain_id, rawAmount: row.legs[0].amount, ...movement };
+        return { id: row.id, chain_id: row.chain_id, ...movement };
       })
       .filter(Boolean);
 

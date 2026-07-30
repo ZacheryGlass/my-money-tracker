@@ -125,6 +125,16 @@ const describeLegs = (legs) => {
   return 'No net movement';
 };
 
+const describeBridgeFees = (match) => {
+  const assets = Array.isArray(match?.assets) && match.assets.length
+    ? match.assets
+    : [{ asset: match?.asset, fee_amount: match?.fee_amount }];
+  const fees = assets
+    .filter((entry) => entry.fee_amount && Number.parseFloat(entry.fee_amount) !== 0)
+    .map((entry) => `${entry.fee_amount} ${entry.asset}`);
+  return fees.join(' + ');
+};
+
 // How #61 decided this pairing, in the user's words. The evidence IS the reason
 // to trust or reject it, so it is shown rather than hidden behind a confidence
 // score nobody can interpret.
@@ -1185,9 +1195,9 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-secondary">
             <span className="font-money">{describeLegs(row.bridge_match.legs)}</span>
-            {row.bridge_match.fee_amount && Number.parseFloat(row.bridge_match.fee_amount) !== 0 && (
+            {describeBridgeFees(row.bridge_match) && (
               <span className="text-tertiary">
-                · bridge fee {row.bridge_match.fee_amount} {row.bridge_match.asset}
+                · bridge fee {describeBridgeFees(row.bridge_match)}
               </span>
             )}
             {row.bridge_match.tx_hash && (
