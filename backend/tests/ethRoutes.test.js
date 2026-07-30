@@ -323,3 +323,49 @@ test('POST /api/eth/wallets/bulk reports each address and adds the good ones', a
     EthWalletService.syncWallet = originalSyncWallet;
   }
 });
+
+test('POST /api/eth/wallets/:id/recapture starts a background replay for an owned wallet', async () => {
+  const EthWallet = require('../src/models/EthWallet');
+  const EthWalletService = require('../src/services/EthWalletService');
+  const originalFind = EthWallet.findByIdForUser;
+  const originalQueue = EthWalletService.queueRecaptureWallet;
+  const queued = [];
+  EthWallet.findByIdForUser = async (id, userId) => (
+    id === 7 ? { id, user_id: userId } : null
+  );
+  EthWalletService.queueRecaptureWallet = (id) => {
+    queued.push(id);
+    return { started: true };
+  };
+  try {
+    const response = await request(app).post('/api/eth/wallets/7/recapture');
+    assert.equal(response.status, 202);
+    assert.deepEqual(queued, [7]);
+    assert.equal(response.body.started, true);
+    assert.equal(response.body.annotations_preserved, true);
+  } finally {
+    EthWallet.findByIdForUser = originalFind;
+    EthWalletService.queueRecaptureWallet = originalQueue;
+  }
+});
+
+test('POST /api/eth/wallets/:id/recapture cannot replay another user’s wallet', async () => {
+  const EthWallet = require('../src/models/EthWallet');
+  const EthWalletService = require('../src/services/EthWalletService');
+  const originalFind = EthWallet.findByIdForUser;
+  const originalQueue = EthWalletService.queueRecaptureWallet;
+  let queued = false;
+  EthWallet.findByIdForUser = async () => null;
+  EthWalletService.queueRecaptureWallet = () => {
+    queued = true;
+    return { started: true };
+  };
+  try {
+    const response = await request(app).post('/api/eth/wallets/7/recapture');
+    assert.equal(response.status, 404);
+    assert.equal(queued, false);
+  } finally {
+    EthWallet.findByIdForUser = originalFind;
+    EthWalletService.queueRecaptureWallet = originalQueue;
+  }
+});

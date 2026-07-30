@@ -352,6 +352,35 @@ router.post('/wallets/:id/sync', async (req, res) => {
   }
 });
 
+// Full replay for metadata that was not captured by older forward-only
+// normalizers. This is intentionally a separate, explicit action from Sync:
+// it can walk years of history and must not be triggered by routine refreshes.
+// It returns 202 because a busy wallet can exceed the proxy timeout. Progress
+// and any failure appear through the existing wallet/chain sync state.
+router.post('/wallets/:id/recapture', async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+    const wallet = await EthWallet.findByIdForUser(id, req.user.id);
+    if (!wallet) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+    const { started } = EthWalletService.queueRecaptureWallet(id);
+    res.status(202).json({
+      started,
+      message: started
+        ? 'Full-history recapture started'
+        : 'Full-history recapture is already running',
+      annotations_preserved: true,
+    });
+  } catch (error) {
+    logger.error({ err: error, walletId: req.params.id }, 'Recapture ETH wallet error');
+    res.status(500).json({ error: 'Failed to start wallet recapture' });
+  }
+});
+
 router.delete('/wallets/:id', async (req, res) => {
   try {
     const id = parseId(req.params.id);

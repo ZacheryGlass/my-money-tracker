@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useReactTable, getCoreRowModel, getSortedRowModel } from '@tanstack/react-table';
-import { AlertTriangle, ChevronDown, ChevronRight, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import { formatExactUnits, formatRelativeTime, shortEthAddress as shortEthAddressOrUnknown } from '../../utils/format';
 import { getAccountDisplayName } from '../../utils/accountDisplay';
@@ -351,6 +351,8 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
   const [bulkResults, setBulkResults] = useState(null);
   const [adding, setAdding] = useState(false);
   const [syncingId, setSyncingId] = useState(null);
+  const [recapturing, setRecapturing] = useState(null);
+  const [recaptureStartingId, setRecaptureStartingId] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
   const [removeData, setRemoveData] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
@@ -439,6 +441,24 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
     }
   };
 
+  const handleRecaptureConfirm = async () => {
+    const wallet = recapturing;
+    setRecapturing(null);
+    setRecaptureStartingId(wallet.id);
+    onError(null);
+    try {
+      const result = await ethAPI.recaptureWallet(wallet.id);
+      showSuccess(result.started
+        ? 'Full-history recapture started. Notes and review decisions are preserved.'
+        : 'That wallet is already being recaptured.');
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to start full-history recapture');
+    } finally {
+      setRecaptureStartingId(null);
+    }
+  };
+
   const handleDisconnectConfirm = async () => {
     const id = disconnecting.id;
     const purge = removeData;
@@ -483,6 +503,17 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
       >
         <RefreshCw size={10} className={syncingId === wallet.id ? 'animate-spin' : ''} />
         Sync
+      </button>
+      <button
+        type="button"
+        onClick={() => setRecapturing(wallet)}
+        disabled={syncingId === wallet.id || recaptureStartingId === wallet.id}
+        aria-label={`Recapture full history for ${walletName(wallet)}`}
+        className={ROW_ACTION_CLASS}
+        title="Re-fetch every chain from genesis while preserving notes and review decisions"
+      >
+        <History size={10} />
+        Recapture
       </button>
       <button
         type="button"
@@ -882,6 +913,33 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
                   className="flex-1 py-4 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all"
                 >
                   Confirm Disconnect
+                </button>
+              </div>
+            </Motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Full-history replay is safe for annotations but expensive enough to
+          require a deliberate second click. It resets no wallet row and
+          deletes no source evidence until a replacement feed has succeeded. */}
+      <AnimatePresence>
+        {recapturing && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setRecapturing(null)} />
+            <Motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} className="relative w-full max-w-lg rounded border border-border bg-surface p-6 shadow-2xl">
+              <h2 className="mb-2 text-2xl font-bold tracking-tight text-primary">Recapture full history?</h2>
+              <p className="mb-5 text-sm text-secondary">
+                Every enabled chain for {walletName(recapturing)} will be re-fetched from genesis.
+                Transaction notes, address notes, labels, category overrides, spam decisions, and
+                reconciliation adjustments are preserved.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button type="button" onClick={() => setRecapturing(null)} className="rounded border border-border px-4 py-2 text-sm font-semibold text-secondary hover:text-primary">
+                  Cancel
+                </button>
+                <button type="button" onClick={handleRecaptureConfirm} className="rounded bg-accent px-4 py-2 text-sm font-bold text-white hover:bg-accent-hover">
+                  Start recapture
                 </button>
               </div>
             </Motion.div>

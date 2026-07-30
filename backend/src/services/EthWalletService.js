@@ -75,6 +75,13 @@ function unitsToDecimalString(value, decimals) {
 // Ethereum's finality window (~2 epochs = 64 blocks).
 const REORG_OVERLAP_BLOCKS = 64;
 
+// A full-history replay is expensive. The derived pipeline already serializes
+// all wallet work for one user, but without this guard two clicks would still
+// queue two complete replays. This map covers one running process; after a
+// restart the reset cursors remain durable and the next normal sync resumes the
+// unfinished recapture from genesis.
+const recaptureRuns = new Map();
+
 function toTimestamp(unixSeconds) {
   return new Date(Number(unixSeconds) * 1000);
 }
@@ -499,6 +506,39 @@ class EthWalletService {
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     return EthDerivedPipeline.serializedForUser(wallet.user_id,
       () => this._syncWallet(walletId, { fillPrices, prefetchedStateSync }));
+  }
+
+  // Safe replacement for the old remove-and-re-add workaround for forward-only
+  // metadata (method selectors, historical transaction status and future
+  // normalizer upgrades). Only source cursors are reset. Stored evidence stays
+  // in place until each replacement feed succeeds, and all user-authored
+  // annotations live outside the reset/rebuild path.
+  static async recaptureWallet(walletId, { fillPrices = true } = {}) {
+    const wallet = await EthWallet.findById(walletId);
+    if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
+    return EthDerivedPipeline.serializedForUser(wallet.user_id, async () => {
+      for (const chain of chains.enabledChains()) {
+        await EthWalletChain.ensure(wallet.id, chain.id, Number(chain.ingestVersion || 0));
+        await EthWalletChain.resetForRecapture(wallet.id, chain.id);
+      }
+      return this._syncWallet(walletId, { fillPrices });
+    });
+  }
+
+  // The HTTP route returns before a genesis replay can hit a proxy timeout.
+  // Returning `started=false` makes duplicate requests honest without exposing
+  // or cancelling the in-flight promise.
+  static queueRecaptureWallet(walletId, options = {}) {
+    if (recaptureRuns.has(walletId)) return { started: false };
+    const run = this.recaptureWallet(walletId, options)
+      .catch((err) => {
+        logger.error({ walletId, err }, 'Full ETH wallet recapture failed');
+      })
+      .finally(() => {
+        if (recaptureRuns.get(walletId) === run) recaptureRuns.delete(walletId);
+      });
+    recaptureRuns.set(walletId, run);
+    return { started: true };
   }
 
   // One chain's ingest for one wallet: fetch each feed, replace that feed's

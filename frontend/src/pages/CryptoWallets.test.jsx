@@ -13,7 +13,7 @@ const apiMocks = vi.hoisted(() => ({
   history: { getAccounts: vi.fn() },
   crypto: { getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn() },
   eth: {
-    addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), syncWallet: vi.fn(), removeWallet: vi.fn(),
+    addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), syncWallet: vi.fn(), recaptureWallet: vi.fn(), removeWallet: vi.fn(),
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getReconciliation: vi.fn(),
@@ -380,6 +380,19 @@ describe('Crypto -> Wallets tab', () => {
     expect(await screen.findAllByText('Ethereum')).not.toHaveLength(0);
     expect(screen.queryByText(/no internal/)).toBeNull();
     expect(screen.queryByText('off')).toBeNull();
+  });
+
+  it('requires confirmation and starts a note-preserving full-history recapture', async () => {
+    apiMocks.eth.recaptureWallet.mockResolvedValue({ started: true, annotations_preserved: true });
+    await openEthereumTab([wallet(report())]);
+
+    const buttons = await screen.findAllByRole('button', { name: /recapture full history for main/i });
+    fireEvent.click(buttons[0]);
+    expect(await screen.findByText(/transaction notes, address notes, labels, category overrides/i)).toBeInTheDocument();
+    expect(apiMocks.eth.recaptureWallet).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /start recapture/i }));
+    await waitFor(() => expect(apiMocks.eth.recaptureWallet).toHaveBeenCalledWith(1));
   });
 
   // Adding wallets. One textbox takes a pasted list, one address per line.

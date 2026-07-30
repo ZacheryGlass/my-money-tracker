@@ -65,6 +65,36 @@ class EthWalletChain {
     return current.rows[0];
   }
 
+  // Explicit full-history recapture. Unlike resetForIngestVersion this is a
+  // user-requested operation, so it does not depend on a version comparison.
+  // Raw rows are deliberately NOT deleted here: each feed replaces its own
+  // history only after that provider walk succeeds. If a provider fails or the
+  // process restarts halfway through, the old evidence survives and the zero
+  // cursor makes the next ordinary sync retry the full range.
+  //
+  // Notes, labels, activity overrides and review verdicts live in separate
+  // tables and are not touched by this statement.
+  static async resetForRecapture(walletId, chainId) {
+    const result = await pool.query(
+      `UPDATE eth_wallet_chains
+       SET last_block_normal = 0,
+           last_block_internal = 0,
+           last_block_token = 0,
+           last_block_nft = 0,
+           last_block_1155 = 0,
+           last_block_statesync = 0,
+           error_code = NULL,
+           error_message = NULL,
+           unsupported_feeds = '{}',
+           last_synced_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE wallet_id = $1 AND chain_id = $2
+       RETURNING *`,
+      [walletId, chainId]
+    );
+    return result.rows[0];
+  }
+
   // Every stored chain for the wallet, INCLUDING chains that are no longer
   // enabled. Callers that clean up derived data depend on seeing those: a
   // disabled chain's rows must be left alone, and they can only be left alone

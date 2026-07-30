@@ -333,6 +333,10 @@ export const eth = {
     const response = await api.post(`/api/eth/wallets/${id}/sync`);
     return response.data;
   },
+  recaptureWallet: async (id) => {
+    const response = await api.post(`/api/eth/wallets/${id}/recapture`);
+    return response.data;
+  },
   removeWallet: async (id, { removeData = false } = {}) => {
     const response = await api.delete(`/api/eth/wallets/${id}${removeData ? '?removeData=true' : ''}`);
     return response.data;

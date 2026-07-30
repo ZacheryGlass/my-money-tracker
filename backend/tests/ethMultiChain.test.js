@@ -111,6 +111,20 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' 
     chainStates.set(chainId, reset);
     return { ...reset };
   });
+  stub(EthWalletChain, 'resetForRecapture', async (walletId, chainId) => {
+    calls.recaptures ||= [];
+    calls.recaptures.push(chainId);
+    const prior = stateFor(walletId, chainId, 0);
+    const reset = {
+      ...prior,
+      last_block_normal: 0, last_block_internal: 0, last_block_token: 0,
+      last_block_nft: 0, last_block_1155: 0, last_block_statesync: 0,
+      error_code: null, error_message: null, unsupported_feeds: [],
+      last_synced_at: null,
+    };
+    chainStates.set(chainId, reset);
+    return { ...reset };
+  });
   stub(EtherscanService, '_latestBlockNumber', async (requestApiKey, chainId) => {
     calls.heads.push({ chainId, apiKey: requestApiKey });
     return 50000000;
@@ -343,6 +357,31 @@ test('each chain resumes from its own cursor with the reorg overlap applied', as
   // Every enabled chain runs every feed.
   assert.equal(calls.fetches.length, 10);
   assert.deepEqual([...new Set(calls.fetches.map((c) => c.chainId))], [1, 42161]);
+});
+
+test('full recapture resets every enabled feed to genesis without deleting the wallet', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '1,42161',
+    cursors: {
+      1: {
+        last_block_normal: 1000, last_block_internal: 900, last_block_token: 800,
+        last_block_nft: 700, last_block_1155: 600, last_block_statesync: 500,
+      },
+      42161: {
+        last_block_normal: 2000, last_block_internal: 1900, last_block_token: 1800,
+        last_block_nft: 1700, last_block_1155: 1600, last_block_statesync: 1500,
+      },
+    },
+  });
+
+  await EthWalletService.recaptureWallet(7, { fillPrices: false });
+
+  assert.deepEqual(calls.recaptures, [1, 42161]);
+  assert.ok(calls.fetches.length > 0);
+  assert.ok(calls.fetches.every((call) => call.startBlock === 0),
+    'every active feed replays from genesis after the durable cursor reset');
+  assert.ok(!queries.some((query) => /DELETE FROM eth_wallets/i.test(query.text)),
+    'recapture never deletes the wallet that owns notes and review decisions');
 });
 
 test('deletes are scoped to one chain, so an overlap window cannot wipe another chain', async (t) => {
@@ -1322,6 +1361,27 @@ test('chain ingestion version writes are explicit and reset every feed cursor', 
   }
   assert.match(sqlOf(reset), /ingest_version = \$3/);
   assert.match(sqlOf(reset), /ingest_version < \$3/);
+});
+
+test('the explicit recapture reset clears every cursor and no annotation table', async () => {
+  queries.length = 0;
+  await EthWalletChain.resetForRecapture(7, 8453);
+
+  const reset = queries.at(-1);
+  for (const cursor of [
+    'last_block_normal', 'last_block_internal', 'last_block_token',
+    'last_block_nft', 'last_block_1155', 'last_block_statesync',
+  ]) {
+    assert.match(sqlOf(reset), new RegExp(`${cursor} = 0`));
+  }
+  assert.match(sqlOf(reset), /WHERE wallet_id = \$1 AND chain_id = \$2/);
+  assert.deepEqual(reset.params, [7, 8453]);
+  for (const annotationTable of [
+    'eth_activity_overrides', 'eth_address_notes', 'eth_address_labels',
+    'eth_reconciliation_adjustments',
+  ]) {
+    assert.doesNotMatch(reset.text, new RegExp(annotationTable));
+  }
 });
 
 test('039 keeps every statement idempotent for the boot-time re-run', () => {
