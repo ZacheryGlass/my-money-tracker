@@ -55,6 +55,9 @@ const MIGRATION = fs.readFileSync(
 const INGEST_VERSION_MIGRATION = fs.readFileSync(
   path.join(__dirname, '..', 'migrations', '050_chain_ingest_version.sql'), 'utf8'
 );
+const UTC_CHAIN_TIMES_MIGRATION = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '054_utc_chain_times.sql'), 'utf8'
+);
 
 // Shared harness: stubs everything a sync touches except the parts under test,
 // and records the (chain, feed) calls the sync actually made.
@@ -1285,6 +1288,20 @@ test('050 adds an idempotent conservative ingestion version marker', () => {
     /ADD COLUMN IF NOT EXISTS ingest_version INT NOT NULL DEFAULT 0/);
   assert.equal(chains.getChain(10).ingestVersion, 1);
   assert.equal(chains.getChain(8453).ingestVersion, 1);
+});
+
+test('054 converts raw and derived chain times from intended UTC wall clocks exactly once', () => {
+  for (const table of ['eth_transfers', 'eth_activity']) {
+    assert.match(
+      UTC_CHAIN_TIMES_MIGRATION,
+      new RegExp(`table_name = '${table}'[\\s\\S]*?data_type = 'timestamp without time zone'[\\s\\S]*?ALTER TABLE ${table}[\\s\\S]*?block_time TYPE TIMESTAMPTZ[\\s\\S]*?USING block_time AT TIME ZONE 'UTC'`)
+    );
+  }
+  assert.equal(
+    (UTC_CHAIN_TIMES_MIGRATION.match(/data_type = 'timestamp without time zone'/g) || []).length,
+    2,
+    'both type changes are guarded so the boot-time migration rerun cannot shift timestamps'
+  );
 });
 
 test('chain ingestion version writes are explicit and reset every feed cursor', async () => {
