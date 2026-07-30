@@ -552,6 +552,7 @@ test('different assets never pair, but the two spellings of one asset do', () =>
   assert.equal(bridgeAsset('USDC.e'), 'USDC');
   assert.equal(bridgeAsset('usdc'), 'USDC');
   assert.equal(bridgeAsset('DAI'), 'XDAI');
+  assert.equal(bridgeAsset('USDS'), 'XDAI');
   assert.equal(bridgeAsset('xdai'), 'XDAI');
   assert.equal(bridgeAsset(''), null);
   // Not over-normalized: these are different money.
@@ -582,6 +583,13 @@ test('the two normalizations COMPOSE, in the order suffix-then-wrapper', () => {
 test('Ethereum DAI pairs with native xDAI across the canonical Gnosis bridge', () => {
   assert.equal(pairBridgeLegs(
     [candidate(1, 1, bridgeAsset('DAI'), '25', T0)],
+    [candidate(2, 100, bridgeAsset('XDAI'), '25', T0 + HOUR)]
+  ).length, 1);
+});
+
+test('Ethereum USDS pairs with native xDAI across the current Gnosis bridge', () => {
+  assert.equal(pairBridgeLegs(
+    [candidate(1, 1, bridgeAsset('USDS'), '25', T0)],
     [candidate(2, 100, bridgeAsset('XDAI'), '25', T0 + HOUR)]
   ).length, 1);
 });

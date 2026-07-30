@@ -133,7 +133,7 @@ function harness(t, {
     return 0;
   });
   stub(EtherscanService, 'getTokenBalance', async (address, contract, apiKey, chainId) => {
-    calls.tokenLookups.push({ contract, chainId });
+    calls.tokenLookups.push({ contract, chainId, apiKey });
     const answer = liveTokens[`${chainId}:${contract}`];
     if (typeof answer === 'function') return answer();
     if (answer === undefined) throw new Error(`no stub for ${chainId}:${contract}`);
@@ -698,6 +698,35 @@ test('no Etherscan key is its own skip reason, not the lookup budget', async (t)
   assert.equal(rowFor(calls, 1, DAI).skip_reason, EthReconciliationService.SKIP_REASONS.NO_API_KEY);
   assert.equal(summary.deferred, 0);
   assert.equal(calls.tokenLookups.length, 0);
+});
+
+test('a keyless chain audits token balances without an Etherscan credential', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '100',
+    native: { 100: '0' },
+    tokens: [{
+      chain_id: 100,
+      token_contract: DAI,
+      token_symbol: 'DAI',
+      token_decimals: 18,
+      balance_units: '1',
+    }],
+    liveTokens: { [`100:${DAI}`]: '1' },
+  });
+
+  await EthReconciliationService.reconcileWallet(WALLET, {
+    liveWeiByChain: { 100: '0' },
+    chainResults: [{
+      chainId: 100,
+      unavailable: false,
+      skippedFeeds: [],
+      unsupportedFeeds: [],
+    }],
+    apiKey: null,
+  });
+
+  assert.deepEqual(calls.tokenLookups.map((call) => [call.chainId, call.apiKey]), [[100, null]]);
+  assert.equal(rowFor(calls, 100, DAI).status, 'match');
 });
 
 test('cleanup is scoped to the chains the run actually walked', async (t) => {

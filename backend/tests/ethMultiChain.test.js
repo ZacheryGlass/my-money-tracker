@@ -55,7 +55,7 @@ const MIGRATION = fs.readFileSync(
 
 // Shared harness: stubs everything a sync touches except the parts under test,
 // and records the (chain, feed) calls the sync actually made.
-function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
+function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' } = {}) {
   const restore = [];
   const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
   const priorChains = process.env.ETH_CHAINS;
@@ -72,12 +72,12 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
   const calls = { fetches: [], deletes: [], cursors: [], unsupported: [], chainErrors: [], cleared: [], inserted: [] };
 
   stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
-  stub(SecretsService, 'getUserKey', async () => 'key');
+  stub(SecretsService, 'getUserKey', async () => apiKey);
   stub(EthWalletChain, 'ensure', async (walletId, chainId) => ({
     wallet_id: walletId,
     chain_id: chainId,
     last_block_normal: 0, last_block_internal: 0, last_block_token: 0,
-    last_block_nft: 0, last_block_1155: 0,
+    last_block_nft: 0, last_block_1155: 0, last_block_statesync: 0,
     ...(cursors[chainId] || {}),
   }));
 
@@ -87,10 +87,11 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
     fetchTokenTxs: 'token',
     fetchNftTxs: 'nft',
     fetch1155Txs: 'nft1155',
+    fetchStateSyncDeposits: 'statesync',
   };
   for (const [method, key] of Object.entries(feeds)) {
-    stub(EtherscanService, method, async (address, startBlock, apiKey, chainId) => {
-      calls.fetches.push({ feed: key, chainId, startBlock, address });
+    stub(EtherscanService, method, async (address, startBlock, requestApiKey, chainId) => {
+      calls.fetches.push({ feed: key, chainId, startBlock, address, apiKey: requestApiKey });
       const behavior = feedBehavior[`${chainId}:${key}`];
       if (typeof behavior === 'function') return behavior();
       return behavior || [];
@@ -211,6 +212,19 @@ test('ETH_CHAINS=1 restores exact mainnet-only sync, and junk cannot disable eve
   process.env.ETH_CHAINS = 'nonsense';
   assert.deepEqual(chains.enabledChainIds(), [1]);
   delete process.env.ETH_CHAINS;
+});
+
+test('credential gating follows the enabled provider set', (t) => {
+  const prior = process.env.ETH_CHAINS;
+  t.after(() => {
+    if (prior === undefined) delete process.env.ETH_CHAINS;
+    else process.env.ETH_CHAINS = prior;
+  });
+
+  process.env.ETH_CHAINS = '100';
+  assert.equal(chains.enabledChainsRequireApiKey(), false);
+  process.env.ETH_CHAINS = '1,100';
+  assert.equal(chains.enabledChainsRequireApiKey(), true);
 });
 
 test('mainnet holding names are byte-identical to their pre-#58 values', () => {
@@ -581,6 +595,17 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
     () => EtherscanService.fetchInternalTxs(WALLET, 0, null, 100),
     (err) => err.code === 'ETHERSCAN_FEED_UNSUPPORTED' && err.chainId === 100
   );
+  axios.get = async () => ({
+    data: {
+      status: '2',
+      message: 'Some internal transactions within this block range have not yet been processed',
+      result: [],
+    },
+  });
+  await assert.rejects(
+    () => EtherscanService.fetchInternalTxs(WALLET, 0, null, 100),
+    (err) => err.code === 'ETHERSCAN_FEED_UNSUPPORTED' && err.chainId === 100
+  );
 
   // A genuine transient error keeps its own code.
   axios.get = async () => ({ data: { status: '0', message: 'NOTOK', result: 'Something went wrong' } });
@@ -614,16 +639,67 @@ test('a chain-declared account API omits Etherscan key and chainid parameters', 
   const seen = [];
   axios.get = async (url, config) => {
     seen.push({ url, params: config.params });
-    return { data: { status: '1', result: '42' } };
+    return { data: { status: '0', message: 'No transactions found', result: [] } };
   };
   t.after(() => { axios.get = original; });
 
-  await EtherscanService.getEthBalance(WALLET, null, 100);
+  await EtherscanService.fetchNormalTxs(WALLET, 0, null, 100);
 
   assert.equal(seen[0].url, 'https://gnosis.blockscout.com/api');
   assert.equal(seen[0].params.chainid, undefined);
   assert.equal(seen[0].params.apikey, undefined);
-  assert.equal(seen[0].params.action, 'balance');
+  assert.equal(seen[0].params.action, 'txlist');
+});
+
+test('a keyless-only chain set syncs without an Etherscan credential', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '100',
+    apiKey: null,
+    feedBehavior: {
+      '100:normal': [{
+        blockNumber: '42',
+        timeStamp: '1700000000',
+        hash: '0xkeyless',
+        from: WALLET,
+        to: '0x1111111111111111111111111111111111111111',
+        value: '1',
+        gasUsed: '0',
+        gasPrice: '0',
+        isError: '0',
+      }],
+    },
+  });
+
+  const result = await EthWalletService.syncWallet(7);
+
+  assert.deepEqual(result.chains.map((row) => row.chainId), [100]);
+  assert.ok(calls.fetches.every((call) => call.chainId === 100));
+  assert.ok(calls.fetches.every((call) => call.apiKey == null));
+  assert.equal(calls.inserted[0].chain_id, 100);
+});
+
+test('Gnosis live balances use keyless RPC instead of Blockscout indexed balances', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  const originalPost = axios.post;
+  let getCalled = false;
+  const rpcCalls = [];
+  axios.get = async () => { getCalled = true; throw new Error('Blockscout balance must not be used'); };
+  axios.post = async (url, body) => {
+    rpcCalls.push({ url, body });
+    return { data: { jsonrpc: '2.0', id: 1, result: '0x2a' } };
+  };
+  t.after(() => { axios.get = originalGet; axios.post = originalPost; });
+
+  assert.equal(await EtherscanService.getEthBalance(WALLET, null, 100), '42');
+  assert.equal(await EtherscanService.getTokenBalance(
+    WALLET, '0x1111111111111111111111111111111111111111', null, 100
+  ), '42');
+  assert.equal(getCalled, false);
+  assert.equal(rpcCalls[0].url, 'https://rpc.gnosischain.com');
+  assert.equal(rpcCalls[0].body.method, 'eth_getBalance');
+  assert.equal(rpcCalls[1].body.method, 'eth_call');
+  assert.match(rpcCalls[1].body.params[0].data, /^0x70a08231[0-9a-f]{64}$/);
 });
 
 test('Blockscout internal transactionHash is normalized to the ingestion hash field', async (t) => {

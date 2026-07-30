@@ -193,7 +193,7 @@ async function getJobStatus() {
       'eth-sync': {
         schedule: '50 7 * * *',
         timezone: 'Etc/UTC',
-        description: 'Syncs transfers and balances for tracked Ethereum wallets via Etherscan',
+        description: 'Syncs transfers and balances for tracked EVM wallets through configured chain providers',
         lastRun: latestEthSync || null
       },
       'exchange-sync': {

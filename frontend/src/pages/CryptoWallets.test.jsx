@@ -91,7 +91,7 @@ describe('Crypto -> Wallets tab', () => {
   const openEthereumTab = async (wallets) => {
     apiMocks.eth.getWallets.mockResolvedValue({ wallets });
     render(<CryptoPage tab="crypto-wallets" onTabChange={vi.fn()} />);
-    await screen.findByText('Ethereum Wallets');
+    await screen.findByText('EVM Wallets');
   };
 
   // The list is a table now: the row states the verdict and the expanded panel
@@ -429,7 +429,7 @@ describe('Crypto -> Wallets tab', () => {
       fireEvent.change(input, { target: { value: `0x${'1'.repeat(40)}\nnope` } });
       fireEvent.click(screen.getByRole('button', { name: /track 2 wallets/i }));
 
-      expect(await screen.findByText(/not a valid ethereum address: nope/i)).toBeInTheDocument();
+      expect(await screen.findByText(/not a valid evm address: nope/i)).toBeInTheDocument();
       expect(apiMocks.eth.addWallets).not.toHaveBeenCalled();
     });
 

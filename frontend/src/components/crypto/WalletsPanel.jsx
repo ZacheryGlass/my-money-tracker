@@ -377,14 +377,14 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
     // splitting on any of them cannot merge or truncate one.
     const entries = walletAddress.split(/[\s,;]+/).map((line) => line.trim()).filter(Boolean);
     if (entries.length === 0) {
-      setFormError('Enter at least one Ethereum address');
+      setFormError('Enter at least one EVM address');
       return;
     }
     const invalid = entries.filter((entry) => !ETH_ADDRESS_RE.test(entry));
     if (invalid.length) {
       setFormError(entries.length === 1
-        ? 'Enter a valid Ethereum address (0x followed by 40 hex characters)'
-        : `Not a valid Ethereum address: ${invalid.slice(0, 3).join(', ')}${invalid.length > 3 ? ` (+${invalid.length - 3} more)` : ''}`);
+        ? 'Enter a valid EVM address (0x followed by 40 hex characters)'
+        : `Not a valid EVM address: ${invalid.slice(0, 3).join(', ')}${invalid.length > 3 ? ` (+${invalid.length - 3} more)` : ''}`);
       return;
     }
     setAdding(true);
@@ -472,7 +472,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
         rel="noreferrer"
         className={ROW_ACTION_CLASS}
       >
-        Etherscan
+        Explorer
       </a>
       <button
         type="button"
@@ -648,8 +648,8 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
     <section>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3 px-2">
         <div>
-          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Ethereum Wallets</h2>
-          <p className="mt-1 text-xs text-secondary">Track any Ethereum address via Etherscan: ETH and token balances, transfers between your own wallets, external transfers, and gas fees.</p>
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">EVM Wallets</h2>
+          <p className="mt-1 text-xs text-secondary">Track any EVM address across configured chain explorers: native and token balances, transfers between your own wallets, external transfers, and gas fees.</p>
         </div>
         {wallets.length > 0 && (
           <button
@@ -667,7 +667,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
           <Wallet size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
           <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Wallets Tracked</h3>
           <p className="text-sm text-secondary max-w-md mx-auto leading-relaxed mb-5">
-            Add an Ethereum address to pull its balance and full transfer history. Transfers between your
+            Add an EVM address to pull its balance and full transfer history. Transfers between your
             own tracked wallets are recognized automatically.
           </p>
           <button
@@ -739,7 +739,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
                   </div>
                   <h2 id="crypto-modal-title" className="text-2xl font-bold text-primary mb-2 tracking-tight">Connect Crypto Wallet</h2>
                   <p className="text-sm text-secondary leading-relaxed">
-                    Paste an Ethereum address to track its balance and full transfer history via Etherscan. Paste several, one per line, to add them all at once.
+                    Paste an EVM address to track its balances and transfer history across configured chains. Paste several, one per line, to add them all at once.
                   </p>
                 </div>
 

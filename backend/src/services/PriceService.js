@@ -15,22 +15,23 @@ const COINGECKO_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 
 class PriceService {
   // Get price from Coinbase (free, no auth needed)
-  static async getCoinbasePrice(ticker) {
+  static async getCoinbasePrice(tickerOrProduct) {
+    const requested = String(tickerOrProduct).toUpperCase();
+    const currencyPair = requested.includes('-') ? requested : `${requested}-USD`;
     try {
-      const currencyPair = ticker.toUpperCase() + '-USD';
       const url = `https://api.coinbase.com/v2/prices/${currencyPair}/spot`;
       const response = await axios.get(url, { timeout: 5000 });
 
       if (response.status !== 200) {
-        logger.warn({ ticker, status: response.status }, 'Coinbase fetch failed');
+        logger.warn({ tickerOrProduct, currencyPair, status: response.status }, 'Coinbase fetch failed');
         return null;
       }
 
       const price = parseFloat(response.data.data.amount);
-      logger.debug({ ticker, price, source: 'coinbase' }, 'Price fetched');
+      logger.debug({ tickerOrProduct, currencyPair, price, source: 'coinbase' }, 'Price fetched');
       return price;
     } catch (error) {
-      logger.warn({ ticker, err: error }, 'Coinbase error');
+      logger.warn({ tickerOrProduct, currencyPair, err: error }, 'Coinbase error');
       return null;
     }
   }
@@ -203,7 +204,7 @@ class PriceService {
     const native = chains.nativeAssetInfo(ticker);
     let price;
     if (isCrypto && native) {
-      price = await this.getCoinbasePrice(ticker);
+      price = await this.getCoinbasePrice(native.coinbaseProduct);
       if (price !== null) return { price, source: 'coinbase' };
       try {
         const idMap = await this.buildCoinGeckoIdMap([ticker]);

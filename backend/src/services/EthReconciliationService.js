@@ -333,7 +333,7 @@ class EthReconciliationService {
 
       if (skip) {
         verdict = { status: 'skipped', delta: null, skipReason: skip };
-      } else if (!apiKey) {
+      } else if (!apiKey && chains.accountApiRequiresKey(token.chainId)) {
         // No key at all. Not 'lookup_budget': that reason promises the asset is
         // first in line next sync, and without a key there is no next sync that
         // can keep the promise. Not counted as deferred either, for the same

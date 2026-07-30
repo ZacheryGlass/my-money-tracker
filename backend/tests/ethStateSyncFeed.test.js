@@ -59,6 +59,9 @@ const WALLET = '0x1234567890abcdef1234567890abcdef12345678';
 const PRECOMPILE = '0x0000000000000000000000000000000000001010';
 const DEPOSIT_MANAGER = '0x401f6c983ea34274ec46f84d70b31c151321188b';
 const TOPIC0 = '0x4e2ca0515ed1aef1395f66b5303bb5d6f1bf9d61a353fa53f73f8ac9973fa9f6';
+const GNOSIS_REWARD = '0x481c034c6d9441db23ea48de68bcae812c5d39ba';
+const ADDED_RECEIVER_TOPIC0 = '0x3c798bbcf33115b42c728b8504cff11dd58736e9fa789f1cda2738db7d696b2a';
+const GNOSIS_BRIDGE = '0x7301cfa0e1756b71869e93d4e4dca5c7d0eb0aa6';
 const DEPOSIT_TX = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd';
 const DEPOSIT_WEI = '47250000000000000000'; // 47.25 POL
 
@@ -79,21 +82,67 @@ function depositLog({ amountWei = DEPOSIT_WEI, block = 84000001, ts = 1742000000
   };
 }
 
+function addedReceiverLog({ amountWei = DEPOSIT_WEI, block = 13903200, ts = 1609959945, hash = DEPOSIT_TX, logIndex = 23 } = {}) {
+  const topicAddress = (address) => `0x${'0'.repeat(24)}${address.slice(2)}`;
+  return {
+    address: GNOSIS_REWARD,
+    topics: [ADDED_RECEIVER_TOPIC0, topicAddress(WALLET), topicAddress(GNOSIS_BRIDGE)],
+    data: `0x${BigInt(amountWei).toString(16).padStart(64, '0')}`,
+    blockNumber: `0x${block.toString(16)}`,
+    timeStamp: `0x${ts.toString(16)}`,
+    logIndex: `0x${logIndex.toString(16)}`,
+    transactionHash: hash,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The registry declaration
 // ---------------------------------------------------------------------------
 
-test('only Polygon declares the state-sync feed, and it names the verified precompile', () => {
+test('Polygon and Gnosis declare their native-credit logs with verified contracts', () => {
   for (const chain of chains.allChains()) {
     if (chain.id === 137) {
       assert.ok(chain.stateSyncDeposits, 'Polygon must declare the state-sync feed');
       assert.equal(chain.stateSyncDeposits.contract, PRECOMPILE);
       assert.equal(chain.stateSyncDeposits.topic0, TOPIC0);
+    } else if (chain.id === 100) {
+      assert.equal(chain.stateSyncDeposits.contract, GNOSIS_REWARD);
+      assert.equal(chain.stateSyncDeposits.topic0, ADDED_RECEIVER_TOPIC0);
+      assert.equal(chain.stateSyncDeposits.userTopicIndex, 1);
     } else {
       assert.equal(chain.stateSyncDeposits, undefined,
         `chain ${chain.id} must NOT declare a state-sync feed`);
     }
   }
+});
+
+test('Gnosis AddedReceiver filters topic1 and becomes a native inbound row', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  const seen = [];
+  axios.get = async (url, config) => {
+    seen.push(config.params);
+    return { data: { status: '1', result: [addedReceiverLog()] } };
+  };
+  t.after(() => { axios.get = original; });
+
+  const rows = await EtherscanService.fetchStateSyncDeposits(
+    WALLET, 0, null, 100, chains.getChain(100).stateSyncDeposits
+  );
+
+  assert.equal(seen[0].topic1, `0x${'0'.repeat(24)}${WALLET.slice(2)}`);
+  assert.equal(seen[0].topic0_1_opr, 'and');
+  assert.equal(seen[0].topic2, undefined);
+  assert.equal(seen[0].chainid, undefined);
+  assert.equal(seen[0].apikey, undefined);
+  assert.deepEqual(rows, [{
+    hash: DEPOSIT_TX,
+    blockNumber: '13903200',
+    timeStamp: '1609959945',
+    from: GNOSIS_REWARD,
+    to: WALLET,
+    value: DEPOSIT_WEI,
+  }]);
 });
 
 // ---------------------------------------------------------------------------
@@ -288,20 +337,23 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
   return { calls, stub };
 }
 
-test('the state-sync feed runs on Polygon and NOWHERE else', async (t) => {
-  const { calls } = harness(t, { chainSet: '1,42161,137' });
+test('the native-credit feed runs only on its declaring Polygon and Gnosis chains', async (t) => {
+  const { calls } = harness(t, { chainSet: '1,100,42161,137' });
 
   await EthWalletService.syncWallet(7);
 
   const stateSyncChains = calls.fetches.filter((c) => c.feed === 'statesync').map((c) => c.chainId);
-  assert.deepEqual(stateSyncChains, [137], 'only the declaring chain fetches the feed');
-  // The declaring chain runs SIX feeds, every other chain runs five.
+  assert.deepEqual(stateSyncChains, [137, 100], 'only declaring chains fetch the feed');
+  // Declaring chains run SIX feeds, every other chain runs five.
   assert.equal(calls.fetches.filter((c) => c.chainId === 137).length, 6);
+  assert.equal(calls.fetches.filter((c) => c.chainId === 100).length, 6);
   assert.equal(calls.fetches.filter((c) => c.chainId === 1).length, 5);
   assert.equal(calls.fetches.filter((c) => c.chainId === 42161).length, 5);
   // The feed receives the chain's declared config (the account feeds get none).
-  const call = calls.fetches.find((c) => c.feed === 'statesync');
-  assert.equal(call.feedConfig.contract, PRECOMPILE);
+  const polygonCall = calls.fetches.find((c) => c.feed === 'statesync' && c.chainId === 137);
+  const gnosisCall = calls.fetches.find((c) => c.feed === 'statesync' && c.chainId === 100);
+  assert.equal(polygonCall.feedConfig.contract, PRECOMPILE);
+  assert.equal(gnosisCall.feedConfig.contract, GNOSIS_REWARD);
 });
 
 test('a state-sync deposit ingests as an internal leg from the precompile', async (t) => {
@@ -325,6 +377,30 @@ test('a state-sync deposit ingests as an internal leg from the precompile', asyn
   assert.equal(internal[0].chain_id, 137);
   // transfer_type='internal' is what makes nativeBalanceDeltas (which sums
   // native+internal-gas) count the credit with no change of its own.
+});
+
+test('a Gnosis AddedReceiver credit ingests as a bridge-classifiable internal leg', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '100',
+    feedBehavior: {
+      '100:statesync': [{
+        hash: DEPOSIT_TX,
+        blockNumber: '13903200',
+        timeStamp: '1609959945',
+        from: GNOSIS_REWARD,
+        to: WALLET,
+        value: DEPOSIT_WEI,
+      }],
+    },
+  });
+
+  await EthWalletService.syncWallet(7);
+
+  const [credit] = calls.inserted.filter((row) => row.transfer_type === 'internal');
+  assert.equal(credit.from_address, GNOSIS_REWARD);
+  assert.equal(credit.to_address, WALLET);
+  assert.equal(credit.value_wei, DEPOSIT_WEI);
+  assert.equal(credit.chain_id, 100);
 });
 
 test('the two internal-typed feeds do not clear each other: delete windows split by from_address', async (t) => {

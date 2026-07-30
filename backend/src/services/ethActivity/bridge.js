@@ -69,10 +69,10 @@ function bridgeAsset(symbol) {
   // the old MATIC token symbol -- without this map every historical Polygon
   // deposit pairs with nothing and both halves stay flagged forever.
   if (base === 'MATIC') return 'POL';
-  // DAI -> XDAI: the canonical Gnosis bridge locks DAI on Ethereum and mints
-  // native xDAI on Gnosis. They must share one matching key or the two halves
-  // of every canonical deposit remain unrelated, review-only rows.
-  if (base === 'DAI') return 'XDAI';
+  // DAI/USDS -> XDAI: the canonical Gnosis bridge historically locked DAI and
+  // now accepts USDS on Ethereum, minting the same native xDAI on Gnosis.
+  // They must share one matching key or either generation stays unpaired.
+  if (base === 'DAI' || base === 'USDS') return 'XDAI';
   return base;
 }
 

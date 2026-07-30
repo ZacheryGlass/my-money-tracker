@@ -522,9 +522,11 @@ class EthWalletService {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     // Credentials belong to the wallet's owner (the nightly job has no
-    // request context). Missing key -> ETHERSCAN_NOT_CONFIGURED.
+    // request context). A key is required only when at least one enabled chain
+    // uses the default keyed provider; a keyless-only set such as
+    // ETH_CHAINS=100 must remain fully usable.
     const apiKey = await SecretsService.getUserKey(wallet.user_id, 'etherscan');
-    if (!apiKey) {
+    if (!apiKey && chains.enabledChainsRequireApiKey()) {
       const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
       throw error;
@@ -730,14 +732,14 @@ class EthWalletService {
 
   static async addWallet(userId, address, label) {
     if (typeof address !== 'string' || !ADDRESS_RE.test(address.trim())) {
-      const error = new Error('address must be a 0x-prefixed 40-hex-character Ethereum address');
+      const error = new Error('address must be a 0x-prefixed 40-hex-character EVM address');
       error.code = 'INVALID_ADDRESS';
       throw error;
     }
-    // Fail fast: without an API key the wallet could be created but never
-    // synced, which would just strand an empty account.
+    // Fail fast only when the enabled provider set needs a key. A keyless-only
+    // chain set can create and sync the wallet without Etherscan credentials.
     const apiKey = await SecretsService.getUserKey(userId, 'etherscan');
-    if (!apiKey) {
+    if (!apiKey && chains.enabledChainsRequireApiKey()) {
       const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
       throw error;
@@ -865,7 +867,7 @@ class EthWalletService {
     if (!account) return { skipped: true };
 
     const apiKey = await SecretsService.getUserKey(wallet.user_id, 'etherscan');
-    if (!apiKey) {
+    if (!apiKey && chains.enabledChainsRequireApiKey()) {
       const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
       throw error;

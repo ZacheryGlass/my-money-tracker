@@ -101,6 +101,7 @@ test('a native asset never takes a symbol-matched quote from Yahoo', async () =>
   try {
     const result = await PriceService.fetchPrice('POL', 'Crypto');
     assert.deepEqual(result, { price: 0.0763, source: 'coinbase' });
+    assert.ok(calls.includes('coinbase:POL-USD'));
     assert.ok(!calls.some((c) => c.startsWith('yahoo')), 'Yahoo must not be consulted for POL');
 
     // And with Coinbase down it falls to the declared CoinGecko id, still never
@@ -115,6 +116,21 @@ test('a native asset never takes a symbol-matched quote from Yahoo', async () =>
     assert.ok(!calls.some((c) => c.startsWith('yahoo')), 'not even as a last resort');
   } finally {
     PriceService.getYahooFinancePrice = originalYahoo;
+    PriceService.getCoinbasePrice = originalCoinbase;
+    PriceService.getCoinGeckoPrice = originalGecko;
+  }
+});
+
+test("xDAI current pricing uses the registry's declared DAI-USD Coinbase product", async () => {
+  const calls = [];
+  const originalCoinbase = PriceService.getCoinbasePrice;
+  const originalGecko = PriceService.getCoinGeckoPrice;
+  PriceService.getCoinbasePrice = async (product) => { calls.push(product); return 1; };
+  PriceService.getCoinGeckoPrice = async () => { throw new Error('CoinGecko should not be reached'); };
+  try {
+    assert.deepEqual(await PriceService.fetchPrice('XDAI', 'Cash'), { price: 1, source: 'coinbase' });
+    assert.deepEqual(calls, ['DAI-USD']);
+  } finally {
     PriceService.getCoinbasePrice = originalCoinbase;
     PriceService.getCoinGeckoPrice = originalGecko;
   }

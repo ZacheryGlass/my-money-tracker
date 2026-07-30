@@ -247,6 +247,33 @@ test('POST /api/eth/wallets/bulk without ETHERSCAN_API_KEY returns 503', async (
   assert.match(response.body.error, /Etherscan is not configured/);
 });
 
+test('POST /api/eth/wallets/bulk allows a keyless-only chain set', async () => {
+  const EthWalletService = require('../src/services/EthWalletService');
+  const originalAddWallet = EthWalletService.addWallet;
+  const originalSyncWallet = EthWalletService.syncWallet;
+  const priorChains = process.env.ETH_CHAINS;
+  process.env.ETH_CHAINS = '100';
+  EthWalletService.addWallet = async (userId, address) => ({
+    wallet: { id: 77, user_id: userId, address },
+    account: { id: 88 },
+  });
+  EthWalletService.syncWallet = async () => ({});
+  try {
+    const response = await request(app)
+      .post('/api/eth/wallets/bulk')
+      .send({ addresses: ['0x1111111111111111111111111111111111111111'] })
+      .set('Content-Type', 'application/json');
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.summary.added, 1);
+  } finally {
+    EthWalletService.addWallet = originalAddWallet;
+    EthWalletService.syncWallet = originalSyncWallet;
+    if (priorChains === undefined) delete process.env.ETH_CHAINS;
+    else process.env.ETH_CHAINS = priorChains;
+  }
+});
+
 test('POST /api/eth/wallets/bulk reports each address and adds the good ones', async () => {
   const SecretsService = require('../src/services/SecretsService');
   const EthWalletService = require('../src/services/EthWalletService');
@@ -262,7 +289,7 @@ test('POST /api/eth/wallets/bulk reports each address and adds the good ones', a
   SecretsService.getUserKey = async () => 'test-key';
   EthWalletService.addWallet = async (userId, address) => {
     if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
-      const error = new Error('address must be a 0x-prefixed 40-hex-character Ethereum address');
+      const error = new Error('address must be a 0x-prefixed 40-hex-character EVM address');
       error.code = 'INVALID_ADDRESS';
       throw error;
     }

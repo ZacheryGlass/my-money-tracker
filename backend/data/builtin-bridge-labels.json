@@ -23,7 +23,7 @@
     "base": "Coinbase's own docs. Also the source for the OP Stack L2 predeploys, which are identical on OP Mainnet and Base (both explorers confirm the same two addresses).",
     "across": "Across' own docs. The per-chain subpage URLs in issue #59 do not exist; the site serves one consolidated table.",
     "polygon": "Polygon's own static network registry, the file its SDKs and docs resolve mainnet addresses from. Five seeded rows: the three PoS PROXY addresses under POSContracts (RootChainManagerProxy, EtherPredicateProxy, ERC20PredicateProxy), plus the Plasma DepositManagerProxy (Main.Contracts.DepositManagerProxy) and the MRC20 native-token precompile (Matic.Contracts.Tokens.MaticToken, 0x0000000000000000000000000000000000001010). POL bridges via PLASMA, not the PoS RootChainManager: the deposit's L1 counterparty is the DepositManager, and its Polygon counterparty is the MRC20, which credits the bridged-in POL through the Bor state sync (#76). The proxies -- and the precompile the state sync writes from -- are what a user (or the system transaction) transacts with; the implementations behind them are never called directly and are not seeded.",
-    "gnosis": "Gnosis Chain's own xDai Bridge page. It identifies the Ethereum foreign bridge and Gnosis home bridge proxy used to mint and redeem the chain's native xDAI."
+    "gnosis": "Gnosis Chain's own xDai Bridge page. It identifies the legacy Ethereum/Gnosis bridge proxies, the current Ethereum BridgeRouter and Gnosis USDS deposit entry points, and the Block Reward contract whose AddedReceiver log records consensus-minted xDAI credits."
   },
   "excluded": {
     "zksync-era": "Chain 324 is ABSENT from Etherscan's V2 chainlist (config/chains.js), so no zkSync transfer can ever be ingested. Its L1 contracts are omitted with it; an L1 deposit into zkSync stays a flagged send, which is the visible failure, not the silent one.",
@@ -47,12 +47,36 @@
       "explorer_name_tag": "Gnosis: xDAI Bridge"
     },
     {
+      "address": "0x9a873656c19efecbfb4f9fab5b7acdeab466a0b0",
+      "name": "Gnosis: BridgeRouter (Ethereum)",
+      "chain_id": 1,
+      "protocol": "gnosis",
+      "docs_name": "BridgeRouter Proxy",
+      "explorer_name_tag": "Gnosis: BridgeRouter"
+    },
+    {
       "address": "0x7301cfa0e1756b71869e93d4e4dca5c7d0eb0aa6",
       "name": "Gnosis: xDAI Bridge",
       "chain_id": 100,
       "protocol": "gnosis",
       "docs_name": "xDAI Bridge Contract",
       "explorer_name_tag": "Gnosis: xDAI Bridge"
+    },
+    {
+      "address": "0x481c034c6d9441db23ea48de68bcae812c5d39ba",
+      "name": "Gnosis: Block Reward Bridge Credit",
+      "chain_id": 100,
+      "protocol": "gnosis",
+      "docs_name": "Block Reward Contract",
+      "explorer_name_tag": "Gnosis: Block Reward"
+    },
+    {
+      "address": "0x5c183c8a49aba6e31049997a56d75600e27ff8c9",
+      "name": "Gnosis: USDS Deposit Contract",
+      "chain_id": 100,
+      "protocol": "gnosis",
+      "docs_name": "USDSDepositContract",
+      "explorer_name_tag": "Gnosis: USDS Deposit Contract"
     },
     {
       "address": "0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f",

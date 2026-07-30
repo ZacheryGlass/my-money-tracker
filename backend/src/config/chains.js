@@ -165,6 +165,20 @@ const REGISTRY = [
       baseUrl: 'https://gnosis.blockscout.com/api',
       requiresApiKey: false,
     },
+    // Blockscout's indexed account balance may be stale while it refreshes in
+    // the background. Reconciliation needs the chain head, so native and token
+    // balance reads use Gnosis' public JSON-RPC endpoint instead.
+    rpcUrl: 'https://rpc.gnosischain.com',
+    // Gnosis mints bridged xDAI through consensus. No account feed contains the
+    // credit; the Block Reward contract's AddedReceiver log is the on-chain
+    // record. This reuses the sixth native-credit feed/cursor introduced for
+    // Polygon. The legacy config name is retained because it is persisted as
+    // last_block_statesync, but `userTopicIndex` makes the log shape generic.
+    stateSyncDeposits: {
+      contract: '0x481c034c6d9441db23ea48de68bcae812c5d39ba',
+      topic0: '0x3c798bbcf33115b42c728b8504cff11dd58736e9fa789f1cda2738db7d696b2a',
+      userTopicIndex: 1,
+    },
   },
   {
     id: 10,
@@ -268,6 +282,18 @@ function enabledChains() {
   return REGISTRY.filter((chain) => ids.has(chain.id));
 }
 
+// The default Etherscan transport needs the user's key; a chain-declared
+// account API can explicitly be keyless. Orchestration gates use this rather
+// than assuming every enabled chain needs Etherscan credentials.
+function accountApiRequiresKey(chainId) {
+  const accountApi = getChain(chainId)?.accountApi;
+  return accountApi ? accountApi.requiresApiKey !== false : true;
+}
+
+function enabledChainsRequireApiKey() {
+  return enabledChains().some((chain) => accountApiRequiresKey(chain.id));
+}
+
 // The whole registry with each entry's current enablement. No runtime caller:
 // this is the introspection entry point the registry tests assert against (that
 // 324 is absent rather than disabled, that 10/8453 ship off, that every chain is
@@ -333,6 +359,8 @@ module.exports = {
   NATIVE_ASSETS,
   enabledChains,
   enabledChainIds,
+  enabledChainsRequireApiKey,
+  accountApiRequiresKey,
   allChains,
   getChain,
   isEnabled,

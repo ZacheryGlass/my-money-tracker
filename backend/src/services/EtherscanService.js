@@ -100,6 +100,24 @@ class EtherscanService {
     const { status, message, result } = response.data || {};
     if (status === '1') return result;
 
+    const detail = `${message || ''} ${typeof result === 'string' ? result : ''}`;
+    // Standing provider limitations must be classified BEFORE the empty-array
+    // shortcut below. Blockscout can return status=2 + result=[] while an
+    // internal range is only partially indexed; accepting that as an empty
+    // successful feed authorizes destructive overlap deletion.
+    if (CHAIN_UNAVAILABLE_RE.test(detail)) {
+      const error = new Error(`${provider.name} cannot serve chain ${chainId} with this API key: ${detail.trim()}`);
+      error.code = 'ETHERSCAN_CHAIN_UNAVAILABLE';
+      error.chainId = chainId;
+      throw error;
+    }
+    if (FEED_UNSUPPORTED_RE.test(detail)) {
+      const error = new Error(`${provider.name} does not serve ${params.action} on chain ${chainId}: ${detail.trim()}`);
+      error.code = 'ETHERSCAN_FEED_UNSUPPORTED';
+      error.chainId = chainId;
+      throw error;
+    }
+
     // "No transactions found" is a normal empty feed, not an error. The logs
     // module (getLogs, #76) answers an empty match with "No records found"
     // instead; both mean the same thing -- nothing to ingest, not a failure.
@@ -114,35 +132,44 @@ class EtherscanService {
       return this._request(params, { apiKey, chainId, attempt: 1 });
     }
 
-    const detail = `${message || ''} ${typeof result === 'string' ? result : ''}`;
-    if (CHAIN_UNAVAILABLE_RE.test(detail)) {
-      const error = new Error(`${provider.name} cannot serve chain ${chainId} with this API key: ${detail.trim()}`);
-      error.code = 'ETHERSCAN_CHAIN_UNAVAILABLE';
-      error.chainId = chainId;
-      throw error;
-    }
-    if (FEED_UNSUPPORTED_RE.test(detail)) {
-      const error = new Error(`${provider.name} does not serve ${params.action} on chain ${chainId}: ${detail.trim()}`);
-      error.code = 'ETHERSCAN_FEED_UNSUPPORTED';
-      error.chainId = chainId;
-      throw error;
-    }
-
     const error = new Error(`${provider.name} error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());
     error.code = 'ETHERSCAN_API_ERROR';
     throw error;
+  }
+
+  static async _rpcRequest(chainId, method, params) {
+    const rpcUrl = chains.getChain(chainId)?.rpcUrl;
+    if (!rpcUrl) return null;
+    const response = await etherscan.throttled(() =>
+      axios.post(rpcUrl, {
+        jsonrpc: '2.0',
+        id: 1,
+        method,
+        params,
+      }, { timeout: 15000 })
+    );
+    const payload = response.data || {};
+    if (payload.error || typeof payload.result !== 'string') {
+      const error = new Error(`Chain RPC error: ${payload.error?.message || 'invalid response'}`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    return payload.result;
   }
 
   // Current balance in wei, as a string (values exceed Number precision).
   // Per chain: the native asset is ETH on every chain in the registry, so this
   // is the chain's ETH balance, not a share of one global figure.
   static async getEthBalance(address, apiKey, chainId = etherscan.CHAIN_ID) {
-    const result = await this._request({
-      module: 'account',
-      action: 'balance',
-      address,
-      tag: 'latest',
-    }, { apiKey, chainId });
+    const rpcResult = await this._rpcRequest(chainId, 'eth_getBalance', [address, 'latest']);
+    const result = rpcResult === null
+      ? await this._request({
+        module: 'account',
+        action: 'balance',
+        address,
+        tag: 'latest',
+      }, { apiKey, chainId })
+      : (/^0x[0-9a-f]+$/i.test(rpcResult) ? BigInt(rpcResult).toString() : rpcResult);
     // A malformed response must not silently zero the ETH holding.
     if (typeof result !== 'string' || !/^\d+$/.test(result)) {
       const error = new Error(`Etherscan returned an invalid balance: ${JSON.stringify(result)}`);
@@ -160,13 +187,20 @@ class EtherscanService {
   // (the rate limit is per key), so a wallet holding fifty tokens on three
   // chains would otherwise monopolise it for minutes.
   static async getTokenBalance(address, contractAddress, apiKey, chainId = etherscan.CHAIN_ID) {
-    const result = await this._request({
-      module: 'account',
-      action: 'tokenbalance',
-      contractaddress: contractAddress,
-      address,
-      tag: 'latest',
-    }, { apiKey, chainId });
+    const paddedAddress = String(address).toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const rpcResult = await this._rpcRequest(chainId, 'eth_call', [{
+      to: contractAddress,
+      data: `0x70a08231${paddedAddress}`,
+    }, 'latest']);
+    const result = rpcResult === null
+      ? await this._request({
+        module: 'account',
+        action: 'tokenbalance',
+        contractaddress: contractAddress,
+        address,
+        tag: 'latest',
+      }, { apiKey, chainId })
+      : (/^0x[0-9a-f]+$/i.test(rpcResult) ? BigInt(rpcResult).toString() : rpcResult);
     // Same fail-loud rule as getEthBalance: a malformed response must not be
     // read as a zero balance, which would report the whole position as drift.
     if (typeof result !== 'string' || !/^\d+$/.test(result)) {
@@ -290,6 +324,12 @@ class EtherscanService {
   static async fetchStateSyncDeposits(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID, feedConfig = null) {
     if (!feedConfig || !feedConfig.contract || !feedConfig.topic0) return [];
     const userTopic = addressTopic(address);
+    const userTopicIndex = Number(feedConfig.userTopicIndex ?? 2);
+    if (![1, 2, 3].includes(userTopicIndex)) {
+      throw new Error('statesync feed userTopicIndex must be 1, 2, or 3');
+    }
+    const userTopicParam = `topic${userTopicIndex}`;
+    const topicOperatorParam = `topic0_${userTopicIndex}_opr`;
     const seen = new Set();
     const out = [];
     let cursor = Math.max(0, Number(startBlock) || 0);
@@ -303,11 +343,10 @@ class EtherscanService {
         action: 'getLogs',
         address: feedConfig.contract,
         topic0: feedConfig.topic0,
-        topic2: userTopic,
-        // topic0 AND topic2: the Deposit signature and this wallet, which is what
-        // excludes the co-emitted LogTransfer log (a different topic0) and every
-        // other wallet's deposits.
-        topic0_2_opr: 'and',
+        [userTopicParam]: userTopic,
+        // topic0 AND the configured indexed receiver: Polygon's Deposit puts
+        // the wallet in topic2; Gnosis' AddedReceiver puts it in topic1.
+        [topicOperatorParam]: 'and',
         fromBlock: cursor,
         toBlock: 'latest',
         page: 1,
@@ -328,7 +367,7 @@ class EtherscanService {
       // (block, logIndex) matches the account feeds' contract and makes the
       // boundary refetch below deterministic.
       const parsed = rows
-        .map((log) => this._parseStateSyncLog(log, address, feedConfig.contract))
+        .map((log) => this._parseStateSyncLog(log, address, feedConfig))
         .sort((a, b) => (a._block - b._block) || (a._logIndex - b._logIndex));
 
       let maxSeen = cursor;
@@ -377,11 +416,17 @@ class EtherscanService {
   // and are ignored). from = the precompile that emitted the log; to = the
   // wallet. Cursor helpers (_block/_logIndex/_key) are stripped by the caller
   // before the row leaves.
-  static _parseStateSyncLog(log, walletAddress, contract) {
+  static _parseStateSyncLog(log, walletAddress, feedConfig) {
     const fail = (why) => {
       throw new Error(`statesync Deposit log is malformed (${why}); treated as a transport failure`);
     };
     const data = typeof log?.data === 'string' ? log.data : '';
+    const contract = String(feedConfig.contract).toLowerCase();
+    if (String(log?.address || '').toLowerCase() !== contract) fail('wrong emitting contract');
+    const userTopicIndex = Number(feedConfig.userTopicIndex ?? 2);
+    if (String(log?.topics?.[userTopicIndex] || '').toLowerCase() !== addressTopic(walletAddress)) {
+      fail('wrong receiver topic');
+    }
     const amountHex = data.slice(0, 66);
     if (!/^0x[0-9a-fA-F]{64}$/.test(amountHex)) fail('bad amount word');
     // getLogs returns these as HEX, unlike the account feeds' decimal strings.
@@ -399,7 +444,7 @@ class EtherscanService {
       hash: log.transactionHash,
       blockNumber: String(block),
       timeStamp: String(timeStamp),
-      from: String(log.address || contract).toLowerCase(),
+      from: contract,
       to: String(walletAddress).toLowerCase(),
       value: BigInt(amountHex).toString(),
       _block: block,
