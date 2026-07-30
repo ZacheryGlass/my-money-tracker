@@ -17,6 +17,23 @@ function toAmount(value) {
   return Math.round(capped * 100) / 100;
 }
 
+// A matched bridge is one movement of the user's own money, even though the
+// two chains recorded it as unrelated transactions. The activity layer owns
+// the matching decision; this is the small resolved projection the older
+// transactions mirror needs in order to make the same decision. Unmatched
+// bridge legs are intentionally absent and stay in the conservative
+// external/token branches below.
+function bridgeMirrorName(transfer, bridge) {
+  const native = chains.nativeSymbol(transfer.chain_id ?? chains.DEFAULT_CHAIN_ID);
+  const symbol = transfer.transfer_type === 'token'
+    ? (transfer.token_symbol || 'TOKEN') : native;
+  const chain = bridge.counterpart_chain_name
+    || chains.chainLabel(bridge.counterpart_chain_id ?? chains.DEFAULT_CHAIN_ID);
+  return bridge.role === 'out'
+    ? `${symbol} → ${chain} bridge`
+    : `${symbol} ← ${chain} bridge`;
+}
+
 // Pure: one eth_transfers row -> a transactions row body, or null when the
 // transfer should not appear in the ledger. Ledger sign convention is Plaid's:
 // positive = money leaving the account.
@@ -48,7 +65,13 @@ function toAmount(value) {
 // Rebuild-safe by construction: the mirror is deleted and rewritten wholesale,
 // so a leg that gets priced by a later backfill reappears on the next rebuild
 // (the historical-price job re-derives every wallet nightly for that reason).
-function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() } = {}) {
+function buildMirrorRow(transfer, walletAddress, {
+  ignoredContracts = new Set(),
+  // Present only for a bridge pair the cross-chain matcher confirmed. The
+  // absence of this value is meaningful: an unmatched bridge must not be
+  // promoted to an internal transfer by the label alone.
+  bridge = null,
+} = {}) {
   const wallet = walletAddress.toLowerCase();
   const outgoing = transfer.from_address === wallet;
   // Own beats exchange (reclassify also encodes this, belt and suspenders):
@@ -57,15 +80,10 @@ function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() 
   const exchangeCategory = outgoing ? 'CRYPTO_EXCHANGE_DEPOSIT' : 'CRYPTO_EXCHANGE_WITHDRAWAL';
   const usd = transfer.usd_at_time == null ? null : Number(transfer.usd_at_time);
 
-  // SCOPE BOUNDARY, deliberate (#59). Only `exchange` and `own` are denormalized
-  // onto the leg, so a bridge deposit mirrors as CRYPTO_EXTERNAL / CRYPTO_TOKEN
-  // like any other outbound transfer -- NOT as an internal move the way
-  // CRYPTO_EXCHANGE_DEPOSIT is. That is safe (neither category is spending, so
-  // nothing lands in a spending total), but it does mean the activity layer
-  // knows a bridge is one movement of the user's own money and the ledger mirror
-  // still does not. Teaching it requires the bridge verdict -- and, for the
-  // internal-transfer pairing, the cross-chain LINK -- to reach this per-leg
-  // pass, which is a separate change; do not infer it from the label here.
+  // A bridge link is the evidence needed to make this older per-leg mirror
+  // agree with the activity layer. A bridge label alone is not enough: the
+  // other side may never have arrived, so unmatched rows remain external and
+  // visible for review.
 
   if (transfer.transfer_type === 'gas') {
     // A fee is always a cost, whichever way the transaction went, and it is
@@ -98,24 +116,24 @@ function buildMirrorRow(transfer, walletAddress, { ignoredContracts = new Set() 
     if (!contract || ignoredContracts.has(contract)) return null;
     const symbol = transfer.token_symbol || 'TOKEN';
     return {
-      category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER'
+      category: transfer.counterparty_is_own || bridge ? 'CRYPTO_SELF_TRANSFER'
         : exchange ? exchangeCategory
         : 'CRYPTO_TOKEN',
-      name: outgoing
+      name: bridge ? bridgeMirrorName(transfer, bridge) : (outgoing
         ? `${symbol} → ${exchange || shortAddress(transfer.to_address)}`
-        : `${symbol} ← ${exchange || shortAddress(transfer.from_address)}`,
+        : `${symbol} ← ${exchange || shortAddress(transfer.from_address)}`),
       amount,
     };
   }
 
   const native = chains.nativeSymbol(transfer.chain_id ?? chains.DEFAULT_CHAIN_ID);
   return {
-    category: transfer.counterparty_is_own ? 'CRYPTO_SELF_TRANSFER'
+    category: transfer.counterparty_is_own || bridge ? 'CRYPTO_SELF_TRANSFER'
       : exchange ? exchangeCategory
       : 'CRYPTO_EXTERNAL',
-    name: outgoing
+    name: bridge ? bridgeMirrorName(transfer, bridge) : (outgoing
       ? `${native} → ${exchange || shortAddress(transfer.to_address)}`
-      : `${native} ← ${exchange || shortAddress(transfer.from_address)}`,
+      : `${native} ← ${exchange || shortAddress(transfer.from_address)}`),
     amount,
   };
 }
@@ -129,23 +147,59 @@ class EthTransactionMirrorService {
   // needed a TTL cache and a stale-amount fallback to survive rapid triage. The
   // dated series removed all of that: valuation is a SQL pass that ran before
   // this, and this reads its answer.
-  static async rebuildForWallet(walletId) {
+  static async rebuildForWallet(walletId, { includeBridgeLinks = false } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     const account = await EthWallet.getAccountForWallet(walletId);
     if (!account) return { skipped: true };
 
-    const [transfersResult, ignoredResult] = await Promise.all([
+    const [transfersResult, ignoredResult, bridgeResult] = await Promise.all([
       pool.query('SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id', [walletId]),
       pool.query('SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1', [wallet.user_id]),
+      includeBridgeLinks ? pool.query(
+        `SELECT a.chain_id, a.tx_hash,
+                CASE WHEN l.out_activity_id = a.id THEN 'out' ELSE 'in' END AS role,
+                l.id AS link_id,
+                l.asset,
+                l.out_amount::text AS out_amount,
+                l.in_amount::text AS in_amount,
+                l.fee_amount::text AS fee_amount,
+                pair.chain_id AS counterpart_chain_id,
+                pair.tx_hash AS counterpart_tx_hash
+           FROM eth_activity a
+           JOIN eth_wallets w ON w.id = a.wallet_id
+           JOIN eth_activity_links l
+             ON l.out_activity_id = a.id OR l.in_activity_id = a.id
+           JOIN eth_activity pair
+             ON pair.id = CASE WHEN l.out_activity_id = a.id
+                               THEN l.in_activity_id ELSE l.out_activity_id END
+           JOIN eth_wallets pair_owner
+             ON pair_owner.id = pair.wallet_id AND pair_owner.user_id = w.user_id
+          WHERE a.wallet_id = $1 AND w.user_id = $2`,
+        [walletId, wallet.user_id]
+      ) : Promise.resolve({ rows: [] }),
     ]);
     const transfers = transfersResult.rows;
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
+    const bridgeByActivity = new Map(bridgeResult.rows.map((row) => [
+      `${row.chain_id}:${row.tx_hash}`,
+      {
+        role: row.role,
+        link_id: row.link_id,
+        asset: row.asset,
+        out_amount: row.out_amount,
+        in_amount: row.in_amount,
+        fee_amount: row.fee_amount,
+        counterpart_chain_id: row.counterpart_chain_id,
+        counterpart_tx_hash: row.counterpart_tx_hash,
+      },
+    ]));
 
     const rows = [];
     let unpricedSkipped = 0;
     for (const transfer of transfers) {
-      const body = buildMirrorRow(transfer, wallet.address, { ignoredContracts });
+      const bridge = bridgeByActivity.get(`${transfer.chain_id ?? chains.DEFAULT_CHAIN_ID}:${transfer.tx_hash}`) || null;
+      const body = buildMirrorRow(transfer, wallet.address, { ignoredContracts, bridge });
       if (!body) {
         // Counted, not mirrored: these are the legs the ledger is knowingly
         // silent about, and the count is what makes that silence visible in the
@@ -189,6 +243,24 @@ class EthTransactionMirrorService {
 
     logger.info({ walletId, mirrored: rows.length, unpricedSkipped }, 'ETH transaction mirror rebuilt');
     return { mirrored: rows.length, unpricedSkipped };
+  }
+
+  // Rebuild all wallet mirrors after the user-wide bridge matcher has produced
+  // links. The per-wallet derivation necessarily runs before matching (the far
+  // side may live on another wallet), so this second database-only pass is
+  // what publishes confirmed bridge links to the legacy transactions table.
+  static async rebuildForUser(userId) {
+    if (!userId) throw new Error('EthTransactionMirrorService.rebuildForUser requires a userId');
+    const wallets = await EthWallet.findAllByUser(userId);
+    const results = [];
+    for (const wallet of wallets) {
+      results.push(await this.rebuildForWallet(wallet.id, { includeBridgeLinks: true }));
+    }
+    return {
+      wallets: wallets.length,
+      mirrored: results.reduce((sum, result) => sum + Number(result.mirrored || 0), 0),
+      unpricedSkipped: results.reduce((sum, result) => sum + Number(result.unpricedSkipped || 0), 0),
+    };
   }
 
 }

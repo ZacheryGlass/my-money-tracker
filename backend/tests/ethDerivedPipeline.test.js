@@ -91,6 +91,10 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
     calls.push(['bridge', userId]); maybeFail('bridge', userId);
     return { matched: 0, unmatched: 0 };
   });
+  stub(MirrorService, 'rebuildForUser', async (userId) => {
+    calls.push(['bridgeMirror', userId]); maybeFail('bridgeMirror', userId);
+    return { wallets: wallets.length, mirrored: 0, unpricedSkipped: 0 };
+  });
   stub(TransactionClassificationService, 'backfill', async () => {
     calls.push(['backfill']); maybeFail('backfill');
   });
@@ -152,7 +156,7 @@ test('sync shape: a price-fill failure warns and the pipeline continues', async 
 // finishUser -- the user-wide tail
 // ---------------------------------------------------------------------------
 
-test('finishUser runs match -> bridge -> backfill and returns the match result', async (t) => {
+test('finishUser runs match -> bridge -> bridge mirror -> backfill and returns the match result', async (t) => {
   const { calls } = harness(t);
   const result = await EthDerivedPipeline.finishUser(1, {
     matchContext: { reason: 'classification-refresh' },
@@ -160,6 +164,7 @@ test('finishUser runs match -> bridge -> backfill and returns the match result',
   assert.deepEqual(calls, [
     ['matches', 1, { reason: 'classification-refresh' }],
     ['bridge', 1],
+    ['bridgeMirror', 1],
     ['backfill'],
   ]);
   assert.deepEqual(result.matches, { matched: 0 });
@@ -195,6 +200,7 @@ test('runForUser classification shape: reclassify first, per-wallet steps, tail 
     ['activity', 8, { rebuildMatches: false }],
     ['matches', 1, { reason: 'classification-refresh' }],
     ['bridge', 1],
+    ['bridgeMirror', 1],
     ['backfill'],
   ]);
 });
@@ -215,6 +221,7 @@ test('runForUser derived shape: holdings after value, no reclassify', async (t) 
     ['activity', 8, { rebuildMatches: false }],
     ['matches', 1, { reason: 'derived-refresh' }],
     ['bridge', 1],
+    ['bridgeMirror', 1],
     ['backfill'],
   ]);
 });
@@ -236,6 +243,7 @@ test('runForUser isolates a step failure to that step, not its wallet or its nei
     ['activity', 8],
     ['matches', 1],
     ['bridge', 1],
+    ['bridgeMirror', 1],
     ['backfill'],
   ]);
 });

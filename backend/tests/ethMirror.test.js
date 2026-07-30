@@ -57,6 +57,20 @@ test('outgoing external ETH transfer mirrors as a positive (outflow) amount', ()
   assert.match(row.name, /^ETH → 0xbbbb/);
 });
 
+test('a confirmed bridge leg mirrors as an internal transfer with the far chain named', () => {
+  const row = buildMirrorRow(transfer({ chain_id: 1 }), WALLET, {
+    bridge: { role: 'out', counterpart_chain_id: 42161 },
+  });
+  assert.equal(row.category, 'CRYPTO_SELF_TRANSFER');
+  assert.equal(row.amount, 6000);
+  assert.equal(row.name, 'ETH → Arbitrum One bridge');
+});
+
+test('an unmatched bridge has no special mirror hint and stays external', () => {
+  const row = buildMirrorRow(transfer(), WALLET);
+  assert.equal(row.category, 'CRYPTO_EXTERNAL');
+});
+
 test('incoming self-transfer mirrors as a negative (inflow) self-transfer', () => {
   const row = buildMirrorRow(
     transfer({ from_address: OTHER, to_address: WALLET, counterparty_is_own: true }),

@@ -6,8 +6,8 @@
 //
 //   reclassify? -> ensureAssets? -> value -> holdings? -> mirror -> activity
 //      (user)        (wallet)      (wallet)  (wallet)     (wallet)   (wallet)
-//   -> match? -> bridge -> backfill
-//       (user)    (user)    (global)
+//   -> match? -> bridge -> mirror -> backfill
+//       (user)    (user)    (user)    (global)
 //
 // Before this module the sequence was hand-copied at four sites (_syncWallet,
 // refreshClassificationsForUser, refreshDerivedForUser, historicalPriceJob),
@@ -154,7 +154,7 @@ async function rebuildWallet(walletId, {
 }
 
 // The user-wide tail every walker runs once after its wallets have landed:
-// match -> bridge -> backfill.
+// match -> bridge -> mirror -> backfill.
 async function finishUser(userId, {
   match = true,
   matchContext = {},
@@ -178,6 +178,11 @@ async function finishUser(userId, {
   // silently unpair every bridge the user has ever made.
   try {
     await EthActivityService.matchBridgeTransfersForUser(userId);
+    // The per-wallet mirror runs before this user-wide matcher because the far
+    // side of a bridge may live on another wallet. Once links exist, rebuild
+    // the legacy transactions mirror so a confirmed bridge is a self-transfer
+    // everywhere, while unmatched legs retain their conservative category.
+    await EthTransactionMirrorService.rebuildForUser(userId);
   } catch (err) {
     if (context) logger.warn({ userId, err }, `Bridge matching failed during ${context}`);
     else logger.warn({ walletId, err }, 'Bridge matching failed; legs stay flagged for review');
