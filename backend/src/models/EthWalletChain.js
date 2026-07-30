@@ -12,17 +12,17 @@ const pool = require('../config/database');
 // caller here already holds a wallet the requesting user owns, so these methods
 // take a walletId directly -- the same contract as EthTransfer's.
 class EthWalletChain {
-  static async ensure(walletId, chainId) {
+  static async ensure(walletId, chainId, ingestVersion = 0) {
     const inserted = await pool.query(
-      `INSERT INTO eth_wallet_chains (wallet_id, chain_id)
-       VALUES ($1, $2)
+      `INSERT INTO eth_wallet_chains (wallet_id, chain_id, ingest_version)
+       VALUES ($1, $2, $3)
        -- DO NOTHING, not DO UPDATE: this runs at the top of every chain's sync,
        -- and an upsert that wrote anything would either clobber live cursors or
        -- make updated_at meaningless. RETURNING is empty on conflict, which is
        -- what the re-select below is for.
        ON CONFLICT (wallet_id, chain_id) DO NOTHING
        RETURNING *`,
-      [walletId, chainId]
+      [walletId, chainId, ingestVersion]
     );
     if (inserted.rows[0]) return inserted.rows[0];
     const existing = await pool.query(
@@ -30,6 +30,39 @@ class EthWalletChain {
       [walletId, chainId]
     );
     return existing.rows[0];
+  }
+
+  // A version bump means stored rows were normalized under an obsolete rule or
+  // provider. Reset every feed cursor atomically, but do not delete data here:
+  // each successfully refetched feed owns its delete-then-insert window, while
+  // a failed feed must preserve its old rows. The zero cursors make retries
+  // remain full-history until each feed actually lands.
+  static async resetForIngestVersion(walletId, chainId, ingestVersion) {
+    const result = await pool.query(
+      `UPDATE eth_wallet_chains
+       SET last_block_normal = 0,
+           last_block_internal = 0,
+           last_block_token = 0,
+           last_block_nft = 0,
+           last_block_1155 = 0,
+           last_block_statesync = 0,
+           ingest_version = $3,
+           error_code = NULL,
+           error_message = NULL,
+           unsupported_feeds = '{}',
+           last_synced_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE wallet_id = $1 AND chain_id = $2
+         AND ingest_version < $3
+       RETURNING *`,
+      [walletId, chainId, ingestVersion]
+    );
+    if (result.rows[0]) return result.rows[0];
+    const current = await pool.query(
+      'SELECT * FROM eth_wallet_chains WHERE wallet_id = $1 AND chain_id = $2',
+      [walletId, chainId]
+    );
+    return current.rows[0];
   }
 
   // Every stored chain for the wallet, INCLUDING chains that are no longer
@@ -53,11 +86,11 @@ class EthWalletChain {
     return result.rows;
   }
 
-  // One cursor per feed. A NULL means that feed produced nothing this run --
-  // either genuinely empty or skipped -- which must leave its cursor where it
-  // was rather than reset it to 0. `statesync` is the #76 sixth feed; a chain
-  // that does not declare it never runs it, so it always passes NULL here and
-  // last_block_statesync stays at its 0 default, unread.
+  // One cursor per feed. A NULL means the feed was skipped or did not report a
+  // coverage boundary, which leaves its cursor unchanged. OP Stack account and
+  // native-credit feeds carry the common scanned explorer head even when empty,
+  // so a completed historical rebuild resumes incrementally next time. A chain
+  // that does not declare statesync passes NULL for that feed.
   static async updateCursors(walletId, chainId, { normal, internal, token, nft, nft1155, statesync }) {
     const result = await pool.query(
       `UPDATE eth_wallet_chains

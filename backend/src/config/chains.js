@@ -191,9 +191,14 @@ const REGISTRY = [
       requiresApiKey: false,
     },
     rpcUrl: 'https://mainnet.optimism.io',
-    // OP deposit transactions are unsigned L2 transactions whose mint funds
-    // execution. Blockscout's legacy txlist omits type=0x7e, but preserves the
-    // zero gas price and status used by `opStackDepositDestination`.
+    // Bump when stored feed rows must be rebuilt under new normalization.
+    // Existing chain rows below this version reset all feed cursors once;
+    // newly-created rows start current and do not pay a redundant backfill.
+    ingestVersion: 1,
+    // OP deposit transactions are unsigned L2 transactions whose independent
+    // mint funds execution. Blockscout's legacy txlist omits type=0x7e,
+    // sourceHash and mint, so fetchNormalTxs enriches zero-gas candidates from
+    // JSON-RPC before `opStackDepositEffects` accounts for both balance effects.
     opStackDeposits: {
       creditSource: '0x4200000000000000000000000000000000000010',
     },
@@ -220,6 +225,7 @@ const REGISTRY = [
       requiresApiKey: false,
     },
     rpcUrl: 'https://mainnet.base.org',
+    ingestVersion: 1,
     opStackDeposits: {
       creditSource: '0x4200000000000000000000000000000000000010',
     },

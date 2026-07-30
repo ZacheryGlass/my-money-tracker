@@ -87,6 +87,13 @@ function maxBlock(rows) {
   return max;
 }
 
+// A successful provider walk can cover blocks even when it finds no rows.
+// Account and native-credit feeds carry that non-enumerable boundary so an
+// empty feed advances instead of rescanning from genesis forever.
+function scannedThroughBlock(rows) {
+  return rows.scannedThroughBlock ?? maxBlock(rows);
+}
+
 class EthWalletService {
   // Decides whether a txlist row is a mis-served classic-era Arbitrum bridge
   // deposit (config/chains.js classicRetryableDeposits), and if so, who the
@@ -131,26 +138,28 @@ class EthWalletService {
     return `0x${word0.slice(24)}`;
   }
 
-  // Blockscout's Etherscan-compatible txlist omits OP Stack's transaction
-  // type=0x7e, sourceHash and mint fields. It does preserve the execution
-  // fields that make a direct EOA deposit distinguishable: an unsigned,
-  // successful, zero-gas-price, empty-calldata 21k transfer. Return the L2
-  // destination for that exact shape, otherwise decline to guess.
-  //
-  // The OP deposit protocol mints `value` to `from` before executing the
-  // transfer. Therefore a deposit from a tracked wallet to somebody else is
-  // net-zero for that tracked L2 account, while a deposit to the tracked wallet
-  // is a real inbound credit. normalizeFeeds handles those two cases below.
-  static opStackDepositDestination(raw, config) {
+  // fetchNormalTxs enriches type-0x7e rows from JSON-RPC because Blockscout's
+  // legacy txlist omits sourceHash and mint. Require every authoritative field
+  // here: mint and value are independent balance effects, and mint survives a
+  // failed execution, so inferring either from the legacy row would corrupt the
+  // exact balance audit.
+  static opStackDepositEffects(raw, config) {
     if (!config?.creditSource) return null;
-    if (raw.gasPrice !== '0' || raw.gasUsed !== '21000') return null;
-    if (String(raw.isError ?? '0') !== '0') return null;
-    if ((raw.input || '').toLowerCase() !== '0x') return null;
-    if (!/^\d+$/.test(String(raw.value || '')) || BigInt(raw.value) <= 0n) return null;
+    if (raw.opStackType !== '0x7e') return null;
+    if (!/^0x[0-9a-f]{64}$/i.test(String(raw.opStackSourceHash || ''))) return null;
+    if (!/^\d+$/.test(String(raw.opStackMintWei ?? ''))) return null;
+    if (!/^\d+$/.test(String(raw.value ?? ''))) return null;
+    if (raw.isError !== '0' && raw.isError !== '1') return null;
     const from = String(raw.from || '').toLowerCase();
-    const to = String(raw.to || '').toLowerCase();
-    if (!ADDRESS_RE.test(from) || !ADDRESS_RE.test(to)) return null;
-    return to;
+    const to = raw.to == null || raw.to === '' ? null : String(raw.to).toLowerCase();
+    if (!ADDRESS_RE.test(from) || (to !== null && !ADDRESS_RE.test(to))) return null;
+    return {
+      from,
+      to,
+      mint: BigInt(raw.opStackMintWei),
+      value: BigInt(raw.value),
+      succeeded: raw.isError === '0',
+    };
   }
 
   // Pure: raw Etherscan feed rows -> eth_transfers rows (without wallet_id).
@@ -257,23 +266,37 @@ class EthWalletService {
         continue;
       }
 
-      // A direct OP Stack deposit is a protocol-minted L2 credit, not a signed
-      // self-transfer. For a tracked destination, store one inbound leg from
-      // the canonical L2 bridge predeploy so bridge classification and
-      // cross-chain matching see it. When the tracked wallet is only `from`
-      // and the deposit executes to somebody else, its L2 balance change is
-      // zero (mint then send), so the account-feed row contributes no leg.
-      // The zero gas price also means no gas leg in either case.
-      const opStackDest = opStackDeposits
-        ? this.opStackDepositDestination(raw, opStackDeposits)
+      // An OP Stack deposit has two independent effects: `mint` credits from
+      // the protocol to `from` unconditionally, then a successful execution
+      // moves `value` from `from` to `to`. Store both effects that touch this
+      // wallet. A self-execution cancels itself and needs no second row; the
+      // mint credit remains. Deposit transactions charge no L2 gas.
+      const opStack = opStackDeposits
+        ? this.opStackDepositEffects(raw, opStackDeposits)
         : null;
-      if (opStackDest) {
-        if (opStackDest === wallet) {
+      if (opStackDeposits && raw.opStackType === '0x7e' && !opStack) {
+        throw new Error(`Enriched OP Stack deposit ${raw.hash || '(unknown hash)'} is malformed`);
+      }
+      if (opStack) {
+        if (opStack.from === wallet && opStack.mint > 0n) {
           rows.push({
             ...baseRow(raw, 'native'),
             from_address: opStackDeposits.creditSource,
             to_address: wallet,
-            value_wei: raw.value,
+            value_wei: opStack.mint.toString(),
+            // Mint is unconditional and succeeded even when the execution
+            // status is failed; native balance math must keep this credit.
+            is_error: false,
+          });
+        }
+        if (opStack.succeeded && opStack.value > 0n
+            && !(opStack.from === wallet && opStack.to === wallet)
+            && (opStack.from === wallet || opStack.to === wallet)) {
+          rows.push({
+            ...baseRow(raw, 'native'),
+            from_address: opStack.from,
+            to_address: opStack.to,
+            value_wei: opStack.value.toString(),
           });
         }
         continue;
@@ -420,7 +443,11 @@ class EthWalletService {
   // survive, and leave its cursor untouched. Advancing a cursor past blocks
   // that were never fetched drops those rows silently and forever.
   static async _syncWalletChain(wallet, chain, apiKey) {
-    const state = await EthWalletChain.ensure(wallet.id, chain.id);
+    const ingestVersion = Number(chain.ingestVersion || 0);
+    let state = await EthWalletChain.ensure(wallet.id, chain.id, ingestVersion);
+    if (Number(state?.ingest_version || 0) < ingestVersion) {
+      state = await EthWalletChain.resetForIngestVersion(wallet.id, chain.id, ingestVersion);
+    }
     // Resume before the stored cursor so a reorg near the tip is healed by the
     // delete-then-reinsert ingest. Per chain: an L2's cursor has nothing to do
     // with mainnet's, and block numbers are independent sequences.
@@ -451,6 +478,13 @@ class EthWalletService {
     // place, so it needs no cursor, no delete scoping, and no gap accounting.
     const classicDeposits = chain.classicRetryableDeposits || null;
     const opStackDeposits = chain.opStackDeposits || null;
+    // OP Stack history is rebuilt under ingestVersion 1. Snapshot Blockscout's
+    // indexed head once and use it as the common end block for all six feeds:
+    // successful empty feeds then have durable coverage, while a failed head
+    // lookup aborts this chain before any destructive overlap delete.
+    const indexedHead = opStackDeposits
+      ? await EtherscanService._latestBlockNumber(apiKey, chain.id)
+      : null;
 
     const feeds = {};
     const fetchedOk = {};
@@ -481,11 +515,24 @@ class EthWalletService {
         continue;
       }
       try {
-        // The trailing arg is the per-chain feed config (state-sync's
-        // {contract, topic0}); the account feeds ignore it.
-        feeds[spec.key] = await EtherscanService[spec.fetch](
-          wallet.address, resume[spec.key], apiKey, chain.id, spec.chainFeed ? chain[spec.chainFeed] : undefined
-        );
+        if (spec.chainFeed) {
+          feeds[spec.key] = await EtherscanService[spec.fetch](
+            wallet.address,
+            resume[spec.key],
+            apiKey,
+            chain.id,
+            chain[spec.chainFeed],
+            indexedHead
+          );
+        } else {
+          feeds[spec.key] = await EtherscanService[spec.fetch](
+            wallet.address,
+            resume[spec.key],
+            apiKey,
+            chain.id,
+            indexedHead
+          );
+        }
         fetchedOk[spec.key] = true;
       } catch (err) {
         fetchedOk[spec.key] = false;
@@ -531,12 +578,12 @@ class EthWalletService {
     const inserted = await EthTransfer.bulkInsert(rows);
 
     await EthWalletChain.updateCursors(wallet.id, chain.id, {
-      normal: fetchedOk.normal ? maxBlock(feeds.normal) : null,
-      internal: fetchedOk.internal ? maxBlock(feeds.internal) : null,
-      token: fetchedOk.token ? maxBlock(feeds.token) : null,
-      nft: fetchedOk.nft ? maxBlock(feeds.nft) : null,
-      nft1155: fetchedOk.nft1155 ? maxBlock(feeds.nft1155) : null,
-      statesync: fetchedOk.statesync ? maxBlock(feeds.statesync) : null,
+      normal: fetchedOk.normal ? scannedThroughBlock(feeds.normal) : null,
+      internal: fetchedOk.internal ? scannedThroughBlock(feeds.internal) : null,
+      token: fetchedOk.token ? scannedThroughBlock(feeds.token) : null,
+      nft: fetchedOk.nft ? scannedThroughBlock(feeds.nft) : null,
+      nft1155: fetchedOk.nft1155 ? scannedThroughBlock(feeds.nft1155) : null,
+      statesync: fetchedOk.statesync ? scannedThroughBlock(feeds.statesync) : null,
     });
     // Written every time, empty array included, so a feed that starts working
     // again (a plan upgrade) stops being reported as a gap.

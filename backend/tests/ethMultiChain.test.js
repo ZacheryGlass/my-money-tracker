@@ -52,6 +52,9 @@ const WALLET = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const MIGRATION = fs.readFileSync(
   path.join(__dirname, '..', 'migrations', '039_multichain_wallets.sql'), 'utf8'
 );
+const INGEST_VERSION_MIGRATION = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '050_chain_ingest_version.sql'), 'utf8'
+);
 
 // Shared harness: stubs everything a sync touches except the parts under test,
 // and records the (chain, feed) calls the sync actually made.
@@ -69,17 +72,46 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' 
     else process.env.ETH_CHAINS = priorChains;
   });
 
-  const calls = { fetches: [], deletes: [], cursors: [], unsupported: [], chainErrors: [], cleared: [], inserted: [] };
+  const calls = {
+    fetches: [], heads: [], deletes: [], cursors: [], unsupported: [],
+    chainErrors: [], cleared: [], inserted: [],
+  };
+  const chainStates = new Map();
+  const stateFor = (walletId, chainId, ingestVersion) => {
+    if (!chainStates.has(chainId)) {
+      chainStates.set(chainId, {
+        wallet_id: walletId,
+        chain_id: chainId,
+        ingest_version: ingestVersion,
+        last_block_normal: 0, last_block_internal: 0, last_block_token: 0,
+        last_block_nft: 0, last_block_1155: 0, last_block_statesync: 0,
+        ...(cursors[chainId] || {}),
+      });
+    }
+    return chainStates.get(chainId);
+  };
 
   stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
   stub(SecretsService, 'getUserKey', async () => apiKey);
-  stub(EthWalletChain, 'ensure', async (walletId, chainId) => ({
-    wallet_id: walletId,
-    chain_id: chainId,
-    last_block_normal: 0, last_block_internal: 0, last_block_token: 0,
-    last_block_nft: 0, last_block_1155: 0, last_block_statesync: 0,
-    ...(cursors[chainId] || {}),
-  }));
+  stub(EthWalletChain, 'ensure', async (walletId, chainId, ingestVersion = 0) =>
+    ({ ...stateFor(walletId, chainId, ingestVersion) }));
+  stub(EthWalletChain, 'resetForIngestVersion', async (walletId, chainId, ingestVersion) => {
+    calls.resets ||= [];
+    calls.resets.push({ chainId, ingestVersion });
+    const reset = {
+      wallet_id: walletId,
+      chain_id: chainId,
+      ingest_version: ingestVersion,
+      last_block_normal: 0, last_block_internal: 0, last_block_token: 0,
+      last_block_nft: 0, last_block_1155: 0, last_block_statesync: 0,
+    };
+    chainStates.set(chainId, reset);
+    return { ...reset };
+  });
+  stub(EtherscanService, '_latestBlockNumber', async (requestApiKey, chainId) => {
+    calls.heads.push({ chainId, apiKey: requestApiKey });
+    return 50000000;
+  });
 
   const feeds = {
     fetchNormalTxs: 'normal',
@@ -90,11 +122,22 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' 
     fetchStateSyncDeposits: 'statesync',
   };
   for (const [method, key] of Object.entries(feeds)) {
-    stub(EtherscanService, method, async (address, startBlock, requestApiKey, chainId) => {
-      calls.fetches.push({ feed: key, chainId, startBlock, address, apiKey: requestApiKey });
+    stub(EtherscanService, method, async (
+      address, startBlock, requestApiKey, chainId, feedConfigOrHead, indexedHead
+    ) => {
+      const coverage = key === 'statesync' ? indexedHead : feedConfigOrHead;
+      calls.fetches.push({
+        feed: key, chainId, startBlock, address, apiKey: requestApiKey, coverage,
+      });
       const behavior = feedBehavior[`${chainId}:${key}`];
-      if (typeof behavior === 'function') return behavior();
-      return behavior || [];
+      const rows = typeof behavior === 'function' ? await behavior() : (behavior || []);
+      if (coverage != null && Array.isArray(rows) && rows.scannedThroughBlock == null) {
+        Object.defineProperty(rows, 'scannedThroughBlock', {
+          value: coverage,
+          enumerable: false,
+        });
+      }
+      return rows;
     });
   }
 
@@ -104,6 +147,18 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' 
   stub(EthTransfer, 'bulkInsert', async (rows) => { calls.inserted.push(...rows); return rows.length; });
   stub(EthWalletChain, 'updateCursors', async (walletId, chainId, next) => {
     calls.cursors.push({ chainId, ...next });
+    const state = stateFor(walletId, chainId, 0);
+    const columns = {
+      normal: 'last_block_normal',
+      internal: 'last_block_internal',
+      token: 'last_block_token',
+      nft: 'last_block_nft',
+      nft1155: 'last_block_1155',
+      statesync: 'last_block_statesync',
+    };
+    for (const [key, value] of Object.entries(next)) {
+      if (value != null) state[columns[key]] = value;
+    }
   });
   stub(EthWalletChain, 'setUnsupportedFeeds', async (walletId, chainId, list) => {
     calls.unsupported.push({ chainId, list });
@@ -658,6 +713,32 @@ test('a chain-declared account API omits Etherscan key and chainid parameters', 
     'OP Mainnet is already above the old 99,999,999 sentinel');
 });
 
+test('an account feed is bounded at the shared indexed head and reports empty coverage', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  let seen;
+  axios.get = async (url, config) => {
+    seen = { url, params: config.params };
+    return { data: { status: '0', message: 'No transactions found', result: [] } };
+  };
+  t.after(() => { axios.get = original; });
+
+  const rows = await EtherscanService.fetchTokenTxs(WALLET, 100, null, 8453, 50000000);
+
+  assert.equal(seen.params.startblock, 100);
+  assert.equal(seen.params.endblock, 50000000);
+  assert.equal(rows.length, 0);
+  assert.equal(rows.scannedThroughBlock, 50000000);
+  assert.deepEqual(Object.keys(rows), [], 'coverage metadata does not become a transfer row field');
+});
+
+test('an account feed freezes when the indexed head falls behind its resume block', async () => {
+  await assert.rejects(
+    () => EtherscanService.fetchTokenTxs(WALLET, 101, null, 8453, 100),
+    (err) => err.code === 'ETHERSCAN_API_ERROR' && /behind requested block/.test(err.message)
+  );
+});
+
 test('a keyless-only chain set syncs without an Etherscan credential', async (t) => {
   const { calls } = harness(t, {
     chainSet: '100',
@@ -727,6 +808,20 @@ test('OP Mainnet and Base live balances use their public RPC endpoints', async (
   ]);
 });
 
+test('Blockscout log coverage uses the explorer indexed head, not the newer RPC head', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  let seenUrl;
+  axios.get = async (url) => {
+    seenUrl = url;
+    return { data: { items: [{ height: 49295092 }] } };
+  };
+  t.after(() => { axios.get = originalGet; });
+
+  assert.equal(await EtherscanService._latestBlockNumber(null, 8453), 49295092);
+  assert.equal(seenUrl, 'https://base.blockscout.com/api/v2/blocks?type=block');
+});
+
 test('a direct OP Stack self-deposit becomes one bridge-classifiable inbound credit', () => {
   const bridge = '0x4200000000000000000000000000000000000010';
   const [credit] = EthWalletService.normalizeFeeds(WALLET, {
@@ -741,6 +836,9 @@ test('a direct OP Stack self-deposit becomes one bridge-classifiable inbound cre
       gasPrice: '0',
       input: '0x',
       isError: '0',
+      opStackType: '0x7e',
+      opStackSourceHash: `0x${'1'.repeat(64)}`,
+      opStackMintWei: '71088375931383555894',
     }],
   }, { opStackDeposits: { creditSource: bridge } });
 
@@ -749,6 +847,70 @@ test('a direct OP Stack self-deposit becomes one bridge-classifiable inbound cre
   assert.equal(credit.to_address, WALLET);
   assert.equal(credit.value_wei, '71088375931383555894');
   assert.equal(credit.ordinal, 0);
+});
+
+test('OP Stack deposit metadata is restored from JSON-RPC before normalization', async (t) => {
+  const hash = `0x${'a'.repeat(64)}`;
+  const sourceHash = `0x${'b'.repeat(64)}`;
+  const originalPaged = EtherscanService._fetchPaged;
+  const originalRpc = EtherscanService._rpcRequest;
+  EtherscanService._fetchPaged = async () => [{
+    hash,
+    from: WALLET,
+    to: WALLET,
+    value: '7',
+    gasPrice: '0',
+    isError: '0',
+  }];
+  EtherscanService._rpcRequest = async (chainId, method, params) => {
+    assert.equal(chainId, 8453);
+    assert.equal(method, 'eth_getTransactionByHash');
+    assert.deepEqual(params, [hash]);
+    return {
+      hash,
+      type: '0x7e',
+      sourceHash,
+      mint: '0xb',
+      value: '0x7',
+    };
+  };
+  t.after(() => {
+    EtherscanService._fetchPaged = originalPaged;
+    EtherscanService._rpcRequest = originalRpc;
+  });
+
+  const rows = await EtherscanService.fetchNormalTxs(WALLET, 0, null, 8453, 50000000);
+  const [row] = rows;
+  assert.equal(row.opStackType, '0x7e');
+  assert.equal(row.opStackSourceHash, sourceHash);
+  assert.equal(row.opStackMintWei, '11');
+  assert.equal(rows.scannedThroughBlock, 50000000,
+    'RPC enrichment preserves the account feed coverage boundary');
+});
+
+test('a failed OP Stack execution keeps the independent mint credit', () => {
+  const [credit] = EthWalletService.normalizeFeeds(WALLET, {
+    normal: [{
+      blockNumber: '49289908',
+      timeStamp: '1785369163',
+      hash: '0xfaileddeposit',
+      from: WALLET,
+      to: '0x1111111111111111111111111111111111111111',
+      value: '5',
+      gasUsed: '99999',
+      gasPrice: '0',
+      input: '0x1234',
+      isError: '1',
+      opStackType: '0x7e',
+      opStackSourceHash: `0x${'4'.repeat(64)}`,
+      opStackMintWei: '11',
+    }],
+  }, { opStackDeposits: chains.getChain(8453).opStackDeposits });
+
+  assert.equal(credit.from_address, '0x4200000000000000000000000000000000000010');
+  assert.equal(credit.to_address, WALLET);
+  assert.equal(credit.value_wei, '11');
+  assert.equal(credit.is_error, false, 'the unconditional mint itself succeeded and must count in balance math');
 });
 
 test('an OP Stack deposit sent onward is net-zero for the tracked L2 sender', () => {
@@ -764,13 +926,66 @@ test('an OP Stack deposit sent onward is net-zero for the tracked L2 sender', ()
       gasPrice: '0',
       input: '0x',
       isError: '0',
+      opStackType: '0x7e',
+      opStackSourceHash: `0x${'2'.repeat(64)}`,
+      opStackMintWei: '1000000000000000000',
     }],
   }, { opStackDeposits: chains.getChain(8453).opStackDeposits });
 
-  assert.deepEqual(rows, [], 'mint then send changes the tracked sender balance by zero');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].from_address, '0x4200000000000000000000000000000000000010');
+  assert.equal(rows[0].value_wei, '1000000000000000000');
+  assert.equal(rows[1].from_address, WALLET);
+  assert.equal(rows[1].to_address, '0x1111111111111111111111111111111111111111');
+  assert.equal(rows[1].value_wei, '1000000000000000000',
+    'mint and execution stay separate so exact balance math nets them to zero');
 });
 
-test('OP Stack deposit reshaping declines every off-shape zero-fee row', () => {
+test('a pre-version OP/Base chain resets every cursor and reingests from genesis once', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '8453',
+    cursors: {
+      8453: {
+        ingest_version: 0,
+        last_block_normal: 49000000,
+        last_block_internal: 49000000,
+        last_block_token: 49000000,
+        last_block_nft: 49000000,
+        last_block_1155: 49000000,
+        last_block_statesync: 49000000,
+      },
+    },
+  });
+
+  await EthWalletService.syncWallet(7);
+
+  assert.deepEqual(calls.resets, [{ chainId: 8453, ingestVersion: 1 }]);
+  assert.ok(calls.fetches.every((call) => call.startBlock === 0),
+    'the provider and normalization change heals every historical feed');
+  assert.ok(calls.deletes.every((call) => call.block === 0),
+    'each successful feed replaces its full old window');
+});
+
+test('empty OP Stack feeds persist indexed coverage and resume incrementally on the next sync', async (t) => {
+  const { calls } = harness(t, { chainSet: '8453' });
+
+  await EthWalletService.syncWallet(7);
+  await EthWalletService.syncWallet(7);
+
+  const cursorWrites = calls.cursors.filter((write) => write.chainId === 8453);
+  assert.equal(cursorWrites.length, 2);
+  for (const field of ['normal', 'internal', 'token', 'nft', 'nft1155', 'statesync']) {
+    assert.equal(cursorWrites[0][field], 50000000, `${field} records empty-feed coverage`);
+  }
+  const secondFetches = calls.fetches.filter((call) => call.chainId === 8453).slice(6);
+  assert.equal(secondFetches.length, 6);
+  assert.ok(secondFetches.every((call) => call.startBlock === 50000000 - 64),
+    'the second sync uses the stored indexed head with only the reorg overlap');
+  assert.ok(secondFetches.every((call) => call.coverage === 50000000),
+    'all account and native-credit feeds share one indexed coverage boundary');
+});
+
+test('OP Stack deposit reshaping declines every off-shape enriched row', () => {
   const config = chains.getChain(8453).opStackDeposits;
   const base = {
     blockNumber: '1',
@@ -783,16 +998,18 @@ test('OP Stack deposit reshaping declines every off-shape zero-fee row', () => {
     gasPrice: '0',
     input: '0x',
     isError: '0',
+    opStackType: '0x7e',
+    opStackSourceHash: `0x${'3'.repeat(64)}`,
+    opStackMintWei: '1',
   };
   for (const patch of [
-    { gasPrice: '1' },
-    { gasUsed: '21001' },
-    { input: '0x1234' },
-    { isError: '1' },
-    { value: '0' },
+    { opStackType: undefined },
+    { opStackSourceHash: '0x1234' },
+    { opStackMintWei: 'not-decimal' },
+    { isError: undefined },
     { to: 'not-an-address' },
   ]) {
-    assert.equal(EthWalletService.opStackDepositDestination({ ...base, ...patch }, config), null);
+    assert.equal(EthWalletService.opStackDepositEffects({ ...base, ...patch }, config), null);
   }
 });
 
@@ -960,6 +1177,33 @@ test('039 carries all five cursors plus the per-chain error and gap columns', ()
   // newly-enabled chain backfills NFTs from genesis on its first sync.
   assert.match(table, /last_block_nft BIGINT NOT NULL DEFAULT 0/);
   assert.match(table, /last_block_1155 BIGINT NOT NULL DEFAULT 0/);
+});
+
+test('050 adds an idempotent conservative ingestion version marker', () => {
+  assert.match(INGEST_VERSION_MIGRATION,
+    /ADD COLUMN IF NOT EXISTS ingest_version INT NOT NULL DEFAULT 0/);
+  assert.equal(chains.getChain(10).ingestVersion, 1);
+  assert.equal(chains.getChain(8453).ingestVersion, 1);
+});
+
+test('chain ingestion version writes are explicit and reset every feed cursor', async () => {
+  queries.length = 0;
+  await EthWalletChain.ensure(7, 8453, 1);
+  await EthWalletChain.resetForIngestVersion(7, 8453, 1);
+
+  const insert = queries.find((q) => /INSERT INTO eth_wallet_chains/.test(q.text));
+  assert.match(sqlOf(insert), /\(wallet_id, chain_id, ingest_version\) VALUES \(\$1, \$2, \$3\)/);
+  assert.deepEqual(insert.params, [7, 8453, 1]);
+
+  const reset = queries.find((q) => /SET last_block_normal = 0/.test(q.text));
+  for (const cursor of [
+    'last_block_normal', 'last_block_internal', 'last_block_token',
+    'last_block_nft', 'last_block_1155', 'last_block_statesync',
+  ]) {
+    assert.match(sqlOf(reset), new RegExp(`${cursor} = 0`));
+  }
+  assert.match(sqlOf(reset), /ingest_version = \$3/);
+  assert.match(sqlOf(reset), /ingest_version < \$3/);
 });
 
 test('039 keeps every statement idempotent for the boot-time re-run', () => {

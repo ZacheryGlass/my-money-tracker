@@ -69,6 +69,12 @@ const DEPOSIT_WEI = '47250000000000000000'; // 47.25 POL
 
 const sqlOf = (query) => query.text.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
 
+function stubScanHead(t, block = 90000000) {
+  const original = EtherscanService._latestBlockNumber;
+  EtherscanService._latestBlockNumber = async () => block;
+  t.after(() => { EtherscanService._latestBlockNumber = original; });
+}
+
 // A getLogs Deposit log as Etherscan V2 returns it: hex blockNumber/timeStamp/
 // logIndex, data = amount ++ input1 ++ output1 (three 32-byte words).
 function depositLog({ amountWei = DEPOSIT_WEI, block = 84000001, ts = 1742000000, hash = DEPOSIT_TX, logIndex = 3 } = {}) {
@@ -136,6 +142,7 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
 });
 
 test('OP Stack ETHBridgeFinalized filters topic2 and becomes a native inbound row', async (t) => {
+  stubScanHead(t, 50000000);
   const axios = require('axios');
   const original = axios.get;
   const seen = [];
@@ -163,6 +170,7 @@ test('OP Stack ETHBridgeFinalized filters topic2 and becomes a native inbound ro
 });
 
 test('Gnosis AddedReceiver filters topic1 and becomes a native inbound row', async (t) => {
+  stubScanHead(t, 14000000);
   const axios = require('axios');
   const original = axios.get;
   const seen = [];
@@ -196,6 +204,7 @@ test('Gnosis AddedReceiver filters topic1 and becomes a native inbound row', asy
 // ---------------------------------------------------------------------------
 
 test('the fetch sends address+topic0+topic2 and parses the log into an internal-row shape', async (t) => {
+  stubScanHead(t);
   const axios = require('axios');
   const original = axios.get;
   const seen = [];
@@ -234,6 +243,7 @@ test('the fetch sends address+topic0+topic2 and parses the log into an internal-
 });
 
 test('the amount is the FIRST 32 bytes of data; the trailing words are ignored', async (t) => {
+  stubScanHead(t);
   const axios = require('axios');
   const original = axios.get;
   axios.get = async () => ({ data: { status: '1', result: [depositLog({ amountWei: '1' })] } });
@@ -259,6 +269,7 @@ test('a chain with no feed config fetches nothing and calls no endpoint', async 
 });
 
 test('an empty getLogs answer is a normal empty feed, not an error', async (t) => {
+  stubScanHead(t, 91234567);
   const axios = require('axios');
   const original = axios.get;
   // The logs module answers an empty match "No records found", which #76 taught
@@ -266,12 +277,16 @@ test('an empty getLogs answer is a normal empty feed, not an error', async (t) =
   axios.get = async () => ({ data: { status: '0', message: 'No records found', result: [] } });
   t.after(() => { axios.get = original; });
 
-  assert.deepEqual(await EtherscanService.fetchStateSyncDeposits(
+  const rows = await EtherscanService.fetchStateSyncDeposits(
     WALLET, 0, 'key', 137, chains.getChain(137).stateSyncDeposits
-  ), []);
+  );
+  assert.deepEqual(rows, []);
+  assert.equal(rows.scannedThroughBlock, 91234567,
+    'a successful empty scan advances coverage instead of rescanning genesis');
 });
 
 test('the fetch walks the block cursor and dedups the boundary block', async (t) => {
+  stubScanHead(t, 1200);
   const axios = require('axios');
   const original = axios.get;
   // A FULL first page (1000 rows, one per block 100..1099) forces a second call;
@@ -323,16 +338,31 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
     else process.env.ETH_CHAINS = priorChains;
   });
 
-  const calls = { fetches: [], deletes: [], cursors: [], unsupported: [], chainErrors: [], cleared: [], inserted: [] };
+  const calls = {
+    fetches: [], heads: [], deletes: [], cursors: [], unsupported: [],
+    chainErrors: [], cleared: [], inserted: [],
+  };
 
   stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
   stub(SecretsService, 'getUserKey', async () => 'key');
-  stub(EthWalletChain, 'ensure', async (walletId, chainId) => ({
+  stub(EtherscanService, '_latestBlockNumber', async (apiKey, chainId) => {
+    calls.heads.push({ chainId, apiKey });
+    return 50000000;
+  });
+  stub(EthWalletChain, 'ensure', async (walletId, chainId, ingestVersion = 0) => ({
     wallet_id: walletId,
     chain_id: chainId,
+    ingest_version: ingestVersion,
     last_block_normal: 0, last_block_internal: 0, last_block_token: 0,
     last_block_nft: 0, last_block_1155: 0, last_block_statesync: 0,
     ...(cursors[chainId] || {}),
+  }));
+  stub(EthWalletChain, 'resetForIngestVersion', async (walletId, chainId, ingestVersion) => ({
+    wallet_id: walletId,
+    chain_id: chainId,
+    ingest_version: ingestVersion,
+    last_block_normal: 0, last_block_internal: 0, last_block_token: 0,
+    last_block_nft: 0, last_block_1155: 0, last_block_statesync: 0,
   }));
 
   const feeds = {
@@ -344,11 +374,24 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
     fetchStateSyncDeposits: 'statesync',
   };
   for (const [method, key] of Object.entries(feeds)) {
-    stub(EtherscanService, method, async (address, startBlock, apiKey, chainId, feedConfig) => {
-      calls.fetches.push({ feed: key, chainId, startBlock, address, feedConfig });
+    stub(EtherscanService, method, async (
+      address, startBlock, apiKey, chainId, feedConfig, indexedHead
+    ) => {
+      const coverage = key === 'statesync' ? indexedHead : feedConfig;
+      calls.fetches.push({
+        feed: key, chainId, startBlock, address,
+        feedConfig: key === 'statesync' ? feedConfig : undefined,
+        coverage,
+      });
       const behavior = feedBehavior[`${chainId}:${key}`];
-      if (typeof behavior === 'function') return behavior();
-      return behavior || [];
+      const rows = typeof behavior === 'function' ? await behavior() : (behavior || []);
+      if (coverage != null && Array.isArray(rows) && rows.scannedThroughBlock == null) {
+        Object.defineProperty(rows, 'scannedThroughBlock', {
+          value: coverage,
+          enumerable: false,
+        });
+      }
+      return rows;
     });
   }
 
@@ -545,6 +588,23 @@ test('the state-sync cursor resumes and advances independently of the internal o
   assert.equal(cursorUpdate.statesync, 84000001, 'the cursor advances to the deposit block');
 });
 
+test('an empty successful native-credit scan advances to the scanned chain head', async (t) => {
+  const empty = [];
+  Object.defineProperty(empty, 'scannedThroughBlock', {
+    value: 50000000,
+    enumerable: false,
+  });
+  const { calls } = harness(t, {
+    chainSet: '8453',
+    feedBehavior: { '8453:statesync': empty },
+  });
+
+  await EthWalletService.syncWallet(7);
+
+  const cursorUpdate = calls.cursors.find((c) => c.chainId === 8453);
+  assert.equal(cursorUpdate.statesync, 50000000);
+});
+
 test('a non-declaring chain never advances or reads the state-sync cursor', async (t) => {
   const { calls } = harness(t, { chainSet: '1' });
 
@@ -716,6 +776,7 @@ test('the two POL halves pair inside the 24h L1-deposit window', () => {
 // ---------------------------------------------------------------------------
 
 test('a malformed log fails the whole feed rather than dropping the row', async (t) => {
+  stubScanHead(t);
   const axios = require('axios');
   const original = axios.get;
   // One good log, one with truncated data. Dropping the bad row and returning
@@ -732,6 +793,7 @@ test('a malformed log fails the whole feed rather than dropping the row', async 
 });
 
 test('a decimal blockNumber is rejected, not misparsed as hex', async (t) => {
+  stubScanHead(t);
   const axios = require('axios');
   const original = axios.get;
   // The account feeds return decimal strings; getLogs returns hex. A decimal
@@ -749,6 +811,7 @@ test('a decimal blockNumber is rejected, not misparsed as hex', async (t) => {
 });
 
 test('an off-shape 200 is a transport failure, not an empty feed', async (t) => {
+  stubScanHead(t);
   const axios = require('axios');
   const original = axios.get;
   // "Fetched OK" is what authorizes the destructive delete of the resume
@@ -762,6 +825,7 @@ test('an off-shape 200 is a transport failure, not an empty feed', async (t) => 
 });
 
 test('a walk that cannot progress is bounded, not infinite', async (t) => {
+  stubScanHead(t);
   const axios = require('axios');
   const etherscanConfig = require('../src/config/etherscan');
   const original = axios.get;

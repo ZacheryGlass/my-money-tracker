@@ -149,12 +149,101 @@ class EtherscanService {
       }, { timeout: 15000 })
     );
     const payload = response.data || {};
-    if (payload.error || typeof payload.result !== 'string') {
+    if (payload.error || payload.result == null) {
       const error = new Error(`Chain RPC error: ${payload.error?.message || 'invalid response'}`);
       error.code = 'ETHERSCAN_API_ERROR';
       throw error;
     }
     return payload.result;
+  }
+
+  static async _latestBlockNumber(apiKey, chainId) {
+    const chain = chains.getChain(chainId);
+    let result;
+    if (chain?.accountApi?.provider === 'Blockscout') {
+      // Advance only through the explorer's indexed head, not the chain RPC
+      // head. The indexer can lag; persisting an RPC block that getLogs has not
+      // indexed yet would skip a late-arriving deposit forever.
+      const blocksUrl = new URL('/api/v2/blocks?type=block', chain.accountApi.baseUrl).toString();
+      const response = await etherscan.throttled(() =>
+        axios.get(blocksUrl, { timeout: 15000 })
+      );
+      // `total_blocks` from /api/v2/stats is an aggregate count, not a block
+      // height (Base's value was ~200k behind its newest indexed height).
+      // Blockscout orders this endpoint newest-first; the first item is the
+      // indexed coverage boundary shared by account and log APIs.
+      result = response.data?.items?.[0]?.height;
+      if (typeof result === 'number') result = String(result);
+    } else {
+      result = await this._request(
+        { module: 'proxy', action: 'eth_blockNumber' },
+        { apiKey, chainId }
+      );
+    }
+    if (typeof result === 'string' && /^\d+$/.test(result)) {
+      result = `0x${BigInt(result).toString(16)}`;
+    }
+    if (typeof result !== 'string' || !/^0x[0-9a-f]+$/i.test(result)) {
+      const error = new Error(`Chain provider returned an invalid block number: ${JSON.stringify(result)}`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    const block = Number(BigInt(result));
+    if (!Number.isSafeInteger(block) || block < 0) {
+      const error = new Error(`Chain provider returned an unsafe block number: ${result}`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    return block;
+  }
+
+  // Blockscout's legacy txlist drops OP Stack's deposit-only fields. A zero
+  // gas price is the narrow candidate gate; JSON-RPC is the authority for type,
+  // sourceHash and mint. If a row really is type 0x7e but those fields cannot be
+  // read, throw so the normal cursor freezes instead of committing a guessed
+  // balance delta.
+  static async _hydrateOpStackDeposits(rows, chainId) {
+    if (!chains.getChain(chainId)?.opStackDeposits) return rows;
+    const hydrated = [];
+    for (const row of rows) {
+      if (row.gasPrice !== '0' || typeof row.hash !== 'string') {
+        hydrated.push(row);
+        continue;
+      }
+      const tx = await this._rpcRequest(chainId, 'eth_getTransactionByHash', [row.hash]);
+      if (!tx || typeof tx !== 'object' || String(tx.type).toLowerCase() !== '0x7e') {
+        hydrated.push(row);
+        continue;
+      }
+      if (!/^0x[0-9a-f]{64}$/i.test(String(tx.sourceHash || ''))
+          || !/^0x[0-9a-f]+$/i.test(String(tx.mint || ''))
+          || !/^0x[0-9a-f]+$/i.test(String(tx.value || ''))) {
+        const error = new Error(`OP Stack deposit ${row.hash} is missing sourceHash, mint, or value`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      const rpcHash = String(tx.hash || '').toLowerCase();
+      if (rpcHash !== row.hash.toLowerCase()) {
+        const error = new Error(`OP Stack RPC returned the wrong transaction for ${row.hash}`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      const rpcValue = BigInt(tx.value).toString();
+      if (rpcValue !== String(row.value)) {
+        const error = new Error(`OP Stack RPC value disagrees with the account feed for ${row.hash}`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      hydrated.push({
+        ...row,
+        from: tx.from,
+        to: tx.to,
+        opStackType: '0x7e',
+        opStackSourceHash: tx.sourceHash.toLowerCase(),
+        opStackMintWei: BigInt(tx.mint).toString(),
+      });
+    }
+    return hydrated;
   }
 
   // Current balance in wei, as a string (values exceed Number precision).
@@ -214,11 +303,27 @@ class EtherscanService {
   // Walks blocks in ascending order. The cursor advances to the last block of
   // each full page WITHOUT +1: a block can be split across the page boundary,
   // so that block is refetched whole and its partial rows are dropped first.
-  static async _fetchPaged(action, address, startBlock, apiKey, chainId = etherscan.CHAIN_ID) {
+  static async _fetchPaged(
+    action,
+    address,
+    startBlock,
+    apiKey,
+    chainId = etherscan.CHAIN_ID,
+    scannedThroughBlock = null
+  ) {
     const all = [];
     let cursor = startBlock;
+    const endBlock = scannedThroughBlock ?? 999999999;
+    if (scannedThroughBlock != null && scannedThroughBlock < cursor) {
+      const error = new Error(
+        `account provider head ${scannedThroughBlock} is behind requested block ${cursor}; cursor frozen`
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
 
     for (;;) {
+      if (cursor > endBlock) break;
       const rows = await this._request({
         module: 'account',
         action,
@@ -228,7 +333,7 @@ class EtherscanService {
         // sentinel silently truncated every backfill there. Keep this numeric
         // for Etherscan-compatible providers that reject `latest`, but leave
         // ample headroom for all currently configured chains.
-        endblock: 999999999,
+        endblock: endBlock,
         page: 1,
         offset: PAGE_SIZE,
         sort: 'asc',
@@ -273,41 +378,97 @@ class EtherscanService {
     // field `transactionHash`; Etherscan and the rest of our ingestion path
     // call it `hash`. Normalize only that documented alias and preserve every
     // original field so pagination and ordinal construction stay unchanged.
-    return all.map((row) => (
+    const result = all.map((row) => (
       action === 'txlistinternal' && !row.hash && row.transactionHash
         ? { ...row, hash: row.transactionHash }
         : row
     ));
+    if (scannedThroughBlock != null) {
+      Object.defineProperty(result, 'scannedThroughBlock', {
+        value: scannedThroughBlock,
+        enumerable: false,
+      });
+    }
+    return result;
   }
 
-  // The five ACCOUNT feeds take the chain as a trailing argument that defaults
-  // to mainnet: the same five actions serve every chain in the registry
-  // (verified live per chain), so the only thing that varies is the chainid
-  // param. The sixth feed (fetchStateSyncDeposits, below) is per-chain-declared
-  // and does not share this shape.
-  static fetchNormalTxs(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID) {
-    return this._fetchPaged('txlist', address, startBlock, apiKey, chainId);
+  // The five ACCOUNT feeds take the chain and an optional indexed coverage
+  // boundary as trailing arguments. Both preserve their old defaults, while
+  // OP/Base pass one shared Blockscout head so every feed—including an empty
+  // one—can report exactly how far it scanned. The sixth feed
+  // (fetchStateSyncDeposits, below) is per-chain-declared and therefore takes
+  // its feed config before that optional boundary.
+  static async fetchNormalTxs(
+    address,
+    startBlock = 0,
+    apiKey,
+    chainId = etherscan.CHAIN_ID,
+    scannedThroughBlock = null
+  ) {
+    const rows = await this._fetchPaged(
+      'txlist', address, startBlock, apiKey, chainId, scannedThroughBlock
+    );
+    const result = await this._hydrateOpStackDeposits(rows, chainId);
+    if (scannedThroughBlock != null) {
+      Object.defineProperty(result, 'scannedThroughBlock', {
+        value: scannedThroughBlock,
+        enumerable: false,
+      });
+    }
+    return result;
   }
 
-  static fetchInternalTxs(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID) {
-    return this._fetchPaged('txlistinternal', address, startBlock, apiKey, chainId);
+  static fetchInternalTxs(
+    address,
+    startBlock = 0,
+    apiKey,
+    chainId = etherscan.CHAIN_ID,
+    scannedThroughBlock = null
+  ) {
+    return this._fetchPaged(
+      'txlistinternal', address, startBlock, apiKey, chainId, scannedThroughBlock
+    );
   }
 
   // ERC-20 only; ERC-721 and ERC-1155 have their own feeds below.
-  static fetchTokenTxs(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID) {
-    return this._fetchPaged('tokentx', address, startBlock, apiKey, chainId);
+  static fetchTokenTxs(
+    address,
+    startBlock = 0,
+    apiKey,
+    chainId = etherscan.CHAIN_ID,
+    scannedThroughBlock = null
+  ) {
+    return this._fetchPaged(
+      'tokentx', address, startBlock, apiKey, chainId, scannedThroughBlock
+    );
   }
 
   // ERC-721. Rows carry tokenID and tokenDecimal ("0"), but no value field --
   // one indivisible token moves per row.
-  static fetchNftTxs(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID) {
-    return this._fetchPaged('tokennfttx', address, startBlock, apiKey, chainId);
+  static fetchNftTxs(
+    address,
+    startBlock = 0,
+    apiKey,
+    chainId = etherscan.CHAIN_ID,
+    scannedThroughBlock = null
+  ) {
+    return this._fetchPaged(
+      'tokennfttx', address, startBlock, apiKey, chainId, scannedThroughBlock
+    );
   }
 
   // ERC-1155. Rows carry tokenID and tokenValue (a count of units, not wei),
   // and Etherscan emits one row per id for a batch transfer.
-  static fetch1155Txs(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID) {
-    return this._fetchPaged('token1155tx', address, startBlock, apiKey, chainId);
+  static fetch1155Txs(
+    address,
+    startBlock = 0,
+    apiKey,
+    chainId = etherscan.CHAIN_ID,
+    scannedThroughBlock = null
+  ) {
+    return this._fetchPaged(
+      'token1155tx', address, startBlock, apiKey, chainId, scannedThroughBlock
+    );
   }
 
   // The SIXTH feed (#76), declared per chain in config/chains.js rather than
@@ -326,8 +487,20 @@ class EtherscanService {
   //
   // Runs under the ONE global throttle like every other Etherscan call: five
   // chains and a sixth feed still share one key's rate limit.
-  static async fetchStateSyncDeposits(address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID, feedConfig = null) {
+  static async fetchStateSyncDeposits(
+    address,
+    startBlock = 0,
+    apiKey,
+    chainId = etherscan.CHAIN_ID,
+    feedConfig = null,
+    indexedHead = null
+  ) {
     if (!feedConfig || !feedConfig.contract || !feedConfig.topic0) return [];
+    // Snapshot the head before the log walk and query only through that block.
+    // The returned coverage cursor can then advance even when this wallet has
+    // no matching logs; using "latest" with an empty result provides no block
+    // from which the caller can resume.
+    const scannedThroughBlock = indexedHead ?? await this._latestBlockNumber(apiKey, chainId);
     const userTopic = addressTopic(address);
     const userTopicIndex = Number(feedConfig.userTopicIndex ?? 2);
     if (![1, 2, 3].includes(userTopicIndex)) {
@@ -338,8 +511,16 @@ class EtherscanService {
     const seen = new Set();
     const out = [];
     let cursor = Math.max(0, Number(startBlock) || 0);
+    if (scannedThroughBlock < cursor) {
+      const error = new Error(
+        `statesync provider head ${scannedThroughBlock} is behind requested block ${cursor}; cursor frozen`
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
 
     for (let page = 1; ; page++) {
+      if (cursor > scannedThroughBlock) break;
       if (page > MAX_LOG_PAGES) {
         throw new Error(`statesync getLogs walk exceeded ${MAX_LOG_PAGES} pages without completing; skipping the feed this sync`);
       }
@@ -353,7 +534,7 @@ class EtherscanService {
         // the wallet in topic2; Gnosis' AddedReceiver puts it in topic1.
         [topicOperatorParam]: 'and',
         fromBlock: cursor,
-        toBlock: 'latest',
+        toBlock: scannedThroughBlock,
         page: 1,
         offset: LOG_PAGE_SIZE,
       }, { apiKey, chainId });
@@ -402,7 +583,7 @@ class EtherscanService {
 
     // The internal cursor fields (_block/_logIndex/_key) stay here; only the
     // account-feed-shaped columns leave, so normalizeFeeds sees an internal row.
-    return out.map((row) => ({
+    const result = out.map((row) => ({
       hash: row.hash,
       blockNumber: row.blockNumber,
       timeStamp: row.timeStamp,
@@ -410,6 +591,11 @@ class EtherscanService {
       to: row.to,
       value: row.value,
     }));
+    Object.defineProperty(result, 'scannedThroughBlock', {
+      value: scannedThroughBlock,
+      enumerable: false,
+    });
+    return result;
   }
 
   // One getLogs Deposit log -> an internal-trace-shaped row. A log this cannot
