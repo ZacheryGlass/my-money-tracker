@@ -9,6 +9,7 @@ import {
 } from '../../utils/dataLabels';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const BUILTIN_LABEL_SOURCES = new Set(['builtin', 'builtin-bridge', 'builtin-polymarket']);
 
 function AddressNoteEditor({ address, initialNote = '', onChanged, onError, showSuccess }) {
   const [note, setNote] = useState(initialNote);
@@ -197,6 +198,7 @@ function LabelsPanel({
   // no kind predates migration 031 and meant "exchange", which needs no pill.
   const renderAddressLabelRow = (label) => {
     const pill = label.source === 'builtin' ? 'Built-in'
+      : label.source === 'builtin-polymarket' ? 'Polymarket'
       // The bridge pack (migration 044) is small, hand-verified against each
       // protocol's own deployment docs, and listed rather than hidden like the
       // 5k scraped rows -- a wrong bridge address has to be correctable, and
@@ -228,7 +230,7 @@ function LabelsPanel({
               <p className="mt-1 text-[10px] leading-relaxed text-tertiary">{label.note}</p>
             )}
           </div>
-          {label.source !== 'builtin' && (
+          {!BUILTIN_LABEL_SOURCES.has(label.source) && (
             <button
               onClick={() => handleUnlabelAddress(label.address)}
               disabled={updatingLabels}

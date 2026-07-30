@@ -200,6 +200,22 @@ describe('Crypto -> Labels tab', () => {
       expect(screen.getByText('Bridge')).toBeInTheDocument();
     });
 
+    it('lists seeded Polymarket labels without allowing removal', async () => {
+      await openLabelForm([
+        {
+          address: '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e',
+          name: 'Polymarket: CTF Exchange V1',
+          kind: 'external',
+          source: 'builtin-polymarket',
+        },
+      ]);
+      fireEvent.click(screen.getByRole('button', { name: /1 reviewed as outside parties/i }));
+      expect(await screen.findByText('Polymarket: CTF Exchange V1')).toBeInTheDocument();
+      expect(screen.getByText('Polymarket')).toBeInTheDocument();
+      const labeled = within(screen.getByRole('region', { name: /labeled addresses/i }));
+      expect(labeled.queryByRole('button', { name: /remove/i })).toBeNull();
+    });
+
     it('renaming an already-labeled address keeps its verdict by sending no kind', async () => {
       const form = await openLabelForm([
         { address: '0x2222222222222222222222222222222222222222', name: 'Cold storage', kind: 'own', source: 'user' },

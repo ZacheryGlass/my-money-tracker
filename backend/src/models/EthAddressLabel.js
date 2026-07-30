@@ -16,6 +16,9 @@ class EthAddressLabel {
   // reasoning read the other way: it is a few dozen rows, each taken from its
   // protocol's own deployment docs, and a wrong one reclassifies a real send as
   // an internal transfer. That has to be visible to be correctable.
+  // The small official protocol packs (for example 'builtin-polymarket',
+  // migration 052) are listed for the same reason: a known protocol
+  // counterparty needs to be visible and correctable.
   //
   // The filter sits OUTSIDE the DISTINCT ON so shadowing resolves first: a
   // user's override of a packed address wins precedence and stays in the list,
@@ -32,7 +35,7 @@ class EthAddressLabel {
          WHERE user_id = $1 OR user_id IS NULL
          ORDER BY address, user_id NULLS LAST
        ) labels
-       WHERE user_id IS NOT NULL OR source IN ('builtin', 'builtin-bridge')
+       WHERE user_id IS NOT NULL OR source IN ('builtin', 'builtin-bridge', 'builtin-polymarket')
        ORDER BY name, address`,
       [userId]
     );
