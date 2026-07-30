@@ -184,30 +184,32 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' 
 // The registry, as probed live
 // ---------------------------------------------------------------------------
 
-test('Gnosis, OP Mainnet, and Base use keyless Blockscout while zkSync Era remains absent', () => {
-  // /v2/chainlist returned 64 chains and none of them was 324 (or any zkSync
-  // entry); every request against it answers "Missing or unsupported chainid
-  // parameter". A disabled entry would advertise "you may turn this on", so it
-  // must not appear at all. Linea took its slot as the ETH-native L2.
+test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
   const ids = chains.allChains().map((chain) => chain.id);
-  assert.ok(!ids.includes(324), 'chain 324 is not served and must not be in the registry');
-  assert.ok(ids.includes(59144), 'Linea replaces zkSync Era as the fifth chain');
-  assert.deepEqual(ids.sort((a, b) => a - b), [1, 10, 100, 137, 8453, 42161, 59144]);
+  assert.deepEqual(
+    ids.sort((a, b) => a - b),
+    [1, 10, 100, 137, 324, 8453, 32401, 42161, 59144]
+  );
   const gnosis = chains.getChain(100);
   assert.equal(gnosis.nativeAsset, 'XDAI');
   assert.equal(gnosis.accountApi.provider, 'Blockscout');
   assert.equal(gnosis.accountApi.requiresApiKey, false);
   assert.equal(gnosis.enabledByDefault, true);
-  for (const id of [10, 8453]) {
+  for (const id of [10, 324, 8453]) {
     const chain = chains.getChain(id);
     assert.equal(chain.accountApi.provider, 'Blockscout');
     assert.equal(chain.accountApi.requiresApiKey, false);
     assert.equal(chain.enabledByDefault, true);
     assert.match(chain.rpcUrl, /^https:/);
+    if (id === 324) continue;
     assert.equal(chain.stateSyncDeposits.contract, '0x4200000000000000000000000000000000000010');
     assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
     assert.equal(chain.opStackDeposits.creditSource, chain.stateSyncDeposits.contract);
   }
+  const lite = chains.getChain(32401);
+  assert.equal(lite.historyProvider, 'zksync-lite');
+  assert.equal(lite.requiresApiKey, false);
+  assert.equal(lite.enabledByDefault, true);
 });
 
 test('all live-probed chains default on through their configured providers', () => {
@@ -216,7 +218,7 @@ test('all live-probed chains default on through their configured providers', () 
   // OP/Base use keyless Blockscout because Etherscan gates them by plan. A
   // partial internal range stays a visible per-feed
   // gap rather than disabling the other independently complete feeds.
-  for (const id of [1, 10, 100, 137, 8453, 42161, 59144]) {
+  for (const id of [1, 10, 100, 137, 324, 8453, 32401, 42161, 59144]) {
     assert.equal(byId.get(id).enabled, true, `chain ${id} defaults on through its configured provider`);
   }
 });
@@ -239,7 +241,7 @@ test('every chain names a native asset that the price layer knows how to fetch',
     assert.ok(chain.coingeckoPlatform, `chain ${chain.id} needs an asset platform`);
   }
   // All ETH-native chains still share one series and one price_cache row.
-  for (const id of [1, 10, 8453, 42161, 59144]) {
+  for (const id of [1, 10, 324, 8453, 32401, 42161, 59144]) {
     assert.equal(chains.nativeSymbol(id), 'ETH');
   }
   assert.equal(chains.nativeSymbol(100), 'XDAI');
@@ -283,6 +285,8 @@ test('credential gating follows the enabled provider set', (t) => {
   assert.equal(chains.enabledChainsRequireApiKey(), false);
   process.env.ETH_CHAINS = '10,100,8453';
   assert.equal(chains.enabledChainsRequireApiKey(), false);
+  process.env.ETH_CHAINS = '324,32401';
+  assert.equal(chains.enabledChainsRequireApiKey(), false);
   process.env.ETH_CHAINS = '1,100';
   assert.equal(chains.enabledChainsRequireApiKey(), true);
 });
@@ -294,6 +298,8 @@ test('mainnet holding names are byte-identical to their pre-#58 values', () => {
   assert.equal(chains.holdingSuffix(1), '');
   assert.equal(chains.ethHoldingName(42161), 'ETH (Arbitrum)');
   assert.equal(chains.holdingSuffix(8453), ' (Base)');
+  assert.equal(chains.ethHoldingName(324), 'ETH (zkSync Era)');
+  assert.equal(chains.ethHoldingName(32401), 'ETH (zkSync Lite)');
 });
 
 // ---------------------------------------------------------------------------

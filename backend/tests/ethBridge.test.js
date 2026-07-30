@@ -902,6 +902,8 @@ test('every source is a first-party domain, never an aggregator', () => {
     /^https:\/\/docs\.base\.org\//,
     /^https:\/\/docs\.across\.to\//,
     /^https:\/\/docs\.gnosischain\.com\//,
+    /^https:\/\/docs\.zksync\.io\//,
+    /^https:\/\/docs\.lite\.zksync\.io\//,
     // Optimism's docs page renders its L1 table client-side from this exact
     // first-party registry file; no static docs.optimism.io page prints them.
     /^https:\/\/raw\.githubusercontent\.com\/ethereum-optimism\/superchain-registry\//,

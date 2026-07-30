@@ -10,6 +10,8 @@ const EXPLORERS = {
   10: 'https://explorer.optimism.io',
   100: 'https://gnosis.blockscout.com',
   137: 'https://polygonscan.com',
+  324: 'https://zksync.blockscout.com',
+  32401: 'https://zkscan.io',
   8453: 'https://base.blockscout.com',
   42161: 'https://arbiscan.io',
   59144: 'https://lineascan.build',
@@ -40,11 +42,17 @@ export function explorerBase(chainId) {
 }
 
 export function explorerTxUrl(txHash, chainId) {
+  if (Number(chainId) === 32401) {
+    return `${explorerBase(chainId)}/explorer/transactions/${txHash}`;
+  }
   return `${explorerBase(chainId)}/tx/${txHash}`;
 }
 
 // Addresses are chain-agnostic (the same EOA exists on every chain), so a
 // caller with no chain context can pass nothing and get Etherscan.
 export function explorerAddressUrl(address, chainId) {
+  if (Number(chainId) === 32401) {
+    return `${explorerBase(chainId)}/explorer/accounts/${address}`;
+  }
   return `${explorerBase(chainId)}/address/${address}`;
 }

@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS eth_activity_links (
 );
 
 -- BEGIN GENERATED SEED (backend/scripts/generate-bridge-seed.js)
--- 40 addresses, researched 2026-07-27. Sources, one per protocol:
+-- 48 addresses, researched 2026-07-29. Sources, one per protocol:
 --   arbitrum  https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses
 --   linea     https://docs.linea.build/network/build/contracts
 --   optimism  https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json
@@ -136,6 +136,8 @@ CREATE TABLE IF NOT EXISTS eth_activity_links (
 --   across    https://docs.across.to/chains-and-contracts
 --   polygon   https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json
 --   gnosis    https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge
+--   zksync    https://docs.zksync.io/zksync-protocol/contracts/l1-contracts/zk-chain-addresses
+--   zksync-lite https://docs.lite.zksync.io/api/environments/
 --
 -- ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING -- never DO UPDATE.
 -- Migrations re-run on every boot; DO UPDATE would re-stamp a name, a kind or
@@ -163,6 +165,14 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0x051f1d88f0af5763fb888ec4378b4d8b29ea3319', 'Linea: L1 Token Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.linea.build/network/build/contracts'),
   (NULL, '0x508ca82df566dcd1b0de8296e70a96332cd644ec', 'Linea: L2 Message Service', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 59144. Source: https://docs.linea.build/network/build/contracts'),
   (NULL, '0x353012dc4a9a6cf55c941badc267f82004a8ceb9', 'Linea: L2 Token Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 59144. Source: https://docs.linea.build/network/build/contracts'),
+  (NULL, '0xabea9132b05a70803a4e85094fd0e1800777fbef', 'zkSync Lite: Main Contract', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.lite.zksync.io/api/environments/'),
+  (NULL, '0x303a465b659cbb0ab36ee643ea362c509eeb5213', 'ZKsync: Bridgehub', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.zksync.io/zksync-protocol/contracts/l1-contracts/zk-chain-addresses'),
+  (NULL, '0xd7f9f54194c633f36ccd5f3da84ad4a1c38cb2cb', 'ZKsync: Shared Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.zksync.io/zksync-protocol/contracts/l1-contracts/zk-chain-addresses'),
+  (NULL, '0x8829ad80e425c646dab305381ff105169feece56', 'ZKsync: L1 Asset Router', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.zksync.io/zksync-protocol/contracts/l1-contracts/zk-chain-addresses'),
+  (NULL, '0x32400084c286cf3e17e7b677ea9583e60a000324', 'ZKsync Era: Chain Contract', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.zksync.io/zksync-protocol/contracts/l1-contracts/zk-chain-addresses'),
+  (NULL, '0x57891966931eb4bb6fb81430e6ce0a03aabde063', 'ZKsync Era: Legacy L1 ERC20 Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.zksync.io/zksync-protocol/api/zks-rpc'),
+  (NULL, '0x11f943b2c77b743ab90f4a0ae7d5a4e7fca3e102', 'ZKsync Era: L2 ERC20 Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 324. Source: https://docs.zksync.io/zksync-protocol/api/zks-rpc'),
+  (NULL, '0x000000000000000000000000000000000000800a', 'ZKsync Era: L2 Base Token', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 324. Source: https://docs.zksync.io/zksync-protocol/era-vm/contracts/system-contracts'),
   (NULL, '0x99c9fc46f92e8a1c0dec1b1747d010903e884be1', 'Optimism: L1 Standard Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json'),
   (NULL, '0xbeb5fc579115071764c7423a4f12edde41f106ed', 'Optimism: Portal', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json'),
   (NULL, '0x25ace71c97b33cc4729cf772ae268934f7ab5fa1', 'Optimism: L1 Cross Domain Messenger', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json'),

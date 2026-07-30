@@ -4,6 +4,7 @@ const axios = require('axios');
 const etherscan = require('../config/etherscan');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
+const ZkSyncLiteService = require('./ZkSyncLiteService');
 
 // Etherscan caps any single query window at 10k results, so paged fetches
 // walk a block cursor instead of page numbers (see _fetchPaged).
@@ -250,6 +251,9 @@ class EtherscanService {
   // Per chain: the native asset is ETH on every chain in the registry, so this
   // is the chain's ETH balance, not a share of one global figure.
   static async getEthBalance(address, apiKey, chainId = etherscan.CHAIN_ID) {
+    if (chains.getChain(chainId)?.historyProvider === 'zksync-lite') {
+      return ZkSyncLiteService.getBalance(address);
+    }
     const rpcResult = await this._rpcRequest(chainId, 'eth_getBalance', [address, 'latest']);
     const result = rpcResult === null
       ? await this._request({
@@ -276,6 +280,9 @@ class EtherscanService {
   // (the rate limit is per key), so a wallet holding fifty tokens on three
   // chains would otherwise monopolise it for minutes.
   static async getTokenBalance(address, contractAddress, apiKey, chainId = etherscan.CHAIN_ID) {
+    if (chains.getChain(chainId)?.historyProvider === 'zksync-lite') {
+      return ZkSyncLiteService.getBalance(address, contractAddress);
+    }
     const paddedAddress = String(address).toLowerCase().replace(/^0x/, '').padStart(64, '0');
     const rpcResult = await this._rpcRequest(chainId, 'eth_call', [{
       to: contractAddress,

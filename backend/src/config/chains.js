@@ -14,12 +14,13 @@
 // broadly-active EOA, so an empty feed could not be mistaken for a missing one.
 // What that turned up, and why this table looks the way it does:
 //
-//   * zkSync Era (324) -- named in #58 -- IS NOT SERVED AT ALL. Every action
-//     answers "Missing or unsupported chainid parameter", and no zkSync/zkEVM
-//     entry appears anywhere in the chainlist. It is absent below rather than
-//     disabled: a disabled entry says "you may turn this on", and this one can
-//     never work. Linea (59144) takes its place -- also an ETH-native Ethereum
-//     L2, and it passed every feed.
+//   * zkSync Era (324) is not served by Etherscan V2, but its public Blockscout
+//     instance passed the same balance/txlist/txlistinternal/token/NFT probes
+//     and its public JSON-RPC endpoint supplies authoritative live balances.
+//   * zkSync Lite has no EIP-155 id because it predates the EVM-compatible Era
+//     chain. It uses reserved app id 32401 and a dedicated read-only importer
+//     for Matter Labs' v0.2 archive. Keeping it in this registry gives the
+//     unified ledger, holdings, filters and notes an explicit chain identity.
 //   * Arbitrum One and Linea have FULL feed parity with mainnet, txlistinternal
 //     included. That matters more than it looks: internal traces are how ETH
 //     arriving from a contract is seen at all, so a chain without them silently
@@ -109,6 +110,33 @@ const REGISTRY = [
     nativeAsset: 'ETH',
     coingeckoPlatform: 'linea',
     enabledByDefault: true,
+  },
+  {
+    id: 324,
+    name: 'ZKsync Era',
+    shortName: 'zkSync Era',
+    nativeAsset: 'ETH',
+    coingeckoPlatform: 'zksync',
+    enabledByDefault: true,
+    accountApi: {
+      provider: 'Blockscout',
+      baseUrl: 'https://zksync.blockscout.com/api',
+      requiresApiKey: false,
+    },
+    rpcUrl: 'https://mainnet.era.zksync.io',
+  },
+  {
+    // App-internal identity. zkSync Lite was not EVM and had no EIP-155 id;
+    // 324 is reserved for Era, so Lite must never reuse it.
+    id: 32401,
+    name: 'zkSync Lite (legacy)',
+    shortName: 'zkSync Lite',
+    nativeAsset: 'ETH',
+    // Lite's fungible token ids resolve to their canonical Ethereum contracts.
+    coingeckoPlatform: 'ethereum',
+    enabledByDefault: true,
+    historyProvider: 'zksync-lite',
+    requiresApiKey: false,
   },
   {
     id: 137,
@@ -323,7 +351,9 @@ function enabledChains() {
 // account API can explicitly be keyless. Orchestration gates use this rather
 // than assuming every enabled chain needs Etherscan credentials.
 function accountApiRequiresKey(chainId) {
-  const accountApi = getChain(chainId)?.accountApi;
+  const chain = getChain(chainId);
+  if (chain?.requiresApiKey === false) return false;
+  const accountApi = chain?.accountApi;
   return accountApi ? accountApi.requiresApiKey !== false : true;
 }
 
@@ -332,10 +362,9 @@ function enabledChainsRequireApiKey() {
 }
 
 // The whole registry with each entry's current enablement. No runtime caller:
-// this is the introspection entry point the registry tests assert against (that
-// 324 is absent rather than disabled, that 10/8453 ship off, that every chain is
-// ETH-native with a verified CoinGecko platform) -- claims that need to see the
-// disabled entries, which enabledChains() by definition cannot show.
+// this is the introspection entry point the registry tests assert against --
+// claims about provider routing and default enablement need to see entries that
+// enabledChains() by definition can hide.
 function allChains() {
   const ids = new Set(enabledChainIds());
   return REGISTRY.map((chain) => ({ ...chain, enabled: ids.has(chain.id) }));

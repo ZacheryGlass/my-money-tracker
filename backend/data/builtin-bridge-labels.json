@@ -1,6 +1,6 @@
 {
   "about": "Canonical cross-chain bridge contracts for the chains config/chains.js knows about, seeded as builtin 'bridge' labels by migration 044. Every address was read byte-for-byte out of raw source fetched from the protocol's own site (never a summarizer, never an aggregator, never model memory) and cross-checked against its public block-explorer name tag where the explorer would answer. See backend/scripts/generate-bridge-seed.js.",
-  "researchedOn": "2026-07-27",
+  "researchedOn": "2026-07-29",
   "rowDefaults": {
     "user_id": null,
     "source": "builtin-bridge",
@@ -14,7 +14,9 @@
     "base": "https://docs.base.org/base-chain/network-information/base-contracts",
     "across": "https://docs.across.to/chains-and-contracts",
     "polygon": "https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json",
-    "gnosis": "https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge"
+    "gnosis": "https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge",
+    "zksync": "https://docs.zksync.io/zksync-protocol/contracts/l1-contracts/zk-chain-addresses",
+    "zksync-lite": "https://docs.lite.zksync.io/api/environments/"
   },
   "sourceNotes": {
     "arbitrum": "Offchain Labs' own docs. The URL published in issue #59 (/build-decentralized-apps/reference/contract-addresses) 301s here.",
@@ -23,10 +25,11 @@
     "base": "Coinbase's own docs. Also the source for the OP Stack L2 predeploys, which are identical on OP Mainnet and Base (both explorers confirm the same two addresses).",
     "across": "Across' own docs. The per-chain subpage URLs in issue #59 do not exist; the site serves one consolidated table.",
     "polygon": "Polygon's own static network registry, the file its SDKs and docs resolve mainnet addresses from. Five seeded rows: the three PoS PROXY addresses under POSContracts (RootChainManagerProxy, EtherPredicateProxy, ERC20PredicateProxy), plus the Plasma DepositManagerProxy (Main.Contracts.DepositManagerProxy) and the MRC20 native-token precompile (Matic.Contracts.Tokens.MaticToken, 0x0000000000000000000000000000000000001010). POL bridges via PLASMA, not the PoS RootChainManager: the deposit's L1 counterparty is the DepositManager, and its Polygon counterparty is the MRC20, which credits the bridged-in POL through the Bor state sync (#76). The proxies -- and the precompile the state sync writes from -- are what a user (or the system transaction) transacts with; the implementations behind them are never called directly and are not seeded.",
-    "gnosis": "Gnosis Chain's own xDai Bridge page. It identifies the legacy Ethereum/Gnosis bridge proxies, the current Ethereum BridgeRouter and Gnosis USDS deposit entry points, and the Block Reward contract whose AddedReceiver log records consensus-minted xDAI credits."
+    "gnosis": "Gnosis Chain's own xDai Bridge page. It identifies the legacy Ethereum/Gnosis bridge proxies, the current Ethereum BridgeRouter and Gnosis USDS deposit entry points, and the Block Reward contract whose AddedReceiver log records consensus-minted xDAI credits.",
+    "zksync": "Matter Labs' own ZKsync contract-address and JSON-RPC documentation. It identifies the current L1 ecosystem entry points, the Era chain contract, the legacy default ERC-20 bridge pair, and the L2 base-token system contract used for native withdrawals.",
+    "zksync-lite": "Matter Labs' archived Lite environment documentation. It prints the mainnet rollup contract byte-for-byte; that same address is the L1 counterparty of the user's known 2021 deposit and 2022 withdrawal."
   },
   "excluded": {
-    "zksync-era": "Chain 324 is ABSENT from Etherscan's V2 chainlist (config/chains.js), so no zkSync transfer can ever be ingested. Its L1 contracts are omitted with it; an L1 deposit into zkSync stays a flagged send, which is the visible failure, not the silent one.",
     "hop": "Hop publishes no addresses in its documentation -- docs.hop.exchange defers to a TypeScript file on the SDK's `develop` branch, which is a moving target rather than a deployment record. Its address table also reuses one address for different contracts on different chains (the Ethereum USDC.e L1 bridge and the Base ETH L2 bridge are both 0x3666f603...), and eth_address_labels is address-keyed with no chain column.",
     "stargate": "Same address-collision problem, inside Stargate's own tables (StargatePoolUSDC on Arbitrum and StargatePoolNative on OP Mainnet are both 0xe8cdf27a...), plus an unresolved V1/V2 split with two live doc sets. Both protocols remain one click away in the label form; seeding a per-token pool address globally would be a verdict about bytes verified on only one chain."
   },
@@ -214,6 +217,73 @@
       "protocol": "linea",
       "docs_name": "L2 Token bridge",
       "explorer_name_tag": "Linea: L2 Token bridge"
+    },
+    {
+      "address": "0xabea9132b05a70803a4e85094fd0e1800777fbef",
+      "name": "zkSync Lite: Main Contract",
+      "chain_id": 1,
+      "protocol": "zksync-lite",
+      "docs_name": "zkSync mainnet contract",
+      "explorer_name_tag": "zkSync"
+    },
+    {
+      "address": "0x303a465b659cbb0ab36ee643ea362c509eeb5213",
+      "name": "ZKsync: Bridgehub",
+      "chain_id": 1,
+      "protocol": "zksync",
+      "docs_name": "Bridgehub",
+      "explorer_name_tag": "ZKsync: Bridgehub"
+    },
+    {
+      "address": "0xd7f9f54194c633f36ccd5f3da84ad4a1c38cb2cb",
+      "name": "ZKsync: Shared Bridge",
+      "chain_id": 1,
+      "protocol": "zksync",
+      "docs_name": "Shared Bridge",
+      "explorer_name_tag": "ZKsync: Shared Bridge"
+    },
+    {
+      "address": "0x8829ad80e425c646dab305381ff105169feece56",
+      "name": "ZKsync: L1 Asset Router",
+      "chain_id": 1,
+      "protocol": "zksync",
+      "docs_name": "L1AssetRouter",
+      "explorer_name_tag": "ZKsync: L1 Asset Router"
+    },
+    {
+      "address": "0x32400084c286cf3e17e7b677ea9583e60a000324",
+      "name": "ZKsync Era: Chain Contract",
+      "chain_id": 1,
+      "protocol": "zksync",
+      "docs_name": "ZKsync Era chain contract",
+      "explorer_name_tag": "ZKsync Era: Diamond Proxy"
+    },
+    {
+      "address": "0x57891966931eb4bb6fb81430e6ce0a03aabde063",
+      "name": "ZKsync Era: Legacy L1 ERC20 Bridge",
+      "chain_id": 1,
+      "protocol": "zksync",
+      "source_url": "https://docs.zksync.io/zksync-protocol/api/zks-rpc",
+      "docs_name": "l1Erc20DefaultBridge",
+      "explorer_name_tag": "ZKsync Era: L1 ERC20 Bridge"
+    },
+    {
+      "address": "0x11f943b2c77b743ab90f4a0ae7d5a4e7fca3e102",
+      "name": "ZKsync Era: L2 ERC20 Bridge",
+      "chain_id": 324,
+      "protocol": "zksync",
+      "source_url": "https://docs.zksync.io/zksync-protocol/api/zks-rpc",
+      "docs_name": "l2Erc20DefaultBridge",
+      "explorer_name_tag": "ZKsync Era: L2 ERC20 Bridge"
+    },
+    {
+      "address": "0x000000000000000000000000000000000000800a",
+      "name": "ZKsync Era: L2 Base Token",
+      "chain_id": 324,
+      "protocol": "zksync",
+      "source_url": "https://docs.zksync.io/zksync-protocol/era-vm/contracts/system-contracts",
+      "docs_name": "L2BaseToken",
+      "explorer_name_tag": "L2 Base Token"
     },
     {
       "address": "0x99c9fc46f92e8a1c0dec1b1747d010903e884be1",

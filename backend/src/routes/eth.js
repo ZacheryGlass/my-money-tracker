@@ -308,6 +308,7 @@ router.get('/wallets', async (req, res) => {
             ...state,
             name: chains.chainLabel(state.chain_id),
             enabled: chains.isEnabled(state.chain_id),
+            source: chains.getChain(state.chain_id)?.historyProvider || 'evm-account-feeds',
           })),
           // Does the stored transfer ledger reproduce the balance the chain
           // reports? `null` until the wallet has been audited at least once,

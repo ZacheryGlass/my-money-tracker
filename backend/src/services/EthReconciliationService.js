@@ -89,8 +89,8 @@ const SKIP_REASONS = {
 // reverted -- so a pre-034/pre-038 row reconciles exactly like a fresh one.
 // The NFT feeds are absent for the same reason: NFTs are not reconciled.
 const REQUIRED_FEEDS = {
-  native: ['normal', 'internal', 'statesync'],
-  token: ['token'],
+  native: ['normal', 'internal', 'statesync', 'legacy_amounts'],
+  token: ['token', 'legacy_amounts'],
 };
 
 // Exact integer comparison, no floats anywhere: |delta| * 1e8 < 1 unit, or

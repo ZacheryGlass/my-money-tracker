@@ -2,6 +2,7 @@
 
 const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
+const ZkSyncLiteService = require('./ZkSyncLiteService');
 const SecretsService = require('./SecretsService');
 const EthDerivedPipeline = require('./EthDerivedPipeline');
 const EthReconciliationService = require('./EthReconciliationService');
@@ -95,6 +96,82 @@ function scannedThroughBlock(rows) {
 }
 
 class EthWalletService {
+  static async _syncZkSyncLiteWalletChain(wallet, chain) {
+    const ingestVersion = Number(chain.ingestVersion || 0);
+    let state = await EthWalletChain.ensure(wallet.id, chain.id, ingestVersion);
+    if (Number(state?.ingest_version || 0) < ingestVersion) {
+      state = await EthWalletChain.resetForIngestVersion(wallet.id, chain.id, ingestVersion);
+    }
+    const resume = Math.max(
+      0,
+      Number(state?.last_block_normal ?? 0) - REORG_OVERLAP_BLOCKS
+    );
+    const [history, account, tokens] = await Promise.all([
+      ZkSyncLiteService.fetchHistory(wallet.address, resume),
+      ZkSyncLiteService.getAccount(wallet.address),
+      ZkSyncLiteService.getTokens(),
+    ]);
+    const normalized = ZkSyncLiteService.normalizeTransactions(
+      wallet.address,
+      history.transactions,
+      tokens,
+      { accountId: account.committed.accountId }
+    );
+    const rows = normalized.rows.map((row) => ({
+      ...row,
+      wallet_id: wallet.id,
+      chain_id: chain.id,
+    }));
+
+    // Lite's archive is one authoritative operation stream rather than five
+    // Etherscan-shaped feeds. It owns all supported transfer types under the
+    // normal cursor, so overlap replacement remains atomic and resumable.
+    await EthTransfer.deleteFromBlock(
+      wallet.id,
+      chain.id,
+      ['native', 'internal', 'token', 'gas', 'nft', 'nft1155'],
+      resume
+    );
+    const inserted = await EthTransfer.bulkInsert(rows);
+    await EthWalletChain.updateCursors(wallet.id, chain.id, {
+      normal: history.scannedThroughBlock,
+      internal: null,
+      token: null,
+      nft: null,
+      nft1155: null,
+      statesync: null,
+    });
+    await EthWalletChain.setUnsupportedFeeds(wallet.id, chain.id, normalized.limitations);
+    if (normalized.limitations.length) {
+      await EthWalletChain.setError(
+        wallet.id,
+        chain.id,
+        'FEED_UNSUPPORTED',
+        'Some zkSync Lite operations omit an amount or asset id; those transactions are retained with an explicit limitation'
+      );
+    } else {
+      await EthWalletChain.clearError(wallet.id, chain.id);
+    }
+    await EthWalletChain.updateSyncTime(wallet.id, chain.id);
+
+    return {
+      chainId: chain.id,
+      chainName: chain.name,
+      inserted,
+      skippedFeeds: [],
+      unsupportedFeeds: normalized.limitations,
+      unavailable: false,
+      fetched: {
+        normal: history.transactions.length,
+        internal: 0,
+        token: 0,
+        nft: 0,
+        nft1155: 0,
+        statesync: 0,
+      },
+    };
+  }
+
   // Decides whether a txlist row is a mis-served classic-era Arbitrum bridge
   // deposit (config/chains.js classicRetryableDeposits), and if so, who the
   // deposit credited. Returns the calldata destination address, or null when
@@ -443,6 +520,9 @@ class EthWalletService {
   // survive, and leave its cursor untouched. Advancing a cursor past blocks
   // that were never fetched drops those rows silently and forever.
   static async _syncWalletChain(wallet, chain, apiKey) {
+    if (chain.historyProvider === 'zksync-lite') {
+      return this._syncZkSyncLiteWalletChain(wallet, chain);
+    }
     const ingestVersion = Number(chain.ingestVersion || 0);
     let state = await EthWalletChain.ensure(wallet.id, chain.id, ingestVersion);
     if (Number(state?.ingest_version || 0) < ingestVersion) {
@@ -478,11 +558,11 @@ class EthWalletService {
     // place, so it needs no cursor, no delete scoping, and no gap accounting.
     const classicDeposits = chain.classicRetryableDeposits || null;
     const opStackDeposits = chain.opStackDeposits || null;
-    // OP Stack history is rebuilt under ingestVersion 1. Snapshot Blockscout's
-    // indexed head once and use it as the common end block for all six feeds:
+    // Snapshot a custom Blockscout provider's indexed head once and use it as
+    // the common end block for all active feeds:
     // successful empty feeds then have durable coverage, while a failed head
     // lookup aborts this chain before any destructive overlap delete.
-    const indexedHead = opStackDeposits
+    const indexedHead = chain.accountApi?.provider === 'Blockscout'
       ? await EtherscanService._latestBlockNumber(apiKey, chain.id)
       : null;
 
