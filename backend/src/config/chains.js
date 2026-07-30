@@ -24,14 +24,12 @@
 //     included. That matters more than it looks: internal traces are how ETH
 //     arriving from a contract is seen at all, so a chain without them silently
 //     drifts away from its own derived balance.
-//   * OP Mainnet (10) and Base (8453) ARE in the chainlist but are gated behind
-//     a paid Etherscan plan -- every action, `balance` included, answers "Free
-//     API access is not supported for this chain." That is a per-key
-//     entitlement, not a missing feed, so they ship present-but-disabled: the
-//     day the key is upgraded they are one env var away. Enabling them on a
-//     free key is not silently broken either -- the sync records
-//     CHAIN_UNAVAILABLE on that chain's eth_wallet_chains row, freezes its
-//     cursors, and leaves every other chain alone.
+//   * OP Mainnet (10) and Base (8453) remain paid-plan-only through Etherscan,
+//     so both use their public Blockscout instances instead. The five account
+//     feeds were probed separately on each chain. Their internal feed reports
+//     partially indexed ranges as status=2; that remains an explicit,
+//     cursor-frozen gap, while a per-chain ETHBridgeFinalized log feed records
+//     canonical native bridge credits independently.
 //   * Polygon PoS (137) is served on the FREE key -- balance, txlist and
 //     txlistinternal all answered on a live probe, so it ships enabled. It is
 //     also the first chain here that is NOT ETH-native (see NATIVE_ASSETS).
@@ -186,8 +184,28 @@ const REGISTRY = [
     shortName: 'Optimism',
     nativeAsset: 'ETH',
     coingeckoPlatform: 'optimistic-ethereum',
-    enabledByDefault: false,
-    disabledReason: 'Etherscan serves this chain only on a paid API plan',
+    enabledByDefault: true,
+    accountApi: {
+      provider: 'Blockscout',
+      baseUrl: 'https://explorer.optimism.io/api',
+      requiresApiKey: false,
+    },
+    rpcUrl: 'https://mainnet.optimism.io',
+    // OP deposit transactions are unsigned L2 transactions whose mint funds
+    // execution. Blockscout's legacy txlist omits type=0x7e, but preserves the
+    // zero gas price and status used by `opStackDepositDestination`.
+    opStackDeposits: {
+      creditSource: '0x4200000000000000000000000000000000000010',
+    },
+    // Standard-bridge ETH deposits emit this event after crediting `to`
+    // (topic2); amount is data word 0. The same predeploy is used by OP and
+    // Base. It also covers third-party frontends that settle through the
+    // canonical StandardBridge.
+    stateSyncDeposits: {
+      contract: '0x4200000000000000000000000000000000000010',
+      topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
+      userTopicIndex: 2,
+    },
   },
   {
     id: 8453,
@@ -195,8 +213,21 @@ const REGISTRY = [
     shortName: 'Base',
     nativeAsset: 'ETH',
     coingeckoPlatform: 'base',
-    enabledByDefault: false,
-    disabledReason: 'Etherscan serves this chain only on a paid API plan',
+    enabledByDefault: true,
+    accountApi: {
+      provider: 'Blockscout',
+      baseUrl: 'https://base.blockscout.com/api',
+      requiresApiKey: false,
+    },
+    rpcUrl: 'https://mainnet.base.org',
+    opStackDeposits: {
+      creditSource: '0x4200000000000000000000000000000000000010',
+    },
+    stateSyncDeposits: {
+      contract: '0x4200000000000000000000000000000000000010',
+      topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
+      userTopicIndex: 2,
+    },
   },
 ];
 

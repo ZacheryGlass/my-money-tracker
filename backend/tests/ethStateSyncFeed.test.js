@@ -62,6 +62,8 @@ const TOPIC0 = '0x4e2ca0515ed1aef1395f66b5303bb5d6f1bf9d61a353fa53f73f8ac9973fa9
 const GNOSIS_REWARD = '0x481c034c6d9441db23ea48de68bcae812c5d39ba';
 const ADDED_RECEIVER_TOPIC0 = '0x3c798bbcf33115b42c728b8504cff11dd58736e9fa789f1cda2738db7d696b2a';
 const GNOSIS_BRIDGE = '0x7301cfa0e1756b71869e93d4e4dca5c7d0eb0aa6';
+const OP_STACK_BRIDGE = '0x4200000000000000000000000000000000000010';
+const ETH_BRIDGE_FINALIZED_TOPIC0 = '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d';
 const DEPOSIT_TX = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd';
 const DEPOSIT_WEI = '47250000000000000000'; // 47.25 POL
 
@@ -95,11 +97,24 @@ function addedReceiverLog({ amountWei = DEPOSIT_WEI, block = 13903200, ts = 1609
   };
 }
 
+function ethBridgeFinalizedLog({ amountWei = DEPOSIT_WEI, block = 49293680, ts = 1785370265, hash = DEPOSIT_TX, logIndex = 1 } = {}) {
+  const topicAddress = (address) => `0x${'0'.repeat(24)}${address.slice(2)}`;
+  return {
+    address: OP_STACK_BRIDGE,
+    topics: [ETH_BRIDGE_FINALIZED_TOPIC0, topicAddress(WALLET), topicAddress(WALLET)],
+    data: `0x${BigInt(amountWei).toString(16).padStart(64, '0')}${'0'.repeat(64)}`,
+    blockNumber: `0x${block.toString(16)}`,
+    timeStamp: `0x${ts.toString(16)}`,
+    logIndex: `0x${logIndex.toString(16)}`,
+    transactionHash: hash,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The registry declaration
 // ---------------------------------------------------------------------------
 
-test('Polygon and Gnosis declare their native-credit logs with verified contracts', () => {
+test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs', () => {
   for (const chain of chains.allChains()) {
     if (chain.id === 137) {
       assert.ok(chain.stateSyncDeposits, 'Polygon must declare the state-sync feed');
@@ -109,11 +124,42 @@ test('Polygon and Gnosis declare their native-credit logs with verified contract
       assert.equal(chain.stateSyncDeposits.contract, GNOSIS_REWARD);
       assert.equal(chain.stateSyncDeposits.topic0, ADDED_RECEIVER_TOPIC0);
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 1);
+    } else if (chain.id === 10 || chain.id === 8453) {
+      assert.equal(chain.stateSyncDeposits.contract, OP_STACK_BRIDGE);
+      assert.equal(chain.stateSyncDeposits.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);
+      assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
     } else {
       assert.equal(chain.stateSyncDeposits, undefined,
         `chain ${chain.id} must NOT declare a state-sync feed`);
     }
   }
+});
+
+test('OP Stack ETHBridgeFinalized filters topic2 and becomes a native inbound row', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  const seen = [];
+  axios.get = async (url, config) => {
+    seen.push({ url, params: config.params });
+    return { data: { status: '1', result: [ethBridgeFinalizedLog()] } };
+  };
+  t.after(() => { axios.get = original; });
+
+  const rows = await EtherscanService.fetchStateSyncDeposits(
+    WALLET, 0, null, 8453, chains.getChain(8453).stateSyncDeposits
+  );
+
+  assert.equal(seen[0].url, 'https://base.blockscout.com/api');
+  assert.equal(seen[0].params.topic2, `0x${'0'.repeat(24)}${WALLET.slice(2)}`);
+  assert.equal(seen[0].params.topic0_2_opr, 'and');
+  assert.deepEqual(rows, [{
+    hash: DEPOSIT_TX,
+    blockNumber: '49293680',
+    timeStamp: '1785370265',
+    from: OP_STACK_BRIDGE,
+    to: WALLET,
+    value: DEPOSIT_WEI,
+  }]);
 });
 
 test('Gnosis AddedReceiver filters topic1 and becomes a native inbound row', async (t) => {
@@ -337,23 +383,29 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
   return { calls, stub };
 }
 
-test('the native-credit feed runs only on its declaring Polygon and Gnosis chains', async (t) => {
-  const { calls } = harness(t, { chainSet: '1,100,42161,137' });
+test('the native-credit feed runs only on its declaring chains', async (t) => {
+  const { calls } = harness(t, { chainSet: '1,10,100,137,8453,42161' });
 
   await EthWalletService.syncWallet(7);
 
   const stateSyncChains = calls.fetches.filter((c) => c.feed === 'statesync').map((c) => c.chainId);
-  assert.deepEqual(stateSyncChains, [137, 100], 'only declaring chains fetch the feed');
+  assert.deepEqual(stateSyncChains, [137, 100, 10, 8453], 'only declaring chains fetch the feed');
   // Declaring chains run SIX feeds, every other chain runs five.
   assert.equal(calls.fetches.filter((c) => c.chainId === 137).length, 6);
   assert.equal(calls.fetches.filter((c) => c.chainId === 100).length, 6);
+  assert.equal(calls.fetches.filter((c) => c.chainId === 10).length, 6);
+  assert.equal(calls.fetches.filter((c) => c.chainId === 8453).length, 6);
   assert.equal(calls.fetches.filter((c) => c.chainId === 1).length, 5);
   assert.equal(calls.fetches.filter((c) => c.chainId === 42161).length, 5);
   // The feed receives the chain's declared config (the account feeds get none).
   const polygonCall = calls.fetches.find((c) => c.feed === 'statesync' && c.chainId === 137);
   const gnosisCall = calls.fetches.find((c) => c.feed === 'statesync' && c.chainId === 100);
+  const optimismCall = calls.fetches.find((c) => c.feed === 'statesync' && c.chainId === 10);
+  const baseCall = calls.fetches.find((c) => c.feed === 'statesync' && c.chainId === 8453);
   assert.equal(polygonCall.feedConfig.contract, PRECOMPILE);
   assert.equal(gnosisCall.feedConfig.contract, GNOSIS_REWARD);
+  assert.equal(optimismCall.feedConfig.contract, OP_STACK_BRIDGE);
+  assert.equal(baseCall.feedConfig.contract, OP_STACK_BRIDGE);
 });
 
 test('a state-sync deposit ingests as an internal leg from the precompile', async (t) => {
@@ -401,6 +453,39 @@ test('a Gnosis AddedReceiver credit ingests as a bridge-classifiable internal le
   assert.equal(credit.to_address, WALLET);
   assert.equal(credit.value_wei, DEPOSIT_WEI);
   assert.equal(credit.chain_id, 100);
+});
+
+test('an OP Stack ETHBridgeFinalized credit ingests once from the labeled bridge', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '8453',
+    feedBehavior: {
+      '8453:statesync': [{
+        hash: DEPOSIT_TX,
+        blockNumber: '49293680',
+        timeStamp: '1785370265',
+        from: OP_STACK_BRIDGE,
+        to: WALLET,
+        value: DEPOSIT_WEI,
+      }],
+      // If Blockscout later serves the same internal trace, the symmetric
+      // bridge-source filter must prevent a duplicate native credit.
+      '8453:internal': [{
+        hash: DEPOSIT_TX,
+        blockNumber: '49293680',
+        timeStamp: '1785370265',
+        from: OP_STACK_BRIDGE,
+        to: WALLET,
+        value: DEPOSIT_WEI,
+      }],
+    },
+  });
+
+  await EthWalletService.syncWallet(7);
+
+  const credits = calls.inserted.filter((row) => row.transfer_type === 'internal');
+  assert.equal(credits.length, 1);
+  assert.equal(credits[0].from_address, OP_STACK_BRIDGE);
+  assert.equal(credits[0].chain_id, 8453);
 });
 
 test('the two internal-typed feeds do not clear each other: delete windows split by from_address', async (t) => {

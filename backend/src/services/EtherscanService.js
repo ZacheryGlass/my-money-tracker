@@ -224,7 +224,11 @@ class EtherscanService {
         action,
         address,
         startblock: cursor,
-        endblock: 99999999,
+        // OP Mainnet passed block 100,000,000 long ago. The old eight-digit
+        // sentinel silently truncated every backfill there. Keep this numeric
+        // for Etherscan-compatible providers that reject `latest`, but leave
+        // ample headroom for all currently configured chains.
+        endblock: 999999999,
         page: 1,
         offset: PAGE_SIZE,
         sort: 'asc',
@@ -310,9 +314,10 @@ class EtherscanService {
   // hardcoded here: `feedConfig` is `chain.stateSyncDeposits` ({contract,
   // topic0}), so a chain that does not declare it never reaches this method.
   //
-  // Native deposits credited by the Bor state sync are visible only as a
-  // `Deposit` log on the MRC20 precompile, in NONE of the account feeds. This
-  // fetches those logs filtered to the WALLET (topic2) and returns them shaped
+  // Native credits absent from account feeds are visible as one declared log:
+  // Polygon's Bor Deposit, Gnosis' AddedReceiver, or an OP Stack
+  // ETHBridgeFinalized event. This fetches those logs filtered to the WALLET
+  // (at the configured indexed topic) and returns them shaped
   // exactly like an internal-trace row -- {hash, blockNumber, timeStamp, from,
   // to, value}, all decimal strings -- so normalizeFeeds ingests them through
   // the SAME path as txlistinternal, as transfer_type='internal'. That is what

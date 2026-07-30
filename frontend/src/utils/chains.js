@@ -7,10 +7,10 @@
 // would just repeat a constant thousands of times.
 const EXPLORERS = {
   1: 'https://etherscan.io',
-  10: 'https://optimistic.etherscan.io',
+  10: 'https://explorer.optimism.io',
   100: 'https://gnosis.blockscout.com',
   137: 'https://polygonscan.com',
-  8453: 'https://basescan.org',
+  8453: 'https://base.blockscout.com',
   42161: 'https://arbiscan.io',
   59144: 'https://lineascan.build',
 };

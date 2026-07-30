@@ -22,8 +22,8 @@ const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 //
 // The first five are the account feeds and run on every chain. The sixth,
 // `statesync` (#76), is declared PER CHAIN: it runs only where the chain object
-// carries the config named by `chainFeed` (config/chains.js `stateSyncDeposits`,
-// Polygon only). It stores transfer_type='internal' rows -- the same type the
+// carries the config named by `chainFeed` (config/chains.js
+// `stateSyncDeposits`). It stores transfer_type='internal' rows -- the same type the
 // `internal` feed owns -- so native balance math, the mirror, activity and
 // valuation read it unchanged; the two feeds are kept from clearing each other's
 // rows by from_address (see the delete loop in _syncWalletChain).
@@ -131,12 +131,34 @@ class EthWalletService {
     return `0x${word0.slice(24)}`;
   }
 
+  // Blockscout's Etherscan-compatible txlist omits OP Stack's transaction
+  // type=0x7e, sourceHash and mint fields. It does preserve the execution
+  // fields that make a direct EOA deposit distinguishable: an unsigned,
+  // successful, zero-gas-price, empty-calldata 21k transfer. Return the L2
+  // destination for that exact shape, otherwise decline to guess.
+  //
+  // The OP deposit protocol mints `value` to `from` before executing the
+  // transfer. Therefore a deposit from a tracked wallet to somebody else is
+  // net-zero for that tracked L2 account, while a deposit to the tracked wallet
+  // is a real inbound credit. normalizeFeeds handles those two cases below.
+  static opStackDepositDestination(raw, config) {
+    if (!config?.creditSource) return null;
+    if (raw.gasPrice !== '0' || raw.gasUsed !== '21000') return null;
+    if (String(raw.isError ?? '0') !== '0') return null;
+    if ((raw.input || '').toLowerCase() !== '0x') return null;
+    if (!/^\d+$/.test(String(raw.value || '')) || BigInt(raw.value) <= 0n) return null;
+    const from = String(raw.from || '').toLowerCase();
+    const to = String(raw.to || '').toLowerCase();
+    if (!ADDRESS_RE.test(from) || !ADDRESS_RE.test(to)) return null;
+    return to;
+  }
+
   // Pure: raw Etherscan feed rows -> eth_transfers rows (without wallet_id).
   // Gas rows are synthesized here, one per normal tx sent by the wallet --
   // including failed txs, which still burn gas. Zero-value normal/internal
   // rows (contract calls, approvals) are dropped as noise; their economic
   // content is the gas row and/or the token row from the token feed.
-  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [], statesync = [] } = {}, { stateSyncContract = null, classicDeposits = null } = {}) {
+  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [], statesync = [] } = {}, { stateSyncContract = null, classicDeposits = null, opStackDeposits = null } = {}) {
     const wallet = walletAddress.toLowerCase();
     const rows = [];
     const ordinals = new Map();
@@ -232,6 +254,28 @@ class EthWalletService {
           method_id: methodId,
           method_name: methodName,
         });
+        continue;
+      }
+
+      // A direct OP Stack deposit is a protocol-minted L2 credit, not a signed
+      // self-transfer. For a tracked destination, store one inbound leg from
+      // the canonical L2 bridge predeploy so bridge classification and
+      // cross-chain matching see it. When the tracked wallet is only `from`
+      // and the deposit executes to somebody else, its L2 balance change is
+      // zero (mint then send), so the account-feed row contributes no leg.
+      // The zero gas price also means no gas leg in either case.
+      const opStackDest = opStackDeposits
+        ? this.opStackDepositDestination(raw, opStackDeposits)
+        : null;
+      if (opStackDest) {
+        if (opStackDest === wallet) {
+          rows.push({
+            ...baseRow(raw, 'native'),
+            from_address: opStackDeposits.creditSource,
+            to_address: wallet,
+            value_wei: raw.value,
+          });
+        }
         continue;
       }
 
@@ -392,7 +436,7 @@ class EthWalletService {
 
     // Which feeds this chain actually runs: the five account feeds always, plus
     // any per-chain feed the chain object declares (#76's state-sync deposits,
-    // Polygon only). A feed a chain does not declare is never fetched, never
+    // plus Gnosis and OP Stack native-credit events). A feed a chain does not declare is never fetched, never
     // cursor-advanced, and never a gap -- so `activeCount` (not FEED_SPECS.length)
     // is what "every feed came back unreadable" is measured against below.
     const feedActive = (spec) => !spec.chainFeed || Boolean(chain[spec.chainFeed]);
@@ -406,6 +450,7 @@ class EthWalletService {
     // state-sync feed this is not a feed of its own: it RESHAPES txlist rows in
     // place, so it needs no cursor, no delete scoping, and no gap accounting.
     const classicDeposits = chain.classicRetryableDeposits || null;
+    const opStackDeposits = chain.opStackDeposits || null;
 
     const feeds = {};
     const fetchedOk = {};
@@ -460,7 +505,11 @@ class EthWalletService {
       }
     }
 
-    const rows = this.normalizeFeeds(wallet.address, feeds, { stateSyncContract, classicDeposits })
+    const rows = this.normalizeFeeds(wallet.address, feeds, {
+      stateSyncContract,
+      classicDeposits,
+      opStackDeposits,
+    })
       .map((row) => ({ ...row, wallet_id: wallet.id, chain_id: chain.id }));
 
     for (const spec of FEED_SPECS) {

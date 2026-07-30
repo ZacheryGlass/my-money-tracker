@@ -129,7 +129,7 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {}, apiKey = 'key' 
 // The registry, as probed live
 // ---------------------------------------------------------------------------
 
-test('Gnosis uses a keyless Blockscout account API while zkSync Era remains absent', () => {
+test('Gnosis, OP Mainnet, and Base use keyless Blockscout while zkSync Era remains absent', () => {
   // /v2/chainlist returned 64 chains and none of them was 324 (or any zkSync
   // entry); every request against it answers "Missing or unsupported chainid
   // parameter". A disabled entry would advertise "you may turn this on", so it
@@ -143,23 +143,26 @@ test('Gnosis uses a keyless Blockscout account API while zkSync Era remains abse
   assert.equal(gnosis.accountApi.provider, 'Blockscout');
   assert.equal(gnosis.accountApi.requiresApiKey, false);
   assert.equal(gnosis.enabledByDefault, true);
+  for (const id of [10, 8453]) {
+    const chain = chains.getChain(id);
+    assert.equal(chain.accountApi.provider, 'Blockscout');
+    assert.equal(chain.accountApi.requiresApiKey, false);
+    assert.equal(chain.enabledByDefault, true);
+    assert.match(chain.rpcUrl, /^https:/);
+    assert.equal(chain.stateSyncDeposits.contract, '0x4200000000000000000000000000000000000010');
+    assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
+    assert.equal(chain.opStackDeposits.creditSource, chain.stateSyncDeposits.contract);
+  }
 });
 
-test('paid-plan-only chains ship present but disabled', () => {
+test('all live-probed chains default on through their configured providers', () => {
   delete process.env.ETH_CHAINS;
   const byId = new Map(chains.allChains().map((chain) => [chain.id, chain]));
-  // Both are in the chainlist, so they are real and one env var away -- but on
-  // the probed (free) key every action including `balance` answers "Free API
-  // access is not supported for this chain".
-  for (const id of [10, 8453]) {
-    assert.equal(byId.get(id).enabled, false, `chain ${id} must default to off`);
-    assert.match(byId.get(id).disabledReason, /paid/i);
-  }
-  // Etherscan full-feed chains default on after live probes. Gnosis also
-  // defaults on through its keyless provider; any explicitly partial
-  // Blockscout internal range becomes a visible per-feed gap.
-  for (const id of [1, 100, 137, 42161, 59144]) {
-    assert.equal(byId.get(id).enabled, true, `chain ${id} passed every feed probe and defaults on`);
+  // OP/Base use keyless Blockscout because Etherscan gates them by plan. A
+  // partial internal range stays a visible per-feed
+  // gap rather than disabling the other independently complete feeds.
+  for (const id of [1, 10, 100, 137, 8453, 42161, 59144]) {
+    assert.equal(byId.get(id).enabled, true, `chain ${id} defaults on through its configured provider`);
   }
 });
 
@@ -180,8 +183,8 @@ test('every chain names a native asset that the price layer knows how to fetch',
     // unverified slug reads as a permanent pricing outage.
     assert.ok(chain.coingeckoPlatform, `chain ${chain.id} needs an asset platform`);
   }
-  // The three ETH-native chains still share one series and one price_cache row.
-  for (const id of [1, 42161, 59144]) {
+  // All ETH-native chains still share one series and one price_cache row.
+  for (const id of [1, 10, 8453, 42161, 59144]) {
     assert.equal(chains.nativeSymbol(id), 'ETH');
   }
   assert.equal(chains.nativeSymbol(100), 'XDAI');
@@ -222,6 +225,8 @@ test('credential gating follows the enabled provider set', (t) => {
   });
 
   process.env.ETH_CHAINS = '100';
+  assert.equal(chains.enabledChainsRequireApiKey(), false);
+  process.env.ETH_CHAINS = '10,100,8453';
   assert.equal(chains.enabledChainsRequireApiKey(), false);
   process.env.ETH_CHAINS = '1,100';
   assert.equal(chains.enabledChainsRequireApiKey(), true);
@@ -445,17 +450,17 @@ test('a wholly unreadable chain is isolated to its own row', async (t) => {
   assert.deepEqual(
     calls.fetches.filter((c) => c.chainId === 8453).map((c) => c.feed),
     ['normal'],
-    'an unreadable chain must cost one request, not five'
+    'an unreadable chain must cost one request, not six'
   );
   assert.deepEqual(calls.unsupported.find((u) => u.chainId === 8453).list,
-    ['normal', 'internal', 'token', 'nft', 'nft1155'],
+    ['normal', 'internal', 'token', 'nft', 'nft1155', 'statesync'],
     'the gap record still names every feed that went unfetched');
   const baseError = calls.chainErrors.find((e) => e.chainId === 8453);
   assert.equal(baseError.code, 'CHAIN_UNAVAILABLE');
   // Actionable: the two things that actually fix it.
   assert.match(baseError.message, /Upgrade the plan or remove 8453 from ETH_CHAINS/);
   assert.ok(calls.cleared.includes(1), 'mainnet still syncs and reports clean');
-  assert.deepEqual(result.unsupportedFeeds.filter((f) => f.startsWith('Base')).length, 5);
+  assert.deepEqual(result.unsupportedFeeds.filter((f) => f.startsWith('Base')).length, 6);
   assert.equal(calls.walletError, undefined, 'a config condition is not a wallet sync failure');
 });
 
@@ -554,19 +559,19 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
   t.after(() => { axios.get = original; });
 
   // Both strings observed live during the feed-parity probe: the first from
-  // OP Mainnet / Base on a free key, the second from zkSync Era's absent id.
+  // an Etherscan plan-gated chain, the second from zkSync Era's absent id.
   for (const result of [
     'Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis',
     'Missing or unsupported chainid parameter (required for v2 api), please see https://api.etherscan.io/v2/chainlist for the list of supported chainids',
   ]) {
     axios.get = async () => ({ data: { status: '0', message: 'NOTOK', result } });
     await assert.rejects(
-      () => EtherscanService.getEthBalance(WALLET, 'key', 8453),
+      () => EtherscanService.getEthBalance(WALLET, 'key', 42161),
       (err) => {
         // Separated from ETHERSCAN_API_ERROR because the two demand opposite
         // handling: retry-next-sync vs record-a-standing-gap.
         assert.equal(err.code, 'ETHERSCAN_CHAIN_UNAVAILABLE');
-        assert.equal(err.chainId, 8453);
+        assert.equal(err.chainId, 42161);
         return true;
       }
     );
@@ -649,6 +654,8 @@ test('a chain-declared account API omits Etherscan key and chainid parameters', 
   assert.equal(seen[0].params.chainid, undefined);
   assert.equal(seen[0].params.apikey, undefined);
   assert.equal(seen[0].params.action, 'txlist');
+  assert.equal(seen[0].params.endblock, 999999999,
+    'OP Mainnet is already above the old 99,999,999 sentinel');
 });
 
 test('a keyless-only chain set syncs without an Etherscan credential', async (t) => {
@@ -700,6 +707,93 @@ test('Gnosis live balances use keyless RPC instead of Blockscout indexed balance
   assert.equal(rpcCalls[0].body.method, 'eth_getBalance');
   assert.equal(rpcCalls[1].body.method, 'eth_call');
   assert.match(rpcCalls[1].body.params[0].data, /^0x70a08231[0-9a-f]{64}$/);
+});
+
+test('OP Mainnet and Base live balances use their public RPC endpoints', async (t) => {
+  const axios = require('axios');
+  const originalPost = axios.post;
+  const seen = [];
+  axios.post = async (url, body) => {
+    seen.push({ url, method: body.method });
+    return { data: { jsonrpc: '2.0', id: 1, result: '0x2a' } };
+  };
+  t.after(() => { axios.post = originalPost; });
+
+  assert.equal(await EtherscanService.getEthBalance(WALLET, null, 10), '42');
+  assert.equal(await EtherscanService.getEthBalance(WALLET, null, 8453), '42');
+  assert.deepEqual(seen, [
+    { url: 'https://mainnet.optimism.io', method: 'eth_getBalance' },
+    { url: 'https://mainnet.base.org', method: 'eth_getBalance' },
+  ]);
+});
+
+test('a direct OP Stack self-deposit becomes one bridge-classifiable inbound credit', () => {
+  const bridge = '0x4200000000000000000000000000000000000010';
+  const [credit] = EthWalletService.normalizeFeeds(WALLET, {
+    normal: [{
+      blockNumber: '49289908',
+      timeStamp: '1785369163',
+      hash: '0xdirectdeposit',
+      from: WALLET,
+      to: WALLET,
+      value: '71088375931383555894',
+      gasUsed: '21000',
+      gasPrice: '0',
+      input: '0x',
+      isError: '0',
+    }],
+  }, { opStackDeposits: { creditSource: bridge } });
+
+  assert.equal(credit.transfer_type, 'native');
+  assert.equal(credit.from_address, bridge);
+  assert.equal(credit.to_address, WALLET);
+  assert.equal(credit.value_wei, '71088375931383555894');
+  assert.equal(credit.ordinal, 0);
+});
+
+test('an OP Stack deposit sent onward is net-zero for the tracked L2 sender', () => {
+  const rows = EthWalletService.normalizeFeeds(WALLET, {
+    normal: [{
+      blockNumber: '49289908',
+      timeStamp: '1785369163',
+      hash: '0xdeposittosomeoneelse',
+      from: WALLET,
+      to: '0x1111111111111111111111111111111111111111',
+      value: '1000000000000000000',
+      gasUsed: '21000',
+      gasPrice: '0',
+      input: '0x',
+      isError: '0',
+    }],
+  }, { opStackDeposits: chains.getChain(8453).opStackDeposits });
+
+  assert.deepEqual(rows, [], 'mint then send changes the tracked sender balance by zero');
+});
+
+test('OP Stack deposit reshaping declines every off-shape zero-fee row', () => {
+  const config = chains.getChain(8453).opStackDeposits;
+  const base = {
+    blockNumber: '1',
+    timeStamp: '1700000000',
+    hash: '0xnear',
+    from: WALLET,
+    to: WALLET,
+    value: '1',
+    gasUsed: '21000',
+    gasPrice: '0',
+    input: '0x',
+    isError: '0',
+  };
+  for (const patch of [
+    { gasPrice: '1' },
+    { gasUsed: '21001' },
+    { input: '0x1234' },
+    { isError: '1' },
+    { value: '0' },
+    { to: 'not-an-address' },
+  ]) {
+    assert.equal(EthWalletService.opStackDepositDestination({ ...base, ...patch }, config), null);
+  }
 });
 
 test('Blockscout internal transactionHash is normalized to the ingestion hash field', async (t) => {
