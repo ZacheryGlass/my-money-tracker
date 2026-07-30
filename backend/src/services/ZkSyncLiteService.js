@@ -89,6 +89,24 @@ class ZkSyncLiteService {
         finalized: null,
       };
     }
+    // The retired archive returns this exact shape for an address that never
+    // activated on Lite: depositing.balances is present, while committed and
+    // finalized are both null. That is a valid empty account, not missing
+    // provider data. Preserve any depositing metadata and synthesize only the
+    // empty committed snapshot the rest of the importer consumes.
+    if (result.committed == null && result.finalized == null
+        && result.depositing && typeof result.depositing.balances === 'object') {
+      return {
+        ...result,
+        committed: {
+          accountId: null,
+          address: String(addressValue).toLowerCase(),
+          lastUpdateInBlock: 0,
+          balances: {},
+          nfts: {},
+        },
+      };
+    }
     if (!result.committed || typeof result.committed.balances !== 'object') {
       const error = new Error('zkSync Lite account response is missing committed balances');
       error.code = 'ZKSYNC_LITE_API_ERROR';

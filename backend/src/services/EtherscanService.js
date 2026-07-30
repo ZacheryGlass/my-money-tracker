@@ -98,7 +98,23 @@ class EtherscanService {
       })
     );
 
-    const { status, message, result } = response.data || {};
+    const payload = response.data || {};
+    const { status, message, result } = payload;
+
+    // The proxy-style endpoints intentionally return an Ethereum JSON-RPC
+    // envelope rather than Etherscan's {status,message,result} envelope. This
+    // is how Etherscan V2 serves module=proxy/action=eth_blockNumber, and how
+    // Blockscout serves module=block/action=eth_block_number. Reject errors and
+    // nulls, but accept a well-formed result before applying the account/log
+    // response rules below.
+    if (payload.jsonrpc === '2.0') {
+      if (!payload.error && payload.result != null) return payload.result;
+      const detail = payload.error?.message || 'invalid JSON-RPC response';
+      const error = new Error(`${provider.name} JSON-RPC error: ${detail}`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+
     if (status === '1') return result;
 
     const detail = `${message || ''} ${typeof result === 'string' ? result : ''}`;
@@ -166,15 +182,32 @@ class EtherscanService {
       // head. The indexer can lag; persisting an RPC block that getLogs has not
       // indexed yet would skip a late-arriving deposit forever.
       const blocksUrl = new URL('/api/v2/blocks?type=block', chain.accountApi.baseUrl).toString();
-      const response = await etherscan.throttled(() =>
-        axios.get(blocksUrl, { timeout: 15000 })
-      );
-      // `total_blocks` from /api/v2/stats is an aggregate count, not a block
-      // height (Base's value was ~200k behind its newest indexed height).
-      // Blockscout orders this endpoint newest-first; the first item is the
-      // indexed coverage boundary shared by account and log APIs.
-      result = response.data?.items?.[0]?.height;
-      if (typeof result === 'number') result = String(result);
+      try {
+        const response = await etherscan.throttled(() =>
+          axios.get(blocksUrl, { timeout: 15000 })
+        );
+        // `total_blocks` from /api/v2/stats is an aggregate count, not a block
+        // height (Base's value was ~200k behind its newest indexed height).
+        // Blockscout orders this endpoint newest-first; the first item is the
+        // indexed coverage boundary shared by account and log APIs.
+        result = response.data?.items?.[0]?.height;
+        if (typeof result === 'number') result = String(result);
+        if (typeof result !== 'string' || !/^(?:0x[0-9a-f]+|\d+)$/i.test(result)) {
+          throw new Error('Blockscout v2 blocks response has no valid indexed height');
+        }
+      } catch (err) {
+        // Some public instances intermittently disable or fail the v2 blocks
+        // route while their documented legacy block module and account/log
+        // APIs remain healthy. Querying eth_block_number on the SAME explorer
+        // is a safe indexed-head fallback; unlike the chain RPC it cannot race
+        // ahead of the explorer whose logs we are about to scan.
+        logger.warn({ chainId, provider: chain.accountApi.baseUrl, err: err.message },
+          'Blockscout v2 head failed; using legacy explorer block-number endpoint');
+        result = await this._request(
+          { module: 'block', action: 'eth_block_number' },
+          { apiKey, chainId }
+        );
+      }
     } else {
       result = await this._request(
         { module: 'proxy', action: 'eth_blockNumber' },

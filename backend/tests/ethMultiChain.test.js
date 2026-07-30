@@ -828,6 +828,45 @@ test('Blockscout log coverage uses the explorer indexed head, not the newer RPC 
   assert.equal(seenUrl, 'https://base.blockscout.com/api/v2/blocks?type=block');
 });
 
+test('Etherscan proxy JSON-RPC responses supply the Polygon log coverage head', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  let seen;
+  axios.get = async (url, config) => {
+    seen = { url, params: config.params };
+    return { data: { jsonrpc: '2.0', id: 83, result: '0x56f00de' } };
+  };
+  t.after(() => { axios.get = originalGet; });
+
+  assert.equal(await EtherscanService._latestBlockNumber('test-key', 137), 91160798);
+  assert.equal(seen.url, 'https://api.etherscan.io/v2/api');
+  assert.equal(seen.params.chainid, 137);
+  assert.equal(seen.params.module, 'proxy');
+  assert.equal(seen.params.action, 'eth_blockNumber');
+});
+
+test('Blockscout head falls back to the documented legacy explorer endpoint', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  const calls = [];
+  axios.get = async (url, config = {}) => {
+    calls.push({ url, params: config.params });
+    if (url.includes('/api/v2/blocks')) {
+      const error = new Error('Request failed with status code 500');
+      error.response = { status: 500 };
+      throw error;
+    }
+    return { data: { jsonrpc: '2.0', id: 1, result: '0x2f0b0f5' } };
+  };
+  t.after(() => { axios.get = originalGet; });
+
+  assert.equal(await EtherscanService._latestBlockNumber(null, 8453), 49328373);
+  assert.equal(calls[0].url, 'https://base.blockscout.com/api/v2/blocks?type=block');
+  assert.equal(calls[1].url, 'https://base.blockscout.com/api');
+  assert.equal(calls[1].params.module, 'block');
+  assert.equal(calls[1].params.action, 'eth_block_number');
+});
+
 test('a direct OP Stack self-deposit becomes one bridge-classifiable inbound credit', () => {
   const bridge = '0x4200000000000000000000000000000000000010';
   const [credit] = EthWalletService.normalizeFeeds(WALLET, {

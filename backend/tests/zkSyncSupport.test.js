@@ -358,6 +358,40 @@ test('Lite history pagination is overlap-bounded and de-duplicates the boundary'
   assert.equal(result.scannedThroughBlock, 200);
 });
 
+test('Lite inactive-account response is a valid empty committed account', async (t) => {
+  const original = ZkSyncLiteService._request;
+  t.after(() => { ZkSyncLiteService._request = original; });
+  ZkSyncLiteService._request = async () => ({
+    depositing: { balances: {} },
+    committed: null,
+    finalized: null,
+  });
+
+  const account = await ZkSyncLiteService.getAccount(WALLET);
+  assert.deepEqual(account.committed, {
+    accountId: null,
+    address: WALLET,
+    lastUpdateInBlock: 0,
+    balances: {},
+    nfts: {},
+  });
+});
+
+test('Lite still fails closed on a malformed non-empty account response', async (t) => {
+  const original = ZkSyncLiteService._request;
+  t.after(() => { ZkSyncLiteService._request = original; });
+  ZkSyncLiteService._request = async () => ({
+    depositing: { balances: { ETH: '1' } },
+    committed: null,
+    finalized: { balances: {} },
+  });
+
+  await assert.rejects(
+    () => ZkSyncLiteService.getAccount(WALLET),
+    /missing committed balances/
+  );
+});
+
 test('Lite sync replaces only its overlap window and advances its normal cursor', async (t) => {
   const restore = [];
   const stub = (object, key, value) => {
