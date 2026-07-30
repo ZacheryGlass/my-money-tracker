@@ -25,6 +25,8 @@ vi.mock('../utils/api', () => ({
     remove: vi.fn(),
     importCsv: vi.fn(),
     getRecords: vi.fn(),
+    getMatches: vi.fn(),
+    matchesExportUrl: vi.fn(() => '/api/exchanges/matches/export'),
     resolveRecord: vi.fn(),
     setCredentials: vi.fn(),
     clearCredentials: vi.fn(),
