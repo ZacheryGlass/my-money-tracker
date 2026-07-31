@@ -356,11 +356,11 @@ test('a linked bridge pair folds into one row hosted by the out side', async () 
   const { sql } = lastLedgerQuery();
   // Read from 044's link table, not re-derived: the matching pass already
   // decided these two transactions are one movement.
-  assert.match(sql, /LEFT JOIN eth_activity_links lo ON lo\.out_activity_id = a\.id/);
-  assert.match(sql, /LEFT JOIN eth_activity_links li ON li\.in_activity_id = a\.id/);
+  assert.match(sql, /l\.out_activity_id = a\.id/);
+  assert.match(sql, /l\.in_activity_id = a\.id/);
   // The IN side is suppressed only when its OUT side is in this same,
   // user-scoped CTE -- which is what keeps a cross-user link from folding.
-  assert.match(sql, /FROM onchain_collapsed i WHERE h\.bridge_role = 'out' AND i\.bridge_role = 'in'/);
+  assert.match(sql, /FROM onchain_collapsed i WHERE h\.bridge_role = 'out'/);
   assert.match(sql, /h\.bridge_role IS DISTINCT FROM 'in'/);
   // Never a join to the counterpart activity row: eth_activity_links has no
   // owner column, so reaching through it would render another user's row.

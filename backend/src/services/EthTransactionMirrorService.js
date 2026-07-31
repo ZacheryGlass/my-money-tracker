@@ -157,7 +157,8 @@ class EthTransactionMirrorService {
       pool.query('SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id', [walletId]),
       pool.query('SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1', [wallet.user_id]),
       includeBridgeLinks ? pool.query(
-        `SELECT a.chain_id, a.tx_hash,
+        `SELECT DISTINCT ON (a.id)
+                a.chain_id, a.tx_hash,
                 CASE WHEN l.out_activity_id = a.id THEN 'out' ELSE 'in' END AS role,
                 l.id AS link_id,
                 l.asset,
@@ -173,9 +174,16 @@ class EthTransactionMirrorService {
            JOIN eth_activity pair
              ON pair.id = CASE WHEN l.out_activity_id = a.id
                                THEN l.in_activity_id ELSE l.out_activity_id END
-           JOIN eth_wallets pair_owner
+          JOIN eth_wallets pair_owner
              ON pair_owner.id = pair.wallet_id AND pair_owner.user_id = w.user_id
-          WHERE a.wallet_id = $1 AND w.user_id = $2`,
+          WHERE a.wallet_id = $1 AND w.user_id = $2
+          -- A destination bundle can have several source link rows. The
+          -- legacy transactions projection only has one bridge counterpart
+          -- slot, so choose its earliest link deterministically rather than
+          -- fanning the query out and letting Map#set silently retain the
+          -- last source. The activity and unified-ledger readers expose the
+          -- complete constituent set separately.
+          ORDER BY a.id, l.id`,
         [walletId, wallet.user_id]
       ) : Promise.resolve({ rows: [] }),
     ]);

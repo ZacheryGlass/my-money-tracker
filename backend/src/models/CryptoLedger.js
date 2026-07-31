@@ -245,10 +245,10 @@ const ONCHAIN_RAW_CTE = `
       -- fold below instead pairs two rows that are BOTH already inside this
       -- user-scoped CTE, which is the only way both ends are guaranteed theirs.
       COALESCE(lo.id, li.id) AS bridge_link_id,
+      COALESCE(lo.in_activity_id, li.in_activity_id) AS bridge_group_key,
       -- Which half this row is. lo first: a row is the out side of at most one
-      -- link and the in side of at most one (both columns are UNIQUE), and a
-      -- single row cannot be both in practice -- the matcher pairs a bridge_out
-      -- with a bridge_in and a row carries one category.
+      -- link and the in side of at most one; a destination bundle aggregates
+      -- all source links in li below. A row still carries one category.
       (CASE WHEN lo.id IS NOT NULL THEN 'out' WHEN li.id IS NOT NULL THEN 'in' END)::text AS bridge_role,
       lo.asset::text AS bridge_asset,
       lo.out_amount AS bridge_out_amount,
@@ -290,9 +290,33 @@ const ONCHAIN_RAW_CTE = `
       ORDER BY v.exchange_record_id
       LIMIT 1
     ) rv ON TRUE
-    -- Both link columns are UNIQUE (044), so neither join can fan a row out.
-    LEFT JOIN eth_activity_links lo ON lo.out_activity_id = a.id
-    LEFT JOIN eth_activity_links li ON li.in_activity_id = a.id
+    LEFT JOIN LATERAL (
+      SELECT l.id, l.in_activity_id, l.asset, l.out_amount, l.in_amount,
+             l.fee_amount, l.asset_details
+      FROM eth_activity_links l
+      WHERE l.out_activity_id = a.id
+      ORDER BY l.id
+      LIMIT 1
+    ) lo ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT CASE WHEN COUNT(l.id) > 0 THEN a.id END AS in_activity_id,
+             MIN(l.id) AS id,
+             (array_agg(l.asset ORDER BY l.id))[1] AS asset,
+             SUM(l.out_amount) AS out_amount,
+             SUM(l.in_amount) AS in_amount,
+             SUM(l.fee_amount) AS fee_amount,
+             CASE WHEN COUNT(*) = 1
+                  THEN (array_agg(l.asset_details ORDER BY l.id))[1]
+                  ELSE jsonb_agg(jsonb_build_object(
+                    'asset', l.asset,
+                    'out_amount', l.out_amount::text,
+                    'in_amount', l.in_amount::text,
+                    'fee_amount', l.fee_amount::text
+                  ) ORDER BY l.id)
+             END AS asset_details
+      FROM eth_activity_links l
+      WHERE l.in_activity_id = a.id
+    ) li ON TRUE
     WHERE w.user_id = $1
   )`;
 
@@ -357,7 +381,13 @@ const ONCHAIN_CTE = `
       r.spam_reason,
       r.bridge_link_id, r.bridge_role, r.bridge_asset,
       r.bridge_out_amount, r.bridge_in_amount, r.bridge_fee_amount,
-      r.bridge_asset_details
+      r.bridge_asset_details, r.bridge_group_key,
+      CASE WHEN r.bridge_group_key IS NULL THEN 1
+           ELSE ROW_NUMBER() OVER (
+             PARTITION BY r.bridge_group_key, r.bridge_role
+             ORDER BY r.occurred_at, r.row_id
+           )
+      END AS bridge_group_rank
     FROM (
       SELECT q.*,
         ROW_NUMBER() OVER (
@@ -431,7 +461,9 @@ const ONCHAIN_BRIDGE_CTE = `
   onchain AS (
     SELECT
       h.source, h.row_id, h.occurred_at, h.category,
-      (h.needs_review OR COALESCE(b.needs_review, FALSE)) AS needs_review,
+      (h.needs_review
+       OR COALESCE(b.needs_review, FALSE)
+       OR COALESCE(m.other_needs_review, FALSE)) AS needs_review,
       h.record_needs_review, h.review_reason,
       h.wallet_id, h.chain_id, h.tx_hash, h.block_number,
       h.counterparty_address, h.counterparty_name, h.method_id, h.method_name,
@@ -453,10 +485,10 @@ const ONCHAIN_BRIDGE_CTE = `
       -- The receiving wallet stays addressable by the wallet filter, like the
       -- self-transfer fold's: the far leg belongs to the movement, so narrowing
       -- to its wallet must find the event rather than drop it.
-      (CASE WHEN b.row_id IS NULL THEN h.fold_wallet_ids
-            ELSE COALESCE(h.fold_wallet_ids, ARRAY[]::int[]) || b.fold_wallet_ids
-       END) AS fold_wallet_ids,
-      (h.spam AND COALESCE(b.spam, TRUE)) AS spam,
+      (COALESCE(h.fold_wallet_ids, ARRAY[]::int[])
+       || CASE WHEN b.row_id IS NULL THEN ARRAY[]::int[] ELSE b.fold_wallet_ids END
+       || COALESCE(m.other_wallet_ids, ARRAY[]::int[])) AS fold_wallet_ids,
+      (h.spam AND COALESCE(b.spam, TRUE) AND COALESCE(m.other_spam, TRUE)) AS spam,
       h.spam_reason,
       CASE WHEN b.row_id IS NULL THEN NULL ELSE jsonb_build_object(
         'link_id', h.bridge_link_id,
@@ -488,7 +520,17 @@ const ONCHAIN_BRIDGE_CTE = `
             'in_amount', h.bridge_in_amount::text,
             'fee_amount', h.bridge_fee_amount::text
           ))
-        )
+        ) || COALESCE(m.other_assets, '[]'::jsonb),
+        'source_members', jsonb_build_array(jsonb_build_object(
+          'row_id', h.row_id,
+          'wallet_id', h.wallet_id,
+          'chain_id', h.chain_id,
+          'tx_hash', h.tx_hash,
+          'asset', h.bridge_asset,
+          'out_amount', h.bridge_out_amount::text,
+          'in_amount', h.bridge_in_amount::text,
+          'fee_amount', h.bridge_fee_amount::text
+        )) || COALESCE(m.other_sources, '[]'::jsonb)
       ) END AS bridge_match,
       -- The folded half's own category, so ?category=bridge_in still finds the
       -- event through its host instead of returning nothing -- the same rule
@@ -503,17 +545,45 @@ const ONCHAIN_BRIDGE_CTE = `
       FROM onchain_collapsed i
       WHERE h.bridge_role = 'out'
         AND i.bridge_role = 'in'
-        AND i.bridge_link_id = h.bridge_link_id
+        AND i.bridge_group_key = h.bridge_group_key
       LIMIT 1
     ) b ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT
+        BOOL_OR(o.needs_review) AS other_needs_review,
+        BOOL_AND(o.spam) AS other_spam,
+        array_agg(o.wallet_id ORDER BY o.row_id) AS other_wallet_ids,
+        jsonb_agg(jsonb_build_object(
+          'row_id', o.row_id,
+          'wallet_id', o.wallet_id,
+          'chain_id', o.chain_id,
+          'tx_hash', o.tx_hash,
+          'asset', o.bridge_asset,
+          'out_amount', o.bridge_out_amount::text,
+          'in_amount', o.bridge_in_amount::text,
+          'fee_amount', o.bridge_fee_amount::text
+        ) ORDER BY o.row_id) AS other_sources,
+        jsonb_agg(jsonb_build_object(
+          'asset', o.bridge_asset,
+          'out_amount', o.bridge_out_amount::text,
+          'in_amount', o.bridge_in_amount::text,
+          'fee_amount', o.bridge_fee_amount::text
+        ) ORDER BY o.row_id) AS other_assets
+      FROM onchain_collapsed o
+      WHERE h.bridge_group_key IS NOT NULL
+        AND o.bridge_group_key = h.bridge_group_key
+        AND o.bridge_role = 'out'
+        AND o.row_id <> h.row_id
+    ) m ON TRUE
     -- The in side is suppressed ONLY when its out side is actually in this
     -- feed. IS DISTINCT FROM, not =: bridge_role is NULL on every ordinary row
     -- and a bare NOT (NULL = 'in' AND ...) is NULL, which WHERE discards --
     -- i.e. it would drop the entire non-bridge ledger.
-    WHERE h.bridge_role IS DISTINCT FROM 'in'
+    WHERE (h.bridge_role IS DISTINCT FROM 'in'
+           AND (h.bridge_group_key IS NULL OR h.bridge_group_rank = 1))
        OR NOT EXISTS (
          SELECT 1 FROM onchain_collapsed o2
-         WHERE o2.bridge_link_id = h.bridge_link_id AND o2.bridge_role = 'out'
+         WHERE o2.bridge_group_key = h.bridge_group_key AND o2.bridge_role = 'out'
        )
   )`;
 

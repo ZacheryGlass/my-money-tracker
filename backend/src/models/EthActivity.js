@@ -7,8 +7,10 @@ const { DEFAULT_CHAIN_ID } = require('../config/chains');
 // one place. A category override clears needs_review because it is a verdict;
 // a note-only row does not, because prose can preserve uncertainty.
 //
-// The join is on the full key (wallet, chain, tx_hash), which both tables carry
-// a UNIQUE index on, so it can never fan one activity row into two.
+// The override join is on the full key (wallet, chain, tx_hash), which both
+// tables carry a UNIQUE index on. Bridge links are aggregated separately so a
+// destination bundle can reference several source rows without fanning this
+// activity reader out.
 const RESOLVED_COLUMNS = `
     a.id, a.wallet_id, a.chain_id, a.tx_hash, a.block_number, a.block_time,
     COALESCE(o.category, a.category) AS category,
@@ -67,14 +69,16 @@ const RESOLVED_COLUMNS = `
     ) END AS exchange_match,
     -- The cross-chain pairing (#59). A matched pair IS one movement of the
     -- user's own money, so each leg carries the other's coordinates and the
-    -- fee the bridge took, and the two render as a single self-transfer.
-    -- Both link columns are UNIQUE, so neither join can fan a row out.
+    -- fee the bridge took, and the two render as a single self-transfer. A
+    -- destination bundle may have several source link rows; the lateral
+    -- aggregate below keeps this transaction-level reader one row per activity.
     COALESCE(lo.id, li.id) AS bridge_link_id,
     COALESCE(lo.asset, li.asset) AS bridge_asset,
     COALESCE(lo.out_amount, li.out_amount) AS bridge_out_amount,
     COALESCE(lo.in_amount, li.in_amount) AS bridge_in_amount,
     COALESCE(lo.fee_amount, li.fee_amount) AS bridge_fee_amount,
     COALESCE(lo.asset_details, li.asset_details) AS bridge_asset_details,
+    bridge_parts.activities AS bridge_counterpart_activities,
     pair.chain_id AS bridge_counterpart_chain_id,
     pair.tx_hash AS bridge_counterpart_tx_hash,
     pair.category AS bridge_counterpart_category`;
@@ -84,8 +88,7 @@ const RESOLVED_FROM = `
     JOIN eth_wallets w ON w.id = a.wallet_id
     LEFT JOIN eth_activity_overrides o
       ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash
-    -- At most one match per activity row (041's unique index says so), so none
-    -- of these can fan one row into two.
+    -- Exchange matches remain one-to-one by schema.
     LEFT JOIN exchange_matches em ON em.activity_id = a.id
     LEFT JOIN exchange_records mer ON mer.id = em.exchange_record_id
     LEFT JOIN exchange_accounts mea ON mea.id = mer.exchange_account_id
@@ -95,9 +98,56 @@ const RESOLVED_FROM = `
      AND mv.wallet_id = a.wallet_id
      AND mv.chain_id = a.chain_id
      AND mv.tx_hash = a.tx_hash
-    LEFT JOIN eth_activity_links lo ON lo.out_activity_id = a.id
-    LEFT JOIN eth_activity_links li ON li.in_activity_id = a.id
-    LEFT JOIN eth_activity pair ON pair.id = COALESCE(lo.in_activity_id, li.out_activity_id)`;
+    LEFT JOIN LATERAL (
+      SELECT l.id, l.in_activity_id, l.asset, l.out_amount, l.in_amount,
+             l.fee_amount, l.asset_details
+      FROM eth_activity_links l
+      WHERE l.out_activity_id = a.id
+      ORDER BY l.id
+      LIMIT 1
+    ) lo ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT MIN(l.id) AS id,
+             (array_agg(l.out_activity_id ORDER BY l.id))[1] AS first_out_activity_id,
+             (array_agg(l.asset ORDER BY l.id))[1] AS asset,
+             SUM(l.out_amount) AS out_amount,
+             SUM(l.in_amount) AS in_amount,
+             SUM(l.fee_amount) AS fee_amount,
+             CASE WHEN COUNT(*) = 1
+                  THEN (array_agg(l.asset_details ORDER BY l.id))[1]
+                  ELSE jsonb_agg(jsonb_build_object(
+                    'asset', l.asset,
+                    'out_amount', l.out_amount::text,
+                    'in_amount', l.in_amount::text,
+                    'fee_amount', l.fee_amount::text
+                  ) ORDER BY l.id)
+             END AS asset_details
+      FROM eth_activity_links l
+      WHERE l.in_activity_id = a.id
+    ) li ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(jsonb_build_object(
+               'id', x.id,
+               'chain_id', x.chain_id,
+               'tx_hash', x.tx_hash,
+               'category', x.category
+             ) ORDER BY x.id) AS activities
+      FROM (
+        SELECT p.id, p.chain_id, p.tx_hash, p.category
+        FROM eth_activity_links l
+        JOIN eth_activity p ON p.id = l.in_activity_id
+        JOIN eth_wallets pw ON pw.id = p.wallet_id AND pw.user_id = w.user_id
+        WHERE l.out_activity_id = a.id
+        UNION ALL
+        SELECT p.id, p.chain_id, p.tx_hash, p.category
+        FROM eth_activity_links l
+        JOIN eth_activity p ON p.id = l.out_activity_id
+        JOIN eth_wallets pw ON pw.id = p.wallet_id AND pw.user_id = w.user_id
+        WHERE l.in_activity_id = a.id
+      ) x
+    ) bridge_parts ON TRUE
+    LEFT JOIN eth_activity pair
+      ON pair.id = COALESCE(lo.in_activity_id, li.first_out_activity_id)`;
 
 const INSERT_COLUMNS = [
   'wallet_id', 'chain_id', 'tx_hash', 'block_number', 'block_time', 'category',

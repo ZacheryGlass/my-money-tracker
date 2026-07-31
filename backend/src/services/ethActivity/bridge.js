@@ -140,14 +140,80 @@ function bundleMatches(out, candidate) {
   });
 }
 
+// A destination bridge transaction can settle a bundle assembled from several
+// source transactions. This is intentionally narrower than ordinary pairing:
+// the destination must contain at least two assets and every source leg must
+// contribute a disjoint, readable asset. That prevents two unrelated same-
+// asset sends from being fused merely because their sum happens to fit.
+function allocateBundleSources(outs, candidate) {
+  const incoming = movementAssets(candidate);
+  if (incoming.length < 2) return null;
+  const incomingByAsset = new Map(incoming.map((entry) => [entry.asset, entry]));
+  const totals = new Map();
+  const selected = [];
+
+  for (const out of outs) {
+    const assets = movementAssets(out);
+    // One source activity may itself be a bundle, but every asset must be
+    // present on the destination and it may not overlap a previous source.
+    if (assets.some((entry) => !incomingByAsset.has(entry.asset)
+      || totals.has(entry.asset))) continue;
+    selected.push(out);
+    for (const entry of assets) totals.set(entry.asset, entry.amount);
+    if (selected.length > incoming.length) break;
+  }
+
+  if (selected.length < 2 || totals.size !== incoming.length) return null;
+  for (const entry of incoming) {
+    const outAmount = totals.get(entry.asset);
+    if (outAmount == null || entry.amount > outAmount
+      || (outAmount - entry.amount) * 10000n > outAmount * BRIDGE_MAX_FEE_BPS) {
+      return null;
+    }
+  }
+  return selected;
+}
+
+function linksForBundleSources(outs, candidate) {
+  const incomingByAsset = new Map(movementAssets(candidate).map((entry) => [entry.asset, entry]));
+  return outs.map((out) => {
+    const outAssets = movementAssets(out);
+    const link = {
+      out_activity_id: out.id,
+      in_activity_id: candidate.id,
+      asset: out.asset,
+      out_amount: out.rawAmount,
+      in_amount: incomingByAsset.get(out.asset)?.rawAmount ?? out.rawAmount,
+      fee_amount: formatUnits(
+        out.amount - (incomingByAsset.get(out.asset)?.amount ?? out.amount),
+        18
+      ),
+    };
+    if (outAssets.length > 1) {
+      link.asset_details = outAssets.map((entry) => {
+        const incoming = incomingByAsset.get(entry.asset);
+        return {
+          asset: entry.asset,
+          out_amount: entry.rawAmount,
+          in_amount: incoming.rawAmount,
+          fee_amount: formatUnits(entry.amount - incoming.amount, 18),
+        };
+      });
+    }
+    return link;
+  });
+}
+
 // Pure so the whole pairing policy is testable without a database. `outs` and
 // `ins` must already be time-ordered; the greedy first-fit that follows is what
 // makes the result deterministic -- with two identical bridges in flight, the
 // earlier out claims the earlier in.
 function pairBridgeLegs(outs, ins) {
   const claimed = new Set();
+  const claimedOuts = new Set();
   const links = [];
   for (const out of outs) {
+    if (claimedOuts.has(out.id)) continue;
     const match = ins.find((candidate) => {
       if (claimed.has(candidate.id)) return false;
       // Cross-chain by definition. Same-chain would pair a send with an
@@ -165,6 +231,7 @@ function pairBridgeLegs(outs, ins) {
     });
     if (!match) continue;
     claimed.add(match.id);
+    claimedOuts.add(out.id);
     const link = {
       out_activity_id: out.id,
       in_activity_id: match.id,
@@ -193,6 +260,28 @@ function pairBridgeLegs(outs, ins) {
     }
     links.push(link);
   }
+
+  // Second pass for bundle settlements: leave the established greedy
+  // one-to-one behavior untouched, then claim only a destination bundle that
+  // can be conserved exactly from multiple still-unclaimed source activities.
+  for (const candidate of ins) {
+    if (claimed.has(candidate.id)) continue;
+    const sourcePool = outs.filter((out) => {
+      if (claimedOuts.has(out.id) || out.chain_id === candidate.chain_id) return false;
+      if (candidate.time < out.time) return false;
+      const window = out.chain_id === DEFAULT_CHAIN_ID
+        ? BRIDGE_DEPOSIT_WINDOW_MS
+        : BRIDGE_WITHDRAWAL_WINDOW_MS;
+      return candidate.time - out.time <= window;
+    });
+    const selected = allocateBundleSources(sourcePool, candidate);
+    if (!selected) continue;
+    for (const link of linksForBundleSources(selected, candidate)) {
+      links.push(link);
+      claimedOuts.add(link.out_activity_id);
+    }
+    claimed.add(candidate.id);
+  }
   return links;
 }
 
@@ -204,4 +293,5 @@ module.exports = {
   bridgeAsset,
   bridgeMovement,
   pairBridgeLegs,
+  allocateBundleSources,
 };

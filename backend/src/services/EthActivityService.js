@@ -231,8 +231,12 @@ class EthActivityService {
     const written = await EthActivityLink.replaceForUser(userId, links);
     const flagged = await EthActivityLink.syncBridgeReviewState(userId, REVIEW_REASONS.unmatched_bridge);
 
-    logger.info({ userId, matched: written, unmatched: flagged }, 'ETH bridge legs matched');
-    return { matched: written, unmatched: flagged };
+    // A many-to-one settlement writes one link per source component, but it is
+    // one completed movement. Keep the public count movement-oriented while
+    // retaining the per-source rows needed for exact constituent hashes.
+    const matched = new Set(links.map((link) => link.in_activity_id)).size;
+    logger.info({ userId, matched, linkRows: written, unmatched: flagged }, 'ETH bridge legs matched');
+    return { matched, unmatched: flagged };
   }
 
   // Fills counterparty_name for display from the owner's labels, resolved with

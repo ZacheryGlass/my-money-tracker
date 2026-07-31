@@ -143,12 +143,9 @@ function fakeQuery(text, params = []) {
       const row = {};
       columns.forEach((col, j) => { row[col] = params[i + j]; });
       if (row.asset_details) row.asset_details = JSON.parse(row.asset_details);
-      // The two UNIQUE constraints: a leg can be claimed once from each side.
+      // A source leg is unique; a destination may repeat for a bundle.
       if (db.links.some((l) => l.out_activity_id === row.out_activity_id)) {
         throw new Error('duplicate key value violates unique constraint "eth_activity_links_out_unique"');
-      }
-      if (db.links.some((l) => l.in_activity_id === row.in_activity_id)) {
-        throw new Error('duplicate key value violates unique constraint "eth_activity_links_in_unique"');
       }
       db.links.push(row);
       inserted++;
@@ -489,6 +486,29 @@ test('a matching multi-asset bundle preserves every asset and its fee', () => {
   ]);
 });
 
+test('a destination bundle can settle multiple source activities without fusion', () => {
+  const links = pairBridgeLegs(
+    [
+      candidate(1, 1, 'POL', '52.520717', T0),
+      candidate(2, 1, 'USDC', '200.996804', T0 + 5 * 60 * 1000),
+    ],
+    [{
+      id: 3, chain_id: 137, time: T0 + 20 * 60 * 1000,
+      assets: [
+        { asset: 'POL', amount: scaled('52.5'), rawAmount: '52.5' },
+        { asset: 'USDC', amount: scaled('200'), rawAmount: '200' },
+      ],
+      asset: 'POL', amount: scaled('52.5'), rawAmount: '52.5',
+    }]
+  );
+
+  assert.deepEqual(links.map((link) => [link.out_activity_id, link.in_activity_id]), [[1, 3], [2, 3]]);
+  assert.deepEqual(links.map((link) => [link.asset, link.out_amount, link.in_amount]), [
+    ['POL', '52.520717', '52.5'],
+    ['USDC', '200.996804', '200'],
+  ]);
+});
+
 test('a fast bridge that takes a cut still pairs, and the delta is the fee', () => {
   const links = pairBridgeLegs(
     [candidate(1, 1, 'ETH', '1', T0)],
@@ -751,6 +771,39 @@ test('a multi-asset bridge transaction pairs when both sides carry the bundle', 
   ]);
 });
 
+test('stateful matching stores one row per source for a destination bundle', async () => {
+  await seedBridgeActivity([
+    {
+      chain_id: 1,
+      category: 'bridge_out',
+      block_time: '2026-03-19T23:02:59.000Z',
+      legs: [{ ...ethLeg('52.520717')[0], asset: 'POL' }],
+    },
+    {
+      chain_id: 1,
+      category: 'bridge_out',
+      block_time: '2026-03-19T23:05:11.000Z',
+      legs: [{ ...ethLeg('200.996804')[0], asset: 'USDC' }],
+    },
+    {
+      chain_id: 137,
+      category: 'bridge_in',
+      block_time: '2026-03-19T23:22:41.000Z',
+      legs: [
+        { ...ethLegIn('52.5')[0], asset: 'POL' },
+        { ...ethLegIn('200')[0], asset: 'USDC.e' },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(await EthActivityService.matchBridgeTransfersForUser(OWNER_ID), {
+    matched: 1, unmatched: 0,
+  });
+  assert.deepEqual(db.links.map((link) => [link.out_activity_id, link.in_activity_id]), [
+    [1, 3], [2, 3],
+  ]);
+});
+
 test('two DIFFERENT unnamed ERC-20s are never fused into one movement', async () => {
   // `asset` is a display string and 'TOKEN' is the placeholder for an ERC-20 the
   // feed never named -- so without a readability flag, two unrelated unnamed
@@ -899,9 +952,10 @@ test('the activity feed exposes the pairing so the two legs render as one', () =
     'bridge_counterpart_chain_id', 'bridge_counterpart_tx_hash']) {
     assert.match(columns, new RegExp(`AS ${column}`));
   }
-  // Both joins, or a leg only sees the pairing from one side.
-  assert.match(from, /LEFT JOIN eth_activity_links lo ON lo\.out_activity_id = a\.id/);
-  assert.match(from, /LEFT JOIN eth_activity_links li ON li\.in_activity_id = a\.id/);
+  // Both sides are still read, but the destination side is aggregated so a
+  // many-to-one settlement cannot fan the activity row out.
+  assert.match(from, /l\.out_activity_id = a\.id/);
+  assert.match(from, /l\.in_activity_id = a\.id/);
 });
 
 // --- the seeded bridge pack ------------------------------------------------
@@ -1111,7 +1165,11 @@ test('both CHECK swaps are guarded on the DEFINITION, with a bumped sentinel', (
 
 test('the links table cannot let one leg be claimed twice', () => {
   assert.match(SEED_SQL, /CONSTRAINT eth_activity_links_out_unique UNIQUE \(out_activity_id\)/);
-  assert.match(SEED_SQL, /CONSTRAINT eth_activity_links_in_unique UNIQUE \(in_activity_id\)/);
+  const manyToOneSql = fs.readFileSync(
+    path.join(__dirname, '..', 'migrations', '059_bridge_many_to_one.sql'), 'utf8'
+  );
+  assert.match(manyToOneSql, /DROP CONSTRAINT eth_activity_links_in_unique/);
+  assert.match(manyToOneSql, /idx_eth_activity_links_in_activity/);
   assert.match(SEED_SQL, /out_activity_id BIGINT NOT NULL REFERENCES eth_activity\(id\) ON DELETE CASCADE/);
   assert.match(SEED_SQL, /in_activity_id BIGINT NOT NULL REFERENCES eth_activity\(id\) ON DELETE CASCADE/);
   // No user_id column: ownership lives on eth_wallets and is inherited through

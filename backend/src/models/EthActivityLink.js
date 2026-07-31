@@ -49,11 +49,11 @@ class EthActivityLink {
       return `(${Array.from({ length: width }, (_, j) => `$${base + j + 1}${hasBundleDetails && j === 6 ? '::jsonb' : ''}`).join(', ')})`;
     });
 
-    // No ON CONFLICT clause on purpose. Both endpoints carry a UNIQUE index, so
-    // a collision here means the matcher claimed one leg twice -- a bug that
-    // must surface, not a duplicate to swallow. Callers wrap the matching pass
-    // the way they wrap every other derivation, so a throw degrades to a logged
-    // warning rather than a failed sync.
+    // No ON CONFLICT clause on purpose. The source endpoint carries a UNIQUE
+    // index, so a collision here means the matcher claimed one source leg twice
+    // -- a bug that must surface, not a duplicate to swallow. A destination
+    // may legitimately repeat when one settlement bundles several source
+    // activities; each row then carries that source's conserved asset slice.
     const result = await pool.query(
       `INSERT INTO eth_activity_links
          ${columns}
