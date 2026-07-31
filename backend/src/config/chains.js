@@ -271,6 +271,7 @@ const REGISTRY = [
       rpcScan: {
         blockRange: 10000,
         batchSize: 10,
+        concurrency: 4,
       },
     },
   },

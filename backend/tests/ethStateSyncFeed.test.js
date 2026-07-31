@@ -147,6 +147,7 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
         assert.deepEqual(chain.stateSyncDeposits.rpcScan, {
           blockRange: 10000,
           batchSize: 10,
+          concurrency: 4,
         });
       }
     } else {

@@ -191,7 +191,10 @@ class EtherscanService {
 
   // JSON-RPC batch transport for bounded historical log walks. IDs are local
   // to this POST and results may arrive in any order, so every item is matched
-  // back by id and validated before its result is returned.
+  // back by id and validated before its result is returned. This is used only
+  // by the chain-declared public-RPC state-sync scanner; its caller bounds
+  // concurrency per provider instead of putting a multi-minute historical
+  // walk behind the Etherscan account-feed throttle.
   static async _rpcBatchRequest(chainId, calls) {
     const rpcUrl = chains.getChain(chainId)?.rpcUrl;
     if (!rpcUrl) {
@@ -206,9 +209,7 @@ class EtherscanService {
       method,
       params,
     }));
-    const response = await etherscan.throttled(() =>
-      axios.post(rpcUrl, body, { timeout: 30000 })
-    );
+    const response = await axios.post(rpcUrl, body, { timeout: 30000 });
     if (!Array.isArray(response.data)) {
       const error = new Error('Chain RPC batch returned a non-array response');
       error.code = 'ETHERSCAN_API_ERROR';
@@ -819,9 +820,11 @@ class EtherscanService {
     const scan = feedConfig?.rpcScan;
     const blockRange = Number(scan?.blockRange);
     const batchSize = Number(scan?.batchSize);
+    const concurrency = Number(scan?.concurrency ?? 1);
     if (!Number.isSafeInteger(blockRange) || blockRange < 1
-        || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 100) {
-      const error = new Error('statesync rpcScan requires blockRange >= 1 and batchSize between 1 and 100');
+        || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 100
+        || !Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8) {
+      const error = new Error('statesync rpcScan requires blockRange >= 1, batchSize between 1 and 100, and concurrency between 1 and 8');
       error.code = 'ETHERSCAN_API_ERROR';
       throw error;
     }
@@ -882,16 +885,23 @@ class EtherscanService {
     }
 
     const logs = [];
-    for (let offset = 0; offset < filters.length; offset += batchSize) {
-      const chunk = filters.slice(offset, offset + batchSize);
-      const results = await this._rpcBatchRequest(chainId, chunk);
-      for (const result of results) {
-        if (!Array.isArray(result)) {
-          const error = new Error('statesync eth_getLogs returned a non-array result');
-          error.code = 'ETHERSCAN_API_ERROR';
-          throw error;
+    for (let offset = 0; offset < filters.length; offset += batchSize * concurrency) {
+      const chunks = [];
+      for (let worker = 0; worker < concurrency && offset + worker * batchSize < filters.length; worker++) {
+        chunks.push(filters.slice(offset + worker * batchSize, offset + (worker + 1) * batchSize));
+      }
+      const resultGroups = await Promise.all(
+        chunks.map((chunk) => this._rpcBatchRequest(chainId, chunk))
+      );
+      for (const results of resultGroups) {
+        for (const result of results) {
+          if (!Array.isArray(result)) {
+            const error = new Error('statesync eth_getLogs returned a non-array result');
+            error.code = 'ETHERSCAN_API_ERROR';
+            throw error;
+          }
+          logs.push(...result);
         }
-        logs.push(...result);
       }
     }
 
@@ -904,22 +914,31 @@ class EtherscanService {
       throw error;
     }
     const timestamps = new Map();
-    for (let offset = 0; offset < uniqueBlocks.length; offset += batchSize) {
-      const blockChunk = uniqueBlocks.slice(offset, offset + batchSize);
-      const blocks = await this._rpcBatchRequest(
-        chainId,
-        blockChunk.map((block) => ({
-          method: 'eth_getBlockByNumber',
-          params: [block, false],
-        }))
+    for (let offset = 0; offset < uniqueBlocks.length; offset += batchSize * concurrency) {
+      const chunks = [];
+      for (let worker = 0; worker < concurrency && offset + worker * batchSize < uniqueBlocks.length; worker++) {
+        const blockChunk = uniqueBlocks.slice(offset + worker * batchSize, offset + (worker + 1) * batchSize);
+        chunks.push({
+          blockChunk,
+          calls: blockChunk.map((block) => ({
+            method: 'eth_getBlockByNumber',
+            params: [block, false],
+          })),
+        });
+      }
+      const blockGroups = await Promise.all(
+        chunks.map(({ calls }) => this._rpcBatchRequest(chainId, calls))
       );
-      blocks.forEach((block, index) => {
-        if (!/^0x[0-9a-f]+$/i.test(String(block?.timestamp || ''))) {
-          const error = new Error('statesync block timestamp hydration returned an invalid block');
-          error.code = 'ETHERSCAN_API_ERROR';
-          throw error;
-        }
-        timestamps.set(blockChunk[index], block.timestamp);
+      blockGroups.forEach((blocks, groupIndex) => {
+        const { blockChunk } = chunks[groupIndex];
+        blocks.forEach((block, index) => {
+          if (!/^0x[0-9a-f]+$/i.test(String(block?.timestamp || ''))) {
+            const error = new Error('statesync block timestamp hydration returned an invalid block');
+            error.code = 'ETHERSCAN_API_ERROR';
+            throw error;
+          }
+          timestamps.set(blockChunk[index], block.timestamp);
+        });
       });
     }
 
