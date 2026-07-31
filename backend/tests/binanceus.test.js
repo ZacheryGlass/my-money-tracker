@@ -36,6 +36,31 @@ test('Binance.US client signs only the allow-listed GET path', async () => {
   }
 });
 
+test('Binance.US API errors identify the endpoint and unsigned request parameters', async () => {
+  const original = axios.get;
+  BinanceUSClient._setPacingForTests(false);
+  axios.get = async () => ({
+    status: 400,
+    data: { code: -1130, msg: 'A parameter was larger than max value.' },
+  });
+  try {
+    const client = new BinanceUSClient({ apiKey: 'key', apiSecret: 'secret' });
+    await assert.rejects(
+      () => client.get('/sapi/v1/asset/assetDistributionHistory', { limit: 1000 }),
+      (error) => {
+        assert.equal(error.code, 'BINANCE_US_API_ERROR');
+        assert.match(error.message, /\/sapi\/v1\/asset\/assetDistributionHistory/);
+        assert.match(error.message, /limit=1000/);
+        assert.doesNotMatch(error.message, /signature|timestamp|recvWindow/);
+        assert.deepEqual(error.requestParams, { limit: 1000 });
+        return true;
+      },
+    );
+  } finally {
+    axios.get = original;
+  }
+});
+
 test('Binance.US trade records preserve exact signed legs and fees', () => {
   const record = connector._internals.tradeRecord({
     symbol: 'ETHUSDT', id: 42, qty: '0.125000000000000000', quoteQty: '250.50',
@@ -74,40 +99,41 @@ test('Binance.US balances add free and locked values exactly', () => {
   assert.deepEqual(balances, { ETH: '0.5', USDT: '3.300000000000000001' });
 });
 
-test('Binance.US fiat pages carry independent cursors across durable batches', async () => {
+test('Binance.US history feeds use endpoint-specific request contracts', async () => {
   const originalGet = BinanceUSClient.prototype.get;
-  let fiatDepositPage = 0;
+  const requests = [];
   BinanceUSClient.prototype.get = async function get(path, params = {}) {
+    requests.push({ path, params });
     if (path === '/api/v3/account') return { balances: [] };
     if (path === '/api/v3/exchangeInfo') return { symbols: [] };
     if (path === '/sapi/v1/capital/config/getall') return [];
     if (path === '/sapi/v1/fiatpayment/query/deposit/history') {
-      fiatDepositPage = params.page;
-      return { total: 1500, data: Array.from({ length: params.page === 1 ? 1000 : 500 }, (_, index) => ({
-        orderId: `d-${params.page}-${index}`,
-        fiatCurrency: 'USD', amount: '1', createTime: 1700000000000 + index,
-      })) };
+      return { assetLogRecordList: [{
+        orderId: 'd-1', fiatCurrency: 'USD', amount: '1', createTime: 1700000000000,
+      }] };
     }
     if (path === '/sapi/v1/fiatpayment/query/withdraw/history') {
-      return { total: 0, data: [] };
+      return { assetLogRecordList: [{
+        orderId: 'w-1', fiatCurrency: 'USD', amount: '2', createTime: 1700000000000,
+      }] };
     }
     if (path === '/sapi/v1/asset/assetDistributionHistory') return { rows: [] };
     if (path === '/sapi/v1/asset/query/dust-logs') return { userDustConvertHistory: [] };
     throw new Error(`unexpected Binance path ${path}`);
   };
   try {
-    const first = await connector.sync({ apiKey: 'key', apiSecret: 'secret' }, { interactive: true });
-    assert.equal(fiatDepositPage, 1);
-    assert.equal(first.stats.backfillPending, true);
-    assert.equal(first.coverageLimitations.length, 2);
-    assert.equal(first.cursor.phase, 'fiat');
-    assert.equal(first.cursor.fiatDepositPage, 2);
-    const second = await connector.sync({ apiKey: 'key', apiSecret: 'secret' }, {
-      cursor: first.cursor, interactive: true,
-    });
-    assert.equal(fiatDepositPage, 2);
-    assert.equal(second.stats.backfillPending, false);
-    assert.equal(second.cursor.phase, 'trades');
+    const result = await connector.sync({ apiKey: 'key', apiSecret: 'secret' }, { interactive: true });
+    const fiatRequests = requests.filter(({ path }) => path.includes('/fiatpayment/query/'));
+    assert.deepEqual(fiatRequests.map(({ params }) => params), [{ offset: 0 }, { offset: 0 }]);
+    const distribution = requests.find(({ path }) => path === '/sapi/v1/asset/assetDistributionHistory');
+    assert.deepEqual(distribution.params, { limit: 500 });
+    const dust = requests.find(({ path }) => path === '/sapi/v1/asset/query/dust-logs');
+    assert.equal(dust.params.startTime, 0);
+    assert.ok(Number.isSafeInteger(dust.params.endTime));
+    assert.equal(result.records.length, 2);
+    assert.equal(result.stats.backfillPending, false);
+    assert.equal(result.coverageLimitations.length, 3);
+    assert.equal(result.cursor.phase, 'trades');
   } finally {
     BinanceUSClient.prototype.get = originalGet;
   }

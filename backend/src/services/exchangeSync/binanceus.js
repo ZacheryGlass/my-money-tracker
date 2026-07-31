@@ -17,7 +17,12 @@ const {
 // an interrupted job resumes at the exact symbol/coin/page it had reached.
 // The API key is used for GETs only; this connector has no mutation endpoint.
 const EXCHANGE = 'binance_us';
-const PAGE_SIZE = 1000;
+// Binance.US does not use one universal page size. Keep the provider limits
+// beside the feed that owns them so a new endpoint cannot accidentally inherit
+// an invalid value from another history feed.
+const TRADE_PAGE_SIZE = 1000;
+const CAPITAL_PAGE_SIZE = 1000;
+const DISTRIBUTION_PAGE_SIZE = 500;
 const MAX_REQUESTS_INTERACTIVE = 100;
 const MAX_REQUESTS_JOB = 1000;
 const MAX_SYMBOLS = 2000;
@@ -161,6 +166,15 @@ function fiatRecord(row, type) {
   }, row.amount);
 }
 
+function fiatRows(body) {
+  // The current Binance.US response is { assetLogRecordList: [...] }.
+  // Keep the older data/array shapes as a compatibility fallback for accounts
+  // served by an older API deployment.
+  if (Array.isArray(body?.assetLogRecordList)) return body.assetLogRecordList;
+  if (Array.isArray(body?.data)) return body.data;
+  return Array.isArray(body) ? body : [];
+}
+
 function listCoins(config) {
   return (Array.isArray(config) ? config : []).map((row) => asset(row.coin || row.asset)).filter(Boolean);
 }
@@ -186,12 +200,6 @@ function emptyCursor() {
     fiatDepositHistory: [], fiatWithdrawHistory: [],
     distributionEnd: null, dustEnd: null,
   };
-}
-
-function pageFingerprint(rows) {
-  return contentId('binanceus:page', [rows.map((row) => {
-    try { return JSON.stringify(row); } catch { return String(row); }
-  }).join('\u0001')]);
 }
 
 function normalizeCursor(cursor) {
@@ -240,7 +248,7 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   while (state.phase === 'trades' && requests < budget) {
     const row = symbols[state.symbolIndex];
     if (!row) { Object.assign(state, advancePhase(state, 'trades')); break; }
-    const params = { symbol: row.symbol, limit: PAGE_SIZE };
+    const params = { symbol: row.symbol, limit: TRADE_PAGE_SIZE };
     if (state.tradeFromId !== null) params.fromId = state.tradeFromId;
     const page = await call('/api/v3/myTrades', params);
     for (const item of Array.isArray(page) ? page : []) {
@@ -248,7 +256,7 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
       if (normalized.needs_review) unknownTypes += 1;
       records.push(normalized);
     }
-    if (!Array.isArray(page) || page.length < PAGE_SIZE) {
+    if (!Array.isArray(page) || page.length < TRADE_PAGE_SIZE) {
       state.symbolIndex += 1; state.tradeFromId = null;
     } else {
       const last = page[page.length - 1];
@@ -272,88 +280,50 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   while (state.phase === 'capital' && requests < budget) {
     const coin = coins[state.coinIndex];
     if (!coin) { Object.assign(state, advancePhase(state, 'capital')); break; }
-    const deposits = await call('/sapi/v1/capital/deposit/hisrec', { coin, offset: state.depositOffset, limit: PAGE_SIZE });
-    const withdrawals = await call('/sapi/v1/capital/withdraw/history', { coin, offset: state.withdrawalOffset, limit: PAGE_SIZE });
+    const deposits = await call('/sapi/v1/capital/deposit/hisrec', { coin, offset: state.depositOffset, limit: CAPITAL_PAGE_SIZE });
+    const withdrawals = await call('/sapi/v1/capital/withdraw/history', { coin, offset: state.withdrawalOffset, limit: CAPITAL_PAGE_SIZE });
     for (const item of Array.isArray(deposits) ? deposits : []) records.push(capitalRecord(item, 'deposit'));
     for (const item of Array.isArray(withdrawals) ? withdrawals : []) records.push(capitalRecord(item, 'withdrawal'));
-    const depositFull = Array.isArray(deposits) && deposits.length >= PAGE_SIZE;
-    const withdrawalFull = Array.isArray(withdrawals) && withdrawals.length >= PAGE_SIZE;
-    if (depositFull) state.depositOffset += PAGE_SIZE;
+    const depositFull = Array.isArray(deposits) && deposits.length >= CAPITAL_PAGE_SIZE;
+    const withdrawalFull = Array.isArray(withdrawals) && withdrawals.length >= CAPITAL_PAGE_SIZE;
+    if (depositFull) state.depositOffset += CAPITAL_PAGE_SIZE;
     else state.depositOffset = 0;
-    if (withdrawalFull) state.withdrawalOffset += PAGE_SIZE;
+    if (withdrawalFull) state.withdrawalOffset += CAPITAL_PAGE_SIZE;
     else state.withdrawalOffset = 0;
     if (!depositFull && !withdrawalFull) state.coinIndex += 1;
     if (requests >= budget && (depositFull || withdrawalFull)) backfillPending = true;
   }
   if (state.phase === 'capital' && state.coinIndex < coins.length) backfillPending = true;
 
-  // Fiat history is explicitly page-numbered. Keep each side's page and done
-  // bit independently so an exact request-budget boundary cannot skip the
-  // withdrawal side or restart the deposit side from page one forever.
+  // Fiat history is not a generic page/rows endpoint. Binance.US exposes an
+  // offset plus a provider-defined (currently 90-day) time window and returns
+  // assetLogRecordList. Request the documented shape and retain the export
+  // limitation for older fiat rows that the API does not expose in this pass.
   if (state.phase === 'fiat' && requests < budget) {
     if (!state.fiatDepositDone && requests < budget) {
-      const page = Math.max(1, Number(state.fiatDepositPage) || 1);
-      const body = await call('/sapi/v1/fiatpayment/query/deposit/history', { page, rows: PAGE_SIZE });
-      const rows = Array.isArray(body?.data) ? body.data : (Array.isArray(body) ? body : []);
+      const body = await call('/sapi/v1/fiatpayment/query/deposit/history', { offset: 0 });
+      const rows = fiatRows(body);
       rows.forEach((item) => records.push(fiatRecord(item, 'deposit')));
-      const fingerprint = pageFingerprint(rows);
-      const history = Array.isArray(state.fiatDepositHistory) ? state.fiatDepositHistory : [];
-      if (history.includes(fingerprint)) {
-        const error = new Error('Binance.US fiat deposit cursor repeated the same page');
-        error.code = 'BINANCE_US_CURSOR_STALLED';
-        throw error;
-      }
-      const total = Number(body?.total);
-      const more = rows.length >= PAGE_SIZE || (Number.isFinite(total) && total > page * PAGE_SIZE);
-      if (more) {
-        state.fiatDepositPage = page + 1;
-        state.fiatDepositFingerprint = fingerprint;
-        state.fiatDepositHistory = [...history.slice(-7), fingerprint];
-      } else {
-        state.fiatDepositPage = 1;
-        state.fiatDepositFingerprint = null;
-        state.fiatDepositHistory = [];
-        state.fiatDepositDone = true;
-      }
+      state.fiatDepositDone = true;
     }
     if (!state.fiatWithdrawDone && requests < budget) {
-      const page = Math.max(1, Number(state.fiatWithdrawPage) || 1);
-      const body = await call('/sapi/v1/fiatpayment/query/withdraw/history', { page, rows: PAGE_SIZE });
-      const rows = Array.isArray(body?.data) ? body.data : (Array.isArray(body) ? body : []);
+      const body = await call('/sapi/v1/fiatpayment/query/withdraw/history', { offset: 0 });
+      const rows = fiatRows(body);
       rows.forEach((item) => records.push(fiatRecord(item, 'withdrawal')));
-      const fingerprint = pageFingerprint(rows);
-      const history = Array.isArray(state.fiatWithdrawHistory) ? state.fiatWithdrawHistory : [];
-      if (history.includes(fingerprint)) {
-        const error = new Error('Binance.US fiat withdrawal cursor repeated the same page');
-        error.code = 'BINANCE_US_CURSOR_STALLED';
-        throw error;
-      }
-      const total = Number(body?.total);
-      const more = rows.length >= PAGE_SIZE || (Number.isFinite(total) && total > page * PAGE_SIZE);
-      if (more) {
-        state.fiatWithdrawPage = page + 1;
-        state.fiatWithdrawFingerprint = fingerprint;
-        state.fiatWithdrawHistory = [...history.slice(-7), fingerprint];
-      } else {
-        state.fiatWithdrawPage = 1;
-        state.fiatWithdrawFingerprint = null;
-        state.fiatWithdrawHistory = [];
-        state.fiatWithdrawDone = true;
-      }
+      state.fiatWithdrawDone = true;
     }
     if (state.fiatDepositDone && state.fiatWithdrawDone) Object.assign(state, advancePhase(state, 'fiat'));
-    else backfillPending = true;
   }
 
   if (state.phase === 'distributions' && requests < budget) {
-    const params = { limit: PAGE_SIZE };
+    const params = { limit: DISTRIBUTION_PAGE_SIZE };
     if (state.distributionEnd !== null && state.distributionEnd !== undefined) {
       params.endTime = state.distributionEnd;
     }
     const body = await call('/sapi/v1/asset/assetDistributionHistory', params);
     const rows = Array.isArray(body?.rows) ? body.rows : (Array.isArray(body) ? body : []);
     records.push(...rows.map(distributionRecord));
-    if (rows.length >= PAGE_SIZE) {
+    if (rows.length >= DISTRIBUTION_PAGE_SIZE) {
       const times = rows.map((row) => Date.parse(timestampOf(row.divTime, row.insertTime, row.time) || '')).filter(Number.isFinite);
       const oldest = times.length ? Math.min(...times) : null;
       if (oldest === null) {
@@ -377,34 +347,21 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   }
 
   if (state.phase === 'dust' && requests < budget) {
-    const params = { limit: PAGE_SIZE };
-    if (state.dustEnd !== null && state.dustEnd !== undefined) params.endTime = state.dustEnd;
+    // This endpoint has no limit parameter and requires both timestamps. A
+    // zero start is the provider's documented way to request the full
+    // available history; keep the old end cursor for a resumed pass.
+    const params = {
+      startTime: 0,
+      endTime: state.dustEnd !== null && state.dustEnd !== undefined
+        ? state.dustEnd : Date.now(),
+    };
     const body = await call('/sapi/v1/asset/query/dust-logs', params);
     const groups = body?.userDustConvertHistory || body?.data || [];
     const rows = groups.flatMap((group) => group?.userAssetDribbletDetails || group?.rows || []);
     records.push(...rows.map((row) => dustRecord(row, groups.find((group) => group?.tranId === row.tranId) || null)));
-    if (rows.length >= PAGE_SIZE) {
-      const times = rows.map((row) => Date.parse(timestampOf(row.operateTime, row.time) || '')).filter(Number.isFinite);
-      const oldest = times.length ? Math.min(...times) : null;
-      if (oldest === null) {
-        const error = new Error('Binance.US dust history page has no usable timestamps; cannot resume safely');
-        error.code = 'BINANCE_US_CURSOR_STALLED';
-        throw error;
-      } else {
-        const nextEnd = Math.max(0, oldest - 1);
-        if (state.dustEnd !== null && nextEnd >= state.dustEnd) {
-          const error = new Error('Binance.US dust history cursor did not move backwards');
-          error.code = 'BINANCE_US_CURSOR_STALLED';
-          throw error;
-        }
-        state.dustEnd = nextEnd;
-        backfillPending = true;
-      }
-    } else {
-      state.dustEnd = null;
-      Object.assign(state, advancePhase(state, 'dust'));
-      completedAllPhases = true;
-    }
+    state.dustEnd = null;
+    Object.assign(state, advancePhase(state, 'dust'));
+    completedAllPhases = true;
   }
 
   // A complete generation starts a fresh incremental pass next time. If the
@@ -420,6 +377,7 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   const coverageLimitations = [
     'Binance.US exchangeInfo omits delisted symbols; historical trades for those symbols require an export.',
     'Product-specific staking/Earn and internal venue-transfer history are not asserted by the generic feeds; retain an account export for those rows.',
+    'Binance.US fiat history uses a provider-defined 90-day window; older fiat deposits or withdrawals require an account export.',
     ...(symbolsTruncated
       ? [`Binance.US returned more than ${MAX_SYMBOLS} symbols; the trade walk is capped at the first ${MAX_SYMBOLS}.`]
       : []),

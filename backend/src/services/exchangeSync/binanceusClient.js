@@ -55,7 +55,7 @@ function sign(query, secret) {
   return crypto.createHmac('sha256', String(secret)).update(query, 'utf8').digest('hex');
 }
 
-function binanceError(status, body) {
+function binanceError(status, body, path = null, params = {}) {
   const code = Number.isFinite(Number(body?.code)) ? Number(body.code) : null;
   const message = body?.msg || body?.message || `HTTP ${status}`;
   let errorCode = 'BINANCE_US_API_ERROR';
@@ -64,10 +64,23 @@ function binanceError(status, body) {
   } else if (status === 429 || status === 418 || RATE_LIMIT_RE.test(`${code ?? ''} ${message}`)) {
     errorCode = 'BINANCE_US_RATE_LIMITED';
   }
-  const error = new Error(`Binance.US error: ${message}`);
+  // Keep the diagnostic useful without ever including the signed timestamp or
+  // secret-derived signature. Endpoint parameters are deliberately copied only
+  // from the caller's unsigned input, which makes the UI error actionable when
+  // Binance rejects an endpoint-specific limit.
+  const details = Object.entries(params || {})
+    .filter(([key]) => !['timestamp', 'signature', 'recvWindow'].includes(key))
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join('&');
+  const location = path ? ` ${path}` : '';
+  const suffix = details ? ` (${details})` : '';
+  const error = new Error(`Binance.US${location} error: ${message}${suffix}`);
   error.code = errorCode;
   error.httpStatus = status;
   error.binanceCode = code;
+  error.endpoint = path;
+  error.requestParams = Object.fromEntries(Object.entries(params || {})
+    .filter(([key]) => !['timestamp', 'signature', 'recvWindow'].includes(key)));
   return error;
 }
 
@@ -140,7 +153,7 @@ class BinanceUSClient {
 
     const body = response.data;
     if (response.status >= 400 || (body && !Array.isArray(body) && body.code !== undefined && Number(body.code) < 0)) {
-      const error = binanceError(response.status, body);
+      const error = binanceError(response.status, body, path, params);
       if (error.code === 'BINANCE_US_RATE_LIMITED' && attempt < RETRY_BACKOFF_MS.length) {
         logger.warn({ path, attempt }, 'Binance.US rate limited; backing off');
         await sleep(RETRY_BACKOFF_MS[attempt]);
@@ -157,7 +170,7 @@ class BinanceUSClient {
   async getAccount() {
     const body = await this.get('/api/v3/account');
     if (!body || !Array.isArray(body.balances)) {
-      throw binanceError(200, { msg: 'account returned an unexpected shape' });
+      throw binanceError(200, { msg: 'account returned an unexpected shape' }, '/api/v3/account');
     }
     return body;
   }
@@ -165,7 +178,7 @@ class BinanceUSClient {
   async getExchangeInfo() {
     const body = await this.get('/api/v3/exchangeInfo', {}, { signed: false });
     if (!body || !Array.isArray(body.symbols)) {
-      throw binanceError(200, { msg: 'exchangeInfo returned an unexpected shape' });
+      throw binanceError(200, { msg: 'exchangeInfo returned an unexpected shape' }, '/api/v3/exchangeInfo');
     }
     return body;
   }
