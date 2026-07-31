@@ -261,14 +261,14 @@ const REGISTRY = [
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
-      // Base's Blockscout logs endpoint serves bounded 100,000-block windows,
+      // Base's Blockscout logs endpoint serves bounded 50,000-block windows,
       // includes the event timestamp, and accepts a comma-separated OR of all
       // tracked receiver topics. That avoids a 21-wallet archive RPC walk;
-      // full 1,000-log responses remain a visible cursor-frozen gap rather
-      // than an apparent complete window.
+      // full 1,000-log responses are recursively split rather than treated as
+      // an apparently complete window.
       rpcScan: {
         provider: 'blockscout',
-        blockRange: 100000,
+        blockRange: 50000,
         batchSize: 1,
         concurrency: 1,
       },

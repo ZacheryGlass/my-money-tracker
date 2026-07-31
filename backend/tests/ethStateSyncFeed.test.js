@@ -146,7 +146,7 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
       if (chain.id === 8453) {
         assert.deepEqual(chain.stateSyncDeposits.rpcScan, {
           provider: 'blockscout',
-          blockRange: 100000,
+          blockRange: 50000,
           batchSize: 1,
           concurrency: 1,
         });
