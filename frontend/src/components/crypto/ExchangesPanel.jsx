@@ -13,6 +13,7 @@ import { formatDateDisplay, formatRelativeTime } from '../../utils/format';
 const EXCHANGE_VENUES = [
   { id: 'coinbase', label: 'Coinbase' },
   { id: 'kraken', label: 'Kraken' },
+  { id: 'binance_us', label: 'Binance.US' },
   { id: 'other', label: 'Other' },
 ];
 const EXCHANGE_VENUE_LABELS = Object.fromEntries(EXCHANGE_VENUES.map((v) => [v.id, v.label]));

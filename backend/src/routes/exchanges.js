@@ -51,13 +51,13 @@ function respondToSyncError(res, error, fallback) {
   }
   // The provider's own refusal is the only thing that tells the user which
   // permission they forgot to tick, so it survives to the client verbatim.
-  if (['KRAKEN_AUTH_FAILED', 'COINBASE_AUTH_FAILED', 'COINBASE_KEY_FORMAT'].includes(error.code)) {
+  if (['KRAKEN_AUTH_FAILED', 'COINBASE_AUTH_FAILED', 'COINBASE_KEY_FORMAT', 'BINANCE_US_AUTH_FAILED'].includes(error.code)) {
     return res.status(400).json({ error: error.message, code: error.code });
   }
-  if (['KRAKEN_RATE_LIMITED', 'COINBASE_RATE_LIMITED'].includes(error.code)) {
+  if (['KRAKEN_RATE_LIMITED', 'COINBASE_RATE_LIMITED', 'BINANCE_US_RATE_LIMITED'].includes(error.code)) {
     return res.status(429).json({ error: error.message, code: error.code });
   }
-  if (['KRAKEN_API_ERROR', 'COINBASE_API_ERROR'].includes(error.code)) {
+  if (['KRAKEN_API_ERROR', 'COINBASE_API_ERROR', 'BINANCE_US_API_ERROR'].includes(error.code)) {
     return res.status(502).json({ error: error.message, code: error.code });
   }
   logger.error({ err: error }, fallback);

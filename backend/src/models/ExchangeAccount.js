@@ -11,7 +11,7 @@ function requireUserId(method, userId) {
   }
 }
 
-const EXCHANGES = new Set(['coinbase', 'kraken', 'other']);
+const EXCHANGES = new Set(['coinbase', 'kraken', 'binance_us', 'other']);
 // Which venues the API sync can talk to is NOT a model concern: the single
 // source of truth is CONNECTORS in services/exchangeSync/index.js, which the
 // routes and ExchangeSyncService both consult via connectorFor().

@@ -2,12 +2,14 @@
 
 const kraken = require('./kraken');
 const coinbase = require('./coinbase');
+const binanceUs = require('./binanceus');
 
 // Which venues the API sync can talk to. 'other' is CSV-only by definition --
 // there is no endpoint to call -- so it never reaches here.
 const CONNECTORS = new Map([
   [kraken.EXCHANGE, kraken],
   [coinbase.EXCHANGE, coinbase],
+  [binanceUs.EXCHANGE, binanceUs],
 ]);
 
 function connectorFor(exchange) {
@@ -34,6 +36,12 @@ const CREDENTIAL_FIELDS = {
     permissions: coinbase.REQUIRED_PERMISSIONS,
     help: 'Create a CDP secret API key with the View permission only — no Trade, no Transfer. '
       + 'Choose ECDSA as the signature algorithm; Ed25519 keys are not supported by these APIs.',
+  },
+  binance_us: {
+    keyLabel: 'API key',
+    secretLabel: 'Secret key',
+    permissions: binanceUs.REQUIRED_PERMISSIONS,
+    help: 'Create an API key with read-only permissions. This integration only calls signed GET endpoints; never grant trading, withdrawal, or transfer permissions.',
   },
 };
 

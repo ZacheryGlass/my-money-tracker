@@ -209,7 +209,7 @@ async function getJobStatus() {
       'exchange-sync': {
         schedule: '55 7 * * *',
         timezone: 'Etc/UTC',
-        description: 'Pulls ledger activity and balances from connected Kraken and Coinbase accounts',
+        description: 'Pulls ledger activity and balances from connected Kraken, Coinbase, and Binance.US accounts',
         lastRun: latestExchangeSync || null
       },
       'price-update': {
