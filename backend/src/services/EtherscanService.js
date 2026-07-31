@@ -162,6 +162,7 @@ class EtherscanService {
     // module (getLogs, #76) answers an empty match with "No records found"
     // instead; both mean the same thing -- nothing to ingest, not a failure.
     if (message === 'No transactions found' || message === 'No records found'
+        || message === 'No logs found'
         || (Array.isArray(result) && result.length === 0)) {
       return [];
     }
@@ -857,6 +858,7 @@ class EtherscanService {
   ) {
     if (!Array.isArray(requests) || requests.length === 0) return new Map();
     const scan = feedConfig?.rpcScan;
+    const useBlockscout = scan?.provider === 'blockscout';
     const blockRange = Number(scan?.blockRange);
     const batchSize = Number(scan?.batchSize);
     const concurrency = Number(scan?.concurrency ?? 1);
@@ -924,7 +926,47 @@ class EtherscanService {
     }
 
     const logs = [];
-    for (let offset = 0; offset < filters.length; offset += batchSize * concurrency) {
+    if (useBlockscout) {
+      // Blockscout's Etherscan-compatible logs endpoint returns the log
+      // timestamp in the same hex shape as the RPC result, so it avoids one
+      // extra eth_getBlockByNumber request per matched block. The receiver
+      // topics are comma-separated OR terms, while topic0 + topicN must be
+      // joined with the explicit `and` operator for Blockscout.
+      const userTopicParam = `topic${userTopicIndex}`;
+      const topicOperatorParam = `topic0_${userTopicIndex}_opr`;
+      const topicParam = [...topicToRequest.keys()].join(',');
+      for (let offset = 0; offset < filters.length; offset++) {
+        const filter = filters[offset].params[0];
+        const rows = await this._request({
+          module: 'logs',
+          action: 'getLogs',
+          address: feedConfig.contract,
+          topic0: feedConfig.topic0,
+          [userTopicParam]: topicParam,
+          [topicOperatorParam]: 'and',
+          fromBlock: parseInt(filter.fromBlock, 16),
+          toBlock: parseInt(filter.toBlock, 16),
+          page: 1,
+          offset: LOG_PAGE_SIZE,
+        }, { apiKey: null, chainId });
+        if (!Array.isArray(rows)) {
+          const error = new Error('statesync Blockscout getLogs returned a non-array result');
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        // A full response is not proof that the range is complete. The
+        // provider ignores page/offset for this endpoint, so accepting it
+        // would advance the cursor past an unknown tail.
+        if (rows.length >= LOG_PAGE_SIZE) {
+          const error = new Error(
+            `statesync Blockscout getLogs reached the ${LOG_PAGE_SIZE}-log window limit; cursor frozen`
+          );
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        logs.push(...rows);
+      }
+    } else for (let offset = 0; offset < filters.length; offset += batchSize * concurrency) {
       const chunks = [];
       for (let worker = 0; worker < concurrency && offset + worker * batchSize < filters.length; worker++) {
         chunks.push(filters.slice(offset + worker * batchSize, offset + (worker + 1) * batchSize));
@@ -953,7 +995,17 @@ class EtherscanService {
       throw error;
     }
     const timestamps = new Map();
-    for (let offset = 0; offset < uniqueBlocks.length; offset += batchSize * concurrency) {
+    if (useBlockscout) {
+      for (const log of logs) {
+        const blockHex = String(log?.blockNumber || '').toLowerCase();
+        if (!/^0x[0-9a-f]+$/.test(String(log?.timeStamp || ''))) {
+          const error = new Error('statesync Blockscout log returned an invalid timeStamp');
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        timestamps.set(blockHex, log.timeStamp);
+      }
+    } else for (let offset = 0; offset < uniqueBlocks.length; offset += batchSize * concurrency) {
       const chunks = [];
       for (let worker = 0; worker < concurrency && offset + worker * batchSize < uniqueBlocks.length; worker++) {
         const blockChunk = uniqueBlocks.slice(offset + worker * batchSize, offset + (worker + 1) * batchSize);

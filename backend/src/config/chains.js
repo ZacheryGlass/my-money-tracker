@@ -261,18 +261,16 @@ const REGISTRY = [
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
-      // mainnet.base.org rejects eth_getLogs ranges above 10,000 blocks.
-      // Batch several bounded filters into one JSON-RPC POST, and OR all
-      // tracked receiver topics within each filter so a full-history rebuild
-      // scans the chain once rather than once per wallet. Base's public RPC
-      // accepts at most ten JSON-RPC calls per POST and rate-limits concurrent
-      // historical walks; exceeding either limit returns an error envelope
-      // instead of the response array, which must remain a visible failed feed
-      // rather than an apparent empty history.
+      // Base's Blockscout logs endpoint serves bounded 10,000-block windows,
+      // includes the event timestamp, and accepts a comma-separated OR of all
+      // tracked receiver topics. That avoids a 21-wallet archive RPC walk;
+      // full 1,000-log responses remain a visible cursor-frozen gap rather
+      // than an apparent complete window.
       rpcScan: {
+        provider: 'blockscout',
         blockRange: 10000,
-        batchSize: 10,
-        concurrency: 2,
+        batchSize: 1,
+        concurrency: 1,
       },
     },
   },

@@ -145,9 +145,10 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
       if (chain.id === 8453) {
         assert.deepEqual(chain.stateSyncDeposits.rpcScan, {
+          provider: 'blockscout',
           blockRange: 10000,
-          batchSize: 10,
-          concurrency: 2,
+          batchSize: 1,
+          concurrency: 1,
         });
       }
     } else {
@@ -224,7 +225,7 @@ test('Base scans bounded RPC windows once for several wallet receiver topics', a
     8453,
     {
       ...chains.getChain(8453).stateSyncDeposits,
-      rpcScan: { blockRange: 10000, batchSize: 50 },
+      rpcScan: { provider: 'rpc', blockRange: 10000, batchSize: 50 },
     },
     19999
   );
@@ -238,6 +239,38 @@ test('Base scans bounded RPC windows once for several wallet receiver topics', a
   assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), ['0xwallet2new']);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
   assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 19999);
+});
+
+test('Base Blockscout windows share receiver topics and use returned timestamps', async (t) => {
+  const original = EtherscanService._request;
+  const calls = [];
+  EtherscanService._request = async (params, options) => {
+    calls.push({ params, options });
+    return [ethBridgeFinalizedLog({ wallet: WALLET, block: 5000, hash: '0xblockscout' })];
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [
+      { address: WALLET, startBlock: 0 },
+      { address: WALLET_2, startBlock: 10000 },
+    ],
+    8453,
+    {
+      ...chains.getChain(8453).stateSyncDeposits,
+      rpcScan: { provider: 'blockscout', blockRange: 10000, batchSize: 1, concurrency: 1 },
+    },
+    19999
+  );
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].options.chainId, 8453);
+  assert.equal(calls[0].params.topic0_2_opr, 'and');
+  assert.match(calls[0].params.topic2, new RegExp(WALLET.slice(2)));
+  assert.match(calls[0].params.topic2, new RegExp(WALLET_2.slice(2)));
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xblockscout']);
+  assert.deepEqual(rowsByAddress.get(WALLET_2), []);
+  assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
 });
 
 test('Base retries a rate-limited JSON-RPC batch before failing the feed', async (t) => {
