@@ -69,6 +69,14 @@ const CHAIN_UNAVAILABLE_RE = /free api access is not supported for this chain|mi
 // never records the gap that explains the drift.
 const FEED_UNSUPPORTED_RE = /missing or invalid (action|module) name|internal transactions .*not yet been processed/i;
 
+// Public JSON-RPC providers rate-limit historical log walks independently of
+// the Etherscan-shaped account-feed throttle. A 200 response may carry the
+// limit in a single JSON-RPC error envelope, or one item in an otherwise valid
+// batch may carry it. Retry the complete batch so no partial window can ever
+// be accepted as coverage.
+const RPC_RATE_LIMIT_RE = /rate limit|over rate|too many requests|429/i;
+const RPC_BATCH_MAX_RETRIES = 3;
+
 class EtherscanService {
   // Preserve the public service contract while allowing a chain to route its
   // Etherscan-shaped account feeds through a different explorer. The caller
@@ -195,7 +203,7 @@ class EtherscanService {
   // by the chain-declared public-RPC state-sync scanner; its caller bounds
   // concurrency per provider instead of putting a multi-minute historical
   // walk behind the Etherscan account-feed throttle.
-  static async _rpcBatchRequest(chainId, calls) {
+  static async _rpcBatchRequest(chainId, calls, attempt = 0) {
     const rpcUrl = chains.getChain(chainId)?.rpcUrl;
     if (!rpcUrl) {
       const error = new Error(`Chain ${chainId} has no JSON-RPC endpoint configured`);
@@ -209,11 +217,42 @@ class EtherscanService {
       method,
       params,
     }));
-    const response = await axios.post(rpcUrl, body, { timeout: 30000 });
+    let response;
+    try {
+      response = await axios.post(rpcUrl, body, { timeout: 30000 });
+    } catch (error) {
+      const detail = error?.response?.data?.error?.message || error?.message || '';
+      if (attempt < RPC_BATCH_MAX_RETRIES && RPC_RATE_LIMIT_RE.test(String(detail))) {
+        const delayMs = 1100 * (attempt + 1);
+        logger.warn({ chainId, attempt: attempt + 1, delayMs },
+          'Chain RPC batch rate limited, retrying');
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return this._rpcBatchRequest(chainId, calls, attempt + 1);
+      }
+      throw error;
+    }
     if (!Array.isArray(response.data)) {
-      const error = new Error('Chain RPC batch returned a non-array response');
+      const detail = response.data?.error?.message || response.data?.message || '';
+      if (attempt < RPC_BATCH_MAX_RETRIES && RPC_RATE_LIMIT_RE.test(String(detail))) {
+        const delayMs = 1100 * (attempt + 1);
+        logger.warn({ chainId, attempt: attempt + 1, delayMs },
+          'Chain RPC batch rate limited, retrying');
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return this._rpcBatchRequest(chainId, calls, attempt + 1);
+      }
+      const suffix = detail ? `: ${detail}` : '';
+      const error = new Error(`Chain RPC batch returned a non-array response${suffix}`);
       error.code = 'ETHERSCAN_API_ERROR';
       throw error;
+    }
+    const rateLimited = response.data.find((item) =>
+      RPC_RATE_LIMIT_RE.test(String(item?.error?.message || item?.error || '')));
+    if (rateLimited && attempt < RPC_BATCH_MAX_RETRIES) {
+      const delayMs = 1100 * (attempt + 1);
+      logger.warn({ chainId, attempt: attempt + 1, delayMs },
+        'Chain RPC batch item rate limited, retrying');
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return this._rpcBatchRequest(chainId, calls, attempt + 1);
     }
     const byId = new Map(response.data.map((item) => [item?.id, item]));
     return body.map(({ id, method }) => {

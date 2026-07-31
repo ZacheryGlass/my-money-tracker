@@ -147,7 +147,7 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
         assert.deepEqual(chain.stateSyncDeposits.rpcScan, {
           blockRange: 10000,
           batchSize: 10,
-          concurrency: 4,
+          concurrency: 2,
         });
       }
     } else {
@@ -238,6 +238,26 @@ test('Base scans bounded RPC windows once for several wallet receiver topics', a
   assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), ['0xwallet2new']);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
   assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 19999);
+});
+
+test('Base retries a rate-limited JSON-RPC batch before failing the feed', async (t) => {
+  const axios = require('axios');
+  const original = axios.post;
+  let requests = 0;
+  axios.post = async () => {
+    requests += 1;
+    if (requests === 1) return { data: { error: { message: 'over rate limit' } } };
+    return { data: [{ jsonrpc: '2.0', id: 1, result: [] }] };
+  };
+  t.after(() => { axios.post = original; });
+
+  const result = await EtherscanService._rpcBatchRequest(8453, [{
+    method: 'eth_getLogs',
+    params: [{ fromBlock: '0x0', toBlock: '0x1', topics: [] }],
+  }]);
+
+  assert.equal(requests, 2);
+  assert.deepEqual(result, [[]]);
 });
 
 test('the nightly prefetch shares one Base scan across every wallet', async (t) => {

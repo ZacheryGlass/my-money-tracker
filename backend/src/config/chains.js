@@ -265,13 +265,14 @@ const REGISTRY = [
       // Batch several bounded filters into one JSON-RPC POST, and OR all
       // tracked receiver topics within each filter so a full-history rebuild
       // scans the chain once rather than once per wallet. Base's public RPC
-      // accepts at most ten JSON-RPC calls per POST; exceeding that limit
-      // returns one error envelope instead of the response array, which must
-      // remain a visible failed feed rather than an apparent empty history.
+      // accepts at most ten JSON-RPC calls per POST and rate-limits concurrent
+      // historical walks; exceeding either limit returns an error envelope
+      // instead of the response array, which must remain a visible failed feed
+      // rather than an apparent empty history.
       rpcScan: {
         blockRange: 10000,
         batchSize: 10,
-        concurrency: 4,
+        concurrency: 2,
       },
     },
   },
