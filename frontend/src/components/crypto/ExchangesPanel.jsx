@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion as Motion } from 'framer-motion';
 import {
   AlertTriangle, ArrowLeftRight, Check, ChevronDown, Clock, Link2, Pencil, Plus,
@@ -81,15 +81,79 @@ function ExchangesPanel({
   const [savingCredentialsId, setSavingCredentialsId] = useState(null);
   const [disconnectingId, setDisconnectingId] = useState(null);
   const [testingId, setTestingId] = useState(null);
-  const [syncingId, setSyncingId] = useState(null);
+  const [syncingIds, setSyncingIds] = useState(() => new Set());
   // Per account, so one account's failure does not blank another's receipt.
   const [syncResults, setSyncResults] = useState({});
+  // Durable server-side job snapshots. These survive a page reload because the
+  // status endpoint returns the latest completed job as well as active work.
+  const [syncStatuses, setSyncStatuses] = useState({});
+  const completionNotifiedRef = useRef(new Set());
+  const [statusPollNonce, setStatusPollNonce] = useState(0);
   // Per account: the flagged records, once the user opens the disclosure.
   const [reviewQueues, setReviewQueues] = useState({});
   const [openReviewAccountId, setOpenReviewAccountId] = useState(null);
   const [resolvingRecordId, setResolvingRecordId] = useState(null);
   const [matchAudit, setMatchAudit] = useState(null);
   const [loadingMatchAudit, setLoadingMatchAudit] = useState(false);
+
+  // Poll only while there is an active job. The first read also restores a
+  // completed receipt after a reload, and the server's durable status means a
+  // browser tab closing cannot make an in-flight provider walk look lost.
+  useEffect(() => {
+    if (typeof exchangesAPI.getSyncStatus !== 'function') return undefined;
+    let cancelled = false;
+    let timer = null;
+
+    const poll = async () => {
+      const connected = accounts.filter((account) => account.credentials?.configured);
+      const snapshots = await Promise.all(connected.map(async (account) => {
+        try {
+          const response = await exchangesAPI.getSyncStatus(account.id);
+          return { accountId: account.id, job: response.job || null };
+        } catch {
+          // A transient status read failure must not erase a visible active
+          // state or claim the server has completed the backfill.
+          return null;
+        }
+      }));
+      if (cancelled) return;
+
+      const usable = snapshots.filter(Boolean);
+      const active = usable.filter(({ job }) => job && ['queued', 'running', 'backoff'].includes(job.status));
+      setSyncStatuses((previous) => {
+        const next = { ...previous };
+        usable.forEach(({ accountId, job }) => { next[accountId] = job; });
+        return next;
+      });
+      setSyncingIds((previous) => {
+        const next = new Set(previous);
+        const successfulIds = new Set(usable.map(({ accountId }) => accountId));
+        connected.forEach((account) => {
+          if (!successfulIds.has(account.id)) return;
+          if (active.some(({ accountId }) => accountId === account.id)) next.add(account.id);
+          else next.delete(account.id);
+        });
+        return next;
+      });
+
+      const completed = usable.filter(({ accountId, job }) => (
+        job?.status === 'completed' && !completionNotifiedRef.current.has(accountId)
+      ));
+      if (completed.length > 0) {
+        completed.forEach(({ accountId }) => completionNotifiedRef.current.add(accountId));
+        // Refresh record counts and the review badge once, after the worker's
+        // final batch commits. Polling itself remains read-only.
+        void onChanged();
+      }
+      if (active.length > 0) timer = setTimeout(poll, 2500);
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [accounts, onChanged, statusPollNonce]);
 
   const handleAddAccount = async (event) => {
     event.preventDefault();
@@ -236,10 +300,23 @@ function ExchangesPanel({
   };
 
   const handleSync = async (account) => {
-    setSyncingId(account.id);
+    setSyncingIds((previous) => new Set(previous).add(account.id));
     setSyncResults((prev) => ({ ...prev, [account.id]: null }));
     try {
-      const result = await exchangesAPI.sync(account.id);
+      // New clients enqueue a durable backfill. The fallback keeps older
+      // embedded/test clients working while they roll forward.
+      const result = typeof exchangesAPI.startSync === 'function'
+        ? await exchangesAPI.startSync(account.id)
+        : await exchangesAPI.sync(account.id);
+      if (result?.job) {
+        setSyncStatuses((previous) => ({ ...previous, [account.id]: result.job }));
+        setSyncResults((prev) => ({ ...prev, [account.id]: { job: result.job } }));
+        setStatusPollNonce((nonce) => nonce + 1);
+        // Counts are unchanged until a batch commits; the poller refreshes
+        // them once the durable job reaches completed.
+        return;
+      }
+      // Compatibility receipt from the legacy bounded endpoint.
       setSyncResults((prev) => ({ ...prev, [account.id]: { sync: result } }));
       await onChanged();
     } catch (err) {
@@ -247,8 +324,21 @@ function ExchangesPanel({
         ...prev,
         [account.id]: { error: err.response?.data?.error || 'Failed to sync from the exchange' },
       }));
+      setSyncingIds((previous) => {
+        const next = new Set(previous);
+        next.delete(account.id);
+        return next;
+      });
     } finally {
-      setSyncingId(null);
+      // A queued job stays disabled until polling observes completed/failed.
+      // The legacy synchronous fallback has already finished here.
+      if (typeof exchangesAPI.startSync !== 'function') {
+        setSyncingIds((previous) => {
+          const next = new Set(previous);
+          next.delete(account.id);
+          return next;
+        });
+      }
     }
   };
 
@@ -463,7 +553,10 @@ function ExchangesPanel({
             const canConnect = Boolean(fields);
             const connected = Boolean(account.credentials?.configured);
             const syncResult = syncResults[account.id];
-            const syncing = syncingId === account.id;
+            const syncJob = syncStatuses[account.id];
+            const jobActive = Boolean(syncJob && ['queued', 'running', 'backoff'].includes(syncJob.status));
+            const syncing = syncingIds.has(account.id) || jobActive;
+            const visibleJob = syncResult?.job || syncJob;
             const testing = testingId === account.id;
             return (
               <Motion.div layout key={account.id} className="card overflow-hidden border-border">
@@ -504,6 +597,12 @@ function ExchangesPanel({
                             <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
                               <RefreshCw size={12} />
                               Synced {formatRelativeTime(account.last_sync_at)}
+                            </span>
+                          )}
+                          {jobActive && (
+                            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-accent">
+                              <RefreshCw size={12} className="animate-spin" />
+                              {syncJob.status === 'backoff' ? 'Rate-limit pause' : 'Sync in progress'}
                             </span>
                           )}
                         </div>
@@ -723,6 +822,44 @@ function ExchangesPanel({
                     </form>
                   )}
 
+                  {visibleJob && (
+                    <div className={`mt-5 rounded border p-4 text-xs leading-relaxed ${
+                      visibleJob.status === 'failed'
+                        ? 'border-loss/20 bg-loss/5 text-loss'
+                        : visibleJob.status === 'completed'
+                          ? 'border-gain/20 bg-gain/5 text-gain'
+                          : 'border-accent/20 bg-accent/5 text-secondary'
+                    }`}>
+                      <div className="flex items-start gap-3">
+                        <RefreshCw size={14} className={jobActive ? 'mt-0.5 flex-shrink-0 animate-spin' : 'mt-0.5 flex-shrink-0'} />
+                        <div>
+                          {visibleJob.status === 'completed' ? (
+                            <p>
+                              Sync complete — read {Number(visibleJob.fetched || 0).toLocaleString()} ledger rows:{' '}
+                              <span className="font-semibold">{Number(visibleJob.imported || 0).toLocaleString()} new</span>
+                              {Number(visibleJob.duplicates || 0) > 0 && `, ${Number(visibleJob.duplicates).toLocaleString()} already held`}
+                              {Number(visibleJob.flagged || 0) > 0 && `, ${Number(visibleJob.flagged).toLocaleString()} flagged for review`}.
+                            </p>
+                          ) : visibleJob.status === 'failed' ? (
+                            <p>Sync stopped: {visibleJob.last_error?.message || 'the exchange backfill failed'}.</p>
+                          ) : visibleJob.status === 'backoff' ? (
+                            <p>
+                              Sync is in progress but the exchange API asked us to slow down. We&apos;ll retry automatically
+                              {visibleJob.next_run_at ? ` around ${formatDateDisplay(visibleJob.next_run_at)}` : ' soon'};
+                              {' '}no duplicate rows will be created.
+                            </p>
+                          ) : (
+                            <p>
+                              Sync in progress — {Number(visibleJob.fetched || 0).toLocaleString()} rows read across{' '}
+                              {Number(visibleJob.batches || 0).toLocaleString()} batch(es). This continues automatically in the background;
+                              {' '}you can leave this page open or come back later.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {syncResult?.error && (
                     <div className="mt-5 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
                       <div className="flex items-start gap-3">
@@ -759,8 +896,8 @@ function ExchangesPanel({
                           reading a partial history as the whole of it. */}
                       {syncResult.sync.backfill_pending && (
                         <p className="mt-1 text-tertiary">
-                          More history is still to come — the nightly sync will keep working backwards, or
-                          press Sync Now again.
+                          More history is still to come — the background worker will keep working backwards
+                          automatically. No second click is needed.
                         </p>
                       )}
                       {syncResult.sync.status === 'balance_mismatch' && (

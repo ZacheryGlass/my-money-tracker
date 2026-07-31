@@ -45,7 +45,7 @@ const EXPENSIVE_ENDPOINTS = new Set(['Ledgers', 'QueryLedgers', 'TradesHistory']
 // "additional calls will be restricted for a few seconds (or possibly longer
 // if calls continue to be made while the rate limits are active)" -- so a
 // retry that fires too early extends the penalty rather than clearing it.
-const RATE_LIMIT_BACKOFF_MS = [5000, 15000];
+const RATE_LIMIT_BACKOFF_MS = [5000, 15000, 30000, 60000];
 
 // Per-key state. The nonce is documented as "an always increasing, unsigned
 // 64-bit integer for each request that is made with a particular API key", so
@@ -99,11 +99,12 @@ async function spendCounter(state, cost) {
   }
 }
 
-function krakenError(messages, { code = 'KRAKEN_API_ERROR' } = {}) {
+function krakenError(messages, { code = 'KRAKEN_API_ERROR', retryAfterMs = 0 } = {}) {
   const list = Array.isArray(messages) ? messages : [String(messages)];
   const error = new Error(`Kraken error: ${list.join(', ')}`);
   error.code = code;
   error.krakenErrors = list;
+  if (retryAfterMs) error.retryAfterMs = retryAfterMs;
   return error;
 }
 
@@ -239,7 +240,12 @@ class KrakenClient {
         await sleep(RATE_LIMIT_BACKOFF_MS[attempt]);
         return this._send(state, endpoint, params, attempt + 1);
       }
-      throw krakenError(errors, { code });
+      throw krakenError(errors, {
+        code,
+        retryAfterMs: code === 'KRAKEN_RATE_LIMITED'
+          ? RATE_LIMIT_BACKOFF_MS[RATE_LIMIT_BACKOFF_MS.length - 1]
+          : 0,
+      });
     }
     // `result` may be absent on a rejected request even with an empty error
     // array; an undefined result must not read as an empty ledger.

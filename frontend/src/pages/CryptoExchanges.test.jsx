@@ -32,6 +32,8 @@ vi.mock('../utils/api', () => ({
     clearCredentials: vi.fn(),
     testConnection: vi.fn(),
     sync: vi.fn(),
+    startSync: vi.fn(),
+    getSyncStatus: vi.fn(),
   },
 }));
 
@@ -110,6 +112,10 @@ beforeEach(() => {
   exchangesAPI.getAll.mockResolvedValue(listResponse([ACCOUNT]));
   exchangesAPI.getRecords.mockResolvedValue({ data: FLAGGED, pagination: { total: FLAGGED.length } });
   exchangesAPI.resolveRecord.mockResolvedValue({ record: { id: 11, needs_review: false } });
+  // Existing receipt tests exercise the compatibility path; the dedicated
+  // background test below swaps this implementation for a job receipt.
+  exchangesAPI.startSync.mockImplementation((id) => exchangesAPI.sync(id));
+  exchangesAPI.getSyncStatus.mockResolvedValue({ job: null });
 });
 
 describe('Crypto -> Exchanges tab', () => {
@@ -370,6 +376,32 @@ describe('Crypto -> Exchanges tab', () => {
 
     // A truncated walk looks exactly like a complete one from the outside.
     expect(await screen.findByText(/More history is still to come/)).toBeInTheDocument();
+  });
+
+  it('queues a durable backfill and tells the user it is still running', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.startSync.mockResolvedValue({
+      account_id: 3,
+      job: {
+        id: 44,
+        account_id: 3,
+        status: 'queued',
+        batches: 0,
+        fetched: 0,
+        imported: 0,
+        duplicates: 0,
+        flagged: 0,
+      },
+    });
+    // The initial status read is empty; the start response itself is the first
+    // visible receipt. A real running snapshot will arrive through polling.
+    exchangesAPI.getSyncStatus.mockResolvedValue({ job: null });
+    await renderSettings();
+    fireEvent.click(await screen.findByLabelText('Sync Kraken Spot now'));
+
+    await waitFor(() => expect(exchangesAPI.startSync).toHaveBeenCalledWith(3));
+    expect(await screen.findByText(/Sync in progress/)).toBeInTheDocument();
+    expect(screen.getByText(/continues automatically in the background/)).toBeInTheDocument();
   });
 
   it('surfaces a balance mismatch instead of silently trusting the import', async () => {

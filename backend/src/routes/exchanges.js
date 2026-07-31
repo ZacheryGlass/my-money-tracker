@@ -7,6 +7,7 @@ const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeMatch = require('../models/ExchangeMatch');
 const ExchangeImportService = require('../services/ExchangeImportService');
 const ExchangeSyncService = require('../services/ExchangeSyncService');
+const ExchangeBackfillService = require('../services/ExchangeBackfillService');
 const ExchangeMatchService = require('../services/ExchangeMatchService');
 const chains = require('../config/chains');
 const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
@@ -541,6 +542,14 @@ router.post('/:id/sync', async (req, res) => {
       });
     }
 
+    // A caller that cannot use the explicit /sync/start route can opt into the
+    // same durable behavior without changing the legacy bounded response for
+    // existing API clients.
+    if (req.query.background === 'true') {
+      const job = await ExchangeBackfillService.enqueue(req.user.id, account.id);
+      return res.status(202).json({ job, account_id: account.id });
+    }
+
     // interactive: a request is waiting, so the page budget is sized to finish
     // inside a proxy timeout. A history longer than that budget comes back
     // with backfill_pending set rather than being silently cut short.
@@ -548,6 +557,42 @@ router.post('/:id/sync', async (req, res) => {
     return res.status(200).json({ ...result, account_id: account.id });
   } catch (error) {
     return respondToSyncError(res, error, 'Failed to sync the exchange account');
+  }
+});
+
+// The interactive endpoint above is deliberately retained for API clients
+// that need one bounded pass and its detailed receipt. The app's Sync Now
+// button uses the durable background contract below: the HTTP request only
+// queues work, so a years-long history cannot be cut off by a proxy timeout.
+router.post('/:id/sync/start', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+    if (!connectorFor(account.exchange)) {
+      return res.status(400).json({
+        error: `There is no API sync for "${account.exchange}" accounts; use CSV import instead`,
+        code: 'EXCHANGE_NOT_SUPPORTED',
+      });
+    }
+
+    const job = await ExchangeBackfillService.enqueue(req.user.id, account.id);
+    return res.status(202).json({ job, account_id: account.id });
+  } catch (error) {
+    return respondToSyncError(res, error, 'Failed to start the exchange backfill');
+  }
+});
+
+// Pollable, user-scoped progress. A completed job is returned as well as an
+// active one, which lets the UI say "done" after a reload instead of silently
+// dropping back to the last account timestamp.
+router.get('/:id/sync-status', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+    const job = await ExchangeBackfillService.status(req.user.id, account.id);
+    return res.status(200).json({ job, account_id: account.id });
+  } catch (error) {
+    return respondToSyncError(res, error, 'Failed to read the exchange backfill status');
   }
 });
 

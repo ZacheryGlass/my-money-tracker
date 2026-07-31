@@ -50,7 +50,12 @@ const ALLOWED_PATH_PREFIXES = [
   '/v2/accounts',
 ];
 
-const RETRY_BACKOFF_MS = [1000, 4000];
+// A 429 is a provider-wide budget signal, not a transient socket hiccup.
+// Retry progressively and honor Retry-After when Coinbase supplies it. The
+// backfill worker adds a durable, longer pause after these in-request retries
+// are exhausted, so a process restart cannot turn the same limit into a hot
+// loop.
+const RETRY_BACKOFF_MS = [1000, 4000, 12000, 30000, 60000];
 
 const lastRequestAt = new Map();
 
@@ -73,6 +78,14 @@ function coinbaseError(message, { code = 'COINBASE_API_ERROR', status } = {}) {
   error.code = code;
   error.httpStatus = status;
   return error;
+}
+
+function parseRetryAfter(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, Math.round(seconds * 1000));
+  const timestamp = Date.parse(String(value));
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 0;
 }
 
 // Three different error envelopes are in play and only two are documented
@@ -249,11 +262,20 @@ class CoinbaseClient {
       const { id, message } = describeError(response.status, response.data);
       const code = classify(response.status, id);
       if (code === 'COINBASE_RATE_LIMITED' && attempt < RETRY_BACKOFF_MS.length) {
-        logger.warn({ path, attempt }, 'Coinbase rate limited; backing off');
-        await sleep(RETRY_BACKOFF_MS[attempt]);
+        const retryAfterMs = parseRetryAfter(response.headers?.['retry-after']);
+        const delayMs = Math.max(RETRY_BACKOFF_MS[attempt], retryAfterMs);
+        logger.warn({ path, attempt, delayMs }, 'Coinbase rate limited; backing off');
+        await sleep(delayMs);
         return this.get(path, params, attempt + 1);
       }
-      throw coinbaseError(message, { code, status: response.status });
+      const error = coinbaseError(message, { code, status: response.status });
+      if (code === 'COINBASE_RATE_LIMITED') {
+        error.retryAfterMs = Math.max(
+          RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)],
+          parseRetryAfter(response.headers?.['retry-after'])
+        );
+      }
+      throw error;
     }
     return response.data;
   }
@@ -275,5 +297,6 @@ module.exports = CoinbaseClient;
 module.exports.HOST = HOST;
 module.exports.JWT_TTL_SECONDS = JWT_TTL_SECONDS;
 module.exports.CLOCK_SKEW_LEEWAY_SECONDS = CLOCK_SKEW_LEEWAY_SECONDS;
+module.exports.RETRY_BACKOFF_MS = RETRY_BACKOFF_MS;
 module.exports._resetRateState = () => lastRequestAt.clear();
 module.exports._setPacingForTests = (enabled) => { pacingEnabled = enabled; };

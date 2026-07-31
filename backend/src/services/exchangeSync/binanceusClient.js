@@ -29,7 +29,7 @@ const ALLOWED_ENDPOINTS = new Set([
   '/sapi/v1/staking/stakingRewardsHistory',
 ]);
 
-const RETRY_BACKOFF_MS = [500, 2000, 5000];
+const RETRY_BACKOFF_MS = [500, 2000, 5000, 15000, 30000];
 const RATE_LIMIT_RE = /rate|too many|429|418|1003|1015/i;
 const keyState = new Map();
 let pacingEnabled = true;
@@ -145,6 +145,9 @@ class BinanceUSClient {
         logger.warn({ path, attempt }, 'Binance.US rate limited; backing off');
         await sleep(RETRY_BACKOFF_MS[attempt]);
         return this._send(state, path, params, { signed, attempt: attempt + 1 });
+      }
+      if (error.code === 'BINANCE_US_RATE_LIMITED') {
+        error.retryAfterMs = RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)];
       }
       throw error;
     }

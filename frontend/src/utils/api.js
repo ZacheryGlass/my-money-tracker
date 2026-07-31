@@ -635,6 +635,17 @@ export const exchanges = {
     const response = await api.post(`/api/exchanges/${id}/sync`);
     return response.data;
   },
+  // Starts the durable, resumable backfill. The response is a job receipt;
+  // callers poll getSyncStatus rather than keeping an HTTP request open while
+  // a provider walks years of ledger pages.
+  startSync: async (id) => {
+    const response = await api.post(`/api/exchanges/${id}/sync/start`);
+    return response.data;
+  },
+  getSyncStatus: async (id) => {
+    const response = await api.get(`/api/exchanges/${id}/sync-status`);
+    return response.data;
+  },
 };
 
 // API key management (Settings -> API Keys). Responses carry masked

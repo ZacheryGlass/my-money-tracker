@@ -6,6 +6,7 @@ const SnapshotJob = require('./snapshotJob');
 const PlaidSyncJob = require('./plaidSyncJob');
 const EthSyncJob = require('./ethSyncJob');
 const ExchangeSyncJob = require('./exchangeSyncJob');
+const ExchangeBackfillService = require('../services/ExchangeBackfillService');
 const BenchmarkUpdateJob = require('./benchmarkUpdateJob');
 const HistoricalPriceJob = require('./historicalPriceJob');
 const ExpenseSyncJob = require('./expenseSyncJob');
@@ -16,6 +17,7 @@ const logger = require('../config/logger');
 let plaidSyncTask = null;
 let ethSyncTask = null;
 let exchangeSyncTask = null;
+let exchangeBackfillTask = null;
 let priceUpdateTask = null;
 let snapshotTask = null;
 let benchmarkUpdateTask = null;
@@ -81,6 +83,25 @@ async function initializeJobs() {
     }
   }, {
     timezone: 'Etc/UTC'
+  });
+
+  // User-requested exchange backfills are durable rows rather than one long
+  // HTTP request. A one-minute pump resumes queued work after an app restart
+  // and gives rate-limit pauses a natural wake-up; enqueue() also kicks it
+  // immediately so the first batch does not wait for the cron boundary.
+  exchangeBackfillTask = cron.schedule('* * * * *', async () => {
+    try {
+      await ExchangeBackfillService.kick();
+    } catch (error) {
+      logger.error({ err: error }, '[scheduler] Exchange backfill pump failed');
+    }
+  }, {
+    timezone: 'Etc/UTC'
+  });
+  // Recover jobs left queued/running by a previous process as soon as this
+  // process is ready; claimDue's lease handles stale running rows.
+  void ExchangeBackfillService.kick().catch((error) => {
+    logger.error({ err: error }, '[scheduler] Initial exchange backfill pump failed');
   });
 
   // Schedule price update at 8 AM UTC daily
@@ -150,6 +171,10 @@ function stopJobs() {
   if (exchangeSyncTask) {
     exchangeSyncTask.stop();
     exchangeSyncTask.destroy();
+  }
+  if (exchangeBackfillTask) {
+    exchangeBackfillTask.stop();
+    exchangeBackfillTask.destroy();
   }
   if (priceUpdateTask) {
     priceUpdateTask.stop();

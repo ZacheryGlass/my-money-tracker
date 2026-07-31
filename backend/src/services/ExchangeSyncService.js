@@ -2,6 +2,7 @@
 
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
+const ExchangeSyncJob = require('../models/ExchangeSyncJob');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const { connectorFor } = require('./exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
@@ -25,6 +26,11 @@ const MAX_REPORTED_MISMATCHES = 25;
 // Exchange account ids with a sync running right now. See _syncResolvedAccount
 // for why this is in memory and what that assumes.
 const inFlightAccounts = new Set();
+const RATE_LIMIT_CODES = new Set([
+  'KRAKEN_RATE_LIMITED',
+  'COINBASE_RATE_LIMITED',
+  'BINANCE_US_RATE_LIMITED',
+]);
 
 function notConfigured(message) {
   const error = new Error(message);
@@ -103,6 +109,7 @@ function reconcile(derived, live) {
 
 class ExchangeSyncService {
   static get ABSOLUTE_TOLERANCE() { return ABSOLUTE_TOLERANCE; }
+  static get RATE_LIMIT_CODES() { return RATE_LIMIT_CODES; }
   static reconcile(derived, live) { return reconcile(derived, live); }
 
   /**
@@ -235,7 +242,7 @@ class ExchangeSyncService {
       // key records "this account has no key" against an account whose key is
       // stored and fine, and it survives after the server is fixed. Nothing is
       // written on that path at all.
-      if (err.code !== 'SECRETS_NOT_CONFIGURED') {
+      if (err.code !== 'SECRETS_NOT_CONFIGURED' && !RATE_LIMIT_CODES.has(err.code)) {
         // The cursor is deliberately NOT passed here: a failed sync must leave
         // the resume point exactly where it was, or the next run starts past
         // rows nobody ever read.
@@ -348,6 +355,14 @@ class ExchangeSyncService {
     for (const account of accounts) {
       summary.processed += 1;
       try {
+        // A user-requested durable backfill owns this cursor until it reaches
+        // the end. The check is database-backed, so a nightly scheduler on a
+        // second App Service instance cannot race the worker from instance A.
+        if (await ExchangeSyncJob.hasActiveForAccount(account.id)) {
+          summary.skipped += 1;
+          summary.results.push({ exchangeAccountId: account.id, skipped: 'EXCHANGE_BACKFILL_ACTIVE' });
+          continue;
+        }
         const result = await this._syncResolvedAccount(account, { interactive: false });
         summary.succeeded += 1;
         if (result.status === 'balance_mismatch') summary.mismatched += 1;
