@@ -933,6 +933,40 @@ describe('CryptoLedger', () => {
     expect(screen.getAllByText(/bridge fee 0.002 ETH/).length).toBeGreaterThan(0);
   });
 
+  it('renders every source transaction in a many-to-one bridge settlement', async () => {
+    setLedger([onchain({
+      category: 'bridge_out',
+      chain_id: 1,
+      legs: [{ asset: 'POL', direction: 'out', amount: '52.520717', units: '52520717', decimals: 6 }],
+      bridge_match: {
+        link_id: 12, chain_id: 137, chain_label: 'Polygon',
+        tx_hash: TX2, category: 'bridge_in',
+        asset: 'POL', out_amount: '52.520717', in_amount: '52.5', fee_amount: '0.020717',
+        assets: [
+          { asset: 'POL', fee_amount: '0.020717' },
+          { asset: 'USDC', fee_amount: '0.000000' },
+        ],
+        source_members: [
+          { row_id: 10, chain_id: 1, tx_hash: TX, asset: 'POL', out_amount: '52.520717' },
+          { row_id: 11, chain_id: 1, tx_hash: TX2, asset: 'USDC', out_amount: '200.996804' },
+        ],
+        legs: [
+          { asset: 'POL', direction: 'in', amount: '52.5', units: '525', decimals: 1 },
+          { asset: 'USDC', direction: 'in', amount: '200.996804', units: '200996804', decimals: 6 },
+        ],
+      },
+    })]);
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('− 52.520717 POL'))[0]);
+
+    expect(await screen.findByText('Constituent source transactions')).toBeInTheDocument();
+    expect(screen.getAllByText('52.520717 POL').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('200.996804 USDC').length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle(TX).length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle(TX2).length).toBeGreaterThan(0);
+  });
+
   it('leaves an unlinked bridge leg as its own flagged row', async () => {
     // Nothing may present a half-finished bridge as a completed transfer.
     setLedger([onchain({

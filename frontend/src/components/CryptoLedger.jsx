@@ -135,6 +135,11 @@ const describeBridgeFees = (match) => {
   return fees.join(' + ');
 };
 
+const describeBridgeSource = (member) => {
+  const amount = member?.out_amount != null ? `${member.out_amount} ${member.asset || ''}`.trim() : null;
+  return amount || member?.tx_hash || 'Source transaction';
+};
+
 // How #61 decided this pairing, in the user's words. The evidence IS the reason
 // to trust or reject it, so it is shown rather than hidden behind a confidence
 // score nobody can interpret.
@@ -1212,6 +1217,31 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
               </a>
             )}
           </div>
+          {row.bridge_match.source_members?.length > 1 && (
+            <div className="mt-2 border-t border-teal-500/10 pt-2">
+              <p className="text-[9px] font-bold uppercase tracking-wide text-teal-400">
+                Constituent source transactions
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {row.bridge_match.source_members.map((member) => (
+                  <li key={`${member.chain_id}:${member.tx_hash}:${member.row_id}`} className="flex flex-wrap items-center gap-2 text-body-sm text-secondary">
+                    <span className="font-money">{describeBridgeSource(member)}</span>
+                    {member.tx_hash && (
+                      <a
+                        href={explorerTxUrl(member.tx_hash, member.chain_id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={member.tx_hash}
+                        className="font-mono text-caption text-accent hover:underline"
+                      >
+                        {shortEthAddress(member.tx_hash)}
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
