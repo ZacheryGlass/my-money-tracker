@@ -23,3 +23,5 @@ node_modules/
 docs/quickstart/
 
 .claude/settings.local.json
+
+todo.md
