@@ -96,6 +96,7 @@ test('one chain attempt is written as one six-feed snapshot with exact errors', 
 
   assert.equal(queries.length, 1);
   assert.match(sqlOf(queries[0]), /INSERT INTO eth_feed_coverage/);
+  assert.match(sqlOf(queries[0]), /\$6::varchar\(20\)/, 'status parameters are explicitly typed for PostgreSQL inference');
   assert.match(sqlOf(queries[0]), /ON CONFLICT \(wallet_id, chain_id, feed\) DO UPDATE/);
   assert.match(sqlOf(queries[0]), /ELSE eth_feed_coverage\.covered_through_block/);
   assert.equal(queries[0].params.length, 6 * 14);
