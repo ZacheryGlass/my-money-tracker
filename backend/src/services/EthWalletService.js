@@ -571,14 +571,21 @@ class EthWalletService {
   // and would spend a provider budget on exactly the assets the historical
   // price job re-walks at 8:10, twenty minutes later. Same series, same
   // providers, same rate limit, twice.
-  static async syncWallet(walletId, { fillPrices = true, prefetchedStateSync = null } = {}) {
+  static async syncWallet(walletId, {
+    fillPrices = true,
+    prefetchedStateSync = null,
+    deferUserFinish = false,
+    rebuildMatches = true,
+  } = {}) {
     // The rebuild lane is keyed by OWNER (EthDerivedPipeline.serializedForUser),
     // so the wallet row is read before enqueueing just to pick the lane;
     // _syncWallet re-reads it inside the slot for fresh state.
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     return EthDerivedPipeline.serializedForUser(wallet.user_id,
-      () => this._syncWallet(walletId, { fillPrices, prefetchedStateSync }));
+      () => this._syncWallet(walletId, {
+        fillPrices, prefetchedStateSync, deferUserFinish, rebuildMatches,
+      }));
   }
 
   // Safe replacement for the old remove-and-re-add workaround for forward-only
@@ -878,7 +885,12 @@ class EthWalletService {
     };
   }
 
-  static async _syncWallet(walletId, { fillPrices = true, prefetchedStateSync = null } = {}) {
+  static async _syncWallet(walletId, {
+    fillPrices = true,
+    prefetchedStateSync = null,
+    deferUserFinish = false,
+    rebuildMatches = true,
+  } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     // Credentials belong to the wallet's owner (the nightly job has no
@@ -974,16 +986,19 @@ class EthWalletService {
       // EthDerivedPipeline; any step throwing lands in the outer catch below,
       // which badges the wallet.
       //
-      // rebuildMatches: true -- the single-wallet sync keeps the exchange-match
-      // pass embedded in the activity rebuild so its result rides on the sync
-      // response, which is why finishUser skips it here.
+      // A single-wallet sync keeps the exchange-match pass embedded in the
+      // activity rebuild so its result rides on the sync response. The nightly
+      // all-wallet caller defers both the match pass and the user-wide tail
+      // until every wallet owned by this user has landed.
       const derived = await EthDerivedPipeline.rebuildWallet(walletId, {
         reclassifyUserId: wallet.user_id,
         fillPrices,
         holdings: true,
-        rebuildMatches: true,
+        rebuildMatches,
       });
-      await EthDerivedPipeline.finishUser(wallet.user_id, { match: false, walletId });
+      if (!deferUserFinish) {
+        await EthDerivedPipeline.finishUser(wallet.user_id, { match: false, walletId });
+      }
 
       // The balance audit (#62): does the ledger we just stored reproduce the
       // balance the chain reports? Runs last, and non-fatally, because it is a
@@ -1071,26 +1086,70 @@ class EthWalletService {
     const summary = { processed: 0, succeeded: 0, failed: 0, results: [] };
     const stateSyncPrefetch = await this._prefetchStateSyncForWallets(wallets);
 
+    const byUser = new Map();
     for (const wallet of wallets) {
-      summary.processed++;
-      try {
-        const result = await this.syncWallet(wallet.id, {
-          fillPrices,
-          prefetchedStateSync: stateSyncPrefetch.get(wallet.id) || null,
-        });
-        summary.succeeded++;
-        summary.results.push({ walletId: wallet.id, address: wallet.address, ...result });
-      } catch (err) {
-        if (err.code === 'ETHERSCAN_NOT_CONFIGURED') {
-          summary.skipped = (summary.skipped || 0) + 1;
-          summary.results.push({ walletId: wallet.id, address: wallet.address, skipped: 'not_configured' });
-          logger.warn({ walletId: wallet.id, userId: wallet.user_id }, 'Skipping ETH wallet: owner has no Etherscan key');
-          continue;
+      const key = wallet.user_id ?? null;
+      if (!byUser.has(key)) byUser.set(key, []);
+      byUser.get(key).push(wallet);
+    }
+
+    // Keep the entire owner block inside one rebuild lane. The previous flat
+    // walk ran finishUser once per wallet, repeating the same cross-wallet
+    // bridge matching, legacy mirror rebuild, and global classification pass.
+    // The raw ingest and per-wallet derived rows still run once per wallet;
+    // only the user-wide tail is coalesced here.
+    for (const [userId, userWallets] of byUser) {
+      await EthDerivedPipeline.serializedForUser(userId, async () => {
+        const successful = [];
+        for (const wallet of userWallets) {
+          summary.processed++;
+          try {
+            const result = await this._syncWallet(wallet.id, {
+              fillPrices,
+              prefetchedStateSync: stateSyncPrefetch.get(wallet.id) || null,
+              deferUserFinish: true,
+              rebuildMatches: false,
+            });
+            summary.succeeded++;
+            const entry = { walletId: wallet.id, address: wallet.address, ...result };
+            summary.results.push(entry);
+            successful.push({ wallet, entry });
+          } catch (err) {
+            if (err.code === 'ETHERSCAN_NOT_CONFIGURED') {
+              summary.skipped = (summary.skipped || 0) + 1;
+              summary.results.push({ walletId: wallet.id, address: wallet.address, skipped: 'not_configured' });
+              logger.warn({ walletId: wallet.id, userId: wallet.user_id }, 'Skipping ETH wallet: owner has no Etherscan key');
+              continue;
+            }
+            summary.failed++;
+            summary.results.push({ walletId: wallet.id, address: wallet.address, error: err.message });
+            logger.error({ walletId: wallet.id, err }, 'Failed to sync ETH wallet');
+          }
         }
-        summary.failed++;
-        summary.results.push({ walletId: wallet.id, address: wallet.address, error: err.message });
-        logger.error({ walletId: wallet.id, err }, 'Failed to sync ETH wallet');
-      }
+
+        if (!successful.length) return;
+        try {
+          await EthDerivedPipeline.finishUser(userId, {
+            match: userId != null,
+            context: 'nightly ETH sync',
+          });
+        } catch (err) {
+          // Match the old per-wallet failure semantics: a failed user-wide
+          // tail invalidates every wallet whose ingest succeeded in this block.
+          for (const { wallet, entry } of successful) {
+            entry.error = err.message;
+            try {
+              await EthWallet.setError(wallet.id, err.code || 'SYNC_ERROR', err.message);
+            } catch (recordErr) {
+              logger.error({ walletId: wallet.id, err: recordErr },
+                'Could not record coalesced nightly ETH tail error');
+            }
+          }
+          summary.succeeded -= successful.length;
+          summary.failed += successful.length;
+          logger.error({ userId, err }, 'Nightly ETH user-wide tail failed');
+        }
+      });
     }
 
     return summary;

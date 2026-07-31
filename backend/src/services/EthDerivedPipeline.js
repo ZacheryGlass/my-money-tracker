@@ -222,10 +222,9 @@ async function runForUser(userId, {
   return finishUser(userId, { matchContext: { reason: matchReason }, context });
 }
 
-// Follow-up, deliberately out of scope here: syncAllWallets still walks
-// wallets flat and runs the user-wide tail once per WALLET (inside each
-// _syncWallet). Giving it a once-per-user tail changes the nightly job's
-// observable per-wallet results, so it is a separate decision.
+// syncAllWallets uses the same primitives directly: it keeps each owner's
+// wallet ingests in this lane, suppresses the per-wallet match pass, and calls
+// finishUser once after the owner block has landed.
 
 module.exports = {
   rebuildWallet,
