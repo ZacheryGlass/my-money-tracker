@@ -273,6 +273,37 @@ test('Base Blockscout windows share receiver topics and use returned timestamps'
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
 });
 
+test('a saturated Blockscout window splits before accepting a cursor', async (t) => {
+  const original = EtherscanService._request;
+  const calls = [];
+  EtherscanService._request = async (params) => {
+    calls.push(params);
+    if (params.fromBlock === 0 && params.toBlock === 99999) {
+      return Array.from({ length: 1000 }, (_, index) =>
+        ethBridgeFinalizedLog({ block: index + 1, hash: `0xfull${index}` }));
+    }
+    return [ethBridgeFinalizedLog({
+      block: params.fromBlock === 0 ? 5000 : 15000,
+      hash: params.fromBlock === 0 ? '0xleft' : '0xright',
+    })];
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [{ address: WALLET, startBlock: 0 }],
+    8453,
+    {
+      ...chains.getChain(8453).stateSyncDeposits,
+      rpcScan: { provider: 'blockscout', blockRange: 100000, batchSize: 1, concurrency: 1 },
+    },
+    99999
+  );
+
+  assert.equal(calls.length, 3, 'one full window plus two split windows');
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xleft', '0xright']);
+  assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 99999);
+});
+
 test('Base retries a rate-limited JSON-RPC batch before failing the feed', async (t) => {
   const axios = require('axios');
   const original = axios.post;

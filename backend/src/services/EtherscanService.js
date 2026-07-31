@@ -935,8 +935,8 @@ class EtherscanService {
       const userTopicParam = `topic${userTopicIndex}`;
       const topicOperatorParam = `topic0_${userTopicIndex}_opr`;
       const topicParam = [...topicToRequest.keys()].join(',');
-      for (let offset = 0; offset < filters.length; offset++) {
-        const filter = filters[offset].params[0];
+      const fetchBlockscoutWindow = async (fromBlock, toBlock, depth = 0) => {
+        if (fromBlock > toBlock) return [];
         const rows = await this._request({
           module: 'logs',
           action: 'getLogs',
@@ -944,8 +944,8 @@ class EtherscanService {
           topic0: feedConfig.topic0,
           [userTopicParam]: topicParam,
           [topicOperatorParam]: 'and',
-          fromBlock: parseInt(filter.fromBlock, 16),
-          toBlock: parseInt(filter.toBlock, 16),
+          fromBlock,
+          toBlock,
           page: 1,
           offset: LOG_PAGE_SIZE,
         }, { apiKey: null, chainId });
@@ -954,17 +954,31 @@ class EtherscanService {
           error.code = 'ETHERSCAN_API_ERROR';
           throw error;
         }
-        // A full response is not proof that the range is complete. The
-        // provider ignores page/offset for this endpoint, so accepting it
-        // would advance the cursor past an unknown tail.
+        // A full response is not proof that the range is complete. Split the
+        // range rather than trusting page/offset, which this endpoint ignores.
         if (rows.length >= LOG_PAGE_SIZE) {
-          const error = new Error(
-            `statesync Blockscout getLogs reached the ${LOG_PAGE_SIZE}-log window limit; cursor frozen`
-          );
-          error.code = 'ETHERSCAN_API_ERROR';
-          throw error;
+          if (fromBlock === toBlock || depth >= 12) {
+            const error = new Error(
+              `statesync Blockscout getLogs reached the ${LOG_PAGE_SIZE}-log window limit at ${fromBlock}; cursor frozen`
+            );
+            error.code = 'ETHERSCAN_API_ERROR';
+            throw error;
+          }
+          const midpoint = Math.floor((fromBlock + toBlock) / 2);
+          const [left, right] = await Promise.all([
+            fetchBlockscoutWindow(fromBlock, midpoint, depth + 1),
+            fetchBlockscoutWindow(midpoint + 1, toBlock, depth + 1),
+          ]);
+          return left.concat(right);
         }
-        logs.push(...rows);
+        return rows;
+      };
+      for (let offset = 0; offset < filters.length; offset++) {
+        const filter = filters[offset].params[0];
+        logs.push(...await fetchBlockscoutWindow(
+          parseInt(filter.fromBlock, 16),
+          parseInt(filter.toBlock, 16)
+        ));
       }
     } else for (let offset = 0; offset < filters.length; offset += batchSize * concurrency) {
       const chunks = [];
