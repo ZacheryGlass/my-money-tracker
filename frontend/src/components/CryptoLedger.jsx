@@ -329,7 +329,11 @@ const CryptoLedger = ({
   const incompleteAccounts = useMemo(() => exchangeAccounts.filter(
     (account) => account.last_sync_status === 'balance_mismatch'
       || account.last_sync_status === 'error'
+      || account.last_sync_status === 'coverage_limited'
       || account.balance_report?.backfill_pending
+      || account.balance_report?.balances_incomplete
+      || (Array.isArray(account.balance_report?.coverage_limitations)
+        && account.balance_report.coverage_limitations.length > 0)
   ), [exchangeAccounts]);
 
   // Native-only, matching the audit's own badge rule: a token delta has benign

@@ -10,6 +10,7 @@ const {
   isNegativeAmount,
   parseTimestamp,
   finalizeRecord,
+  contentId,
 } = require('../exchangeImport/shared');
 const logger = require('../../config/logger');
 
@@ -130,6 +131,18 @@ function currencyOf(money) {
   return code || null;
 }
 
+// Missing provider ids are uncommon, but a fallback external id still has to
+// be stable when the same row is fetched again. JSON keeps object-valued
+// fields meaningful; String(object) would collapse every destination object
+// to "[object Object]" and make unrelated rows collide.
+function stableContentPart(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+  return String(value);
+}
+
 // v2 pagination: "you know that you have paginated all the results when the
 // response's next_uri is empty". starting_after takes the id of the last
 // resource on the page.
@@ -145,6 +158,7 @@ async function pageV2(client, path, {
   // caller so an unfinished walk can be picked up exactly where it stopped
   // instead of restarting from the newest row and never reaching the old ones.
   let startingAfter = startAfter || undefined;
+  const seenCursors = new Set(startingAfter ? [startingAfter] : []);
   let pages = 0;
   let truncated = false;
 
@@ -169,7 +183,17 @@ async function pageV2(client, path, {
 
     const last = data[data.length - 1];
     if (!body.pagination || !body.pagination.next_uri) break;
-    if (!last || !last.id) break;
+    if (!last || !last.id) {
+      const error = new Error(`Coinbase pagination returned a next_uri without a usable cursor for ${path}`);
+      error.code = 'COINBASE_CURSOR_STALLED';
+      throw error;
+    }
+    if (seenCursors.has(last.id)) {
+      const error = new Error(`Coinbase cursor stalled while reading ${path}`);
+      error.code = 'COINBASE_CURSOR_STALLED';
+      throw error;
+    }
+    seenCursors.add(last.id);
     startingAfter = last.id;
   }
 
@@ -191,7 +215,12 @@ async function pageV3Accounts(client, { maxPages = 20 } = {}) {
   for (let page = 0; page < maxPages; page += 1) {
     const body = await client.listBrokerageAccounts({ limit: V3_ACCOUNT_LIMIT, cursor });
     accounts.push(...body.accounts);
-    if (!body.has_next || !body.cursor) { truncated = false; break; }
+    if (!body.has_next) { truncated = false; break; }
+    if (!body.cursor) {
+      logger.warn({ exchange: EXCHANGE, pages: page + 1 },
+        'Coinbase brokerage account list claimed another page without a cursor; balance reconciliation skipped');
+      break;
+    }
     cursor = body.cursor;
   }
   if (truncated) {
@@ -221,6 +250,7 @@ async function pageV3Fills(client, { startTime, maxPages }) {
     // than saying nothing at all.
     if (body?.proof_token_required) {
       logger.warn({ exchange: EXCHANGE }, 'Coinbase fills need a 2FA proof token; quote enrichment skipped');
+      truncated = true;
       break;
     }
     // No has_next on this endpoint -- an empty cursor is the terminator.
@@ -234,6 +264,7 @@ async function pageV3Fills(client, { startTime, maxPages }) {
     logger.warn({ exchange: EXCHANGE, pages: maxPages, fills: fills.length },
       'Coinbase fills list hit the page budget; older trades import without their quote leg or commission');
   }
+  fills.truncated = truncated;
   return fills;
 }
 
@@ -372,6 +403,10 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
   // or another account otherwise. Only an address belongs in the address
   // column, which is what forgotten-wallet discovery reads.
   const address = typeof to.address === 'string' && to.address ? to.address : null;
+  const hasNativeId = typeof tx.id === 'string' ? tx.id.trim().length > 0 : tx.id !== undefined && tx.id !== null;
+  const externalId = hasNativeId
+    ? `cb:${tx.id}`
+    : contentId('coinbase:transaction', [stableContentPart(tx)]);
 
   return finalizeRecord({
     record_type: mapped ?? UNKNOWN_RECORD_TYPE,
@@ -389,7 +424,7 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
     // ALWAYS the v2 transaction id, including for a widowed Convert leg --
     // see the note above foldConversions for why a Convert cannot be keyed on
     // anything the retail CSV export does not also carry.
-    external_id: `cb:${tx.id}`,
+    external_id: externalId,
     // An uncategorized `tx`, a `request`, or a type Coinbase adds after this
     // was written all land here: stored, visible, and flagged -- never guessed
     // into income or a deposit, and never dropped. A widowed Convert leg is
@@ -397,7 +432,7 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
     // both what surfaces it for review and what lets a later, complete fetch
     // of the SAME leg upgrade it in place. A fee whose currency nobody could
     // determine is flagged for a third: reconciliation cannot see it.
-    needs_review: isUnknown || Boolean(tx._unpairedConversion) || feeUnattributed,
+    needs_review: isUnknown || !hasNativeId || Boolean(tx._unpairedConversion) || feeUnattributed,
     raw: { _format: 'coinbase', _source: 'api', ...tx },
   }, { line, amountCell });
 }
@@ -459,7 +494,14 @@ function foldConversions(transactions) {
 // A Convert's identity is the OUTGOING LEG's v2 transaction id -- the one
 // identifier the API reader and the retail CSV reader can both compute. See
 // the note above foldConversions.
-const conversionIdFor = (from) => `cb:${from.id}`;
+const conversionIdFor = (from, to, tradeId) => {
+  const hasNativeId = typeof from?.id === 'string'
+    ? from.id.trim().length > 0
+    : from?.id !== undefined && from?.id !== null;
+  return hasNativeId
+    ? `cb:${from.id}`
+    : contentId('coinbase:conversion', [tradeId, stableContentPart(from), stableContentPart(to)]);
+};
 
 function recordFromConversion({ from, to, tradeId }, { line }) {
   return finalizeRecord({
@@ -473,8 +515,8 @@ function recordFromConversion({ from, to, tradeId }, { line }) {
     fee_amount: null,
     tx_hash: null,
     address: null,
-    external_id: conversionIdFor(from),
-    needs_review: false,
+    external_id: conversionIdFor(from, to, tradeId),
+    needs_review: !from?.id || !to?.id,
     raw: {
       _format: 'coinbase', _source: 'api', _trade_id: tradeId, _paired_id: to.id, from, to,
     },
@@ -508,7 +550,7 @@ const coinbaseConnector = {
    *
    * Cursor:
    *
-   *   { since, headStartedAt,
+   *   { since, headStartedAt, accountsStartAfter,
    *     pending: { [v2AccountId]: startingAfterId | true },
    *     done: [v2AccountId] }
    *
@@ -528,8 +570,13 @@ const coinbaseConnector = {
    * reaches the rest. More wallets than budget therefore made ZERO progress,
    * forever, with backfillPending stuck true (which also suppresses balance
    * reconciliation permanently). `done` carries the accounts already walked to
-   * the end IN THIS BACKFILL GENERATION; they are skipped without a request,
-   * and the whole set is cleared the moment the backfill completes so the next
+   * the end IN THIS BACKFILL GENERATION; they are skipped without a request.
+   * `accountsStartAfter` does the same for the account list itself: Coinbase
+   * can return more than the 25-page account-list budget, so the next pass must
+   * continue after the last enumerated account instead of starting at page 1.
+   * Pending account ids are walked directly before that continuation is read,
+   * so a transaction page budget cannot strand an account from an earlier list
+   * segment. Both fields are cleared when the generation completes so the next
    * incremental sync visits everything again.
    */
   async sync(credentials, { cursor = null, interactive = true } = {}) {
@@ -551,11 +598,24 @@ const coinbaseConnector = {
     }).catch((err) => {
       // Enrichment only. Losing it costs a trade's quote leg, not the trade.
       logger.warn({ err }, 'Coinbase fills fetch failed; trades import without fill enrichment');
-      return [];
+      const empty = [];
+      empty.truncated = true;
+      return empty;
     });
+    const fillsTruncated = Boolean(fills.truncated);
     const { byOrder: fillsByOrder, adjusted } = summarizeFills(fills);
 
-    const v2Accounts = await pageV2(client, '/v2/accounts', { maxPages: 25 });
+    const accountListStartAfter = typeof state.accountsStartAfter === 'string'
+      ? state.accountsStartAfter : null;
+    const v2Accounts = await pageV2(client, '/v2/accounts', {
+      maxPages: 25,
+      startAfter: accountListStartAfter,
+    });
+    if (v2Accounts.truncated && !v2Accounts.resumeAfter) {
+      const error = new Error('Coinbase account list was truncated without a resume cursor');
+      error.code = 'COINBASE_CURSOR_STALLED';
+      throw error;
+    }
 
     const pending = (state.pending && typeof state.pending === 'object') ? state.pending : {};
     // A generation is only in progress when a previous pass truncated, which is
@@ -563,7 +623,10 @@ const coinbaseConnector = {
     // must not skip anybody.
     const inBackfill = Boolean(state.headStartedAt);
     const done = new Set(inBackfill && Array.isArray(state.done) ? state.done : []);
-    const nextDone = new Set();
+    // Keep accounts completed in an earlier account-list segment. The list
+    // cursor below intentionally starts after that segment, so dropping these
+    // ids would make the next pass forget which history it already covered.
+    const nextDone = new Set(inBackfill ? done : []);
     const nextPending = {};
     const transactions = [];
     // An account list that was itself cut short means accounts exist that have
@@ -572,27 +635,26 @@ const coinbaseConnector = {
     // been read at all.
     let truncated = v2Accounts.truncated;
     let pagesUsed = 0;
+    const handled = new Set();
 
-    for (const account of v2Accounts.rows) {
-      if (!account?.id) continue;
-      // Already walked to the end earlier in this backfill. Skipped before the
-      // budget check, because re-walking it is precisely what burned the budget
-      // and stalled the whole backfill.
-      if (done.has(account.id)) { nextDone.add(account.id); continue; }
-      const carried = pending[account.id];
-      // `true` means "enumerated but never started". A string is a
-      // starting_after id to resume from.
-      const resumeAfter = typeof carried === 'string' ? carried : null;
+    const walkAccount = async (accountId, carried) => {
+      if (!accountId || handled.has(accountId)) return;
+      if (done.has(accountId)) {
+        nextDone.add(accountId);
+        handled.add(accountId);
+        return;
+      }
       const unfinished = carried !== undefined;
+      const resumeAfter = typeof carried === 'string' ? carried : null;
       if (pagesUsed >= maxPages) {
         // Out of budget before this account was touched. It has to be recorded
         // as unfinished even when it has no resume id yet, or the next run
         // treats it as up to date and its history is never read.
         truncated = true;
-        nextPending[account.id] = carried ?? true;
-        continue;
+        nextPending[accountId] = carried ?? true;
+        return;
       }
-      const result = await pageV2(client, `/v2/accounts/${account.id}/transactions`, {
+      const result = await pageV2(client, `/v2/accounts/${accountId}/transactions`, {
         maxPages: maxPages - pagesUsed,
         startAfter: resumeAfter,
         // While an account is still being backfilled the watermark must not
@@ -605,13 +667,31 @@ const coinbaseConnector = {
           : null,
       });
       pagesUsed += result.pages;
+      handled.add(accountId);
       if (result.truncated) {
         truncated = true;
-        nextPending[account.id] = result.resumeAfter ?? true;
+        nextPending[accountId] = result.resumeAfter ?? true;
       } else {
-        nextDone.add(account.id);
+        nextDone.add(accountId);
       }
       transactions.push(...result.rows);
+    };
+
+    // A transaction-page budget may leave accounts from an earlier account-list
+    // segment pending. Walk those ids directly before continuing enumeration;
+    // otherwise an account-list resume cursor would strand their old history.
+    for (const [accountId, carried] of Object.entries(pending)) {
+      await walkAccount(accountId, carried);
+    }
+
+    for (const account of v2Accounts.rows) {
+      if (!account?.id) continue;
+      // Already walked to the end earlier in this backfill. Skipped before the
+      // budget check, because re-walking it is precisely what burned the budget
+      // and stalled the whole backfill.
+      // `walkAccount` handles carried cursors, the budget boundary and
+      // duplicate ids that appear in adjacent provider pages.
+      await walkAccount(account.id, pending[account.id]);
     }
 
     const { pairs, singles } = foldConversions(transactions);
@@ -661,11 +741,16 @@ const coinbaseConnector = {
         ? {
           since: state.since ?? null,
           headStartedAt: state.headStartedAt ?? startedAt,
+          accountsStartAfter: v2Accounts.truncated ? v2Accounts.resumeAfter : null,
           pending: nextPending,
           done: [...nextDone],
         }
         : {
-          since: state.headStartedAt ?? startedAt, headStartedAt: null, pending: {}, done: [],
+          since: state.headStartedAt ?? startedAt,
+          headStartedAt: null,
+          accountsStartAfter: null,
+          pending: {},
+          done: [],
         },
       balances: Object.fromEntries(sortedEntries(balances)),
       // Half a live balance picture reads every unenumerated portfolio as zero
@@ -680,6 +765,9 @@ const coinbaseConnector = {
         backfillPending: truncated,
         balancesIncomplete: balancesTruncated,
       },
+      coverageLimitations: fillsTruncated
+        ? ['Coinbase fill enrichment hit its page budget; older trades may lack quote or commission detail.']
+        : [],
     };
   },
 };

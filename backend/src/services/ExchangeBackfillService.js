@@ -15,12 +15,32 @@ const RATE_LIMIT_CODES = new Set([
 const MAX_BACKOFF_MS = 15 * 60 * 1000;
 const BASE_BACKOFF_MS = 5000;
 const PUMP_DELAY_MS = 250;
+const TRANSIENT_RETRY_LIMIT = 5;
+const TRANSIENT_CODES = new Set([
+  'KRAKEN_API_ERROR',
+  'COINBASE_API_ERROR',
+  'BINANCE_US_API_ERROR',
+]);
+const TRANSPORT_CODES = new Set([
+  'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN', 'ECONNREFUSED',
+  'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EPIPE', 'ERR_NETWORK',
+  'ERR_BAD_RESPONSE', 'UND_ERR_CONNECT_TIMEOUT',
+]);
 
 let pumpPromise = null;
 let pumpAgain = false;
 
 function isRateLimited(error) {
   return Boolean(error && RATE_LIMIT_CODES.has(error.code));
+}
+
+function isTransient(error) {
+  if (!error || isRateLimited(error)) return false;
+  if (TRANSPORT_CODES.has(error.code)) return true;
+  if (!TRANSIENT_CODES.has(error.code)) return false;
+  const status = Number(error.httpStatus ?? error.response?.status ?? error.request_summary?.status);
+  if (status >= 500) return true;
+  return /timeout|temporar|unavailable|try again|server/i.test(String(error.message || ''));
 }
 
 function backoffDelay(attempt, retryAfterMs = 0) {
@@ -50,6 +70,7 @@ function batchStats(result) {
       backfill_pending: Boolean(result.backfill_pending),
       status: result.status,
       balance_report: result.balance_report || null,
+      coverage_limitations: result.coverage_limitations || [],
     },
   };
 }
@@ -132,63 +153,126 @@ class ExchangeBackfillService {
     // next turn immediately; the durable row means a restart resumes safely.
     const job = await ExchangeSyncJob.claimDue();
     if (!job) return null;
-    await this._runClaimed(job);
+    const nextDelayMs = await this._runClaimed(job);
     // Check for another account (or the next batch) without waiting for the
-    // one-minute recovery cron. If the row is in provider backoff, claimDue
-    // simply finds nothing until its next_run_at.
-    setTimeout(() => this.kick(), PUMP_DELAY_MS);
+    // one-minute recovery cron. _runClaimed supplies the next due delay so a
+    // provider backoff does not turn into a tight polling loop.
+    if (Number.isFinite(nextDelayMs)) {
+      setTimeout(() => this.kick(), Math.max(0, nextDelayMs));
+    }
     return job;
   }
 
   static async _runClaimed(job) {
     let account;
+    let heartbeatTimer = null;
+    let leaseLost = false;
+    const claimToken = job.claim_token;
+    const heartbeat = async () => {
+      const renewed = await ExchangeSyncJob.heartbeat(job.id, claimToken);
+      if (!renewed) leaseLost = true;
+    };
     try {
+      if (!claimToken) {
+        logger.warn({ jobId: job.id }, 'Exchange backfill job has no claim token; leaving it for recovery');
+        return PUMP_DELAY_MS;
+      }
+      heartbeatTimer = setInterval(() => {
+        void heartbeat().catch((error) => {
+          leaseLost = true;
+          logger.warn({ jobId: job.id, err: error }, 'Exchange backfill lease heartbeat failed');
+        });
+      }, Math.floor(ExchangeSyncJob.LEASE_MS / 3));
+      heartbeatTimer.unref?.();
       account = await ExchangeAccount.findWithCredentialsForUser(job.exchange_account_id, job.user_id);
       if (!account) {
-        await ExchangeSyncJob.fail(job.id, {
+        await ExchangeSyncJob.fail(job.id, claimToken, {
           errorCode: 'EXCHANGE_ACCOUNT_NOT_FOUND',
           errorMessage: 'The exchange account no longer exists',
         });
-        return;
+        return PUMP_DELAY_MS;
+      }
+      if (!account.api_key_encrypted || !account.api_secret_encrypted) {
+        await ExchangeSyncJob.fail(job.id, claimToken, {
+          errorCode: 'EXCHANGE_NOT_CONFIGURED',
+          errorMessage: 'Exchange credentials were removed before this backfill ran',
+        });
+        return PUMP_DELAY_MS;
       }
 
       const result = await ExchangeSyncService._syncResolvedAccount(account, { interactive: false });
       const stats = batchStats(result);
-      if (result.backfill_pending) {
-        await ExchangeSyncJob.requeue(job.id, { ...stats, backfillPending: true, delayMs: PUMP_DELAY_MS });
-      } else {
-        await ExchangeSyncJob.complete(job.id, stats);
+      if (leaseLost) {
+        logger.warn({ jobId: job.id }, 'Exchange backfill lease was lost; discarding stale progress receipt');
+        return PUMP_DELAY_MS;
       }
+      if (result.backfill_pending) {
+        await ExchangeSyncJob.requeue(job.id, claimToken, { ...stats, backfillPending: true, delayMs: PUMP_DELAY_MS });
+      } else {
+        await ExchangeSyncJob.complete(job.id, claimToken, stats);
+      }
+      return PUMP_DELAY_MS;
     } catch (error) {
+      if (error.code === 'EXCHANGE_SYNC_LOCK_LOST' || error.code === 'EXCHANGE_SYNC_LEASE_LOST') {
+        logger.warn({ jobId: job.id, err: error }, 'Exchange backfill lost ownership; leaving the row for recovery');
+        return PUMP_DELAY_MS;
+      }
       if (error.code === 'EXCHANGE_SYNC_IN_PROGRESS') {
+        // Credentials can be cleared after the initial account read but before
+        // the account lease is claimed. That is not a live-sync collision: the
+        // job must finish as not-configured instead of retrying forever.
+        const current = await ExchangeAccount.findWithCredentialsForUser(
+          job.exchange_account_id, job.user_id
+        );
+        if (!current || !current.api_key_encrypted || !current.api_secret_encrypted) {
+          await ExchangeSyncJob.fail(job.id, claimToken, {
+            errorCode: 'EXCHANGE_NOT_CONFIGURED',
+            errorMessage: 'Exchange credentials were removed before this backfill ran',
+          });
+          return PUMP_DELAY_MS;
+        }
         // The nightly one-pass job may own the account for a few seconds. It
         // is not a failed backfill and should not consume the rate-limit budget.
-        await ExchangeSyncJob.requeue(job.id, {
+        await ExchangeSyncJob.requeue(job.id, claimToken, {
           backfillPending: true,
           lastBatch: { status: 'waiting_for_existing_sync' },
           delayMs: 1000,
         });
-        return;
+        return 1000;
       }
       if (isRateLimited(error)) {
         const attempt = (job.backoff_attempts || 0) + 1;
         const delay = backoffDelay(attempt, error.retryAfterMs);
-        await ExchangeSyncJob.backoff(job.id, {
+        await ExchangeSyncJob.backoff(job.id, claimToken, {
           delayMs: delay,
           errorCode: error.code,
           errorMessage: error.message,
         });
-        setTimeout(() => this.kick(), delay);
         logger.warn({ exchangeAccountId: job.exchange_account_id, code: error.code, delayMs: delay, attempt },
           'Exchange backfill paused for provider rate limit');
-        return;
+        return delay;
       }
-      await ExchangeSyncJob.fail(job.id, {
+      if (isTransient(error) && (job.backoff_attempts || 0) < TRANSIENT_RETRY_LIMIT) {
+        const attempt = (job.backoff_attempts || 0) + 1;
+        const delay = backoffDelay(attempt);
+        await ExchangeSyncJob.backoff(job.id, claimToken, {
+          delayMs: delay,
+          errorCode: error.code || 'EXCHANGE_TRANSIENT_ERROR',
+          errorMessage: error.message,
+        });
+        logger.warn({ exchangeAccountId: job.exchange_account_id, code: error.code, delayMs: delay, attempt },
+          'Exchange backfill paused for a transient provider error');
+        return delay;
+      }
+      await ExchangeSyncJob.fail(job.id, claimToken, {
         errorCode: error.code,
         errorMessage: error.message,
       });
       logger.error({ exchangeAccountId: job.exchange_account_id, userId: job.user_id, err: error },
         'Exchange backfill failed');
+      return PUMP_DELAY_MS;
+    } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
     }
   }
 }

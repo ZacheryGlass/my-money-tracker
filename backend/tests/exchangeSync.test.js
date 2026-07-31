@@ -34,6 +34,7 @@ const stored = new Map();
 const chainDetails = new Map();
 let derivedBalances = {};
 let accountOverrides = {};
+let accountSyncLockActive = false;
 const queries = [];
 
 function accountRow(overrides = {}) {
@@ -73,6 +74,8 @@ function fakeQuery(text, params) {
   const sql = String(text).replace(/\s+/g, ' ').trim();
   queries.push({ sql, params });
 
+  if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] };
+
   // Ordered most specific first: the credential-bearing read is the only
   // SELECT * left on this table, and derivedBalances also mentions
   // exchange_accounts, so a loose match would swallow it.
@@ -102,6 +105,10 @@ function fakeQuery(text, params) {
   if (/^SELECT \* FROM exchange_accounts WHERE id = \$1 AND user_id = \$2/.test(sql)) {
     return { rows: resolveAccount(params[0], params[1]) };
   }
+  if (/^SELECT id FROM exchange_accounts WHERE id = \$1 AND user_id = \$2/.test(sql)) {
+    return accountSyncLockActive ? { rows: [] } : { rows: resolveAccount(params[0], params[1]).map(({ id }) => ({ id })) };
+  }
+  if (/^SELECT 1 FROM exchange_sync_jobs/.test(sql)) return { rows: [] };
   if (/^SELECT \* FROM exchange_accounts WHERE api_key_encrypted IS NOT NULL/.test(sql)) {
     return { rows: accountOverrides.api_key_encrypted ? [accountRow()] : [] };
   }
@@ -126,6 +133,7 @@ function fakeQuery(text, params) {
   }
   if (/^UPDATE exchange_accounts SET api_key_encrypted = NULL/.test(sql)) {
     // clearCredentials: a DELETE of ciphertext, which needs no encryption key.
+    if (accountSyncLockActive) return { rows: [] };
     accountOverrides = {};
     return { rows: [accountRow({ id: params[0], api_configured: false })] };
   }
@@ -140,6 +148,18 @@ function fakeQuery(text, params) {
         api_configured: params[2] !== null,
       })],
     };
+  }
+  if (/^UPDATE exchange_accounts SET sync_lock_token = \$2::uuid/.test(sql)) {
+    return accountSyncLockActive ? { rows: [] } : { rows: [{ id: params[0] }] };
+  }
+  if (/^UPDATE exchange_accounts SET sync_lock_until/.test(sql)) {
+    return { rows: [{ id: params[0] }] };
+  }
+  if (/^SELECT id FROM exchange_accounts WHERE id = \$1 AND sync_lock_token = \$2::uuid/.test(sql)) {
+    return { rows: [{ id: params[0] }] };
+  }
+  if (/^UPDATE exchange_accounts SET sync_lock_token = NULL/.test(sql)) {
+    return { rows: [{ id: params[0] }] };
   }
   if (/^UPDATE exchange_accounts SET sync_cursor/.test(sql)) {
     return { rows: [accountRow({ last_sync_status: params[2], last_sync_error: params[3] })] };
@@ -392,6 +412,7 @@ beforeEach(() => {
   requests.length = 0;
   derivedBalances = {};
   accountOverrides = {};
+  accountSyncLockActive = false;
   krakenLedgerPages = null;
   krakenLedgerHistory = null;
   coinbaseTransactionPages = null;
@@ -929,6 +950,22 @@ test('coinbase: a trade\'s quote leg is signed against the base, as the CSV read
   assert.equal(sell.quote_amount, '1000.00', 'selling receives the quote');
 });
 
+test('coinbase: a transaction without a provider id gets a stable reviewable fallback id', () => {
+  const { recordFromTransaction } = coinbaseConnector._internals;
+  const transaction = {
+    type: 'receive',
+    created_at: '2024-03-02T10:00:00Z',
+    amount: { amount: '1.25', currency: 'BTC' },
+    to: { address: '0x1111111111111111111111111111111111111111' },
+  };
+  const first = recordFromTransaction(transaction, { line: 1, fillsByOrder: new Map() });
+  const replay = recordFromTransaction({ ...transaction }, { line: 99, fillsByOrder: new Map() });
+
+  assert.match(first.external_id, /^coinbase:transaction:h:[0-9a-f]{40}$/);
+  assert.equal(first.external_id, replay.external_id);
+  assert.equal(first.needs_review, true);
+});
+
 test('coinbase: a widowed convert leg is flagged, and the outgoing one is upgradeable in place', async () => {
   const { foldConversions, recordFromTransaction, recordFromConversion } = coinbaseConnector._internals;
   const from = {
@@ -987,6 +1024,32 @@ test('coinbase: an account list that was cut short is not reported as a finished
   // never read at all.
   assert.equal(result.stats.backfillPending, true);
   assert.equal(result.cursor.since, null);
+});
+
+test('coinbase: an oversized account list resumes from its last account cursor', async () => {
+  const template = COINBASE.v2Accounts.data[0];
+  coinbaseAccountPages = Array.from({ length: 26 }, (_, page) => ({
+    _after: page === 0 ? undefined : `acct-${page * 100 - 1}`,
+    data: Array.from({ length: 100 }, (_, i) => ({ ...template, id: `acct-${page * 100 + i}` })),
+    pagination: page < 25
+      ? { next_uri: `/v2/accounts?starting_after=acct-${page * 100 + 99}` }
+      : { next_uri: null },
+  }));
+
+  const first = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: null, interactive: true }
+  );
+  assert.equal(first.stats.backfillPending, true);
+  assert.equal(first.cursor.accountsStartAfter, 'acct-2499');
+
+  requests.length = 0;
+  await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: first.cursor, interactive: false }
+  );
+  const accountCalls = requests.filter((entry) => entry.path === '/v2/accounts');
+  assert.equal(accountCalls[0].params.starting_after, 'acct-2499');
 });
 
 test('coinbase: a multi-run backfill dates the watermark from when it started', async () => {
@@ -1209,6 +1272,17 @@ test('a stored key can still be revoked when the encryption key is gone', async 
   assert.ok(wipe, 'the ciphertext columns are actually NULLed');
 });
 
+test('disconnect waits for an active sync instead of revoking its live key', async () => {
+  connectAccount();
+  accountSyncLockActive = true;
+
+  const clear = await request(app).delete(`/api/exchanges/${OWNED_ACCOUNT_ID}/credentials`);
+
+  assert.equal(clear.status, 409);
+  assert.equal(clear.body.code, 'EXCHANGE_SYNC_IN_PROGRESS');
+  assert.equal(queries.some((entry) => /^UPDATE exchange_accounts SET api_key_encrypted = NULL/.test(entry.sql)), true);
+});
+
 test('a sync with no encryption key is a 503 about the server, not a 409 about the account', async () => {
   connectAccount();
   delete process.env.SECRETS_ENCRYPTION_KEY;
@@ -1255,6 +1329,17 @@ test('POST /test proves the key with one read and writes nothing', async () => {
   assert.equal(response.body.ok, true);
   assert.deepEqual(requests.map((entry) => entry.endpoint), ['Balance']);
   assert.equal(stored.size, 0, 'a connection test must not import anything');
+});
+
+test('a connection test refuses an account already owned by a sync', async () => {
+  connectAccount();
+  accountSyncLockActive = true;
+
+  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/test`);
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'EXCHANGE_SYNC_IN_PROGRESS');
+  assert.deepEqual(requests, []);
 });
 
 test('a rejected key comes back as the provider\'s own message, not a 500', async () => {
@@ -1709,9 +1794,26 @@ test('coinbase: an incomplete live balance picture skips reconciliation instead 
   const response = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
 
   assert.equal(response.status, 200);
-  assert.equal(response.body.status, 'ok', 'half a balance picture cannot convict the parser');
+  assert.equal(response.body.status, 'coverage_limited', 'half a balance picture must surface a coverage warning');
   assert.equal(response.body.balance_report.skipped, 'live_balances_incomplete');
   assert.equal(response.body.balance_report.mismatch_count, 0);
+  assert.equal(response.body.coverage_limitations.length, 1);
+});
+
+test('coinbase: a missing v3 balance cursor fails closed as incomplete', async () => {
+  coinbaseBrokeragePages = [{
+    _cursor: undefined,
+    accounts: COINBASE.brokerageAccounts.accounts,
+    has_next: true,
+    cursor: '',
+  }];
+
+  const result = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: null, interactive: true }
+  );
+
+  assert.equal(result.balancesComplete, false);
 });
 
 test('a server without an encryption key writes no per-account sync status', async () => {

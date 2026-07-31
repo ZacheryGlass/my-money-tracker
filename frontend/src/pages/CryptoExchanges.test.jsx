@@ -404,6 +404,48 @@ describe('Crypto -> Exchanges tab', () => {
     expect(screen.getByText(/continues automatically in the background/)).toBeInTheDocument();
   });
 
+  it('replaces the queue receipt with the durable completed snapshot', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.startSync.mockResolvedValue({
+      account_id: 3,
+      job: {
+        id: 45,
+        account_id: 3,
+        status: 'queued',
+        requested_at: '2026-07-31T12:01:00.000Z',
+        batches: 0,
+        fetched: 0,
+        imported: 0,
+        duplicates: 0,
+        flagged: 0,
+      },
+    });
+    // Let the initial restore poll finish before the click, then make the
+    // status read for this run return the worker's terminal receipt.
+    exchangesAPI.getSyncStatus.mockResolvedValue({ job: null });
+    await renderSettings();
+    await waitFor(() => expect(exchangesAPI.getSyncStatus).toHaveBeenCalledWith(3));
+    exchangesAPI.getSyncStatus.mockResolvedValue({
+      job: {
+        id: 45,
+        account_id: 3,
+        status: 'completed',
+        requested_at: '2026-07-31T12:01:00.000Z',
+        completed_at: '2026-07-31T12:01:02.000Z',
+        batches: 1,
+        fetched: 17,
+        imported: 12,
+        duplicates: 5,
+        flagged: 1,
+        last_batch: { coverage_limitations: [] },
+      },
+    });
+    fireEvent.click(await screen.findByLabelText('Sync Kraken Spot now'));
+
+    expect(await screen.findByText(/Sync complete — read 17 ledger rows/)).toBeInTheDocument();
+    expect(screen.queryByText(/Sync in progress/)).not.toBeInTheDocument();
+  });
+
   it('surfaces a balance mismatch instead of silently trusting the import', async () => {
     exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
     exchangesAPI.sync.mockResolvedValue({

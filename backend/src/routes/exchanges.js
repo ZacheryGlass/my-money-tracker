@@ -5,6 +5,7 @@ const requireUser = require('../middleware/auth');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeMatch = require('../models/ExchangeMatch');
+const ExchangeSyncJob = require('../models/ExchangeSyncJob');
 const ExchangeImportService = require('../services/ExchangeImportService');
 const ExchangeSyncService = require('../services/ExchangeSyncService');
 const ExchangeBackfillService = require('../services/ExchangeBackfillService');
@@ -369,11 +370,27 @@ router.patch('/:id', async (req, res) => {
     const { name, exchange } = req.body || {};
     const invalid = validateAccountInput({ name, exchange }, { partial: true });
     if (invalid) return res.status(400).json({ error: invalid });
+    if (exchange !== undefined && exchange !== account.exchange
+      && await ExchangeSyncJob.hasActiveForAccount(account.id)) {
+      return res.status(409).json({
+        error: 'Wait for the exchange sync to finish before changing the provider',
+        code: 'EXCHANGE_SYNC_IN_PROGRESS',
+      });
+    }
 
     const updated = await ExchangeAccount.update(account.id, req.user.id, {
       name: typeof name === 'string' ? name.trim() : undefined,
       exchange,
     });
+    if (!updated) {
+      if (exchange !== undefined && exchange !== account.exchange) {
+        return res.status(409).json({
+          error: 'The exchange cannot be changed after credentials or records exist; create a new account instead',
+          code: 'EXCHANGE_ACCOUNT_LOCKED',
+        });
+      }
+      return res.status(404).json({ error: 'Exchange account not found' });
+    }
     return res.status(200).json({ account: updated });
   } catch (error) {
     if (error.code === '23505') {
@@ -554,7 +571,17 @@ router.post('/:id/sync', async (req, res) => {
     // inside a proxy timeout. A history longer than that budget comes back
     // with backfill_pending set rather than being silently cut short.
     const result = await ExchangeSyncService.syncAccount(req.user.id, account.id, { interactive: true });
-    return res.status(200).json({ ...result, account_id: account.id });
+    // Preserve the old bounded receipt, but never strand a partial history for
+    // API clients that still call this endpoint. The continuation is queued
+    // only after the bounded pass releases the account lock.
+    const continuation = result.backfill_pending
+      ? await ExchangeBackfillService.enqueue(req.user.id, account.id)
+      : null;
+    return res.status(200).json({
+      ...result,
+      account_id: account.id,
+      ...(continuation ? { job: continuation } : {}),
+    });
   } catch (error) {
     return respondToSyncError(res, error, 'Failed to sync the exchange account');
   }

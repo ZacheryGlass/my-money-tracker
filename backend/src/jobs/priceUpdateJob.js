@@ -11,13 +11,12 @@ const JOB_NAME = 'price-update';
 async function run() {
   logger.info({ job: JOB_NAME }, 'Starting price update job');
 
-  const isAlreadyRunning = await JobLog.isRunning(JOB_NAME);
-  if (isAlreadyRunning) {
+  const jobLog = await JobLog.createIfNotRunning(JOB_NAME);
+  if (!jobLog) {
     logger.info({ job: JOB_NAME }, 'Job already running, skipping');
     return { skipped: true, reason: 'concurrent_execution' };
   }
 
-  const jobLog = await JobLog.create(JOB_NAME);
   logger.info({ job: JOB_NAME, logId: jobLog.id }, 'Created job log entry');
 
   try {

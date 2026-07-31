@@ -58,6 +58,7 @@ const ALLOWED_PATH_PREFIXES = [
 const RETRY_BACKOFF_MS = [1000, 4000, 12000, 30000, 60000];
 
 const lastRequestAt = new Map();
+const keyQueues = new Map();
 
 // Set only by tests, for the same reason as the Kraken client's: a paginated
 // walk paced at the documented request ceiling spends its whole runtime
@@ -228,7 +229,20 @@ class CoinbaseClient {
    * GET only, by design. `path` must carry no query string -- the JWT signs
    * the bare path, so the query rides in `params` and is appended after.
    */
-  async get(path, params = {}, attempt = 0) {
+  async get(path, params = {}) {
+    // Two account rows can legitimately hold the same Coinbase key. Serialize
+    // those requests per key so both callers cannot wake from the pacing sleep
+    // and spend the provider budget in one burst.
+    const previous = keyQueues.get(this.keyName) || Promise.resolve();
+    const run = previous.then(
+      () => this._get(path, params),
+      () => this._get(path, params)
+    );
+    keyQueues.set(this.keyName, run.then(() => undefined, () => undefined));
+    return run;
+  }
+
+  async _get(path, params = {}, attempt = 0) {
     const since = Date.now() - (lastRequestAt.get(this.keyName) || 0);
     if (pacingEnabled && since < MIN_REQUEST_INTERVAL_MS) await sleep(MIN_REQUEST_INTERVAL_MS - since);
     lastRequestAt.set(this.keyName, Date.now());
@@ -251,7 +265,7 @@ class CoinbaseClient {
     } catch (err) {
       if (attempt < RETRY_BACKOFF_MS.length) {
         await sleep(RETRY_BACKOFF_MS[attempt]);
-        return this.get(path, params, attempt + 1);
+        return this._get(path, params, attempt + 1);
       }
       // The raw AxiosError carries `Authorization: Bearer <jwt>` on
       // config.headers, and pino's err serializer copies it verbatim.
@@ -266,7 +280,7 @@ class CoinbaseClient {
         const delayMs = Math.max(RETRY_BACKOFF_MS[attempt], retryAfterMs);
         logger.warn({ path, attempt, delayMs }, 'Coinbase rate limited; backing off');
         await sleep(delayMs);
-        return this.get(path, params, attempt + 1);
+        return this._get(path, params, attempt + 1);
       }
       const error = coinbaseError(message, { code, status: response.status });
       if (code === 'COINBASE_RATE_LIMITED') {
@@ -298,5 +312,8 @@ module.exports.HOST = HOST;
 module.exports.JWT_TTL_SECONDS = JWT_TTL_SECONDS;
 module.exports.CLOCK_SKEW_LEEWAY_SECONDS = CLOCK_SKEW_LEEWAY_SECONDS;
 module.exports.RETRY_BACKOFF_MS = RETRY_BACKOFF_MS;
-module.exports._resetRateState = () => lastRequestAt.clear();
+module.exports._resetRateState = () => {
+  lastRequestAt.clear();
+  keyQueues.clear();
+};
 module.exports._setPacingForTests = (enabled) => { pacingEnabled = enabled; };

@@ -73,3 +73,42 @@ test('Binance.US balances add free and locked values exactly', () => {
   ] });
   assert.deepEqual(balances, { ETH: '0.5', USDT: '3.300000000000000001' });
 });
+
+test('Binance.US fiat pages carry independent cursors across durable batches', async () => {
+  const originalGet = BinanceUSClient.prototype.get;
+  let fiatDepositPage = 0;
+  BinanceUSClient.prototype.get = async function get(path, params = {}) {
+    if (path === '/api/v3/account') return { balances: [] };
+    if (path === '/api/v3/exchangeInfo') return { symbols: [] };
+    if (path === '/sapi/v1/capital/config/getall') return [];
+    if (path === '/sapi/v1/fiatpayment/query/deposit/history') {
+      fiatDepositPage = params.page;
+      return { total: 1500, data: Array.from({ length: params.page === 1 ? 1000 : 500 }, (_, index) => ({
+        orderId: `d-${params.page}-${index}`,
+        fiatCurrency: 'USD', amount: '1', createTime: 1700000000000 + index,
+      })) };
+    }
+    if (path === '/sapi/v1/fiatpayment/query/withdraw/history') {
+      return { total: 0, data: [] };
+    }
+    if (path === '/sapi/v1/asset/assetDistributionHistory') return { rows: [] };
+    if (path === '/sapi/v1/asset/query/dust-logs') return { userDustConvertHistory: [] };
+    throw new Error(`unexpected Binance path ${path}`);
+  };
+  try {
+    const first = await connector.sync({ apiKey: 'key', apiSecret: 'secret' }, { interactive: true });
+    assert.equal(fiatDepositPage, 1);
+    assert.equal(first.stats.backfillPending, true);
+    assert.equal(first.coverageLimitations.length, 2);
+    assert.equal(first.cursor.phase, 'fiat');
+    assert.equal(first.cursor.fiatDepositPage, 2);
+    const second = await connector.sync({ apiKey: 'key', apiSecret: 'secret' }, {
+      cursor: first.cursor, interactive: true,
+    });
+    assert.equal(fiatDepositPage, 2);
+    assert.equal(second.stats.backfillPending, false);
+    assert.equal(second.cursor.phase, 'trades');
+  } finally {
+    BinanceUSClient.prototype.get = originalGet;
+  }
+});

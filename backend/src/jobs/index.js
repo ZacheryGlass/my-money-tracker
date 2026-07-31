@@ -23,16 +23,25 @@ let snapshotTask = null;
 let benchmarkUpdateTask = null;
 let historicalPriceTask = null;
 let expenseSyncTask = null;
-const PROCESS_STARTED_AT = new Date();
+// A rolling App Service deployment can start a second scheduler while the
+// first one is still doing useful work. Only rows old enough to be abandoned
+// are recovered here; using this process's start time would falsely fail a
+// live run owned by another instance. The lease is deliberately generous for
+// the exchange/price jobs, whose duration grows with the number of accounts.
+// This is an operational recovery boundary, not an ownership claim; JobLog
+// terminal writes are status-guarded so an old process cannot overwrite the
+// recovery result after the boundary fires.
+const INTERRUPTED_JOB_STALE_MS = 6 * 60 * 60 * 1000;
 
 async function initializeJobs() {
-  const interrupted = await JobLog.failInterruptedRuns(PROCESS_STARTED_AT);
+  const staleBefore = new Date(Date.now() - INTERRUPTED_JOB_STALE_MS);
+  const interrupted = await JobLog.failInterruptedRuns(staleBefore);
   if (interrupted.length > 0) {
     logger.warn({
       jobs: interrupted.map(({ id, job_name: jobName, started_at: startedAt }) => ({
         id, jobName, startedAt,
       })),
-    }, 'Marked jobs interrupted by the previous application process as failed');
+    }, 'Marked stale scheduled job rows as failed');
   }
 
   // Schedule Plaid sync at 7:30 AM UTC daily (before price update)

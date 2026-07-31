@@ -10,14 +10,13 @@ async function run() {
   logger.info({ job: JOB_NAME }, 'Starting snapshot creation job');
 
   // Check for concurrent execution
-  const isAlreadyRunning = await JobLog.isRunning(JOB_NAME);
-  if (isAlreadyRunning) {
+  const jobLog = await JobLog.createIfNotRunning(JOB_NAME);
+  if (!jobLog) {
     logger.info({ job: JOB_NAME }, 'Job already running, skipping');
     return { skipped: true, reason: 'concurrent_execution' };
   }
 
   // Create job log entry
-  const jobLog = await JobLog.create(JOB_NAME);
   logger.info({ job: JOB_NAME, logId: jobLog.id }, 'Created job log entry');
 
   try {

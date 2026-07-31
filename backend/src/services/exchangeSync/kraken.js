@@ -86,6 +86,7 @@ function fundingRows(result) {
  */
 async function fetchFundingDetails(client, { start, end }) {
   const byRefid = new Map();
+  const coverageLimitations = [];
   for (const endpoint of ['WithdrawStatus', 'DepositStatus']) {
     try {
       // `true` asks for the paginated (wrapped) form; after that the cursor is
@@ -116,6 +117,7 @@ async function fetchFundingDetails(client, { start, end }) {
           if (Array.isArray(result) && rows.length >= FUNDING_PAGE_LIMIT) {
             logger.warn({ endpoint, rows: rows.length, limit: FUNDING_PAGE_LIMIT },
               'Kraken funding status returned a full page with no cursor; addresses beyond it are not read');
+            coverageLimitations.push(`${endpoint} returned a full page without a continuation cursor; older funding addresses may be missing.`);
           }
           break;
         }
@@ -124,12 +126,14 @@ async function fetchFundingDetails(client, { start, end }) {
       if (pages >= FUNDING_MAX_PAGES) {
         logger.warn({ endpoint, pages },
           'Kraken funding status hit the page budget; some records import without addresses this run');
+        coverageLimitations.push(`${endpoint} hit its page budget; older funding addresses may be missing.`);
       }
     } catch (err) {
       logger.warn({ err, endpoint }, 'Kraken funding status fetch failed; records import without addresses');
+      coverageLimitations.push(`${endpoint} could not be read; some funding addresses may be missing.`);
     }
   }
-  return byRefid;
+  return { byRefid, coverageLimitations };
 }
 
 /**
@@ -303,8 +307,10 @@ const krakenConnector = {
     const oldestFetched = times.length ? Math.min(...times) : null;
     const newestFetched = times.length ? Math.max(...times) : null;
 
-    const funding = rows.length ? await fetchFundingDetails(client, { start, end }) : new Map();
-    const { records, unknownTypes } = buildRecords(toRecordRows(rows, funding));
+    const fundingResult = rows.length
+      ? await fetchFundingDetails(client, { start, end })
+      : { byRefid: new Map(), coverageLimitations: [] };
+    const { records, unknownTypes } = buildRecords(toRecordRows(rows, fundingResult.byRefid));
 
     // Only ever advanced past rows that were actually read. A cursor that ran
     // ahead of the fetch would drop the gap silently and permanently.
@@ -361,6 +367,7 @@ const krakenConnector = {
         // would blame the parser for rows nobody has fetched yet.
         backfillPending: Boolean(nextCursor.pendingEnd),
       },
+      coverageLimitations: fundingResult.coverageLimitations,
     };
   },
 };

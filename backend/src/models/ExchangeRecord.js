@@ -89,7 +89,7 @@ class ExchangeRecord {
   // half record and be discarded -- silently, and permanently. An identical
   // re-import changes nothing: both rows carry the same needs_review, so the
   // guard fails and the row is counted as a duplicate.
-  static async bulkInsert(exchangeAccountId, records) {
+  static async bulkInsert(exchangeAccountId, records, { syncLockToken = null } = {}) {
     if (!exchangeAccountId) throw new Error('ExchangeRecord.bulkInsert requires an exchangeAccountId');
     if (!records || records.length === 0) {
       return { inserted: 0, upgraded: 0, duplicates: 0, total: 0 };
@@ -115,6 +115,24 @@ class ExchangeRecord {
     let upgraded = 0;
     try {
       await client.query('BEGIN');
+      if (syncLockToken) {
+        // Keep the account row locked for the whole insert transaction. A
+        // credential clear either happens first (and this ownership check
+        // fails) or waits for the transaction to commit; it cannot slip
+        // between a separate SELECT and the INSERT statements.
+        const owner = await client.query(
+          `SELECT id
+           FROM exchange_accounts
+           WHERE id = $1 AND sync_lock_token = $2::uuid AND sync_lock_until > CURRENT_TIMESTAMP
+           FOR UPDATE`,
+          [exchangeAccountId, syncLockToken]
+        );
+        if (!owner.rows[0]) {
+          const error = new Error('The exchange sync lost ownership before storing provider rows');
+          error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+          throw error;
+        }
+      }
       for (let start = 0; start < unique.length; start += CHUNK_SIZE) {
         const chunk = unique.slice(start, start + CHUNK_SIZE);
         const values = [];
@@ -227,44 +245,73 @@ class ExchangeRecord {
   // WHERE only matches rows that have a hole, and needs_review is not in the
   // statement at all -- so this cannot downgrade, re-flag, or contradict
   // anything a previous import decided.
-  static async backfillChainDetails(exchangeAccountId, rows) {
+  static async backfillChainDetails(exchangeAccountId, rows, { syncLockToken = null } = {}) {
     if (!exchangeAccountId) throw new Error('ExchangeRecord.backfillChainDetails requires an exchangeAccountId');
     const fillable = (rows || []).filter((row) => row.external_id
       && (row.tx_hash || row.address || row.network || row.chain_id));
     if (fillable.length === 0) return { filled: 0 };
 
+    const client = syncLockToken ? await pool.connect() : null;
     let filled = 0;
-    for (let start = 0; start < fillable.length; start += CHUNK_SIZE) {
-      const chunk = fillable.slice(start, start + CHUNK_SIZE);
-      const values = [exchangeAccountId];
-      const tuples = chunk.map((row) => {
-        values.push(
-          row.external_id,
-          row.tx_hash ?? null,
-          row.address ?? null,
-          row.network ?? null,
-          row.chain_id ?? null
+    try {
+      if (client) {
+        await client.query('BEGIN');
+        const owner = await client.query(
+          `SELECT id
+           FROM exchange_accounts
+           WHERE id = $1 AND sync_lock_token = $2::uuid AND sync_lock_until > CURRENT_TIMESTAMP
+           FOR UPDATE`,
+          [exchangeAccountId, syncLockToken]
         );
-        return `($${values.length - 4}::text, $${values.length - 3}::text, $${values.length - 2}::text, $${values.length - 1}::varchar(80), $${values.length}::bigint)`;
-      });
-      const result = await pool.query(
-        `UPDATE exchange_records er
-         SET tx_hash = COALESCE(er.tx_hash, incoming.tx_hash),
-             address = COALESCE(er.address, incoming.address),
-             network = COALESCE(er.network, incoming.network),
-             chain_id = COALESCE(er.chain_id, incoming.chain_id)
-         FROM (VALUES ${tuples.join(', ')}) AS incoming(external_id, tx_hash, address, network, chain_id)
-         WHERE er.exchange_account_id = $1
-           AND er.external_id = incoming.external_id
-           AND ((er.tx_hash IS NULL AND incoming.tx_hash IS NOT NULL)
-             OR (er.address IS NULL AND incoming.address IS NOT NULL)
-             OR (er.network IS NULL AND incoming.network IS NOT NULL)
-             OR (er.chain_id IS NULL AND incoming.chain_id IS NOT NULL))`,
-        values
-      );
-      filled += result.rowCount || 0;
+        if (!owner.rows[0]) {
+          const error = new Error('The exchange sync lost ownership before filling chain details');
+          error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+          throw error;
+        }
+      }
+      const queryTarget = client || pool;
+      for (let start = 0; start < fillable.length; start += CHUNK_SIZE) {
+        const chunk = fillable.slice(start, start + CHUNK_SIZE);
+        const values = [exchangeAccountId];
+        const tuples = chunk.map((row) => {
+          values.push(
+            row.external_id,
+            row.tx_hash ?? null,
+            row.address ?? null,
+            row.network ?? null,
+            row.chain_id ?? null
+          );
+          return `($${values.length - 4}::text, $${values.length - 3}::text, $${values.length - 2}::text, $${values.length - 1}::varchar(80), $${values.length}::bigint)`;
+        });
+        const result = await queryTarget.query(
+          `UPDATE exchange_records er
+           SET tx_hash = COALESCE(er.tx_hash, incoming.tx_hash),
+               address = COALESCE(er.address, incoming.address),
+               network = COALESCE(er.network, incoming.network),
+               chain_id = COALESCE(er.chain_id, incoming.chain_id)
+           FROM (VALUES ${tuples.join(', ')}) AS incoming(external_id, tx_hash, address, network, chain_id)
+           WHERE er.exchange_account_id = $1
+             AND er.external_id = incoming.external_id
+             AND ((er.tx_hash IS NULL AND incoming.tx_hash IS NOT NULL)
+               OR (er.address IS NULL AND incoming.address IS NOT NULL)
+               OR (er.network IS NULL AND incoming.network IS NOT NULL)
+               OR (er.chain_id IS NULL AND incoming.chain_id IS NOT NULL))`,
+          values
+        );
+        filled += result.rowCount || 0;
+      }
+      if (client) await client.query('COMMIT');
+      return { filled };
+    } catch (error) {
+      if (client) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) {
+          logger.warn({ err: rollbackError, exchangeAccountId }, 'Exchange chain detail rollback failed');
+        }
+      }
+      throw error;
+    } finally {
+      if (client) client.release();
     }
-    return { filled };
   }
 
   // Per-asset position implied by everything stored for this account, for the

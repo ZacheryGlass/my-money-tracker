@@ -122,8 +122,25 @@ class ExchangeAccount {
       `UPDATE exchange_accounts
        SET name = COALESCE($3, name),
            exchange = COALESCE($4, exchange),
+           sync_cursor = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE sync_cursor END,
+           last_sync_at = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE last_sync_at END,
+           last_sync_status = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE last_sync_status END,
+           last_sync_error = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE last_sync_error END,
+           balance_report = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE balance_report END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND user_id = $2
+         AND (
+           $4::text IS NULL
+           OR $4::text = exchange
+           OR (
+             api_key_encrypted IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM exchange_records er
+               WHERE er.exchange_account_id = exchange_accounts.id
+             )
+             AND (sync_lock_token IS NULL OR sync_lock_until IS NULL OR sync_lock_until < CURRENT_TIMESTAMP)
+           )
+         )
        RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
       [id, userId, name ?? null, exchange ?? null]
     );
@@ -156,26 +173,93 @@ class ExchangeAccount {
   // and cleared together -- half a credential fails every request with a
   // signature error instead of being skipped as unconfigured.
   //
-  // Changing the key invalidates the cursor's provenance but not the cursor
-  // itself: the records already stored are still the same account's, and
-  // UNIQUE (exchange_account_id, external_id) makes a re-fetch of overlapping
-  // history a no-op, so the resume point is deliberately left alone.
+  // Changing the key invalidates the cursor's provenance. Existing records are
+  // retained, but the next backfill starts from the head and safely dedupes
+  // overlap against them. The lock predicate makes replacement atomic with a
+  // running sync, so an old worker cannot write a cursor for the new key.
   static async setCredentials(id, userId, {
     apiKeyEncrypted, apiKeyLast4, apiSecretEncrypted, apiSecretLast4,
   }) {
     requireUserId('setCredentials', userId);
-    const result = await pool.query(
-      `UPDATE exchange_accounts
-       SET api_key_encrypted = $3,
-           api_key_last4 = $4,
-           api_secret_encrypted = $5,
-           api_secret_last4 = $6,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1 AND user_id = $2
-       RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
-      [id, userId, apiKeyEncrypted, apiKeyLast4, apiSecretEncrypted, apiSecretLast4]
-    );
-    return result.rows[0];
+    const client = await pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      // Use separate commands after the row lock so a claim that was waiting
+      // on this account is visible in a fresh READ COMMITTED snapshot. A
+      // single UPDATE ... NOT EXISTS can otherwise miss a job claimed while
+      // its statement snapshot was already open.
+      const locked = await client.query(
+        `SELECT id
+         FROM exchange_accounts
+         WHERE id = $1 AND user_id = $2
+           AND (sync_lock_token IS NULL OR sync_lock_until IS NULL OR sync_lock_until < CURRENT_TIMESTAMP)
+         FOR UPDATE`,
+        [id, userId]
+      );
+      if (!locked.rows[0]) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      // Cancel the old credential generation while the account row is locked.
+      // ExchangeSyncJob.enqueue takes the same lock, so a queued request cannot
+      // slip between this cancellation and the new credentials_updated_at.
+      await client.query(
+        `UPDATE exchange_sync_jobs
+         SET status = 'failed',
+             completed_at = CURRENT_TIMESTAMP,
+             next_run_at = NULL,
+             lease_until = NULL,
+             claim_token = NULL,
+             last_error_code = $2,
+             last_error = $3,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE exchange_account_id = $1
+           AND status IN ('queued', 'backoff')`,
+        [id, 'EXCHANGE_CREDENTIALS_REPLACED', 'Exchange credentials were replaced before this backfill ran']
+      );
+      const running = await client.query(
+        `SELECT 1 FROM exchange_sync_jobs
+         WHERE exchange_account_id = $1 AND status = 'running'
+         LIMIT 1`,
+        [id]
+      );
+      if (running.rows[0]) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const result = await client.query(
+        `UPDATE exchange_accounts
+         SET api_key_encrypted = $3,
+             api_key_last4 = $4,
+             api_secret_encrypted = $5,
+             api_secret_last4 = $6,
+             credentials_updated_at = CURRENT_TIMESTAMP,
+             sync_cursor = NULL,
+             last_sync_at = NULL,
+             last_sync_status = NULL,
+             last_sync_error = NULL,
+             balance_report = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND user_id = $2
+         RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
+        [id, userId, apiKeyEncrypted, apiKeyLast4, apiSecretEncrypted, apiSecretLast4]
+      );
+      await client.query('COMMIT');
+      committed = true;
+      return result.rows[0];
+    } catch (error) {
+      if (!committed) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) {
+          // Preserve the original database error; the connection is released
+          // immediately and the transaction is discarded with it.
+          void rollbackError;
+        }
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Disconnecting keeps every record already imported -- exactly like an ETH
@@ -183,20 +267,64 @@ class ExchangeAccount {
   // connection can recover once the key is gone.
   static async clearCredentials(id, userId) {
     requireUserId('clearCredentials', userId);
-    const result = await pool.query(
-      `UPDATE exchange_accounts
-       SET api_key_encrypted = NULL,
-           api_key_last4 = NULL,
-           api_secret_encrypted = NULL,
-           api_secret_last4 = NULL,
-           last_sync_status = NULL,
-           last_sync_error = NULL,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1 AND user_id = $2
-       RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
-      [id, userId]
-    );
-    return result.rows[0];
+    const client = await pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(
+        `SELECT id
+         FROM exchange_accounts
+         WHERE id = $1 AND user_id = $2
+           AND (sync_lock_token IS NULL OR sync_lock_until IS NULL OR sync_lock_until < CURRENT_TIMESTAMP)
+         FOR UPDATE`,
+        [id, userId]
+      );
+      if (!locked.rows[0]) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const running = await client.query(
+        `SELECT 1 FROM exchange_sync_jobs
+         WHERE exchange_account_id = $1 AND status = 'running'
+         LIMIT 1`,
+        [id]
+      );
+      if (running.rows[0]) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const result = await client.query(
+        `UPDATE exchange_accounts
+         SET api_key_encrypted = NULL,
+             api_key_last4 = NULL,
+             api_secret_encrypted = NULL,
+             api_secret_last4 = NULL,
+             credentials_updated_at = NULL,
+             sync_cursor = NULL,
+             last_sync_at = NULL,
+             last_sync_status = NULL,
+             last_sync_error = NULL,
+             balance_report = NULL,
+             sync_lock_token = NULL,
+             sync_lock_until = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND user_id = $2
+         RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
+        [id, userId]
+      );
+      await client.query('COMMIT');
+      committed = true;
+      return result.rows[0];
+    } catch (error) {
+      if (!committed) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) {
+          void rollbackError;
+        }
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Written by the job, which iterates every user's accounts, so this one is
@@ -206,7 +334,7 @@ class ExchangeAccount {
   // its status and leaves the resume point where it was, because advancing
   // past rows that were never fetched would drop them silently and forever
   // (the same rule the ETH per-feed cursors follow).
-  static async saveSyncState(id, { cursor, status, error, balanceReport }) {
+  static async saveSyncState(id, { cursor, status, error, balanceReport, syncLockToken = null }) {
     const result = await pool.query(
       `UPDATE exchange_accounts
        SET sync_cursor = COALESCE($2::jsonb, sync_cursor),
@@ -216,6 +344,7 @@ class ExchangeAccount {
            balance_report = COALESCE($5::jsonb, balance_report),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
+         AND ($6::uuid IS NULL OR (sync_lock_token = $6::uuid AND sync_lock_until > CURRENT_TIMESTAMP))
        RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
       [
         id,
@@ -223,9 +352,66 @@ class ExchangeAccount {
         status ?? null,
         error ?? null,
         balanceReport === undefined || balanceReport === null ? null : JSON.stringify(balanceReport),
+        syncLockToken,
       ]
     );
     return result.rows[0];
+  }
+
+  // A database-backed lease shared by the nightly sync, the durable backfill,
+  // and legacy synchronous clients. This closes the check-then-use window
+  // where two app instances could read and overwrite one cursor.
+  static async claimSyncLock(id, token, leaseMs) {
+    const result = await pool.query(
+      `UPDATE exchange_accounts
+       SET sync_lock_token = $2::uuid,
+           sync_lock_until = CURRENT_TIMESTAMP + ($3::bigint * INTERVAL '1 millisecond'),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND api_key_encrypted IS NOT NULL
+         AND api_secret_encrypted IS NOT NULL
+         AND (sync_lock_token IS NULL OR sync_lock_until IS NULL OR sync_lock_until < CURRENT_TIMESTAMP)
+       RETURNING id`,
+      [id, token, leaseMs]
+    );
+    return result.rows[0] || null;
+  }
+
+  static async refreshSyncLock(id, token, leaseMs) {
+    const result = await pool.query(
+      `UPDATE exchange_accounts
+       SET sync_lock_until = CURRENT_TIMESTAMP + ($3::bigint * INTERVAL '1 millisecond'),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND sync_lock_token = $2::uuid AND sync_lock_until > CURRENT_TIMESTAMP
+       RETURNING id`,
+      [id, token, leaseMs]
+    );
+    return result.rows[0] || null;
+  }
+
+  static async ownsSyncLock(id, token) {
+    if (!token) return false;
+    const result = await pool.query(
+      `SELECT id
+       FROM exchange_accounts
+       WHERE id = $1 AND sync_lock_token = $2::uuid AND sync_lock_until > CURRENT_TIMESTAMP`,
+      [id, token]
+    );
+    return Boolean(result.rows[0]);
+  }
+
+  static async releaseSyncLock(id, token) {
+    if (!token) return null;
+    const result = await pool.query(
+      `UPDATE exchange_accounts
+       SET sync_lock_token = NULL,
+           sync_lock_until = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND sync_lock_token = $2::uuid
+       RETURNING id`,
+      [id, token]
+    );
+    return result.rows[0] || null;
   }
 }
 

@@ -88,6 +88,10 @@ function ExchangesPanel({
   // status endpoint returns the latest completed job as well as active work.
   const [syncStatuses, setSyncStatuses] = useState({});
   const completionNotifiedRef = useRef(new Set());
+  const syncingIdsRef = useRef(syncingIds);
+  const syncStatusesRef = useRef(syncStatuses);
+  syncingIdsRef.current = syncingIds;
+  syncStatusesRef.current = syncStatuses;
   const [statusPollNonce, setStatusPollNonce] = useState(0);
   // Per account: the flagged records, once the user opens the disclosure.
   const [reviewQueues, setReviewQueues] = useState({});
@@ -103,6 +107,7 @@ function ExchangesPanel({
     if (typeof exchangesAPI.getSyncStatus !== 'function') return undefined;
     let cancelled = false;
     let timer = null;
+    let statusReadFailures = 0;
 
     const poll = async () => {
       const connected = accounts.filter((account) => account.credentials?.configured);
@@ -119,6 +124,9 @@ function ExchangesPanel({
       if (cancelled) return;
 
       const usable = snapshots.filter(Boolean);
+      const failedReads = usable.length < connected.length;
+      if (failedReads) statusReadFailures += 1;
+      else statusReadFailures = 0;
       const active = usable.filter(({ job }) => job && ['queued', 'running', 'backoff'].includes(job.status));
       setSyncStatuses((previous) => {
         const next = { ...previous };
@@ -128,6 +136,10 @@ function ExchangesPanel({
       setSyncingIds((previous) => {
         const next = new Set(previous);
         const successfulIds = new Set(usable.map(({ accountId }) => accountId));
+        const connectedIds = new Set(connected.map((account) => account.id));
+        for (const id of next) {
+          if (!connectedIds.has(id)) next.delete(id);
+        }
         connected.forEach((account) => {
           if (!successfulIds.has(account.id)) return;
           if (active.some(({ accountId }) => accountId === account.id)) next.add(account.id);
@@ -137,15 +149,32 @@ function ExchangesPanel({
       });
 
       const completed = usable.filter(({ accountId, job }) => (
-        job?.status === 'completed' && !completionNotifiedRef.current.has(accountId)
+        job?.status === 'completed'
+          && !completionNotifiedRef.current.has(`${accountId}:${job.id}`)
       ));
       if (completed.length > 0) {
-        completed.forEach(({ accountId }) => completionNotifiedRef.current.add(accountId));
+        completed.forEach(({ accountId, job }) => completionNotifiedRef.current.add(`${accountId}:${job.id}`));
         // Refresh record counts and the review badge once, after the worker's
         // final batch commits. Polling itself remains read-only.
         void onChanged();
       }
-      if (active.length > 0) timer = setTimeout(poll, 2500);
+      const localActive = connected.some((account) => {
+        const local = syncingIdsRef.current.has(account.id);
+        const prior = syncStatusesRef.current[account.id];
+        return local || (prior && ['queued', 'running', 'backoff'].includes(prior.status));
+      });
+      const backoffDelays = active
+        .filter(({ job }) => job.status === 'backoff' && job.next_run_at)
+        .map(({ job }) => Math.max(2500, new Date(job.next_run_at).getTime() - Date.now()));
+      const validBackoffDelays = backoffDelays.filter(Number.isFinite);
+      const nextDelay = validBackoffDelays.length > 0 ? Math.min(...validBackoffDelays) : 2500;
+      // A backoff can last 15 minutes; polling every 2.5s would hit the app's
+      // own request limit. A failed status read still gets retried, but only
+      // while a local or previously observed active job needs it. On a page
+      // reload, also give a short-lived network hiccup a few read-only retries
+      // so an active server job is not lost before the first successful poll.
+      if (active.length > 0) timer = setTimeout(poll, nextDelay);
+      else if (failedReads && (localActive || statusReadFailures <= 3)) timer = setTimeout(poll, 5000);
     };
 
     void poll();
@@ -258,6 +287,20 @@ function ExchangesPanel({
       // component state once the server has it.
       setCredentialInputs({ apiKey: '', apiSecret: '' });
       setConnectingId(null);
+      setSyncingIds((previous) => {
+        const next = new Set(previous);
+        next.delete(account.id);
+        return next;
+      });
+      setSyncStatuses((previous) => {
+        const next = { ...previous };
+        delete next[account.id];
+        return next;
+      });
+      setSyncResults((previous) => ({ ...previous, [account.id]: null }));
+      completionNotifiedRef.current = new Set(
+        [...completionNotifiedRef.current].filter((key) => !key.startsWith(`${account.id}:`))
+      );
       showSuccess('API key saved');
       await onChanged();
     } catch (err) {
@@ -274,6 +317,17 @@ function ExchangesPanel({
     setDisconnectingId(null);
     try {
       await exchangesAPI.clearCredentials(account.id);
+      setSyncingIds((previous) => {
+        const next = new Set(previous);
+        next.delete(account.id);
+        return next;
+      });
+      setSyncStatuses((previous) => {
+        const next = { ...previous };
+        delete next[account.id];
+        return next;
+      });
+      setSyncResults((previous) => ({ ...previous, [account.id]: null }));
       showSuccess('API key removed; imported records were kept');
       await onChanged();
     } catch (err) {
@@ -317,6 +371,11 @@ function ExchangesPanel({
         return;
       }
       // Compatibility receipt from the legacy bounded endpoint.
+      setSyncingIds((previous) => {
+        const next = new Set(previous);
+        next.delete(account.id);
+        return next;
+      });
       setSyncResults((prev) => ({ ...prev, [account.id]: { sync: result } }));
       await onChanged();
     } catch (err) {
@@ -556,7 +615,11 @@ function ExchangesPanel({
             const syncJob = syncStatuses[account.id];
             const jobActive = Boolean(syncJob && ['queued', 'running', 'backoff'].includes(syncJob.status));
             const syncing = syncingIds.has(account.id) || jobActive;
-            const visibleJob = syncResult?.job || syncJob;
+            const receiptJob = syncResult?.job;
+            const visibleJob = receiptJob && syncJob && receiptJob.id !== syncJob.id
+              ? (new Date(receiptJob.requested_at || 0).getTime() >= new Date(syncJob.requested_at || 0).getTime()
+                ? receiptJob : syncJob)
+              : syncJob || receiptJob;
             const testing = testingId === account.id;
             return (
               <Motion.div layout key={account.id} className="card overflow-hidden border-border">
@@ -699,6 +762,7 @@ function ExchangesPanel({
                         <>
                           <button
                             onClick={() => handleDisconnect(account)}
+                            disabled={syncing}
                             className="rounded border border-loss/30 bg-loss/10 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-loss transition-all"
                           >
                             {/* Naming what survives is the point: the records
@@ -834,17 +898,24 @@ function ExchangesPanel({
                         <RefreshCw size={14} className={jobActive ? 'mt-0.5 flex-shrink-0 animate-spin' : 'mt-0.5 flex-shrink-0'} />
                         <div>
                           {visibleJob.status === 'completed' ? (
-                            <p>
-                              Sync complete — read {Number(visibleJob.fetched || 0).toLocaleString()} ledger rows:{' '}
-                              <span className="font-semibold">{Number(visibleJob.imported || 0).toLocaleString()} new</span>
-                              {Number(visibleJob.duplicates || 0) > 0 && `, ${Number(visibleJob.duplicates).toLocaleString()} already held`}
-                              {Number(visibleJob.flagged || 0) > 0 && `, ${Number(visibleJob.flagged).toLocaleString()} flagged for review`}.
-                            </p>
+                            <>
+                              <p>
+                                Sync complete — read {Number(visibleJob.fetched || 0).toLocaleString()} ledger rows:{' '}
+                                <span className="font-semibold">{Number(visibleJob.imported || 0).toLocaleString()} new</span>
+                                {Number(visibleJob.duplicates || 0) > 0 && `, ${Number(visibleJob.duplicates).toLocaleString()} already held`}
+                                {Number(visibleJob.flagged || 0) > 0 && `, ${Number(visibleJob.flagged).toLocaleString()} flagged for review`}.
+                              </p>
+                              {visibleJob.last_batch?.coverage_limitations?.length > 0 && (
+                                <p className="mt-1 text-loss">
+                                  Known coverage limits remain: {visibleJob.last_batch.coverage_limitations.join(' ')}
+                                </p>
+                              )}
+                            </>
                           ) : visibleJob.status === 'failed' ? (
                             <p>Sync stopped: {visibleJob.last_error?.message || 'the exchange backfill failed'}.</p>
                           ) : visibleJob.status === 'backoff' ? (
                             <p>
-                              Sync is in progress but the exchange API asked us to slow down. We&apos;ll retry automatically
+                              Sync is in progress but the exchange is temporarily unavailable or rate-limited. We&apos;ll retry automatically
                               {visibleJob.next_run_at ? ` around ${formatDateDisplay(visibleJob.next_run_at)}` : ' soon'};
                               {' '}no duplicate rows will be created.
                             </p>
@@ -908,6 +979,11 @@ function ExchangesPanel({
                           {syncResult.sync.balance_report.mismatches.map((m) => m.asset).join(', ')}.
                         </p>
                       )}
+                      {syncResult.sync.coverage_limitations?.length > 0 && (
+                        <p className="mt-1 text-loss">
+                          Known coverage limits remain: {syncResult.sync.coverage_limitations.join(' ')}
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -920,6 +996,20 @@ function ExchangesPanel({
                         The last sync&apos;s derived balances disagree with the exchange for{' '}
                         {(account.balance_report?.mismatches || []).map((m) => m.asset).join(', ') || 'some assets'}.
                         Some activity is missing or was misread.
+                      </p>
+                    </div>
+                  )}
+
+                  {!syncResult && (account.last_sync_status === 'coverage_limited'
+                    || account.balance_report?.balances_incomplete
+                    || account.balance_report?.coverage_limitations?.length > 0) && (
+                    <div className="mt-5 flex items-start gap-3 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
+                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                      <p>
+                        The exchange API has known history limits for this account. Review the imported records and
+                        retain an export for any activity the API does not expose.
+                        {account.balance_report?.coverage_limitations?.length > 0
+                          ? ` ${account.balance_report.coverage_limitations.join(' ')}` : ''}
                       </p>
                     </div>
                   )}

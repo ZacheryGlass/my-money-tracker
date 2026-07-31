@@ -1190,7 +1190,7 @@ const TransactionClassificationService = require('../src/services/TransactionCla
 async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = null } = {}) {
   const calls = [];
   const saved = {
-    isRunning: JobLog.isRunning, create: JobLog.create, complete: JobLog.complete,
+    createIfNotRunning: JobLog.createIfNotRunning, complete: JobLog.complete,
     fail: JobLog.fail,
     findAllForJobs: EthWallet.findAllForJobs,
     applyToWallet: AssetPriceHistory.applyToWallet,
@@ -1201,8 +1201,7 @@ async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = n
     matches: ExchangeMatchService.rebuildForUserSafely,
     backfill: TransactionClassificationService.backfill,
   };
-  JobLog.isRunning = async () => false;
-  JobLog.create = async () => ({ id: 1 });
+  JobLog.createIfNotRunning = async () => ({ id: 1 });
   JobLog.complete = async () => {};
   JobLog.fail = async () => {};
   EthWallet.findAllForJobs = async () => wallets;
@@ -1248,8 +1247,7 @@ async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = n
     const result = await historicalPriceJob.run();
     return { calls, result };
   } finally {
-    JobLog.isRunning = saved.isRunning;
-    JobLog.create = saved.create;
+    JobLog.createIfNotRunning = saved.createIfNotRunning;
     JobLog.complete = saved.complete;
     JobLog.fail = saved.fail;
     EthWallet.findAllForJobs = saved.findAllForJobs;

@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeSyncJob = require('../models/ExchangeSyncJob');
@@ -26,6 +27,8 @@ const MAX_REPORTED_MISMATCHES = 25;
 // Exchange account ids with a sync running right now. See _syncResolvedAccount
 // for why this is in memory and what that assumes.
 const inFlightAccounts = new Set();
+const SYNC_LOCK_LEASE_MS = 10 * 60 * 1000;
+const SYNC_LOCK_HEARTBEAT_MS = 3 * 60 * 1000;
 const RATE_LIMIT_CODES = new Set([
   'KRAKEN_RATE_LIMITED',
   'COINBASE_RATE_LIMITED',
@@ -136,12 +139,21 @@ class ExchangeSyncService {
       error.code = 'SECRETS_NOT_CONFIGURED';
       throw error;
     }
-    return ExchangeAccount.setCredentials(exchangeAccountId, userId, {
+    // Pending work is cancelled inside ExchangeAccount.setCredentials while
+    // the account row is locked. That transaction is shared with enqueue(), so
+    // a new job cannot be inserted between cancellation and key replacement.
+    const saved = await ExchangeAccount.setCredentials(exchangeAccountId, userId, {
       apiKeyEncrypted: secretCrypto.encrypt(apiKey),
       apiKeyLast4: secretCrypto.last4(apiKey),
       apiSecretEncrypted: secretCrypto.encrypt(apiSecret),
       apiSecretLast4: secretCrypto.last4(apiSecret),
     });
+    if (!saved) {
+      const error = new Error('A sync for this exchange account is already running; wait for it to finish before replacing the key');
+      error.code = 'EXCHANGE_SYNC_IN_PROGRESS';
+      throw error;
+    }
+    return saved;
   }
 
   /**
@@ -154,7 +166,34 @@ class ExchangeSyncService {
    * neither use nor remove.
    */
   static async clearCredentials(userId, exchangeAccountId) {
-    return ExchangeAccount.clearCredentials(exchangeAccountId, userId);
+    const account = await ExchangeAccount.findByIdForUser(exchangeAccountId, userId);
+    if (!account) {
+      const error = new Error('Exchange account not found');
+      error.code = 'EXCHANGE_ACCOUNT_NOT_FOUND';
+      throw error;
+    }
+    // Clear atomically only when no direct/nightly sync owns the account lease.
+    // Otherwise a worker that already decrypted the old key could continue
+    // calling the provider after the user thought Disconnect had revoked it.
+    // Queued durable work has no account lease and is cancelled immediately
+    // after the credential wipe; a running worker simply finishes and releases
+    // its lease before Disconnect can succeed.
+    const cleared = await ExchangeAccount.clearCredentials(exchangeAccountId, userId);
+    if (!cleared) {
+      const error = new Error('A sync for this exchange account is already running; wait for it to finish before removing the key');
+      error.code = 'EXCHANGE_SYNC_IN_PROGRESS';
+      throw error;
+    }
+    try {
+      await ExchangeSyncJob.cancelForAccount(exchangeAccountId);
+    } catch (error) {
+      // The key is already gone, which is the safety-critical operation. A
+      // queued worker will fail closed on its next claim because credentials
+      // are absent; do not report a successful revocation as a 500 merely
+      // because cleanup of its durable receipt was unavailable.
+      logger.warn({ exchangeAccountId, err: error }, 'Exchange sync job cancellation after credential removal failed');
+    }
+    return cleared;
   }
 
   /**
@@ -176,7 +215,58 @@ class ExchangeSyncService {
       error.code = 'EXCHANGE_NOT_SUPPORTED';
       throw error;
     }
-    return connector.probe(decryptCredentials(account));
+    if (!account.api_key_encrypted || !account.api_secret_encrypted) {
+      throw notConfigured('This exchange account has no API key stored');
+    }
+
+    // A connection probe is still a provider call. Use the same database
+    // lease as a sync so Disconnect or key rotation cannot clear/replace the
+    // key while the old ciphertext is in flight.
+    const syncLockToken = crypto.randomUUID();
+    const claimed = await ExchangeAccount.claimSyncLock(
+      account.id, syncLockToken, SYNC_LOCK_LEASE_MS
+    );
+    if (!claimed) {
+      const error = new Error('A sync or connection test for this exchange account is already running');
+      error.code = 'EXCHANGE_SYNC_IN_PROGRESS';
+      throw error;
+    }
+    let heartbeatTimer = null;
+    try {
+      const currentAccount = await ExchangeAccount.findWithCredentialsForUser(account.id, userId);
+      if (!currentAccount || !currentAccount.api_key_encrypted || !currentAccount.api_secret_encrypted) {
+        const error = new Error('The exchange credentials were removed before the connection test started');
+        error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+        throw error;
+      }
+      const currentConnector = connectorFor(currentAccount.exchange);
+      if (!currentConnector) {
+        const error = new Error(`There is no API sync for "${currentAccount.exchange}" accounts`);
+        error.code = 'EXCHANGE_NOT_SUPPORTED';
+        throw error;
+      }
+      heartbeatTimer = setInterval(() => {
+        void ExchangeAccount.refreshSyncLock(account.id, syncLockToken, SYNC_LOCK_LEASE_MS)
+          .catch((error) => logger.warn({ accountId: account.id, err: error }, 'Exchange probe lock heartbeat failed'));
+      }, SYNC_LOCK_HEARTBEAT_MS);
+      heartbeatTimer.unref?.();
+      if (!await ExchangeAccount.ownsSyncLock(account.id, syncLockToken)) {
+        const error = new Error('The exchange connection test lost ownership before contacting the provider');
+        error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+        throw error;
+      }
+      const result = await currentConnector.probe(decryptCredentials(currentAccount));
+      if (!await ExchangeAccount.ownsSyncLock(account.id, syncLockToken)) {
+        const error = new Error('The exchange connection test lost ownership before completing');
+        error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+        throw error;
+      }
+      return result;
+    } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      await ExchangeAccount.releaseSyncLock(account.id, syncLockToken)
+        .catch((error) => logger.warn({ accountId: account.id, err: error }, 'Exchange probe lock release failed'));
+    }
   }
 
   /**
@@ -193,6 +283,14 @@ class ExchangeSyncService {
       error.code = 'EXCHANGE_ACCOUNT_NOT_FOUND';
       throw error;
     }
+    if (!account.api_key_encrypted || !account.api_secret_encrypted) {
+      throw notConfigured('This exchange account has no API key stored');
+    }
+    if (await ExchangeSyncJob.hasActiveForAccount(exchangeAccountId)) {
+      const error = new Error('A background sync for this exchange account is already running');
+      error.code = 'EXCHANGE_SYNC_IN_PROGRESS';
+      throw error;
+    }
     return this._syncResolvedAccount(account, { interactive });
   }
 
@@ -200,38 +298,78 @@ class ExchangeSyncService {
   // row (with each account's OWNER's credentials on it), so it must not be
   // made to look it up again under a userId it does not have.
   static async _syncResolvedAccount(account, { interactive }) {
-    const connector = connectorFor(account.exchange);
-    if (!connector) {
-      const error = new Error(`There is no API sync for "${account.exchange}" accounts`);
-      error.code = 'EXCHANGE_NOT_SUPPORTED';
-      throw error;
+    if (!account.api_key_encrypted || !account.api_secret_encrypted) {
+      throw notConfigured('This exchange account has no API key stored');
     }
-
     // Sync Now pressed while the nightly job is mid-pass would run two walks
     // against one cursor: both read from the same resume point, both fetch the
     // same pages, and whichever finishes last overwrites the other's cursor.
     // Cheap to prevent and expensive to debug.
     //
-    // In-memory on purpose. This assumes ONE app process, which is what the
-    // App Service plan runs; scaling out would need this in the database (an
-    // advisory lock or a claimed-at column), and the assumption is written
-    // down here so the day that changes it is findable.
+    // This in-memory guard is only a cheap same-process fast path. The
+    // database-backed lease below is the cross-process ownership boundary.
     if (inFlightAccounts.has(account.id)) {
       const error = new Error('A sync for this exchange account is already running');
       error.code = 'EXCHANGE_SYNC_IN_PROGRESS';
       throw error;
     }
     inFlightAccounts.add(account.id);
+    const syncLockToken = crypto.randomUUID();
+    let lockClaimed = false;
+    let heartbeatTimer = null;
     try {
-      return await this._runSync(account, connector, { interactive });
+      lockClaimed = Boolean(await ExchangeAccount.claimSyncLock(
+        account.id, syncLockToken, SYNC_LOCK_LEASE_MS
+      ));
+      if (!lockClaimed) {
+        const error = new Error('A sync for this exchange account is already running');
+        error.code = 'EXCHANGE_SYNC_IN_PROGRESS';
+        throw error;
+      }
+      // Credentials can be replaced after the caller loaded its account but
+      // before this lease was claimed. Re-read under the lease so the provider
+      // request uses the current key, and so a concurrent disconnect cannot
+      // turn into a stale worker that writes after the account was cleared.
+      const currentAccount = await ExchangeAccount.findWithCredentialsForUser(account.id, account.user_id);
+      if (!currentAccount) {
+        const error = new Error('The exchange credentials were removed before the sync started');
+        error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+        throw error;
+      }
+      // The account may have changed providers after the caller/job loaded its
+      // snapshot but before this lease was claimed. Resolve the connector from
+      // the fresh, leased row so new credentials can never be sent to the old
+      // provider implementation.
+      const connector = connectorFor(currentAccount.exchange);
+      if (!connector) {
+        const error = new Error(`There is no API sync for "${currentAccount.exchange}" accounts`);
+        error.code = 'EXCHANGE_NOT_SUPPORTED';
+        throw error;
+      }
+      heartbeatTimer = setInterval(() => {
+        void ExchangeAccount.refreshSyncLock(account.id, syncLockToken, SYNC_LOCK_LEASE_MS)
+          .catch((error) => logger.warn({ accountId: account.id, err: error }, 'Exchange sync lock heartbeat failed'));
+      }, SYNC_LOCK_HEARTBEAT_MS);
+      heartbeatTimer.unref?.();
+      return await this._runSync(currentAccount, connector, { interactive, syncLockToken });
     } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (lockClaimed) {
+        await ExchangeAccount.releaseSyncLock(account.id, syncLockToken)
+          .catch((error) => logger.warn({ accountId: account.id, err: error }, 'Exchange sync lock release failed'));
+      }
       inFlightAccounts.delete(account.id);
     }
   }
 
-  static async _runSync(account, connector, { interactive }) {
+  static async _runSync(account, connector, { interactive, syncLockToken = null }) {
     let result;
     try {
+      if (syncLockToken && !await ExchangeAccount.ownsSyncLock(account.id, syncLockToken)) {
+        const error = new Error('The exchange sync lost ownership before contacting the provider');
+        error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+        throw error;
+      }
       result = await connector.sync(decryptCredentials(account), {
         cursor: account.sync_cursor ?? null,
         interactive,
@@ -246,19 +384,33 @@ class ExchangeSyncService {
         // The cursor is deliberately NOT passed here: a failed sync must leave
         // the resume point exactly where it was, or the next run starts past
         // rows nobody ever read.
-        await ExchangeAccount.saveSyncState(account.id, {
+        const savedError = await ExchangeAccount.saveSyncState(account.id, {
           status: err.code === 'EXCHANGE_NOT_CONFIGURED' ? 'not_configured' : 'error',
           error: err.message,
+          syncLockToken,
         });
+        if (!savedError && syncLockToken) {
+          const lost = new Error('The exchange sync lost ownership before recording its error');
+          lost.code = 'EXCHANGE_SYNC_LOCK_LOST';
+          throw lost;
+        }
       }
       throw err;
     }
 
+    // A lease can expire during an unusually slow provider call. Do not write
+    // rows fetched with a key that another request has since revoked/replaced.
+    if (syncLockToken && !await ExchangeAccount.ownsSyncLock(account.id, syncLockToken)) {
+      const error = new Error('The exchange sync lost ownership before storing provider rows');
+      error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+      throw error;
+    }
+
     const records = result.records.map((record) => ({ ...record, source: 'api' }));
-    const stored = await ExchangeRecord.bulkInsert(account.id, records);
+    const stored = await ExchangeRecord.bulkInsert(account.id, records, { syncLockToken });
     // Fills the on-chain hole a CSV-first import left behind; see the note on
     // backfillChainDetails for why the ON CONFLICT arm cannot do this.
-    const backfilled = await ExchangeRecord.backfillChainDetails(account.id, records);
+    const backfilled = await ExchangeRecord.backfillChainDetails(account.id, records, { syncLockToken });
 
     const derived = await ExchangeRecord.derivedBalances(account.id, account.user_id);
     // A truncated backfill has not read the whole history yet, so a mismatch
@@ -272,6 +424,12 @@ class ExchangeSyncService {
     // discounted -- a stored report full of phantom mismatches is worse than
     // none.
     const balancesIncomplete = result.balancesComplete === false;
+    const coverageLimitations = Array.isArray(result.coverageLimitations)
+      ? result.coverageLimitations.filter(Boolean)
+      : [];
+    if (balancesIncomplete) {
+      coverageLimitations.push('The live balance list was incomplete; reconciliation was skipped for this batch.');
+    }
     const report = balancesIncomplete
       ? {
         checked_at: new Date().toISOString(),
@@ -282,9 +440,13 @@ class ExchangeSyncService {
         skipped: 'live_balances_incomplete',
       }
       : reconcile(derived, result.balances || {});
-    const status = (pending || balancesIncomplete)
+    const status = pending
       ? 'ok'
-      : (report.mismatch_count > 0 ? 'balance_mismatch' : 'ok');
+      : (balancesIncomplete
+        ? 'coverage_limited'
+        : (report.mismatch_count > 0
+          ? 'balance_mismatch'
+          : (coverageLimitations.length > 0 ? 'coverage_limited' : 'ok')));
 
     if (balancesIncomplete) {
       logger.warn({ exchangeAccountId: account.id, exchange: account.exchange },
@@ -295,8 +457,19 @@ class ExchangeSyncService {
       cursor: result.cursor,
       status,
       error: null,
-      balanceReport: { ...report, backfill_pending: pending, balances_incomplete: balancesIncomplete },
+      balanceReport: {
+        ...report,
+        backfill_pending: pending,
+        balances_incomplete: balancesIncomplete,
+        coverage_limitations: coverageLimitations,
+      },
+      syncLockToken,
     });
+    if (!saved) {
+      const error = new Error('The exchange sync lost ownership of the account cursor');
+      error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+      throw error;
+    }
 
     // API-sourced records are the ones that most often carry the exact tx_hash,
     // which is what upgrades a match from heuristic to exact -- so a sync is the
@@ -332,7 +505,8 @@ class ExchangeSyncService {
       needs_review: records.filter((record) => record.needs_review).length,
       unknown_types: result.stats?.unknownTypes ?? 0,
       backfill_pending: pending,
-      balance_report: report,
+      balance_report: { ...report, coverage_limitations: coverageLimitations },
+      coverage_limitations: coverageLimitations,
       matched: matches?.matches ?? 0,
       status,
     };

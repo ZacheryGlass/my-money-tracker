@@ -788,7 +788,13 @@ describe('CryptoLedger', () => {
       accounts: [
         { id: 7, name: 'Kraken', last_sync_status: 'balance_mismatch' },
         { id: 8, name: 'Coinbase', last_sync_status: 'ok', balance_report: { backfill_pending: true } },
-        { id: 9, name: 'Other', last_sync_status: 'ok' },
+        { id: 9, name: 'Binance.US', last_sync_status: 'coverage_limited', balance_report: {
+          coverage_limitations: ['delisted symbols are not available from the provider'],
+        } },
+        { id: 10, name: 'Coinbase Advanced', last_sync_status: 'ok', balance_report: {
+          balances_incomplete: true,
+        } },
+        { id: 11, name: 'Other', last_sync_status: 'ok' },
       ],
     });
 
@@ -796,7 +802,7 @@ describe('CryptoLedger', () => {
 
     // The healthy account is not counted; a warning that never clears gets
     // ignored, exactly like a badge that cannot reach zero.
-    expect(await screen.findByText(/2 exchange accounts have not finished syncing/)).toBeInTheDocument();
+    expect(await screen.findByText(/4 exchange accounts have not finished syncing/)).toBeInTheDocument();
   });
 
   // --- the spam quarantine (#74) --------------------------------------------

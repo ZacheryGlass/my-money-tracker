@@ -4,8 +4,9 @@ class JobLog {
   // Scheduled jobs are intentionally run by one application scheduler
   // instance. A process can be terminated while a job is awaiting a provider,
   // leaving its durable row at "running" forever even though no JavaScript
-  // execution still owns it. At process boot, rows that predate this process
-  // are therefore failed explicitly before any cron task is registered.
+  // execution still owns it. At process boot, rows older than the caller's
+  // recovery boundary are failed explicitly before any cron task is registered;
+  // a rolling deployment must not fail a live row owned by another instance.
   static async failInterruptedRuns(before) {
     if (!(before instanceof Date) || Number.isNaN(before.getTime())) {
       throw new TypeError('before must be a valid Date');
@@ -37,6 +38,18 @@ class JobLog {
     return result.rows[0];
   }
 
+  // The partial unique index on (job_name) WHERE status='running' is the
+  // cross-process claim. A caller that loses the race gets a normal skip
+  // instead of throwing a scheduler error.
+  static async createIfNotRunning(jobName) {
+    try {
+      return await this.create(jobName);
+    } catch (error) {
+      if (error.code === '23505') return null;
+      throw error;
+    }
+  }
+
   static async complete(id, processed, succeeded, failed, details = null) {
     const result = await pool.query(
       `UPDATE job_logs
@@ -47,7 +60,7 @@ class JobLog {
            tickers_succeeded = $2,
            tickers_failed = $3,
            details = $4
-       WHERE id = $5
+       WHERE id = $5 AND status = 'running'
        RETURNING *`,
       [processed, succeeded, failed, details ? JSON.stringify(details) : null, id]
     );
@@ -62,7 +75,7 @@ class JobLog {
            duration_ms = EXTRACT(MILLISECONDS FROM (CURRENT_TIMESTAMP - started_at)),
            error_message = $1,
            details = $2
-       WHERE id = $3
+       WHERE id = $3 AND status = 'running'
        RETURNING *`,
       [errorMessage, details ? JSON.stringify(details) : null, id]
     );
