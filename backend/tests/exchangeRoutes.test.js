@@ -73,7 +73,12 @@ function fakeQuery(text, params) {
     const owned = recordId === FLAGGED_RECORD_ID
       && accountId === OWNED_ACCOUNT_ID
       && userId === OWNER_ID;
-    return { rows: owned ? [{ id: recordId, exchange_account_id: accountId, needs_review: false }] : [] };
+    return { rows: owned ? [{
+      id: recordId,
+      exchange_account_id: accountId,
+      needs_review: false,
+      duplicate_candidate: false,
+    }] : [] };
   }
   if (/FROM exchange_accounts ea/.test(sql)) {
     return { rows: [{ ...accountRow(), record_count: 3, needs_review_count: 1 }] };
@@ -365,6 +370,7 @@ test('a flagged record can be resolved, which is what empties the queue', async 
 
   assert.equal(response.status, 200);
   assert.equal(response.body.record.needs_review, false);
+  assert.equal(response.body.record.duplicate_candidate, false);
 });
 
 test('balance exception reads are user-scoped and paginated', async () => {

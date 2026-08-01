@@ -50,6 +50,10 @@ const exchangeReviewReason = (record) => {
   if ((record?.record_type === 'trade' || record?.record_type === 'conversion') && !record?.quote_asset) {
     return 'only one side of this trade is in the file';
   }
+  if (['deposit', 'withdrawal'].includes(record?.record_type)
+      && ['USD', 'USDC', 'EUR', 'GBP', 'CAD'].includes(String(record?.base_asset || '').toUpperCase())) {
+    return 'no bank transaction or exchange counterpart has been confirmed for this movement';
+  }
   return sourceType ? `unrecognized row type "${sourceType}"` : 'flagged while importing';
 };
 

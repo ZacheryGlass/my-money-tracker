@@ -812,9 +812,8 @@ router.get('/:id/sync-status', async (req, res) => {
   }
 });
 
-// Clearing the flag by hand is the only thing that empties the review queue:
-// nothing else ever writes needs_review = false, so without this the badge is
-// permanent and gets ignored, taking the flagged rows with it.
+// A manual review accepts the imported event as stored. Candidate review also
+// clears the candidate badge; derived matching evidence never owns this queue.
 router.patch('/:id/records/:recordId/resolve', async (req, res) => {
   try {
     const account = await loadAccount(req, res);

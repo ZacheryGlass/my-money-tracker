@@ -143,6 +143,19 @@ function candidateRowsByExternalId(existingRows) {
   return new Map(existingRows.map((row) => [row.external_id, row]));
 }
 
+// A provider can legitimately report the same economic shape more than once
+// in a day (recurring fills, equal withdrawals, and so on). Distinct native
+// ids at distinct full instants from the same source are evidence of distinct
+// ledger events, not duplicate evidence. The day-bucket fingerprint remains
+// useful across sources, where timestamp formatting can differ.
+function isDistinctSameSourceEvent(left, right) {
+  if (!left?.source || left.source !== right?.source) return false;
+  if (!left.external_id || !right.external_id || left.external_id === right.external_id) return false;
+  const leftTime = new Date(left.occurred_at).getTime();
+  const rightTime = new Date(right.occurred_at).getTime();
+  return Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime;
+}
+
 function columnValue(record, column) {
   if (column === 'raw' || column === 'dedupe_provenance') return jsonValue(record[column]);
   // Defense in depth for callers outside ExchangeImportService and
@@ -275,12 +288,16 @@ class ExchangeRecord {
         }
         const sameBatch = record.fingerprint ? (incomingByFingerprint.get(record.fingerprint) || []) : [];
         const candidates = (existingByFingerprint.get(record.fingerprint) || [])
-          .filter((candidate) => candidate.external_id !== record.external_id);
+          .filter((candidate) => candidate.external_id !== record.external_id)
+          .filter((candidate) => !isDistinctSameSourceEvent(candidate, record));
+        const sameBatchCandidates = sameBatch
+          .filter((candidate) => candidate.external_id !== record.external_id)
+          .filter((candidate) => !isDistinctSameSourceEvent(candidate, record));
         const conflicts = candidates.length === 1 ? conflictingDetails(candidates[0], record) : [];
         const sourceCompatible = candidates.length === 1
           && candidates[0].source && record.source && candidates[0].source !== record.source;
         const exactCandidate = candidates.length === 1
-          && sameBatch.length === 1
+          && sameBatchCandidates.length === 0
           && sourceCompatible
           && conflicts.length === 0
           && !candidates[0].duplicate_candidate
@@ -292,7 +309,7 @@ class ExchangeRecord {
           continue;
         }
 
-        const hasCandidate = candidates.length > 0 || sameBatch.length > 1;
+        const hasCandidate = candidates.length > 0 || sameBatchCandidates.length > 0;
         if (hasCandidate) {
           duplicateCandidates += 1;
           if (conflicts.length > 0 || candidates.length > 1) duplicateConflicts += 1;
@@ -633,14 +650,17 @@ class ExchangeRecord {
     };
   }
 
-  // Clearing the flag is what lets the review queue reach zero. Ownership is
-  // enforced in the statement itself, through the account: a record id that
-  // belongs to someone else updates nothing and the route answers 404.
+  // Accepting a candidate means the user has decided it is a distinct event,
+  // so both the queue flag and the candidate badge must clear together.
+  // Ownership is enforced in the statement itself, through the account: a
+  // record id that belongs to someone else updates nothing and the route
+  // answers 404.
   static async resolveReview(recordId, exchangeAccountId, userId) {
     if (!userId) throw new Error('ExchangeRecord.resolveReview requires a userId');
     const result = await pool.query(
       `UPDATE exchange_records er
-       SET needs_review = FALSE
+       SET needs_review = FALSE,
+           duplicate_candidate = FALSE
        FROM exchange_accounts ea
        WHERE er.exchange_account_id = ea.id
          AND er.id = $1

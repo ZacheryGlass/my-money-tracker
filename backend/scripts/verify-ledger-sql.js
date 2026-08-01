@@ -195,10 +195,10 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     'SELECT needs_review FROM exchange_records WHERE id = $1',
     [fiatRecord.rows[0].id]
   );
-  ok('real fiat matcher links a same-amount named bank rail event',
+  ok('real fiat matcher links a same-amount named bank rail event without rewriting import review',
     fiatResult.matched === 1 && fiatLink.rows.length === 1
       && String(fiatLink.rows[0].exchange_record_id) === String(fiatRecord.rows[0].id)
-      && fiatReview.rows[0]?.needs_review === false);
+      && fiatReview.rows[0]?.needs_review === true);
   await pool.query('DELETE FROM accounts WHERE id = $1', [bankAccount.rows[0].id]);
   await pool.query('DELETE FROM exchange_records WHERE id = $1', [fiatRecord.rows[0].id]);
 

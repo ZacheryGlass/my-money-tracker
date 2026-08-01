@@ -162,7 +162,9 @@ Frontend `.env`: `VITE_API_URL` (empty = same origin)
   cannot be invented by the application.
 - **Exchange coverage**: account-level unavailable-record flags, exact per-asset
   summaries, fiat/Plaid links, immediate internal-transfer classification, and
-  strict v3 matching are implemented. The remaining gaps are provider history,
+  strict v3 matching are implemented. Fiat/Plaid links are derived evidence and
+  never write the importer-quality `exchange_records.needs_review` flag; unmatched
+  flows stay visible in the match audit instead. The remaining gaps are provider history,
   review decisions, and the final zero-unexplained audit.
 - **Asset identity**: fallback matching now requires the source-backed native
   registry (ETH, POL/MATIC, XDAI); unregistered ERC-20 symbols remain

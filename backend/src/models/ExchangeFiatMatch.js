@@ -79,18 +79,6 @@ class ExchangeFiatMatch {
          RETURNING id`,
         [userId]
       );
-      await client.query(
-        `UPDATE exchange_records er
-         SET needs_review = CASE WHEN EXISTS (
-               SELECT 1 FROM exchange_fiat_matches efm
-               WHERE efm.exchange_record_id = er.id
-             ) THEN FALSE ELSE TRUE END
-         FROM exchange_accounts ea
-         WHERE ea.id = er.exchange_account_id AND ea.user_id = $1
-           AND er.record_type IN ('deposit', 'withdrawal')
-           AND UPPER(er.base_asset) IN ('USD', 'USDC', 'EUR', 'GBP', 'CAD')`,
-        [userId]
-      );
       await client.query('COMMIT');
       return { matched: inserted.rowCount || 0 };
     } catch (error) {

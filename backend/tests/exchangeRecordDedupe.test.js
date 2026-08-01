@@ -173,3 +173,28 @@ test('same-day same-amount events from one source remain separate review candida
   assert.deepEqual([...rows.values()].map((row) => row.duplicate_candidate), [true, true]);
   assert.deepEqual([...rows.values()].map((row) => row.needs_review), [true, true]);
 });
+
+test('same-source events with distinct provider ids and full timestamps are not duplicate candidates', async () => {
+  const result = await ExchangeRecord.bulkInsert(7, [
+    record('csv', 'provider-event-1', { occurred_at: '2026-07-30T12:34:56.000Z' }),
+    record('csv', 'provider-event-2', { occurred_at: '2026-07-30T12:35:56.000Z' }),
+  ]);
+
+  assert.equal(result.duplicateCandidates, 0);
+  assert.equal(result.inserted, 2);
+  assert.deepEqual([...rows.values()].map((row) => row.duplicate_candidate), [false, false]);
+  assert.deepEqual([...rows.values()].map((row) => row.needs_review), [false, false]);
+});
+
+test('a later same-source event at a distinct full timestamp is not a duplicate candidate', async () => {
+  await ExchangeRecord.bulkInsert(7, [
+    record('csv', 'provider-event-1', { occurred_at: '2026-07-30T12:34:56.000Z' }),
+  ]);
+  const result = await ExchangeRecord.bulkInsert(7, [
+    record('csv', 'provider-event-2', { occurred_at: '2026-07-30T12:35:56.000Z' }),
+  ]);
+
+  assert.equal(result.duplicateCandidates, 0);
+  assert.equal(result.inserted, 1);
+  assert.deepEqual([...rows.values()].map((row) => row.duplicate_candidate), [false, false]);
+});
