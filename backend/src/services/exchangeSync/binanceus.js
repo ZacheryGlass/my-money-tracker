@@ -231,6 +231,7 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   };
 
   const account = await call('/api/v3/account');
+  const balanceObservedAt = new Date().toISOString();
   const exchangeInfo = await call('/api/v3/exchangeInfo', {}, { signed: false });
   const listedSymbols = Array.isArray(exchangeInfo.symbols) ? exchangeInfo.symbols : [];
   const tradeableSymbols = listedSymbols
@@ -384,7 +385,11 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   ];
 
   return {
-    records, cursor: state, balances: accountBalances(account), balancesComplete: true,
+    records,
+    cursor: state,
+    balances: accountBalances(account),
+    balance_observed_at: balanceObservedAt,
+    balancesComplete: true,
     coverageLimitations,
     stats: {
       rows: records.length, requests, unknownTypes,

@@ -25,6 +25,7 @@ const PUBLIC_COLUMNS = [
   'id', 'user_id', 'name', 'exchange', 'last_import_at', 'created_at', 'updated_at',
   'api_key_last4', 'api_secret_last4',
   'last_sync_at', 'last_sync_status', 'last_sync_error', 'balance_report',
+  'reconciliation_status',
   // Deliberately NOT sync_cursor: it is an internal resume point, and for
   // Coinbase it carries per-account ids that are of no use to the client.
 ];
@@ -128,6 +129,8 @@ class ExchangeAccount {
            last_sync_status = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE last_sync_status END,
            last_sync_error = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE last_sync_error END,
            balance_report = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE balance_report END,
+           provider_balance_snapshot = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE provider_balance_snapshot END,
+           reconciliation_status = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN 'unknown' ELSE reconciliation_status END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND user_id = $2
          AND (
@@ -158,9 +161,10 @@ class ExchangeAccount {
     return result.rows[0];
   }
 
-  static async touchImport(id, userId) {
+  static async touchImport(id, userId, { client = null } = {}) {
     requireUserId('touchImport', userId);
-    const result = await pool.query(
+    const database = client || pool;
+    const result = await database.query(
       `UPDATE exchange_accounts
        SET last_import_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND user_id = $2
@@ -168,6 +172,124 @@ class ExchangeAccount {
       [id, userId]
     );
     return result.rows[0];
+  }
+
+  // Read the private reconciliation inputs only after ownership has been
+  // checked. The complete provider balance map never belongs in a public
+  // projection or an HTTP response.
+  static async findForReconciliation(id, userId, { client = null } = {}) {
+    requireUserId('findForReconciliation', userId);
+    const database = client || pool;
+    const result = await database.query(
+      `SELECT id, user_id, exchange, credentials_updated_at,
+              provider_balance_snapshot, reconciliation_status, balance_report
+       FROM exchange_accounts
+       WHERE id = $1 AND user_id = $2`,
+      [id, userId]
+    );
+    return result.rows[0];
+  }
+
+  // Reconciliation writes are always user-scoped, including the internal
+  // request path used by CSV imports. This prevents an account id from ever
+  // becoming an ID-only write primitive.
+  static async saveReconciliation(id, userId, { status, report, client = null } = {}) {
+    requireUserId('saveReconciliation', userId);
+    const database = client || pool;
+    const result = await database.query(
+      `UPDATE exchange_accounts
+       SET reconciliation_status = $3,
+           balance_report = $4::jsonb,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND user_id = $2
+       RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
+      [id, userId, status, JSON.stringify(report)]
+    );
+    return result.rows[0];
+  }
+
+  // CSV imports must not race an API sync's derived-balance calculation. The
+  // row lock also makes record upsert, import timestamp, and reconciliation a
+  // single atomic unit. A running provider lease is rejected rather than
+  // waiting behind a network call.
+  static async withImportTransaction(id, userId, callback) {
+    requireUserId('withImportTransaction', userId);
+    const client = await pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(
+        `SELECT *
+         FROM exchange_accounts
+         WHERE id = $1 AND user_id = $2
+         FOR UPDATE`,
+        [id, userId]
+      );
+      if (!locked.rows[0]) {
+        const error = new Error('Exchange account not found');
+        error.code = 'EXCHANGE_ACCOUNT_NOT_FOUND';
+        throw error;
+      }
+      const account = locked.rows[0];
+      if (account.sync_lock_token && account.sync_lock_until
+        && new Date(account.sync_lock_until).getTime() > Date.now()) {
+        const error = new Error('A sync for this exchange account is already running');
+        error.code = 'EXCHANGE_SYNC_IN_PROGRESS';
+        throw error;
+      }
+      const result = await callback(client, account);
+      await client.query('COMMIT');
+      committed = true;
+      return result;
+    } catch (error) {
+      if (!committed) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) {
+          void rollbackError;
+        }
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // API sync storage uses the existing lease plus a row lock. Provider calls
+  // happen before this transaction, so the transaction remains short while
+  // still preventing stale workers from writing records or snapshots.
+  static async withSyncWriteTransaction(id, userId, syncLockToken, callback) {
+    requireUserId('withSyncWriteTransaction', userId);
+    const client = await pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(
+        `SELECT *
+         FROM exchange_accounts
+         WHERE id = $1 AND user_id = $2
+           AND sync_lock_token = $3::uuid
+           AND sync_lock_until > CURRENT_TIMESTAMP
+         FOR UPDATE`,
+        [id, userId, syncLockToken]
+      );
+      if (!locked.rows[0]) {
+        const error = new Error('The exchange sync lost ownership before storing provider rows');
+        error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+        throw error;
+      }
+      const result = await callback(client, locked.rows[0]);
+      await client.query('COMMIT');
+      committed = true;
+      return result;
+    } catch (error) {
+      if (!committed) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) {
+          void rollbackError;
+        }
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Both halves in one statement. The table's CHECK requires them to be set
@@ -241,6 +363,8 @@ class ExchangeAccount {
              last_sync_status = NULL,
              last_sync_error = NULL,
              balance_report = NULL,
+             provider_balance_snapshot = NULL,
+             reconciliation_status = 'unknown',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = $1 AND user_id = $2
          RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
@@ -306,6 +430,8 @@ class ExchangeAccount {
              last_sync_status = NULL,
              last_sync_error = NULL,
              balance_report = NULL,
+             provider_balance_snapshot = NULL,
+             reconciliation_status = 'unknown',
              sync_lock_token = NULL,
              sync_lock_until = NULL,
              updated_at = CURRENT_TIMESTAMP
@@ -335,14 +461,20 @@ class ExchangeAccount {
   // its status and leaves the resume point where it was, because advancing
   // past rows that were never fetched would drop them silently and forever
   // (the same rule the ETH per-feed cursors follow).
-  static async saveSyncState(id, { cursor, status, error, balanceReport, syncLockToken = null }) {
-    const result = await pool.query(
+  static async saveSyncState(id, {
+    cursor, status, error, balanceReport, syncLockToken = null,
+    providerBalanceSnapshot, reconciliationStatus, client = null,
+  }) {
+    const database = client || pool;
+    const result = await database.query(
       `UPDATE exchange_accounts
        SET sync_cursor = COALESCE($2::jsonb, sync_cursor),
            last_sync_at = CURRENT_TIMESTAMP,
            last_sync_status = $3,
            last_sync_error = $4,
            balance_report = COALESCE($5::jsonb, balance_report),
+           provider_balance_snapshot = COALESCE($7::jsonb, provider_balance_snapshot),
+           reconciliation_status = COALESCE($8, reconciliation_status),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
          AND ($6::uuid IS NULL OR (sync_lock_token = $6::uuid AND sync_lock_until > CURRENT_TIMESTAMP))
@@ -354,6 +486,9 @@ class ExchangeAccount {
         error ?? null,
         balanceReport === undefined || balanceReport === null ? null : JSON.stringify(balanceReport),
         syncLockToken,
+        providerBalanceSnapshot === undefined || providerBalanceSnapshot === null
+          ? null : JSON.stringify(providerBalanceSnapshot),
+        reconciliationStatus ?? null,
       ]
     );
     return result.rows[0];

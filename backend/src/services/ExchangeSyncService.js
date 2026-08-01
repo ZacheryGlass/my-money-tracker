@@ -5,25 +5,11 @@ const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeSyncJob = require('../models/ExchangeSyncJob');
 const ExchangeMatchService = require('./ExchangeMatchService');
+const ExchangeReconciliationService = require('./ExchangeReconciliationService');
 const { connectorFor } = require('./exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
-const {
-  absAmount, subtractAmounts, compareAmounts, scaleByPowerOfTen,
-} = require('./exchangeImport/shared');
 const { annotateRecords } = require('./exchangeImport/canonicalFingerprint');
 const logger = require('../config/logger');
-
-// Dust: an exchange rounds its published balance, and the ledger does not.
-// Below this the two agree for every purpose this app has.
-const ABSOLUTE_TOLERANCE = '0.00000001';
-// ...and 1 part per million of the position, for assets held in quantities
-// where 1e-8 is meaninglessly strict.
-const RELATIVE_TOLERANCE_EXPONENT = 6;
-
-// How many mismatching assets get named in the stored report. The point is to
-// tell the user something is wrong and roughly where; a 400-asset dump would
-// bloat every account row for no extra signal.
-const MAX_REPORTED_MISMATCHES = 25;
 
 // Exchange account ids with a sync running right now. See _syncResolvedAccount
 // for why this is in memory and what that assumes.
@@ -76,45 +62,12 @@ function decryptCredentials(account) {
   }
 }
 
-/**
- * Compare a derived position against the exchange's own figure.
- *
- * A mismatch means records were missed or misparsed. It is reported, not
- * corrected: the derived figure is the thing under test, so overwriting it
- * with the live one would hide exactly the bug this check exists to find.
- */
-function reconcile(derived, live) {
-  const assets = [...new Set([...Object.keys(derived), ...Object.keys(live)])].sort();
-  const mismatches = [];
-
-  for (const asset of assets) {
-    const derivedAmount = derived[asset] ?? '0';
-    const liveAmount = live[asset] ?? '0';
-    const difference = subtractAmounts(derivedAmount, liveAmount);
-    const magnitude = absAmount(difference) ?? '0';
-
-    if (compareAmounts(magnitude, ABSOLUTE_TOLERANCE) <= 0) continue;
-    // |difference| * 1e6 <= |live| is the relative test, done by shifting the
-    // decimal point rather than dividing, so it stays exact.
-    const scaled = scaleByPowerOfTen(magnitude, RELATIVE_TOLERANCE_EXPONENT);
-    if (compareAmounts(scaled, absAmount(liveAmount) ?? '0') <= 0) continue;
-
-    mismatches.push({ asset, derived: derivedAmount, live: liveAmount, difference });
-  }
-
-  return {
-    checked_at: new Date().toISOString(),
-    assets_checked: assets.length,
-    mismatch_count: mismatches.length,
-    mismatches: mismatches.slice(0, MAX_REPORTED_MISMATCHES),
-    truncated: mismatches.length > MAX_REPORTED_MISMATCHES,
-  };
-}
-
 class ExchangeSyncService {
-  static get ABSOLUTE_TOLERANCE() { return ABSOLUTE_TOLERANCE; }
+  static get ABSOLUTE_TOLERANCE() { return '0.00000001'; }
   static get RATE_LIMIT_CODES() { return RATE_LIMIT_CODES; }
-  static reconcile(derived, live) { return reconcile(derived, live); }
+  static reconcile(derived, live) {
+    return { checked_at: new Date().toISOString(), ...ExchangeReconciliationService.reconcile(derived, live) };
+  }
 
   /**
    * Store a credential pair. Mirrors the API Keys tab exactly: AES-256-GCM
@@ -408,69 +361,99 @@ class ExchangeSyncService {
     }
 
     const records = annotateRecords(account.exchange, result.records.map((record) => ({ ...record, source: 'api' })));
-    const stored = await ExchangeRecord.bulkInsert(account.id, records, { syncLockToken });
-    // Fills the on-chain hole a CSV-first import left behind; see the note on
-    // backfillChainDetails for why the ON CONFLICT arm cannot do this.
-    const backfilled = await ExchangeRecord.backfillChainDetails(account.id, records, { syncLockToken });
-
-    const derived = await ExchangeRecord.derivedBalances(account.id, account.user_id);
-    // A truncated backfill has not read the whole history yet, so a mismatch
-    // says nothing about the parser. Calling it 'balance_mismatch' here would
-    // train the user to ignore the flag before it ever means anything.
-    const pending = Boolean(result.stats?.backfillPending);
-    // The same argument from the other side: a connector that could not
-    // enumerate every live balance is comparing against a picture with holes
-    // in it, and every unenumerated asset reads as a zero the ledger
-    // contradicts. The comparison is skipped outright rather than run and
-    // discounted -- a stored report full of phantom mismatches is worse than
-    // none.
-    const balancesIncomplete = result.balancesComplete === false;
-    const coverageLimitations = Array.isArray(result.coverageLimitations)
-      ? result.coverageLimitations.filter(Boolean)
-      : [];
-    if (balancesIncomplete) {
-      coverageLimitations.push('The live balance list was incomplete; reconciliation was skipped for this batch.');
-    }
-    const report = balancesIncomplete
-      ? {
-        checked_at: new Date().toISOString(),
-        assets_checked: 0,
-        mismatch_count: 0,
-        mismatches: [],
-        truncated: false,
-        skipped: 'live_balances_incomplete',
-      }
-      : reconcile(derived, result.balances || {});
-    const status = pending
-      ? 'ok'
-      : (balancesIncomplete
-        ? 'coverage_limited'
-        : (report.mismatch_count > 0
-          ? 'balance_mismatch'
-          : (coverageLimitations.length > 0 ? 'coverage_limited' : 'ok')));
-
-    if (balancesIncomplete) {
-      logger.warn({ exchangeAccountId: account.id, exchange: account.exchange },
-        'Live balances were incomplete; skipping reconciliation for this sync');
-    }
-
-    const saved = await ExchangeAccount.saveSyncState(account.id, {
-      cursor: result.cursor,
-      status,
-      error: null,
-      balanceReport: {
-        ...report,
-        backfill_pending: pending,
-        balances_incomplete: balancesIncomplete,
-        coverage_limitations: coverageLimitations,
-      },
+    const write = await ExchangeAccount.withSyncWriteTransaction(
+      account.id,
+      account.user_id,
       syncLockToken,
-    });
-    if (!saved) {
-      const error = new Error('The exchange sync lost ownership of the account cursor');
-      error.code = 'EXCHANGE_SYNC_LOCK_LOST';
-      throw error;
-    }
+      async (client, lockedAccount) => {
+        const stored = await ExchangeRecord.bulkInsert(account.id, records, { syncLockToken, client });
+        // Fills the on-chain hole a CSV-first import left behind; see the note
+        // on backfillChainDetails for why the ON CONFLICT arm cannot do this.
+        const backfilled = await ExchangeRecord.backfillChainDetails(
+          account.id, records, { syncLockToken, client }
+        );
+        const { derived, latestRecordAt } = await ExchangeRecord.reconciliationInputs(
+          account.id, account.user_id, { client }
+        );
+        // A truncated backfill has not read the whole history yet, so a mismatch
+        // says nothing about the parser. Calling it 'balance_mismatch' here would
+        // train the user to ignore the flag before it ever means anything.
+        const pending = Boolean(result.stats?.backfillPending);
+        // The same argument from the other side: a connector that could not
+        // enumerate every live balance is comparing against a picture with holes
+        // in it, and every unenumerated asset reads as a zero the ledger
+        // contradicts. The comparison is skipped outright rather than run and
+        // discounted -- a stored report full of phantom mismatches is worse than
+        // none.
+        const balancesIncomplete = result.balancesComplete === false;
+        const coverageLimitations = Array.isArray(result.coverageLimitations)
+          ? result.coverageLimitations.filter(Boolean)
+          : [];
+        if (balancesIncomplete) {
+          coverageLimitations.push('The live balance list was incomplete; reconciliation was skipped for this batch.');
+        }
+        const providerSnapshot = balancesIncomplete
+          ? undefined
+          : ExchangeReconciliationService.snapshotEnvelope(
+            lockedAccount,
+            result.balances || {},
+            result.balance_observed_at || new Date().toISOString()
+          );
+        const reconciliation = ExchangeReconciliationService.buildReconciliation({
+          account: lockedAccount,
+          derived,
+          snapshot: providerSnapshot || lockedAccount.provider_balance_snapshot,
+          latestRecordAt,
+          existingReport: lockedAccount.balance_report,
+          backfillPending: pending,
+          balancesIncomplete,
+          coverageLimitations,
+        });
+        const status = pending
+          ? 'ok'
+          : (balancesIncomplete
+            ? 'coverage_limited'
+            : (reconciliation.report.mismatch_count > 0
+              ? 'balance_mismatch'
+              : (coverageLimitations.length > 0 ? 'coverage_limited' : 'ok')));
+
+        if (balancesIncomplete) {
+          logger.warn({ exchangeAccountId: account.id, exchange: account.exchange },
+            'Live balances were incomplete; skipping reconciliation for this sync');
+        }
+
+        const saved = await ExchangeAccount.saveSyncState(account.id, {
+          cursor: result.cursor,
+          status,
+          error: null,
+          balanceReport: reconciliation.report,
+          providerBalanceSnapshot: providerSnapshot,
+          reconciliationStatus: reconciliation.status,
+          syncLockToken,
+          client,
+        });
+        if (!saved) {
+          const error = new Error('The exchange sync lost ownership of the account cursor');
+          error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+          throw error;
+        }
+        return {
+          stored,
+          backfilled,
+          pending,
+          balancesIncomplete,
+          coverageLimitations,
+          report: reconciliation.report,
+          reconciliationStatus: reconciliation.status,
+          status,
+          saved,
+        };
+      }
+    );
+    const {
+      stored, backfilled, pending, balancesIncomplete, coverageLimitations,
+      report, reconciliationStatus, status, saved,
+    } = write;
 
     // API-sourced records are the ones that most often carry the exact tx_hash,
     // which is what upgrades a match from heuristic to exact -- so a sync is the
@@ -494,6 +477,7 @@ class ExchangeSyncService {
       chainDetailsFilled: backfilled.filled,
       unknownTypes: result.stats?.unknownTypes ?? 0,
       mismatches: report.mismatch_count,
+      reconciliationStatus,
       backfillPending: pending,
       balancesIncomplete,
       matched: matches?.matches ?? 0,
@@ -513,6 +497,8 @@ class ExchangeSyncService {
       unknown_types: result.stats?.unknownTypes ?? 0,
       backfill_pending: pending,
       balance_report: { ...report, coverage_limitations: coverageLimitations },
+      reconciliation_status: reconciliationStatus,
+      reconciliation: { status: reconciliationStatus, ...report },
       coverage_limitations: coverageLimitations,
       matched: matches?.matches ?? 0,
       status,

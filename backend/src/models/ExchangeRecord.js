@@ -161,7 +161,7 @@ class ExchangeRecord {
   // half record and be discarded -- silently, and permanently. An identical
   // re-import changes nothing: both rows carry the same needs_review, so the
   // guard fails and the row is counted as a duplicate.
-  static async bulkInsert(exchangeAccountId, records, { syncLockToken = null } = {}) {
+  static async bulkInsert(exchangeAccountId, records, { syncLockToken = null, client = null } = {}) {
     if (!exchangeAccountId) throw new Error('ExchangeRecord.bulkInsert requires an exchangeAccountId');
     if (!records || records.length === 0) {
       return { inserted: 0, upgraded: 0, duplicates: 0, total: 0 };
@@ -182,7 +182,8 @@ class ExchangeRecord {
     }
     const unique = [...byId.values()];
 
-    const client = await pool.connect();
+    const database = client || await pool.connect();
+    const ownsTransaction = !client;
     let inserted = 0;
     let upgraded = 0;
     let deduplicated = 0;
@@ -191,13 +192,13 @@ class ExchangeRecord {
     let recordsToInsertCount = 0;
     let dedupeReplays = 0;
     try {
-      await client.query('BEGIN');
+      if (ownsTransaction) await database.query('BEGIN');
       if (syncLockToken) {
         // Keep the account row locked for the whole insert transaction. A
         // credential clear either happens first (and this ownership check
         // fails) or waits for the transaction to commit; it cannot slip
         // between a separate SELECT and the INSERT statements.
-        const owner = await client.query(
+        const owner = await database.query(
           `SELECT id
            FROM exchange_accounts
            WHERE id = $1 AND sync_lock_token = $2::uuid AND sync_lock_until > CURRENT_TIMESTAMP
@@ -212,7 +213,7 @@ class ExchangeRecord {
       } else {
         // CSV imports do not carry a sync lease. Serializing writes per account
         // closes the candidate-check/insert race without widening ownership.
-        await client.query(
+        await database.query(
           'SELECT id FROM exchange_accounts WHERE id = $1 FOR UPDATE',
           [exchangeAccountId]
         );
@@ -220,7 +221,7 @@ class ExchangeRecord {
 
       const externalIds = unique.map((record) => record.external_id);
       const fingerprints = unique.map((record) => record.fingerprint).filter(Boolean);
-      const existingResult = await client.query(
+      const existingResult = await database.query(
         `SELECT er.*
          FROM exchange_records er
          WHERE er.exchange_account_id = $1
@@ -231,7 +232,7 @@ class ExchangeRecord {
       );
       const existingById = candidateRowsByExternalId(existingResult.rows);
       const existingByFingerprint = candidateRowsByFingerprint(existingResult.rows);
-      const dedupeAuditResult = await client.query(
+      const dedupeAuditResult = await database.query(
         `SELECT incoming_external_id
          FROM exchange_record_dedupe_events
          WHERE exchange_account_id = $1
@@ -314,7 +315,7 @@ class ExchangeRecord {
       // Apply ambiguous markers before inserts so a concurrent read cannot see
       // only one half of the candidate group after this transaction commits.
       for (const candidate of ambiguousExisting.values()) {
-        await client.query(
+        await database.query(
           `UPDATE exchange_records
            SET duplicate_candidate = TRUE,
                needs_review = TRUE,
@@ -332,13 +333,13 @@ class ExchangeRecord {
           .filter((column) => !IDENTITY_COLUMNS.has(column))
           .map((column) => `${column} = $${COLUMNS.indexOf(column) + 3}`)
           .join(', ');
-        await client.query(
+        await database.query(
           `UPDATE exchange_records
            SET ${assignments}
            WHERE id = $1 AND exchange_account_id = $2`,
           params
         );
-        await client.query(
+        await database.query(
           `INSERT INTO exchange_record_dedupe_events
              (exchange_account_id, survivor_record_id, incoming_external_id,
               incoming_source, fingerprint, fingerprint_version, incoming_snapshot)
@@ -373,7 +374,7 @@ class ExchangeRecord {
 
         let result;
         try {
-          result = await client.query(
+          result = await database.query(
             `INSERT INTO exchange_records (exchange_account_id, ${COLUMNS.join(', ')})
              VALUES ${placeholders.join(', ')}
              ON CONFLICT (exchange_account_id, external_id) DO UPDATE
@@ -405,7 +406,6 @@ class ExchangeRecord {
           if (row.inserted) inserted += 1; else upgraded += 1;
         }
       }
-
       // Migration 062 intentionally does not rewrite historical rows. Once
       // a legacy row is touched by a later import with a usable fingerprint,
       // fill only that metadata so future cross-source imports can find it.
@@ -418,7 +418,7 @@ class ExchangeRecord {
           values.push(record.external_id, record.fingerprint, record.fingerprint_version || FINGERPRINT_VERSION);
           return `($${values.length - 2}::text, $${values.length - 1}::varchar(64), $${values.length}::smallint)`;
         });
-        await client.query(
+        await database.query(
           `UPDATE exchange_records er
            SET fingerprint = incoming.fingerprint,
                fingerprint_version = incoming.fingerprint_version
@@ -429,18 +429,18 @@ class ExchangeRecord {
           values
         );
       }
-      await client.query('COMMIT');
+      if (ownsTransaction) await database.query('COMMIT');
     } catch (err) {
       // The rollback is best effort. If the connection is already gone its
       // failure must not replace the error that explains what happened.
-      try {
-        await client.query('ROLLBACK');
+      if (ownsTransaction) try {
+        await database.query('ROLLBACK');
       } catch (rollbackError) {
         logger.warn({ err: rollbackError, exchangeAccountId }, 'Exchange record import rollback failed');
       }
       throw err;
     } finally {
-      client.release();
+      if (ownsTransaction) database.release();
     }
 
     return {
@@ -499,18 +499,19 @@ class ExchangeRecord {
   // WHERE only matches rows that have a hole, and needs_review is not in the
   // statement at all -- so this cannot downgrade, re-flag, or contradict
   // anything a previous import decided.
-  static async backfillChainDetails(exchangeAccountId, rows, { syncLockToken = null } = {}) {
+  static async backfillChainDetails(exchangeAccountId, rows, { syncLockToken = null, client = null } = {}) {
     if (!exchangeAccountId) throw new Error('ExchangeRecord.backfillChainDetails requires an exchangeAccountId');
     const fillable = (rows || []).filter((row) => row.external_id
       && (row.tx_hash || row.address || row.network || row.chain_id));
     if (fillable.length === 0) return { filled: 0 };
 
-    const client = syncLockToken ? await pool.connect() : null;
+    const database = client || (syncLockToken ? await pool.connect() : null);
+    const ownsTransaction = !client && Boolean(syncLockToken);
     let filled = 0;
     try {
-      if (client) {
-        await client.query('BEGIN');
-        const owner = await client.query(
+      if (ownsTransaction) {
+        await database.query('BEGIN');
+        const owner = await database.query(
           `SELECT id
            FROM exchange_accounts
            WHERE id = $1 AND sync_lock_token = $2::uuid AND sync_lock_until > CURRENT_TIMESTAMP
@@ -523,7 +524,7 @@ class ExchangeRecord {
           throw error;
         }
       }
-      const queryTarget = client || pool;
+      const queryTarget = database || pool;
       for (let start = 0; start < fillable.length; start += CHUNK_SIZE) {
         const chunk = fillable.slice(start, start + CHUNK_SIZE);
         const values = [exchangeAccountId];
@@ -554,17 +555,17 @@ class ExchangeRecord {
         );
         filled += result.rowCount || 0;
       }
-      if (client) await client.query('COMMIT');
+      if (ownsTransaction) await database.query('COMMIT');
       return { filled };
     } catch (error) {
-      if (client) {
-        try { await client.query('ROLLBACK'); } catch (rollbackError) {
+      if (ownsTransaction) {
+        try { await database.query('ROLLBACK'); } catch (rollbackError) {
           logger.warn({ err: rollbackError, exchangeAccountId }, 'Exchange chain detail rollback failed');
         }
       }
       throw error;
     } finally {
-      if (client) client.release();
+      if (ownsTransaction) database.release();
     }
   }
 
@@ -578,9 +579,10 @@ class ExchangeRecord {
   // The three legs mirror how a record is written: base and quote amounts are
   // stored SIGNED as the exchange wrote them, and the fee is stored positive
   // and was charged on top -- so it subtracts.
-  static async derivedBalances(exchangeAccountId, userId) {
+  static async derivedBalances(exchangeAccountId, userId, { client = null } = {}) {
     if (!userId) throw new Error('ExchangeRecord.derivedBalances requires a userId');
-    const result = await pool.query(
+    const database = client || pool;
+    const result = await database.query(
       `SELECT asset, SUM(delta)::text AS derived
        FROM (
          SELECT er.base_asset AS asset, er.base_amount AS delta
@@ -605,6 +607,28 @@ class ExchangeRecord {
       [exchangeAccountId, userId]
     );
     return Object.fromEntries(result.rows.map((row) => [row.asset, row.derived]));
+  }
+
+  // The latest ledger timestamp and the derived balances must come from the
+  // same transaction as an import or API sync. That makes the freshness
+  // decision deterministic when a new row lands while reconciliation runs.
+  static async reconciliationInputs(exchangeAccountId, userId, { client = null } = {}) {
+    if (!userId) throw new Error('ExchangeRecord.reconciliationInputs requires a userId');
+    const database = client || pool;
+    const [derived, latest] = await Promise.all([
+      this.derivedBalances(exchangeAccountId, userId, { client: database }),
+      database.query(
+        `SELECT MAX(er.occurred_at) AS latest_record_at
+         FROM exchange_records er
+         JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+         WHERE er.exchange_account_id = $1 AND ea.user_id = $2`,
+        [exchangeAccountId, userId]
+      ),
+    ]);
+    return {
+      derived,
+      latestRecordAt: latest.rows[0]?.latest_record_at ?? null,
+    };
   }
 
   // Clearing the flag is what lets the review queue reach zero. Ownership is

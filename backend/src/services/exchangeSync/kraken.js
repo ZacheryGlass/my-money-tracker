@@ -356,10 +356,13 @@ const krakenConnector = {
         pendingOffset: 0,
       };
 
+    const balances = normalizeBalances(await client.getBalance());
+    const balanceObservedAt = new Date().toISOString();
     return {
       records,
       cursor: nextCursor,
-      balances: normalizeBalances(await client.getBalance()),
+      balances,
+      balance_observed_at: balanceObservedAt,
       stats: {
         rows: rows.length,
         pages,

@@ -327,7 +327,8 @@ const CryptoLedger = ({
   }, [reload, refreshKey]);
 
   const incompleteAccounts = useMemo(() => exchangeAccounts.filter(
-    (account) => account.last_sync_status === 'balance_mismatch'
+    (account) => ['mismatch', 'stale', 'unknown'].includes(account.reconciliation_status)
+      || account.last_sync_status === 'balance_mismatch'
       || account.last_sync_status === 'error'
       || account.last_sync_status === 'coverage_limited'
       || account.balance_report?.backfill_pending

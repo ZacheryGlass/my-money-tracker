@@ -251,6 +251,7 @@ test('uploading the same ledger twice yields one set of records', async () => {
   // The unrecognized ledger type and the widowed trade leg imported rather
   // than vanishing.
   assert.equal(first.body.needs_review, 2);
+  assert.equal(first.body.reconciliation_status, 'unknown');
   assert.equal(stored.size, 11);
 
   const second = await upload(csv);
@@ -261,6 +262,7 @@ test('uploading the same ledger twice yields one set of records', async () => {
   // upgrade here would mean the guard is not actually guarding.
   assert.equal(second.body.upgraded, 0);
   assert.equal(second.body.duplicates, 11);
+  assert.equal(second.body.reconciliation_status, 'unknown');
   assert.equal(stored.size, 11, 're-import must not add a second copy');
 });
 

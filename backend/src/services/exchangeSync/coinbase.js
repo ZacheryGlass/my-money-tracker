@@ -598,6 +598,7 @@ const coinbaseConnector = {
     // Advanced Trade balances -- the live figure the derived one is checked
     // against, and the same call the probe makes.
     const { accounts: brokerageAccounts, truncated: balancesTruncated } = await pageV3Accounts(client);
+    const balanceObservedAt = new Date().toISOString();
 
     const fills = await pageV3Fills(client, {
       startTime: watermark ? new Date(watermark).toISOString() : undefined,
@@ -760,6 +761,7 @@ const coinbaseConnector = {
           done: [],
         },
       balances: Object.fromEntries(sortedEntries(balances)),
+      balance_observed_at: balanceObservedAt,
       // Half a live balance picture reads every unenumerated portfolio as zero
       // and flags a healthy account, so the caller skips the comparison rather
       // than running it against a partial truth.

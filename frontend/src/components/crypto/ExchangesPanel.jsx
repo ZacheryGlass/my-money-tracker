@@ -55,6 +55,54 @@ const exchangeRecordAmount = (record) => {
   return amount.toLocaleString(undefined, { maximumFractionDigits: 8 });
 };
 
+// One account-level notice owns reconciliation messaging. Keeping mismatch,
+// stale, and unknown in one component prevents a CSV import from showing the
+// same problem once in its receipt and again in the refreshed account card.
+function ReconciliationNotice({ status, report }) {
+  const effectiveStatus = status
+    || (report?.mismatch_count > 0 ? 'mismatch' : null);
+  if (!effectiveStatus || effectiveStatus === 'current') return null;
+
+  if (effectiveStatus === 'mismatch') {
+    const assets = (report?.mismatches || []).map((mismatch) => mismatch.asset).join(', ');
+    return (
+      <p className="mt-1 flex items-start gap-2 text-loss">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+        The last sync&apos;s derived balances disagree with the exchange for {assets || 'some assets'}.{' '}
+        {report?.mismatch_count || 0} asset(s) do not match the balance the exchange reports, so some activity is missing or misread.
+      </p>
+    );
+  }
+
+  if (effectiveStatus === 'stale') {
+    const snapshot = report?.snapshot_at ? ` The last provider balance was observed ${formatRelativeTime(report.snapshot_at)}.` : '';
+    const limits = report?.coverage_limitations?.length > 0
+      ? ` Known coverage limits remain: ${report.coverage_limitations.join(' ')}` : '';
+    return (
+      <p className="mt-1 flex items-start gap-2 text-loss">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+        Reconciliation is stale; import the missing history or run a complete API sync before treating this account as complete.{snapshot}{limits}
+      </p>
+    );
+  }
+
+  if (effectiveStatus === 'unknown') {
+    return (
+      <p className="mt-1 flex items-start gap-2 text-loss">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+        No complete provider balance snapshot is available, so this account cannot yet be reconciled.{report?.last_known_mismatch_count > 0 ? ' The last known comparison also had mismatches.' : ''}
+      </p>
+    );
+  }
+
+  return null;
+}
+
+function legacyReconciliationStatus(status, report) {
+  return status
+    || (report?.mismatch_count > 0 ? 'mismatch' : null);
+}
+
 // Exchange accounts: read-only API keys, CSV imports, and the per-account queue
 // of records the importer could not fully read.
 function ExchangesPanel({
@@ -1021,46 +1069,33 @@ function ExchangesPanel({
                           automatically. No second click is needed.
                         </p>
                       )}
-                      {syncResult.sync.status === 'balance_mismatch' && (
-                        <p className="mt-1 flex items-start gap-2 text-loss">
-                          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                          {syncResult.sync.balance_report.mismatch_count} asset(s) do not match the balance the
-                          exchange reports, so some activity is missing or misread:{' '}
-                          {syncResult.sync.balance_report.mismatches.map((m) => m.asset).join(', ')}.
-                        </p>
-                      )}
-                      {syncResult.sync.coverage_limitations?.length > 0 && (
-                        <p className="mt-1 text-loss">
-                          Known coverage limits remain: {syncResult.sync.coverage_limitations.join(' ')}
-                        </p>
-                      )}
+                      <ReconciliationNotice
+                        status={syncResult.sync.reconciliation_status
+                          || (syncResult.sync.status === 'balance_mismatch' ? 'mismatch'
+                            : syncResult.sync.status === 'coverage_limited' ? 'stale' : null)}
+                        report={syncResult.sync.reconciliation || syncResult.sync.balance_report}
+                      />
                     </div>
                   )}
 
                   {/* Persisted from the last run, so a mismatch found by the
                       nightly job is visible without pressing anything. */}
-                  {!syncResult && account.last_sync_status === 'balance_mismatch' && (
-                    <div className="mt-5 flex items-start gap-3 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
-                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                      <p>
-                        The last sync&apos;s derived balances disagree with the exchange for{' '}
-                        {(account.balance_report?.mismatches || []).map((m) => m.asset).join(', ') || 'some assets'}.
-                        Some activity is missing or was misread.
-                      </p>
-                    </div>
-                  )}
-
-                  {!syncResult && (account.last_sync_status === 'coverage_limited'
-                    || account.balance_report?.balances_incomplete
-                    || account.balance_report?.coverage_limitations?.length > 0) && (
-                    <div className="mt-5 flex items-start gap-3 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
-                      <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                      <p>
-                        The exchange API has known history limits for this account. Review the imported records and
-                        retain an export for any activity the API does not expose.
-                        {account.balance_report?.coverage_limitations?.length > 0
-                          ? ` ${account.balance_report.coverage_limitations.join(' ')}` : ''}
-                      </p>
+                  {!syncResult && !result
+                    && ['mismatch', 'stale', 'unknown'].includes(
+                      legacyReconciliationStatus(
+                        account.reconciliation_status
+                          || (account.last_sync_status === 'balance_mismatch' ? 'mismatch'
+                            : account.last_sync_status === 'coverage_limited' ? 'stale' : null),
+                        account.balance_report
+                      )
+                    ) && (
+                    <div className="mt-5 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
+                      <ReconciliationNotice
+                        status={account.reconciliation_status
+                          || (account.last_sync_status === 'balance_mismatch' ? 'mismatch'
+                            : account.last_sync_status === 'coverage_limited' ? 'stale' : null)}
+                        report={account.balance_report}
+                      />
                     </div>
                   )}
 
@@ -1104,6 +1139,7 @@ function ExchangesPanel({
                           preamble line(s) inside the file.
                         </p>
                       )}
+                      <ReconciliationNotice status={result.reconciliation_status} report={result.reconciliation} />
                     </div>
                   )}
                 </div>

@@ -259,6 +259,8 @@ describe('Crypto -> Exchanges tab', () => {
       needs_review: 1,
       skipped_header_rows: 0,
       skipped_noise_rows: 0,
+      reconciliation_status: 'unknown',
+      reconciliation: { stale_reasons: ['no_complete_snapshot'] },
     });
     await renderSettings();
 
@@ -277,6 +279,7 @@ describe('Crypto -> Exchanges tab', () => {
     expect(screen.getByText(/2 possible duplicates sent to review/)).toBeInTheDocument();
     expect(screen.getByText(/1 flagged for review/)).toBeInTheDocument();
     expect(screen.getByText(/Kraken ledgers export/)).toBeInTheDocument();
+    expect(screen.getByText(/No complete provider balance snapshot is available/)).toBeInTheDocument();
   });
 
   it('reports records an earlier partial export could only half describe', async () => {

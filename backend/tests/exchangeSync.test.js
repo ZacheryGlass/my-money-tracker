@@ -275,6 +275,7 @@ const PUBLIC_COLUMNS = [
   'id', 'user_id', 'name', 'exchange', 'last_import_at', 'created_at', 'updated_at',
   'api_key_last4', 'api_secret_last4',
   'last_sync_at', 'last_sync_status', 'last_sync_error', 'balance_report',
+  'reconciliation_status',
 ];
 
 // The copy above cannot drift silently: once the fake pool is installed the
@@ -1517,7 +1518,7 @@ test('disconnect waits for an active sync instead of revoking its live key', asy
 
   assert.equal(clear.status, 409);
   assert.equal(clear.body.code, 'EXCHANGE_SYNC_IN_PROGRESS');
-  assert.equal(queries.some((entry) => /^UPDATE exchange_accounts SET api_key_encrypted = NULL/.test(entry.sql)), true);
+  assert.equal(queries.some((entry) => /^UPDATE exchange_accounts SET api_key_encrypted = NULL/.test(entry.sql)), false);
 });
 
 test('a sync with no encryption key is a 503 about the server, not a 409 about the account', async () => {
@@ -1631,6 +1632,33 @@ test('a CSV upload after an API backfill of the same period adds nothing', async
   assert.equal(uploaded.body.upgraded, 0, 'nothing was half-known, so nothing is upgraded');
   assert.equal(uploaded.body.duplicates, 11);
   assert.equal(stored.size, 11, 'no second copy of a single event');
+});
+
+test('every CSV import recomputes reconciliation, including a no-new-row import', async () => {
+  connectAccount();
+  accountOverrides.provider_balance_snapshot = {
+    provider: 'kraken',
+    observed_at: new Date().toISOString(),
+    complete: true,
+    balances: { BTC: '0' },
+  };
+  derivedBalances = { BTC: '1' };
+
+  const first = await request(app)
+    .post(`/api/exchanges/${OWNED_ACCOUNT_ID}/import`)
+    .set('Content-Type', 'text/csv')
+    .send(readFixture('kraken-ledgers.csv'));
+  assert.equal(first.status, 200);
+  assert.equal(first.body.reconciliation_status, 'mismatch');
+
+  const second = await request(app)
+    .post(`/api/exchanges/${OWNED_ACCOUNT_ID}/import`)
+    .set('Content-Type', 'text/csv')
+    .send(readFixture('kraken-ledgers.csv'));
+  assert.equal(second.status, 200);
+  assert.equal(second.body.imported, 0);
+  assert.equal(second.body.reconciliation_status, 'mismatch');
+  assert.equal(stored.size, 11);
 });
 
 test('a CSV-first import still gains the addresses only the API can see', async () => {

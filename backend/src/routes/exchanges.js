@@ -503,6 +503,12 @@ router.post('/:id/import', express.text({ type: 'text/csv', limit: '10mb' }), as
         code: 'UNSTORABLE_VALUE',
       });
     }
+    if (error.code === 'EXCHANGE_SYNC_IN_PROGRESS') {
+      return res.status(409).json({ error: error.message, code: error.code });
+    }
+    if (error.code === 'EXCHANGE_ACCOUNT_NOT_FOUND') {
+      return res.status(404).json({ error: error.message, code: error.code });
+    }
     logger.error({ err: error, accountId: req.params.id }, 'Exchange CSV import error');
     return res.status(500).json({ error: 'Failed to import exchange records' });
   }
