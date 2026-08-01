@@ -20,6 +20,7 @@ const readJson = (name) => JSON.parse(readFixture(name));
 const KRAKEN_LEDGERS = readJson('kraken-ledgers-api.json');
 const KRAKEN_FUNDING = readJson('kraken-funding-api.json');
 const COINBASE = readJson('coinbase-api.json');
+const COINBASE_LEGACY = readJson('coinbase-legacy-api.json');
 
 const OWNED_ACCOUNT_ID = 7;
 const OWNER_ID = 1;
@@ -27,14 +28,16 @@ const COINBASE_ACCOUNT_ID = 8;
 
 // --- fake pg ---------------------------------------------------------------
 //
-// Stands in for UNIQUE (exchange_account_id, external_id): keyed by the same
-// pair, valued by the row's needs_review, so the guarded upgrade behaves the
-// way Postgres would.
+// Stands in for UNIQUE (exchange_account_id, external_id). Complete normalized
+// rows are retained so upgrade tests can inspect the durable record rather than
+// trusting only the sync receipt.
 const stored = new Map();
 const chainDetails = new Map();
 let derivedBalances = {};
+let deriveFromStored = false;
 let accountOverrides = {};
 let accountSyncLockActive = false;
+let nextStoredId = 1;
 const queries = [];
 
 function accountRow(overrides = {}) {
@@ -59,9 +62,61 @@ function accountRow(overrides = {}) {
   };
 }
 
-const PARAMS_PER_ROW = 21;
-const EXTERNAL_ID_OFFSET = 11;
-const NEEDS_REVIEW_OFFSET = 12;
+const RECORD_COLUMNS = [
+  'record_type', 'occurred_at', 'base_asset', 'base_amount', 'quote_asset', 'quote_amount',
+  'fee_asset', 'fee_amount', 'tx_hash', 'address', 'external_id', 'needs_review', 'raw',
+  'source', 'network', 'chain_id', 'fingerprint', 'fingerprint_version',
+  'dedupe_provenance', 'duplicate_candidate',
+];
+const PARAMS_PER_ROW = RECORD_COLUMNS.length + 1;
+
+function storedKey(accountId, externalId) {
+  return `${accountId}|${externalId}`;
+}
+
+function recordFromInsertParams(params, start = 0) {
+  const row = { id: nextStoredId++, exchange_account_id: params[start] };
+  RECORD_COLUMNS.forEach((column, index) => {
+    const value = params[start + index + 1];
+    if (column === 'raw' && typeof value === 'string') {
+      row[column] = JSON.parse(value);
+    } else {
+      row[column] = value;
+    }
+  });
+  return row;
+}
+
+function recordsForAccount(accountId) {
+  return [...stored.values()].filter((row) => row.exchange_account_id === accountId);
+}
+
+function calculatedBalances(accountId) {
+  const totals = {};
+  const add = (asset, amount) => {
+    if (!asset || amount === null || amount === undefined) return;
+    totals[asset] = addAmounts(totals[asset] ?? '0', String(amount));
+  };
+  for (const row of recordsForAccount(accountId)) {
+    add(row.base_asset, row.base_amount);
+    add(row.quote_asset, row.quote_amount);
+    if (row.fee_asset && row.fee_amount !== null && row.fee_amount !== undefined) {
+      add(row.fee_asset, negateAmount(String(row.fee_amount)));
+    }
+  }
+  return totals;
+}
+
+function seedStoredRecord(accountId, record, { needsReview = record.needs_review } = {}) {
+  const row = {
+    id: nextStoredId++,
+    exchange_account_id: accountId,
+    ...record,
+    needs_review: needsReview,
+  };
+  stored.set(storedKey(accountId, record.external_id), row);
+  return row;
+}
 
 function resolveAccount(id, userId) {
   if (userId !== OWNER_ID) return [];
@@ -80,7 +135,8 @@ function fakeQuery(text, params) {
   // SELECT * left on this table, and derivedBalances also mentions
   // exchange_accounts, so a loose match would swallow it.
   if (/GROUP BY asset/.test(sql)) {
-    return { rows: Object.entries(derivedBalances).map(([asset, derived]) => ({ asset, derived })) };
+    const balances = deriveFromStored ? calculatedBalances(params[0]) : derivedBalances;
+    return { rows: Object.entries(balances).map(([asset, derived]) => ({ asset, derived })) };
   }
   if (/^UPDATE exchange_records er SET tx_hash = COALESCE/.test(sql)) {
     let filled = 0;
@@ -127,7 +183,7 @@ function fakeQuery(text, params) {
         ...row,
         api_configured: full.api_configured,
         record_count: stored.size,
-        needs_review_count: 0,
+        needs_review_count: [...stored.values()].filter((record) => record.needs_review).length,
       }],
     };
   }
@@ -162,6 +218,9 @@ function fakeQuery(text, params) {
     return { rows: [{ id: params[0] }] };
   }
   if (/^UPDATE exchange_accounts SET sync_cursor/.test(sql)) {
+    if (params[1] !== null && params[1] !== undefined) {
+      accountOverrides = { ...accountOverrides, sync_cursor: params[1] };
+    }
     return { rows: [accountRow({ last_sync_status: params[2], last_sync_error: params[3] })] };
   }
   if (/^UPDATE exchange_accounts/.test(sql)) {
@@ -170,20 +229,38 @@ function fakeQuery(text, params) {
   if (/^INSERT INTO exchange_records/.test(sql)) {
     const rows = [];
     for (let i = 0; i < params.length; i += PARAMS_PER_ROW) {
-      const key = `${params[i]}|${params[i + EXTERNAL_ID_OFFSET]}`;
-      const needsReview = Boolean(params[i + NEEDS_REVIEW_OFFSET]);
+      const incoming = recordFromInsertParams(params, i);
+      const key = storedKey(incoming.exchange_account_id, incoming.external_id);
+      const needsReview = Boolean(incoming.needs_review);
       if (!stored.has(key)) {
-        stored.set(key, needsReview);
+        stored.set(key, incoming);
         rows.push({ inserted: true });
-      } else if (stored.get(key) && !needsReview) {
-        stored.set(key, needsReview);
+      } else if (stored.get(key).needs_review && !needsReview) {
+        stored.set(key, { ...stored.get(key), ...incoming, id: stored.get(key).id });
         rows.push({ inserted: false });
       }
     }
     return { rows, rowCount: rows.length };
   }
   if (/FROM exchange_records er/.test(sql)) {
-    if (/COUNT\(\*\)/.test(sql)) return { rows: [{ total: 0 }] };
+    if (/^SELECT COUNT\(\*\)::int AS total/.test(sql)) {
+      const [accountId, userId] = params;
+      if (userId !== OWNER_ID) return { rows: [{ total: 0 }] };
+      let rows = recordsForAccount(accountId);
+      if (/er\.needs_review/.test(sql)) rows = rows.filter((record) => record.needs_review);
+      if (/NOT er\.needs_review/.test(sql)) rows = rows.filter((record) => !record.needs_review);
+      return { rows: [{ total: rows.length }] };
+    }
+    if (/^SELECT er\.\*/.test(sql)) {
+      const [accountId, userId] = params;
+      if (userId !== OWNER_ID) return { rows: [] };
+      let rows = recordsForAccount(accountId);
+      if (/er\.needs_review/.test(sql)) rows = rows.filter((record) => record.needs_review);
+      if (/NOT er\.needs_review/.test(sql)) rows = rows.filter((record) => !record.needs_review);
+      const limit = params[params.length - 2];
+      const offset = params[params.length - 1];
+      return { rows: rows.slice(offset, offset + limit) };
+    }
     return { rows: [] };
   }
   return { rows: [] };
@@ -341,6 +418,10 @@ function coinbaseResponse(url, config) {
   }
   if (/^\/v2\/accounts\/[^/]+\/transactions$/.test(path)) {
     if (coinbaseTransactionPages) {
+      // Match the default fixture: only the first synthetic wallet carries the
+      // transaction history. This keeps custom legacy pages from duplicating
+      // every record when the connector walks the second account.
+      if (!path.includes('11111111')) return { status: 200, data: { data: [], pagination: { next_uri: null } } };
       const after = config?.params?.starting_after;
       const index = after ? coinbaseTransactionPages.findIndex((page) => page._after === after) : 0;
       return { status: 200, data: coinbaseTransactionPages[index] ?? { data: [], pagination: {} } };
@@ -388,8 +469,10 @@ const CoinbaseClient = require('../src/services/exchangeSync/coinbaseClient');
 const krakenConnector = require('../src/services/exchangeSync/kraken');
 const coinbaseConnector = require('../src/services/exchangeSync/coinbase');
 const ExchangeSyncService = require('../src/services/ExchangeSyncService');
+const ExchangeRecord = require('../src/models/ExchangeRecord');
 const { buildRecords } = require('../src/services/exchangeImport/krakenLedger');
 const { parseExchangeCsv } = require('../src/services/exchangeImport');
+const { addAmounts, negateAmount } = require('../src/services/exchangeImport/shared');
 
 // A throwaway P-256 key in the shape Coinbase hands out. Generated here rather
 // than committed: a PEM in a public repo reads like a leaked credential even
@@ -411,7 +494,9 @@ beforeEach(() => {
   queries.length = 0;
   requests.length = 0;
   derivedBalances = {};
+  deriveFromStored = false;
   accountOverrides = {};
+  nextStoredId = 1;
   accountSyncLockActive = false;
   krakenLedgerPages = null;
   krakenLedgerHistory = null;
@@ -447,6 +532,43 @@ function connectAccount({ exchange = 'kraken', apiKey = 'KRAKEN-KEY-1234', apiSe
     api_secret_last4: secretCrypto.last4(secret),
     api_configured: true,
   };
+}
+
+function legacyCoinbaseRecords() {
+  return COINBASE_LEGACY.transactions.data.map((transaction, index) => (
+    coinbaseConnector._internals.recordFromTransaction(transaction, {
+      line: index + 1,
+      fillsByOrder: new Map(),
+    })
+  ));
+}
+
+function useLegacyCoinbaseFixture() {
+  coinbaseTransactionPages = [{
+    data: COINBASE_LEGACY.transactions.data,
+    pagination: { next_uri: null },
+  }];
+  coinbaseBrokeragePages = [{
+    accounts: [
+      {
+        currency: 'BTC',
+        available_balance: { value: '0.00030000', currency: 'BTC' },
+        hold: { value: '0', currency: 'BTC' },
+      },
+      {
+        currency: 'USD',
+        available_balance: { value: '1.00', currency: 'USD' },
+        hold: { value: '0', currency: 'USD' },
+      },
+      {
+        currency: 'ETH2',
+        available_balance: { value: '1.00000000', currency: 'ETH2' },
+        hold: { value: '0', currency: 'ETH2' },
+      },
+    ],
+    has_next: false,
+    cursor: '',
+  }];
 }
 
 // --- Kraken request signing ------------------------------------------------
@@ -897,6 +1019,96 @@ test('kraken: balances fold every wallet spelling of one asset into one position
 });
 
 // --- Coinbase connector ----------------------------------------------------
+
+test('coinbase: historical staking and ETH2 aliases normalize without losing provider types', () => {
+  const expected = new Map([
+    ['staking_reward', 'reward'],
+    ['inflation_reward', 'reward'],
+    ['interest', 'reward'],
+    ['retail_eth2_deprecation', 'transfer'],
+  ]);
+  const records = legacyCoinbaseRecords();
+
+  assert.equal(records.length, expected.size);
+  for (const record of records) {
+    const providerType = record.raw.type;
+    assert.equal(record.record_type, expected.get(providerType), providerType);
+    assert.equal(record.needs_review, false, providerType);
+    assert.equal(record.external_id, `cb:${record.raw.id}`);
+    assert.ok(record.base_asset, providerType);
+    assert.ok(record.base_amount, providerType);
+  }
+});
+
+test('coinbase: a full backfill upgrades legacy rows and recalculates durable state', async () => {
+  connectAccount({
+    exchange: 'coinbase',
+    apiKey: 'organizations/o/apiKeys/k',
+    apiSecret: EC_KEY_PEM.privateKey,
+  });
+  useLegacyCoinbaseFixture();
+  deriveFromStored = true;
+
+  const incoming = legacyCoinbaseRecords();
+  incoming.forEach((record) => seedStoredRecord(COINBASE_ACCOUNT_ID, record, { needsReview: true }));
+
+  const response = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.imported, 0);
+  assert.equal(response.body.upgraded, incoming.length);
+  assert.equal(response.body.duplicates, 0);
+  assert.equal(response.body.needs_review, 0);
+  assert.equal(response.body.status, 'ok');
+  assert.equal(response.body.balance_report.mismatch_count, 0);
+  assert.equal(response.body.backfill_pending, false);
+  assert.equal(stored.size, incoming.length);
+
+  for (const record of incoming) {
+    const saved = stored.get(storedKey(COINBASE_ACCOUNT_ID, record.external_id));
+    assert.equal(saved.record_type, record.record_type);
+    assert.equal(saved.needs_review, false);
+    assert.equal(saved.raw.type, record.raw.type);
+    assert.equal(saved.base_amount, record.base_amount);
+  }
+
+  const reviewQueue = await request(app)
+    .get(`/api/exchanges/${COINBASE_ACCOUNT_ID}/records?needs_review=true`);
+  assert.equal(reviewQueue.status, 200);
+  assert.equal(reviewQueue.body.pagination.total, 0);
+
+  // The first pass advanced the cursor. Force the same full-history contract a
+  // second time to prove clean rows are duplicates, not repeat upgrades.
+  accountOverrides = { ...accountOverrides, sync_cursor: null };
+  const second = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.imported, 0);
+  assert.equal(second.body.upgraded, 0);
+  assert.equal(second.body.duplicates, incoming.length);
+  assert.equal(stored.size, incoming.length);
+});
+
+test('coinbase: a resolved legacy row is not overwritten by a later clean import', async () => {
+  const { recordFromTransaction } = coinbaseConnector._internals;
+  const record = recordFromTransaction({
+    id: 'manual-legacy-row',
+    type: 'staking_reward',
+    created_at: '2024-03-10T12:00:00Z',
+    amount: { amount: '0.25', currency: 'BTC' },
+  }, { line: 1, fillsByOrder: new Map() });
+  const resolved = seedStoredRecord(COINBASE_ACCOUNT_ID, {
+    ...record,
+    record_type: 'transfer',
+    raw: { _format: 'coinbase', _source: 'csv', type: 'manual_review' },
+  }, { needsReview: false });
+
+  const result = await ExchangeRecord.bulkInsert(COINBASE_ACCOUNT_ID, [record]);
+
+  assert.deepEqual(result, { inserted: 0, upgraded: 0, duplicates: 1, total: 1 });
+  assert.equal(stored.get(storedKey(COINBASE_ACCOUNT_ID, record.external_id)).id, resolved.id);
+  assert.equal(stored.get(storedKey(COINBASE_ACCOUNT_ID, record.external_id)).record_type, 'transfer');
+  assert.equal(stored.get(storedKey(COINBASE_ACCOUNT_ID, record.external_id)).raw.type, 'manual_review');
+});
 
 test('coinbase: buys, sends, rewards and conversions map to the right record types', async () => {
   const result = await coinbaseConnector.sync(

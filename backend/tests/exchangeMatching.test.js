@@ -638,10 +638,15 @@ test('a user who tracks no exchange transfers at all sees no new flags', async (
 
 test('trades alone do not open the gate: only transfers can explain a transfer', async () => {
   db.activity = [activityRow({ category: 'exchange_deposit' })];
-  seedRecords(recordRow(501, { record_type: 'trade' }), recordRow(502, { record_type: 'reward' }));
+  seedRecords(
+    recordRow(501, { record_type: 'trade' }),
+    recordRow(502, { record_type: 'reward' }),
+    recordRow(503, { record_type: 'transfer' }),
+  );
 
   const result = await ExchangeMatchService.rebuildForUser(OWNER_ID);
   assert.equal(result.flagged, 0);
+  assert.deepEqual(ExchangeMatch.MATCHABLE_RECORD_TYPES, ['deposit', 'withdrawal']);
 });
 
 test('deleting an exchange account returns its matched flows to needs_review', async () => {

@@ -61,10 +61,10 @@ const REQUIRED_PERMISSIONS = ['View (read-only)'];
 
 // v2 transaction type -> record type. Enumerated from the current published
 // table at https://docs.cdp.coinbase.com/coinbase-app/track-apis/transactions
-// (28 values). Several types that used to exist -- exchange_deposit,
-// pro_deposit, staking_reward, inflation_reward, interest -- are NOT in the
-// current list and are deliberately absent here; the CSV importer still maps
-// their export spellings, which is where they survive.
+// (28 values). Coinbase has also returned historical values that are no longer
+// in the published list. Keep those exact spellings here when they are observed
+// in an API payload: the normalized record type is our stable vocabulary, while
+// raw.type retains the provider's original value for auditability.
 const TYPE_MAP = {
   // Trades. `buy`/`sell` are the retail ones; advanced_trade_fill is a fill on
   // the Advanced Trade book, which the retail CSV calls "Advanced Trade Buy".
@@ -83,6 +83,9 @@ const TYPE_MAP = {
   earn_payout: 'reward',
   incentives_rewards_payout: 'reward',
   subscription_rebate: 'reward',
+  staking_reward: 'reward',
+  inflation_reward: 'reward',
+  interest: 'reward',
 
   // Movement in and out of Coinbase itself.
   send: 'withdrawal',
@@ -105,6 +108,10 @@ const TYPE_MAP = {
   clawback: 'transfer',
   incentives_shared_clawback: 'transfer',
   fcm_futures_usdc_sell_additional_encumberment_rollup: 'transfer',
+  // Historical retail asset transition/deprecation rows are an internal
+  // direction-free move. They must never become a deposit or withdrawal and
+  // therefore must not enter exchange-to-wallet matching.
+  retail_eth2_deprecation: 'transfer',
 
   subscription: 'fee',
 

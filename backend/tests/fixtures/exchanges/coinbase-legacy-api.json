@@ -1,0 +1,58 @@
+{
+  "transactions": {
+    "pagination": {
+      "ending_before": null,
+      "starting_after": null,
+      "limit": 100,
+      "order": "desc",
+      "previous_uri": null,
+      "next_uri": null
+    },
+    "data": [
+      {
+        "id": "11111111-0000-0000-0000-000000000001",
+        "type": "staking_reward",
+        "status": "completed",
+        "amount": { "amount": "0.00010000", "currency": "BTC" },
+        "native_amount": { "amount": "6.20", "currency": "USD" },
+        "description": "Staking reward",
+        "created_at": "2024-03-04T12:00:00Z",
+        "resource": "transaction",
+        "resource_path": "/v2/accounts/synthetic/transactions/11111111-0000-0000-0000-000000000001"
+      },
+      {
+        "id": "22222222-0000-0000-0000-000000000002",
+        "type": "inflation_reward",
+        "status": "completed",
+        "amount": { "amount": "0.00020000", "currency": "BTC" },
+        "native_amount": { "amount": "12.40", "currency": "USD" },
+        "description": "Inflation reward",
+        "created_at": "2024-03-05T12:00:00Z",
+        "resource": "transaction",
+        "resource_path": "/v2/accounts/synthetic/transactions/22222222-0000-0000-0000-000000000002"
+      },
+      {
+        "id": "33333333-0000-0000-0000-000000000003",
+        "type": "interest",
+        "status": "completed",
+        "amount": { "amount": "1.00", "currency": "USD" },
+        "native_amount": { "amount": "1.00", "currency": "USD" },
+        "description": "Interest",
+        "created_at": "2024-03-06T12:00:00Z",
+        "resource": "transaction",
+        "resource_path": "/v2/accounts/synthetic/transactions/33333333-0000-0000-0000-000000000003"
+      },
+      {
+        "id": "44444444-0000-0000-0000-000000000004",
+        "type": "retail_eth2_deprecation",
+        "status": "completed",
+        "amount": { "amount": "1.00000000", "currency": "ETH2" },
+        "native_amount": { "amount": "2500.00", "currency": "USD" },
+        "description": "ETH2 asset transition",
+        "created_at": "2024-03-07T12:00:00Z",
+        "resource": "transaction",
+        "resource_path": "/v2/accounts/synthetic/transactions/44444444-0000-0000-0000-000000000004"
+      }
+    ]
+  }
+}
