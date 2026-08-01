@@ -9,6 +9,7 @@ const { ZERO_ADDRESS } = require('../utils/ethActivityVocabulary');
 // maps answer different questions.
 const REVIEW_REASONS = {
   unmatched_exchange: 'No exchange record explains this transfer yet -- import or sync that account',
+  heuristic_exchange: 'Heuristic exchange match needs confirmation -- review the amount, fee, address and timing evidence',
 };
 const HEX_ADDRESS = /^0x[0-9a-f]{40}$/;
 
@@ -18,6 +19,53 @@ const HEX_ADDRESS = /^0x[0-9a-f]{40}$/;
 //
 // 'manual' outranks even a hash because it is the user overruling us.
 const METHOD_RANK = { manual: 0, tx_hash: 1, address_amount: 2, amount_window: 3 };
+
+const EVIDENCE_FIELDS = [
+  'rule_version', 'comparison_kind', 'comparison_left_amount', 'comparison_right_amount',
+  'fee_amount_applied', 'amount_delta', 'amount_tolerance', 'magnitude_ratio',
+  'address_match', 'time_delta_seconds',
+];
+
+const DECIMAL_SCALE = 10n ** 18n;
+const ABSOLUTE_TOLERANCE_SCALED = 10n ** 10n;
+
+// SQL is the primary matcher, but keep the same policy at the selection
+// boundary so a stale/buggy candidate producer cannot reintroduce a material
+// false positive. The fixed-point conversion avoids JavaScript float rounding.
+function scaledDecimal(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  const match = text.match(/^(-?)(\d+)(?:\.(\d{1,18}))?$/);
+  if (!match) return null;
+  const fraction = (match[3] || '').padEnd(18, '0');
+  const scaled = BigInt(match[2]) * DECIMAL_SCALE + BigInt(fraction || '0');
+  return match[1] ? -scaled : scaled;
+}
+
+function amountEvidencePasses(candidate) {
+  if (candidate.comparison_kind !== 'amount') return true;
+  const leftValue = scaledDecimal(candidate.comparison_left_amount);
+  const rightValue = scaledDecimal(candidate.comparison_right_amount);
+  if (leftValue === null || rightValue === null) return false;
+  const left = leftValue < 0n ? -leftValue : leftValue;
+  const right = rightValue < 0n ? -rightValue : rightValue;
+  const larger = left > right ? left : right;
+  const smaller = left < right ? left : right;
+  const fee = scaledDecimal(candidate.fee_amount_applied) ?? 0n;
+  const rawDelta = left > right ? left - right : right - left;
+  const amountDelta = rawDelta > fee ? rawDelta - fee : 0n;
+  const relativeTolerance = (larger * 5n) / 1000n;
+  const tolerance = relativeTolerance > ABSOLUTE_TOLERANCE_SCALED
+    ? relativeTolerance : ABSOLUTE_TOLERANCE_SCALED;
+  return amountDelta <= tolerance && (larger === 0n || smaller * 2n >= larger);
+}
+
+function evidenceFor(candidate, fallbackKind = null) {
+  return Object.fromEntries(EVIDENCE_FIELDS.map((field) => [
+    field,
+    candidate[field] ?? (field === 'rule_version' ? 'v2' : field === 'comparison_kind' ? fallbackKind : null),
+  ]));
+}
 
 const onChainVerdictKey = (row) =>
   `oc:${row.exchange_record_id}:${row.wallet_id}:${row.chain_id}:${row.tx_hash}`;
@@ -54,7 +102,8 @@ function compareCandidates(a, b) {
   if (shape !== 0) return shape;
   const rank = (METHOD_RANK[a.match_method] ?? 9) - (METHOD_RANK[b.match_method] ?? 9);
   if (rank !== 0) return rank;
-  const delta = Number(a.time_delta ?? 0) - Number(b.time_delta ?? 0);
+  const delta = Number(a.time_delta_seconds ?? a.time_delta ?? 0)
+    - Number(b.time_delta_seconds ?? b.time_delta ?? 0);
   if (delta !== 0) return delta;
   const record = Number(a.exchange_record_id) - Number(b.exchange_record_id);
   if (record !== 0) return record;
@@ -104,6 +153,8 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
       match_method: 'manual',
       confidence: 'high',
       time_delta: 0,
+      rule_version: 'v2',
+      comparison_kind: 'manual',
     });
   }
 
@@ -113,7 +164,7 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
     ...pairs.map((row) => ({ ...row, activity_id: null })),
   ].filter((row) => {
     const key = row.counter_record_id ? pairVerdictKey(row) : onChainVerdictKey(row);
-    return !rejected.has(key);
+    return !rejected.has(key) && amountEvidencePasses(row);
   });
 
   candidates.sort(compareCandidates);
@@ -138,6 +189,10 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
         counter_record_id: counterId,
         match_method: candidate.match_method,
         confidence: candidate.confidence,
+        wallet_id: null,
+        chain_id: null,
+        tx_hash: null,
+        ...evidenceFor(candidate, candidate.match_method === 'tx_hash' ? 'hash' : 'amount'),
       });
       continue;
     }
@@ -152,6 +207,10 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
       counter_record_id: null,
       match_method: candidate.match_method,
       confidence: candidate.confidence,
+      wallet_id: candidate.wallet_id ?? null,
+      chain_id: candidate.chain_id ?? null,
+      tx_hash: candidate.tx_hash ?? null,
+      ...evidenceFor(candidate, candidate.match_method === 'tx_hash' ? 'hash' : 'amount'),
     });
 
     // The learning loop, restricted to hash matches. A hash match is the
@@ -205,12 +264,13 @@ class ExchangeMatchService {
     ]);
 
     const { rows, learn } = selectMatches({ onChain, pairs, verdicts });
-    const matches = await ExchangeMatch.replaceForUser(userId, rows);
+    const replacement = await ExchangeMatch.replaceForUser(userId, rows);
+    const matches = replacement.inserted;
     // Order matters between these two only in that both are idempotent and
     // mutually exclusive: one needs a match to exist, the other needs one not
     // to. Clearing first keeps a row that just gained a match from being read
     // as unmatched in the same pass.
-    const cleared = await ExchangeMatch.clearReviewForMatched(userId);
+    const cleared = await ExchangeMatch.clearReviewForMatched(userId, REVIEW_REASONS.heuristic_exchange);
     const flagged = await ExchangeMatch.flagUnmatchedExchangeFlows(userId, REVIEW_REASONS.unmatched_exchange);
 
     // Labels heal FUTURE classification, exactly as the issue says: nothing
@@ -226,8 +286,8 @@ class ExchangeMatchService {
       }
     }
 
-    logger.info({ userId, matches, cleared, flagged, learned }, 'Exchange matches rebuilt');
-    return { matches, cleared, flagged, learned };
+    logger.info({ userId, matches, invalidated: replacement.invalidated, cleared, flagged, learned }, 'Exchange matches rebuilt');
+    return { matches, invalidated: replacement.invalidated, cleared, flagged, learned };
   }
 
   // Same pass, but never fatal. Every caller outside the activity rebuild is
@@ -248,3 +308,4 @@ module.exports = ExchangeMatchService;
 module.exports.selectMatches = selectMatches;
 module.exports.REVIEW_REASONS = REVIEW_REASONS;
 module.exports.METHOD_RANK = METHOD_RANK;
+module.exports.amountEvidencePasses = amountEvidencePasses;

@@ -10,6 +10,7 @@ const ExchangeBackfillService = require('../services/ExchangeBackfillService');
 const BenchmarkUpdateJob = require('./benchmarkUpdateJob');
 const HistoricalPriceJob = require('./historicalPriceJob');
 const ExpenseSyncJob = require('./expenseSyncJob');
+const ExchangeMatchHardeningJob = require('./exchangeMatchHardeningJob');
 const JobLog = require('../models/JobLog');
 const logger = require('../config/logger');
 
@@ -111,6 +112,12 @@ async function initializeJobs() {
   // process is ready; claimDue's lease handles stale running rows.
   void ExchangeBackfillService.kick().catch((error) => {
     logger.error({ err: error }, '[scheduler] Initial exchange backfill pump failed');
+  });
+
+  // Rebuild the derived exchange-match table once after the hardened rules
+  // migrate in. The durable job row makes this safe across every later boot.
+  void ExchangeMatchHardeningJob.run().catch((error) => {
+    logger.error({ err: error }, '[scheduler] Exchange match hardening failed');
   });
 
   // Schedule price update at 8 AM UTC daily

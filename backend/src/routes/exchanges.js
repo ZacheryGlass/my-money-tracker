@@ -219,6 +219,19 @@ router.get('/matches', async (req, res) => {
   }
 });
 
+// Immutable rebuild events explain why an older derived match disappeared.
+router.get('/matches/events', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const { events, total } = await ExchangeMatch.eventsForUser(req.user.id, { limit, offset });
+    return res.status(200).json({ data: events, pagination: { total, limit, offset } });
+  } catch (error) {
+    logger.error({ err: error }, 'Get exchange match events error');
+    return res.status(500).json({ error: 'Failed to retrieve exchange match events' });
+  }
+});
+
 // A repeatable, reviewable export of the derived pairings. Unmatched sides are
 // intentionally not fabricated into rows here: the JSON summary beside this
 // export reports those counts, while this file contains only pairings with the
@@ -234,6 +247,16 @@ router.get('/matches/export', async (req, res) => {
       ['activity_id', 'activity_id'],
       ['match_method', 'match_method'],
       ['confidence', 'confidence'],
+      ['rule_version', 'rule_version'],
+      ['comparison_kind', 'comparison_kind'],
+      ['comparison_left_amount', 'comparison_left_amount'],
+      ['comparison_right_amount', 'comparison_right_amount'],
+      ['fee_amount_applied', 'fee_amount_applied'],
+      ['amount_delta', 'amount_delta'],
+      ['amount_tolerance', 'amount_tolerance'],
+      ['magnitude_ratio', 'magnitude_ratio'],
+      ['address_match', 'address_match'],
+      ['time_delta_seconds', 'time_delta_seconds'],
       ['verdict', 'verdict'],
       ['verdict_note', 'verdict_note'],
       ['record_type', 'record_type'],

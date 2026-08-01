@@ -26,6 +26,7 @@ vi.mock('../utils/api', () => ({
     importCsv: vi.fn(),
     getRecords: vi.fn(),
     getMatches: vi.fn(),
+    getMatchEvents: vi.fn(),
     matchesExportUrl: vi.fn(() => '/api/exchanges/matches/export'),
     resolveRecord: vi.fn(),
     setCredentials: vi.fn(),
@@ -112,6 +113,42 @@ beforeEach(() => {
   vi.clearAllMocks();
   exchangesAPI.getAll.mockResolvedValue(listResponse([ACCOUNT]));
   exchangesAPI.getRecords.mockResolvedValue({ data: FLAGGED, pagination: { total: FLAGGED.length } });
+  exchangesAPI.getMatches.mockResolvedValue({
+    data: [{
+      id: 20,
+      occurred_at: '2026-07-31T12:00:00.000Z',
+      exchange_account_name: 'Kraken Spot',
+      record_type: 'deposit',
+      base_amount: '1.995',
+      base_asset: 'ETH',
+      match_method: 'address_amount',
+      confidence: 'medium',
+      comparison_kind: 'amount',
+      amount_delta: '0',
+      amount_tolerance: '0.01',
+      magnitude_ratio: '0.9975',
+      fee_amount_applied: '0.005',
+      address_match: true,
+      verdict: null,
+    }],
+    summary: { matched: 1, unmatchedRecords: 0, unmatchedActivities: 0 },
+  });
+  exchangesAPI.getMatchEvents.mockResolvedValue({
+    data: [{
+      id: 21,
+      created_at: '2026-07-31T12:01:00.000Z',
+      exchange_account_name: 'Kraken Spot',
+      exchange_record_id: 20,
+      reason: 'No longer satisfies the hardened amount, fee or magnitude policy',
+      prior_match_method: 'amount_window',
+      prior_confidence: 'low',
+      comparison_kind: 'amount',
+      amount_delta: '2.5',
+      amount_tolerance: '0.01',
+      magnitude_ratio: '0.01',
+    }],
+    pagination: { total: 1 },
+  });
   exchangesAPI.resolveRecord.mockResolvedValue({ record: { id: 11, needs_review: false } });
   // Existing receipt tests exercise the compatibility path; the dedicated
   // background test below swaps this implementation for a job receipt.
@@ -129,6 +166,18 @@ describe('Crypto -> Exchanges tab', () => {
     // has to look at.
     expect(within(card).getByText('2 need review')).toBeInTheDocument();
     expect(within(card).getByText('Kraken')).toBeInTheDocument();
+  });
+
+  it('shows comparison evidence and rebuild invalidations in the match audit', async () => {
+    await renderSettings();
+    fireEvent.click(await screen.findByRole('button', { name: /Match audit/i }));
+
+    expect(await screen.findByText(/residual 0 ≤ tolerance 0.01/)).toBeInTheDocument();
+    expect(screen.getByText(/address corroborated/)).toBeInTheDocument();
+    expect(screen.getByText('Automatically invalidated')).toBeInTheDocument();
+    expect(screen.getByText(/No longer satisfies the hardened amount/)).toBeInTheDocument();
+    expect(exchangesAPI.getMatches).toHaveBeenCalledWith({ limit: 100 });
+    expect(exchangesAPI.getMatchEvents).toHaveBeenCalledWith({ limit: 100 });
   });
 
   it('says an account has never been imported rather than showing nothing', async () => {

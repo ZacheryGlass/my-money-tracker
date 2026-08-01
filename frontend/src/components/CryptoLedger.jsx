@@ -1114,6 +1114,13 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
               {row.exchange_match.match_confidence ? ` · ${row.exchange_match.match_confidence} confidence` : ''}
             </span>
           </div>
+          {row.exchange_match.comparison_kind === 'amount' && (
+            <p className="mt-1 text-caption text-tertiary">
+              residual {row.exchange_match.amount_delta ?? '—'} ≤ tolerance {row.exchange_match.amount_tolerance ?? '—'} ·
+              ratio {row.exchange_match.magnitude_ratio ?? '—'} · fee {row.exchange_match.fee_amount_applied ?? '0'}
+              {row.exchange_match.address_match ? ' · address corroborated' : ' · time-window evidence only'}
+            </p>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {row.exchange_match.verdict ? (
               <>

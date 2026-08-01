@@ -44,6 +44,7 @@ const db = {
   activity: [],
   labels: [],
   records: new Map(),
+  events: [],
 };
 const queries = [];
 
@@ -51,7 +52,12 @@ const verdictKey = (row) => (row.counter_record_id
   ? `pr:${row.exchange_record_id}:${row.counter_record_id}`
   : `oc:${row.exchange_record_id}:${row.wallet_id}:${row.chain_id}:${row.tx_hash}`);
 
-const MATCH_COLUMNS = ['exchange_record_id', 'activity_id', 'counter_record_id', 'match_method', 'confidence'];
+const MATCH_COLUMNS = [
+  'exchange_record_id', 'activity_id', 'counter_record_id', 'match_method', 'confidence',
+  'rule_version', 'comparison_kind', 'comparison_left_amount', 'comparison_right_amount',
+  'fee_amount_applied', 'amount_delta', 'amount_tolerance', 'magnitude_ratio',
+  'address_match', 'time_delta_seconds',
+];
 
 let nextMatchId = 1;
 
@@ -99,16 +105,50 @@ function fakeQuery(text, params = []) {
     }
     return { rows: [], rowCount: inserted };
   }
-  if (/^UPDATE eth_activity a SET needs_review = FALSE/.test(sql)) {
+  if (/^INSERT INTO exchange_match_events/.test(sql)) {
+    const [eventKey, exchangeRecordId, counterRecordId, walletId, chainId, txHash,
+      priorMatchMethod, priorConfidence, reason, ruleVersion, comparisonKind,
+      comparisonLeftAmount, comparisonRightAmount, feeAmountApplied, amountDelta,
+      amountTolerance, magnitudeRatio, addressMatch, timeDeltaSeconds] = params;
+    if (!db.events.some((event) => event.event_key === eventKey)) {
+      db.events.push({
+        event_key: eventKey,
+        exchange_record_id: exchangeRecordId,
+        counter_record_id: counterRecordId,
+        wallet_id: walletId,
+        chain_id: chainId,
+        tx_hash: txHash,
+        prior_match_method: priorMatchMethod,
+        prior_confidence: priorConfidence,
+        reason,
+        rule_version: ruleVersion,
+        comparison_kind: comparisonKind,
+        comparison_left_amount: comparisonLeftAmount,
+        comparison_right_amount: comparisonRightAmount,
+        fee_amount_applied: feeAmountApplied,
+        amount_delta: amountDelta,
+        amount_tolerance: amountTolerance,
+        magnitude_ratio: magnitudeRatio,
+        address_match: addressMatch,
+        time_delta_seconds: timeDeltaSeconds,
+      });
+    }
+    return { rows: [], rowCount: 1 };
+  }
+  if (/^UPDATE eth_activity a SET needs_review =/.test(sql)
+      && !/^UPDATE eth_activity a SET needs_review = TRUE/.test(sql)) {
     let count = 0;
+    const heuristicReason = params[1];
     for (const row of db.activity) {
       const match = db.matches.find((m) => m.activity_id === row.id);
       if (!match) continue;
-      // Path-independent: the stamp does not depend on the row being flagged,
-      // only on it saying something other than what the match says.
-      if (!row.needs_review && row.review_reason === null && row.confidence === match.confidence) continue;
-      row.needs_review = false;
-      row.review_reason = null;
+      const needsReview = !['tx_hash', 'manual'].includes(match.match_method);
+      const reviewReason = needsReview ? heuristicReason : null;
+      if (row.needs_review === needsReview
+          && row.review_reason === reviewReason
+          && row.confidence === match.confidence) continue;
+      row.needs_review = needsReview;
+      row.review_reason = reviewReason;
       row.confidence = match.confidence;
       count += 1;
     }
@@ -213,6 +253,7 @@ function fakeQuery(text, params = []) {
       ...row,
       ...(db.records.get(row.exchange_record_id) || {}),
       counter_record_type: db.records.get(row.counter_record_id)?.record_type ?? null,
+      verdict: db.verdicts.get(verdictKey(row))?.verdict ?? null,
       total_count: db.matches.length,
     }));
     return { rows };
@@ -255,7 +296,7 @@ const app = require('../src/server');
 const ExchangeMatch = require('../src/models/ExchangeMatch');
 const ExchangeMatchService = require('../src/services/ExchangeMatchService');
 
-const { selectMatches, REVIEW_REASONS } = ExchangeMatchService;
+const { selectMatches, REVIEW_REASONS, amountEvidencePasses } = ExchangeMatchService;
 
 // --- fixtures --------------------------------------------------------------
 
@@ -321,6 +362,7 @@ beforeEach(() => {
   db.activity = [];
   db.labels = [];
   db.records.clear();
+  db.events = [];
   queries.length = 0;
   nextMatchId = 1;
   delete process.env.DEV_AUTH_USER_ID;
@@ -413,9 +455,44 @@ test('a record with no hash still matches on asset, amount and a time window', a
 
   assert.equal(db.matches.length, 1);
   assert.equal(db.matches[0].match_method, 'address_amount');
-  // The transfer leaves the queue, but it does not claim to be certain.
-  assert.equal(db.activity[0].needs_review, false);
+  // A heuristic is deliberately still reviewable even though it has a match.
+  assert.equal(db.activity[0].needs_review, true);
+  assert.equal(db.activity[0].review_reason, REVIEW_REASONS.heuristic_exchange);
   assert.equal(db.activity[0].confidence, 'medium');
+});
+
+test('materially different amounts never survive the heuristic guard, including opposite signs', () => {
+  const candidate = onChainCandidate({
+    match_method: 'amount_window',
+    confidence: 'low',
+    comparison_kind: 'amount',
+    comparison_left_amount: '-0.00000001',
+    comparison_right_amount: '25',
+    fee_amount_applied: '0',
+  });
+  assert.equal(amountEvidencePasses(candidate), false);
+  assert.deepEqual(selectMatches({ onChain: [candidate] }).rows, []);
+});
+
+test('amount evidence compares magnitudes after an applicable fee and preserves direction as separate evidence', () => {
+  const candidate = onChainCandidate({
+    match_method: 'address_amount',
+    confidence: 'medium',
+    comparison_kind: 'amount',
+    comparison_left_amount: '-2.00000000',
+    comparison_right_amount: '1.995',
+    fee_amount_applied: '0.005',
+    amount_delta: '0',
+    amount_tolerance: '0.01',
+    magnitude_ratio: '0.9975',
+    address_match: true,
+  });
+  assert.equal(amountEvidencePasses(candidate), true);
+  const { rows } = selectMatches({ onChain: [candidate] });
+  assert.equal(rows[0].comparison_kind, 'amount');
+  assert.equal(rows[0].amount_delta, '0');
+  assert.equal(rows[0].amount_tolerance, '0.01');
+  assert.equal(rows[0].address_match, true);
 });
 
 test('a hash match beats a fallback match for the same record, whatever the row order', () => {
@@ -532,6 +609,48 @@ test('the rebuild replaces every match it derived, and does not duplicate them',
   await ExchangeMatchService.rebuildForUser(OWNER_ID);
   assert.equal(db.matches.length, 1, 'a second rebuild must not stack a second match');
   assert.notEqual(db.matches[0].id, firstId, 'and it really is delete-then-insert');
+});
+
+test('a hardened rebuild audits a stale derived match once and preserves explicit verdicts', async () => {
+  db.activity = [activityRow()];
+  seedRecords(recordRow(500));
+  db.onChainCandidates = [onChainCandidate({
+    match_method: 'amount_window',
+    confidence: 'low',
+    comparison_kind: 'amount',
+    comparison_left_amount: '1',
+    comparison_right_amount: '1',
+    amount_delta: '0',
+    amount_tolerance: '0.005',
+    magnitude_ratio: '1',
+  })];
+
+  await ExchangeMatchService.rebuildForUser(OWNER_ID);
+  db.onChainCandidates = [];
+  const invalidated = await ExchangeMatchService.rebuildForUser(OWNER_ID);
+
+  assert.equal(invalidated.invalidated, 1);
+  assert.equal(db.events.length, 1);
+  assert.equal(db.events[0].prior_match_method, 'amount_window');
+  assert.equal(db.events[0].amount_tolerance, '0.005');
+
+  const repeated = await ExchangeMatchService.rebuildForUser(OWNER_ID);
+  assert.equal(repeated.invalidated, 0);
+  assert.equal(db.events.length, 1, 'the event key makes rebuild counts reproducible');
+
+  db.verdicts.set(verdictKey({
+    exchange_record_id: 500, wallet_id: WALLET_ID, chain_id: 1, tx_hash: TX,
+  }), {
+    exchange_record_id: 500,
+    counter_record_id: null,
+    wallet_id: WALLET_ID,
+    chain_id: 1,
+    tx_hash: TX,
+    verdict: 'confirmed',
+  });
+  const confirmed = await ExchangeMatchService.rebuildForUser(OWNER_ID);
+  assert.equal(confirmed.invalidated, 0);
+  assert.equal(db.matches[0].match_method, 'manual');
 });
 
 test('a rejected match stays rejected through any number of rebuilds', async () => {
@@ -678,14 +797,18 @@ test('the on-chain candidate query keeps its exact-NUMERIC tolerance and its dir
 
   // Wei-scale quantities. A float comparison would both miss real matches and
   // invent fake ones, so the tolerance is a NUMERIC literal all the way down.
-  assert.match(sql, /ABS\(sr\.base_amount - sa\.leg_amount\) <= sr\.base_fee_amount \+ sa\.leg_amount \* \$2::numeric/);
-  assert.equal(params[1], ExchangeMatch.AMOUNT_TOLERANCE_RATE);
+  assert.match(sql, /GREATEST\(\$2::numeric, GREATEST\(sa\.leg_amount, sr\.base_amount\) \* \$3::numeric\)/);
+  assert.match(sql, /evidence\.amount_delta <= evidence\.amount_tolerance/);
+  assert.match(sql, /evidence\.magnitude_ratio >= \$5::numeric/);
+  assert.equal(params[1], ExchangeMatch.ABSOLUTE_AMOUNT_TOLERANCE);
+  assert.equal(params[2], ExchangeMatch.AMOUNT_TOLERANCE_RATE);
+  assert.equal(params[4], ExchangeMatch.MIN_MAGNITUDE_RATIO);
   assert.doesNotMatch(sql, /float|double precision/i);
 
   // Direction, or a deposit and a withdrawal of the same size on the same day
   // match each other.
   assert.match(sql, /sr\.record_type = CASE WHEN sa\.leg_direction = 'out' THEN 'deposit' ELSE 'withdrawal' END/);
-  assert.match(sql, /sr\.record_type = CASE WHEN sa\.category = 'exchange_deposit' THEN 'deposit' ELSE 'withdrawal' END/);
+  assert.match(sql, /sa\.leg_direction IN \('in', 'out'\)/);
 
   // Both sides fail closed through their root tables.
   assert.match(sql, /JOIN eth_wallets w ON w\.id = a\.wallet_id/);
@@ -714,15 +837,14 @@ test('a fee in another currency does not widen the amount window on either arm',
     assert.match(sql, /CASE WHEN er\.fee_asset IS NULL OR UPPER\(er\.fee_asset\) = UPPER\(er\.base_asset\) THEN COALESCE\(ABS\(er\.fee_amount\), 0\) ELSE 0 END AS base_fee_amount/);
     // And no tolerance may reach the raw column past that guard: the 0.5%
     // relative slack is all a foreign-currency fee gets.
-    const tolerances = sql.match(/<=[^)]*fee_amount[^\n]*?\$2::numeric/g) || [];
-    assert.ok(tolerances.length > 0, 'the tolerance is still there');
-    for (const tolerance of tolerances) {
-      assert.doesNotMatch(tolerance, /(?<!base_)fee_amount/, `unguarded fee in: ${tolerance}`);
-    }
-  }
+   assert.match(sql, /amount_delta/);
+   assert.match(sql, /amount_tolerance/);
+   assert.doesNotMatch(sql, /ABS\(sr\.base_amount - sa\.leg_amount\) <= sr\.base_fee_amount \+/);
+   assert.doesNotMatch(sql, /ABS\(sent\.base_amount - received\.base_amount\) <= sent\.base_fee_amount \+/);
+ }
 
-  assert.match(onChain, /<= sr\.base_fee_amount \+ sa\.leg_amount \* \$2::numeric/);
-  assert.match(pair, /<= sent\.base_fee_amount \+ received\.base_fee_amount \+ sent\.base_amount \* \$2::numeric/);
+  assert.match(onChain, /GREATEST\(ABS\(sr\.base_amount - sa\.leg_amount\) - sr\.base_fee_amount, 0::numeric\)/);
+  assert.match(pair, /GREATEST\(ABS\(sent\.base_amount - received\.base_amount\)/);
 });
 
 test('the exchange-to-exchange query refuses to pair an account with itself', async () => {
@@ -784,7 +906,7 @@ test('the confidence stamp does not depend on whether the row happened to be fla
   const neverFlagged = await run(false);
   assert.equal(flaggedFirst.confidence, 'medium');
   assert.equal(neverFlagged.confidence, 'medium', 'a match paired by a time window is not certain either way');
-  assert.equal(neverFlagged.needs_review, false);
+  assert.equal(neverFlagged.needs_review, true);
 });
 
 test('the verdict statements gate the wallet as well as the record', async () => {
