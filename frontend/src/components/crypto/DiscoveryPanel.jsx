@@ -5,13 +5,18 @@ import { shortEthAddress } from '../../utils/format';
 
 const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
   const [candidates, setCandidates] = useState([]);
+  const [receipts, setReceipts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const result = await ethAPI.getDiscoveryCandidates({ status: 'pending' });
+      const [result, receiptResult] = await Promise.all([
+        ethAPI.getDiscoveryCandidates({ status: 'pending' }),
+        ethAPI.getDiscoveryReceipts({ limit: 100 }),
+      ]);
       setCandidates(result.candidates || []);
+      setReceipts(receiptResult.receipts || []);
     } catch (error) {
       onError?.(error.response?.data?.error || 'Failed to load wallet discovery candidates');
     } finally {
@@ -85,6 +90,27 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
           </article>
         ))}
       </div>
+      {receipts.length > 0 && (
+        <details className="rounded border border-border bg-surface-2 p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-primary">
+            Provider receipts ({receipts.length})
+          </summary>
+          <p className="mt-1 text-xs text-tertiary">
+            These durable outcomes explain which bounded checks completed, were skipped, or need a retry.
+          </p>
+          <div className="mt-3 space-y-2">
+            {receipts.map((receipt) => (
+              <div key={receipt.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 text-xs">
+                <span className="font-mono text-secondary">{shortEthAddress(receipt.address)} · chain {receipt.chain_id} · depth {receipt.depth}</span>
+                <span className={`font-semibold uppercase tracking-wide ${receipt.status === 'failed' ? 'text-loss' : receipt.status === 'complete' ? 'text-gain' : 'text-accent'}`}>
+                  {receipt.status.replace('_', ' ')}{receipt.rows_fetched != null ? ` · ${receipt.rows_fetched} rows` : ''}
+                </span>
+                {receipt.error_message && <span className="basis-full text-tertiary">{receipt.error_message}</span>}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </section>
   );
 };

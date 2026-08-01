@@ -7,6 +7,8 @@ const PlaidItem = require('../models/PlaidItem');
 const PriceCache = require('../models/PriceCache');
 const Trade = require('../models/Trade');
 const SecurityMaster = require('../models/SecurityMaster');
+const ExchangeMatchService = require('./ExchangeMatchService');
+const TransactionClassificationService = require('./TransactionClassificationService');
 const logger = require('../config/logger');
 
 // Plaid investment subtypes carry the tax treatment exactly; the app only needs
@@ -346,6 +348,17 @@ class PlaidService {
       } else {
         logger.error({ plaidItemId, err }, 'Failed to sync transactions');
       }
+    }
+
+    // Bank rows can arrive after the exchange import. Rebuild the derived
+    // exchange-fiat links from the bank side too, then immediately refresh the
+    // spending classification so a newly linked deposit/withdrawal is not
+    // counted as income or expense until the next exchange sync.
+    results.exchangeFiat = await ExchangeMatchService.rebuildForUserSafely(item.user_id, { plaidItemId });
+    try {
+      results.classification = await TransactionClassificationService.backfillForUser(item.user_id);
+    } catch (err) {
+      logger.warn({ plaidItemId, err }, 'Transaction classification backfill skipped after Plaid sync');
     }
 
     if (investmentAccountIds.length > 0) {

@@ -173,7 +173,7 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     `INSERT INTO exchange_records
        (exchange_account_id, record_type, occurred_at, base_asset, base_amount,
         external_id, needs_review, source)
-     VALUES ($1, 'deposit', '2026-02-20 18:40', 'USD', 1.25, 'FIAT-1', false, 'api')
+     VALUES ($1, 'deposit', '2026-02-20 18:40', 'USD', 1.25, 'FIAT-1', true, 'api')
      RETURNING id`,
     [accountId]
   );
@@ -191,9 +191,14 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
        JOIN transactions t ON t.id = efm.transaction_id
       WHERE t.plaid_transaction_id = 'verify-plaid-1'`
   );
+  const fiatReview = await pool.query(
+    'SELECT needs_review FROM exchange_records WHERE id = $1',
+    [fiatRecord.rows[0].id]
+  );
   ok('real fiat matcher links a same-amount named bank rail event',
     fiatResult.matched === 1 && fiatLink.rows.length === 1
-      && String(fiatLink.rows[0].exchange_record_id) === String(fiatRecord.rows[0].id));
+      && String(fiatLink.rows[0].exchange_record_id) === String(fiatRecord.rows[0].id)
+      && fiatReview.rows[0]?.needs_review === false);
   await pool.query('DELETE FROM accounts WHERE id = $1', [bankAccount.rows[0].id]);
   await pool.query('DELETE FROM exchange_records WHERE id = $1', [fiatRecord.rows[0].id]);
 

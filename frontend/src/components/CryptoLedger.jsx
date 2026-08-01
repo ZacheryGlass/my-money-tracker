@@ -467,6 +467,15 @@ const CryptoLedger = ({
                 {entry.exchange_match.verdict === 'confirmed' ? 'Matched ✓' : 'Matched'}
               </Chip>
             )}
+            {entry.exchange_fiat_match && (
+              <Chip
+                className="border-accent/20 bg-accent/10 text-accent"
+                title="Exchange fiat movement linked to the bank transaction imported from Plaid"
+              >
+                <Landmark size={9} />
+                Bank linked
+              </Chip>
+            )}
             {/* A hash only exists on its own chain: the same lookup on the
                 wrong explorer reads as "this never happened". */}
             {entry.tx_hash && entry.source === 'onchain' && (
@@ -1064,6 +1073,21 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
           </DetailField>
         )}
         {row.external_id && <DetailField label="Exchange record">{row.external_id}</DetailField>}
+        {row.exchange_fiat_match && (
+          <div className="col-span-full border border-accent/20 bg-accent/5 p-2">
+            <p className="text-[9px] font-bold uppercase tracking-wide text-accent">Linked bank transaction</p>
+            <p className="mt-1 text-body-sm text-secondary">
+              {row.exchange_fiat_match.bank_name || row.exchange_fiat_match.merchant_name || 'Plaid transaction'}
+              {row.exchange_fiat_match.bank_account_name ? ` · ${row.exchange_fiat_match.bank_account_name}` : ''}
+              {row.exchange_fiat_match.bank_date ? ` · ${formatDateDisplay(row.exchange_fiat_match.bank_date)}` : ''}
+            </p>
+            <p className="mt-0.5 text-caption text-tertiary">
+              Same fiat movement · {row.exchange_fiat_match.day_delta === 0
+                ? 'same day'
+                : `${row.exchange_fiat_match.day_delta} day${row.exchange_fiat_match.day_delta === 1 ? '' : 's'} apart`}
+            </p>
+          </div>
+        )}
         {row.review_reason && <DetailField label="Why flagged">{row.review_reason}</DetailField>}
         {addressNote && <DetailField label="Address note">{addressNote}</DetailField>}
         {row.override_note && <DetailField label="Transaction note">{row.override_note}</DetailField>}

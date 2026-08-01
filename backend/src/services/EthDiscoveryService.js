@@ -35,19 +35,31 @@ class EthDiscoveryService {
   // much provider work happened. Contracts and high-traffic candidates are
   // killed before they can turn a service address into a personal wallet.
   static async expand(userId, { maxCalls = 25, maxDepth = 3, maxRows = 200 } = {}) {
-    const frontier = await EthDiscoveryCandidate.pendingFrontier(userId, maxCalls);
+    const frontier = await EthDiscoveryCandidate.pendingFrontier(userId, maxCalls, maxDepth);
     const apiKey = await SecretsService.getUserKey(userId, 'etherscan');
     let calls = 0;
     let rows = 0;
     let completed = 0;
+    let chainUnknown = 0;
     let truncated = false;
     for (const candidate of frontier) {
       if (calls >= maxCalls) { truncated = true; break; }
-      const chainId = Number(candidate.chain_id) || chains.DEFAULT_CHAIN_ID;
-      const depth = Math.max(0, (candidate.evidence || []).reduce((max, item) => {
+      const chainId = Number(candidate.chain_id);
+      // Migration 057 uses chain_id=0 to mean the source did not identify the
+      // chain. Never turn that explicit uncertainty into an Ethereum fetch:
+      // the candidate remains pending until the user or a source supplies a
+      // chain, and no misleading receipt is written.
+      if (!Number.isSafeInteger(chainId) || chainId < 1 || !chains.getChain(chainId)) {
+        chainUnknown += 1;
+        logger.info({ userId, address: candidate.address, chainId: candidate.chain_id }, 'Skipping discovery candidate with unknown chain');
+        continue;
+      }
+      const depth = Number.isInteger(candidate.depth)
+        ? Math.max(0, candidate.depth)
+        : Math.max(0, (candidate.evidence || []).reduce((max, item) => {
         const hop = Number(item.hop_depth);
         return Number.isFinite(hop) ? Math.max(max, hop) : max;
-      }, 0));
+        }, 0));
       if (depth >= maxDepth) {
         await EthDiscoveryCandidate.recordFetch(userId, {
           address: candidate.address, chainId, depth, status: 'truncated', rowsFetched: 0,
@@ -137,7 +149,7 @@ class EthDiscoveryService {
         });
       }
     }
-    return { calls, rows, completed, truncated, frontier: frontier.length };
+    return { calls, rows, completed, chain_unknown: chainUnknown, truncated, frontier: frontier.length };
   }
 
   static async decide(userId, candidate, decision, label) {

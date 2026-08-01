@@ -147,18 +147,40 @@ async function applyBackfillRows(rows) {
 async function loadRows(userId = null) {
   const params = userId == null ? [] : [userId];
   const scope = userId == null ? '' : 'WHERE a.user_id = $1';
-  const result = await pool.query(`
-    SELECT t.id, t.category, t.amount, t.detailed_category, t.category_confidence,
-           (efm.id IS NOT NULL) AS exchange_fiat_match,
-           tc.direction AS current_direction, tc.confidence AS current_confidence,
-           tc.is_internal_transfer AS current_internal
-    FROM transactions t
-    JOIN accounts a ON a.id = t.account_id
-    LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
-    LEFT JOIN exchange_fiat_matches efm ON efm.transaction_id = t.id
-    ${scope}
-  `, params);
-  return result.rows;
+  try {
+    const result = await pool.query(`
+      SELECT t.id, t.category, t.amount, t.detailed_category, t.category_confidence,
+             (efm.id IS NOT NULL) AS exchange_fiat_match,
+             tc.direction AS current_direction, tc.confidence AS current_confidence,
+             tc.is_internal_transfer AS current_internal
+      FROM transactions t
+      JOIN accounts a ON a.id = t.account_id
+      LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
+      LEFT JOIN exchange_fiat_matches efm ON efm.transaction_id = t.id
+      ${scope}
+    `, params);
+    return result.rows;
+  } catch (error) {
+    // During a rolling deploy the application may briefly start before the
+    // derived fiat-link migration has reached the database. Classification is
+    // still safe without that optional evidence; retry the same scoped read
+    // with the link signal false rather than failing the entire exchange/Plaid
+    // sync. Any other database error remains fatal.
+    if (!/relation ["']exchange_fiat_matches["'] does not exist/i.test(String(error.message || ''))) {
+      throw error;
+    }
+    const result = await pool.query(`
+      SELECT t.id, t.category, t.amount, t.detailed_category, t.category_confidence,
+             FALSE AS exchange_fiat_match,
+             tc.direction AS current_direction, tc.confidence AS current_confidence,
+             tc.is_internal_transfer AS current_internal
+      FROM transactions t
+      JOIN accounts a ON a.id = t.account_id
+      LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
+      ${scope}
+    `, params);
+    return result.rows;
+  }
 }
 
 async function backfill() {

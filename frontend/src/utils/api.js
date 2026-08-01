@@ -339,6 +339,12 @@ export const eth = {
     });
     return response.data;
   },
+  getDiscoveryReceipts: async ({ limit, offset } = {}) => {
+    const response = await api.get('/api/eth/discovery/receipts', {
+      params: { ...(limit ? { limit } : {}), ...(offset ? { offset } : {}) },
+    });
+    return response.data;
+  },
   runDiscovery: async () => {
     const response = await api.post('/api/eth/discovery/run');
     return response.data;

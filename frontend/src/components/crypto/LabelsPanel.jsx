@@ -136,7 +136,10 @@ function LabelsPanel({
         ? Number(exchangeAccountIdInput) : undefined;
       await ethAPI.labelAddress(address, name || null, {
         kind: labelKind,
-        ...(exchangeAccountId ? { exchange_account_id: exchangeAccountId } : {}),
+        // Send an explicit null when the user selects None so a previously
+        // linked unavailable account can be detached. Non-exchange verdicts
+        // also clear any stale linkage on the server.
+        exchange_account_id: exchangeAccountId ?? null,
       });
       if (labelNoteInput.trim()) await ethAPI.saveAddressNote(address, labelNoteInput.trim());
       showSuccess('Address labeled');

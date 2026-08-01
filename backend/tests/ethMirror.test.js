@@ -176,6 +176,17 @@ test('outgoing ETH to a labeled exchange mirrors as a deposit named after it', (
   assert.equal(row.name, 'ETH → Coinbase');
 });
 
+test('EtherDelta custody transfers mirror as exchange movements', () => {
+  const custody = '0x8d12a197cb00d4747a1fe03395095ce2a5cc6819';
+  const row = buildMirrorRow(
+    transfer({ to_address: custody }),
+    WALLET,
+    { custodyExchanges: new Map([[custody, 'EtherDelta']]) }
+  );
+  assert.equal(row.category, 'CRYPTO_EXCHANGE_DEPOSIT');
+  assert.equal(row.name, 'ETH → EtherDelta');
+});
+
 test('incoming token from a labeled exchange mirrors as a withdrawal', () => {
   const row = buildMirrorRow(
     transfer({

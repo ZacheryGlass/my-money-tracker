@@ -12,16 +12,38 @@ function assertUser(userId, method) {
 }
 
 class EthDiscoveryCandidate {
-  static async pendingFrontier(userId, limit = 25) {
+  static async pendingFrontier(userId, limit = 25, maxDepth = 3) {
     assertUser(userId, 'pendingFrontier');
     const result = await pool.query(
-      `SELECT id, address, chain_id, score, evidence
-       FROM eth_discovery_candidates
-       WHERE user_id = $1 AND status = 'pending'
-         AND source IN ('path', 'exchange_withdrawal')
-       ORDER BY score DESC NULLS LAST, id ASC
+      `WITH frontier AS (
+         SELECT c.id, c.user_id, c.address, c.chain_id, c.score, c.evidence,
+                COALESCE((
+                  SELECT MAX(CASE WHEN item->>'hop_depth' ~ '^[0-9]+$'
+                                  THEN (item->>'hop_depth')::int END)
+                  FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(c.evidence) = 'array'
+                         THEN c.evidence ELSE jsonb_build_array(c.evidence) END
+                  ) item
+                ), 0)::int AS depth
+         FROM eth_discovery_candidates c
+         WHERE c.user_id = $1 AND c.status = 'pending'
+           AND c.source IN ('path', 'exchange_withdrawal')
+       )
+       SELECT f.id, f.address, f.chain_id, f.score, f.evidence, f.depth
+       FROM frontier f
+       WHERE f.depth < $3
+         AND NOT EXISTS (
+         SELECT 1
+         FROM eth_discovery_fetches r
+         WHERE r.user_id = f.user_id
+           AND r.address = f.address
+           AND r.chain_id = f.chain_id
+           AND r.depth = f.depth
+           AND r.status IN ('complete', 'contract', 'high_traffic', 'dust')
+       )
+       ORDER BY f.score DESC NULLS LAST, f.id ASC
        LIMIT $2`,
-      [userId, limit]
+      [userId, limit, maxDepth]
     );
     return result.rows;
   }
@@ -213,6 +235,24 @@ class EthDiscoveryCandidate {
       }),
       total: result.rows.length ? Number(result.rows[0].total_count) : 0,
     };
+  }
+
+  static async fetchReceiptsForUser(userId, { limit = 100, offset = 0 } = {}) {
+    assertUser(userId, 'fetchReceiptsForUser');
+    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+    const safeOffset = Math.max(Number(offset) || 0, 0);
+    const result = await pool.query(
+      `SELECT r.id, r.address, r.chain_id, r.depth, r.status, r.rows_fetched,
+              r.error_message, r.fetched_at, c.source, c.score
+       FROM eth_discovery_fetches r
+       LEFT JOIN eth_discovery_candidates c
+         ON c.user_id = r.user_id AND c.address = r.address AND c.chain_id = r.chain_id
+       WHERE r.user_id = $1
+       ORDER BY r.fetched_at DESC, r.id DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, safeLimit, safeOffset]
+    );
+    return result.rows;
   }
 
   static async findByIdForUser(userId, id) {

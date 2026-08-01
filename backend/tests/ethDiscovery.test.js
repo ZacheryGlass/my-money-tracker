@@ -59,6 +59,17 @@ test('discovery list uses a bounded, status-aware query', async () => {
   assert.match(call.text, /LIMIT \$3 OFFSET \$4/);
 });
 
+test('discovery frontier respects durable per-depth receipts', async () => {
+  const frontier = await EthDiscoveryCandidate.pendingFrontier(1, 25);
+  assert.deepEqual(frontier, []);
+  const call = calls[0];
+  assert.match(call.text, /eth_discovery_fetches/);
+  assert.match(call.text, /r\.depth = f\.depth/);
+  assert.match(call.text, /f\.depth < \$3/);
+  assert.match(call.text, /r\.status IN \('complete', 'contract', 'high_traffic', 'dust'\)/);
+  assert.match(call.text, /jsonb_array_elements/);
+});
+
 test('discovery decisions cannot be written outside the caller scope', async () => {
   const candidate = await EthDiscoveryCandidate.findByIdForUser(1, 9);
   assert.equal(candidate.user_id, 1);

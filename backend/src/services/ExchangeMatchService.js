@@ -332,6 +332,7 @@ class ExchangeMatchService {
     // as unmatched in the same pass.
     const cleared = await ExchangeMatch.clearReviewForMatched(userId);
     const unavailable = await ExchangeMatch.clearReviewForUnavailable(userId);
+    const restored = await ExchangeMatch.restoreReviewForAvailable(userId, REVIEW_REASONS.unmatched_exchange);
     let fiat = { matched: 0 };
     try {
       fiat = await ExchangeFiatMatch.rebuildForUser(userId);
@@ -361,8 +362,8 @@ class ExchangeMatchService {
       }
     }
 
-    logger.info({ userId, matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, unavailable, flagged, learned, fiat: fiat.matched }, 'Exchange matches rebuilt');
-    return { matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, unavailable, flagged, learned, fiat: fiat.matched };
+    logger.info({ userId, matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, unavailable, restored, flagged, learned, fiat: fiat.matched }, 'Exchange matches rebuilt');
+    return { matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, unavailable, restored, flagged, learned, fiat: fiat.matched };
   }
 
   // Same pass, but never fatal. Every caller outside the activity rebuild is

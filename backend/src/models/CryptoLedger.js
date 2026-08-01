@@ -219,6 +219,18 @@ const ONCHAIN_RAW_CTE = `
       NULL::text AS external_id,
       NULL::text AS record_address,
       NULL::text AS record_source,
+      CASE WHEN efm.id IS NULL THEN NULL ELSE jsonb_build_object(
+        'match_id', efm.id,
+        'exchange_record_id', efm.exchange_record_id,
+        'transaction_id', efm.transaction_id,
+        'amount', efm.amount::text,
+        'day_delta', efm.day_delta,
+        'bank_date', eft.date,
+        'bank_name', eft.name,
+        'merchant_name', eft.merchant_name,
+        'bank_amount', eft.amount::text,
+        'bank_account_name', efa.name
+      ) END AS exchange_fiat_match,
       -- Guarded on mer, not on em: the record join carries the ownership
       -- predicate, so a match row pointing at somebody else's record leaves
       -- mer NULL and the fold simply does not happen.
@@ -276,6 +288,9 @@ const ONCHAIN_RAW_CTE = `
       AND EXISTS (SELECT 1 FROM exchange_accounts oa
                   WHERE oa.id = mer.exchange_account_id AND oa.user_id = $1)
     LEFT JOIN exchange_accounts mea ON mea.id = mer.exchange_account_id AND mea.user_id = $1
+    LEFT JOIN exchange_fiat_matches efm ON efm.exchange_record_id = mer.id
+    LEFT JOIN transactions eft ON eft.id = efm.transaction_id
+    LEFT JOIN accounts efa ON efa.id = eft.account_id AND efa.user_id = $1
     LEFT JOIN exchange_match_verdicts mv
       ON mv.exchange_record_id = em.exchange_record_id
      AND mv.counter_record_id IS NULL
@@ -378,6 +393,7 @@ const ONCHAIN_CTE = `
       r.exchange_account_id, r.exchange, r.account_name, r.record_type,
       r.base_asset, r.base_amount, r.quote_asset, r.quote_amount,
       r.fee_asset, r.fee_amount, r.external_id, r.record_address, r.record_source,
+      r.exchange_fiat_match,
       r.exchange_match,
       r.rejected_verdict, r.rejected_record_id, r.rejected_counter_record_id,
       r.match_category, r.match_account_id,
@@ -488,6 +504,7 @@ const ONCHAIN_BRIDGE_CTE = `
       h.exchange_account_id, h.exchange, h.account_name, h.record_type,
       h.base_asset, h.base_amount, h.quote_asset, h.quote_amount,
       h.fee_asset, h.fee_amount, h.external_id, h.record_address, h.record_source,
+      h.exchange_fiat_match,
       h.exchange_match,
       h.rejected_verdict, h.rejected_record_id, h.rejected_counter_record_id,
       h.match_category, h.match_account_id,
@@ -676,6 +693,18 @@ const EXCHANGE_CTE = `
       er.external_id::text AS external_id,
       er.address::text AS record_address,
       er.source::text AS record_source,
+      CASE WHEN efm.id IS NULL THEN NULL ELSE jsonb_build_object(
+        'match_id', efm.id,
+        'exchange_record_id', efm.exchange_record_id,
+        'transaction_id', efm.transaction_id,
+        'amount', efm.amount::text,
+        'day_delta', efm.day_delta,
+        'bank_date', eft.date,
+        'bank_name', eft.name,
+        'merchant_name', eft.merchant_name,
+        'bank_amount', eft.amount::text,
+        'bank_account_name', efa.name
+      ) END AS exchange_fiat_match,
       CASE WHEN cer.id IS NULL THEN NULL ELSE ${matchJson('cem', 'cer', 'cea', 'cmv')} END AS exchange_match,
       -- The venue side needs the rejected-verdict handle just as much as the
       -- on-chain side does, and for the same reason: rejecting a pairing
@@ -711,6 +740,9 @@ const EXCHANGE_CTE = `
       AND EXISTS (SELECT 1 FROM exchange_accounts oa
                   WHERE oa.id = cer.exchange_account_id AND oa.user_id = $1)
     LEFT JOIN exchange_accounts cea ON cea.id = cer.exchange_account_id AND cea.user_id = $1
+    LEFT JOIN exchange_fiat_matches efm ON efm.exchange_record_id = er.id
+    LEFT JOIN transactions eft ON eft.id = efm.transaction_id
+    LEFT JOIN accounts efa ON efa.id = eft.account_id AND efa.user_id = $1
     LEFT JOIN exchange_match_verdicts cmv
       ON cmv.exchange_record_id = cem.exchange_record_id
      AND cmv.counter_record_id = cem.counter_record_id
@@ -924,6 +956,7 @@ function toLedgerRow(row) {
     external_id: row.external_id,
     record_address: row.record_address,
     record_source: row.record_source,
+    exchange_fiat_match: row.exchange_fiat_match || null,
     // The other half of this movement (#61), folded in, with its own legs
     // already shaped so a reader never has to know which side it came from.
     exchange_match: row.exchange_match

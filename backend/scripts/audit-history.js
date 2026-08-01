@@ -107,9 +107,17 @@ async function buildReport(userId, archiveReportPath = null) {
              JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
             WHERE ea.user_id = $1
          ), matched_records AS (
-           SELECT exchange_record_id AS id FROM exchange_matches
+           SELECT m.exchange_record_id AS id
+             FROM exchange_matches m
+             JOIN exchange_records er ON er.id = m.exchange_record_id
+             JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+            WHERE ea.user_id = $1
            UNION
-           SELECT counter_record_id FROM exchange_matches WHERE counter_record_id IS NOT NULL
+           SELECT m.counter_record_id AS id
+             FROM exchange_matches m
+             JOIN exchange_records er ON er.id = m.counter_record_id
+             JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+            WHERE ea.user_id = $1 AND m.counter_record_id IS NOT NULL
          ), matchable AS (
            SELECT er.id
              FROM exchange_records er
@@ -162,12 +170,20 @@ async function buildReport(userId, archiveReportPath = null) {
                                WHERE o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id
                                  AND o.tx_hash = a.tx_hash), a.category)
                     IN ('bridge_out', 'bridge_in')
-                AND NOT EXISTS (SELECT 1 FROM eth_activity_links l
-                                  WHERE l.out_activity_id = a.id OR l.in_activity_id = a.id))
+                AND NOT EXISTS (SELECT 1
+                                  FROM eth_activity_links l
+                                  JOIN eth_activity other
+                                    ON other.id = CASE WHEN l.out_activity_id = a.id
+                                                       THEN l.in_activity_id ELSE l.out_activity_id END
+                                  JOIN eth_wallets other_w ON other_w.id = other.wallet_id
+                                  WHERE (l.out_activity_id = a.id OR l.in_activity_id = a.id)
+                                    AND other_w.user_id = $1))
               AS unmatched_bridge_legs
        FROM eth_activity_links l
        JOIN eth_activity a ON a.id = l.out_activity_id
        JOIN eth_wallets w ON w.id = a.wallet_id
+       JOIN eth_activity other ON other.id = l.in_activity_id
+       JOIN eth_wallets other_w ON other_w.id = other.wallet_id AND other_w.user_id = $1
       WHERE w.user_id = $1`,
     [userId]
   ))[0] || {};

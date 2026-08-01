@@ -67,6 +67,7 @@ function bridgeMirrorName(transfer, bridge) {
 // (the historical-price job re-derives every wallet nightly for that reason).
 function buildMirrorRow(transfer, walletAddress, {
   ignoredContracts = new Set(),
+  custodyExchanges = new Map(),
   // Present only for a bridge pair the cross-chain matcher confirmed. The
   // absence of this value is meaningful: an unmatched bridge must not be
   // promoted to an internal transfer by the label alone.
@@ -76,7 +77,11 @@ function buildMirrorRow(transfer, walletAddress, {
   const outgoing = transfer.from_address === wallet;
   // Own beats exchange (reclassify also encodes this, belt and suspenders):
   // a tracked wallet that happens to be labeled stays a self-transfer.
-  const exchange = transfer.counterparty_is_own ? null : transfer.counterparty_exchange || null;
+  const counterparty = outgoing ? transfer.to_address : transfer.from_address;
+  const custodyExchange = counterparty && custodyExchanges.get(String(counterparty).toLowerCase());
+  const exchange = transfer.counterparty_is_own
+    ? null
+    : transfer.counterparty_exchange || custodyExchange || null;
   const exchangeCategory = outgoing ? 'CRYPTO_EXCHANGE_DEPOSIT' : 'CRYPTO_EXCHANGE_WITHDRAWAL';
   const usd = transfer.usd_at_time == null ? null : Number(transfer.usd_at_time);
 
@@ -153,7 +158,7 @@ class EthTransactionMirrorService {
     const account = await EthWallet.getAccountForWallet(walletId);
     if (!account) return { skipped: true };
 
-    const [transfersResult, ignoredResult, bridgeResult] = await Promise.all([
+    const [transfersResult, ignoredResult, bridgeResult, custodyResult] = await Promise.all([
       pool.query('SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id', [walletId]),
       pool.query('SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1', [wallet.user_id]),
       includeBridgeLinks ? pool.query(
@@ -186,9 +191,21 @@ class EthTransactionMirrorService {
           ORDER BY a.id, l.id`,
         [walletId, wallet.user_id]
       ) : Promise.resolve({ rows: [] }),
+      pool.query(
+        `SELECT address, name
+         FROM (
+           SELECT DISTINCT ON (address) address, name, source
+           FROM eth_address_labels
+           WHERE user_id = $1 OR user_id IS NULL
+           ORDER BY address, user_id NULLS LAST
+         ) resolved
+         WHERE source = 'builtin-etherdelta'`,
+        [wallet.user_id]
+      ),
     ]);
     const transfers = transfersResult.rows;
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
+    const custodyExchanges = new Map(custodyResult.rows.map((row) => [row.address, row.name]));
     const bridgeByActivity = new Map(bridgeResult.rows.map((row) => [
       `${row.chain_id}:${row.tx_hash}`,
       {
@@ -207,7 +224,7 @@ class EthTransactionMirrorService {
     let unpricedSkipped = 0;
     for (const transfer of transfers) {
       const bridge = bridgeByActivity.get(`${transfer.chain_id ?? chains.DEFAULT_CHAIN_ID}:${transfer.tx_hash}`) || null;
-      const body = buildMirrorRow(transfer, wallet.address, { ignoredContracts, bridge });
+      const body = buildMirrorRow(transfer, wallet.address, { ignoredContracts, custodyExchanges, bridge });
       if (!body) {
         // Counted, not mirrored: these are the legs the ledger is knowingly
         // silent about, and the count is what makes that silence visible in the

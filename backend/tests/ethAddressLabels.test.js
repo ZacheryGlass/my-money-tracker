@@ -65,6 +65,8 @@ test('upsert preserves an existing verdict when no kind is given', async () => {
   assert.match(sql, /kind = COALESCE\(\$5, eth_address_labels\.kind\)/);
   // note keeps its COALESCE -- a re-label with no note must not erase one.
   assert.match(sql, /note = COALESCE\(EXCLUDED\.note, eth_address_labels\.note\)/);
+  assert.match(sql, /exchange_account_id = CASE WHEN \$5::text = 'exchange' THEN \$6::int/);
+  assert.match(sql, /WHEN \$5::text IS NOT NULL THEN NULL/);
 });
 
 test('delete only removes the caller\'s rows, never builtins', async () => {

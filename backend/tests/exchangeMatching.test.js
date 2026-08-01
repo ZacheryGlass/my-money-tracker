@@ -176,6 +176,19 @@ function fakeQuery(text, params = []) {
     }
     return { rows: [], rowCount: count };
   }
+  if (/^UPDATE eth_activity a SET needs_review = TRUE/.test(sql)
+      && /exchange_records_unavailable/.test(sql)) {
+    const [, reason] = params;
+    let count = 0;
+    for (const row of db.activity) {
+      if (row.review_reason !== 'exchange_records_unavailable') continue;
+      row.needs_review = true;
+      row.review_reason = reason;
+      row.confidence = 'low';
+      count += 1;
+    }
+    return { rows: [], rowCount: count };
+  }
   if (/^UPDATE eth_activity a SET needs_review = TRUE/.test(sql)) {
     const [, reason, , suggestionReason] = params;
     // The gate: matching has to be in play at all before "unmatched" means
@@ -1005,6 +1018,9 @@ test('the unmatched-flow flag is gated on the user tracking exchange transfers a
   assert.match(sql, /cr\.id = s\.counter_record_id AND cea\.user_id = \$1/);
   assert.deepEqual(params[2], ['deposit', 'withdrawal']);
   assert.match(sql, /NOT EXISTS \(SELECT 1 FROM exchange_matches m WHERE m\.activity_id = a\.id\)/);
+  assert.match(sql, /unavailable_ea\.records_unavailable = TRUE/);
+  assert.match(sql, /AND NOT EXISTS \( SELECT 1 FROM eth_address_labels l JOIN exchange_accounts unavailable_ea/);
+  assert.doesNotMatch(sql, /OR EXISTS \( SELECT 1 FROM eth_address_labels l JOIN exchange_accounts ea/);
   assert.match(sql, /w\.user_id = \$1/);
 });
 

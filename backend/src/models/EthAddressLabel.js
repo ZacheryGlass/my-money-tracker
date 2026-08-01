@@ -79,7 +79,11 @@ class EthAddressLabel {
        DO UPDATE SET name = EXCLUDED.name,
                      kind = COALESCE($5, eth_address_labels.kind),
                      note = COALESCE(EXCLUDED.note, eth_address_labels.note),
-                     exchange_account_id = COALESCE(EXCLUDED.exchange_account_id, eth_address_labels.exchange_account_id)
+                     exchange_account_id = CASE
+                       WHEN $5::text = 'exchange' THEN $6::int
+                       WHEN $5::text IS NOT NULL THEN NULL
+                       ELSE eth_address_labels.exchange_account_id
+                     END
        RETURNING *`,
       [userId, address.toLowerCase(), name, note || null, kind, exchangeAccountId]
     );

@@ -81,6 +81,18 @@ router.get('/discovery/candidates', async (req, res) => {
   }
 });
 
+router.get('/discovery/receipts', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const receipts = await EthDiscoveryCandidate.fetchReceiptsForUser(req.user.id, { limit, offset });
+    return res.status(200).json({ receipts, pagination: { limit, offset } });
+  } catch (error) {
+    logger.error({ err: error }, 'Get ETH discovery fetch receipts error');
+    return res.status(500).json({ error: 'Failed to retrieve wallet discovery receipts' });
+  }
+});
+
 router.post('/discovery/run', async (req, res) => {
   try {
     const result = await EthDiscoveryService.run(req.user.id);

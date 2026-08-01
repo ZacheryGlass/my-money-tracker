@@ -723,6 +723,42 @@ class ExchangeMatch {
     return result.rowCount || 0;
   }
 
+  // Reversing an account's records-unavailable flag must restore the
+  // conservative unmatched verdict. The explicit gap explanation is derived
+  // state, not a permanent user override: once the account is available again
+  // the activity belongs back in the review queue until a real record or
+  // confirmation explains it.
+  static async restoreReviewForAvailable(userId, reviewReason) {
+    requireUserId('restoreReviewForAvailable', userId);
+    const result = await pool.query(
+      `UPDATE eth_activity a
+       SET needs_review = TRUE,
+           review_reason = $2,
+           confidence = 'low'
+       FROM eth_wallets w
+       WHERE w.id = a.wallet_id AND w.user_id = $1
+         AND COALESCE((SELECT o.category FROM eth_activity_overrides o
+                       WHERE o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id
+                         AND o.tx_hash = a.tx_hash), a.category)
+             IN ('exchange_deposit', 'exchange_withdrawal')
+         AND a.review_reason = 'exchange_records_unavailable'
+         AND NOT EXISTS (SELECT 1 FROM exchange_matches m WHERE m.activity_id = a.id)
+         AND NOT EXISTS (
+           SELECT 1
+           FROM eth_address_labels l
+           JOIN exchange_accounts ea ON ea.id = l.exchange_account_id
+           WHERE l.user_id = $1 AND l.kind = 'exchange'
+             AND ea.user_id = $1 AND ea.records_unavailable = TRUE
+             AND LOWER(a.counterparty_address) = l.address
+         )
+         AND (a.needs_review IS DISTINCT FROM TRUE
+              OR a.review_reason IS DISTINCT FROM $2
+              OR a.confidence IS DISTINCT FROM 'low')`,
+      [userId, reviewReason]
+    );
+    return result.rowCount || 0;
+  }
+
   /**
    * An on-chain flow to or from an exchange with no record behind it.
    *
@@ -777,6 +813,19 @@ class ExchangeMatch {
                a.category
              ) IN ('exchange_deposit', 'exchange_withdrawal')
          AND NOT EXISTS (SELECT 1 FROM exchange_matches m WHERE m.activity_id = a.id)
+         -- A linked records-unavailable account is an explicit, durable
+         -- explanation-with-gap. clearReviewForUnavailable() sets that
+         -- verdict immediately before this pass; do not put the same leg back
+         -- into the generic unmatched queue on every rebuild.
+         AND NOT EXISTS (
+           SELECT 1
+           FROM eth_address_labels l
+           JOIN exchange_accounts unavailable_ea ON unavailable_ea.id = l.exchange_account_id
+           WHERE l.user_id = $1 AND l.kind = 'exchange'
+             AND unavailable_ea.user_id = $1
+             AND unavailable_ea.records_unavailable = TRUE
+             AND LOWER(a.counterparty_address) = l.address
+         )
          AND (
            NOT a.needs_review
            OR (
@@ -802,13 +851,6 @@ class ExchangeMatch {
            SELECT 1 FROM exchange_records er
            JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
            WHERE ea.user_id = $1 AND er.record_type = ANY($3::varchar[])
-         ) OR EXISTS (
-           SELECT 1
-           FROM eth_address_labels l
-           JOIN exchange_accounts ea ON ea.id = l.exchange_account_id
-           WHERE l.user_id = $1 AND l.kind = 'exchange'
-             AND ea.user_id = $1 AND ea.records_unavailable = TRUE
-             AND LOWER(a.counterparty_address) = l.address
          ))`,
       [userId, reviewReason, MATCHABLE_RECORD_TYPES, suggestionReason]
     );

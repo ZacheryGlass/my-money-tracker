@@ -333,6 +333,15 @@ test('a venue record can never be quarantined, and never NULL either', async () 
   assert.match(lastLedgerQuery().sql, /FALSE AS spam, NULL::text AS spam_reason/);
 });
 
+test('the unified ledger carries scoped exchange-to-bank links', async () => {
+  await request(app).get('/api/crypto/ledger');
+  const { sql } = lastLedgerQuery();
+  assert.match(sql, /exchange_fiat_matches/);
+  assert.match(sql, /exchange_fiat_match/);
+  assert.match(sql, /efa\.user_id = \$1/);
+  assert.match(sql, /eft\.amount::text/);
+});
+
 test('the summary excludes the quarantine from its counts and says how many', async () => {
   ledgerRows = [onchainRow(), onchainRow({ row_id: 11, spam: true, spam_reason: 'address_poisoning' })];
   const response = await request(app).get('/api/crypto/ledger/summary');

@@ -117,7 +117,7 @@ describe('Crypto -> Labels tab', () => {
       // 'external' gateways on a plain rename.
       await waitFor(() => {
         expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
-          '0x3333333333333333333333333333333333333333', 'Coinbase', { kind: undefined }
+          '0x3333333333333333333333333333333333333333', 'Coinbase', { kind: undefined, exchange_account_id: null }
         );
       });
     });
@@ -132,7 +132,7 @@ describe('Crypto -> Labels tab', () => {
       // classification, so the server falls back to a short address.
       await waitFor(() => {
         expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
-          '0x3333333333333333333333333333333333333333', null, { kind: 'external' }
+          '0x3333333333333333333333333333333333333333', null, { kind: 'external', exchange_account_id: null }
         );
       });
     });
@@ -149,7 +149,7 @@ describe('Crypto -> Labels tab', () => {
       // this verdict is offered by hand at all.
       await waitFor(() => {
         expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
-          '0x3333333333333333333333333333333333333333', null, { kind: 'bridge' }
+          '0x3333333333333333333333333333333333333333', null, { kind: 'bridge', exchange_account_id: null }
         );
       });
     });
@@ -166,7 +166,7 @@ describe('Crypto -> Labels tab', () => {
 
       await waitFor(() => {
         expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
-          '0x5555555555555555555555555555555555555555', null, { kind: 'service' }
+          '0x5555555555555555555555555555555555555555', null, { kind: 'service', exchange_account_id: null }
         );
       });
     });
@@ -230,7 +230,7 @@ describe('Crypto -> Labels tab', () => {
       // the own set and turn a self-transfer into a phantom exchange deposit.
       await waitFor(() => {
         expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
-          '0x2222222222222222222222222222222222222222', 'Ledger', { kind: undefined }
+          '0x2222222222222222222222222222222222222222', 'Ledger', { kind: undefined, exchange_account_id: null }
         );
       });
     });
