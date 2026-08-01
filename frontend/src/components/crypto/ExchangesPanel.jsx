@@ -21,6 +21,7 @@ const IMPORT_FORMAT_LABELS = {
   coinbase_retail: 'Coinbase transactions export',
   coinbase_pro: 'Coinbase Pro account statement',
   kraken: 'Kraken ledgers export',
+  binance_us: 'Binance.US account activity export',
   generic: 'generic column mapping',
 };
 

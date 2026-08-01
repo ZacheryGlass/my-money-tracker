@@ -1,0 +1,7 @@
+User ID,Time,Category,Operation,Order ID,Transaction ID,Primary Asset,Realized Amount For Primary Asset,Realized Amount for Primary Asset in USD,Base Asset,Realized Amount For Base Asset,Realized Amount For Base Asset In USD,Quote Asset,Realized Amount for Quote Asset,Realized Amount for Quote Asset in USD,Fee Asset,Realized Amount for Fee Asset,Realized Amount for Fee Asset in USD,Payment Method,Withdraw Method,Additional Note
+fixture-user,2026-07-31 23:39:01,Deposit,Crypto Deposit,,100000001,ETH,1.25,3000,,,,,,,,,,,,
+fixture-user,2026-07-31 23:39:02,Spot Trading,Buy,200000001,100000002,,,,SOL,2.5,350,USD,350,350,SOL,0.002,0.28,,,
+fixture-user,2026-07-31 23:39:03,Spot Trading,Sell,200000001,100000003,,,,SOL,1.5,225,USD,225,225,USD,0.5,0.5,,,
+fixture-user,2026-07-31 23:39:04,Distribution,Staking Rewards,,100000004,ETH,0.01,24,,,,,,,,,,,,
+fixture-user,2026-07-31 23:39:05,Withdrawal,Crypto Withdrawal,,100000005,ETH,0.75,1800,,,,,,,ETH,0.001,2.4,,,
+fixture-user,2026-07-31 23:39:06,Transfer,Internal Transfer,,100000006,USDT,10,10,,,,,,,,,,,,

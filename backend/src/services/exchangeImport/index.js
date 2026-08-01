@@ -5,13 +5,15 @@ const { ImportFormatError } = require('./shared');
 const coinbaseRetail = require('./coinbaseRetail');
 const coinbasePro = require('./coinbasePro');
 const kraken = require('./kraken');
+const binanceUs = require('./binanceUs');
 const generic = require('./generic');
 
 // Order matters only in that the specific importers get first refusal; their
 // header signatures are disjoint (Coinbase retail alone has "Quantity
 // Transacted", Coinbase Pro alone has "amount/balance unit", Kraken alone has
-// txid+refid), so at most one can claim a file.
-const IMPORTERS = [coinbaseRetail, coinbasePro, kraken];
+// txid+refid, Binance.US alone has "Realized Amount For Base Asset"), so at
+// most one can claim a file.
+const IMPORTERS = [coinbaseRetail, coinbasePro, kraken, binanceUs];
 const BY_FORMAT = new Map([...IMPORTERS, generic].map((importer) => [importer.FORMAT, importer]));
 
 const FORMATS = [...BY_FORMAT.keys()];

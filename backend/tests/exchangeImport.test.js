@@ -425,6 +425,64 @@ test('kraken: an unknown ledger type imports flagged', () => {
   assert.equal(records.filter((record) => record.needs_review).length, 2);
 });
 
+// --- Binance.US account activity ------------------------------------------
+
+test('Binance.US: account activity export uses realized amount columns and maps each row', () => {
+  const { format, records, stats } = parseExchangeCsv(fixture('binance-us.csv'));
+  assert.equal(format, 'binance_us');
+  assert.equal(records.length, 6);
+  assert.equal(stats.unknownTypes, 1);
+
+  const recordsById = byId(records);
+  const deposit = recordsById.get('binanceus:deposit:100000001');
+  assert.equal(deposit.record_type, 'deposit');
+  assert.equal(deposit.base_asset, 'ETH');
+  assert.equal(deposit.base_amount, '1.25');
+
+  const buy = recordsById.get('binanceus:trade:SOLUSD:100000002');
+  assert.equal(buy.record_type, 'trade');
+  assert.equal(buy.base_amount, '2.5');
+  assert.equal(buy.quote_asset, 'USD');
+  assert.equal(buy.quote_amount, '-350');
+  assert.equal(buy.fee_asset, 'SOL');
+  assert.equal(buy.fee_amount, '0.002');
+
+  const sell = recordsById.get('binanceus:trade:SOLUSD:100000003');
+  assert.equal(sell.base_amount, '-1.5');
+  assert.equal(sell.quote_amount, '225');
+  assert.equal(sell.fee_asset, 'USD');
+
+  const reward = recordsById.get('binanceus:distribution:100000004');
+  assert.equal(reward.record_type, 'reward');
+  assert.equal(reward.base_amount, '0.01');
+
+  const withdrawal = recordsById.get('binanceus:withdrawal:100000005');
+  assert.equal(withdrawal.record_type, 'withdrawal');
+  assert.equal(withdrawal.base_amount, '-0.75');
+  assert.equal(withdrawal.fee_asset, 'ETH');
+  assert.equal(withdrawal.fee_amount, '0.001');
+
+  const unknown = recordsById.get('binanceus:csv:100000006');
+  assert.equal(unknown.record_type, 'transfer');
+  assert.equal(unknown.needs_review, true);
+  assert.equal(unknown.base_asset, 'USDT');
+  assert.equal(unknown.base_amount, '10');
+});
+
+test('Binance.US: account activity export is idempotent and preserves raw source cells', () => {
+  const text = fixture('binance-us.csv');
+  const first = parseExchangeCsv(text).records;
+  const second = parseExchangeCsv(text).records;
+  assert.deepEqual(
+    second.map((record) => record.external_id),
+    first.map((record) => record.external_id)
+  );
+  assert.equal(new Set(first.map((record) => record.external_id)).size, first.length);
+  assert.equal(first[1].raw['Realized Amount For Base Asset'], '2.5');
+  assert.equal(first[1].raw['Realized Amount for Quote Asset'], '350');
+  assert.equal(first[1].raw._source, 'csv');
+});
+
 // --- Amounts and timestamps ------------------------------------------------
 
 test('amounts are read exactly, or not at all', () => {
