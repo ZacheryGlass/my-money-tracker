@@ -127,6 +127,7 @@ cd frontend && npm run lint     # eslint
 
 ## Notes
 
+- **Private archive audit** (#71, `npm run audit:exchange-archive -- --manifest <private.json> --user-id <id>`): the manifest explicitly classifies every saved artifact as source, evidence, or irrelevant and selects a real adapter; a reason is mandatory, so files cannot disappear through an implicit skip. Exchange CSVs are parsed by the same fail-closed production readers and matched read-only by provider id, then canonical fingerprint. The other supported evidence adapters prove a single-file ZIP against its extracted source and verify that every address in a prior investigation has a durable note. The JSON report hashes every file, enumerates parser rejects/missing/ambiguous rows, and exits 2 unless every listed artifact is explained. Manifests and reports contain private paths and account history and stay under ignored `backend/data/`; never commit them.
 - **Kraken asset aliases** (#79): the shared Kraken CSV/API normalizer first
   applies structural provider cleanup (legacy codes and single-letter wallet
   suffixes), then applies only explicitly verified economic aliases. `SOL03` and
