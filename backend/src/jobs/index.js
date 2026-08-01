@@ -114,8 +114,8 @@ async function initializeJobs() {
     logger.error({ err: error }, '[scheduler] Initial exchange backfill pump failed');
   });
 
-  // Rebuild the derived exchange-match table once after the hardened rules
-  // migrate in. The durable job row makes this safe across every later boot.
+  // Rebuild matches and review-only suggestions once after each versioned
+  // policy migration. The durable job row makes later boots cheap.
   void ExchangeMatchHardeningJob.run().catch((error) => {
     logger.error({ err: error }, '[scheduler] Exchange match hardening failed');
   });

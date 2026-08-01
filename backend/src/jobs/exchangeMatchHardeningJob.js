@@ -5,7 +5,8 @@ const JobLog = require('../models/JobLog');
 const ExchangeMatchService = require('../services/ExchangeMatchService');
 const logger = require('../config/logger');
 
-const JOB_NAME = 'exchange-match-hardening-v2';
+const JOB_NAME = 'exchange-match-policy-v3';
+const RULE_VERSION = 'v3';
 
 // This is a one-time migration of derived state, not a recurring matcher pass.
 // A completed row makes subsequent boots cheap; a failed run remains retryable.
@@ -40,7 +41,7 @@ async function run() {
     if (failed > 0) {
       const error = new Error('Exchange match hardening failed for ' + failed + ' user(s)');
       await JobLog.fail(jobLog.id, error.message, {
-        ruleVersion: 'v2',
+        ruleVersion: RULE_VERSION,
         processed: users.rows.length,
         succeeded,
         failed,
@@ -50,13 +51,13 @@ async function run() {
     }
 
     await JobLog.complete(jobLog.id, users.rows.length, succeeded, failed, {
-      ruleVersion: 'v2',
+      ruleVersion: RULE_VERSION,
       results,
     });
     return { skipped: false, processed: users.rows.length, succeeded, failed, results };
   } catch (error) {
     if (failed === 0) {
-      await JobLog.fail(jobLog.id, error.message, { ruleVersion: 'v2', results });
+      await JobLog.fail(jobLog.id, error.message, { ruleVersion: RULE_VERSION, results });
     }
     throw error;
   }

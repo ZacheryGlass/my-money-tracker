@@ -31,10 +31,10 @@ const { CATEGORIES: ACTIVITY_CATEGORIES } = require('../utils/ethActivityVocabul
 //
 // This is #61's matcher, NOT a hash comparison done here: `exchange_matches`
 // already decided that "sent 1.4 ETH to Coinbase" and "Coinbase received
-// 1.4 ETH" are one movement, with evidence (tx_hash / address_amount /
-// amount_window / manual), a confidence, and a user verdict that can overrule
-// it. Re-deriving that in this file would be a second matcher disagreeing with
-// the first.
+// 1.4 ETH" are one movement. Under v3 an active fold is either tx_hash proof
+// or a manual confirmation; address/amount and amount/time evidence lives in
+// exchange_match_suggestions and never reaches this CTE. Re-deriving that in
+// this file would be a second matcher disagreeing with the first.
 //
 // Two shapes, per 041's one_shape CHECK:
 //   activity_id + record        -> the record folds into the on-chain row

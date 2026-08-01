@@ -14,7 +14,7 @@ function requireUserId(method, userId) {
   }
 }
 
-const MATCH_RULE_VERSION = 'v2';
+const MATCH_RULE_VERSION = 'v3';
 
 const EVIDENCE_COLUMNS = [
   'rule_version', 'comparison_kind', 'comparison_left_amount', 'comparison_right_amount',
@@ -33,21 +33,22 @@ function invalidationEventKey(row) {
   return `invalidate:${matchIdentity(row)}:${MATCH_RULE_VERSION}`;
 }
 
-// All heuristic comparison constants stay as strings so PostgreSQL performs the
-// policy with NUMERIC rather than JavaScript floating point. The relative band
-// covers ordinary display rounding; the tiny absolute floor covers decimal
-// serialization noise without becoming a meaningful amount for a real transfer.
-// Fees are subtracted from the observed difference only when denominated in
-// the transferred asset, and the ratio guard rejects dust-to-material matches.
-const AMOUNT_TOLERANCE_RATE = '0.005';
-const ABSOLUTE_AMOUNT_TOLERANCE = '0.00000001';
-const MIN_MAGNITUDE_RATIO = '0.5';
+// v3 has no amount tolerance. A percentage grows with wealth instead of
+// measurement uncertainty: 0.5% made a 30 ETH transfer accept 0.15 ETH of
+// unexplained difference. Both sides are exact NUMERIC values. A same-asset fee
+// is accounted for explicitly; the remaining residual must be exactly zero.
+const EXACT_AMOUNT_TOLERANCE = '0';
 
 // How far apart the two sides may sit. An exchange credits a deposit after N
 // confirmations and processes a withdrawal out of a queue, so "hours" is the
 // right unit -- the issue says so. Wide enough for a slow queue, narrow enough
 // that a repeated monthly transfer of the same size cannot cross into it.
 const MATCH_WINDOW_HOURS = 24;
+
+// Amount and time alone never become a match in v3. They remain useful review
+// suggestions, but their search window is deliberately narrower than a match
+// corroborated by an address.
+const AMOUNT_ONLY_WINDOW_HOURS = 2;
 
 // Money leaves the sending exchange before it lands at the receiving one, so
 // the deposit is expected AFTER the withdrawal. The backward slack exists only
@@ -66,12 +67,21 @@ const INSERT_COLUMNS = [
   'address_match', 'time_delta_seconds',
 ];
 
+const SUGGESTION_INSERT_COLUMNS = [
+  'exchange_record_id', 'activity_id', 'counter_record_id', 'wallet_id', 'chain_id', 'tx_hash',
+  'match_method', 'confidence', 'suggestion_reason',
+  'rule_version', 'comparison_kind', 'comparison_left_amount', 'comparison_right_amount',
+  'fee_amount_applied', 'amount_delta', 'amount_tolerance', 'magnitude_ratio',
+  'address_match', 'time_delta_seconds',
+];
+
 // One activity row's netted movement, pulled out of legs JSONB.
 //
 // Restricted to a SINGLE net leg on purpose: an exchange transfer moves exactly
 // one asset, so a row with two net legs is a swap or something stranger and has
-// no business fallback-matching against a one-asset record. The hash arm does
-// not read these at all -- a hash is identity, whatever the legs look like.
+// no business fallback-matching against a one-asset record. The hash arm also
+// uses the single leg's direction: the strict policy requires hash identity
+// AND compatible direction before an automatic fold.
 const ACTIVITY_LEG = `
     CASE WHEN jsonb_array_length(a.legs) = 1 THEN UPPER(a.legs->0->>'asset') END AS leg_asset,
     CASE WHEN jsonb_array_length(a.legs) = 1 THEN ABS((a.legs->0->>'amount')::numeric) END AS leg_amount,
@@ -110,22 +120,21 @@ const SCOPED_RECORDS = `
     SELECT er.id AS record_id, er.exchange_account_id, ea.name AS exchange_account_name,
            er.record_type, er.occurred_at,
            UPPER(er.base_asset) AS base_asset, ABS(er.base_amount) AS base_amount,
-           -- The fee widens a BASE-ASSET tolerance, so only a fee denominated in
-           -- the base asset may be added to it. Coinbase retail books a
+           -- The fee explains a BASE-ASSET difference, so only a fee denominated
+           -- in the base asset may be subtracted. Coinbase retail books a
            -- withdrawal fee in the price currency (USD), and adding "12.34" to a
            -- tolerance measured in ETH turns a half-percent window into twelve
            -- ether -- which matched a 3.5 ETH transfer against a 2 ETH record.
            -- A foreign-currency fee is not converted (no rate is stored on the
-           -- row); it is simply dropped, leaving the 0.5% relative slack, which
-           -- is what covers a rounded display amount anyway.
-           CASE WHEN er.fee_asset IS NULL OR UPPER(er.fee_asset) = UPPER(er.base_asset)
+           -- row); it is dropped. There is no percentage fallback in v3.
+           CASE WHEN UPPER(er.fee_asset) = UPPER(er.base_asset)
                 THEN COALESCE(ABS(er.fee_amount), 0) ELSE 0 END AS base_fee_amount,
            LOWER(er.tx_hash) AS tx_hash, LOWER(er.address) AS address,
            er.network, er.chain_id
     FROM exchange_records er
     JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
     WHERE ea.user_id = $1
-      AND er.record_type = ANY($4::varchar[])
+      AND er.record_type = ANY($3::varchar[])
       AND er.base_amount IS NOT NULL
       AND er.base_asset IS NOT NULL
   )`;
@@ -166,11 +175,10 @@ const MATCH_FROM = `
      AND v.tx_hash IS NOT DISTINCT FROM a.tx_hash`;
 
 class ExchangeMatch {
-  static get AMOUNT_TOLERANCE_RATE() { return AMOUNT_TOLERANCE_RATE; }
-  static get ABSOLUTE_AMOUNT_TOLERANCE() { return ABSOLUTE_AMOUNT_TOLERANCE; }
-  static get MIN_MAGNITUDE_RATIO() { return MIN_MAGNITUDE_RATIO; }
+  static get EXACT_AMOUNT_TOLERANCE() { return EXACT_AMOUNT_TOLERANCE; }
   static get MATCH_RULE_VERSION() { return MATCH_RULE_VERSION; }
   static get MATCH_WINDOW_HOURS() { return MATCH_WINDOW_HOURS; }
+  static get AMOUNT_ONLY_WINDOW_HOURS() { return AMOUNT_ONLY_WINDOW_HOURS; }
   static get PAIR_BACKDATE_HOURS() { return PAIR_BACKDATE_HOURS; }
   static get MATCHABLE_RECORD_TYPES() { return MATCHABLE_RECORD_TYPES; }
 
@@ -181,11 +189,11 @@ class ExchangeMatch {
    * and inference:
    *
    *  - tx_hash. The exchange published the on-chain hash of the transfer, so
-   *    this is identity, not a guess. exchange_records has no chain column
-   *    while eth_activity is chain-keyed (039), which makes a stored hash
-   *    chain-AMBIGUOUS -- but a 32-byte hash is not reproduced by accident, and
-   *    old rows can still have no chain, but a source-backed chain id narrows
-   *    the join and prevents a cross-chain replay from claiming the wrong leg.
+   *    this is identity, not a guess. eth_activity is chain-keyed (039), while
+   *    old exchange rows can still have no chain; a source-backed chain id
+   *    narrows the join and prevents a cross-chain replay from claiming the
+   *    wrong leg. The parsed transfer direction must also agree; a hash with no
+   *    verifiable movement direction is not enough for an automatic fold.
    *
    *  - asset + amount + window, for the records that carry no hash (a Kraken
    *    ledgers CSV has neither a txid nor a destination). Restricted to
@@ -205,31 +213,49 @@ class ExchangeMatch {
        SELECT sa.activity_id, sr.record_id AS exchange_record_id,
               sa.wallet_id, sa.chain_id, sa.tx_hash, sa.counterparty_address,
               sa.single_net_leg, sr.exchange_account_name,
+              (sa.leg_direction IN ('in', 'out')
+               AND sr.record_type = CASE WHEN sa.leg_direction = 'out'
+                                         THEN 'deposit' ELSE 'withdrawal' END) AS direction_compatible,
               'tx_hash' AS match_method, 'high' AS confidence,
               '${MATCH_RULE_VERSION}' AS rule_version, 'hash' AS comparison_kind,
-              NULL::numeric AS comparison_left_amount,
-              NULL::numeric AS comparison_right_amount,
-              NULL::numeric AS fee_amount_applied,
-              NULL::numeric AS amount_delta,
-              NULL::numeric AS amount_tolerance,
-              NULL::numeric AS magnitude_ratio,
-              NULL::boolean AS address_match,
-              0::bigint AS time_delta_seconds
+              CASE WHEN sa.leg_asset = sr.base_asset THEN sa.leg_amount END AS comparison_left_amount,
+              CASE WHEN sa.leg_asset = sr.base_asset THEN sr.base_amount END AS comparison_right_amount,
+              CASE WHEN sa.leg_asset = sr.base_asset THEN
+                CASE WHEN ABS(sr.base_amount - sa.leg_amount) = 0
+                     THEN 0::numeric ELSE sr.base_fee_amount END
+              END AS fee_amount_applied,
+              CASE WHEN sa.leg_asset = sr.base_asset
+                   THEN LEAST(
+                     ABS(sr.base_amount - sa.leg_amount),
+                     ABS(ABS(sr.base_amount - sa.leg_amount) - sr.base_fee_amount)
+                   )
+              END AS amount_delta,
+              CASE WHEN sa.leg_asset = sr.base_asset THEN $2::numeric END AS amount_tolerance,
+              CASE WHEN sa.leg_asset = sr.base_asset AND GREATEST(sa.leg_amount, sr.base_amount) = 0
+                   THEN 1::numeric
+                   WHEN sa.leg_asset = sr.base_asset
+                   THEN LEAST(sa.leg_amount, sr.base_amount) / GREATEST(sa.leg_amount, sr.base_amount)
+              END AS magnitude_ratio,
+              (sr.address IS NOT NULL
+                AND sr.address IN (sa.wallet_address, sa.counterparty_address)) AS address_match,
+              EXTRACT(EPOCH FROM (GREATEST(sa.block_time, sr.occurred_at)
+                                  - LEAST(sa.block_time, sr.occurred_at)))::bigint AS time_delta_seconds
        FROM scoped_activity sa
        JOIN scoped_records sr
          ON sr.tx_hash = sa.tx_hash
         AND (sr.chain_id IS NULL OR sr.chain_id = sa.chain_id)
-       -- A row with no single net leg (a revert, a multi-asset call) has no
-       -- direction to check; the hash already settled identity.
-       WHERE sa.leg_direction IS NULL
-          OR (sa.leg_direction IN ('in', 'out')
-              AND sr.record_type = CASE WHEN sa.leg_direction = 'out' THEN 'deposit' ELSE 'withdrawal' END)
+       -- Hash identity is automatic only when the parsed movement also proves
+       -- a compatible direction. A revert or multi-asset call has no single
+       -- direction to verify, so it does not qualify for automatic folding.
+       WHERE sa.leg_direction IN ('in', 'out')
+         AND sr.record_type = CASE WHEN sa.leg_direction = 'out' THEN 'deposit' ELSE 'withdrawal' END
 
        UNION ALL
 
        SELECT sa.activity_id, sr.record_id,
               sa.wallet_id, sa.chain_id, sa.tx_hash, sa.counterparty_address,
               sa.single_net_leg, sr.exchange_account_name,
+              TRUE AS direction_compatible,
               -- The record's stored address being one of the two addresses in
               -- the transfer is real corroboration: a withdrawal names its
               -- destination (this wallet) and a deposit names the venue's
@@ -243,7 +269,7 @@ class ExchangeMatch {
               '${MATCH_RULE_VERSION}' AS rule_version, 'amount' AS comparison_kind,
               sa.leg_amount AS comparison_left_amount,
               sr.base_amount AS comparison_right_amount,
-              sr.base_fee_amount AS fee_amount_applied,
+              evidence.fee_amount_applied,
               evidence.amount_delta,
               evidence.amount_tolerance,
               evidence.magnitude_ratio,
@@ -271,8 +297,13 @@ class ExchangeMatch {
        CROSS JOIN LATERAL (
           SELECT GREATEST(sa.leg_amount, sr.base_amount) AS larger_amount,
                  LEAST(sa.leg_amount, sr.base_amount) AS smaller_amount,
-                 GREATEST(ABS(sr.base_amount - sa.leg_amount) - sr.base_fee_amount, 0::numeric) AS amount_delta,
-                 GREATEST($2::numeric, GREATEST(sa.leg_amount, sr.base_amount) * $3::numeric) AS amount_tolerance,
+                 CASE WHEN ABS(sr.base_amount - sa.leg_amount) = 0
+                      THEN 0::numeric ELSE sr.base_fee_amount END AS fee_amount_applied,
+                 LEAST(
+                   ABS(sr.base_amount - sa.leg_amount),
+                   ABS(ABS(sr.base_amount - sa.leg_amount) - sr.base_fee_amount)
+                 ) AS amount_delta,
+                 $2::numeric AS amount_tolerance,
                  CASE WHEN GREATEST(sa.leg_amount, sr.base_amount) = 0
                       THEN 1::numeric
                       ELSE LEAST(sa.leg_amount, sr.base_amount)
@@ -285,11 +316,12 @@ class ExchangeMatch {
          AND sa.leg_asset IS NOT NULL
          AND sa.leg_amount IS NOT NULL
          AND evidence.amount_delta <= evidence.amount_tolerance
-         AND evidence.magnitude_ratio >= $5::numeric
-         AND sa.block_time >= sr.occurred_at - make_interval(hours => $6::int)
-         AND sa.block_time <= sr.occurred_at + make_interval(hours => $6::int)`,
-      [userId, ABSOLUTE_AMOUNT_TOLERANCE, AMOUNT_TOLERANCE_RATE,
-        MATCHABLE_RECORD_TYPES, MIN_MAGNITUDE_RATIO, MATCH_WINDOW_HOURS]
+         AND evidence.time_delta_seconds <= 3600 * CASE
+               WHEN sr.address IS NOT NULL
+                AND sr.address IN (sa.wallet_address, sa.counterparty_address)
+               THEN $4::int ELSE $5::int END`,
+      [userId, EXACT_AMOUNT_TOLERANCE, MATCHABLE_RECORD_TYPES,
+        MATCH_WINDOW_HOURS, AMOUNT_ONLY_WINDOW_HOURS]
     );
     return result.rows;
   }
@@ -308,6 +340,7 @@ class ExchangeMatch {
     const result = await pool.query(
       `WITH ${SCOPED_RECORDS}
        SELECT sent.record_id AS exchange_record_id, received.record_id AS counter_record_id,
+              TRUE AS direction_compatible,
               CASE
                 WHEN sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash THEN 'tx_hash'
                 WHEN sent.address IS NOT NULL AND sent.address = received.address THEN 'address_amount'
@@ -322,13 +355,10 @@ class ExchangeMatch {
                    THEN 'hash' ELSE 'amount' END AS comparison_kind,
               sent.base_amount AS comparison_left_amount,
               received.base_amount AS comparison_right_amount,
-              (sent.base_fee_amount + received.base_fee_amount) AS fee_amount_applied,
-              CASE WHEN sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash
-                   THEN NULL::numeric ELSE evidence.amount_delta END AS amount_delta,
-              CASE WHEN sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash
-                   THEN NULL::numeric ELSE evidence.amount_tolerance END AS amount_tolerance,
-              CASE WHEN sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash
-                   THEN NULL::numeric ELSE evidence.magnitude_ratio END AS magnitude_ratio,
+              evidence.fee_amount_applied,
+              evidence.amount_delta,
+              evidence.amount_tolerance,
+              evidence.magnitude_ratio,
               (sent.address IS NOT NULL AND sent.address = received.address) AS address_match,
               EXTRACT(EPOCH FROM (GREATEST(sent.occurred_at, received.occurred_at)
                                   - LEAST(sent.occurred_at, received.occurred_at)))::bigint AS time_delta_seconds
@@ -346,9 +376,16 @@ class ExchangeMatch {
        CROSS JOIN LATERAL (
          SELECT GREATEST(sent.base_amount, received.base_amount) AS larger_amount,
                 LEAST(sent.base_amount, received.base_amount) AS smaller_amount,
-                GREATEST(ABS(sent.base_amount - received.base_amount)
-                          - sent.base_fee_amount - received.base_fee_amount, 0::numeric) AS amount_delta,
-                GREATEST($2::numeric, GREATEST(sent.base_amount, received.base_amount) * $3::numeric) AS amount_tolerance,
+                CASE WHEN ABS(sent.base_amount - received.base_amount) = 0
+                     THEN 0::numeric
+                     ELSE sent.base_fee_amount + received.base_fee_amount
+                END AS fee_amount_applied,
+                LEAST(
+                  ABS(sent.base_amount - received.base_amount),
+                  ABS(ABS(sent.base_amount - received.base_amount)
+                      - sent.base_fee_amount - received.base_fee_amount)
+                ) AS amount_delta,
+                $2::numeric AS amount_tolerance,
                 CASE WHEN GREATEST(sent.base_amount, received.base_amount) = 0
                      THEN 1::numeric
                      ELSE LEAST(sent.base_amount, received.base_amount)
@@ -358,14 +395,17 @@ class ExchangeMatch {
        WHERE (
          (sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash)
          OR (
+           (sent.tx_hash IS NULL OR received.tx_hash IS NULL)
+           AND
            evidence.amount_delta <= evidence.amount_tolerance
-           AND evidence.magnitude_ratio >= $5::numeric
-           AND received.occurred_at >= sent.occurred_at - make_interval(hours => $7::int)
-           AND received.occurred_at <= sent.occurred_at + make_interval(hours => $6::int)
+           AND received.occurred_at >= sent.occurred_at - make_interval(hours => $5::int)
+           AND received.occurred_at <= sent.occurred_at + make_interval(hours => CASE
+                 WHEN sent.address IS NOT NULL AND sent.address = received.address
+                 THEN $4::int ELSE $6::int END)
          )
        )`,
-      [userId, ABSOLUTE_AMOUNT_TOLERANCE, AMOUNT_TOLERANCE_RATE,
-        MATCHABLE_RECORD_TYPES, MIN_MAGNITUDE_RATIO, MATCH_WINDOW_HOURS, PAIR_BACKDATE_HOURS]
+      [userId, EXACT_AMOUNT_TOLERANCE, MATCHABLE_RECORD_TYPES,
+        MATCH_WINDOW_HOURS, PAIR_BACKDATE_HOURS, AMOUNT_ONLY_WINDOW_HOURS]
     );
     return result.rows;
   }
@@ -406,14 +446,29 @@ class ExchangeMatch {
    * EthActivity.replaceForWallet: the derived table is rebuilt in full and the
    * verdict table is never touched.
    */
-  static async replaceForUser(userId, rows) {
+  static async replaceForUser(userId, rows, suggestions = []) {
     requireUserId('replaceForUser', userId);
+    if (!Array.isArray(rows) || !Array.isArray(suggestions)) {
+      throw new TypeError('ExchangeMatch.replaceForUser requires match and suggestion arrays');
+    }
+    const unsafeMatch = rows.find((row) => !['tx_hash', 'manual'].includes(row.match_method));
+    if (unsafeMatch) {
+      throw new Error(`ExchangeMatch.replaceForUser refuses non-automatic method ${unsafeMatch.match_method}`);
+    }
+    const unsafeSuggestion = suggestions.find((row) => (
+      !['tx_hash', 'address_amount', 'amount_window'].includes(row.match_method)
+      || !['ambiguous', 'address_amount', 'amount_time_only'].includes(row.suggestion_reason)
+    ));
+    if (unsafeSuggestion) {
+      throw new Error('ExchangeMatch.replaceForUser received an invalid review suggestion');
+    }
 
     // One transaction, following ExchangeRecord.bulkUpsert. Delete-then-insert
     // outside one is a window in which this user has NO matches at all, and a
     // failure mid-insert leaves that window open permanently.
     const client = await pool.connect();
     let inserted = 0;
+    let suggested = 0;
     let invalidated = 0;
     try {
       await client.query('BEGIN');
@@ -450,7 +505,7 @@ class ExchangeMatch {
       for (const row of stale) {
         const onChain = row.counter_record_id == null;
         const reason = row.comparison_kind === 'amount'
-          ? 'No longer satisfies the hardened amount, fee or magnitude policy'
+          ? 'Prior heuristic evidence is no longer eligible for automatic matching under v3'
           : 'No longer selected by the rebuilt matcher';
         await client.query(
           `INSERT INTO exchange_match_events
@@ -482,6 +537,13 @@ class ExchangeMatch {
          USING exchange_records er
          JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
          WHERE m.exchange_record_id = er.id AND ea.user_id = $1`,
+        [userId]
+      );
+      await client.query(
+        `DELETE FROM exchange_match_suggestions s
+         USING exchange_records er
+         JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+         WHERE s.exchange_record_id = er.id AND ea.user_id = $1`,
         [userId]
       );
 
@@ -518,6 +580,43 @@ class ExchangeMatch {
         );
         inserted += result.rowCount || 0;
       }
+
+      for (let start = 0; start < suggestions.length; start += CHUNK) {
+        const chunk = suggestions.slice(start, start + CHUNK);
+        const values = [];
+        const placeholders = chunk.map((row, i) => {
+          const base = i * SUGGESTION_INSERT_COLUMNS.length;
+          values.push(
+            row.exchange_record_id,
+            row.activity_id ?? null,
+            row.counter_record_id ?? null,
+            row.wallet_id ?? null,
+            row.chain_id ?? null,
+            row.tx_hash ?? null,
+            row.match_method,
+            row.confidence || 'low',
+            row.suggestion_reason,
+            row.rule_version || MATCH_RULE_VERSION,
+            row.comparison_kind || null,
+            row.comparison_left_amount ?? null,
+            row.comparison_right_amount ?? null,
+            row.fee_amount_applied ?? null,
+            row.amount_delta ?? null,
+            row.amount_tolerance ?? null,
+            row.magnitude_ratio ?? null,
+            row.address_match ?? null,
+            row.time_delta_seconds ?? null
+          );
+          return `(${SUGGESTION_INSERT_COLUMNS.map((_, j) => `$${base + j + 1}`).join(', ')})`;
+        });
+        const result = await client.query(
+          `INSERT INTO exchange_match_suggestions (${SUGGESTION_INSERT_COLUMNS.join(', ')})
+           VALUES ${placeholders.join(', ')}
+           ON CONFLICT DO NOTHING`,
+          values
+        );
+        suggested += result.rowCount || 0;
+      }
       await client.query('COMMIT');
     } catch (err) {
       try {
@@ -540,38 +639,46 @@ class ExchangeMatch {
         'Exchange match insert dropped rows on conflict'
       );
     }
-    return { inserted, invalidated };
+    if (suggested !== suggestions.length) {
+      logger.warn(
+        { userId, derived: suggestions.length, inserted: suggested, dropped: suggestions.length - suggested },
+        'Exchange match suggestion insert dropped rows on conflict'
+      );
+    }
+    return { inserted, suggested, invalidated };
   }
 
   /**
-   * A hash/manual transfer is explained and leaves the review queue. A
-   * heuristic remains visibly reviewable until the user confirms it.
+   * An active on-chain match is necessarily hash/manual and leaves the review
+   * queue. Heuristics live in exchange_match_suggestions instead, so this
+   * method never receives or clears one.
    *
    * PATH-INDEPENDENT: the confidence is stamped on every matched row, not only
    * on rows that happen to be flagged right now. Gating on needs_review made
    * the stored answer depend on history -- a transfer synced BEFORE its record
-   * was imported was flagged, then cleared to the match's 'medium'; the same
-   * transfer synced after already had the record, was never flagged, and kept
-   * the ladder's 'high'. Identical data, two answers. The extra predicate keeps
-   * the statement from rewriting rows that already say the right thing, so
-   * `cleared` still counts real changes and a no-op rebuild writes nothing.
+   * was imported was flagged, then cleared; the same transfer synced after the
+   * record already existed was never flagged. Identical data must produce the
+   * same stored confidence either way. The extra predicate keeps the statement
+   * from rewriting rows that already say the right thing, so `cleared` still
+   * counts real changes and a no-op rebuild writes nothing.
    */
-  static async clearReviewForMatched(userId, heuristicReason) {
+  static async clearReviewForMatched(userId) {
     requireUserId('clearReviewForMatched', userId);
     const result = await pool.query(
       `UPDATE eth_activity a
-       SET needs_review = m.match_method NOT IN ('tx_hash', 'manual'),
-           review_reason = CASE WHEN m.match_method IN ('tx_hash', 'manual')
-                                THEN NULL ELSE $2 END,
+       SET needs_review = FALSE,
+           review_reason = NULL,
            confidence = m.confidence
        FROM eth_wallets w, exchange_matches m
        WHERE w.id = a.wallet_id AND w.user_id = $1
          AND m.activity_id = a.id
-         AND (a.needs_review IS DISTINCT FROM (m.match_method NOT IN ('tx_hash', 'manual'))
-              OR a.review_reason IS DISTINCT FROM CASE WHEN m.match_method IN ('tx_hash', 'manual')
-                                                        THEN NULL ELSE $2 END
+         -- Defense in depth. replaceForUser rejects every other method, but a
+         -- stale or manually written row must not silently become automatic.
+         AND m.match_method IN ('tx_hash', 'manual')
+         AND (a.needs_review IS DISTINCT FROM FALSE
+              OR a.review_reason IS NOT NULL
               OR a.confidence IS DISTINCT FROM m.confidence)`,
-      [userId, heuristicReason || 'Heuristic exchange match needs confirmation'],
+      [userId],
     );
     return result.rowCount || 0;
   }
@@ -595,11 +702,26 @@ class ExchangeMatch {
    * transfer also shrinks the covered period past it, leaving the transfer
    * marked explained by evidence that no longer exists.
    */
-  static async flagUnmatchedExchangeFlows(userId, reviewReason) {
+  static async flagUnmatchedExchangeFlows(userId, reviewReason, suggestionReason = null) {
     requireUserId('flagUnmatchedExchangeFlows', userId);
     const result = await pool.query(
       `UPDATE eth_activity a
-       SET needs_review = TRUE, review_reason = $2, confidence = 'low'
+       SET needs_review = TRUE,
+           review_reason = CASE WHEN EXISTS (
+             SELECT 1
+             FROM exchange_match_suggestions s
+             JOIN exchange_records sr ON sr.id = s.exchange_record_id
+             JOIN exchange_accounts sea ON sea.id = sr.exchange_account_id
+             WHERE s.activity_id = a.id
+               AND sea.user_id = $1
+               AND (s.counter_record_id IS NULL OR EXISTS (
+                 SELECT 1
+                 FROM exchange_records cr
+                 JOIN exchange_accounts cea ON cea.id = cr.exchange_account_id
+                 WHERE cr.id = s.counter_record_id AND cea.user_id = $1
+               ))
+           ) THEN COALESCE($4, $2) ELSE $2 END,
+           confidence = 'low'
        FROM eth_wallets w
        WHERE w.id = a.wallet_id AND w.user_id = $1
          -- The RESOLVED category, exactly as the candidate query reads it. A
@@ -614,14 +736,34 @@ class ExchangeMatch {
                 WHERE o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash),
                a.category
              ) IN ('exchange_deposit', 'exchange_withdrawal')
-         AND NOT a.needs_review
          AND NOT EXISTS (SELECT 1 FROM exchange_matches m WHERE m.activity_id = a.id)
+         AND (
+           NOT a.needs_review
+           OR (
+               EXISTS (
+                 SELECT 1
+                 FROM exchange_match_suggestions s
+                 JOIN exchange_records sr ON sr.id = s.exchange_record_id
+                 JOIN exchange_accounts sea ON sea.id = sr.exchange_account_id
+                 WHERE s.activity_id = a.id
+                   AND sea.user_id = $1
+                   AND (s.counter_record_id IS NULL OR EXISTS (
+                     SELECT 1
+                     FROM exchange_records cr
+                     JOIN exchange_accounts cea ON cea.id = cr.exchange_account_id
+                     WHERE cr.id = s.counter_record_id AND cea.user_id = $1
+                   ))
+               )
+             AND (a.review_reason IS DISTINCT FROM COALESCE($4, $2)
+                  OR a.confidence IS DISTINCT FROM 'low')
+           )
+         )
          AND EXISTS (
            SELECT 1 FROM exchange_records er
            JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
            WHERE ea.user_id = $1 AND er.record_type = ANY($3::varchar[])
          )`,
-      [userId, reviewReason, MATCHABLE_RECORD_TYPES]
+      [userId, reviewReason, MATCHABLE_RECORD_TYPES, suggestionReason]
     );
     return result.rowCount || 0;
   }
@@ -629,10 +771,11 @@ class ExchangeMatch {
   /**
    * The venue's own address, learned from a match that PROVED it.
    *
-   * Only ever called for hash matches (and for a user's own confirmation),
-   * because only those are identity: the counterparty of a transaction the
-   * exchange itself published is the exchange, full stop. A fallback match is
-   * a guess, and a wrong 'exchange' label deletes real spending from cash flow.
+   * Only ever called for a unique, single-leg hash match: the counterparty of a
+   * transaction the exchange itself published is the exchange, full stop. A
+   * fallback match is a guess, and even a manual confirmation answers only
+   * whether two rows are one movement; neither may teach a global address
+   * label. A wrong 'exchange' label deletes real spending from cash flow.
    *
    * Writes ONLY when the address has no verdict of any kind, user or global.
    * That is how precedence stays intact without this needing to know the
@@ -680,6 +823,58 @@ class ExchangeMatch {
     };
   }
 
+  // Review candidates are intentionally separate from active matches. Reading
+  // them never folds a ledger row; confirming one writes a durable verdict and
+  // the next rebuild promotes it to a manual match.
+  static async findSuggestionsForUser(userId, { limit = 100, offset = 0 } = {}) {
+    requireUserId('findSuggestionsForUser', userId);
+    const result = await pool.query(
+      `SELECT s.id, s.exchange_record_id, s.activity_id, s.counter_record_id,
+              s.wallet_id, s.chain_id, s.tx_hash,
+              s.match_method, s.confidence, s.suggestion_reason, s.created_at,
+              s.rule_version, s.comparison_kind,
+              s.comparison_left_amount, s.comparison_right_amount,
+              s.fee_amount_applied, s.amount_delta, s.amount_tolerance,
+              s.magnitude_ratio, s.address_match, s.time_delta_seconds,
+              er.record_type, er.occurred_at, er.base_asset, er.base_amount,
+              er.fee_asset, er.fee_amount, er.tx_hash AS record_tx_hash,
+              er.address AS record_address, er.network AS record_network,
+              er.chain_id AS record_chain_id,
+              ea.id AS exchange_account_id, ea.name AS exchange_account_name, ea.exchange,
+              counter.record_type AS counter_record_type,
+              counter.occurred_at AS counter_occurred_at,
+              counter.base_asset AS counter_base_asset,
+              counter.base_amount AS counter_base_amount,
+              counter_account.id AS counter_account_id,
+              counter_account.name AS counter_account_name,
+              a.block_time, a.category, a.legs, a.fee_wei,
+              w.address AS wallet_address,
+              COUNT(*) OVER() AS total_count
+       FROM exchange_match_suggestions s
+       JOIN exchange_records er ON er.id = s.exchange_record_id
+       JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+       LEFT JOIN exchange_records counter ON counter.id = s.counter_record_id
+       LEFT JOIN exchange_accounts counter_account ON counter_account.id = counter.exchange_account_id
+       LEFT JOIN eth_activity a ON a.id = s.activity_id
+       LEFT JOIN eth_wallets w ON w.id = a.wallet_id
+       WHERE ea.user_id = $1
+         AND (s.counter_record_id IS NULL OR counter_account.user_id = $1)
+         AND (s.activity_id IS NULL OR w.user_id = $1)
+       ORDER BY er.occurred_at DESC, s.id DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
+    );
+    const total = result.rows.length ? Number(result.rows[0].total_count) : 0;
+    return {
+      suggestions: result.rows.map((row) => {
+        const rest = { ...row };
+        delete rest.total_count;
+        return rest;
+      }),
+      total,
+    };
+  }
+
   /**
    * How much of the picture is joined up. `unmatched_records` is the issue's
    * "record-side deposit from an unknown source" -- reported as a count rather
@@ -695,6 +890,16 @@ class ExchangeMatch {
           JOIN exchange_records er ON er.id = m.exchange_record_id
           JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
           WHERE ea.user_id = $1) AS matched,
+         (SELECT COUNT(*)::int FROM exchange_match_suggestions s
+          JOIN exchange_records er ON er.id = s.exchange_record_id
+          JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+          LEFT JOIN exchange_records counter ON counter.id = s.counter_record_id
+          LEFT JOIN exchange_accounts counter_account ON counter_account.id = counter.exchange_account_id
+          LEFT JOIN eth_activity a ON a.id = s.activity_id
+          LEFT JOIN eth_wallets w ON w.id = a.wallet_id
+          WHERE ea.user_id = $1
+            AND (s.counter_record_id IS NULL OR counter_account.user_id = $1)
+            AND (s.activity_id IS NULL OR w.user_id = $1)) AS suggested,
          (SELECT COUNT(*)::int FROM exchange_records er
           JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
           WHERE ea.user_id = $1 AND er.record_type = ANY($2::varchar[])
@@ -716,6 +921,7 @@ class ExchangeMatch {
     const row = result.rows[0] || {};
     return {
       matched: Number(row.matched) || 0,
+      suggested: Number(row.suggested) || 0,
       unmatchedRecords: Number(row.unmatched_records) || 0,
       unmatchedActivities: Number(row.unmatched_activities) || 0,
     };

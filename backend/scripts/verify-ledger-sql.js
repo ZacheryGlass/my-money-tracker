@@ -162,6 +162,21 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   );
   const recordId = (externalId) => records.rows.find((r) => r.external_id === externalId).id;
 
+  // Execute the matcher's REAL candidate SQL too. The unit suite pins this
+  // query as text because its fake Pool cannot parse PostgreSQL; this is the
+  // check that catches a valid-looking LATERAL/NUMERIC rewrite that Postgres
+  // itself rejects or evaluates differently.
+  const ExchangeMatch = require('../src/models/ExchangeMatch');
+  const matcherPool = require('../src/config/database');
+  const onChainCandidates = await ExchangeMatch.onChainCandidates(1);
+  const depositCandidate = onChainCandidates.find((candidate) => (
+    String(candidate.exchange_record_id) === String(recordId('DEP-1'))
+      && candidate.tx_hash === DEPOSIT_TX
+  ));
+  ok('real matcher SQL recognizes a compatible hash and direction',
+    depositCandidate?.match_method === 'tx_hash'
+      && depositCandidate.direction_compatible === true);
+
   // The pairing #61 would derive, written directly: this verifies the LEDGER's
   // reading of exchange_matches, not the matcher itself.
   await pool.query(
@@ -186,9 +201,32 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     [account2.rows[0].id, accountId]
   );
   const pairId = (externalId) => pair.rows.find((r) => r.external_id === externalId).id;
+  const pairCandidates = await ExchangeMatch.exchangePairCandidates(1);
+  const exactPairCandidate = pairCandidates.find((candidate) => (
+    String(candidate.exchange_record_id) === String(pairId('CB-WD-1'))
+      && String(candidate.counter_record_id) === String(pairId('KR-DEP-2'))
+  ));
+  ok('real matcher SQL keeps exact amount and narrow-time evidence review-only',
+    exactPairCandidate?.match_method === 'amount_window'
+      && /^0(?:\.0*)?$/.test(exactPairCandidate.amount_delta)
+      && exactPairCandidate.direction_compatible === true);
+
+  let rejectedV3Heuristic = false;
+  try {
+    await pool.query(
+      `INSERT INTO exchange_matches
+         (exchange_record_id, counter_record_id, match_method, confidence)
+       VALUES ($1, $2, 'address_amount', 'medium')`,
+      [pairId('CB-WD-1'), pairId('KR-DEP-2')]
+    );
+  } catch (error) {
+    rejectedV3Heuristic = error.code === '23514';
+  }
+  ok('the v3 database default refuses a heuristic active match', rejectedV3Heuristic);
   await pool.query(
-    `INSERT INTO exchange_matches (exchange_record_id, counter_record_id, match_method, confidence)
-     VALUES ($1, $2, 'address_amount', 'medium')`,
+    `INSERT INTO exchange_matches
+       (exchange_record_id, counter_record_id, match_method, confidence, rule_version)
+     VALUES ($1, $2, 'address_amount', 'medium', 'v2')`,
     [pairId('CB-WD-1'), pairId('KR-DEP-2')]
   );
 
@@ -870,6 +908,7 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('migration second pass makes no further changes',
     JSON.stringify(afterFirstAlias) === JSON.stringify(afterSecondAlias));
 
+  await matcherPool.end();
   await pool.end();
 
   console.log('\n--- checks ---');

@@ -35,6 +35,7 @@ vi.mock('../utils/api', () => ({
     sync: vi.fn(),
     startSync: vi.fn(),
     getSyncStatus: vi.fn(),
+    setMatchVerdict: vi.fn(),
   },
 }));
 
@@ -115,7 +116,31 @@ beforeEach(() => {
   exchangesAPI.getRecords.mockResolvedValue({ data: FLAGGED, pagination: { total: FLAGGED.length } });
   exchangesAPI.getMatches.mockResolvedValue({
     data: [{
+      id: 19,
+      occurred_at: '2026-07-31T12:00:00.000Z',
+      exchange_account_name: 'Kraken Spot',
+      record_type: 'deposit',
+      base_amount: '1.995',
+      base_asset: 'ETH',
+      match_method: 'tx_hash',
+      confidence: 'high',
+      comparison_kind: 'hash',
+      comparison_left_amount: '2',
+      comparison_right_amount: '1.995',
+      amount_delta: '0',
+      amount_tolerance: '0',
+      fee_amount_applied: '0.005',
+      verdict: null,
+    }],
+    suggestions: [{
       id: 20,
+      exchange_record_id: 20,
+      activity_id: 30,
+      wallet_id: 1,
+      wallet_address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      chain_id: 1,
+      tx_hash: '0x1111111111111111111111111111111111111111111111111111111111111111',
+      block_time: '2026-07-31T11:57:00.000Z',
       occurred_at: '2026-07-31T12:00:00.000Z',
       exchange_account_name: 'Kraken Spot',
       record_type: 'deposit',
@@ -125,13 +150,13 @@ beforeEach(() => {
       confidence: 'medium',
       comparison_kind: 'amount',
       amount_delta: '0',
-      amount_tolerance: '0.01',
+      amount_tolerance: '0',
       magnitude_ratio: '0.9975',
       fee_amount_applied: '0.005',
       address_match: true,
-      verdict: null,
+      suggestion_reason: 'address_amount',
     }],
-    summary: { matched: 1, unmatchedRecords: 0, unmatchedActivities: 0 },
+    summary: { matched: 1, suggested: 1, unmatchedRecords: 1, unmatchedActivities: 1 },
   });
   exchangesAPI.getMatchEvents.mockResolvedValue({
     data: [{
@@ -139,7 +164,7 @@ beforeEach(() => {
       created_at: '2026-07-31T12:01:00.000Z',
       exchange_account_name: 'Kraken Spot',
       exchange_record_id: 20,
-      reason: 'No longer satisfies the hardened amount, fee or magnitude policy',
+      reason: 'Prior heuristic evidence is no longer eligible for automatic matching under v3',
       prior_match_method: 'amount_window',
       prior_confidence: 'low',
       comparison_kind: 'amount',
@@ -172,12 +197,33 @@ describe('Crypto -> Exchanges tab', () => {
     await renderSettings();
     fireEvent.click(await screen.findByRole('button', { name: /Match audit/i }));
 
-    expect(await screen.findByText(/residual 0 ≤ tolerance 0.01/)).toBeInTheDocument();
+    expect(await screen.findAllByText(/fee-adjusted amounts agree|Fee-adjusted exact match/)).toHaveLength(2);
+    expect(screen.getByText('automatic')).toBeInTheDocument();
     expect(screen.getByText(/address corroborated/)).toBeInTheDocument();
+    expect(screen.getByText(/Address and amount corroborated/)).toBeInTheDocument();
+    expect(screen.getByText(/Possible on-chain side:.*wallet 0xaaaa…aaaa.*chain 1/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Same movement/i })).toBeInTheDocument();
     expect(screen.getByText('Automatically invalidated')).toBeInTheDocument();
-    expect(screen.getByText(/No longer satisfies the hardened amount/)).toBeInTheDocument();
-    expect(exchangesAPI.getMatches).toHaveBeenCalledWith({ limit: 100 });
+    expect(screen.getByText(/no longer eligible for automatic matching/i)).toBeInTheDocument();
+    expect(exchangesAPI.getMatches).toHaveBeenCalledWith({ limit: 500 });
     expect(exchangesAPI.getMatchEvents).toHaveBeenCalledWith({ limit: 100 });
+  });
+
+  it('requires an explicit verdict before promoting an address suggestion', async () => {
+    exchangesAPI.setMatchVerdict.mockResolvedValue({ verdict: { verdict: 'confirmed' } });
+    await renderSettings();
+    fireEvent.click(await screen.findByRole('button', { name: /Match audit/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Same movement/i }));
+
+    await waitFor(() => {
+      expect(exchangesAPI.setMatchVerdict).toHaveBeenCalledWith({
+        exchangeRecordId: 20,
+        walletId: 1,
+        chainId: 1,
+        txHash: '0x1111111111111111111111111111111111111111111111111111111111111111',
+        verdict: 'confirmed',
+      });
+    });
   });
 
   it('says an account has never been imported rather than showing nothing', async () => {

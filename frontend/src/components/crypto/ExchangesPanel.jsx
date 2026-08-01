@@ -5,7 +5,11 @@ import {
   RefreshCw, Save, ShieldCheck, Trash2, Unlink, Upload, X,
 } from 'lucide-react';
 import { exchanges as exchangesAPI } from '../../utils/api';
-import { formatDateDisplay, formatRelativeTime } from '../../utils/format';
+import { formatDateDisplay, formatRelativeTime, shortEthAddress } from '../../utils/format';
+import {
+  describeExchangeMatchEvidence,
+  describeExchangeSuggestionReason,
+} from '../../utils/exchangeMatchEvidence';
 import ExchangeBalanceExceptionQueue from './ExchangeBalanceExceptionQueue';
 
 // The venues the backend accepts. Coinbase covers both the retail export and a
@@ -54,6 +58,17 @@ const exchangeRecordAmount = (record) => {
   const amount = Number(record.base_amount);
   if (!Number.isFinite(amount)) return record.base_amount;
   return amount.toLocaleString(undefined, { maximumFractionDigits: 8 });
+};
+
+const suggestionTargetText = (suggestion) => {
+  if (suggestion?.counter_record_id != null) {
+    return `Possible other side: ${formatDateDisplay(suggestion.counter_occurred_at)} · ${suggestion.counter_account_name || 'Exchange'} · ${suggestion.counter_record_type || 'transfer'} · ${suggestion.counter_base_amount ?? '—'} ${suggestion.counter_base_asset || ''}`.trim();
+  }
+  const hash = suggestion?.tx_hash
+    ? `${suggestion.tx_hash.slice(0, 10)}…${suggestion.tx_hash.slice(-8)}`
+    : 'unknown transaction';
+  const time = suggestion?.block_time ? formatDateDisplay(suggestion.block_time) : 'unknown time';
+  return `Possible on-chain side: ${time} · wallet ${shortEthAddress(suggestion?.wallet_address)} · chain ${suggestion?.chain_id ?? 'unknown'} · ${hash}`;
 };
 
 // One account-level notice owns reconciliation messaging. Keeping mismatch,
@@ -153,6 +168,7 @@ function ExchangesPanel({
   const [resolvingRecordId, setResolvingRecordId] = useState(null);
   const [matchAudit, setMatchAudit] = useState(null);
   const [loadingMatchAudit, setLoadingMatchAudit] = useState(false);
+  const [judgingSuggestion, setJudgingSuggestion] = useState(null);
   const [balanceAudits, setBalanceAudits] = useState({});
   const focusAuditLoadedRef = useRef(null);
 
@@ -565,7 +581,7 @@ function ExchangesPanel({
     setLoadingMatchAudit(true);
     try {
       const [matches, events] = await Promise.all([
-        exchangesAPI.getMatches({ limit: 100 }),
+        exchangesAPI.getMatches({ limit: 500 }),
         exchangesAPI.getMatchEvents({ limit: 100 }),
       ]);
       setMatchAudit({
@@ -577,6 +593,31 @@ function ExchangesPanel({
       onError(err.response?.data?.error || 'Failed to load exchange match audit');
     } finally {
       setLoadingMatchAudit(false);
+    }
+  };
+
+  const handleSuggestionVerdict = async (suggestion, verdict) => {
+    const key = `${suggestion.id}:${verdict}`;
+    setJudgingSuggestion(key);
+    try {
+      await exchangesAPI.setMatchVerdict({
+        exchangeRecordId: suggestion.exchange_record_id,
+        ...(suggestion.counter_record_id != null
+          ? { counterRecordId: suggestion.counter_record_id }
+          : {
+            walletId: suggestion.wallet_id,
+            chainId: suggestion.chain_id,
+            txHash: suggestion.tx_hash,
+          }),
+        verdict,
+      });
+      showSuccess(verdict === 'confirmed' ? 'Pairing confirmed' : 'Pairing rejected');
+      await onChanged();
+      await handleLoadMatchAudit();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to save the pairing decision');
+    } finally {
+      setJudgingSuggestion(null);
     }
   };
 
@@ -620,12 +661,13 @@ function ExchangesPanel({
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <div>
               <h3 className="text-sm font-bold uppercase tracking-tight text-primary">Exchange match audit</h3>
-              <p className="mt-1 text-xs text-secondary">Pairings are derived evidence; confirm or reject them from the ledger before treating them as final.</p>
+              <p className="mt-1 text-xs text-secondary">Only matching transaction hashes and pairings you confirmed are automatic. Address or timing evidence stays separate until you decide.</p>
             </div>
             <button type="button" onClick={() => setMatchAudit(null)} className="rounded border border-transparent p-1.5 text-tertiary hover:text-primary" aria-label="Close match audit"><X size={15} /></button>
           </div>
-          <div className="grid grid-cols-2 gap-3 border-b border-border px-5 py-4 text-xs md:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 border-b border-border px-5 py-4 text-xs md:grid-cols-6">
             <div><p className="text-tertiary">Matched</p><p className="mt-1 font-mono font-semibold text-primary">{(matchAudit.summary?.matched || 0).toLocaleString()}</p></div>
+            <div><p className="text-tertiary">Suggestions</p><p className="mt-1 font-mono font-semibold text-accent">{(matchAudit.summary?.suggested || 0).toLocaleString()}</p></div>
             <div><p className="text-tertiary">Unmatched exchange</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.summary?.unmatchedRecords || 0).toLocaleString()}</p></div>
             <div><p className="text-tertiary">Unmatched on-chain</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.summary?.unmatchedActivities || 0).toLocaleString()}</p></div>
             <div><p className="text-tertiary">Shown below</p><p className="mt-1 font-mono font-semibold text-primary">{(matchAudit.data || []).length.toLocaleString()}</p></div>
@@ -638,19 +680,61 @@ function ExchangesPanel({
                   <div className="min-w-0">
                     <p className="text-primary">{formatDateDisplay(match.occurred_at)} · {match.exchange_account_name} · {match.record_type} · {match.base_amount} {match.base_asset}</p>
                     <p className="mt-0.5 text-caption text-tertiary">{match.match_method} · {match.confidence} · {match.category || 'venue-only movement'}</p>
-                    {match.comparison_kind === 'amount' && (
+                    {(match.comparison_kind === 'amount' || match.match_method === 'tx_hash') && (
                       <p className="mt-1 text-caption text-secondary">
-                        residual {match.amount_delta ?? '—'} ≤ tolerance {match.amount_tolerance ?? '—'} ·
-                        ratio {match.magnitude_ratio ?? '—'} · fee {match.fee_amount_applied ?? '0'}
-                        {match.address_match ? ' · address corroborated' : ' · time-window evidence only'}
+                        {describeExchangeMatchEvidence(match)}
+                        {match.address_match ? ' · address corroborated' : ''}
                       </p>
                     )}
                   </div>
-                  <span className={`rounded px-2 py-1 text-[9px] font-bold uppercase tracking-wide ${match.verdict === 'confirmed' ? 'bg-gain/10 text-gain' : match.verdict === 'rejected' ? 'bg-loss/10 text-loss' : 'bg-surface-3 text-tertiary'}`}>{match.verdict || 'unreviewed'}</span>
+                  <span className={`rounded px-2 py-1 text-[9px] font-bold uppercase tracking-wide ${match.verdict === 'confirmed' ? 'bg-gain/10 text-gain' : match.verdict === 'rejected' ? 'bg-loss/10 text-loss' : 'bg-surface-3 text-tertiary'}`}>{match.verdict || (match.match_method === 'tx_hash' ? 'automatic' : 'unreviewed')}</span>
                 </li>
               ))}
             </ul>
           ) : <p className="px-5 py-4 text-xs text-secondary">No derived pairings yet. The unmatched counts above are the current gaps.</p>}
+          {(matchAudit.suggestions || []).length > 0 && (
+            <div className="border-t border-border">
+              <div className="px-5 py-3">
+                <h4 className="text-xs font-bold uppercase tracking-wide text-accent">Needs your confirmation</h4>
+                <p className="mt-1 text-caption text-secondary">These alternatives do not fold or suppress any ledger rows unless you confirm one.</p>
+              </div>
+              <ul className="divide-y divide-border">
+                {matchAudit.suggestions.map((suggestion) => (
+                  <li key={suggestion.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-xs">
+                    <div className="min-w-0">
+                      <p className="text-primary">{formatDateDisplay(suggestion.occurred_at)} · {suggestion.exchange_account_name} · {suggestion.record_type} · {suggestion.base_amount} {suggestion.base_asset}</p>
+                      <p className="mt-0.5 text-caption text-secondary">{suggestionTargetText(suggestion)}</p>
+                      <p className="mt-0.5 text-caption text-accent">{describeExchangeSuggestionReason(suggestion)}</p>
+                      <p className="mt-1 text-caption text-secondary">
+                        {describeExchangeMatchEvidence(suggestion)}
+                        {suggestion.address_match ? ' · address corroborated' : ` · ${suggestion.time_delta_seconds ?? '—'} seconds apart`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleSuggestionVerdict(suggestion, 'confirmed')}
+                        disabled={judgingSuggestion != null}
+                        className="inline-flex h-7 items-center gap-1 rounded border border-gain/30 bg-gain/10 px-2 text-[9px] font-bold uppercase tracking-wide text-gain disabled:opacity-40"
+                      >
+                        {judgingSuggestion === `${suggestion.id}:confirmed` ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />}
+                        Same movement
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSuggestionVerdict(suggestion, 'rejected')}
+                        disabled={judgingSuggestion != null}
+                        className="inline-flex h-7 items-center gap-1 rounded border border-loss/30 bg-loss/10 px-2 text-[9px] font-bold uppercase tracking-wide text-loss disabled:opacity-40"
+                      >
+                        {judgingSuggestion === `${suggestion.id}:rejected` ? <RefreshCw size={10} className="animate-spin" /> : <X size={10} />}
+                        Not the same
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {(matchAudit.events || []).length > 0 && (
             <div className="border-t border-border">
               <div className="px-5 py-3">
@@ -663,7 +747,7 @@ function ExchangesPanel({
                     <p className="text-primary">{formatDateDisplay(event.created_at)} · {event.exchange_account_name} · record #{event.exchange_record_id}</p>
                     <p className="mt-0.5 text-caption text-secondary">{event.reason} · prior {event.prior_match_method} ({event.prior_confidence})</p>
                     {event.comparison_kind === 'amount' && (
-                      <p className="mt-1 text-caption text-tertiary">residual {event.amount_delta ?? '—'} ≤ tolerance {event.amount_tolerance ?? '—'} · ratio {event.magnitude_ratio ?? '—'}</p>
+                      <p className="mt-1 text-caption text-tertiary">{describeExchangeMatchEvidence(event)}</p>
                     )}
                   </li>
                 ))}

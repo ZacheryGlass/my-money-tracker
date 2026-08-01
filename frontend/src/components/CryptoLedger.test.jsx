@@ -427,7 +427,7 @@ describe('CryptoLedger', () => {
       legs: [{ asset: 'ETH', direction: 'out', amount: '1.25', units: '125', decimals: 2 }],
       exchange_match: {
         match_id: 4, exchange_record_id: 88, verdict_exchange_record_id: 88,
-        verdict_counter_record_id: null, match_method: 'address_amount', match_confidence: 'medium',
+        verdict_counter_record_id: null, match_method: 'tx_hash', match_confidence: 'high',
         verdict: null, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
         record_type: 'deposit', needs_review: true, external_id: 'DEP-2',
         legs: [{ asset: 'ETH', direction: 'in', amount: '1.25', units: '125', decimals: 2 }],
@@ -452,7 +452,7 @@ describe('CryptoLedger', () => {
       chain_id: 1,
       exchange_match: {
         match_id: 3, exchange_record_id: 55, verdict_exchange_record_id: 55,
-        verdict_counter_record_id: null, match_method: 'amount_window', match_confidence: 'low',
+        verdict_counter_record_id: null, match_method: 'tx_hash', match_confidence: 'high',
         verdict: null, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
         record_type: 'deposit', needs_review: false, external_id: 'DEP-1',
         legs: [{ asset: 'ETH', direction: 'in', amount: '1.25', units: '125', decimals: 2 }],
@@ -462,9 +462,7 @@ describe('CryptoLedger', () => {
 
     render(<CryptoLedger />);
     fireEvent.click((await screen.findAllByText('− 1.25 ETH'))[0]);
-    // The weakest evidence is stated outright, which is what makes the choice
-    // a real one.
-    expect((await screen.findAllByText(/Same amount, inside the settlement window/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/same transaction hash/i)).length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByRole('button', { name: /same movement/i })[0]);
 
     await vi.waitFor(() => {
@@ -482,7 +480,7 @@ describe('CryptoLedger', () => {
       legs: [{ asset: 'ETH', direction: 'out', amount: '1.25', units: '125', decimals: 2 }],
       exchange_match: {
         match_id: 3, exchange_record_id: 55, verdict_exchange_record_id: 55,
-        verdict_counter_record_id: null, match_method: 'amount_window', match_confidence: 'low',
+        verdict_counter_record_id: null, match_method: 'tx_hash', match_confidence: 'high',
         verdict: null, exchange_account_id: 7, account_name: 'Kraken', exchange: 'kraken',
         record_type: 'deposit', needs_review: false, external_id: 'DEP-1',
         legs: [{ asset: 'ETH', direction: 'in', amount: '1.25', units: '125', decimals: 2 }],
@@ -508,7 +506,7 @@ describe('CryptoLedger', () => {
     setLedger([exchange({
       exchange_match: {
         match_id: 9, exchange_record_id: 71, verdict_exchange_record_id: 55,
-        verdict_counter_record_id: 71, match_method: 'address_amount', match_confidence: 'medium',
+        verdict_counter_record_id: 71, match_method: 'tx_hash', match_confidence: 'high',
         verdict: null, exchange_account_id: 8, account_name: 'Coinbase', exchange: 'coinbase',
         record_type: 'deposit', needs_review: false, external_id: 'CB-1',
         legs: [{ asset: 'ETH', direction: 'in', amount: '0.5', units: '5', decimals: 1 }],
@@ -653,7 +651,7 @@ describe('CryptoLedger', () => {
       record_needs_review: false,
       exchange_match: {
         match_id: 9, exchange_record_id: 71, verdict_exchange_record_id: 55,
-        verdict_counter_record_id: 71, match_method: 'address_amount', match_confidence: 'medium',
+        verdict_counter_record_id: 71, match_method: 'tx_hash', match_confidence: 'high',
         verdict: null, exchange_account_id: 8, account_name: 'Coinbase', exchange: 'coinbase',
         record_type: 'deposit', needs_review: true, external_id: 'CB-1',
         legs: [{ asset: 'ETH', direction: 'in', amount: '0.5', units: '5', decimals: 1 }],

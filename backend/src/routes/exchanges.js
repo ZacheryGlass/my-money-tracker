@@ -295,10 +295,11 @@ function parseVerdictTarget(source) {
   return { target: { exchangeRecordId, walletId, chainId, txHash } };
 }
 
-// Every match this user has, both shapes, with each side described. This is
-// where a Coinbase -> Kraken transfer reads as ONE movement: the withdrawal
-// record and the deposit record, side by side, with no on-chain leg because
-// there never was one.
+// Every active match plus the separate review suggestions, with both sides
+// described. Only `data` is folded in the ledger; `suggestions` stays inert
+// until the user confirms it. An active Coinbase -> Kraken transfer reads as
+// ONE movement: the withdrawal and deposit side by side, with no on-chain leg
+// because there never was one.
 //
 // The Crypto Exchanges panel consumes this list for its match-audit drawer;
 // POST/DELETE /matches/verdict remain the durable confirm/reject controls.
@@ -307,12 +308,18 @@ router.get('/matches', async (req, res) => {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
-    const [{ matches, total }, summary] = await Promise.all([
+    const [{ matches, total }, { suggestions, total: suggestionTotal }, summary] = await Promise.all([
       ExchangeMatch.findForUser(req.user.id, { limit, offset }),
+      ExchangeMatch.findSuggestionsForUser(req.user.id, { limit, offset }),
       ExchangeMatch.summaryForUser(req.user.id),
     ]);
 
-    return res.status(200).json({ data: matches, summary, pagination: { total, limit, offset } });
+    return res.status(200).json({
+      data: matches,
+      suggestions,
+      summary,
+      pagination: { total, suggestion_total: suggestionTotal, limit, offset },
+    });
   } catch (error) {
     logger.error({ err: error }, 'Get exchange matches error');
     return res.status(500).json({ error: 'Failed to retrieve exchange matches' });

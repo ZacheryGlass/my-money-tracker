@@ -9,15 +9,13 @@ const { ZERO_ADDRESS } = require('../utils/ethActivityVocabulary');
 // maps answer different questions.
 const REVIEW_REASONS = {
   unmatched_exchange: 'No exchange record explains this transfer yet -- import or sync that account',
-  heuristic_exchange: 'Heuristic exchange match needs confirmation -- review the amount, fee, address and timing evidence',
+  suggested_exchange: 'Possible exchange pairing needs confirmation -- review the amount, fee, address and timing evidence',
 };
 const HEX_ADDRESS = /^0x[0-9a-f]{40}$/;
 
-// Strongest evidence first. The order IS the algorithm: matching is greedy and
-// one-to-one, so whichever candidate is considered first claims both its sides,
-// and a hash match must never lose a record to a same-day coincidence.
-//
-// 'manual' outranks even a hash because it is the user overruling us.
+// Strongest evidence first. Ordering is deterministic, but v3 never uses time
+// or ids to choose between plausible alternatives: ambiguity produces review
+// suggestions. Manual outranks hash because it is the user overruling us.
 const METHOD_RANK = { manual: 0, tx_hash: 1, address_amount: 2, amount_window: 3 };
 
 const EVIDENCE_FIELDS = [
@@ -27,7 +25,7 @@ const EVIDENCE_FIELDS = [
 ];
 
 const DECIMAL_SCALE = 10n ** 18n;
-const ABSOLUTE_TOLERANCE_SCALED = 10n ** 10n;
+const EXACT_AMOUNT_TOLERANCE_SCALED = 0n;
 
 // SQL is the primary matcher, but keep the same policy at the selection
 // boundary so a stale/buggy candidate producer cannot reintroduce a material
@@ -49,21 +47,27 @@ function amountEvidencePasses(candidate) {
   if (leftValue === null || rightValue === null) return false;
   const left = leftValue < 0n ? -leftValue : leftValue;
   const right = rightValue < 0n ? -rightValue : rightValue;
-  const larger = left > right ? left : right;
-  const smaller = left < right ? left : right;
-  const fee = scaledDecimal(candidate.fee_amount_applied) ?? 0n;
+  const parsedFee = scaledDecimal(candidate.fee_amount_applied) ?? 0n;
+  const fee = parsedFee < 0n ? -parsedFee : parsedFee;
   const rawDelta = left > right ? left - right : right - left;
-  const amountDelta = rawDelta > fee ? rawDelta - fee : 0n;
-  const relativeTolerance = (larger * 5n) / 1000n;
-  const tolerance = relativeTolerance > ABSOLUTE_TOLERANCE_SCALED
-    ? relativeTolerance : ABSOLUTE_TOLERANCE_SCALED;
-  return amountDelta <= tolerance && (larger === 0n || smaller * 2n >= larger);
+  // Some providers store the transferred quantity gross and expose the fee
+  // separately; others store the net quantity and still expose that fee. Both
+  // exact representations are admissible. A PARTIAL fee difference is not:
+  // max(rawDelta - fee, 0) made every difference smaller than the fee look
+  // exact. The residual is therefore the smaller of "no fee applied" and
+  // "the documented fee applied in full".
+  const feeAdjustedDelta = rawDelta > fee ? rawDelta - fee : fee - rawDelta;
+  const amountDelta = rawDelta < feeAdjustedDelta ? rawDelta : feeAdjustedDelta;
+  // v3 deliberately has no tolerance band. Import and on-chain quantities are
+  // exact NUMERIC values, so after a source-backed same-asset fee is accounted
+  // for, any residual means the amounts are not equal.
+  return amountDelta <= EXACT_AMOUNT_TOLERANCE_SCALED;
 }
 
 function evidenceFor(candidate, fallbackKind = null) {
   return Object.fromEntries(EVIDENCE_FIELDS.map((field) => [
     field,
-    candidate[field] ?? (field === 'rule_version' ? 'v2' : field === 'comparison_kind' ? fallbackKind : null),
+    candidate[field] ?? (field === 'rule_version' ? 'v3' : field === 'comparison_kind' ? fallbackKind : null),
   ]));
 }
 
@@ -117,16 +121,12 @@ function compareCandidates(a, b) {
  * decides anything -- which is what makes every rule below testable without a
  * database.
  *
- * One movement is counted ONCE, so a record and an activity each participate in
- * at most one match. That is enforced here, greedily, rather than left to the
- * unique indexes: an index would reject the second claim with an error, and the
- * correct answer is not "fail the rebuild", it is "the stronger evidence wins".
- *
- * On-chain candidates are considered before exchange-to-exchange ones because
- * compareCandidates says so explicitly -- see the shape key there. Leaving it
- * to the method ranks did not work: the two shapes carry the SAME ranks, so an
- * equal-rank pair won on time delta, or on ids, and took the record away from
- * the on-chain leg that proved a tracked wallet was in between.
+ * One movement is counted ONCE. Manual confirmations and unique transaction
+ * hashes are identity. Address + strict fee-adjusted amount and amount + time
+ * alone are suggestions and never fold rows. If more than one otherwise-
+ * eligible candidate claims the same
+ * side, every alternative stays a suggestion instead of a greedy winner being
+ * invented from row order or a few seconds of timestamp proximity.
  */
 function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
   const rejected = new Set();
@@ -153,7 +153,7 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
       match_method: 'manual',
       confidence: 'high',
       time_delta: 0,
-      rule_version: 'v2',
+      rule_version: 'v3',
       comparison_kind: 'manual',
     });
   }
@@ -164,7 +164,9 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
     ...pairs.map((row) => ({ ...row, activity_id: null })),
   ].filter((row) => {
     const key = row.counter_record_id ? pairVerdictKey(row) : onChainVerdictKey(row);
-    return !rejected.has(key) && amountEvidencePasses(row);
+    if (rejected.has(key) || !amountEvidencePasses(row)) return false;
+    if (row.match_method === 'tx_hash' && row.direction_compatible !== true) return false;
+    return true;
   });
 
   candidates.sort(compareCandidates);
@@ -172,15 +174,23 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
   const claimedRecords = new Set();
   const claimedActivities = new Set();
   const rows = [];
+  const suggestions = [];
   const learn = new Map();
 
-  for (const candidate of candidates) {
-    const recordId = Number(candidate.exchange_record_id);
-    if (claimedRecords.has(recordId)) continue;
+  const sideKeys = (candidate) => candidate.counter_record_id
+    ? [`record:${Number(candidate.exchange_record_id)}`, `record:${Number(candidate.counter_record_id)}`]
+    : [`record:${Number(candidate.exchange_record_id)}`, `activity:${Number(candidate.activity_id)}`];
 
+  const isClaimed = (candidate) => sideKeys(candidate).some((key) => {
+    const [kind, id] = key.split(':');
+    return kind === 'record' ? claimedRecords.has(Number(id)) : claimedActivities.has(Number(id));
+  });
+
+  const claim = (candidate) => {
+    const recordId = Number(candidate.exchange_record_id);
     if (candidate.counter_record_id) {
       const counterId = Number(candidate.counter_record_id);
-      if (claimedRecords.has(counterId) || counterId === recordId) continue;
+      if (claimedRecords.has(recordId) || claimedRecords.has(counterId) || counterId === recordId) return false;
       claimedRecords.add(recordId);
       claimedRecords.add(counterId);
       rows.push({
@@ -194,11 +204,11 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
         tx_hash: null,
         ...evidenceFor(candidate, candidate.match_method === 'tx_hash' ? 'hash' : 'amount'),
       });
-      continue;
+      return true;
     }
 
     const activityId = Number(candidate.activity_id);
-    if (!activityId || claimedActivities.has(activityId)) continue;
+    if (!activityId || claimedRecords.has(recordId) || claimedActivities.has(activityId)) return false;
     claimedRecords.add(recordId);
     claimedActivities.add(activityId);
     rows.push({
@@ -222,21 +232,70 @@ function selectMatches({ onChain = [], pairs = [], verdicts = [] } = {}) {
     // either: they answered "these two rows are the same money", not "label
     // this address for every future transfer".
     //
-    // Restricted further to a transaction with exactly ONE net leg. The hash
-    // arm deliberately matches whatever the legs look like -- a hash is
-    // identity -- but counterparty_address on a multi-leg row is the gas leg's
-    // to_address, which for a swap or a batched withdrawal is a ROUTER
-    // CONTRACT. Labelling that 'exchange' would delete every future
-    // interaction with that router from cash flow, globally and permanently.
+    // Restricted further to a transaction with exactly ONE net leg. The v3
+    // hash arm already requires that leg to establish compatible direction;
+    // keeping the guard here makes the learning boundary explicit too. On a
+    // multi-leg row counterparty_address can be a ROUTER CONTRACT, and labelling
+    // it 'exchange' would delete every future interaction with that router from
+    // cash flow, globally and permanently.
     if (candidate.match_method === 'tx_hash' && candidate.single_net_leg) {
       const address = String(candidate.counterparty_address || '').toLowerCase();
       if (HEX_ADDRESS.test(address) && address !== ZERO_ADDRESS && !learn.has(address)) {
         learn.set(address, candidate.exchange_account_name || 'Exchange');
       }
     }
+    return true;
+  };
+
+  const suggest = (candidate, suggestionReason) => {
+    if (isClaimed(candidate)) return;
+    suggestions.push({
+      exchange_record_id: Number(candidate.exchange_record_id),
+      activity_id: candidate.counter_record_id ? null : Number(candidate.activity_id),
+      counter_record_id: candidate.counter_record_id ? Number(candidate.counter_record_id) : null,
+      wallet_id: candidate.counter_record_id ? null : (candidate.wallet_id ?? null),
+      chain_id: candidate.counter_record_id ? null : (candidate.chain_id ?? null),
+      tx_hash: candidate.counter_record_id ? null : (candidate.tx_hash ?? null),
+      match_method: candidate.match_method,
+      confidence: candidate.confidence,
+      suggestion_reason: suggestionReason,
+      ...evidenceFor(candidate, candidate.match_method === 'tx_hash' ? 'hash' : 'amount'),
+    });
+  };
+
+  // Explicit answers always win. Conflict checks at verdict write time prevent
+  // two confirmations from claiming the same record.
+  for (const candidate of candidates.filter(isManual)) claim(candidate);
+
+  // Hashes establish identity, but a chain-ambiguous replay or malformed feed
+  // can still yield more than one candidate. Do not pick one in that case.
+  const hashes = candidates.filter((candidate) => candidate.match_method === 'tx_hash' && !isClaimed(candidate));
+  const hashCounts = new Map();
+  hashes.forEach((candidate) => sideKeys(candidate).forEach((key) => hashCounts.set(key, (hashCounts.get(key) || 0) + 1)));
+  for (const candidate of hashes) {
+    if (sideKeys(candidate).some((key) => hashCounts.get(key) > 1)) suggest(candidate, 'ambiguous');
+    else claim(candidate);
   }
 
-  return { rows, learn: [...learn].map(([address, name]) => ({ address, name })) };
+  // Address corroboration is much stronger than time alone, but still not
+  // identity: deposit addresses can be reused and source timestamps can be
+  // coarse. It always waits for confirmation.
+  const fallbacks = candidates.filter((candidate) => (
+    ['address_amount', 'amount_window'].includes(candidate.match_method) && !isClaimed(candidate)
+  ));
+  const fallbackCounts = new Map();
+  fallbacks.forEach((candidate) => sideKeys(candidate).forEach((key) => (
+    fallbackCounts.set(key, (fallbackCounts.get(key) || 0) + 1)
+  )));
+  for (const candidate of fallbacks) {
+    const ambiguous = sideKeys(candidate).some((key) => fallbackCounts.get(key) > 1);
+    suggest(candidate, ambiguous
+      ? 'ambiguous'
+      : candidate.match_method === 'address_amount' ? 'address_amount' : 'amount_time_only');
+  }
+
+  suggestions.sort(compareCandidates);
+  return { rows, suggestions, learn: [...learn].map(([address, name]) => ({ address, name })) };
 }
 
 class ExchangeMatchService {
@@ -263,15 +322,19 @@ class ExchangeMatchService {
       ExchangeMatch.verdictsForUser(userId),
     ]);
 
-    const { rows, learn } = selectMatches({ onChain, pairs, verdicts });
-    const replacement = await ExchangeMatch.replaceForUser(userId, rows);
+    const { rows, suggestions, learn } = selectMatches({ onChain, pairs, verdicts });
+    const replacement = await ExchangeMatch.replaceForUser(userId, rows, suggestions);
     const matches = replacement.inserted;
     // Order matters between these two only in that both are idempotent and
     // mutually exclusive: one needs a match to exist, the other needs one not
     // to. Clearing first keeps a row that just gained a match from being read
     // as unmatched in the same pass.
-    const cleared = await ExchangeMatch.clearReviewForMatched(userId, REVIEW_REASONS.heuristic_exchange);
-    const flagged = await ExchangeMatch.flagUnmatchedExchangeFlows(userId, REVIEW_REASONS.unmatched_exchange);
+    const cleared = await ExchangeMatch.clearReviewForMatched(userId);
+    const flagged = await ExchangeMatch.flagUnmatchedExchangeFlows(
+      userId,
+      REVIEW_REASONS.unmatched_exchange,
+      REVIEW_REASONS.suggested_exchange
+    );
 
     // Labels heal FUTURE classification, exactly as the issue says: nothing
     // here re-runs the ladder. Calling refreshClassificationsForUser from
@@ -286,8 +349,8 @@ class ExchangeMatchService {
       }
     }
 
-    logger.info({ userId, matches, invalidated: replacement.invalidated, cleared, flagged, learned }, 'Exchange matches rebuilt');
-    return { matches, invalidated: replacement.invalidated, cleared, flagged, learned };
+    logger.info({ userId, matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, flagged, learned }, 'Exchange matches rebuilt');
+    return { matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, flagged, learned };
   }
 
   // Same pass, but never fatal. Every caller outside the activity rebuild is
