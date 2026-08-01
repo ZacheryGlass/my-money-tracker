@@ -893,6 +893,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             <LabelsPanel
               addressLabels={addressLabels}
               addressNotes={addressNotes}
+              exchangeAccounts={exchangeAccounts}
               ignoredTokens={ignoredTokens}
               onChanged={handleManageChanged}
               onError={setError}

@@ -35,7 +35,7 @@ class EthAddressLabel {
          WHERE user_id = $1 OR user_id IS NULL
          ORDER BY address, user_id NULLS LAST
        ) labels
-       WHERE user_id IS NOT NULL OR source IN ('builtin', 'builtin-bridge', 'builtin-polymarket')
+       WHERE user_id IS NOT NULL OR source IN ('builtin', 'builtin-bridge', 'builtin-polymarket', 'builtin-etherdelta')
        ORDER BY name, address`,
       [userId]
     );
@@ -66,20 +66,22 @@ class EthAddressLabel {
   // the builtin lookup did the same to pack 'external' gateways (CoinPayments,
   // MoonPay, ...) -- the fresh user row shadowed the pack row as 'exchange',
   // rewriting that spending as an internal transfer.
-  static async upsert(userId, address, name, note, kind = null) {
+  static async upsert(userId, address, name, note, kind = null, exchangeAccountId = null) {
     const result = await pool.query(
-      `INSERT INTO eth_address_labels (user_id, address, name, source, note, kind)
+      `INSERT INTO eth_address_labels (user_id, address, name, source, note, kind, exchange_account_id)
        VALUES ($1, $2::text, $3, 'user', $4,
                COALESCE($5,
                         (SELECT kind FROM eth_address_labels
                           WHERE address = $2::text AND user_id IS NULL),
-                        'exchange'))
+                        'exchange'),
+               $6)
        ON CONFLICT (user_id, address) WHERE user_id IS NOT NULL
        DO UPDATE SET name = EXCLUDED.name,
                      kind = COALESCE($5, eth_address_labels.kind),
-                     note = COALESCE(EXCLUDED.note, eth_address_labels.note)
+                     note = COALESCE(EXCLUDED.note, eth_address_labels.note),
+                     exchange_account_id = COALESCE(EXCLUDED.exchange_account_id, eth_address_labels.exchange_account_id)
        RETURNING *`,
-      [userId, address.toLowerCase(), name, note || null, kind]
+      [userId, address.toLowerCase(), name, note || null, kind, exchangeAccountId]
     );
     return result.rows[0];
   }

@@ -9,7 +9,7 @@ import {
 } from '../../utils/dataLabels';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-const BUILTIN_LABEL_SOURCES = new Set(['builtin', 'builtin-bridge', 'builtin-polymarket']);
+const BUILTIN_LABEL_SOURCES = new Set(['builtin', 'builtin-bridge', 'builtin-polymarket', 'builtin-etherdelta']);
 
 function AddressNoteEditor({ address, initialNote = '', onChanged, onError, showSuccess }) {
   const [note, setNote] = useState(initialNote);
@@ -59,6 +59,7 @@ function AddressNoteEditor({ address, initialNote = '', onChanged, onError, show
 function LabelsPanel({
   addressLabels,
   addressNotes = [],
+  exchangeAccounts = [],
   ignoredTokens,
   onChanged,
   onError,
@@ -70,6 +71,7 @@ function LabelsPanel({
   // null = follow the default for the typed address. Only a deliberate pick
   // sets it, so the default can keep tracking what the user types.
   const [labelVerdictChoice, setLabelVerdictChoice] = useState(null);
+  const [exchangeAccountIdInput, setExchangeAccountIdInput] = useState('');
   const [updatingLabels, setUpdatingLabels] = useState(false);
   const [showExternalLabels, setShowExternalLabels] = useState(false);
   const [ignoreContract, setIgnoreContract] = useState('');
@@ -129,13 +131,20 @@ function LabelsPanel({
     setUpdatingLabels(true);
     onError(null);
     try {
-      await ethAPI.labelAddress(address, name || null, { kind: labelVerdictKind(labelVerdict) });
+      const labelKind = labelVerdictKind(labelVerdict);
+      const exchangeAccountId = labelKind === 'exchange' && exchangeAccountIdInput
+        ? Number(exchangeAccountIdInput) : undefined;
+      await ethAPI.labelAddress(address, name || null, {
+        kind: labelKind,
+        ...(exchangeAccountId ? { exchange_account_id: exchangeAccountId } : {}),
+      });
       if (labelNoteInput.trim()) await ethAPI.saveAddressNote(address, labelNoteInput.trim());
       showSuccess('Address labeled');
       setLabelAddressInput('');
       setLabelNameInput('');
       setLabelNoteInput('');
       setLabelVerdictChoice(null);
+      setExchangeAccountIdInput('');
       await onChanged();
     } catch (err) {
       onError(err.response?.data?.error || 'Failed to label address');
@@ -306,6 +315,22 @@ function LabelsPanel({
                   ))}
                 </select>
               </label>
+              {labelVerdictKind(labelVerdict) === 'exchange' && (
+                <label className="min-w-0 text-caption text-tertiary">
+                  Unrecoverable account (optional)
+                  <select
+                    value={exchangeAccountIdInput}
+                    onChange={(event) => setExchangeAccountIdInput(event.target.value)}
+                    className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+                    disabled={updatingLabels}
+                  >
+                    <option value="">None</option>
+                    {exchangeAccounts.filter((account) => account.records_unavailable).map((account) => (
+                      <option key={account.id} value={account.id}>{account.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <button
                 type="submit"
                 disabled={updatingLabels}

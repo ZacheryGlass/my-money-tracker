@@ -5,6 +5,7 @@ const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeSyncJob = require('../models/ExchangeSyncJob');
 const ExchangeMatchService = require('./ExchangeMatchService');
+const TransactionClassificationService = require('./TransactionClassificationService');
 const ExchangeReconciliationService = require('./ExchangeReconciliationService');
 const ExchangeBalanceReconciliationService = require('./ExchangeBalanceReconciliationService');
 const { connectorFor } = require('./exchangeSync');
@@ -506,6 +507,10 @@ class ExchangeSyncService {
     const matches = await ExchangeMatchService.rebuildForUserSafely(account.user_id, {
       exchangeAccountId: account.id,
     });
+    // A newly discovered fiat rail link must immediately stop the bank leg
+    // from counting as spending; waiting for the nightly expense job would
+    // show the same cash movement twice in the meantime.
+    await TransactionClassificationService.backfillForUser(account.user_id);
 
     logger.info({
       exchangeAccountId: account.id,

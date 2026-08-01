@@ -29,6 +29,7 @@ const verdict = (category, extra = {}) => ({
 function classifyActivity({
   wallet, failed, valueLegs, hadValueLegs, netLegs, gasLegs,
   bridgeAddresses = new Set(), serviceAddresses = new Set(),
+  custodyAddresses = new Set(),
 }) {
   if (failed) return verdict('failed');
 
@@ -45,6 +46,18 @@ function classifyActivity({
     // Deposit = value left the wallet for the venue, matching the mirror's
     // outgoing -> CRYPTO_EXCHANGE_DEPOSIT.
     const outbound = exchangeLegs.some((leg) => leg.from_address === wallet);
+    return verdict(outbound ? 'exchange_deposit' : 'exchange_withdrawal');
+  }
+
+  // EtherDelta's old custody contract is a known external venue, but its
+  // internal fills are not standard ERC-20 transfers. Treat visible custody
+  // legs as venue movements without claiming that the hidden order-book side
+  // was imported; the discovery/coverage surface remains the honest gap.
+  const custodyLegs = valueLegs.filter(
+    (leg) => !leg.counterparty_is_own && custodyAddresses.has(counterpartyAddress(wallet, leg))
+  );
+  if (custodyLegs.length > 0) {
+    const outbound = custodyLegs.some((leg) => leg.from_address === wallet);
     return verdict(outbound ? 'exchange_deposit' : 'exchange_withdrawal');
   }
 

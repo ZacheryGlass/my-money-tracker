@@ -275,7 +275,7 @@ const PUBLIC_COLUMNS = [
   'id', 'user_id', 'name', 'exchange', 'last_import_at', 'created_at', 'updated_at',
   'api_key_last4', 'api_secret_last4',
   'last_sync_at', 'last_sync_status', 'last_sync_error', 'balance_report',
-  'reconciliation_status',
+  'reconciliation_status', 'records_unavailable',
 ];
 
 // The copy above cannot drift silently: once the fake pool is installed the

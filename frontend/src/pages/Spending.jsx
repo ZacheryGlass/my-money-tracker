@@ -40,10 +40,18 @@ const COLUMNS = [
     accessorFn: (row) => row.merchant_name || row.name,
     header: 'Description',
     meta: { cellClassName: 'min-w-0' },
-    cell: ({ row, getValue }) => (
-      <div className="flex items-center gap-2">
-        <span className="truncate text-body-sm font-semibold text-primary">{getValue()}</span>
-        {row.original.pending && (
+      cell: ({ row, getValue }) => (
+        <div className="flex items-center gap-2">
+          <span className="truncate text-body-sm font-semibold text-primary">{getValue()}</span>
+          {row.original.exchange_fiat_match_id && (
+            <span
+              className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent"
+              title={`Linked to ${row.original.exchange_fiat_account_name || 'an exchange'}${row.original.exchange_fiat_external_id ? ` · ${row.original.exchange_fiat_external_id}` : ''}`}
+            >
+              Exchange linked
+            </span>
+          )}
+          {row.original.pending && (
           <span className="shrink-0 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">
             Pending
           </span>
@@ -240,6 +248,14 @@ export default function Spending() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-semibold text-primary">{txn.merchant_name || txn.name}</span>
+                      {txn.exchange_fiat_match_id && (
+                        <span
+                          className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent"
+                          title={`Linked to ${txn.exchange_fiat_account_name || 'an exchange'}${txn.exchange_fiat_external_id ? ` · ${txn.exchange_fiat_external_id}` : ''}`}
+                        >
+                          Exchange linked
+                        </span>
+                      )}
                       {txn.pending && (
                         <span className="shrink-0 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">
                           Pending

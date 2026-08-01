@@ -162,6 +162,41 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   );
   const recordId = (externalId) => records.rows.find((r) => r.external_id === externalId).id;
 
+  // The fiat companion uses a real PostgreSQL INSERT ... ON CONFLICT path;
+  // exercise it here rather than trusting the fake-pool SQL-shape tests. The
+  // temporary bank row is removed immediately after the assertion, so it does
+  // not alter the rest of this ledger fixture.
+  const bankAccount = await pool.query(
+    "INSERT INTO accounts (name, type, user_id) VALUES ('Verify Bank', 'depository', 1) RETURNING id"
+  );
+  const fiatRecord = await pool.query(
+    `INSERT INTO exchange_records
+       (exchange_account_id, record_type, occurred_at, base_asset, base_amount,
+        external_id, needs_review, source)
+     VALUES ($1, 'deposit', '2026-02-20 18:40', 'USD', 1.25, 'FIAT-1', false, 'api')
+     RETURNING id`,
+    [accountId]
+  );
+  await pool.query(
+    `INSERT INTO transactions
+       (account_id, plaid_transaction_id, date, name, merchant_name, amount, category)
+     VALUES ($1, 'verify-plaid-1', '2026-02-20', 'Kraken transfer', 'Kraken', 1.25, 'TRANSFER_OUT')`,
+    [bankAccount.rows[0].id]
+  );
+  const ExchangeFiatMatch = require('../src/models/ExchangeFiatMatch');
+  const fiatResult = await ExchangeFiatMatch.rebuildForUser(1);
+  const fiatLink = await pool.query(
+    `SELECT efm.exchange_record_id, efm.transaction_id
+       FROM exchange_fiat_matches efm
+       JOIN transactions t ON t.id = efm.transaction_id
+      WHERE t.plaid_transaction_id = 'verify-plaid-1'`
+  );
+  ok('real fiat matcher links a same-amount named bank rail event',
+    fiatResult.matched === 1 && fiatLink.rows.length === 1
+      && String(fiatLink.rows[0].exchange_record_id) === String(fiatRecord.rows[0].id));
+  await pool.query('DELETE FROM accounts WHERE id = $1', [bankAccount.rows[0].id]);
+  await pool.query('DELETE FROM exchange_records WHERE id = $1', [fiatRecord.rows[0].id]);
+
   // Execute the matcher's REAL candidate SQL too. The unit suite pins this
   // query as text because its fake Pool cannot parse PostgreSQL; this is the
   // check that catches a valid-looking LATERAL/NUMERIC rewrite that Postgres
@@ -907,6 +942,15 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
       && JSON.stringify(firstVerdict) === JSON.stringify(secondVerdict));
   ok('migration second pass makes no further changes',
     JSON.stringify(afterFirstAlias) === JSON.stringify(afterSecondAlias));
+
+  const { buildReport } = require('./audit-history');
+  const historyReport = await buildReport(1);
+  const reportText = JSON.stringify(historyReport);
+  ok('privacy-safe history manifest is aggregate-only',
+    historyReport.read_only === true
+      && !Object.prototype.hasOwnProperty.call(historyReport, 'user_id')
+      && !reportText.includes('0x')
+      && !reportText.includes('tx_hash'));
 
   await matcherPool.end();
   await pool.end();

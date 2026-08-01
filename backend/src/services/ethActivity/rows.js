@@ -17,7 +17,7 @@ const {
 
 // Pure: one transaction's eth_transfers legs -> one eth_activity row body.
 function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks = new Map(),
-  spamInputs = EMPTY_SPAM_INPUTS, bridgeAddresses = new Set(), serviceAddresses = new Set()) {
+  spamInputs = EMPTY_SPAM_INPUTS, bridgeAddresses = new Set(), serviceAddresses = new Set(), custodyAddresses = new Set()) {
   const gasLegs = legs.filter((leg) => leg.transfer_type === 'gas');
   const feeWei = gasLegs.reduce((sum, leg) => sum + toBigIntLenient(leg.value_wei), 0n);
 
@@ -130,6 +130,7 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decim
     gasLegs,
     bridgeAddresses,
     serviceAddresses,
+    custodyAddresses,
   });
 
   const counterparty = resolveCounterparty(wallet, valueLegs, gasLegs);
@@ -269,7 +270,7 @@ function buildActivityRows(walletAddress, transfers, {
   bridgeAddresses = new Set(),
   // The owner's 'service'-labeled addresses (instant-swap deposit addresses),
   // resolved the same way. Drives the ladder's rule 4.
-  serviceAddresses = new Set(),
+  serviceAddresses = new Set(), custodyAddresses = new Set(),
 } = {}) {
   const wallet = String(walletAddress).toLowerCase();
   // Wallet-wide, before the grouping: the SQL partition this mirrors spans the
@@ -297,7 +298,7 @@ function buildActivityRows(walletAddress, transfers, {
   }
   return [...byTx.values()].map(({ chainId, txHash, legs }) =>
     buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks, spamInputs,
-      bridgeAddresses, serviceAddresses));
+      bridgeAddresses, serviceAddresses, custodyAddresses));
 }
 
 module.exports = {

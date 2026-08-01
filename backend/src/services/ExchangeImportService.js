@@ -3,6 +3,7 @@
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeMatchService = require('./ExchangeMatchService');
+const TransactionClassificationService = require('./TransactionClassificationService');
 const ExchangeReconciliationService = require('./ExchangeReconciliationService');
 const { parseExchangeCsv } = require('./exchangeImport');
 const { annotateRecords } = require('./exchangeImport/canonicalFingerprint');
@@ -52,6 +53,7 @@ class ExchangeImportService {
     // what makes "import the export" the actual fix for those flags, instead of
     // something that only takes effect at the next wallet sync.
     const matches = await ExchangeMatchService.rebuildForUserSafely(userId, { exchangeAccountId });
+    await TransactionClassificationService.backfillForUser(userId);
 
     const needsReview = parsed.records.filter((record) => record.needs_review).length;
     logger.info({

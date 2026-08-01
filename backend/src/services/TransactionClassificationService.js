@@ -105,21 +105,15 @@ function classify(transaction) {
 // is_essential, is_one_time, is_refund, is_reimbursement and notes are omitted so
 // they survive; this service is the sole writer of direction, so nothing manual is
 // clobbered by overwriting it.
-async function backfill() {
-  const transactions = await pool.query(`
-    SELECT t.id, t.category, t.amount, t.detailed_category, t.category_confidence,
-           tc.direction AS current_direction, tc.confidence AS current_confidence,
-           tc.is_internal_transfer AS current_internal
-    FROM transactions t
-    LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
-  `);
-
+async function applyBackfillRows(rows) {
   const ids = [];
   const directions = [];
   const internals = [];
   const confidences = [];
-  for (const row of transactions.rows) {
-    const result = classify(row);
+  for (const row of rows) {
+    const result = row.exchange_fiat_match
+      ? { direction: 'internal_transfer', isInternalTransfer: true, confidence: 0.95 }
+      : classify(row);
     // Only rows whose derived values actually changed are written. Without this
     // every run rewrites the whole table to change nothing. Every column the
     // upsert writes is compared -- is_internal_transfer happens to be a pure
@@ -134,8 +128,7 @@ async function backfill() {
     internals.push(result.isInternalTransfer);
     confidences.push(result.confidence);
   }
-  const examined = transactions.rows.length;
-  if (!ids.length) return { classified: 0, examined };
+  if (!ids.length) return { classified: 0, examined: rows.length };
 
   await pool.query(`
     INSERT INTO transaction_classifications (transaction_id, direction, is_internal_transfer, confidence)
@@ -147,10 +140,36 @@ async function backfill() {
         updated_at = CURRENT_TIMESTAMP
   `, [ids, directions, internals, confidences]);
 
-  // `classified` counts rows CHANGED, not rows seen, so it reads 0 on a healthy
-  // steady-state run; `examined` distinguishes that from an empty table.
-  logger.info({ classified: ids.length, examined }, 'Transaction classification backfill completed');
-  return { classified: ids.length, examined };
+  logger.info({ classified: ids.length, examined: rows.length }, 'Transaction classification backfill completed');
+  return { classified: ids.length, examined: rows.length };
 }
 
-module.exports = { classify, backfill, CATEGORY_DIRECTIONS, DETAILED_DIRECTIONS };
+async function loadRows(userId = null) {
+  const params = userId == null ? [] : [userId];
+  const scope = userId == null ? '' : 'WHERE a.user_id = $1';
+  const result = await pool.query(`
+    SELECT t.id, t.category, t.amount, t.detailed_category, t.category_confidence,
+           (efm.id IS NOT NULL) AS exchange_fiat_match,
+           tc.direction AS current_direction, tc.confidence AS current_confidence,
+           tc.is_internal_transfer AS current_internal
+    FROM transactions t
+    JOIN accounts a ON a.id = t.account_id
+    LEFT JOIN transaction_classifications tc ON tc.transaction_id = t.id
+    LEFT JOIN exchange_fiat_matches efm ON efm.transaction_id = t.id
+    ${scope}
+  `, params);
+  return result.rows;
+}
+
+async function backfill() {
+  return applyBackfillRows(await loadRows());
+}
+
+async function backfillForUser(userId) {
+  if (!Number.isInteger(userId) || userId < 1) {
+    throw new Error('TransactionClassificationService.backfillForUser requires a userId');
+  }
+  return applyBackfillRows(await loadRows(userId));
+}
+
+module.exports = { classify, backfill, backfillForUser, CATEGORY_DIRECTIONS, DETAILED_DIRECTIONS };

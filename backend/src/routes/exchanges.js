@@ -11,6 +11,7 @@ const ExchangeSyncService = require('../services/ExchangeSyncService');
 const ExchangeBackfillService = require('../services/ExchangeBackfillService');
 const ExchangeMatchService = require('../services/ExchangeMatchService');
 const ExchangeBalanceReconciliation = require('../models/ExchangeBalanceReconciliation');
+const ExchangeFiatMatch = require('../models/ExchangeFiatMatch');
 const chains = require('../config/chains');
 const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
 const { CREDENTIAL_FIELDS, connectorFor } = require('../services/exchangeSync');
@@ -85,7 +86,7 @@ async function loadAccount(req, res) {
   return account;
 }
 
-function validateAccountInput({ name, exchange }, { partial = false } = {}) {
+function validateAccountInput({ name, exchange, records_unavailable }, { partial = false } = {}) {
   if (name !== undefined) {
     if (typeof name !== 'string' || !name.trim()) return 'name is required';
     if (name.trim().length > 120) return 'name must be 120 characters or fewer';
@@ -96,6 +97,9 @@ function validateAccountInput({ name, exchange }, { partial = false } = {}) {
     if (typeof exchange !== 'string' || !ExchangeAccount.EXCHANGES.has(exchange)) {
       return `exchange must be one of: ${[...ExchangeAccount.EXCHANGES].join(', ')}`;
     }
+  }
+  if (records_unavailable !== undefined && typeof records_unavailable !== 'boolean') {
+    return 'records_unavailable must be a boolean';
   }
   return null;
 }
@@ -214,6 +218,18 @@ router.get('/balance-exceptions', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get exchange balance exceptions error');
     return res.status(500).json({ error: 'Failed to retrieve exchange balance exceptions' });
+  }
+});
+
+router.get('/fiat-matches', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const result = await ExchangeFiatMatch.findForUser(req.user.id, { limit, offset });
+    return res.status(200).json({ data: result.matches, pagination: { total: result.total, limit, offset } });
+  } catch (error) {
+    logger.error({ err: error }, 'Get exchange fiat matches error');
+    return res.status(500).json({ error: 'Failed to retrieve exchange fiat matches' });
   }
 });
 
@@ -497,8 +513,8 @@ router.patch('/:id', async (req, res) => {
     const account = await loadAccount(req, res);
     if (!account) return undefined;
 
-    const { name, exchange } = req.body || {};
-    const invalid = validateAccountInput({ name, exchange }, { partial: true });
+    const { name, exchange, records_unavailable: recordsUnavailable } = req.body || {};
+    const invalid = validateAccountInput({ name, exchange, records_unavailable: recordsUnavailable }, { partial: true });
     if (invalid) return res.status(400).json({ error: invalid });
     if (exchange !== undefined && exchange !== account.exchange
       && await ExchangeSyncJob.hasActiveForAccount(account.id)) {
@@ -511,6 +527,7 @@ router.patch('/:id', async (req, res) => {
     const updated = await ExchangeAccount.update(account.id, req.user.id, {
       name: typeof name === 'string' ? name.trim() : undefined,
       exchange,
+      recordsUnavailable,
     });
     if (!updated) {
       if (exchange !== undefined && exchange !== account.exchange) {
@@ -520,6 +537,14 @@ router.patch('/:id', async (req, res) => {
         });
       }
       return res.status(404).json({ error: 'Exchange account not found' });
+    }
+    if (recordsUnavailable !== undefined) {
+      // The account limitation is evidence used by the exchange-flow review
+      // pass. Rebuild before responding so the UI's immediate refetch sees the
+      // explained-with-gap state (or the review flag restored when reversed).
+      await ExchangeMatchService.rebuildForUserSafely(req.user.id, {
+        exchangeAccountId: account.id,
+      });
     }
     return res.status(200).json({ account: updated });
   } catch (error) {

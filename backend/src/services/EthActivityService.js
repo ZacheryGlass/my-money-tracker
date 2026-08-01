@@ -38,7 +38,7 @@ class EthActivityService {
 
     const [
       transfersResult, ignoredResult, labeledResult, ownWalletsResult, coverageResult,
-      bridgeAddresses, serviceAddresses,
+      bridgeAddresses, serviceAddresses, custodyAddresses,
     ] = await Promise.all([
       pool.query(
         'SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id',
@@ -99,6 +99,7 @@ class EthActivityService {
       this._bridgeAddressesForUser(wallet.user_id),
       // The owner's swap-service counterparties (046), driving rule 4.
       this._serviceAddressesForUser(wallet.user_id),
+      this._custodyAddressesForUser(wallet.user_id),
     ]);
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));
     const labeledAddresses = new Set(labeledResult.rows.map((row) => row.address));
@@ -116,7 +117,7 @@ class EthActivityService {
 
     const rows = buildActivityRows(wallet.address, transfersResult.rows, {
       ignoredContracts, labeledAddresses, ownAddresses, unlistedAssets,
-      bridgeAddresses, serviceAddresses,
+      bridgeAddresses, serviceAddresses, custodyAddresses,
     });
     await this._nameCounterparties(wallet.user_id, rows);
     const written = await EthActivity.replaceForWallet(walletId, rows);
@@ -174,6 +175,20 @@ class EthActivityService {
 
   static _serviceAddressesForUser(userId) {
     return this._addressesOfKindForUser(userId, 'service');
+  }
+
+  static async _custodyAddressesForUser(userId) {
+    const { rows } = await pool.query(
+      `SELECT address FROM (
+         SELECT DISTINCT ON (address) address, source
+         FROM eth_address_labels
+         WHERE user_id = $1 OR user_id IS NULL
+         ORDER BY address, user_id NULLS LAST
+       ) labels
+       WHERE source = 'builtin-etherdelta'`,
+      [userId]
+    );
+    return new Set(rows.map((row) => row.address));
   }
 
   // Pairs each bridge_out with the bridge_in that completes it, across chains

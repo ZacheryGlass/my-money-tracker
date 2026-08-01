@@ -85,7 +85,11 @@ const SUGGESTION_INSERT_COLUMNS = [
 const ACTIVITY_LEG = `
     CASE WHEN jsonb_array_length(a.legs) = 1 THEN UPPER(a.legs->0->>'asset') END AS leg_asset,
     CASE WHEN jsonb_array_length(a.legs) = 1 THEN ABS((a.legs->0->>'amount')::numeric) END AS leg_amount,
-    CASE WHEN jsonb_array_length(a.legs) = 1 THEN a.legs->0->>'direction' END AS leg_direction`;
+    CASE WHEN jsonb_array_length(a.legs) = 1 THEN a.legs->0->>'direction' END AS leg_direction,
+    CASE WHEN jsonb_array_length(a.legs) = 1
+           AND NULLIF(a.legs->0->>'contract', '') IS NOT NULL
+         THEN CONCAT('erc20:', a.chain_id, ':', LOWER(a.legs->0->>'contract'))
+         ELSE ai.canonical_key END AS leg_asset_identity`;
 
 // The activity side of every matching query. `category` is the RESOLVED one --
 // override coalesced over derived -- for the same reason every other reader
@@ -107,6 +111,9 @@ const SCOPED_ACTIVITY = `
            ${ACTIVITY_LEG}
     FROM eth_activity a
     JOIN eth_wallets w ON w.id = a.wallet_id
+    LEFT JOIN evm_asset_identity_registry ai
+      ON ai.asset_code = UPPER(a.legs->0->>'asset')
+     AND NULLIF(a.legs->0->>'contract', '') IS NULL
     LEFT JOIN eth_activity_overrides o
       ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash
     WHERE w.user_id = $1
@@ -130,9 +137,12 @@ const SCOPED_RECORDS = `
            CASE WHEN UPPER(er.fee_asset) = UPPER(er.base_asset)
                 THEN COALESCE(ABS(er.fee_amount), 0) ELSE 0 END AS base_fee_amount,
            LOWER(er.tx_hash) AS tx_hash, LOWER(er.address) AS address,
-           er.network, er.chain_id
+           er.network, er.chain_id,
+           ai.canonical_key AS base_asset_identity,
+           ea.records_unavailable
     FROM exchange_records er
     JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+    LEFT JOIN evm_asset_identity_registry ai ON ai.asset_code = UPPER(er.base_asset)
     WHERE ea.user_id = $1
       AND er.record_type = ANY($3::varchar[])
       AND er.base_amount IS NOT NULL
@@ -280,14 +290,10 @@ class ExchangeMatch {
        JOIN scoped_records sr
          ON sr.tx_hash IS NULL
         AND (sr.chain_id IS NULL OR sr.chain_id = sa.chain_id)
-        -- DEFERRED: raw symbol equality. WETH and stETH read as different
-        -- assets from the ETH the venue recorded (false negatives), and a spam
-        -- token minted with a real ticker reads as the same one (false
-        -- positives) -- the latter only mitigated by this arm requiring an
-        -- already-exchange_* category, which needs an exchange LABEL on the
-        -- counterparty. A canonical-asset map is the fix and is out of scope
-        -- here; nothing below depends on the comparison staying naive.
-        AND sr.base_asset = sa.leg_asset
+        -- Source-backed identity only. Raw symbol equality would make a
+        -- ticker collision (or stETH/ETH) look like the same asset.
+        AND sr.base_asset_identity IS NOT NULL
+        AND sr.base_asset_identity = sa.leg_asset_identity
         AND sa.leg_direction IN ('in', 'out')
         AND sr.record_type = CASE WHEN sa.leg_direction = 'out' THEN 'deposit' ELSE 'withdrawal' END
         -- Exact NUMERIC throughout. These are wei-scale quantities and a
@@ -367,10 +373,10 @@ class ExchangeMatch {
          ON received.exchange_account_id <> sent.exchange_account_id
         AND sent.record_type = 'withdrawal'
         AND received.record_type = 'deposit'
-        -- Raw symbol equality again, deferred for the same reasons as the
-        -- on-chain arm: WETH/stETH are false negatives, a spoofed ticker a
-        -- false positive.
-        AND sent.base_asset = received.base_asset
+        -- Source-backed identity only. Unregistered provider symbols stay
+        -- unmatched rather than being treated as the same token.
+        AND sent.base_asset_identity IS NOT NULL
+        AND sent.base_asset_identity = received.base_asset_identity
         AND (sent.chain_id IS NULL OR received.chain_id IS NULL
              OR sent.chain_id = received.chain_id)
        CROSS JOIN LATERAL (
@@ -683,6 +689,40 @@ class ExchangeMatch {
     return result.rowCount || 0;
   }
 
+  // A legacy venue account can be explicitly marked as having no recoverable
+  // provider records.  An exchange label linked to that account is terminal
+  // evidence for the on-chain leg: it is explained as venue custody, while
+  // the missing trade history remains visible in the account summary.
+  static async clearReviewForUnavailable(userId) {
+    requireUserId('clearReviewForUnavailable', userId);
+    const result = await pool.query(
+      `UPDATE eth_activity a
+       SET needs_review = FALSE,
+           review_reason = 'exchange_records_unavailable',
+           confidence = 'medium'
+       FROM eth_wallets w
+       WHERE w.id = a.wallet_id AND w.user_id = $1
+         AND COALESCE((SELECT o.category FROM eth_activity_overrides o
+                       WHERE o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id
+                         AND o.tx_hash = a.tx_hash), a.category)
+             IN ('exchange_deposit', 'exchange_withdrawal')
+         AND NOT EXISTS (SELECT 1 FROM exchange_matches m WHERE m.activity_id = a.id)
+         AND EXISTS (
+           SELECT 1
+           FROM eth_address_labels l
+           JOIN exchange_accounts ea ON ea.id = l.exchange_account_id
+           WHERE l.user_id = $1 AND l.kind = 'exchange'
+             AND ea.user_id = $1 AND ea.records_unavailable = TRUE
+             AND LOWER(a.counterparty_address) = l.address
+         )
+         AND (a.needs_review IS DISTINCT FROM FALSE
+              OR a.review_reason IS DISTINCT FROM 'exchange_records_unavailable'
+              OR a.confidence IS DISTINCT FROM 'medium')`,
+      [userId]
+    );
+    return result.rowCount || 0;
+  }
+
   /**
    * An on-chain flow to or from an exchange with no record behind it.
    *
@@ -758,11 +798,18 @@ class ExchangeMatch {
                   OR a.confidence IS DISTINCT FROM 'low')
            )
          )
-         AND EXISTS (
+         AND (EXISTS (
            SELECT 1 FROM exchange_records er
            JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
            WHERE ea.user_id = $1 AND er.record_type = ANY($3::varchar[])
-         )`,
+         ) OR EXISTS (
+           SELECT 1
+           FROM eth_address_labels l
+           JOIN exchange_accounts ea ON ea.id = l.exchange_account_id
+           WHERE l.user_id = $1 AND l.kind = 'exchange'
+             AND ea.user_id = $1 AND ea.records_unavailable = TRUE
+             AND LOWER(a.counterparty_address) = l.address
+         ))`,
       [userId, reviewReason, MATCHABLE_RECORD_TYPES, suggestionReason]
     );
     return result.rowCount || 0;

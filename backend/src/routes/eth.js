@@ -19,6 +19,7 @@ const EthWalletService = require('../services/EthWalletService');
 const EthReconciliationService = require('../services/EthReconciliationService');
 const EthDerivedPipeline = require('../services/EthDerivedPipeline');
 const EthDiscoveryService = require('../services/EthDiscoveryService');
+const ExchangeAccount = require('../models/ExchangeAccount');
 const SecretsService = require('../services/SecretsService');
 const { CATEGORIES } = require('../utils/ethActivityVocabulary');
 const logger = require('../config/logger');
@@ -1096,7 +1097,7 @@ router.delete('/address-notes/:address', async (req, res) => {
 
 router.post('/address-labels', async (req, res) => {
   try {
-    const { address, name, note } = req.body || {};
+    const { address, name, note, exchange_account_id: exchangeAccountId } = req.body || {};
     if (!address || !/^0x[0-9a-f]{40}$/i.test(address.trim())) {
       return res.status(400).json({ error: 'address must be a 0x-prefixed 40-hex-character address' });
     }
@@ -1133,9 +1134,25 @@ router.post('/address-labels', async (req, res) => {
       return res.status(400).json({ error: 'name is required (max 64 characters)' });
     }
     const normalized = address.trim().toLowerCase();
+    const parsedExchangeAccountId = exchangeAccountId === undefined || exchangeAccountId === null || exchangeAccountId === ''
+      ? null : Number(exchangeAccountId);
+    if (parsedExchangeAccountId !== null
+      && (!Number.isSafeInteger(parsedExchangeAccountId) || parsedExchangeAccountId < 1)) {
+      return res.status(400).json({ error: 'exchange_account_id must be a positive integer' });
+    }
+    if (parsedExchangeAccountId !== null && kind !== 'exchange') {
+      return res.status(400).json({ error: 'exchange_account_id requires the exchange verdict' });
+    }
+    if (parsedExchangeAccountId !== null) {
+      const account = await ExchangeAccount.findByIdForUser(parsedExchangeAccountId, req.user.id);
+      if (!account) return res.status(404).json({ error: 'Exchange account not found' });
+      if (!account.records_unavailable) {
+        return res.status(409).json({ error: 'Mark this exchange account as records unavailable before linking an address' });
+      }
+    }
     const labelName = trimmedName || shortAddress(normalized);
 
-    const label = await EthAddressLabel.upsert(req.user.id, normalized, labelName, note, kind);
+    const label = await EthAddressLabel.upsert(req.user.id, normalized, labelName, note, kind, parsedExchangeAccountId);
     await EthWalletService.refreshClassificationsForUser(req.user.id);
     res.status(201).json({ label });
   } catch (error) {

@@ -48,7 +48,7 @@ test('upsert lowercases the address and writes a user-owned row', async () => {
   // column type) while the subselect comparison deduces text, and Postgres
   // rejects the conflict (42P08) -- caught against a real database, which the
   // fake pool here cannot do.
-  assert.match(sql, /VALUES \(\$1, \$2::text, \$3, 'user', \$4, COALESCE\(\$5, \(SELECT kind FROM eth_address_labels WHERE address = \$2::text AND user_id IS NULL\), 'exchange'\)\)/);
+  assert.match(sql, /VALUES \(\$1, \$2::text, \$3, 'user', \$4, COALESCE\(\$5, \(SELECT kind FROM eth_address_labels WHERE address = \$2::text AND user_id IS NULL\), 'exchange'\), \$6\)/);
   assert.match(sql, /ON CONFLICT \(user_id, address\) WHERE user_id IS NOT NULL/);
 });
 

@@ -397,8 +397,10 @@ export const eth = {
   // kind: 'exchange' (default) | 'external' | 'own' | 'bridge' | 'service'. A
   // name is required only for 'exchange', where it becomes the counterparty
   // text in the ledger.
-  labelAddress: async (address, name, { note, kind } = {}) => {
-    const response = await api.post('/api/eth/address-labels', { address, name, note, kind });
+  labelAddress: async (address, name, { note, kind, exchange_account_id: exchangeAccountId } = {}) => {
+    const response = await api.post('/api/eth/address-labels', {
+      address, name, note, kind, exchange_account_id: exchangeAccountId,
+    });
     return response.data;
   },
   unlabelAddress: async (address) => {
@@ -546,6 +548,10 @@ export const crypto = {
 export const exchanges = {
   getAll: async () => {
     const response = await api.get('/api/exchanges');
+    return response.data;
+  },
+  getFiatMatches: async (params = {}) => {
+    const response = await api.get('/api/exchanges/fiat-matches', { params });
     return response.data;
   },
   getBalanceExceptions: async (params = {}) => {

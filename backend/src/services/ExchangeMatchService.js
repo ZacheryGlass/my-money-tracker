@@ -1,6 +1,7 @@
 'use strict';
 
 const ExchangeMatch = require('../models/ExchangeMatch');
+const ExchangeFiatMatch = require('../models/ExchangeFiatMatch');
 const logger = require('../config/logger');
 const { ZERO_ADDRESS } = require('../utils/ethActivityVocabulary');
 
@@ -330,6 +331,17 @@ class ExchangeMatchService {
     // to. Clearing first keeps a row that just gained a match from being read
     // as unmatched in the same pass.
     const cleared = await ExchangeMatch.clearReviewForMatched(userId);
+    const unavailable = await ExchangeMatch.clearReviewForUnavailable(userId);
+    let fiat = { matched: 0 };
+    try {
+      fiat = await ExchangeFiatMatch.rebuildForUser(userId);
+    } catch (error) {
+      // The fiat link is a derived companion to exchange matching. Keep the
+      // core exchange/on-chain pass usable during a rolling deploy where the
+      // new migration has not reached every instance yet; the next rebuild
+      // retries it after the schema is present.
+      logger.warn({ userId, err: error }, 'Exchange fiat matching skipped');
+    }
     const flagged = await ExchangeMatch.flagUnmatchedExchangeFlows(
       userId,
       REVIEW_REASONS.unmatched_exchange,
@@ -349,8 +361,8 @@ class ExchangeMatchService {
       }
     }
 
-    logger.info({ userId, matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, flagged, learned }, 'Exchange matches rebuilt');
-    return { matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, flagged, learned };
+    logger.info({ userId, matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, unavailable, flagged, learned, fiat: fiat.matched }, 'Exchange matches rebuilt');
+    return { matches, suggestions: replacement.suggested, invalidated: replacement.invalidated, cleared, unavailable, flagged, learned, fiat: fiat.matched };
   }
 
   // Same pass, but never fatal. Every caller outside the activity rebuild is

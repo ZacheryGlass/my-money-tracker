@@ -124,9 +124,15 @@ router.get('/', async (req, res) => {
               t.merchant_name, t.amount, t.currency_code, t.category, t.pending,
               COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) as account_name,
               a.name as account_source_name,
-              a.display_name as account_display_name
+              a.display_name as account_display_name,
+              efm.id AS exchange_fiat_match_id,
+              er.external_id AS exchange_fiat_external_id,
+              ea.name AS exchange_fiat_account_name
        FROM transactions t
        JOIN accounts a ON t.account_id = a.id
+       LEFT JOIN exchange_fiat_matches efm ON efm.transaction_id = t.id
+       LEFT JOIN exchange_records er ON er.id = efm.exchange_record_id
+       LEFT JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
        ${whereClause}
        ORDER BY ${sortColumn} ${sortDirection === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, t.id DESC
        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,

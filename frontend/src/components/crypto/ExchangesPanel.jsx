@@ -331,6 +331,18 @@ function ExchangesPanel({
     }
   };
 
+  const handleToggleRecordsUnavailable = async (account) => {
+    try {
+      await exchangesAPI.update(account.id, { records_unavailable: !account.records_unavailable });
+      showSuccess(account.records_unavailable
+        ? 'Historical record-loss flag cleared'
+        : 'Account marked as having unrecoverable provider records');
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to update historical record coverage');
+    }
+  };
+
   const openConnectForm = (account) => {
     setConnectingId(account.id);
     // Always empty. The server never returns a stored key, so a pre-filled
@@ -871,6 +883,11 @@ function ExchangesPanel({
                               {account.duplicate_candidate_count} possible duplicate{account.duplicate_candidate_count === 1 ? '' : 's'}
                             </span>
                           )}
+                          {account.records_unavailable && (
+                            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400">
+                              Provider records unavailable
+                            </span>
+                          )}
                           <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
                             <Clock size={12} />
                             {account.last_import_at ? formatRelativeTime(account.last_import_at) : 'Never imported'}
@@ -948,6 +965,14 @@ function ExchangesPanel({
                           onChange={(event) => handleImport(account, event)}
                         />
                       </label>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleRecordsUnavailable(account)}
+                        className="rounded border border-border px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary transition-all hover:border-accent hover:text-accent"
+                        title="Declare that this venue's historical records cannot be recovered"
+                      >
+                        {account.records_unavailable ? 'Records unavailable' : 'Mark records unavailable'}
+                      </button>
                       {renamingId === account.id ? (
                         <form
                           onSubmit={(event) => { event.preventDefault(); handleRenameAccount(account); }}
@@ -1178,6 +1203,22 @@ function ExchangesPanel({
                         <ShieldCheck size={14} className="mt-0.5 flex-shrink-0" />
                         <p>{syncResult.tested}</p>
                       </div>
+                    </div>
+                  )}
+
+                  {account.records_unavailable && (
+                    <div className="mt-5 rounded border border-amber-400/30 bg-amber-400/5 p-4 text-xs leading-relaxed text-secondary">
+                      <p className="font-semibold text-amber-400">Provider records are marked unrecoverable.</p>
+                      <p className="mt-1">On-chain custody flows can be explained, but trades that happened inside this venue cannot be reconstructed. The bounded net below is the activity represented by imported venue rows.</p>
+                      {account.records_unavailable_summary?.length > 0 ? (
+                        <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                          {account.records_unavailable_summary.map((item) => (
+                            <span key={item.asset} className="font-mono text-[10px]">
+                              {item.asset}: deposited {item.deposited}, withdrawn {item.withdrawn}, net {item.net_change}
+                            </span>
+                          ))}
+                        </div>
+                      ) : <p className="mt-1 text-tertiary">No venue-side rows are available to quantify yet.</p>}
                     </div>
                   )}
 

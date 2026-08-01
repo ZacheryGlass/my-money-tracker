@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
+const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 
 const STATUSES = new Set(['pending', 'confirmed_own', 'dismissed']);
 
@@ -11,6 +12,65 @@ function assertUser(userId, method) {
 }
 
 class EthDiscoveryCandidate {
+  static async pendingFrontier(userId, limit = 25) {
+    assertUser(userId, 'pendingFrontier');
+    const result = await pool.query(
+      `SELECT id, address, chain_id, score, evidence
+       FROM eth_discovery_candidates
+       WHERE user_id = $1 AND status = 'pending'
+         AND source IN ('path', 'exchange_withdrawal')
+       ORDER BY score DESC NULLS LAST, id ASC
+       LIMIT $2`,
+      [userId, limit]
+    );
+    return result.rows;
+  }
+
+  static async findKnownAddress(userId, address) {
+    assertUser(userId, 'findKnownAddress');
+    if (!ADDRESS_RE.test(String(address || ''))) return false;
+    const result = await pool.query(
+      `SELECT 1 FROM eth_wallets WHERE user_id = $1 AND address = LOWER($2)
+       UNION ALL
+       SELECT 1 FROM eth_address_labels
+       WHERE address = LOWER($2) AND (user_id = $1 OR user_id IS NULL)
+       LIMIT 1`,
+      [userId, address]
+    );
+    return Boolean(result.rows[0]);
+  }
+
+  static async recordFetch(userId, { address, chainId, depth, status, rowsFetched = 0, errorMessage = null }) {
+    assertUser(userId, 'recordFetch');
+    await pool.query(
+      `INSERT INTO eth_discovery_fetches
+         (user_id, address, chain_id, depth, status, rows_fetched, error_message)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, address, chain_id, depth) DO UPDATE SET
+         status = EXCLUDED.status, rows_fetched = EXCLUDED.rows_fetched,
+         error_message = EXCLUDED.error_message, fetched_at = CURRENT_TIMESTAMP`,
+      [userId, address.toLowerCase(), chainId, depth, status, rowsFetched, errorMessage]
+    );
+  }
+
+  static async upsertPath(userId, { address, chainId, score, evidence }) {
+    assertUser(userId, 'upsertPath');
+    const result = await pool.query(
+      `INSERT INTO eth_discovery_candidates (user_id, address, chain_id, source, score, evidence)
+       VALUES ($1, LOWER($2), $3, 'path', $4, $5::jsonb)
+       ON CONFLICT (user_id, address, chain_id) DO UPDATE SET
+         score = CASE WHEN eth_discovery_candidates.status = 'pending'
+                      THEN GREATEST(eth_discovery_candidates.score, EXCLUDED.score)
+                      ELSE eth_discovery_candidates.score END,
+         evidence = CASE WHEN eth_discovery_candidates.status = 'pending'
+                         THEN EXCLUDED.evidence ELSE eth_discovery_candidates.evidence END,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [userId, address, chainId, score, JSON.stringify(evidence)]
+    );
+    return result.rows[0] || null;
+  }
+
   static async seed(userId) {
     assertUser(userId, 'seed');
     // The path arm is deliberately one intermediary: both legs are already in

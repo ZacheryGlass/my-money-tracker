@@ -937,6 +937,9 @@ test('the candidate query requires exact NUMERIC amounts and uses tiered time wi
   assert.match(sql, /WHERE w\.user_id = \$1/);
   assert.match(sql, /JOIN exchange_accounts ea ON ea\.id = er\.exchange_account_id/);
   assert.match(sql, /WHERE ea\.user_id = \$1/);
+  assert.match(sql, /evm_asset_identity_registry/);
+  assert.match(sql, /sr\.base_asset_identity = sa\.leg_asset_identity/);
+  assert.doesNotMatch(sql, /AND sr\.base_asset = sa\.leg_asset/);
 
   // The override is coalesced over the derived verdict, like every other reader.
   assert.match(sql, /COALESCE\(o\.category, a\.category\) AS category/);

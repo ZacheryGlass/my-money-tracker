@@ -386,6 +386,11 @@ const AccountsPage = () => {
         cell: ({ row }) => (
           <div className="min-w-0 py-2">
             <div className="text-base font-bold text-primary truncate">{row.original.merchant_name || row.original.name}</div>
+            {row.original.exchange_fiat_match_id && (
+              <div className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-accent">
+                Exchange linked · {row.original.exchange_fiat_account_name || 'exchange'}
+              </div>
+            )}
             {row.original.merchant_name && row.original.merchant_name !== row.original.name && (
               <div className="text-xs text-tertiary truncate leading-tight uppercase font-semibold mt-0.5">{row.original.name}</div>
             )}
@@ -690,6 +695,11 @@ const AccountsPage = () => {
                           <div key={txn.id} className="p-4 bg-surface-2 border border-border rounded flex items-center justify-between gap-4">
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-bold text-primary truncate">{txn.merchant_name || txn.name}</p>
+                              {txn.exchange_fiat_match_id && (
+                                <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-accent">
+                                  Exchange linked · {txn.exchange_fiat_account_name || 'exchange'}
+                                </p>
+                              )}
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="text-[10px] text-tertiary font-mono">{formatDateDisplay(txn.date)}</span>
                                 {txn.pending && <span className="text-[9px] font-bold uppercase text-amber-500">Pending</span>}

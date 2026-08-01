@@ -190,7 +190,7 @@ test("a user's 'external' label shadows a seeded builtin exchange", async () => 
   // per-user index. The builtin (user_id NULL) is not touched -- deleting or
   // updating it would only be undone by the next boot's seed anyway.
   const upsertSql = sqlOf(upsert);
-  assert.match(upsertSql, /INSERT INTO eth_address_labels \(user_id, address, name, source, note, kind\)/);
+  assert.match(upsertSql, /INSERT INTO eth_address_labels \(user_id, address, name, source, note, kind, exchange_account_id\)/);
   assert.match(upsertSql, /ON CONFLICT \(user_id, address\) WHERE user_id IS NOT NULL/);
   const userRow = { user_id: 7, address: seeded.address, name: 'Not my exchange', kind: 'external', source: 'user' };
 
@@ -223,7 +223,7 @@ test('the label management list hides the bulk pack but keeps overrides', async 
   // The bridge pack (044, 'builtin-bridge') IS listed: a few dozen rows taken
   // from each protocol's own deployment docs, where a wrong one has to be
   // visible to be correctable. Only 'eth-labels' is hidden.
-  assert.match(sql, /WHERE user_id IS NOT NULL OR source IN \('builtin', 'builtin-bridge', 'builtin-polymarket'\)/);
+  assert.match(sql, /WHERE user_id IS NOT NULL OR source IN \('builtin', 'builtin-bridge', 'builtin-polymarket', 'builtin-etherdelta'\)/);
   assert.doesNotMatch(sql, /'eth-labels'/);
   // The pack filter runs AFTER precedence resolves, so an override of a packed
   // address is still listed (and still removable).

@@ -26,6 +26,7 @@ const PUBLIC_COLUMNS = [
   'api_key_last4', 'api_secret_last4',
   'last_sync_at', 'last_sync_status', 'last_sync_error', 'balance_report',
   'reconciliation_status',
+  'records_unavailable',
   // Deliberately NOT sync_cursor: it is an internal resume point, and for
   // Coinbase it carries per-account ids that are of no use to the client.
 ];
@@ -75,7 +76,25 @@ class ExchangeAccount {
                  ORDER BY abr.calculated_at DESC, abr.id DESC LIMIT 1),
                 CASE WHEN ea.last_sync_status = 'balance_mismatch'
                   THEN 'legacy_unclassified' ELSE 'never' END
-              ) AS balance_audit_status
+              ) AS balance_audit_status,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                         'asset', x.asset,
+                         'deposited', x.deposited::text,
+                         'withdrawn', x.withdrawn::text,
+                         'net_change', (x.deposited - x.withdrawn)::text
+                       ) ORDER BY x.asset)
+                FROM (
+                  SELECT UPPER(er.base_asset) AS asset,
+                         SUM(CASE WHEN er.record_type = 'deposit' THEN ABS(er.base_amount) ELSE 0 END) AS deposited,
+                         SUM(CASE WHEN er.record_type = 'withdrawal' THEN ABS(er.base_amount) ELSE 0 END) AS withdrawn
+                  FROM exchange_records er
+                  WHERE er.exchange_account_id = ea.id
+                    AND er.base_asset IS NOT NULL
+                    AND er.record_type IN ('deposit', 'withdrawal')
+                  GROUP BY UPPER(er.base_asset)
+                ) x
+              ), '[]'::jsonb) AS records_unavailable_summary
        FROM exchange_accounts ea
        LEFT JOIN exchange_records er ON er.exchange_account_id = ea.id
        WHERE ea.user_id = $1
@@ -136,7 +155,7 @@ class ExchangeAccount {
 
   // Both filters on the same statement: a foreign id updates nothing and the
   // route turns the empty result into a 404.
-  static async update(id, userId, { name, exchange }) {
+  static async update(id, userId, { name, exchange, recordsUnavailable }) {
     requireUserId('update', userId);
     const result = await pool.query(
       `UPDATE exchange_accounts
@@ -149,6 +168,7 @@ class ExchangeAccount {
            balance_report = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE balance_report END,
            provider_balance_snapshot = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN NULL ELSE provider_balance_snapshot END,
            reconciliation_status = CASE WHEN $4::text IS NOT NULL AND $4::text <> exchange THEN 'unknown' ELSE reconciliation_status END,
+           records_unavailable = COALESCE($5::boolean, records_unavailable),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND user_id = $2
          AND (
@@ -164,7 +184,7 @@ class ExchangeAccount {
            )
          )
        RETURNING ${PUBLIC_COLUMNS.join(', ')}, ${CREDENTIAL_FLAG}`,
-      [id, userId, name ?? null, exchange ?? null]
+      [id, userId, name ?? null, exchange ?? null, recordsUnavailable ?? null]
     );
     return result.rows[0];
   }
