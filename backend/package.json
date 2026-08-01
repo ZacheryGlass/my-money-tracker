@@ -8,7 +8,7 @@
     "start": "node src/server.js",
     "start:prod": "node scripts/migrate.js && node src/server.js",
     "migrate": "node scripts/migrate.js",
-    "lint": "eslint src/ scripts/generate-label-seed.js scripts/generate-bridge-seed.js scripts/rebuildExchangeMatches.js scripts/report-exchange-duplicates.js scripts/audit-exchange-archive.js scripts/verify-ledger-sql.js",
+    "lint": "eslint src/ scripts/generate-label-seed.js scripts/generate-bridge-seed.js scripts/rebuildExchangeMatches.js scripts/report-exchange-duplicates.js scripts/resolve-exchange-duplicates.js scripts/audit-exchange-archive.js scripts/verify-ledger-sql.js",
     "test": "node --test --test-reporter=spec \"tests/*.test.js\"",
     "rebuild:exchange-matches": "node scripts/rebuildExchangeMatches.js",
     "import": "node scripts/importFromCsv.js",
@@ -17,6 +17,7 @@
     "export:excel": "node scripts/exportFromExcel.js",
     "verify:ledger": "node scripts/verify-ledger-sql.js",
     "report:exchange-duplicates": "node scripts/report-exchange-duplicates.js",
+    "resolve:exchange-duplicates": "node scripts/resolve-exchange-duplicates.js",
     "audit:exchange-archive": "node scripts/audit-exchange-archive.js"
   },
   "keywords": [],
