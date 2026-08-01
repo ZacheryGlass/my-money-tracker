@@ -29,6 +29,9 @@ const IMPORT_FORMAT_LABELS = {
 // it stores the source row -- so this reads the shape of what it produced. A
 // queue of rows with no stated reason is a queue nobody works through.
 const exchangeReviewReason = (record) => {
+  if (record?.duplicate_candidate) {
+    return 'another provider export may describe this same event; compare the preserved source details';
+  }
   const raw = record?.raw || {};
   const rows = Array.isArray(raw.rows) ? raw.rows : null;
   const sourceType = raw['Transaction Type'] || raw.type || rows?.[0]?.type || null;
@@ -644,6 +647,11 @@ function ExchangesPanel({
                               {account.needs_review_count} need review
                             </span>
                           )}
+                          {account.duplicate_candidate_count > 0 && (
+                            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400">
+                              {account.duplicate_candidate_count} possible duplicate{account.duplicate_candidate_count === 1 ? '' : 's'}
+                            </span>
+                          )}
                           <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-tertiary">
                             <Clock size={12} />
                             {account.last_import_at ? formatRelativeTime(account.last_import_at) : 'Never imported'}
@@ -904,6 +912,10 @@ function ExchangesPanel({
                                 Sync complete — read {Number(visibleJob.fetched || 0).toLocaleString()} ledger rows:{' '}
                                 <span className="font-semibold">{Number(visibleJob.imported || 0).toLocaleString()} new</span>
                                 {Number(visibleJob.duplicates || 0) > 0 && `, ${Number(visibleJob.duplicates).toLocaleString()} already held`}
+                                {Number(visibleJob.last_batch?.deduplicated || visibleJob.deduplicated || 0) > 0
+                                  && `, ${Number(visibleJob.last_batch?.deduplicated || visibleJob.deduplicated).toLocaleString()} matched across sources`}
+                                {Number(visibleJob.last_batch?.duplicate_candidates || visibleJob.duplicate_candidates || 0) > 0
+                                  && `, ${Number(visibleJob.last_batch?.duplicate_candidates || visibleJob.duplicate_candidates).toLocaleString()} possible duplicates sent to review`}
                                 {Number(visibleJob.flagged || 0) > 0 && `, ${Number(visibleJob.flagged).toLocaleString()} flagged for review`}.
                               </p>
                               {visibleJob.last_batch?.coverage_limitations?.length > 0 && (
@@ -957,6 +969,8 @@ function ExchangesPanel({
                         <span className="font-semibold text-primary">{syncResult.sync.imported.toLocaleString()} new</span>
                         {syncResult.sync.upgraded > 0 && `, ${syncResult.sync.upgraded.toLocaleString()} completed from an earlier partial import`}
                         {syncResult.sync.duplicates > 0 && `, ${syncResult.sync.duplicates.toLocaleString()} already held`}
+                        {syncResult.sync.deduplicated > 0 && `, ${syncResult.sync.deduplicated.toLocaleString()} matched across sources`}
+                        {syncResult.sync.duplicate_candidates > 0 && `, ${syncResult.sync.duplicate_candidates.toLocaleString()} possible duplicates sent to review`}
                         {syncResult.sync.chain_details_filled > 0 && `, ${syncResult.sync.chain_details_filled.toLocaleString()} gained an on-chain address`}
                         {syncResult.sync.needs_review > 0 && (
                           <span className="text-loss">, {syncResult.sync.needs_review.toLocaleString()} flagged for review</span>
@@ -1042,6 +1056,8 @@ function ExchangesPanel({
                             only sign the second upload was worth making. */}
                         {result.upgraded > 0 && `, ${result.upgraded.toLocaleString()} completed from an earlier partial export`}
                         {result.duplicates > 0 && `, ${result.duplicates.toLocaleString()} already imported`}
+                        {result.deduplicated > 0 && `, ${result.deduplicated.toLocaleString()} matched across sources`}
+                        {result.duplicate_candidates > 0 && `, ${result.duplicate_candidates.toLocaleString()} possible duplicates sent to review`}
                         {result.needs_review > 0 && (
                           <span className="text-loss">, {result.needs_review.toLocaleString()} flagged for review</span>
                         )}

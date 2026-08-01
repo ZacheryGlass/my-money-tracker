@@ -4,6 +4,7 @@ const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const { parseExchangeCsv } = require('./exchangeImport');
+const { annotateRecords } = require('./exchangeImport/canonicalFingerprint');
 const logger = require('../config/logger');
 
 class ExchangeImportService {
@@ -22,11 +23,10 @@ class ExchangeImportService {
       throw error;
     }
     const parsed = parseExchangeCsv(csvText, { format, mapping });
-    // Provenance only. It does not participate in the conflict key or the
-    // upgrade guard, so an API-synced record and a CSV row describing the same
-    // event still collapse onto one record -- which is the whole point of the
-    // two sources sharing an external_id scheme.
-    const records = parsed.records.map((record) => ({ ...record, source: 'csv' }));
+    // External ids are provider/source replay keys. The shared fingerprint is
+    // the separate, conservative cross-source identity used when those ids
+    // differ; raw provenance remains attached for review and audit.
+    const records = annotateRecords(account.exchange, parsed.records.map((record) => ({ ...record, source: 'csv' })));
     const result = await ExchangeRecord.bulkInsert(exchangeAccountId, records);
 
     // Stamped even when nothing new landed: the user asked for an import and
@@ -49,6 +49,9 @@ class ExchangeImportService {
       inserted: result.inserted,
       upgraded: result.upgraded,
       duplicates: result.duplicates,
+      deduplicated: result.deduplicated,
+      duplicate_candidates: result.duplicateCandidates,
+      duplicate_conflicts: result.duplicateConflicts,
       needsReview,
       matched: matches?.matches ?? 0,
     }, 'Exchange CSV import');
@@ -62,6 +65,9 @@ class ExchangeImportService {
       // and apart from "duplicates" because something did change.
       upgraded: result.upgraded,
       duplicates: result.duplicates,
+      deduplicated: result.deduplicated,
+      duplicate_candidates: result.duplicateCandidates,
+      duplicate_conflicts: result.duplicateConflicts,
       needs_review: needsReview,
       matched: matches?.matches ?? 0,
       // Surfaced rather than swallowed: a repeated header or a preamble block

@@ -42,12 +42,12 @@ function accountRow(overrides = {}) {
 }
 
 // The INSERT built by ExchangeRecord.bulkInsert binds one account id followed
-// by the 16 record columns per row, with external_id eleventh among them and
-// needs_review twelfth. `source` (migration 040) is the fourteenth and network
-// plus chain_id are the fifteenth and sixteenth; they are
-// provenance only -- it deliberately takes no part in the conflict key, which
-// is what lets an API row and a CSV row for the same event dedupe.
-const PARAMS_PER_ROW = 17;
+// by the 20 record columns per row, with external_id eleventh among them and
+// needs_review twelfth. `source` (migration 040) is the fourteenth, network and
+// chain_id are the fifteenth and sixteenth, and the fingerprint metadata fills
+// the final four positions. The fingerprint is deliberately non-unique, which
+// is what lets ambiguous same-event candidates remain reviewable.
+const PARAMS_PER_ROW = 21;
 const EXTERNAL_ID_OFFSET = 11;
 const NEEDS_REVIEW_OFFSET = 12;
 

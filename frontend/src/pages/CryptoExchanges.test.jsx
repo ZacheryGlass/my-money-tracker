@@ -43,6 +43,7 @@ const ACCOUNT = {
   exchange: 'kraken',
   record_count: 1080,
   needs_review_count: 2,
+  duplicate_candidate_count: 0,
   last_import_at: new Date().toISOString(),
   // Only ever a masked status: the server never returns a stored key.
   credentials: { configured: false, key_masked: null, secret_masked: null },
@@ -204,6 +205,8 @@ describe('Crypto -> Exchanges tab', () => {
       parsed: 10,
       imported: 7,
       duplicates: 3,
+      deduplicated: 1,
+      duplicate_candidates: 2,
       needs_review: 1,
       skipped_header_rows: 0,
       skipped_noise_rows: 0,
@@ -221,6 +224,8 @@ describe('Crypto -> Exchanges tab', () => {
     await waitFor(() => expect(exchangesAPI.importCsv).toHaveBeenCalledWith(3, csv));
     expect(await screen.findByText(/7 new/)).toBeInTheDocument();
     expect(screen.getByText(/3 already imported/)).toBeInTheDocument();
+    expect(screen.getByText(/1 matched across sources/)).toBeInTheDocument();
+    expect(screen.getByText(/2 possible duplicates sent to review/)).toBeInTheDocument();
     expect(screen.getByText(/1 flagged for review/)).toBeInTheDocument();
     expect(screen.getByText(/Kraken ledgers export/)).toBeInTheDocument();
   });
@@ -268,6 +273,19 @@ describe('Crypto -> Exchanges tab', () => {
     // Resolved rows leave the queue, which is the only way it reaches zero.
     await waitFor(() => expect(screen.queryByLabelText('Mark record 11 reviewed')).not.toBeInTheDocument());
     expect(screen.getByLabelText('Mark record 12 reviewed')).toBeInTheDocument();
+  });
+
+  it('explains when a flagged record may duplicate another source', async () => {
+    exchangesAPI.getRecords.mockResolvedValue({
+      data: [{ ...FLAGGED[0], duplicate_candidate: true }],
+      pagination: { total: 1 },
+    });
+    await renderSettings();
+
+    const card = (await screen.findByText('Kraken Spot')).closest('.card');
+    fireEvent.click(within(card).getByRole('button', { name: /Needs review \(2\)/ }));
+
+    expect(await screen.findByText(/another provider export may describe this same event/)).toBeInTheDocument();
   });
 
   it('does not offer a review queue for an account with nothing flagged', async () => {

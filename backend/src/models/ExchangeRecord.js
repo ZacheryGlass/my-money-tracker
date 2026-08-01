@@ -2,17 +2,23 @@
 
 const pool = require('../config/database');
 const logger = require('../config/logger');
+const {
+  FINGERPRINT_VERSION,
+  conflictingDetails,
+  sourceSnapshot,
+} = require('../services/exchangeImport/canonicalFingerprint');
 
 const COLUMNS = [
   'record_type', 'occurred_at', 'base_asset', 'base_amount', 'quote_asset', 'quote_amount',
   'fee_asset', 'fee_amount', 'tx_hash', 'address', 'external_id', 'needs_review', 'raw',
   // 'csv' | 'api' | NULL for rows imported before migration 040. Provenance
-  // only: nothing keys, dedupes or votes on it, so an API row and a CSV row
-  // describing the same event still collapse onto one record.
+  // only: the cross-source fingerprint is stored separately and the raw
+  // provider spelling remains available in dedupe_provenance.
   'source',
   // Provider network spelling plus normalized EVM chain id when known. Both
   // are nullable for legacy rows and non-EVM records.
-  'network', 'chain_id',
+  'network', 'chain_id', 'fingerprint', 'fingerprint_version',
+  'dedupe_provenance', 'duplicate_candidate',
 ];
 
 // Everything the upgrade rewrites: the whole record except its identity
@@ -39,6 +45,8 @@ const BAD_VALUE_CODES = new Set(['22003', '22P05', '22P02']);
 // eslint-disable-next-line no-control-regex
 const NUL_BYTE = /\u0000/g;
 const NUL_CHAR = '\u0000';
+
+const IDENTITY_COLUMNS = new Set(['external_id']);
 
 function stripNulls(value) {
   if (typeof value === 'string') return value.replace(NUL_BYTE, '');
@@ -78,6 +86,70 @@ function describeBadRecord(chunk) {
   return { externalId: chunk[0]?.external_id ?? null, detail: null };
 }
 
+function jsonValue(value) {
+  if (value === null || value === undefined) return null;
+  return JSON.stringify(stripNulls(value));
+}
+
+function mergeProvenance(existing, incoming) {
+  const prior = Array.isArray(existing?.dedupe_provenance)
+    ? existing.dedupe_provenance
+    : [sourceSnapshot(existing)];
+  return [...prior, sourceSnapshot(incoming)];
+}
+
+function mergeCandidate(existing, incoming) {
+  const merged = { ...existing };
+  for (const field of ['tx_hash', 'address', 'network', 'chain_id']) {
+    if ((merged[field] === null || merged[field] === undefined || merged[field] === '')
+        && incoming[field] !== null && incoming[field] !== undefined && incoming[field] !== '') {
+      merged[field] = incoming[field];
+    }
+  }
+  merged.source = existing.source === 'api' || incoming.source === 'api'
+    ? 'api' : (existing.source || incoming.source || null);
+  merged.fingerprint = existing.fingerprint || incoming.fingerprint;
+  merged.fingerprint_version = existing.fingerprint_version || incoming.fingerprint_version || FINGERPRINT_VERSION;
+  merged.dedupe_provenance = mergeProvenance(existing, incoming);
+  // A review decision is never silently downgraded by a second source.
+  merged.needs_review = Boolean(existing.needs_review || incoming.needs_review);
+  merged.duplicate_candidate = false;
+  return merged;
+}
+
+function candidateMarker(record, candidates, conflicts = []) {
+  const raw = record.raw && typeof record.raw === 'object' ? { ...record.raw } : {};
+  raw._dedupe = {
+    kind: 'candidate',
+    fingerprint: record.fingerprint,
+    candidate_external_ids: candidates.map((candidate) => candidate.external_id),
+    conflicts,
+  };
+  return raw;
+}
+
+function candidateRowsByFingerprint(existingRows) {
+  const byFingerprint = new Map();
+  for (const row of existingRows) {
+    if (!row.fingerprint) continue;
+    const rows = byFingerprint.get(row.fingerprint) || [];
+    rows.push(row);
+    byFingerprint.set(row.fingerprint, rows);
+  }
+  return byFingerprint;
+}
+
+function candidateRowsByExternalId(existingRows) {
+  return new Map(existingRows.map((row) => [row.external_id, row]));
+}
+
+function updateValues(record) {
+  return COLUMNS.map((column) => {
+    if (column === 'raw' || column === 'dedupe_provenance') return jsonValue(record[column]);
+    return record[column] ?? null;
+  });
+}
+
 class ExchangeRecord {
   // Idempotent by construction: UNIQUE (exchange_account_id, external_id) is
   // what makes re-uploading a longer export insert only the rows that are new.
@@ -113,6 +185,11 @@ class ExchangeRecord {
     const client = await pool.connect();
     let inserted = 0;
     let upgraded = 0;
+    let deduplicated = 0;
+    let duplicateCandidates = 0;
+    let duplicateConflicts = 0;
+    let recordsToInsertCount = 0;
+    let dedupeReplays = 0;
     try {
       await client.query('BEGIN');
       if (syncLockToken) {
@@ -132,9 +209,153 @@ class ExchangeRecord {
           error.code = 'EXCHANGE_SYNC_LOCK_LOST';
           throw error;
         }
+      } else {
+        // CSV imports do not carry a sync lease. Serializing writes per account
+        // closes the candidate-check/insert race without widening ownership.
+        await client.query(
+          'SELECT id FROM exchange_accounts WHERE id = $1 FOR UPDATE',
+          [exchangeAccountId]
+        );
       }
-      for (let start = 0; start < unique.length; start += CHUNK_SIZE) {
-        const chunk = unique.slice(start, start + CHUNK_SIZE);
+
+      const externalIds = unique.map((record) => record.external_id);
+      const fingerprints = unique.map((record) => record.fingerprint).filter(Boolean);
+      const existingResult = await client.query(
+        `SELECT er.*
+         FROM exchange_records er
+         WHERE er.exchange_account_id = $1
+           AND (er.external_id = ANY($2::text[])
+             OR er.fingerprint = ANY($3::text[]))
+         FOR UPDATE`,
+        [exchangeAccountId, externalIds, fingerprints]
+      );
+      const existingById = candidateRowsByExternalId(existingResult.rows);
+      const existingByFingerprint = candidateRowsByFingerprint(existingResult.rows);
+      const dedupeAuditResult = await client.query(
+        `SELECT incoming_external_id
+         FROM exchange_record_dedupe_events
+         WHERE exchange_account_id = $1
+           AND incoming_external_id = ANY($2::text[])`,
+        [exchangeAccountId, externalIds]
+      );
+      const auditedIncomingIds = new Set(
+        dedupeAuditResult.rows.map((row) => row.incoming_external_id)
+      );
+      const incomingByFingerprint = new Map();
+      for (const record of unique) {
+        if (!record.fingerprint) continue;
+        const rows = incomingByFingerprint.get(record.fingerprint) || [];
+        rows.push(record);
+        incomingByFingerprint.set(record.fingerprint, rows);
+      }
+
+      const inserts = [];
+      const merges = [];
+      const ambiguousExisting = new Map();
+      for (const record of unique) {
+        if (!existingById.has(record.external_id) && auditedIncomingIds.has(record.external_id)) {
+          // A high-confidence cross-source merge stores the incoming provider
+          // id only in the audit table. A later replay must remain a plain
+          // duplicate, not create another audit event or append provenance a
+          // second time.
+          dedupeReplays += 1;
+          continue;
+        }
+        const exact = existingById.get(record.external_id);
+        if (exact) {
+          inserts.push(record);
+          continue;
+        }
+        const sameBatch = record.fingerprint ? (incomingByFingerprint.get(record.fingerprint) || []) : [];
+        const candidates = (existingByFingerprint.get(record.fingerprint) || [])
+          .filter((candidate) => candidate.external_id !== record.external_id);
+        const conflicts = candidates.length === 1 ? conflictingDetails(candidates[0], record) : [];
+        const sourceCompatible = candidates.length === 1
+          && candidates[0].source && record.source && candidates[0].source !== record.source;
+        const exactCandidate = candidates.length === 1
+          && sameBatch.length === 1
+          && sourceCompatible
+          && conflicts.length === 0
+          && !candidates[0].duplicate_candidate
+          && !candidates[0].needs_review
+          && !record.needs_review;
+
+        if (exactCandidate) {
+          merges.push({ existing: candidates[0], incoming: record });
+          continue;
+        }
+
+        const hasCandidate = candidates.length > 0 || sameBatch.length > 1;
+        if (hasCandidate) {
+          duplicateCandidates += 1;
+          if (conflicts.length > 0 || candidates.length > 1) duplicateConflicts += 1;
+          record.duplicate_candidate = true;
+          record.needs_review = true;
+          record.raw = candidateMarker(record, candidates, conflicts);
+          for (const candidate of candidates) ambiguousExisting.set(candidate.id, {
+            ...candidate,
+            duplicate_candidate: true,
+            needs_review: true,
+            dedupe_provenance: [
+              ...(Array.isArray(candidate.dedupe_provenance) ? candidate.dedupe_provenance : []),
+              {
+                kind: 'candidate',
+                fingerprint: record.fingerprint,
+                incoming_external_id: record.external_id,
+                incoming_source: record.source || null,
+                conflicts,
+              },
+            ],
+          });
+        }
+        inserts.push(record);
+      }
+
+      // Apply ambiguous markers before inserts so a concurrent read cannot see
+      // only one half of the candidate group after this transaction commits.
+      for (const candidate of ambiguousExisting.values()) {
+        await client.query(
+          `UPDATE exchange_records
+           SET duplicate_candidate = TRUE,
+               needs_review = TRUE,
+               dedupe_provenance = $2::jsonb
+           WHERE id = $1 AND exchange_account_id = $3`,
+          [candidate.id, jsonValue(candidate.dedupe_provenance), exchangeAccountId]
+        );
+      }
+
+      for (const { existing, incoming } of merges) {
+        const merged = mergeCandidate(existing, incoming);
+        const values = updateValues(merged);
+        const params = [existing.id, exchangeAccountId, ...values];
+        const assignments = COLUMNS
+          .filter((column) => !IDENTITY_COLUMNS.has(column))
+          .map((column) => `${column} = $${COLUMNS.indexOf(column) + 3}`)
+          .join(', ');
+        await client.query(
+          `UPDATE exchange_records
+           SET ${assignments}
+           WHERE id = $1 AND exchange_account_id = $2`,
+          params
+        );
+        await client.query(
+          `INSERT INTO exchange_record_dedupe_events
+             (exchange_account_id, survivor_record_id, incoming_external_id,
+              incoming_source, fingerprint, fingerprint_version, incoming_snapshot)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+          [exchangeAccountId, existing.id, incoming.external_id, incoming.source || null,
+            incoming.fingerprint, incoming.fingerprint_version || FINGERPRINT_VERSION,
+            jsonValue(sourceSnapshot(incoming))]
+        );
+        deduplicated += 1;
+      }
+
+      // The ordinary external-id upsert remains the idempotence boundary for
+      // exact replays. Candidate merges above are removed from this batch.
+      const recordsToInsert = inserts;
+      recordsToInsertCount = recordsToInsert.length;
+      for (let start = 0; start < recordsToInsert.length; start += CHUNK_SIZE) {
+        const chunk = recordsToInsert.slice(start, start + CHUNK_SIZE);
         const values = [];
         const placeholders = chunk.map((record, rowIndex) => {
           const base = rowIndex * (COLUMNS.length + 1);
@@ -142,6 +363,8 @@ class ExchangeRecord {
           for (const column of COLUMNS) {
             values.push(column === 'raw'
               ? (record.raw === null || record.raw === undefined ? null : JSON.stringify(stripNulls(record.raw)))
+              : column === 'dedupe_provenance'
+                ? jsonValue(record.dedupe_provenance)
               : record[column] ?? null);
           }
           const slots = Array.from({ length: COLUMNS.length + 1 }, (_, i) => `$${base + i + 1}`);
@@ -154,8 +377,12 @@ class ExchangeRecord {
             `INSERT INTO exchange_records (exchange_account_id, ${COLUMNS.join(', ')})
              VALUES ${placeholders.join(', ')}
              ON CONFLICT (exchange_account_id, external_id) DO UPDATE
-               SET ${UPGRADE_COLUMNS.map((column) => `${column} = EXCLUDED.${column}`).join(', ')}
-               WHERE exchange_records.needs_review AND NOT EXCLUDED.needs_review
+               SET ${UPGRADE_COLUMNS.map((column) => column === 'duplicate_candidate'
+                 ? `${column} = exchange_records.duplicate_candidate OR EXCLUDED.${column}`
+                 : `${column} = EXCLUDED.${column}`).join(', ')}
+               WHERE exchange_records.needs_review
+                 AND NOT exchange_records.duplicate_candidate
+                 AND NOT EXCLUDED.needs_review
              RETURNING (xmax = 0) AS inserted`,
             values
           );
@@ -178,6 +405,30 @@ class ExchangeRecord {
           if (row.inserted) inserted += 1; else upgraded += 1;
         }
       }
+
+      // Migration 062 intentionally does not rewrite historical rows. Once
+      // a legacy row is touched by a later import with a usable fingerprint,
+      // fill only that metadata so future cross-source imports can find it.
+      // This never changes the economic record, review state, or raw payload.
+      const fingerprintRows = unique.filter((record) => record.external_id && record.fingerprint);
+      for (let start = 0; start < fingerprintRows.length; start += CHUNK_SIZE) {
+        const chunk = fingerprintRows.slice(start, start + CHUNK_SIZE);
+        const values = [exchangeAccountId];
+        const tuples = chunk.map((record) => {
+          values.push(record.external_id, record.fingerprint, record.fingerprint_version || FINGERPRINT_VERSION);
+          return `($${values.length - 2}::text, $${values.length - 1}::varchar(64), $${values.length}::smallint)`;
+        });
+        await client.query(
+          `UPDATE exchange_records er
+           SET fingerprint = incoming.fingerprint,
+               fingerprint_version = incoming.fingerprint_version
+           FROM (VALUES ${tuples.join(', ')}) AS incoming(external_id, fingerprint, fingerprint_version)
+           WHERE er.exchange_account_id = $1
+             AND er.external_id = incoming.external_id
+             AND er.fingerprint IS NULL`,
+          values
+        );
+      }
       await client.query('COMMIT');
     } catch (err) {
       // The rollback is best effort. If the connection is already gone its
@@ -195,7 +446,10 @@ class ExchangeRecord {
     return {
       inserted,
       upgraded,
-      duplicates: (unique.length - inserted - upgraded) + duplicatesInFile,
+      duplicates: (recordsToInsertCount - inserted - upgraded) + duplicatesInFile + dedupeReplays,
+      deduplicated,
+      duplicateCandidates,
+      duplicateConflicts,
       total: records.length,
     };
   }

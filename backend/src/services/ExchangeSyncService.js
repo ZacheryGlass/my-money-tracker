@@ -10,6 +10,7 @@ const secretCrypto = require('../utils/secretCrypto');
 const {
   absAmount, subtractAmounts, compareAmounts, scaleByPowerOfTen,
 } = require('./exchangeImport/shared');
+const { annotateRecords } = require('./exchangeImport/canonicalFingerprint');
 const logger = require('../config/logger');
 
 // Dust: an exchange rounds its published balance, and the ledger does not.
@@ -406,7 +407,7 @@ class ExchangeSyncService {
       throw error;
     }
 
-    const records = result.records.map((record) => ({ ...record, source: 'api' }));
+    const records = annotateRecords(account.exchange, result.records.map((record) => ({ ...record, source: 'api' })));
     const stored = await ExchangeRecord.bulkInsert(account.id, records, { syncLockToken });
     // Fills the on-chain hole a CSV-first import left behind; see the note on
     // backfillChainDetails for why the ON CONFLICT arm cannot do this.
@@ -487,6 +488,9 @@ class ExchangeSyncService {
       imported: stored.inserted,
       upgraded: stored.upgraded,
       duplicates: stored.duplicates,
+      deduplicated: stored.deduplicated,
+      duplicate_candidates: stored.duplicateCandidates,
+      duplicate_conflicts: stored.duplicateConflicts,
       chainDetailsFilled: backfilled.filled,
       unknownTypes: result.stats?.unknownTypes ?? 0,
       mismatches: report.mismatch_count,
@@ -501,6 +505,9 @@ class ExchangeSyncService {
       imported: stored.inserted,
       upgraded: stored.upgraded,
       duplicates: stored.duplicates,
+      deduplicated: stored.deduplicated,
+      duplicate_candidates: stored.duplicateCandidates,
+      duplicate_conflicts: stored.duplicateConflicts,
       chain_details_filled: backfilled.filled,
       needs_review: records.filter((record) => record.needs_review).length,
       unknown_types: result.stats?.unknownTypes ?? 0,

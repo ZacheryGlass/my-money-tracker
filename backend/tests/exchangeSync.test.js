@@ -59,7 +59,7 @@ function accountRow(overrides = {}) {
   };
 }
 
-const PARAMS_PER_ROW = 17;
+const PARAMS_PER_ROW = 21;
 const EXTERNAL_ID_OFFSET = 11;
 const NEEDS_REVIEW_OFFSET = 12;
 

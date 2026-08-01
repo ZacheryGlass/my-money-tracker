@@ -54,6 +54,7 @@ class ExchangeAccount {
               ea.${CREDENTIAL_FLAG},
               COUNT(er.id)::int AS record_count,
               COUNT(er.id) FILTER (WHERE er.needs_review)::int AS needs_review_count,
+              COUNT(er.id) FILTER (WHERE er.duplicate_candidate)::int AS duplicate_candidate_count,
               MIN(er.occurred_at) AS first_record_at,
               MAX(er.occurred_at) AS last_record_at
        FROM exchange_accounts ea
