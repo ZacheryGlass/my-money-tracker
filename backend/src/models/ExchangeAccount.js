@@ -57,7 +57,25 @@ class ExchangeAccount {
               COUNT(er.id) FILTER (WHERE er.needs_review)::int AS needs_review_count,
               COUNT(er.id) FILTER (WHERE er.duplicate_candidate)::int AS duplicate_candidate_count,
               MIN(er.occurred_at) AS first_record_at,
-              MAX(er.occurred_at) AS last_record_at
+              MAX(er.occurred_at) AS last_record_at,
+              (SELECT COUNT(*)::int FROM exchange_balance_exceptions ebe
+               WHERE ebe.exchange_account_id = ea.id
+                 AND ebe.status IN ('open', 'accepted')) AS balance_exception_count,
+              (SELECT COUNT(*)::int FROM exchange_balance_exceptions ebe
+               WHERE ebe.exchange_account_id = ea.id
+                 AND ebe.status IN ('open', 'accepted')
+                 AND (ebe.status = 'open'
+                   OR ebe.category IN ('parser_defect', 'missing_activity'))) AS balance_blocking_count,
+              (SELECT MAX(abr.calculated_at) FROM exchange_balance_audit_runs abr
+               WHERE abr.exchange_account_id = ea.id
+                 AND abr.run_status = 'authoritative') AS balance_audited_at,
+              COALESCE(
+                (SELECT abr.run_status FROM exchange_balance_audit_runs abr
+                 WHERE abr.exchange_account_id = ea.id
+                 ORDER BY abr.calculated_at DESC, abr.id DESC LIMIT 1),
+                CASE WHEN ea.last_sync_status = 'balance_mismatch'
+                  THEN 'legacy_unclassified' ELSE 'never' END
+              ) AS balance_audit_status
        FROM exchange_accounts ea
        LEFT JOIN exchange_records er ON er.exchange_account_id = ea.id
        WHERE ea.user_id = $1

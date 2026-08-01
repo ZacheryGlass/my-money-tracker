@@ -233,7 +233,12 @@ function toRecordRows(ledgerRows, fundingByRefid) {
 // is apples to apples. XETH, ETH2 and ETH2.S are three keys in one Balance
 // response and one position in the ledger, so they are summed, not overwritten.
 function normalizeBalances(balanceMap) {
+  return normalizeBalanceDetails(balanceMap).balances;
+}
+
+function normalizeBalanceDetails(balanceMap) {
   const balances = {};
+  const balanceDetails = {};
   for (const [code, value] of Object.entries(balanceMap || {})) {
     const asset = normalizeAsset(code);
     const amount = cleanAmount(value);
@@ -244,8 +249,13 @@ function normalizeBalances(balanceMap) {
     // summed one would not ("4.25"), and the comparison would be comparing
     // formatting as much as value.
     balances[asset] = addAmounts(balances[asset] ?? '0', amount);
+    const detail = balanceDetails[asset] || { provider_asset_codes: [], provider_balances: {} };
+    detail.provider_asset_codes.push(code);
+    detail.provider_balances[code] = amount;
+    balanceDetails[asset] = detail;
   }
-  return balances;
+  for (const detail of Object.values(balanceDetails)) detail.provider_asset_codes.sort();
+  return { balances, balanceDetails };
 }
 
 const krakenConnector = {
@@ -356,12 +366,13 @@ const krakenConnector = {
         pendingOffset: 0,
       };
 
-    const balances = normalizeBalances(await client.getBalance());
+    const normalized = normalizeBalanceDetails(await client.getBalance());
     const balanceObservedAt = new Date().toISOString();
     return {
       records,
       cursor: nextCursor,
-      balances,
+      balances: normalized.balances,
+      balance_details: normalized.balanceDetails,
       balance_observed_at: balanceObservedAt,
       stats: {
         rows: rows.length,
@@ -380,4 +391,6 @@ const krakenConnector = {
 module.exports = krakenConnector;
 module.exports.MAX_PAGES_INTERACTIVE = MAX_PAGES_INTERACTIVE;
 module.exports.RESUME_OVERLAP_SECONDS = RESUME_OVERLAP_SECONDS;
-module.exports._internals = { toRecordRows, normalizeBalances, fundingRows, fetchLedgerWindow };
+module.exports._internals = {
+  toRecordRows, normalizeBalances, normalizeBalanceDetails, fundingRows, fetchLedgerWindow,
+};

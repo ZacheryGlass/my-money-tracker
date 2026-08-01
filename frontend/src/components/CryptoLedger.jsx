@@ -331,6 +331,8 @@ const CryptoLedger = ({
       || account.last_sync_status === 'balance_mismatch'
       || account.last_sync_status === 'error'
       || account.last_sync_status === 'coverage_limited'
+      || account.last_sync_status === 'reconciled_with_exceptions'
+      || (account.balance_exception_count || 0) > 0
       || account.balance_report?.backfill_pending
       || account.balance_report?.balances_incomplete
       || (Array.isArray(account.balance_report?.coverage_limitations)

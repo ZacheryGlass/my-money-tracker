@@ -548,6 +548,18 @@ export const exchanges = {
     const response = await api.get('/api/exchanges');
     return response.data;
   },
+  getBalanceExceptions: async (params = {}) => {
+    const response = await api.get('/api/exchanges/balance-exceptions', { params });
+    return response.data;
+  },
+  getAccountBalanceExceptions: async (id, params = {}) => {
+    const response = await api.get(`/api/exchanges/${id}/balance-exceptions`, { params });
+    return response.data;
+  },
+  updateBalanceException: async (id, payload) => {
+    const response = await api.patch(`/api/exchanges/balance-exceptions/${id}`, payload);
+    return response.data;
+  },
   create: async (name, exchange) => {
     const response = await api.post('/api/exchanges', { name, exchange });
     return response.data;

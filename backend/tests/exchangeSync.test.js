@@ -1105,7 +1105,15 @@ test('coinbase: a resolved legacy row is not overwritten by a later clean import
 
   const result = await ExchangeRecord.bulkInsert(COINBASE_ACCOUNT_ID, [record]);
 
-  assert.deepEqual(result, { inserted: 0, upgraded: 0, duplicates: 1, total: 1 });
+  assert.deepEqual(result, {
+    inserted: 0,
+    upgraded: 0,
+    duplicates: 1,
+    deduplicated: 0,
+    duplicateCandidates: 0,
+    duplicateConflicts: 0,
+    total: 1,
+  });
   assert.equal(stored.get(storedKey(COINBASE_ACCOUNT_ID, record.external_id)).id, resolved.id);
   assert.equal(stored.get(storedKey(COINBASE_ACCOUNT_ID, record.external_id)).record_type, 'transfer');
   assert.equal(stored.get(storedKey(COINBASE_ACCOUNT_ID, record.external_id)).raw.type, 'manual_review');

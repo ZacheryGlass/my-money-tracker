@@ -367,6 +367,39 @@ test('a flagged record can be resolved, which is what empties the queue', async 
   assert.equal(response.body.record.needs_review, false);
 });
 
+test('balance exception reads are user-scoped and paginated', async () => {
+  const response = await request(app)
+    .get('/api/exchanges/balance-exceptions?limit=25&offset=0');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.data, []);
+  assert.deepEqual(response.body.pagination, { total: 0, limit: 25, offset: 0 });
+  assert.equal(response.body.summary.count, 0);
+
+  asUser(2);
+  const foreign = await request(app)
+    .get(`/api/exchanges/${OWNED_ACCOUNT_ID}/balance-exceptions`);
+  assert.equal(foreign.status, 404);
+});
+
+test('balance exception approval validates category, evidence, and exact version', async () => {
+  const response = await request(app)
+    .patch('/api/exchanges/balance-exceptions/1')
+    .send({ version: 1, status: 'accepted', category: 'parser_defect', evidence: '', adjustment: '0' });
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /category and evidence/i);
+});
+
+test('balance exception status cannot be system-cleared by a reviewer', async () => {
+  const response = await request(app)
+    .patch('/api/exchanges/balance-exceptions/1')
+    .send({ version: 1, status: 'cleared', category: 'rounding_dust', evidence: 'provider note', adjustment: '0' });
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /status must be open or accepted/i);
+});
+
 test('resolving a record that is not the caller\'s is a 404', async () => {
   const foreignAccount = await request(app)
     .patch(`/api/exchanges/999/records/${FLAGGED_RECORD_ID}/resolve`);

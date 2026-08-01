@@ -720,8 +720,10 @@ const coinbaseConnector = {
     }
 
     const balances = {};
+    const balanceDetails = {};
     for (const account of brokerageAccounts) {
-      const asset = currencyOf(account.available_balance) ?? String(account.currency ?? '').toUpperCase();
+      const providerCode = currencyOf(account.available_balance) ?? String(account.currency ?? '').toUpperCase();
+      const asset = providerCode;
       const available = amountOf(account.available_balance);
       const hold = amountOf(account.hold);
       if (!asset) continue;
@@ -731,6 +733,13 @@ const coinbaseConnector = {
       // exact scaled path and comes out in one canonical form -- "0.06" and
       // "0.0600" must not read as two different balances.
       balances[asset] = addAmounts(addAmounts(balances[asset] ?? '0', available ?? '0'), hold ?? '0');
+      const total = addAmounts(available ?? '0', hold ?? '0');
+      const detail = balanceDetails[asset] || { provider_asset_codes: [], provider_balances: {} };
+      detail.provider_asset_codes.push(providerCode);
+      detail.provider_balances[providerCode] = addAmounts(
+        detail.provider_balances[providerCode] ?? '0', total
+      );
+      balanceDetails[asset] = detail;
     }
 
     return {
@@ -761,6 +770,10 @@ const coinbaseConnector = {
           done: [],
         },
       balances: Object.fromEntries(sortedEntries(balances)),
+      balance_details: Object.fromEntries(sortedEntries(balanceDetails).map(([key, detail]) => [key, {
+        ...detail,
+        provider_asset_codes: [...new Set(detail.provider_asset_codes)].sort(),
+      }])),
       balance_observed_at: balanceObservedAt,
       // Half a live balance picture reads every unenumerated portfolio as zero
       // and flags a healthy account, so the caller skips the comparison rather

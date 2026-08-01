@@ -10,11 +10,13 @@ const ExchangeImportService = require('../services/ExchangeImportService');
 const ExchangeSyncService = require('../services/ExchangeSyncService');
 const ExchangeBackfillService = require('../services/ExchangeBackfillService');
 const ExchangeMatchService = require('../services/ExchangeMatchService');
+const ExchangeBalanceReconciliation = require('../models/ExchangeBalanceReconciliation');
 const chains = require('../config/chains');
 const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
 const { CREDENTIAL_FIELDS, connectorFor } = require('../services/exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
 const { toCsv } = require('../utils/csv');
+const { cleanAmount } = require('../services/exchangeImport/shared');
 const logger = require('../config/logger');
 
 const router = express.Router();
@@ -98,6 +100,51 @@ function validateAccountInput({ name, exchange }, { partial = false } = {}) {
   return null;
 }
 
+function validateExceptionUpdate(body) {
+  const status = typeof body.status === 'string' ? body.status.trim().toLowerCase() : '';
+  if (!['open', 'accepted'].includes(status)) {
+    return { error: 'status must be open or accepted' };
+  }
+  const category = body.category === null || body.category === undefined || body.category === ''
+    ? null : String(body.category).trim().toLowerCase();
+  if (category && !ExchangeBalanceReconciliation.CATEGORIES.has(category)) {
+    return { error: `category must be one of: ${[...ExchangeBalanceReconciliation.CATEGORIES].join(', ')}` };
+  }
+  const evidence = body.evidence === null || body.evidence === undefined
+    ? null : body.evidence;
+  if (evidence !== null && typeof evidence !== 'string') return { error: 'evidence must be a string' };
+  const trimmedEvidence = evidence?.trim() || null;
+  if (status === 'accepted' && (!category || !trimmedEvidence)) {
+    return { error: 'category and evidence are required to accept an exception' };
+  }
+  if (!Number.isInteger(body.version) && !(typeof body.version === 'string' && /^[1-9]\d*$/.test(body.version))) {
+    return { error: 'version must be a positive integer' };
+  }
+  const version = Number(body.version);
+  if (!Number.isSafeInteger(version) || version < 1 || version > 2147483647) {
+    return { error: 'version must be a positive integer' };
+  }
+  if (typeof body.adjustment !== 'string') {
+    return { error: 'adjustment must be an exact decimal string' };
+  }
+  const adjustment = cleanAmount(body.adjustment);
+  if (adjustment === null) return { error: 'adjustment must be a valid decimal amount' };
+  const fractionLength = String(adjustment).split('.')[1]?.length || 0;
+  const digitLength = String(adjustment).replace('-', '').replace('.', '').length;
+  if (fractionLength > 18 || digitLength > 38) {
+    return { error: 'adjustment exceeds the supported 38,18 precision' };
+  }
+  if (status === 'open' && adjustment !== '0') {
+    return { error: 'adjustment can only be applied to an accepted exception' };
+  }
+  if (adjustment !== '0' && !trimmedEvidence) {
+    return { error: 'a nonzero adjustment requires an evidence note' };
+  }
+  return {
+    value: { version, status, category, evidence: trimmedEvidence, adjustment },
+  };
+}
+
 router.get('/', async (req, res) => {
   try {
     const accounts = await ExchangeAccount.findAllByUser(req.user.id);
@@ -141,6 +188,59 @@ router.post('/', async (req, res) => {
     }
     logger.error({ err: error }, 'Create exchange account error');
     res.status(500).json({ error: 'Failed to create exchange account' });
+  }
+});
+
+// Durable balance exceptions are separate from the legacy balance_report. The
+// default queue excludes system-cleared rows; callers can request one status
+// explicitly for audit/history views.
+router.get('/balance-exceptions', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const status = req.query.status ? String(req.query.status).trim().toLowerCase() : null;
+    if (status && !['open', 'accepted', 'cleared'].includes(status)) {
+      return res.status(400).json({ error: 'status must be open, accepted, or cleared' });
+    }
+    const [{ rows, total }, summary] = await Promise.all([
+      ExchangeBalanceReconciliation.findForUser(req.user.id, { status, limit, offset }),
+      ExchangeBalanceReconciliation.summaryForUser(req.user.id),
+    ]);
+    return res.status(200).json({
+      data: rows,
+      summary,
+      pagination: { total, limit, offset },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Get exchange balance exceptions error');
+    return res.status(500).json({ error: 'Failed to retrieve exchange balance exceptions' });
+  }
+});
+
+router.patch('/balance-exceptions/:exceptionId', async (req, res) => {
+  try {
+    const exceptionId = parseId(req.params.exceptionId);
+    if (!exceptionId) return res.status(404).json({ error: 'Exchange balance exception not found' });
+    const parsed = validateExceptionUpdate(req.body || {});
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const result = await ExchangeBalanceReconciliation.updateForUser(
+      req.user.id, exceptionId, parsed.value
+    );
+    if (result.stale) {
+      return res.status(409).json({
+        error: 'This exchange balance exception changed since it was opened; refresh before saving',
+        code: 'EXCHANGE_BALANCE_EXCEPTION_STALE',
+        version: result.currentVersion,
+      });
+    }
+    if (!result.row) return res.status(404).json({ error: 'Exchange balance exception not found' });
+    await ExchangeBalanceReconciliation.refreshAccountStatusForUser(req.user.id, result.row.exchange_account_id);
+    const exception = await ExchangeBalanceReconciliation.findByIdForUser(req.user.id, exceptionId);
+    return res.status(200).json({ exception });
+  } catch (error) {
+    logger.error({ err: error, exceptionId: req.params.exceptionId },
+      'Update exchange balance exception error');
+    return res.status(500).json({ error: 'Failed to update the exchange balance exception' });
   }
 });
 
@@ -442,6 +542,34 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     logger.error({ err: error, accountId: req.params.id }, 'Delete exchange account error');
     return res.status(500).json({ error: 'Failed to delete exchange account' });
+  }
+});
+
+router.get('/:id/balance-exceptions', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const status = req.query.status ? String(req.query.status).trim().toLowerCase() : null;
+    if (status && !['open', 'accepted', 'cleared'].includes(status)) {
+      return res.status(400).json({ error: 'status must be open, accepted, or cleared' });
+    }
+    const [{ rows, total }, summary] = await Promise.all([
+      ExchangeBalanceReconciliation.findForUser(req.user.id, {
+        exchangeAccountId: account.id, status, limit, offset,
+      }),
+      ExchangeBalanceReconciliation.summaryForUser(req.user.id, { exchangeAccountId: account.id }),
+    ]);
+    return res.status(200).json({
+      account_id: account.id,
+      data: rows,
+      summary,
+      pagination: { total, limit, offset },
+    });
+  } catch (error) {
+    logger.error({ err: error, accountId: req.params.id }, 'Get account balance exceptions error');
+    return res.status(500).json({ error: 'Failed to retrieve account balance exceptions' });
   }
 });
 

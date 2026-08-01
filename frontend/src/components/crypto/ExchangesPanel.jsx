@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion as Motion } from 'framer-motion';
 import {
   AlertTriangle, ArrowLeftRight, Check, ChevronDown, Clock, Link2, Pencil, Plus,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { exchanges as exchangesAPI } from '../../utils/api';
 import { formatDateDisplay, formatRelativeTime } from '../../utils/format';
+import ExchangeBalanceExceptionQueue from './ExchangeBalanceExceptionQueue';
 
 // The venues the backend accepts. Coinbase covers both the retail export and a
 // Coinbase Pro / Exchange statement -- the importer recognizes which is which
@@ -114,6 +115,7 @@ function ExchangesPanel({
   onError,
   showSuccess,
   onRetry,
+  focusAccountId = null,
 }) {
   const [nameInput, setNameInput] = useState('');
   const [venue, setVenue] = useState('coinbase');
@@ -151,6 +153,8 @@ function ExchangesPanel({
   const [resolvingRecordId, setResolvingRecordId] = useState(null);
   const [matchAudit, setMatchAudit] = useState(null);
   const [loadingMatchAudit, setLoadingMatchAudit] = useState(false);
+  const [balanceAudits, setBalanceAudits] = useState({});
+  const focusAuditLoadedRef = useRef(null);
 
   // Poll only while there is an active job. The first read also restores a
   // completed receipt after a reload, and the server's durable status means a
@@ -483,6 +487,53 @@ function ExchangesPanel({
     await loadReviewQueue(account.id);
   };
 
+  const handleLoadBalanceAudit = useCallback(async (account) => {
+    setBalanceAudits((previous) => ({
+      ...previous,
+      [account.id]: { ...(previous[account.id] || {}), open: true, loading: true, error: null },
+    }));
+    try {
+      const response = await exchangesAPI.getAccountBalanceExceptions(account.id, { limit: 50 });
+      setBalanceAudits((previous) => ({
+        ...previous,
+        [account.id]: { ...previous[account.id], open: true, loading: false, data: response },
+      }));
+    } catch (err) {
+      setBalanceAudits((previous) => ({
+        ...previous,
+        [account.id]: {
+          ...previous[account.id], open: true, loading: false,
+          error: err.response?.data?.error || 'Couldn\'t load the balance audit',
+        },
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!focusAccountId) {
+      focusAuditLoadedRef.current = null;
+      return;
+    }
+    if (focusAuditLoadedRef.current === focusAccountId) return;
+    const account = accounts.find((candidate) => Number(candidate.id) === Number(focusAccountId));
+    if (account) {
+      focusAuditLoadedRef.current = focusAccountId;
+      void handleLoadBalanceAudit(account);
+    }
+  }, [accounts, focusAccountId, handleLoadBalanceAudit]);
+
+  const handleToggleBalanceAudit = async (account) => {
+    const current = balanceAudits[account.id];
+    if (current?.open && !current.loading) {
+      setBalanceAudits((previous) => ({
+        ...previous,
+        [account.id]: { ...current, open: false },
+      }));
+      return;
+    }
+    await handleLoadBalanceAudit(account);
+  };
+
   const handleResolveRecord = async (account, record) => {
     setResolvingRecordId(record.id);
     try {
@@ -708,6 +759,7 @@ function ExchangesPanel({
                 ? receiptJob : syncJob)
               : syncJob || receiptJob;
             const testing = testingId === account.id;
+            const balanceAudit = balanceAudits[account.id];
             return (
               <Motion.div layout key={account.id} className="card overflow-hidden border-border">
                 <div className="p-5 md:p-6">
@@ -1075,6 +1127,13 @@ function ExchangesPanel({
                             : syncResult.sync.status === 'coverage_limited' ? 'stale' : null)}
                         report={syncResult.sync.reconciliation || syncResult.sync.balance_report}
                       />
+                      {syncResult.sync.status === 'reconciled_with_exceptions' && (
+                        <p className="mt-1 flex items-start gap-2 text-orange-400">
+                          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                          The audit found documented balance exceptions. Review the Balance audit section;
+                          accepted explanations affect reconciliation only.
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1140,6 +1199,48 @@ function ExchangesPanel({
                         </p>
                       )}
                       <ReconciliationNotice status={result.reconciliation_status} report={result.reconciliation} />
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-border">
+                  <button
+                    type="button"
+                    aria-expanded={Boolean(balanceAudit?.open)}
+                    onClick={() => handleToggleBalanceAudit(account)}
+                    className="flex w-full items-center justify-between gap-2 px-5 py-3 text-caption text-tertiary transition-colors hover:text-primary md:px-6"
+                  >
+                    <span>
+                      Balance audit
+                      {account.balance_exception_count > 0 && (
+                        <span className="ml-2 font-bold text-loss">
+                          {account.balance_exception_count} exception{account.balance_exception_count === 1 ? '' : 's'}
+                        </span>
+                      )}
+                      {account.balance_audit_status === 'legacy_unclassified' && (
+                        <span className="ml-2 text-orange-400">legacy mismatch needs a new complete audit</span>
+                      )}
+                    </span>
+                    <ChevronDown size={14} className={balanceAudit?.open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                  </button>
+                  {balanceAudit?.open && (
+                    <div className="border-t border-border p-4 md:p-5">
+                      <ExchangeBalanceExceptionQueue
+                        data={balanceAudit.data}
+                        loading={balanceAudit.loading}
+                        error={balanceAudit.error}
+                        onRetry={() => handleLoadBalanceAudit(account)}
+                        onSaved={async () => {
+                          await handleLoadBalanceAudit(account);
+                          await onChanged();
+                        }}
+                        onError={onError}
+                        showSuccess={showSuccess}
+                        title="Balance audit details"
+                        description={account.balance_audit_status === 'coverage_limited'
+                          ? 'The latest comparison was coverage-limited and did not change this queue. Complete the API backfill before treating a mismatch as authoritative.'
+                          : 'Review the exact derived and provider values. Accepting an explanation records evidence and affects reconciliation only.'}
+                      />
                     </div>
                   )}
                 </div>

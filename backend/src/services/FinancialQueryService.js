@@ -7,6 +7,7 @@ const SalaryHistory = require('../models/SalaryHistory');
 const RecurringExpense = require('../models/RecurringExpense');
 const EthTransfer = require('../models/EthTransfer');
 const EthReconciliation = require('../models/EthReconciliation');
+const ExchangeBalanceReconciliation = require('../models/ExchangeBalanceReconciliation');
 const {
   calculateReturns,
   correlationAndBeta,
@@ -1376,6 +1377,23 @@ class FinancialQueryService {
       });
     }
 
+    const exchangeReconciliation = await ExchangeBalanceReconciliation.summaryForUser(userId);
+    if (exchangeReconciliation.blocking) {
+      issues.push({
+        severity: 'warning',
+        code: 'exchange_balance_exceptions',
+        count: exchangeReconciliation.blocking,
+        detail: 'Exchange balances have open exceptions, or accepted parser-defect or missing-activity explanations. The exchange ledger is not complete until those are resolved.',
+      });
+    } else if (exchangeReconciliation.reconciled) {
+      issues.push({
+        severity: 'info',
+        code: 'exchange_balance_reconciled_with_exceptions',
+        count: exchangeReconciliation.reconciled,
+        detail: 'Some exchange balance differences are documented as opening-balance gaps, provider migrations, or rounding dust. These notes affect reconciliation only and do not change holdings or ledger records.',
+      });
+    }
+
     return {
       meta: toolMeta(),
       status: portfolio.freshness.status === 'warning' || issues.some((issue) => issue.severity === 'warning') ? 'warning' : 'ok',
@@ -1385,6 +1403,7 @@ class FinancialQueryService {
         latestSnapshotDate: isoDate(counts.latest_snapshot_date),
         benchmarkObservations: counts.benchmark_observations,
         recordedInvestmentFlows: counts.recorded_investment_flows,
+        exchangeBalanceExceptions: exchangeReconciliation,
       },
       issues,
     };

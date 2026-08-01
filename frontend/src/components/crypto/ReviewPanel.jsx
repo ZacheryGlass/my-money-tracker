@@ -7,6 +7,7 @@ import {
 } from '../../utils/format';
 import { explorerAddressUrl, explorerTxUrl } from '../../utils/chains';
 import { spamReasonLabel } from '../../utils/dataLabels';
+import ExchangeBalanceExceptionQueue from './ExchangeBalanceExceptionQueue';
 
 const shortEthAddress = (address) => shortEthAddressOrUnknown(address, '');
 
@@ -229,6 +230,9 @@ function ReviewPanel({
   onError,
   showSuccess,
   onRetry,
+  exchangeExceptions,
+  exchangeExceptionsError,
+  onOpenExchanges,
 }) {
   const [triagingAddress, setTriagingAddress] = useState(null);
   const [showDust, setShowDust] = useState(false);
@@ -367,16 +371,35 @@ function ReviewPanel({
     }
   };
 
+  const exchangeQueue = exchangeExceptions === undefined ? null : (
+    <ExchangeBalanceExceptionQueue
+      data={exchangeExceptions}
+      error={exchangeExceptionsError}
+      onRetry={onRetry}
+      onSaved={onChanged}
+      onOpenAccount={(accountId) => onOpenExchanges?.(accountId)}
+      onError={onError}
+      showSuccess={showSuccess}
+      showAccount
+      title="Exchange balance review"
+      description="These exceptions preserve the exact provider response and derived ledger value. Accept only with a category and evidence; adjustments affect reconciliation only."
+    />
+  );
+
   if (!hasWallets) {
     return (
-      <p className="text-body-sm text-tertiary">
-        Nothing to review yet. Counterparties and quarantined transactions appear once a wallet has synced.
-      </p>
+      <>
+        {exchangeQueue}
+        <p className="mt-6 text-body-sm text-tertiary">
+          Nothing else to review yet. Counterparties and quarantined transactions appear once a wallet has synced.
+        </p>
+      </>
     );
   }
 
   return (
     <>
+      {exchangeQueue}
       <section aria-labelledby="eth-review-heading">
         <div className="mb-3 px-2">
           <h2 id="eth-review-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Needs Review</h2>

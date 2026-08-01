@@ -206,7 +206,10 @@ class ExchangeBackfillService {
         return PUMP_DELAY_MS;
       }
 
-      const result = await ExchangeSyncService._syncResolvedAccount(account, { interactive: false });
+      const result = await ExchangeSyncService._syncResolvedAccount(account, {
+        interactive: false,
+        syncJobId: job.id,
+      });
       const stats = batchStats(result);
       if (leaseLost) {
         logger.warn({ jobId: job.id }, 'Exchange backfill lease was lost; discarding stale progress receipt');

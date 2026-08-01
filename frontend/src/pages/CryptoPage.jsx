@@ -113,6 +113,11 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // a quarantine is that it says what it swallowed.
   const [spamActivity, setSpamActivity] = useState(null);
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
+  const [exchangeFocusAccountId, setExchangeFocusAccountId] = useState(null);
+  // undefined = this build/API does not expose the durable audit yet; null =
+  // the endpoint was attempted but failed; an object is a successful read.
+  const [exchangeExceptions, setExchangeExceptions] = useState(undefined);
+  const [exchangeExceptionsError, setExchangeExceptionsError] = useState(null);
   // Loaded-and-empty and failed-to-load must not look alike: "No Exchange
   // Accounts" after a failed request invites the user to add one they already
   // have, and hides the imports they made.
@@ -185,7 +190,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // Each list degrades on its own: a failed labels request must not blank the
   // exchange accounts beside it, and the two nullable ones say so themselves.
   const fetchManageData = useCallback(async () => {
-    const [ignoredResult, labelsResult, counterpartyResult, spamResult, exchangeResult] = await Promise.all([
+    const exchangeExceptionsPromise = typeof exchangesAPI.getBalanceExceptions === 'function'
+      ? exchangesAPI.getBalanceExceptions({ limit: 50 }).catch(() => null)
+      : Promise.resolve(undefined);
+    const [ignoredResult, labelsResult, counterpartyResult, spamResult, exchangeResult, exchangeExceptionResult] = await Promise.all([
       ethAPI.getIgnoredTokens().catch(() => null),
       ethAPI.getAddressLabels().catch(() => null),
       ethAPI.getUnreviewedCounterparties().catch(() => null),
@@ -197,6 +205,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         limit: Math.min(SPAM_PAGE_SIZE * spamPagesRef.current, SPAM_MAX_LIMIT),
       }).catch(() => null),
       exchangesAPI.getAll().catch(() => null),
+      exchangeExceptionsPromise,
     ]);
     setIgnoredTokens(ignoredResult?.tokens || []);
     setAddressLabels(labelsResult?.labels || []);
@@ -208,6 +217,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     // Only treated as unavailable on a response that actually said so: a
     // failed request must not read as "the server cannot store keys".
     setExchangeEncryptionConfigured(exchangeResult ? exchangeResult.encryption_configured !== false : true);
+    if (exchangeExceptionResult !== undefined) {
+      setExchangeExceptions(exchangeExceptionResult);
+      setExchangeExceptionsError(exchangeExceptionResult ? null : 'Couldn\'t load the exchange balance review queue.');
+    }
     setManageLoaded(true);
   }, []);
 
@@ -297,7 +310,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // Material only, deliberately. A badge that cannot reach zero -- because a
   // single airdrop wave parked 40 dust counterparties behind it -- teaches the
   // user to ignore the badge.
-  const reviewAttentionCount = counterpartyData?.summary?.count || 0;
+  const exchangeExceptionAttentionCount = exchangeExceptions?.summary?.count || 0;
+  const reviewAttentionCount = (counterpartyData?.summary?.count || 0) + exchangeExceptionAttentionCount;
+  const reviewAttentionUnknown = counterpartyData === null || exchangeExceptions === null;
   const exchangeAttentionCount = useMemo(
     () => exchangeAccounts.reduce((sum, account) => sum + (account.needs_review_count || 0), 0),
     [exchangeAccounts]
@@ -553,7 +568,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     {
       value: REVIEW_TAB,
       label: 'Review',
-      badge: reviewAttentionCount > 0
+      badge: reviewAttentionUnknown
+        ? countBadge('?', 'border-loss/20 bg-loss/10 text-loss')
+        : reviewAttentionCount > 0
         ? countBadge(reviewAttentionCount, 'border-orange-500/30 bg-orange-500/10 text-orange-400')
         : null,
     },
@@ -842,6 +859,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
               onError={setError}
               showSuccess={showSuccess}
               onRetry={fetchManageData}
+              focusAccountId={exchangeFocusAccountId}
             />
           ))}
 
@@ -862,6 +880,12 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
               onError={setError}
               showSuccess={showSuccess}
               onRetry={fetchManageData}
+              exchangeExceptions={exchangeExceptions}
+              exchangeExceptionsError={exchangeExceptionsError}
+              onOpenExchanges={(accountId) => {
+                setExchangeFocusAccountId(accountId);
+                onTabChange?.(EXCHANGES_TAB);
+              }}
             />
           ))}
 

@@ -6,6 +6,7 @@ const ExchangeRecord = require('../models/ExchangeRecord');
 const ExchangeSyncJob = require('../models/ExchangeSyncJob');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const ExchangeReconciliationService = require('./ExchangeReconciliationService');
+const ExchangeBalanceReconciliationService = require('./ExchangeBalanceReconciliationService');
 const { connectorFor } = require('./exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
 const { annotateRecords } = require('./exchangeImport/canonicalFingerprint');
@@ -251,7 +252,7 @@ class ExchangeSyncService {
   // Shared by the request path and the job. The job has already resolved the
   // row (with each account's OWNER's credentials on it), so it must not be
   // made to look it up again under a userId it does not have.
-  static async _syncResolvedAccount(account, { interactive }) {
+  static async _syncResolvedAccount(account, { interactive, syncJobId = null }) {
     if (!account.api_key_encrypted || !account.api_secret_encrypted) {
       throw notConfigured('This exchange account has no API key stored');
     }
@@ -305,7 +306,7 @@ class ExchangeSyncService {
           .catch((error) => logger.warn({ accountId: account.id, err: error }, 'Exchange sync lock heartbeat failed'));
       }, SYNC_LOCK_HEARTBEAT_MS);
       heartbeatTimer.unref?.();
-      return await this._runSync(currentAccount, connector, { interactive, syncLockToken });
+      return await this._runSync(currentAccount, connector, { interactive, syncLockToken, syncJobId });
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (lockClaimed) {
@@ -316,7 +317,9 @@ class ExchangeSyncService {
     }
   }
 
-  static async _runSync(account, connector, { interactive, syncLockToken = null }) {
+  static async _runSync(account, connector, {
+    interactive, syncLockToken = null, syncJobId = null,
+  }) {
     let result;
     try {
       if (syncLockToken && !await ExchangeAccount.ownsSyncLock(account.id, syncLockToken)) {
@@ -440,6 +443,7 @@ class ExchangeSyncService {
         return {
           stored,
           backfilled,
+          derived,
           pending,
           balancesIncomplete,
           coverageLimitations,
@@ -452,8 +456,48 @@ class ExchangeSyncService {
     );
     const {
       stored, backfilled, pending, balancesIncomplete, coverageLimitations,
-      report, reconciliationStatus, status, saved,
+      report, reconciliationStatus, status: legacyStatus, saved: initiallySaved, derived,
     } = write;
+
+    // The immutable per-asset audit is the source of truth for reviewed
+    // exceptions. It runs after the atomic record/snapshot transaction commits
+    // so its independent transaction sees the exact ledger just stored.
+    // Fail closed to the compatibility reconciliation if the audit tables are
+    // temporarily unavailable; never pretend the exception queue is empty.
+    let balanceAudit = { available: false, authoritative: false };
+    try {
+      balanceAudit = await ExchangeBalanceReconciliationService.auditAccount(account.id, {
+        syncJobId,
+        derived,
+        live: result.balances || {},
+        balanceDetails: result.balance_details || {},
+        backfillPending: pending,
+        balancesIncomplete,
+        coverageLimitations,
+        calculatedAt: result.balance_observed_at || new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error({ err: error, exchangeAccountId: account.id },
+        'Exchange balance audit failed; preserving compatibility reconciliation result');
+    }
+    const status = balanceAudit.available && balanceAudit.authoritative
+      ? (balanceAudit.blocking_exception_count > 0
+        ? 'balance_mismatch'
+        : (balanceAudit.exception_count > 0 ? 'reconciled_with_exceptions' : 'ok'))
+      : legacyStatus;
+    let saved = initiallySaved;
+    if (status !== legacyStatus) {
+      saved = await ExchangeAccount.saveSyncState(account.id, {
+        status,
+        error: null,
+        syncLockToken,
+      });
+      if (!saved) {
+        const error = new Error('The exchange sync lost ownership before storing its audit status');
+        error.code = 'EXCHANGE_SYNC_LOCK_LOST';
+        throw error;
+      }
+    }
 
     // API-sourced records are the ones that most often carry the exact tx_hash,
     // which is what upgrades a match from heuristic to exact -- so a sync is the
@@ -499,6 +543,7 @@ class ExchangeSyncService {
       balance_report: { ...report, coverage_limitations: coverageLimitations },
       reconciliation_status: reconciliationStatus,
       reconciliation: { status: reconciliationStatus, ...report },
+      balance_audit: balanceAudit,
       coverage_limitations: coverageLimitations,
       matched: matches?.matches ?? 0,
       status,

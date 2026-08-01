@@ -180,14 +180,31 @@ function listCoins(config) {
 }
 
 function accountBalances(body) {
+  return accountBalanceDetails(body).balances;
+}
+
+function accountBalanceDetails(body) {
   const balances = {};
+  const balanceDetails = {};
   for (const row of body?.balances || []) {
     const coin = asset(row.asset);
     if (!coin) continue;
     const total = addAmounts(amount(row.free) ?? '0', amount(row.locked) ?? '0');
-    if (total !== null) balances[coin] = addAmounts(balances[coin] ?? '0', total);
+    if (total !== null) {
+      balances[coin] = addAmounts(balances[coin] ?? '0', total);
+      const providerCode = String(row.asset).trim();
+      const detail = balanceDetails[coin] || { provider_asset_codes: [], provider_balances: {} };
+      detail.provider_asset_codes.push(providerCode);
+      detail.provider_balances[providerCode] = addAmounts(
+        detail.provider_balances[providerCode] ?? '0', total
+      );
+      balanceDetails[coin] = detail;
+    }
   }
-  return balances;
+  for (const detail of Object.values(balanceDetails)) {
+    detail.provider_asset_codes = [...new Set(detail.provider_asset_codes)].sort();
+  }
+  return { balances, balanceDetails };
 }
 
 function emptyCursor() {
@@ -384,10 +401,12 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
       : []),
   ];
 
+  const normalizedBalances = accountBalanceDetails(account);
   return {
     records,
     cursor: state,
-    balances: accountBalances(account),
+    balances: normalizedBalances.balances,
+    balance_details: normalizedBalances.balanceDetails,
     balance_observed_at: balanceObservedAt,
     balancesComplete: true,
     coverageLimitations,
@@ -414,5 +433,5 @@ module.exports = connector;
 module.exports.MAX_REQUESTS_INTERACTIVE = MAX_REQUESTS_INTERACTIVE;
 module.exports._internals = {
   timestampOf, tradeRecord, capitalRecord, distributionRecord, dustRecord, fiatRecord,
-  accountBalances, normalizeCursor, emptyCursor,
+  accountBalances, accountBalanceDetails, normalizeCursor, emptyCursor,
 };
