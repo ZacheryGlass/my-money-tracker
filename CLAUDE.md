@@ -124,6 +124,12 @@ cd frontend && npm run lint     # eslint
 
 ## Notes
 
+- **Kraken asset aliases** (#79): the shared Kraken CSV/API normalizer first
+  applies structural provider cleanup (legacy codes and single-letter wallet
+  suffixes), then applies only explicitly verified economic aliases. `SOL03` and
+  `SOL03.S` therefore become canonical `SOL`, while numbered tickers are never
+  collapsed by a generic digit-stripping rule; the original provider code stays
+  in each record's raw payload.
 - **Address notes** (migration 049, `eth_address_notes`, `GET|POST|DELETE /api/eth/address-notes`) are user-scoped prose, deliberately separate from `eth_address_labels`. Any label row is a classification verdict and removes the address from counterparty review; a note such as "likely cold storage; confirm on device" must remain recordable without voting `own`, `exchange`, or `external`. Notes render beside labels, in Needs Review, and in expanded ledger rows and never trigger reclassification.
 - **Transaction notes** reuse `eth_activity_overrides.note` through `POST /api/eth/activity/note`, but prose alone is not a category verdict: a note-only row preserves the ladder's category, spam verdict, and `needs_review`. Reverting a category correction preserves its note. The not-empty CHECK allows category, spam, or note; never UPDATE the final non-null field to NULL and then DELETE, because PostgreSQL checks the UPDATE before the DELETE runs.
 

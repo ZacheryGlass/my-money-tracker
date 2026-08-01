@@ -1,7 +1,7 @@
 'use strict';
 
 const KrakenClient = require('./krakenClient');
-const { normalizeAsset, buildRecords } = require('../exchangeImport/krakenLedger');
+const { normalizeAssetParts, normalizeAsset, buildRecords } = require('../exchangeImport/krakenLedger');
 const { cleanAmount, addAmounts } = require('../exchangeImport/shared');
 const logger = require('../../config/logger');
 
@@ -189,6 +189,7 @@ function toRecordRows(ledgerRows, fundingByRefid) {
       ? fundingByRefid.get(entry.refid)
       : null;
     const amountCell = entry.amount === undefined || entry.amount === null ? '' : String(entry.amount);
+    const normalizedAsset = normalizeAssetParts(entry.asset);
 
     return {
       line: index + 1,
@@ -201,7 +202,8 @@ function toRecordRows(ledgerRows, fundingByRefid) {
       occurredAt: new Date(Number(entry.time) * 1000).toISOString(),
       type,
       subtype: String(entry.subtype ?? '').toLowerCase(),
-      asset: normalizeAsset(entry.asset),
+      asset: normalizedAsset.asset,
+      identityAsset: normalizedAsset.identityAsset,
       amountCell,
       amount: cleanAmount(amountCell),
       fee: cleanAmount(entry.fee),

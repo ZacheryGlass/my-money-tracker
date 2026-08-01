@@ -23,7 +23,7 @@ const {
 // the first sign of it would be a doubled balance.
 //
 // A normalized row:
-//   { line, txid, refid, occurredAt, type, subtype, asset,
+//   { line, txid, refid, occurredAt, type, subtype, asset, identityAsset,
 //     amountCell, amount, fee, raw, txHash?, address? }
 // where `txid` is the LEDGER ENTRY id (the CSV's txid column; the map key in
 // the REST response) and `refid` is the parent transaction's id.
@@ -41,6 +41,14 @@ const ASSET_MAP = {
   ETH2: 'ETH',
   XXDG: 'DOGE',
   XDG: 'DOGE',
+};
+
+// Explicitly verified economic aliases. This is intentionally separate from
+// ASSET_MAP: the legacy map rewrites provider spellings, while this map asserts
+// that two provider assets are the same position. Do not turn this into a
+// generic "strip digits" rule -- a future numbered ticker needs evidence first.
+const ECONOMIC_ASSET_MAP = {
+  SOL03: 'SOL',
 };
 
 // .S staked, .M opt-in rewards, .P parachain are documented
@@ -66,15 +74,20 @@ const EARN_MOVEMENT_SUBTYPES = new Set(['allocation', 'autoallocation', 'dealloc
 // through to the single-row path and are flagged instead.
 const PAIRED_ROW_TYPES = new Set(['trade', 'spend', 'receive']);
 
-function normalizeAsset(raw) {
+function normalizeAssetParts(raw) {
   let asset = String(raw ?? '').trim().toUpperCase();
-  if (!asset) return null;
+  if (!asset) return { asset: null, identityAsset: null };
   asset = asset.replace(SUFFIX, '');
-  if (ASSET_MAP[asset]) return ASSET_MAP[asset];
+  if (ASSET_MAP[asset]) asset = ASSET_MAP[asset];
   // Legacy four-character codes: X<crypto>, Z<fiat> (XLTC, ZEUR). Three-letter
   // tickers are left alone, so ADA and DOT are untouched.
-  if (/^[XZ][A-Z]{3}$/.test(asset)) return asset.slice(1);
-  return asset;
+  if (/^[XZ][A-Z]{3}$/.test(asset)) asset = asset.slice(1);
+  const identityAsset = asset;
+  return { asset: ECONOMIC_ASSET_MAP[asset] || asset, identityAsset };
+}
+
+function normalizeAsset(raw) {
+  return normalizeAssetParts(raw).asset;
 }
 
 // Row type -> record type for rows that stand alone. Paired rows (trade legs,
@@ -142,8 +155,8 @@ function buildRecords(parsedRows) {
   let unknownTypes = 0;
 
   const hashIdFor = (row) => contentId(
-    'kraken', [row.occurredAt, row.type, row.asset, row.amount],
-    dupIndexFor(`${row.occurredAt}|${row.type}|${row.asset}|${row.amount}`)
+    'kraken', [row.occurredAt, row.type, row.identityAsset ?? row.asset, row.amount],
+    dupIndexFor(`${row.occurredAt}|${row.type}|${row.identityAsset ?? row.asset}|${row.amount}`)
   );
 
   // A row that stands alone is identified by its own ledger entry id. A
@@ -248,8 +261,10 @@ function buildRecords(parsedRows) {
 
 module.exports = {
   ASSET_MAP,
+  ECONOMIC_ASSET_MAP,
   EARN_MOVEMENT_SUBTYPES,
   PAIRED_ROW_TYPES,
+  normalizeAssetParts,
   normalizeAsset,
   mapRowType,
   buildRecords,

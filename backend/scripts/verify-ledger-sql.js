@@ -759,6 +759,117 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     (await CryptoLedger.findForUser(2, { limit: 200, offset: 0 }))
       .rows.some((r) => r.tx_hash === tx('d')));
 
+  // --- Kraken numbered/staked asset aliases (#79) ---------------------------
+  // Seed the data AFTER the normal boot migration passes so migration 062 is
+  // tested as a real data backfill, then run it twice to exercise the
+  // boot-time idempotence contract. The second venue proves the update cannot
+  // rewrite an unrelated exchange's symbols.
+  const aliasRecords = await pool.query(
+    `INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at,
+       base_asset, base_amount, quote_asset, quote_amount, fee_asset, fee_amount,
+       tx_hash, address, external_id, needs_review, raw, source)
+     VALUES
+       ($1, 'trade', '2026-06-01 10:00', 'SOL03', 1, 'SOL03.S', -100, 'SOL03.S', 0.01,
+        'tx-alias-kraken', 'address-alias-kraken', 'ALIAS-KRAKEN', false,
+        '{"asset":"SOL03.S"}'::jsonb, 'api'),
+       ($2, 'trade', '2026-06-01 11:00', 'SOL03', 2, 'SOL03.S', -200, 'SOL03.S', 0.02,
+        'tx-alias-coinbase', 'address-alias-coinbase', 'ALIAS-COINBASE', false,
+        '{"asset":"SOL03.S"}'::jsonb, 'api')
+     RETURNING id, exchange_account_id, record_type, occurred_at, base_asset, base_amount,
+               quote_asset, quote_amount, fee_asset, fee_amount, tx_hash, address,
+               external_id, needs_review, raw, source`,
+    [accountId, account2.rows[0].id]
+  );
+  const krakenAlias = aliasRecords.rows.find((row) => row.external_id === 'ALIAS-KRAKEN');
+  const coinbaseAlias = aliasRecords.rows.find((row) => row.external_id === 'ALIAS-COINBASE');
+  const aliasMatch = await pool.query(
+    `INSERT INTO exchange_matches (exchange_record_id, counter_record_id, match_method, confidence)
+     VALUES ($1, $2, 'manual', 'high')
+     RETURNING id`,
+    [krakenAlias.id, coinbaseAlias.id]
+  );
+  const aliasVerdict = await pool.query(
+    `INSERT INTO exchange_match_verdicts (exchange_record_id, counter_record_id, verdict, note)
+     VALUES ($1, $2, 'confirmed', 'migration verifier')
+     RETURNING id`,
+    [krakenAlias.id, coinbaseAlias.id]
+  );
+  const beforeAliasCount = (await pool.query('SELECT COUNT(*)::int AS n FROM exchange_records')).rows[0].n;
+  const aliasMigration = fs.readFileSync(
+    path.join(REPO_BACKEND, 'migrations', '062_kraken_asset_aliases.sql'), 'utf8'
+  );
+  await pool.query(aliasMigration);
+  const afterFirstAlias = (await pool.query(
+    `SELECT er.id, er.exchange_account_id, er.record_type, er.occurred_at, er.base_asset,
+            er.base_amount, er.quote_asset, er.quote_amount, er.fee_asset, er.fee_amount,
+            er.tx_hash, er.address, er.external_id, er.needs_review, er.raw, er.source
+     FROM exchange_records er
+     WHERE er.external_id IN ('ALIAS-KRAKEN', 'ALIAS-COINBASE')
+     ORDER BY er.external_id`
+  )).rows;
+  const firstMatch = (await pool.query(
+    'SELECT id, exchange_record_id, counter_record_id FROM exchange_matches WHERE id = $1',
+    [aliasMatch.rows[0].id]
+  )).rows[0];
+  const firstVerdict = (await pool.query(
+    'SELECT id, exchange_record_id, counter_record_id, verdict, note FROM exchange_match_verdicts WHERE id = $1',
+    [aliasVerdict.rows[0].id]
+  )).rows[0];
+
+  await pool.query(aliasMigration);
+  const afterSecondAlias = (await pool.query(
+    `SELECT er.id, er.exchange_account_id, er.record_type, er.occurred_at, er.base_asset,
+            er.base_amount, er.quote_asset, er.quote_amount, er.fee_asset, er.fee_amount,
+            er.tx_hash, er.address, er.external_id, er.needs_review, er.raw, er.source
+     FROM exchange_records er
+     WHERE er.external_id IN ('ALIAS-KRAKEN', 'ALIAS-COINBASE')
+     ORDER BY er.external_id`
+  )).rows;
+  const afterAliasCount = (await pool.query('SELECT COUNT(*)::int AS n FROM exchange_records')).rows[0].n;
+  const secondMatch = (await pool.query(
+    'SELECT id, exchange_record_id, counter_record_id FROM exchange_matches WHERE id = $1',
+    [aliasMatch.rows[0].id]
+  )).rows[0];
+  const secondVerdict = (await pool.query(
+    'SELECT id, exchange_record_id, counter_record_id, verdict, note FROM exchange_match_verdicts WHERE id = $1',
+    [aliasVerdict.rows[0].id]
+  )).rows[0];
+  const krakenAfter = afterSecondAlias.find((row) => row.external_id === 'ALIAS-KRAKEN');
+  const coinbaseAfter = afterSecondAlias.find((row) => row.external_id === 'ALIAS-COINBASE');
+  ok('migration canonicalizes all three Kraken asset columns',
+    krakenAfter?.base_asset === 'SOL'
+      && krakenAfter.quote_asset === 'SOL'
+      && krakenAfter.fee_asset === 'SOL');
+  ok('migration leaves non-Kraken aliases untouched',
+    coinbaseAfter?.base_asset === 'SOL03'
+      && coinbaseAfter.quote_asset === 'SOL03.S'
+      && coinbaseAfter.fee_asset === 'SOL03.S');
+  ok('migration preserves raw provider payloads',
+    krakenAfter?.raw?.asset === 'SOL03.S' && coinbaseAfter?.raw?.asset === 'SOL03.S');
+  ok('migration preserves protected record fields',
+    krakenAfter?.record_type === 'trade'
+      && krakenAfter.occurred_at.getTime() === krakenAlias.occurred_at.getTime()
+      && krakenAfter.base_amount === krakenAlias.base_amount
+      && krakenAfter.quote_amount === krakenAlias.quote_amount
+      && krakenAfter.fee_amount === krakenAlias.fee_amount
+      && krakenAfter.tx_hash === krakenAlias.tx_hash
+      && krakenAfter.address === krakenAlias.address
+      && krakenAfter.needs_review === krakenAlias.needs_review
+      && krakenAfter.source === krakenAlias.source);
+  ok('migration preserves record count and stable IDs',
+    afterAliasCount === beforeAliasCount
+      && krakenAfter?.id === krakenAlias.id
+      && coinbaseAfter?.id === coinbaseAlias.id
+      && krakenAfter?.external_id === 'ALIAS-KRAKEN'
+      && coinbaseAfter?.external_id === 'ALIAS-COINBASE');
+  ok('migration preserves exchange matches and user verdicts',
+    firstMatch && secondMatch
+      && JSON.stringify(firstMatch) === JSON.stringify(secondMatch)
+      && firstVerdict && secondVerdict
+      && JSON.stringify(firstVerdict) === JSON.stringify(secondVerdict));
+  ok('migration second pass makes no further changes',
+    JSON.stringify(afterFirstAlias) === JSON.stringify(afterSecondAlias));
+
   await pool.end();
 
   console.log('\n--- checks ---');

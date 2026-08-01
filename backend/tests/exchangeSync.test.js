@@ -667,6 +667,31 @@ test('kraken: staking and reward rows are income; earn wallet moves are not', as
   assert.equal(byId.get('kraken:LHHHHH-88888-HHHHHH').record_type, 'transfer');
 });
 
+test('kraken: numbered aliases aggregate live balances and preserve provider identity', () => {
+  const { normalizeBalances, toRecordRows } = krakenConnector._internals;
+  const balances = normalizeBalances({
+    SOL: '4',
+    SOL03: '2',
+    'SOL03.S': '3',
+    'SOL04.S': '5',
+  });
+
+  assert.deepEqual(balances, { SOL: '9', SOL04: '5' });
+
+  const rows = toRecordRows([
+    {
+      ledgerId: '', refid: '', time: 1712016000, type: 'transfer', subtype: '',
+      asset: 'SOL03.S', amount: '1', fee: '0', balance: '1', aclass: 'currency',
+    },
+  ], new Map());
+  assert.equal(rows[0].asset, 'SOL');
+  assert.equal(rows[0].identityAsset, 'SOL03');
+  assert.equal(rows[0].raw.asset, 'SOL03.S');
+
+  const report = ExchangeSyncService.reconcile(balances, { SOL: '9', SOL04: '5' });
+  assert.equal(report.mismatch_count, 0);
+});
+
 test('kraken: an unknown ledger type imports flagged, never skipped', async () => {
   const result = await krakenConnector.sync(
     { apiKey: 'k', apiSecret: Buffer.alloc(32, 1).toString('base64') },

@@ -12,6 +12,9 @@ const path = require('path');
 // Real exports are personal financial history and never enter this repository.
 const { parseExchangeCsv, ImportFormatError } = require('../src/services/exchangeImport');
 const { cleanAmount, parseTimestamp } = require('../src/services/exchangeImport/shared');
+const {
+  normalizeAssetParts, normalizeAsset, buildRecords,
+} = require('../src/services/exchangeImport/krakenLedger');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'exchanges');
 const fixture = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
@@ -411,6 +414,59 @@ test('kraken: legacy asset codes and wallet suffixes normalize to one ticker', (
   // quote amount the exchange never traded.
   assert.equal(withdrawal.quote_amount, null);
   assert.equal(withdrawal.raw.amountusd, '-200.00');
+});
+
+test('kraken: verified numbered aliases canonicalize without generic digit stripping', () => {
+  const staked = normalizeAssetParts('SOL03.S');
+  assert.deepEqual(staked, { asset: 'SOL', identityAsset: 'SOL03' });
+  assert.equal(normalizeAsset('SOL03'), 'SOL');
+  assert.equal(normalizeAsset('SOL04.S'), 'SOL04');
+
+  // A crypto/crypto trade makes the numbered alias the quote asset, and its
+  // fee is charged in that same asset. The raw rows retain Kraken's spelling.
+  const rows = buildRecords([
+    {
+      line: 1, txid: 'trade-out', refid: 'trade-alias', occurredAt: '2024-04-01T00:00:00.000Z',
+      type: 'trade', subtype: '', asset: 'BTC', identityAsset: 'BTC', amountCell: '-1',
+      amount: '-1', fee: '0', raw: { asset: 'XXBT' },
+    },
+    {
+      line: 2, txid: 'trade-in', refid: 'trade-alias', occurredAt: '2024-04-01T00:00:00.000Z',
+      type: 'trade', subtype: '', asset: staked.asset, identityAsset: staked.identityAsset,
+      amountCell: '10', amount: '10', fee: '0.01', raw: { asset: 'SOL03.S' },
+    },
+  ]).records[0];
+  assert.equal(rows.base_asset, 'BTC');
+  assert.equal(rows.quote_asset, 'SOL');
+  assert.equal(rows.fee_asset, 'SOL');
+  assert.equal(rows.raw.rows[1].asset, 'SOL03.S');
+});
+
+test('kraken: id-less fallback IDs use the pre-alias identity asset', () => {
+  const row = (providerAsset) => {
+    const parts = normalizeAssetParts(providerAsset);
+    return {
+      line: 1,
+      txid: '',
+      refid: '',
+      occurredAt: '2024-04-02T00:00:00.000Z',
+      type: 'transfer',
+      subtype: '',
+      asset: parts.asset,
+      identityAsset: parts.identityAsset,
+      amountCell: '1',
+      amount: '1',
+      fee: '0',
+      raw: { asset: providerAsset },
+    };
+  };
+
+  const first = buildRecords([row('SOL03')]).records[0];
+  const second = buildRecords([row('SOL03.S')]).records[0];
+  assert.equal(first.base_asset, 'SOL');
+  assert.equal(first.raw.asset, 'SOL03');
+  assert.equal(second.raw.asset, 'SOL03.S');
+  assert.equal(first.external_id, second.external_id);
 });
 
 test('kraken: an unknown ledger type imports flagged', () => {

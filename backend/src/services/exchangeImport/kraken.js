@@ -1,7 +1,7 @@
 'use strict';
 
 const { cleanAmount, parseTimestamp, ImportFormatError } = require('./shared');
-const { normalizeAsset, buildRecords } = require('./krakenLedger');
+const { normalizeAssetParts, buildRecords } = require('./krakenLedger');
 const { isBlankRow } = require('../../utils/csv');
 
 // The CSV half of the Kraken reader: it turns a ledgers export into normalized
@@ -89,6 +89,7 @@ function parse(rows) {
     });
 
     const amountCell = cellOf(row, 'amount');
+    const normalizedAsset = normalizeAssetParts(cellOf(row, 'asset'));
     parsedRows.push({
       line,
       txid: cellOf(row, 'txid'),
@@ -96,7 +97,8 @@ function parse(rows) {
       occurredAt,
       type: cellOf(row, 'type').toLowerCase(),
       subtype: cellOf(row, 'subtype').toLowerCase(),
-      asset: normalizeAsset(cellOf(row, 'asset')),
+      asset: normalizedAsset.asset,
+      identityAsset: normalizedAsset.identityAsset,
       amountCell,
       amount: cleanAmount(amountCell),
       fee: cleanAmount(cellOf(row, 'fee')),
