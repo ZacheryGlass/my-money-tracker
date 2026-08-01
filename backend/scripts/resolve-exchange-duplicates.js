@@ -5,7 +5,12 @@
 require('dotenv').config();
 const fs = require('fs');
 const pool = require('../src/config/database');
-const { conflictingDetails, sourceSnapshot } = require('../src/services/exchangeImport/canonicalFingerprint');
+const {
+  FINGERPRINT_VERSION,
+  fingerprintFor,
+  conflictingDetails,
+  sourceSnapshot,
+} = require('../src/services/exchangeImport/canonicalFingerprint');
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -62,9 +67,11 @@ async function resolveGroup(client, group, userId) {
   const survivor = result.rows.find((row) => String(row.id) === String(group.suggested_survivor_id));
   const duplicate = result.rows.find((row) => row !== survivor);
   if (!survivor || !duplicate) throw new Error(`candidate group ${group.fingerprint} has no declared survivor`);
+  const survivorFingerprint = survivor.fingerprint || fingerprintFor(survivor.exchange, survivor);
+  const duplicateFingerprint = duplicate.fingerprint || fingerprintFor(duplicate.exchange, duplicate);
   if (survivor.exchange_account_id !== duplicate.exchange_account_id
-      || survivor.fingerprint !== group.fingerprint
-      || duplicate.fingerprint !== group.fingerprint) {
+      || survivorFingerprint !== group.fingerprint
+      || duplicateFingerprint !== group.fingerprint) {
     throw new Error(`candidate group ${group.fingerprint} changed since the report`);
   }
   if (survivor.source === duplicate.source || !['api', 'csv'].includes(survivor.source)
@@ -87,10 +94,13 @@ async function resolveGroup(client, group, userId) {
          source = CASE WHEN source = 'api' OR $6 = 'api' THEN 'api' ELSE COALESCE(source, $6) END,
          needs_review = needs_review OR $7,
          dedupe_provenance = $8::jsonb,
+         fingerprint = $9,
+         fingerprint_version = COALESCE(fingerprint_version, $10),
          duplicate_candidate = FALSE
      WHERE id = $1`,
     [survivor.id, duplicate.tx_hash, duplicate.address, duplicate.network, duplicate.chain_id,
-      duplicate.source, duplicate.needs_review, JSON.stringify(provenance)]
+      duplicate.source, duplicate.needs_review, JSON.stringify(provenance), group.fingerprint,
+      FINGERPRINT_VERSION]
   );
   await client.query(
     `INSERT INTO exchange_record_dedupe_events
@@ -98,7 +108,8 @@ async function resolveGroup(client, group, userId) {
         fingerprint, fingerprint_version, incoming_snapshot)
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
     [survivor.exchange_account_id, survivor.id, duplicate.external_id, duplicate.source,
-      group.fingerprint, duplicate.fingerprint_version || 1, JSON.stringify(sourceSnapshot(duplicate))]
+      group.fingerprint, duplicate.fingerprint_version || FINGERPRINT_VERSION,
+      JSON.stringify(sourceSnapshot(duplicate))]
   );
   await client.query('DELETE FROM exchange_records WHERE id = $1', [duplicate.id]);
   return { survivor_id: survivor.id, removed_id: duplicate.id, fingerprint: group.fingerprint };
