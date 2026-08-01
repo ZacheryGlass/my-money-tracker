@@ -75,6 +75,8 @@ function fakeQuery(text, params = []) {
     const result = [];
     for (let offset = 0; offset < params.length; offset += PARAMS_PER_ROW) {
       const incoming = decodeInsertRow(params, offset);
+      assert.notEqual(incoming.duplicate_candidate, null,
+        'INSERT must not bypass the database default with duplicate_candidate=NULL');
       const key = [...rows.values()].find((row) => row.exchange_account_id === incoming.exchange_account_id
         && row.external_id === incoming.external_id);
       if (!key) {

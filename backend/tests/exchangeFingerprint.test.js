@@ -38,6 +38,12 @@ test('canonicalization normalizes provider aliases and decimal spelling', () => 
   assert.equal(canonicalAmount('-0.0000'), '0');
 });
 
+test('annotated ordinary records carry the required false candidate flag', () => {
+  const annotated = annotateRecord('coinbase', apiTrade);
+  assert.equal(annotated.duplicate_candidate, false);
+  assert.equal(annotateRecord('coinbase', { ...apiTrade, duplicate_candidate: true }).duplicate_candidate, true);
+});
+
 test('API and CSV versions of one Coinbase event share a fingerprint', () => {
   const csvTrade = {
     ...apiTrade,

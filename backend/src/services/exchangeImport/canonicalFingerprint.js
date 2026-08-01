@@ -144,6 +144,10 @@ function annotateRecord(exchange, record) {
     ...record,
     fingerprint,
     fingerprint_version: fingerprint ? FINGERPRINT_VERSION : null,
+    // The insert names every column explicitly, so PostgreSQL's column
+    // DEFAULT does not apply. Every ordinary row must carry FALSE; the
+    // candidate path promotes it to TRUE later when ambiguity is observed.
+    duplicate_candidate: Boolean(record?.duplicate_candidate),
   };
 }
 

@@ -143,11 +143,17 @@ function candidateRowsByExternalId(existingRows) {
   return new Map(existingRows.map((row) => [row.external_id, row]));
 }
 
+function columnValue(record, column) {
+  if (column === 'raw' || column === 'dedupe_provenance') return jsonValue(record[column]);
+  // Defense in depth for callers outside ExchangeImportService and
+  // ExchangeSyncService. An explicit NULL bypasses the database default and
+  // violates the NOT NULL constraint introduced with fingerprinting.
+  if (column === 'duplicate_candidate') return Boolean(record[column]);
+  return record[column] ?? null;
+}
+
 function updateValues(record) {
-  return COLUMNS.map((column) => {
-    if (column === 'raw' || column === 'dedupe_provenance') return jsonValue(record[column]);
-    return record[column] ?? null;
-  });
+  return COLUMNS.map((column) => columnValue(record, column));
 }
 
 class ExchangeRecord {
@@ -362,11 +368,7 @@ class ExchangeRecord {
           const base = rowIndex * (COLUMNS.length + 1);
           values.push(exchangeAccountId);
           for (const column of COLUMNS) {
-            values.push(column === 'raw'
-              ? (record.raw === null || record.raw === undefined ? null : JSON.stringify(stripNulls(record.raw)))
-              : column === 'dedupe_provenance'
-                ? jsonValue(record.dedupe_provenance)
-              : record[column] ?? null);
+            values.push(columnValue(record, column));
           }
           const slots = Array.from({ length: COLUMNS.length + 1 }, (_, i) => `$${base + i + 1}`);
           return `(${slots.join(', ')})`;
