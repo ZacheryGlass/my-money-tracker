@@ -1,6 +1,6 @@
 # Remaining work for a fully explained EVM history
 
-Last reviewed: 2026-08-03 (autonomous completion pass)
+Last reviewed: 2026-08-03 (post-deploy verification)
 
 ## Definition of done
 
@@ -35,17 +35,22 @@ page or because a row has a note.
 - [x] Added an evidence-backed OpenSea Seaport 1.5 protocol label migration;
       existing built-in packs already cover EtherDelta, OpenSea/Wyvern, ENS,
       Uniswap/MetaMask, Polymarket CTF, bridge contracts, and legacy venue
-      labels. Labels remain counterparty evidence only and never assert a sale
-      or personal intent.
+      labels. The migration is deployed and its production row was verified.
+      Labels remain counterparty evidence only and never assert a sale or
+      personal intent.
+
+## Next execution after deployment
+
+- [ ] Rerun the existing read-only wallet and exchange backfills with available
+      credentials, then rebuild derived data and regenerate the audit. The
+      prior private audit was generated during the pre-deploy completion pass;
+      it must not be treated as a post-deploy sync result.
 
 ## User-gated work
 
 - [ ] Add or confirm every wallet that is missing from the private inventory.
       Choose tracked, owned-but-untracked, exchange, external/service, or
       unresolved; ownership cannot be inferred from activity.
-- [ ] Deploy the pending migrations/code changes, then rerun the connected
-      syncs in the app. This is intentionally not done in this pass because
-      the user requested no push or deploy.
 - [ ] Provide Coinbase Pro/closed-venue statements and any other export that
       the provider cannot expose through an API. Retain originals outside Git.
 - [ ] Add read-only credentials for remaining venues, sync to account
@@ -98,15 +103,15 @@ page or because a row has a note.
 
 ## Verification and evidence package
 
-- [x] Aggregate audit manifest generated with code revision, provider
-      boundaries, exchange coverage, match/suggestion counts, bridge links,
-      reconciliation statuses, price exclusions, and discovery receipts.
+- [x] Aggregate audit manifest generated during the completion pass with code
+      revision, provider boundaries, exchange coverage, match/suggestion
+      counts, bridge links, reconciliation statuses, price exclusions, and
+      discovery receipts. Refresh it after the next post-deploy sync.
 - [x] Private unified-ledger export generated alongside the final manifest;
       both are permission-restricted and excluded from Git.
 - [x] Run the complete backend/frontend test, lint, build, and SQL verifier
-      suite after the final code changes, then commit with a Conventional
-      Commit. Backend: 1,007 tests passed; frontend: 189 tests passed; the SQL
-      verifier passed all 88 checks. Do not push or deploy without explicit
-      authorization.
+      suite after the final code changes, then create the Conventional Commit
+      and deploy it after explicit authorization. Backend: 1,007 tests passed;
+      frontend: 189 tests passed; the SQL verifier passed all 88 checks.
 - [ ] Close GitHub issues only when acceptance criteria are demonstrated by
       tests, production evidence, or an explicitly approved exception.
