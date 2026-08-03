@@ -19,7 +19,7 @@ const RESOLVED_COLUMNS = `
     o.note AS override_note,
     (o.category IS NOT NULL) AS is_overridden,
     a.counterparty_address, a.counterparty_name,
-    a.method_id, a.method_name,
+    a.method_id, a.method_name, a.protocol_interpretation,
     a.legs, a.fee_wei, a.confidence, a.classified_at,
     -- At-the-time USD (043). Derived alongside the legs and rebuilt with them,
     -- so an override changes what a transaction MEANS without touching what it
@@ -167,12 +167,14 @@ const INSERT_COLUMNS = [
   // placeholder builder below finds it by index.
   'usd_value', 'usd_fee', 'usd_basis',
   'spam', 'spam_reason',
+  'protocol_interpretation',
 ];
 
 // The one column that needs a cast, found by name rather than by a hardcoded
 // ordinal -- appending a column used to silently move the cast onto the wrong
 // placeholder.
 const LEGS_COLUMN_INDEX = INSERT_COLUMNS.indexOf('legs');
+const PROTOCOL_INTERPRETATION_COLUMN_INDEX = INSERT_COLUMNS.indexOf('protocol_interpretation');
 
 class EthActivity {
   // Delete-then-insert, like the ledger mirror. Scoped to eth_activity ONLY:
@@ -217,9 +219,14 @@ class EthActivity {
           row.usd_fee ?? null,
           row.usd_basis ?? null,
           spamReason != null,
-          spamReason
+          spamReason,
+          row.protocol_interpretation == null ? null : JSON.stringify(row.protocol_interpretation)
         );
-        return `(${INSERT_COLUMNS.map((_, j) => (j === LEGS_COLUMN_INDEX ? `$${base + j + 1}::jsonb` : `$${base + j + 1}`)).join(', ')})`;
+        return `(${INSERT_COLUMNS.map((_, j) => (
+          j === LEGS_COLUMN_INDEX || j === PROTOCOL_INTERPRETATION_COLUMN_INDEX
+            ? `$${base + j + 1}::jsonb`
+            : `$${base + j + 1}`
+        )).join(', ')})`;
       });
       const result = await pool.query(
         `INSERT INTO eth_activity (${INSERT_COLUMNS.join(', ')})

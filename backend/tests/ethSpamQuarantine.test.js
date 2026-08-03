@@ -72,6 +72,7 @@ const ACTIVITY_COLUMNS = [
   'legs', 'fee_wei', 'needs_review', 'review_reason', 'confidence',
   'usd_value', 'usd_fee', 'usd_basis',
   'spam', 'spam_reason',
+  'protocol_interpretation',
 ];
 
 const walletRow = (id = OWNED_WALLET_ID) => ({
@@ -120,7 +121,7 @@ function fakeQuery(text, params = []) {
   if (/^SELECT contract_address FROM eth_ignored_tokens/.test(sql)) {
     return { rows: db.ignoredTokens.map((contract_address) => ({ contract_address })) };
   }
-  if (/^SELECT DISTINCT ON \(address\) address, name FROM eth_address_labels/.test(sql)) {
+  if (/^SELECT DISTINCT ON \(address\) address, name, source, confidence FROM eth_address_labels/.test(sql)) {
     const wanted = new Set(params[0]);
     return { rows: db.labels.filter((l) => wanted.has(l.address)) };
   }
@@ -154,6 +155,9 @@ function fakeQuery(text, params = []) {
       const row = {};
       ACTIVITY_COLUMNS.forEach((col, j) => { row[col] = params[i + j]; });
       row.legs = JSON.parse(row.legs);
+      row.protocol_interpretation = row.protocol_interpretation == null
+        ? null
+        : JSON.parse(row.protocol_interpretation);
       // Stands in for 045's paired CHECK: a quarantine always says why, and an
       // unquarantined row never carries a stale reason.
       assert.equal(

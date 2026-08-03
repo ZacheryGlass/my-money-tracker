@@ -1072,6 +1072,19 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
             </span>
           </DetailField>
         )}
+        {row.protocol_interpretation && (
+          <div className="col-span-full border border-accent/20 bg-accent/5 p-2">
+            <p className="text-[9px] font-bold uppercase tracking-wide text-accent">
+              {row.protocol_interpretation.protocol} · {row.protocol_interpretation.action?.replaceAll('_', ' ')}
+            </p>
+            <p className="mt-1 text-body-sm text-secondary">{row.protocol_interpretation.summary}</p>
+            {row.protocol_interpretation.limitations?.length > 0 && (
+              <p className="mt-0.5 text-caption text-tertiary">
+                Limitation: {row.protocol_interpretation.limitations.join(' ')}
+              </p>
+            )}
+          </div>
+        )}
         {row.external_id && <DetailField label="Exchange record">{row.external_id}</DetailField>}
         {row.exchange_fiat_match && (
           <div className="col-span-full border border-accent/20 bg-accent/5 p-2">

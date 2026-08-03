@@ -733,6 +733,25 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
   );
 });
 
+test('an HTTP 429 from a chain explorer backs off and retries without accepting an empty feed', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    if (requests === 1) {
+      const error = new Error('Request failed with status code 429');
+      error.response = { status: 429, headers: { 'retry-after': '0' } };
+      throw error;
+    }
+    return { data: { status: '1', result: '0' } };
+  };
+  t.after(() => { axios.get = original; });
+
+  assert.equal(await EtherscanService.getEthBalance(WALLET, 'key', 1), '0');
+  assert.equal(requests, 2);
+});
+
 test('the chain id reaches Etherscan as the chainid param', async (t) => {
   const axios = require('axios');
   const original = axios.get;

@@ -55,6 +55,7 @@ const ACTIVITY_COLUMNS = [
   'usd_value', 'usd_fee', 'usd_basis',
   // The spam quarantine (045).
   'spam', 'spam_reason',
+  'protocol_interpretation',
 ];
 
 const walletRow = (id = OWNED_WALLET_ID) => ({
@@ -106,7 +107,7 @@ function fakeQuery(text, params = []) {
     return { rows: db.ignoredTokens.map((contract_address) => ({ contract_address })) };
   }
   // Narrow on purpose: the triage-queue CTE also names eth_address_labels.
-  if (/^SELECT DISTINCT ON \(address\) address, name FROM eth_address_labels/.test(sql)) {
+  if (/^SELECT DISTINCT ON \(address\) address, name, source, confidence FROM eth_address_labels/.test(sql)) {
     const wanted = new Set(params[0]);
     return { rows: db.labels.filter((l) => wanted.has(l.address)) };
   }
@@ -137,6 +138,9 @@ function fakeQuery(text, params = []) {
       const row = {};
       ACTIVITY_COLUMNS.forEach((col, j) => { row[col] = params[i + j]; });
       row.legs = JSON.parse(row.legs);
+      row.protocol_interpretation = row.protocol_interpretation == null
+        ? null
+        : JSON.parse(row.protocol_interpretation);
       // Stands in for UNIQUE (wallet_id, chain_id, tx_hash) + DO NOTHING.
       const exists = db.activity.some((r) => key(r.wallet_id, r.chain_id, r.tx_hash)
         === key(row.wallet_id, row.chain_id, row.tx_hash));
@@ -786,6 +790,30 @@ test('counterparty names come from the owner\'s labels, for display', async () =
   // Naming a counterparty 'external' does not settle whether the transfer was
   // spending, so the flag stays up.
   assert.equal(db.activity[0].needs_review, true);
+});
+
+test('a rebuild stores protocol interpretation without changing the classification verdict', async () => {
+  db.transfers = [
+    tokenLeg({
+      token_contract: USDC, token_symbol: 'USDC', token_decimals: 6,
+      from_address: WALLET, to_address: ROUTER, value_wei: '3000000000',
+    }),
+    tokenLeg({
+      token_contract: WETH, token_symbol: 'WETH',
+      from_address: ROUTER, to_address: WALLET, value_wei: '1000000000000000000',
+    }),
+    gasLeg({ to_address: ROUTER }),
+  ];
+  db.labels = [{
+    address: ROUTER, name: 'Uniswap V3: Router', source: 'eth-labels', confidence: 'low',
+  }];
+
+  await EthActivityService.rebuildForWallet(OWNED_WALLET_ID);
+
+  assert.equal(db.activity[0].category, 'swap');
+  assert.equal(db.activity[0].needs_review, false);
+  assert.equal(db.activity[0].protocol_interpretation.action, 'router_swap');
+  assert.equal(db.activity[0].protocol_interpretation.confidence, 'low');
 });
 
 // --- overrides -------------------------------------------------------------

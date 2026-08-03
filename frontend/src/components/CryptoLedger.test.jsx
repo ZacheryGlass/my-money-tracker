@@ -344,6 +344,23 @@ describe('CryptoLedger', () => {
     });
   });
 
+  it('shows an evidence-backed protocol explanation with its limitation', async () => {
+    setLedger([onchain({
+      protocol_interpretation: {
+        protocol: 'Uniswap',
+        action: 'router_swap',
+        summary: 'A Uniswap router interaction has assets leaving and entering the wallet.',
+        limitations: ['The stored events do not prove the quoted route.'],
+      },
+    })]);
+    render(<CryptoLedger />);
+
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USDC'))[0]);
+
+    expect(await screen.findByText('Uniswap · router swap')).toBeInTheDocument();
+    expect(screen.getByText(/The stored events do not prove the quoted route/)).toBeInTheDocument();
+  });
+
   it('never offers an override category the activity table would reject', async () => {
     setLedger([onchain()]);
     render(<CryptoLedger />);

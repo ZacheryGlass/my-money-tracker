@@ -76,6 +76,15 @@ const FEED_UNSUPPORTED_RE = /missing or invalid (action|module) name|internal tr
 // be accepted as coverage.
 const RPC_RATE_LIMIT_RE = /rate limit|over rate|too many requests|429/i;
 const RPC_BATCH_MAX_RETRIES = 3;
+const EXPLORER_MAX_RETRIES = 4;
+
+function explorerRetryDelay(error, attempt) {
+  const header = error?.response?.headers?.['retry-after'];
+  if (header != null && /^\d+(?:\.\d+)?$/.test(String(header))) {
+    return Math.min(30000, Math.max(0, Number(header) * 1000));
+  }
+  return Math.min(30000, 1100 * (2 ** attempt));
+}
 
 class EtherscanService {
   // Preserve the public service contract while allowing a chain to route its
@@ -110,16 +119,30 @@ class EtherscanService {
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
       throw error;
     }
-    const response = await etherscan.throttled(() =>
-      axios.get(provider.baseUrl, {
-        timeout: 15000,
-        params: {
-          ...provider.params,
-          ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
-          ...params,
-        },
-      })
-    );
+    let response;
+    try {
+      response = await etherscan.throttled(() =>
+        axios.get(provider.baseUrl, {
+          timeout: 15000,
+          params: {
+            ...provider.params,
+            ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
+            ...params,
+          },
+        })
+      );
+    } catch (error) {
+      if (error?.response?.status === 429 && attempt < EXPLORER_MAX_RETRIES) {
+        const delayMs = explorerRetryDelay(error, attempt);
+        logger.warn({
+          chainId, provider: provider.name, attempt: attempt + 1, delayMs,
+          params: { module: params.module, action: params.action },
+        }, 'Chain explorer returned HTTP 429, backing off before retry');
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return this._request(params, { apiKey, chainId, attempt: attempt + 1 });
+      }
+      throw error;
+    }
 
     const payload = response.data || {};
     const { status, message, result } = payload;
@@ -166,11 +189,14 @@ class EtherscanService {
         || (Array.isArray(result) && result.length === 0)) {
       return [];
     }
-    if (typeof result === 'string' && result.includes('rate limit') && attempt === 0) {
-      logger.warn({ chainId, provider: provider.name, params: { module: params.module, action: params.action } },
-        'Chain explorer rate limited, retrying once');
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-      return this._request(params, { apiKey, chainId, attempt: 1 });
+    if (typeof result === 'string' && result.includes('rate limit') && attempt < EXPLORER_MAX_RETRIES) {
+      const delayMs = explorerRetryDelay(null, attempt);
+      logger.warn({
+        chainId, provider: provider.name, attempt: attempt + 1, delayMs,
+        params: { module: params.module, action: params.action },
+      }, 'Chain explorer rate limited, backing off before retry');
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return this._request(params, { apiKey, chainId, attempt: attempt + 1 });
     }
 
     const error = new Error(`${provider.name} error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());

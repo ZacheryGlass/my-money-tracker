@@ -18,6 +18,7 @@ const {
   CATEGORIES, ZERO_ADDRESS, REVIEW_REASONS, SPAM_REASONS, SPAM_DUST_USD,
 } = require('../utils/ethActivityVocabulary');
 const { buildActivityRows } = require('./ethActivity/rows');
+const { interpretProtocolActivity } = require('./ethActivity/protocolInterpretation');
 const {
   bridgeMovement, pairBridgeLegs, bridgeAsset,
   BRIDGE_MAX_FEE_BPS, BRIDGE_DEPOSIT_WINDOW_MS, BRIDGE_WITHDRAWAL_WINDOW_MS,
@@ -119,7 +120,13 @@ class EthActivityService {
       ignoredContracts, labeledAddresses, ownAddresses, unlistedAssets,
       bridgeAddresses, serviceAddresses, custodyAddresses,
     });
-    await this._nameCounterparties(wallet.user_id, rows);
+    const labels = await this._nameCounterparties(wallet.user_id, rows);
+    for (const row of rows) {
+      row.protocol_interpretation = interpretProtocolActivity(
+        row,
+        row.counterparty_address ? labels.get(row.counterparty_address) || null : null
+      );
+    }
     const written = await EthActivity.replaceForWallet(walletId, rows);
 
     // The exchange matching pass (#61), re-derived here for the same reason the
@@ -258,25 +265,26 @@ class EthActivityService {
   // the same precedence as classification: a user row shadows a builtin. An
   // exchange name is already denormalized onto the leg, so those rows keep it.
   static async _nameCounterparties(userId, rows) {
-    const pending = [...new Set(
-      rows.filter((row) => row.counterparty_address && !row.counterparty_name)
+    const addresses = [...new Set(
+      rows.filter((row) => row.counterparty_address)
         .map((row) => row.counterparty_address)
     )];
-    if (!pending.length) return;
+    if (!addresses.length) return new Map();
 
     const result = await pool.query(
-      `SELECT DISTINCT ON (address) address, name
+      `SELECT DISTINCT ON (address) address, name, source, confidence
        FROM eth_address_labels
        WHERE address = ANY($1::varchar[]) AND (user_id = $2 OR user_id IS NULL)
        ORDER BY address, user_id NULLS LAST`,
-      [pending, userId]
+      [addresses, userId]
     );
-    const names = new Map(result.rows.map((row) => [row.address, row.name]));
+    const labels = new Map(result.rows.map((row) => [row.address, row]));
     for (const row of rows) {
       if (!row.counterparty_name && row.counterparty_address) {
-        row.counterparty_name = names.get(row.counterparty_address) || null;
+        row.counterparty_name = labels.get(row.counterparty_address)?.name || null;
       }
     }
+    return labels;
   }
 }
 
