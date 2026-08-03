@@ -2,6 +2,15 @@
 
 Last reviewed: 2026-08-03 (autonomous production refresh and local completion pass)
 
+## Repository and deployment state
+
+- Production is still running `1efcefc`.
+- Local `main` contains `6b1b033` and the implementation commit `2a59bf1`;
+  it is two commits ahead of `origin/main` and has not been pushed or deployed.
+- The protocol-interpretation migration and UI are therefore local-only. The
+  production audit counts below describe the deployed schema and existing
+  evidence, not post-deployment protocol-interpretation rows.
+
 ## Definition of done
 
 Every confirmed wallet and relevant chain has a provider-backed coverage
