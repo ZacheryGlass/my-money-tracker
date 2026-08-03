@@ -223,7 +223,7 @@ test('the label management list hides the bulk pack but keeps overrides', async 
   // The bridge pack (044, 'builtin-bridge') IS listed: a few dozen rows taken
   // from each protocol's own deployment docs, where a wrong one has to be
   // visible to be correctable. Only 'eth-labels' is hidden.
-  assert.match(sql, /WHERE user_id IS NOT NULL OR source IN \('builtin', 'builtin-bridge', 'builtin-polymarket', 'builtin-etherdelta'\)/);
+  assert.match(sql, /WHERE user_id IS NOT NULL OR source IN \('builtin', 'builtin-bridge', 'builtin-polymarket', 'builtin-etherdelta', 'builtin-opensea'\)/);
   assert.doesNotMatch(sql, /'eth-labels'/);
   // The pack filter runs AFTER precedence resolves, so an override of a packed
   // address is still listed (and still removable).

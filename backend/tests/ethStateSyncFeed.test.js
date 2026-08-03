@@ -149,6 +149,7 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
           blockRange: 10000,
           batchSize: 1,
           concurrency: 1,
+          allowExtraneousTopics: true,
         });
       }
     } else {
@@ -258,7 +259,10 @@ test('Base Blockscout windows share receiver topics and use returned timestamps'
     8453,
     {
       ...chains.getChain(8453).stateSyncDeposits,
-      rpcScan: { provider: 'blockscout', blockRange: 10000, batchSize: 1, concurrency: 1 },
+      rpcScan: {
+        provider: 'blockscout', blockRange: 10000, batchSize: 1, concurrency: 1,
+        allowExtraneousTopics: true,
+      },
     },
     19999
   );
@@ -271,6 +275,59 @@ test('Base Blockscout windows share receiver topics and use returned timestamps'
   assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xblockscout']);
   assert.deepEqual(rowsByAddress.get(WALLET_2), []);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
+});
+
+test('Base ignores only well-formed out-of-scope receivers from a public log response', async (t) => {
+  const original = EtherscanService._rpcBatchRequest;
+  EtherscanService._rpcBatchRequest = async (chainId, batch) => {
+    assert.equal(chainId, 8453);
+    if (batch[0].method === 'eth_getLogs') {
+      return batch.map(() => [
+        ethBridgeFinalizedLog({ wallet: WALLET, hash: '0xrequested' }),
+        ethBridgeFinalizedLog({ wallet: WALLET_2, hash: '0xother' }),
+      ]);
+    }
+    return batch.map(() => ({ timestamp: '0x65' }));
+  };
+  t.after(() => { EtherscanService._rpcBatchRequest = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [{ address: WALLET, startBlock: 0 }],
+    8453,
+    {
+      ...chains.getChain(8453).stateSyncDeposits,
+      rpcScan: { provider: 'rpc', blockRange: 10000, batchSize: 1, allowExtraneousTopics: true },
+    },
+    9999
+  );
+
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xrequested']);
+  assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 9999);
+});
+
+test('an out-of-scope malformed receiver still freezes the state-sync cursor', async (t) => {
+  const original = EtherscanService._rpcBatchRequest;
+  EtherscanService._rpcBatchRequest = async (chainId, batch) => {
+    if (batch[0].method !== 'eth_getLogs') return batch.map(() => ({ timestamp: '0x65' }));
+    return batch.map(() => [{
+      ...ethBridgeFinalizedLog({ wallet: WALLET, hash: '0xmalformed' }),
+      topics: [ETH_BRIDGE_FINALIZED_TOPIC0, '0x1234'],
+    }]);
+  };
+  t.after(() => { EtherscanService._rpcBatchRequest = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      {
+        ...chains.getChain(8453).stateSyncDeposits,
+        rpcScan: { provider: 'rpc', blockRange: 10000, batchSize: 1, allowExtraneousTopics: true },
+      },
+      9999
+    ),
+    /receiver outside the requested topic set/
+  );
 });
 
 test('a saturated Blockscout window splits before accepting a cursor', async (t) => {

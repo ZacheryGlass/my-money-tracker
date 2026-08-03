@@ -1138,6 +1138,17 @@ test('empty OP Stack feeds persist indexed coverage and resume incrementally on 
     'all account and native-credit feeds share one indexed coverage boundary');
 });
 
+test('coverage names the actual Base state-sync provider', async (t) => {
+  const { calls } = harness(t, { chainSet: '8453' });
+
+  await EthWalletService.syncWallet(7);
+
+  const entry = calls.coverage
+    .find((attempt) => attempt.chainId === 8453)
+    .entries.find((row) => row.feed === 'statesync');
+  assert.equal(entry.provider, 'Blockscout (https://base.blockscout.com/api)');
+});
+
 test('OP Stack deposit reshaping declines every off-shape enriched row', () => {
   const config = chains.getChain(8453).opStackDeposits;
   const base = {

@@ -107,7 +107,11 @@ function providerName(chain, spec = null) {
   if (chain.historyProvider === 'zksync-lite') {
     return 'Matter Labs zkSync Lite archive';
   }
-  if (spec?.chainFeed && chain[spec.chainFeed]?.rpcScan) {
+  const scan = spec?.chainFeed ? chain[spec.chainFeed]?.rpcScan : null;
+  if (scan?.provider === 'blockscout' && chain.accountApi) {
+    return `${chain.accountApi.provider || 'chain explorer'} (${chain.accountApi.baseUrl})`;
+  }
+  if (scan) {
     return `JSON-RPC (${chain.rpcUrl})`;
   }
   if (chain.accountApi) {

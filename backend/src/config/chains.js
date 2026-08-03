@@ -271,6 +271,11 @@ const REGISTRY = [
         blockRange: 10000,
         batchSize: 1,
         concurrency: 1,
+        // Some public Base log responses include valid ETHBridgeFinalized
+        // events outside the requested receiver OR-set. The scanner validates
+        // their shape and ignores only those out-of-scope receivers; malformed
+        // events still fail closed and freeze coverage.
+        allowExtraneousTopics: true,
       },
     },
   },

@@ -1053,6 +1053,20 @@ class EtherscanService {
       const receiverTopic = String(log?.topics?.[userTopicIndex] || '').toLowerCase();
       const request = topicToRequest.get(receiverTopic);
       if (!request) {
+        // A few public log endpoints return valid events outside a large OR
+        // filter. They cannot belong to any requested wallet, so retaining
+        // them would be wrong, but dropping them is safe once the event shape
+        // is independently validated. Any malformed out-of-scope row still
+        // freezes the cursor: completeness cannot be proven.
+        const topic0 = String(log?.topics?.[0] || '').toLowerCase();
+        const validReceiverTopic = /^0x[0-9a-f]{64}$/.test(receiverTopic);
+        const validContract = String(log?.address || '').toLowerCase()
+          === String(feedConfig.contract).toLowerCase();
+        if (feedConfig.rpcScan?.allowExtraneousTopics
+            && topic0 === String(feedConfig.topic0).toLowerCase()
+            && validReceiverTopic && validContract) {
+          continue;
+        }
         const error = new Error('statesync RPC returned a receiver outside the requested topic set');
         error.code = 'ETHERSCAN_API_ERROR';
         throw error;
