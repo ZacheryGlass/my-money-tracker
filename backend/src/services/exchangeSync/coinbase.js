@@ -87,7 +87,10 @@ const TYPE_MAP = {
   inflation_reward: 'reward',
   interest: 'reward',
 
-  // Movement in and out of Coinbase itself.
+  // Movement in and out of Coinbase itself. `send` is direction-ambiguous in
+  // the v2 vocabulary: Coinbase also returns it to the RECEIVING account with
+  // a positive amount. recordFromTransaction resolves that one type from the
+  // signed amount instead of treating every occurrence as a withdrawal.
   send: 'withdrawal',
   receive: 'deposit',
   fiat_deposit: 'deposit',
@@ -320,13 +323,29 @@ function summarizeFills(fills) {
  */
 function recordFromTransaction(tx, { line, fillsByOrder }) {
   const rawType = String(tx.type ?? '').toLowerCase();
-  const mapped = TYPE_MAP[rawType];
-  const isUnknown = mapped === undefined;
 
   const occurredAt = parseTimestamp(tx.created_at);
   const baseAsset = currencyOf(tx.amount);
   const amountCell = tx.amount?.amount ?? '';
   const baseAmount = amountOf(tx.amount);
+
+  // Coinbase calls both sides of an on-chain transfer `send`. The amount is
+  // signed from this account's perspective: negative left Coinbase, positive
+  // arrived at Coinbase. Treating every `send` as a withdrawal blocks an exact
+  // transaction-hash match for deposits even though the provider supplied the
+  // identity proof. A zero or malformed amount proves no direction and stays
+  // reviewable instead of being guessed into the matching pool.
+  let mapped = TYPE_MAP[rawType];
+  let directionUnknown = false;
+  if (rawType === 'send') {
+    if (baseAmount === null || baseAmount === '0') {
+      mapped = UNKNOWN_RECORD_TYPE;
+      directionUnknown = true;
+    } else {
+      mapped = isNegativeAmount(baseAmount) ? 'withdrawal' : 'deposit';
+    }
+  }
+  const isUnknown = mapped === undefined;
 
   // native_amount is the same event valued in the account's fiat currency, so
   // it is the quote leg for a buy/sell. For a Convert the counter-leg is a
@@ -439,7 +458,7 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
     // both what surfaces it for review and what lets a later, complete fetch
     // of the SAME leg upgrade it in place. A fee whose currency nobody could
     // determine is flagged for a third: reconciliation cannot see it.
-    needs_review: isUnknown || !hasNativeId || Boolean(tx._unpairedConversion) || feeUnattributed,
+    needs_review: isUnknown || directionUnknown || !hasNativeId || Boolean(tx._unpairedConversion) || feeUnattributed,
     raw: { _format: 'coinbase', _source: 'api', ...tx },
   }, { line, amountCell });
 }

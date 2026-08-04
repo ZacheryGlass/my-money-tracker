@@ -99,6 +99,9 @@ const ACTIVITY_LEG = `
 const SCOPED_ACTIVITY = `
   scoped_activity AS (
     SELECT a.id AS activity_id, a.wallet_id, a.chain_id, LOWER(a.tx_hash) AS tx_hash,
+           CASE WHEN a.tx_hash ~* '^(0x)?[0-9a-f]{64}$'
+                THEN REGEXP_REPLACE(LOWER(a.tx_hash), '^0x', '')
+                ELSE LOWER(a.tx_hash) END AS match_tx_hash,
            a.block_time, LOWER(a.counterparty_address) AS counterparty_address,
            LOWER(w.address) AS wallet_address,
            COALESCE(o.category, a.category) AS category,
@@ -136,7 +139,11 @@ const SCOPED_RECORDS = `
            -- row); it is dropped. There is no percentage fallback in v3.
            CASE WHEN UPPER(er.fee_asset) = UPPER(er.base_asset)
                 THEN COALESCE(ABS(er.fee_amount), 0) ELSE 0 END AS base_fee_amount,
-           LOWER(er.tx_hash) AS tx_hash, LOWER(er.address) AS address,
+           LOWER(er.tx_hash) AS tx_hash,
+           CASE WHEN er.tx_hash ~* '^(0x)?[0-9a-f]{64}$'
+                THEN REGEXP_REPLACE(LOWER(er.tx_hash), '^0x', '')
+                ELSE LOWER(er.tx_hash) END AS match_tx_hash,
+           LOWER(er.address) AS address,
            er.network, er.chain_id,
            ai.canonical_key AS base_asset_identity,
            ea.records_unavailable
@@ -252,7 +259,7 @@ class ExchangeMatch {
                                   - LEAST(sa.block_time, sr.occurred_at)))::bigint AS time_delta_seconds
        FROM scoped_activity sa
        JOIN scoped_records sr
-         ON sr.tx_hash = sa.tx_hash
+         ON sr.match_tx_hash = sa.match_tx_hash
         AND (sr.chain_id IS NULL OR sr.chain_id = sa.chain_id)
        -- Hash identity is automatic only when the parsed movement also proves
        -- a compatible direction. A revert or multi-asset call has no single
@@ -348,16 +355,16 @@ class ExchangeMatch {
        SELECT sent.record_id AS exchange_record_id, received.record_id AS counter_record_id,
               TRUE AS direction_compatible,
               CASE
-                WHEN sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash THEN 'tx_hash'
+                WHEN sent.match_tx_hash IS NOT NULL AND sent.match_tx_hash = received.match_tx_hash THEN 'tx_hash'
                 WHEN sent.address IS NOT NULL AND sent.address = received.address THEN 'address_amount'
                 ELSE 'amount_window'
               END AS match_method,
-              CASE WHEN sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash
+              CASE WHEN sent.match_tx_hash IS NOT NULL AND sent.match_tx_hash = received.match_tx_hash
                    THEN 'high'
                    WHEN sent.address IS NOT NULL AND sent.address = received.address THEN 'medium'
                    ELSE 'low' END AS confidence,
               '${MATCH_RULE_VERSION}' AS rule_version,
-              CASE WHEN sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash
+              CASE WHEN sent.match_tx_hash IS NOT NULL AND sent.match_tx_hash = received.match_tx_hash
                    THEN 'hash' ELSE 'amount' END AS comparison_kind,
               sent.base_amount AS comparison_left_amount,
               received.base_amount AS comparison_right_amount,
@@ -399,7 +406,7 @@ class ExchangeMatch {
                 END AS magnitude_ratio
        ) evidence
        WHERE (
-         (sent.tx_hash IS NOT NULL AND sent.tx_hash = received.tx_hash)
+         (sent.match_tx_hash IS NOT NULL AND sent.match_tx_hash = received.match_tx_hash)
          OR (
            (sent.tx_hash IS NULL OR received.tx_hash IS NULL)
            AND

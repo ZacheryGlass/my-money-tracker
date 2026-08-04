@@ -944,6 +944,9 @@ test('the candidate query requires exact NUMERIC amounts and uses tiered time wi
   assert.match(sql, /sr\.record_type = CASE WHEN sa\.leg_direction = 'out' THEN 'deposit' ELSE 'withdrawal' END/);
   assert.match(sql, /sa\.leg_direction IN \('in', 'out'\)/);
   assert.match(sql, /WHERE sa\.leg_direction IN \('in', 'out'\) AND sr\.record_type = CASE/);
+  assert.match(sql, /sr\.match_tx_hash = sa\.match_tx_hash/);
+  assert.match(sql, /REGEXP_REPLACE\(LOWER\(er\.tx_hash\), '\^0x', ''\) ELSE LOWER\(er\.tx_hash\) END AS match_tx_hash/);
+  assert.match(sql, /REGEXP_REPLACE\(LOWER\(a\.tx_hash\), '\^0x', ''\) ELSE LOWER\(a\.tx_hash\) END AS match_tx_hash/);
 
   // Both sides fail closed through their root tables.
   assert.match(sql, /JOIN eth_wallets w ON w\.id = a\.wallet_id/);
@@ -1005,6 +1008,7 @@ test('the exchange-to-exchange query refuses to pair an account with itself', as
   assert.match(sql, /\(sent\.tx_hash IS NULL OR received\.tx_hash IS NULL\) AND evidence\.amount_delta <= evidence\.amount_tolerance/);
   assert.match(sql, /\$2::numeric/);
   assert.doesNotMatch(sql, /float|double precision/i);
+  assert.match(sql, /sent\.match_tx_hash = received\.match_tx_hash/);
 });
 
 test('the unmatched-flow flag is gated on the user tracking exchange transfers at all', async () => {

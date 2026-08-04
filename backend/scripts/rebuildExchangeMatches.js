@@ -1,23 +1,37 @@
 #!/usr/bin/env node
 'use strict';
 
-// One-shot post-migration maintenance for derived exchange matches. This uses
-// only the database-backed matcher: it never resolves credentials or contacts
-// an exchange provider. User verdicts remain in exchange_match_verdicts and are
-// read by ExchangeMatchService during every rebuild.
+// Rebuild derived exchange matches for one user (`--user-id N`) or every user
+// with exchange records (no argument). This uses only the database-backed
+// matcher: it never resolves credentials or contacts an exchange provider.
+// User verdicts remain in exchange_match_verdicts and are read by
+// ExchangeMatchService during every rebuild.
 
 const pool = require('../src/config/database');
 const ExchangeMatchService = require('../src/services/ExchangeMatchService');
 
 async function run() {
+  const userFlag = process.argv.indexOf('--user-id');
+  let requestedUserId = null;
+  if (userFlag !== -1) {
+    requestedUserId = Number(process.argv[userFlag + 1]);
+    if (!Number.isInteger(requestedUserId) || requestedUserId <= 0) {
+      throw new Error('--user-id requires a positive integer');
+    }
+  }
+
   const result = await pool.query(
     `SELECT DISTINCT ea.user_id
-     FROM exchange_accounts ea
-     JOIN exchange_records er ON er.exchange_account_id = ea.id
-     WHERE ea.exchange = 'kraken'
-       AND er.raw::text ~ '"asset"[[:space:]]*:[[:space:]]*"SOL03(\\.S)?"'
-     ORDER BY ea.user_id`
+       FROM exchange_accounts ea
+       JOIN exchange_records er ON er.exchange_account_id = ea.id
+      WHERE ($1::int IS NULL OR ea.user_id = $1)
+      ORDER BY ea.user_id`,
+    [requestedUserId]
   );
+
+  if (requestedUserId && result.rows.length === 0) {
+    throw new Error(`No exchange records found for user ${requestedUserId}`);
+  }
 
   let failures = 0;
   for (const row of result.rows) {

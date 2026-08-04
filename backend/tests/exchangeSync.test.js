@@ -21,6 +21,9 @@ const KRAKEN_LEDGERS = readJson('kraken-ledgers-api.json');
 const KRAKEN_FUNDING = readJson('kraken-funding-api.json');
 const COINBASE = readJson('coinbase-api.json');
 const COINBASE_LEGACY = readJson('coinbase-legacy-api.json');
+const COINBASE_DIRECTION_MIGRATION = fs.readFileSync(
+  path.join(__dirname, '../migrations/073_coinbase_send_direction.sql'), 'utf8'
+);
 
 const OWNED_ACCOUNT_ID = 7;
 const OWNER_ID = 1;
@@ -1140,6 +1143,39 @@ test('coinbase: buys, sends, rewards and conversions map to the right record typ
   assert.equal(send.address, '0xcccccccccccccccccccccccccccccccccccccccc');
 
   assert.equal(byId.get('cb:cccccccc-0000-0000-0000-00000000000c').record_type, 'reward');
+});
+
+test('coinbase: an incoming send is a deposit and a directionless send fails closed', () => {
+  const { recordFromTransaction } = coinbaseConnector._internals;
+  const incoming = recordFromTransaction({
+    id: 'dddddddd-0000-0000-0000-00000000000d',
+    type: 'send',
+    created_at: '2024-03-04T12:00:00Z',
+    amount: { amount: '1.25', currency: 'ETH' },
+    network: { hash: '44'.repeat(32), network_name: 'ethereum' },
+  }, { line: 1, fillsByOrder: new Map() });
+  const directionless = recordFromTransaction({
+    id: 'eeeeeeee-0000-0000-0000-00000000000e',
+    type: 'send',
+    created_at: '2024-03-04T12:00:00Z',
+    amount: { amount: '0', currency: 'ETH' },
+    network: { hash: '55'.repeat(32), network_name: 'ethereum' },
+  }, { line: 2, fillsByOrder: new Map() });
+
+  assert.equal(incoming.record_type, 'deposit');
+  assert.equal(incoming.needs_review, false);
+  assert.equal(directionless.record_type, 'transfer');
+  assert.equal(directionless.needs_review, true);
+});
+
+test('coinbase: the historical direction repair is source-backed and invalidates stale fingerprints', () => {
+  assert.match(COINBASE_DIRECTION_MIGRATION, /ea\.exchange = 'coinbase'/);
+  assert.match(COINBASE_DIRECTION_MIGRATION, /er\.base_amount > 0/);
+  assert.match(COINBASE_DIRECTION_MIGRATION, /er\.tx_hash IS NOT NULL/);
+  assert.match(COINBASE_DIRECTION_MIGRATION, /er\.raw->>'_source' = 'api'/);
+  assert.match(COINBASE_DIRECTION_MIGRATION, /LOWER\(er\.raw->>'type'\) = 'send'/);
+  assert.match(COINBASE_DIRECTION_MIGRATION, /fingerprint = NULL/);
+  assert.match(COINBASE_DIRECTION_MIGRATION, /fingerprint_version = NULL/);
 });
 
 test('coinbase: a convert\'s two legs become one conversion keyed on the outgoing leg', async () => {
