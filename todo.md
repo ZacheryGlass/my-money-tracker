@@ -223,15 +223,15 @@ closure list is empty. Do not close issues automatically.
 
 ## Verification and private evidence
 
-- [x] Backend tests: 1,007 passed in a serialized full run. The first parallel
+- [x] Backend tests: 1,014 passed in a serialized full run. The first parallel
       run had one transient localhost test-port collision and its isolated
       rerun passed 73/73.
 - [x] Backend lint: passed.
-- [x] Frontend tests: 191 passed (existing React `act(...)` warnings only).
+- [x] Frontend tests: 193 passed (existing React `act(...)` warnings only).
 - [x] Frontend lint: passed with 12 existing TanStack/React Compiler warnings
       and no errors.
 - [x] Frontend production build: passed.
-- [x] Ledger SQL verifier: both migration passes and all 91 checks passed.
+- [x] Ledger SQL verifier: both migration passes and all 92 checks passed.
 - [x] Final aggregate audit and detailed evidence manifests were written under
       `/private/tmp` with mode 0600:
       `my-money-evm-final-2026-08-03.json`,

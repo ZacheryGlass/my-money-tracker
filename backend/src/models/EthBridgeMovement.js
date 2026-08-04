@@ -35,14 +35,6 @@ class EthBridgeMovement {
     return rows;
   }
 
-  static async findRejectedPairKeys(userId, client = pool) {
-    const verdicts = await this.findVerdictsForUser(userId, client);
-    return new Set(verdicts.filter((row) => row.verdict === 'rejected').map((row) => (
-      `${coordinate(row.out_wallet_id, row.out_chain_id, row.out_tx_hash)}>`
-      + coordinate(row.in_wallet_id, row.in_chain_id, row.in_tx_hash)
-    )));
-  }
-
   static async replaceForUser(userId, movements, suggestions, clientOverride = null) {
     if (!userId) throw new Error('EthBridgeMovement.replaceForUser requires a userId');
     if (!Array.isArray(movements) || !Array.isArray(suggestions)) {
@@ -197,11 +189,30 @@ class EthBridgeMovement {
     return EthActivityLink.replaceForUser(userId, links, client);
   }
 
-  static async findAuditForUser(userId, { limit = 500, offset = 0 } = {}) {
-    const safeLimit = Math.min(Math.max(Number(limit) || 500, 1), 1000);
-    const safeOffset = Math.max(Number(offset) || 0, 0);
-    const [movements, suggestions, verdicts, receiptFailures, summary] = await Promise.all([
-      pool.query(
+  static async findAuditForUser(userId, options = {}) {
+    const safeLimit = Math.min(Math.max(Number(options.limit) || 500, 1), 1000);
+    const safeOffset = Math.max(Number(options.offset) || 0, 0);
+    const safeSuggestionLimit = Math.min(
+      Math.max(Number(options.suggestionLimit) || 500, 1), 1000
+    );
+    const safeSuggestionOffset = Math.max(Number(options.suggestionOffset) || 0, 0);
+    const expectedSuggestionGeneration = options.suggestionGeneration == null
+      ? null : String(options.suggestionGeneration);
+    if (safeSuggestionOffset > 0 && !expectedSuggestionGeneration) {
+      const error = new Error('A suggestion generation is required for continuation pages');
+      error.code = 'BRIDGE_SUGGESTION_GENERATION_REQUIRED';
+      throw error;
+    }
+
+    // All collections and the generation token share one repeatable-read
+    // snapshot. A rebuild may replace derived suggestions immediately before
+    // or after this transaction, but it cannot splice two generations into
+    // one response.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const [movements, suggestions, verdicts, receiptFailures, summary] = await Promise.all([
+        client.query(
         `SELECT m.*,
                 COALESCE(jsonb_agg(jsonb_build_object(
                   'wallet_id', mm.wallet_id, 'wallet_address', w.address,
@@ -218,7 +229,7 @@ class EthBridgeMovement {
           LIMIT $2 OFFSET $3`,
         [userId, safeLimit, safeOffset]
       ),
-      pool.query(
+        client.query(
         `SELECT s.*, ow.address AS out_wallet_address, iw.address AS in_wallet_address,
                 v.verdict
            FROM eth_bridge_suggestions s
@@ -233,9 +244,9 @@ class EthBridgeMovement {
           WHERE s.user_id = $1 AND v.id IS NULL
           ORDER BY s.ambiguous DESC, s.created_at DESC, s.id DESC
           LIMIT $2 OFFSET $3`,
-        [userId, safeLimit, safeOffset]
+        [userId, safeSuggestionLimit, safeSuggestionOffset]
       ),
-      pool.query(
+        client.query(
         `SELECT v.*, ow.address AS out_wallet_address, iw.address AS in_wallet_address
            FROM eth_bridge_verdicts v
            JOIN eth_wallets ow ON ow.id = v.out_wallet_id AND ow.user_id = v.user_id
@@ -245,7 +256,7 @@ class EthBridgeMovement {
           LIMIT $2 OFFSET $3`,
         [userId, safeLimit, safeOffset]
       ),
-      pool.query(
+        client.query(
         `SELECT latest.*
            FROM (
              SELECT DISTINCT ON (a.wallet_id, a.chain_id, a.tx_hash)
@@ -262,7 +273,7 @@ class EthBridgeMovement {
           LIMIT $2 OFFSET $3`,
         [userId, safeLimit, safeOffset]
       ),
-      pool.query(
+        client.query(
         `SELECT
            (SELECT COUNT(*)::int FROM eth_bridge_movements WHERE user_id = $1) AS movements,
            (SELECT COUNT(*)::int FROM eth_bridge_movements
@@ -286,6 +297,22 @@ class EthBridgeMovement {
                   AND v.in_wallet_id = s.in_wallet_id AND v.in_chain_id = s.in_chain_id
                   AND v.in_tx_hash = s.in_tx_hash
              )) AS suggestions,
+           (SELECT md5(COALESCE(string_agg(
+                     concat_ws('|',
+                       s.out_wallet_id::text, s.out_chain_id::text, lower(s.out_tx_hash),
+                       s.in_wallet_id::text, s.in_chain_id::text, lower(s.in_tx_hash),
+                       s.suggestion_reason, s.ambiguous::text
+                     ), ',' ORDER BY s.ambiguous DESC, s.created_at DESC, s.id DESC
+                   ), ''))
+              FROM eth_bridge_suggestions s
+             WHERE s.user_id = $1 AND NOT EXISTS (
+               SELECT 1 FROM eth_bridge_verdicts v
+                WHERE v.user_id = s.user_id
+                  AND v.out_wallet_id = s.out_wallet_id AND v.out_chain_id = s.out_chain_id
+                  AND v.out_tx_hash = s.out_tx_hash
+                  AND v.in_wallet_id = s.in_wallet_id AND v.in_chain_id = s.in_chain_id
+                  AND v.in_tx_hash = s.in_tx_hash
+             )) AS suggestion_generation,
            (SELECT COUNT(*)::int
               FROM (
                 SELECT DISTINCT ON (a.wallet_id, a.chain_id, a.tx_hash) a.status
@@ -298,13 +325,40 @@ class EthBridgeMovement {
         [userId]
       ),
     ]);
+    const summaryRow = summary.rows[0] || {};
+    const suggestionTotal = Number(summaryRow.suggestions) || 0;
+    const suggestionGeneration = String(
+      summaryRow.suggestion_generation || 'd41d8cd98f00b204e9800998ecf8427e'
+    );
+    if (expectedSuggestionGeneration
+        && expectedSuggestionGeneration !== suggestionGeneration) {
+      const error = new Error('Bridge alternatives changed; restart from the first page');
+      error.code = 'BRIDGE_SUGGESTION_PAGE_STALE';
+      throw error;
+    }
+    await client.query('COMMIT');
     return {
       movements: movements.rows,
       suggestions: suggestions.rows,
       verdicts: verdicts.rows,
       receipt_failures: receiptFailures.rows,
-      summary: summary.rows[0],
+      summary: summaryRow,
+      pagination: {
+        suggestions: {
+          limit: safeSuggestionLimit,
+          offset: safeSuggestionOffset,
+          total: suggestionTotal,
+          generation: suggestionGeneration,
+          has_more: safeSuggestionOffset + suggestions.rows.length < suggestionTotal,
+        },
+      },
     };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   static async upsertVerdict(userId, input, client = pool) {
@@ -350,6 +404,8 @@ class EthBridgeMovement {
             AND NOT (out_wallet_id = $2 AND out_chain_id = $3 AND out_tx_hash = $4
                      AND in_wallet_id = $5 AND in_chain_id = $6 AND in_tx_hash = $7)
             AND ((out_wallet_id = $2 AND out_chain_id = $3 AND out_tx_hash = $4)
+              OR (in_wallet_id = $2 AND in_chain_id = $3 AND in_tx_hash = $4)
+              OR (out_wallet_id = $5 AND out_chain_id = $6 AND out_tx_hash = $7)
               OR (in_wallet_id = $5 AND in_chain_id = $6 AND in_tx_hash = $7))
           LIMIT 1`,
         [userId, ...fields]

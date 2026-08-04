@@ -12,10 +12,12 @@ const EthActivityLink = require('../models/EthActivityLink');
 const { REVIEW_REASONS } = require('../utils/ethActivityVocabulary');
 const { decodeEnvelope, RULE_VERSION } = require('./bridge/adapters');
 const {
-  buildProtocolMovements, suggestBridgeLegs, suggestionPairKey, verdictMovement,
+  buildProtocolMovements, resolveProtocolCoordinateConflicts,
+  suggestBridgeLegs, suggestionPairKey, verdictMovement,
 } = require('./bridge/matcher');
 
 const MAX_RECEIPTS_PER_REBUILD = 250;
+const BRIDGE_LOCK_NAMESPACE = 1112688964; // ASCII-ish "BRID", signed int32-safe.
 const lower = (value) => String(value || '').toLowerCase();
 
 function endpointApplies(endpoint, activity) {
@@ -202,10 +204,55 @@ class BridgeMatchingService {
     return envelopes;
   }
 
+  static async lockForUser(userId, client) {
+    if (!userId || !client?.query) throw new Error('Bridge user lock requires a user and transaction client');
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [
+      BRIDGE_LOCK_NAMESPACE, Number(userId),
+    ]);
+  }
+
   static async rebuildForUser(userId, options = {}) {
     if (!userId) throw new Error('BridgeMatchingService.rebuildForUser requires a userId');
     const transactionClient = options.client || null;
-    const queryClient = transactionClient || pool;
+    if (transactionClient) {
+      await this.lockForUser(userId, transactionClient);
+      return this._rebuildForUserLocked(userId, options);
+    }
+
+    // Receipt acquisition is durable evidence and may involve bounded network
+    // calls, so it remains outside the derived-state transaction. The locked
+    // phase below reloads every activity, endpoint, receipt and verdict after
+    // taking the database lock; it never derives from this preliminary
+    // snapshot.
+    if (options.acquireReceipts !== false) {
+      const activities = await this._activitiesForUser(userId, pool);
+      const endpoints = await EthBridgeEndpoint.findForTransactions(activities, pool);
+      const annotated = this._withEndpointMetadata(activities, endpoints);
+      await this._acquire(userId, annotated, endpoints, {
+        ...options, acquireReceipts: true, client: pool,
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockForUser(userId, client);
+      const result = await this._rebuildForUserLocked(userId, {
+        ...options, acquireReceipts: false, client,
+      });
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async _rebuildForUserLocked(userId, options = {}) {
+    const queryClient = options.client;
+    if (!queryClient) throw new Error('Locked bridge rebuild requires a transaction client');
     const activities = await this._activitiesForUser(userId, queryClient);
     const endpoints = await EthBridgeEndpoint.findForTransactions(activities, queryClient);
     const annotatedActivities = this._withEndpointMetadata(activities, endpoints);
@@ -245,6 +292,7 @@ class BridgeMatchingService {
     const manualMovements = verdicts
       .filter((verdict) => verdict.verdict === 'confirmed')
       .map(verdictMovement);
+    protocolMovements = resolveProtocolCoordinateConflicts(protocolMovements, manualMovements);
 
     const occupiedPairs = new Set([
       ...protocolMovements.filter((movement) => movement.status === 'protocol_verified')
@@ -267,27 +315,14 @@ class BridgeMatchingService {
       )));
 
     const movements = [...protocolMovements, ...manualMovements];
-    // Receipt acquisition is intentionally outside this transaction; it is
-    // durable evidence. The complete derived-state swap (movements,
-    // suggestions, compatibility folds, and review flags) is atomic.
-    const client = transactionClient || await pool.connect();
-    const ownsTransaction = transactionClient == null;
-    let linkRows;
-    let unmatched;
-    try {
-      if (ownsTransaction) await client.query('BEGIN');
-      await EthBridgeMovement.replaceForUser(userId, movements, suggestions, client);
-      linkRows = await EthBridgeMovement.rebuildProjectionForUser(userId, client);
-      unmatched = await EthActivityLink.syncBridgeReviewState(
-        userId, REVIEW_REASONS.unmatched_bridge, client
-      );
-      if (ownsTransaction) await client.query('COMMIT');
-    } catch (error) {
-      if (ownsTransaction) await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      if (ownsTransaction) client.release();
-    }
+    // The caller owns this already-locked transaction. Movements,
+    // suggestions, compatibility folds, and review flags therefore swap as
+    // one unit from a verdict snapshot taken after the same advisory lock.
+    await EthBridgeMovement.replaceForUser(userId, movements, suggestions, queryClient);
+    const linkRows = await EthBridgeMovement.rebuildProjectionForUser(userId, queryClient);
+    const unmatched = await EthActivityLink.syncBridgeReviewState(
+      userId, REVIEW_REASONS.unmatched_bridge, queryClient
+    );
     const matched = movements.filter((movement) => (
       movement.status === 'protocol_verified' || movement.status === 'user_confirmed'
     )).length;

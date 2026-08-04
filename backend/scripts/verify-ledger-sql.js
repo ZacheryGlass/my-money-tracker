@@ -748,6 +748,25 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     [walletId, wallet2Id, BRIDGE_OUT_TX, BRIDGE_IN_TX, addr('f')]
   );
   const bridgeId = (hash) => bridgeRows.rows.find((r) => r.tx_hash === hash).id;
+  await pool.query(
+    `INSERT INTO eth_bridge_suggestions
+       (user_id, out_wallet_id, out_chain_id, out_tx_hash,
+        in_wallet_id, in_chain_id, in_tx_hash, protocol, family_version,
+        suggestion_reason, ambiguous, evidence)
+     VALUES (1, $1, 1, $3, $2, 42161, $4, 'arbitrum', 'nitro',
+             'asset_time_only', TRUE, '{"fixture":"sql_verifier"}'::jsonb)`,
+    [walletId, wallet2Id, BRIDGE_OUT_TX, BRIDGE_IN_TX]
+  );
+  const EthBridgeMovement = require('../src/models/EthBridgeMovement');
+  const suggestionAudit = await EthBridgeMovement.findAuditForUser(1, {
+    suggestionLimit: 1,
+  });
+  ok('bridge audit executes the complete-set suggestion fingerprint against the schema',
+    suggestionAudit.suggestions.length === 1
+      && suggestionAudit.pagination.suggestions.total === 1
+      && /^[a-f0-9]{32}$/.test(suggestionAudit.pagination.suggestions.generation));
+  await pool.query('DELETE FROM eth_bridge_suggestions WHERE user_id = 1');
+
   const verifiedMovement = await pool.query(
     `INSERT INTO eth_bridge_movements
        (user_id, protocol, family_version, status, verification_method,

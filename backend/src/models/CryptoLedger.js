@@ -479,10 +479,11 @@ const ONCHAIN_CTE = `
 // one movement of the user's own money that the chains recorded as two
 // unrelated transactions -- different hashes, different per-chain block
 // numbers, so neither the (chain, tx_hash) collapse above nor anything else
-// merges them. `eth_activity_links` is where 044's matching pass already
-// decided they are the same movement, exactly as `exchange_matches` is where
-// #61 decided a venue record and a transaction are; this reads that verdict, it
-// does not re-derive one.
+// merges them. `eth_activity_links` is migration 072's guarded compatibility
+// projection of an active evidence-first movement. Database triggers permit a
+// fold only for protocol identity or a durable user verdict and require both
+// activities to be members of that movement; this reader never re-derives the
+// verdict.
 //
 // The OUT side HOSTS, matching the self-transfer collapse (the sender's row is
 // the one that describes the movement and paid the gas) and the exchange fold
@@ -490,15 +491,11 @@ const ONCHAIN_CTE = `
 // `bridge_match` with its own coordinates, so nothing is dropped -- it is
 // stated, on the row that accounts for it.
 //
-// BOTH ENDS ARE SCOPED, and that is the whole reason this pairs two rows of
-// `onchain_collapsed` rather than joining eth_activity_links -> eth_activity.
-// The link table carries no owner (044 inherits scope through eth_wallets on
-// purpose), so nothing in the schema stops a link row from naming another
-// user's activity. Reached that way, user 2's transaction would render inside
-// user 1's feed. Here an invisible counterpart simply produces no fold: the
-// link is ignored and BOTH halves stay single rows in their owners' feeds --
-// which is also the correct rendering for an unlinked bridge leg, still flagged
-// per the ladder.
+// BOTH ENDS ARE SCOPED. Migration 072's constraints and triggers reject a
+// cross-owner movement or projection; this query still scopes both collapsed
+// activities independently as defense in depth. An invisible or invalidated
+// counterpart therefore produces no fold, and both halves remain visible and
+// flagged in their owners' feeds.
 //
 // needs_review ORs across the pair (a flagged half folded into an explained
 // host would leave the queue while still being unexplained) and spam ANDs

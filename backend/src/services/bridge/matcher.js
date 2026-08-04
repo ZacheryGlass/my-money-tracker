@@ -120,6 +120,70 @@ function buildProtocolMovements(events) {
   return movements;
 }
 
+function projectionCoordinates(movement) {
+  return [...new Set((movement.members || [])
+    .filter((member) => member.role === 'initiation' || DESTINATION_ROLES.has(member.role))
+    .map(coordinateKey))];
+}
+
+// One activity row cannot host two compatibility projections. Protocols may
+// emit several independently identified messages from a batch/multicall, but
+// the activity table is transaction-granular rather than message-granular.
+// Until message slices are modeled, every protocol movement claiming the same
+// transaction stays visible and unsupported instead of letting a UNIQUE
+// violation roll back the user's entire bridge rebuild. A durable user verdict
+// owns its coordinates and therefore also demotes a coincident automatic
+// derivation.
+function resolveProtocolCoordinateConflicts(protocolMovements, manualMovements = []) {
+  const manualCoordinates = new Set(
+    manualMovements
+      .filter((movement) => movement.status === 'user_confirmed')
+      .flatMap(projectionCoordinates)
+  );
+  const claims = new Map();
+  const conflicts = new Map();
+
+  for (const [index, movement] of protocolMovements.entries()) {
+    if (movement.status !== 'protocol_verified') continue;
+    for (const key of projectionCoordinates(movement)) {
+      if (!claims.has(key)) claims.set(key, []);
+      claims.get(key).push(index);
+      if (manualCoordinates.has(key)) {
+        conflicts.set(index, {
+          reason: 'user_verdict_claims_transaction',
+          coordinate: key,
+        });
+      }
+    }
+  }
+
+  for (const [key, indexes] of claims) {
+    if (indexes.length < 2) continue;
+    for (const index of indexes) {
+      if (!conflicts.has(index)) {
+        conflicts.set(index, {
+          reason: 'shared_transaction_multiple_protocol_identities',
+          coordinate: key,
+        });
+      }
+    }
+  }
+
+  return protocolMovements.map((movement, index) => {
+    const conflict = conflicts.get(index);
+    if (!conflict) return movement;
+    return {
+      ...movement,
+      status: 'unsupported',
+      evidence: {
+        ...movement.evidence,
+        ambiguity: conflict.reason,
+        conflicting_coordinate: conflict.coordinate,
+      },
+    };
+  });
+}
+
 function verdictMovement(verdict) {
   return {
     protocol: 'manual',
@@ -247,6 +311,8 @@ module.exports = {
   compatibleIdentityFields,
   coordinateKey,
   memberKey,
+  projectionCoordinates,
+  resolveProtocolCoordinateConflicts,
   suggestBridgeLegs,
   suggestionPairKey,
   verdictMovement,

@@ -103,6 +103,11 @@ const BRIDGE_STATUS_LABELS = {
 };
 
 const bridgeStatusLabel = (status) => BRIDGE_STATUS_LABELS[status] || status || 'Unsupported';
+const bridgeSuggestionKey = (suggestion) => [
+  suggestion.out_wallet_id, suggestion.out_chain_id, suggestion.out_tx_hash,
+  suggestion.in_wallet_id, suggestion.in_chain_id, suggestion.in_tx_hash,
+  suggestion.suggestion_reason,
+].join(':');
 
 // A uint256 token id runs to 78 digits and would blow the column out.
 const shortTokenId = (id) => {
@@ -235,6 +240,7 @@ const CryptoLedger = ({
   const [unpriced, setUnpriced] = useState([]);
   const [bridgeAudit, setBridgeAudit] = useState(null);
   const [bridgeJudging, setBridgeJudging] = useState(null);
+  const [bridgeSuggestionsLoading, setBridgeSuggestionsLoading] = useState(false);
   const [source, setSource] = useState('');
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
@@ -377,6 +383,54 @@ const CryptoLedger = ({
       setError(err.response?.data?.error || 'Failed to save the bridge verdict');
     } finally {
       setBridgeJudging(null);
+    }
+  };
+
+  const loadMoreBridgeSuggestions = async () => {
+    const page = bridgeAudit?.pagination?.suggestions;
+    if (!page?.has_more || bridgeSuggestionsLoading) return;
+    setBridgeSuggestionsLoading(true);
+    setError(null);
+    try {
+      const result = await cryptoAPI.getBridgeAudit({
+        suggestion_limit: page.limit || 500,
+        suggestion_offset: (bridgeAudit.suggestions || []).length,
+        suggestion_generation: page.generation,
+        // The other collections have independent first-page controls and are
+        // ignored here; keep this continuation response small.
+        limit: 1,
+      });
+      setBridgeAudit((current) => {
+        if (!current) return result;
+        const seen = new Set((current.suggestions || []).map(bridgeSuggestionKey));
+        const additions = (result.suggestions || []).filter(
+          (suggestion) => !seen.has(bridgeSuggestionKey(suggestion))
+        );
+        return {
+          ...current,
+          suggestions: [...(current.suggestions || []), ...additions],
+          summary: result.summary || current.summary,
+          pagination: {
+            ...current.pagination,
+            suggestions: result.pagination?.suggestions || page,
+          },
+        };
+      });
+    } catch (err) {
+      if (err.response?.status === 409) {
+        try {
+          const fresh = await cryptoAPI.getBridgeAudit();
+          setBridgeAudit(fresh);
+          setError('Bridge evidence changed during review; alternatives restarted from a complete first page.');
+          return;
+        } catch (refreshError) {
+          setError(refreshError.response?.data?.error || 'Failed to restart changed bridge alternatives');
+          return;
+        }
+      }
+      setError(err.response?.data?.error || 'Failed to load every bridge alternative');
+    } finally {
+      setBridgeSuggestionsLoading(false);
     }
   };
 
@@ -816,6 +870,22 @@ const CryptoLedger = ({
                 </li>
               ))}
             </ul>
+          )}
+          {bridgeAudit.pagination?.suggestions?.has_more && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-orange-500/30 bg-orange-500/5 px-3 py-2 text-caption text-orange-400">
+              <span>
+                Showing {(bridgeAudit.suggestions || []).length.toLocaleString()} of {Number(bridgeAudit.pagination.suggestions.total || bridgeAudit.summary?.suggestions || 0).toLocaleString()} plausible alternatives. Hidden alternatives remain unmatched.
+              </span>
+              <button
+                type="button"
+                disabled={bridgeSuggestionsLoading}
+                onClick={loadMoreBridgeSuggestions}
+                className="inline-flex h-7 items-center gap-1 rounded border border-orange-500/30 bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-orange-400 disabled:opacity-40"
+              >
+                {bridgeSuggestionsLoading && <RefreshCw size={10} className="animate-spin" />}
+                Show more alternatives
+              </button>
+            </div>
           )}
           {(bridgeAudit.movements || []).some((movement) => (
             !['protocol_verified', 'user_confirmed', 'invalidated'].includes(movement.status)

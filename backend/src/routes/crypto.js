@@ -7,6 +7,7 @@ const EthWallet = require('../models/EthWallet');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const EthBridgeMovement = require('../models/EthBridgeMovement');
 const BridgeMatchingService = require('../services/BridgeMatchingService');
+const EthDerivedPipeline = require('../services/EthDerivedPipeline');
 const pool = require('../config/database');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
@@ -333,27 +334,57 @@ router.get('/bridges', async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 500, 1), 1000);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const suggestionLimit = Math.min(
+      Math.max(parseInt(req.query.suggestion_limit, 10) || 500, 1), 1000
+    );
+    const suggestionOffset = Math.max(parseInt(req.query.suggestion_offset, 10) || 0, 0);
+    const suggestionGeneration = req.query.suggestion_generation == null
+      ? null : String(req.query.suggestion_generation);
+    if (suggestionGeneration != null && !/^[a-f0-9]{32}$/.test(suggestionGeneration)) {
+      return res.status(400).json({ error: 'Invalid bridge suggestion generation' });
+    }
     return res.status(200).json(await EthBridgeMovement.findAuditForUser(
-      req.user.id, { limit, offset }
+      req.user.id, {
+        limit, offset, suggestionLimit, suggestionOffset, suggestionGeneration,
+      }
     ));
   } catch (error) {
+    if (error.code === 'BRIDGE_SUGGESTION_GENERATION_REQUIRED') {
+      return res.status(400).json({ error: error.message });
+    }
+    if (error.code === 'BRIDGE_SUGGESTION_PAGE_STALE') {
+      return res.status(409).json({ error: error.message });
+    }
     logger.error({ err: error }, 'Get bridge audit error');
     return res.status(500).json({ error: 'Failed to retrieve bridge evidence' });
   }
 });
 
 router.post('/bridges/verdict', async (req, res) => {
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const verdict = await EthBridgeMovement.upsertVerdict(req.user.id, req.body || {}, client);
-    const rebuilt = await BridgeMatchingService.rebuildForUser(
-      req.user.id, { acquireReceipts: false, client }
-    );
-    await client.query('COMMIT');
+    const { verdict, rebuilt } = await EthDerivedPipeline.serializedForUser(req.user.id, async () => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        // The cross-process lock must precede the verdict write as well as the
+        // rebuild snapshot. Otherwise a stale rebuild can invalidate a fold
+        // committed moments after it read the old verdict set.
+        await BridgeMatchingService.lockForUser(req.user.id, client);
+        const saved = await EthBridgeMovement.upsertVerdict(req.user.id, req.body || {}, client);
+        const result = await BridgeMatchingService.rebuildForUser(
+          req.user.id, { acquireReceipts: false, client }
+        );
+        await client.query('COMMIT');
+        return { verdict: saved, rebuilt: result };
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    });
     return res.status(200).json({ verdict, rebuilt });
   } catch (error) {
-    await client.query('ROLLBACK');
     if (error.code === 'INVALID_BRIDGE_VERDICT') {
       return res.status(400).json({ error: error.message });
     }
@@ -365,31 +396,41 @@ router.post('/bridges/verdict', async (req, res) => {
     }
     logger.error({ err: error }, 'Set bridge verdict error');
     return res.status(500).json({ error: 'Failed to save the bridge verdict' });
-  } finally {
-    client.release();
   }
 });
 
 router.delete('/bridges/verdict', async (req, res) => {
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const removed = await EthBridgeMovement.deleteVerdict(req.user.id, req.body || {}, client);
-    if (!removed) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Bridge verdict not found' });
-    }
-    const rebuilt = await BridgeMatchingService.rebuildForUser(
-      req.user.id, { acquireReceipts: false, client }
-    );
-    await client.query('COMMIT');
-    return res.status(200).json({ removed: true, rebuilt });
+    const result = await EthDerivedPipeline.serializedForUser(req.user.id, async () => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await BridgeMatchingService.lockForUser(req.user.id, client);
+        const removed = await EthBridgeMovement.deleteVerdict(req.user.id, req.body || {}, client);
+        if (!removed) {
+          const error = new Error('Bridge verdict not found');
+          error.code = 'BRIDGE_VERDICT_NOT_FOUND';
+          throw error;
+        }
+        const rebuilt = await BridgeMatchingService.rebuildForUser(
+          req.user.id, { acquireReceipts: false, client }
+        );
+        await client.query('COMMIT');
+        return { removed: true, rebuilt };
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    });
+    return res.status(200).json(result);
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (error.code === 'BRIDGE_VERDICT_NOT_FOUND') {
+      return res.status(404).json({ error: error.message });
+    }
     logger.error({ err: error }, 'Delete bridge verdict error');
     return res.status(500).json({ error: 'Failed to remove the bridge verdict' });
-  } finally {
-    client.release();
   }
 });
 

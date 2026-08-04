@@ -10,6 +10,11 @@ require('dotenv').config();
 const fs = require('fs');
 const pool = require('../src/config/database');
 
+async function tableExists(tableName) {
+  const { rows } = await pool.query('SELECT to_regclass($1) IS NOT NULL AS exists', [tableName]);
+  return rows[0]?.exists === true;
+}
+
 function option(name) {
   const index = process.argv.indexOf(name);
   return index === -1 ? null : process.argv[index + 1] || null;
@@ -93,6 +98,68 @@ async function buildReport(userId) {
        )
      ORDER BY a.block_time, a.id`, [userId])).rows;
 
+  const bridgeEvidenceModelAvailable = await tableExists('eth_bridge_movements');
+  let bridgeMovements = [];
+  let bridgeSuggestions = [];
+  let bridgeVerdicts = [];
+  let bridgeReceiptFailures = [];
+  if (bridgeEvidenceModelAvailable) {
+    bridgeMovements = (await pool.query(`
+      SELECT m.id, m.protocol, m.family_version, m.status,
+             m.verification_method, m.correlation_key, m.rule_version,
+             m.evidence, m.invalidated_at, m.invalidation_reason,
+             COALESCE(jsonb_agg(jsonb_build_object(
+               'wallet_id', mm.wallet_id, 'chain_id', mm.chain_id,
+               'tx_hash', mm.tx_hash, 'role', mm.role,
+               'receipt_id', mm.receipt_id, 'log_index', mm.log_index,
+               'asset_id', mm.asset_id, 'amount', mm.amount::text,
+               'fee_amount', mm.fee_amount::text, 'evidence', mm.evidence
+             ) ORDER BY mm.id) FILTER (WHERE mm.id IS NOT NULL), '[]'::jsonb) AS members
+        FROM eth_bridge_movements m
+        LEFT JOIN eth_bridge_movement_members mm ON mm.movement_id = m.id
+        LEFT JOIN eth_wallets mw ON mw.id = mm.wallet_id AND mw.user_id = m.user_id
+       WHERE m.user_id = $1 AND (mm.id IS NULL OR mw.id IS NOT NULL)
+       GROUP BY m.id
+       ORDER BY m.updated_at, m.id`, [userId])).rows;
+
+    bridgeSuggestions = (await pool.query(`
+      SELECT s.id, s.out_wallet_id, s.out_chain_id, s.out_tx_hash,
+             s.in_wallet_id, s.in_chain_id, s.in_tx_hash,
+             s.protocol, s.family_version, s.suggestion_reason,
+             s.ambiguous, s.rule_version, s.evidence, s.created_at
+        FROM eth_bridge_suggestions s
+        JOIN eth_wallets ow ON ow.id = s.out_wallet_id AND ow.user_id = s.user_id
+        JOIN eth_wallets iw ON iw.id = s.in_wallet_id AND iw.user_id = s.user_id
+       WHERE s.user_id = $1
+       ORDER BY s.ambiguous DESC, s.created_at, s.id`, [userId])).rows;
+
+    bridgeVerdicts = (await pool.query(`
+      SELECT v.id, v.out_wallet_id, v.out_chain_id, v.out_tx_hash,
+             v.in_wallet_id, v.in_chain_id, v.in_tx_hash,
+             v.verdict, v.note, v.created_at, v.updated_at
+        FROM eth_bridge_verdicts v
+        JOIN eth_wallets ow ON ow.id = v.out_wallet_id AND ow.user_id = v.user_id
+        JOIN eth_wallets iw ON iw.id = v.in_wallet_id AND iw.user_id = v.user_id
+       WHERE v.user_id = $1
+       ORDER BY v.updated_at, v.id`, [userId])).rows;
+
+    bridgeReceiptFailures = (await pool.query(`
+      SELECT latest.*
+        FROM (
+          SELECT DISTINCT ON (a.wallet_id, a.chain_id, a.tx_hash)
+                 a.id, a.wallet_id, a.chain_id, a.tx_hash, a.provider,
+                 a.status, a.provider_boundary, a.error_code,
+                 a.error_detail, a.attempted_at
+            FROM eth_bridge_receipt_attempts a
+            JOIN eth_wallets w ON w.id = a.wallet_id
+           WHERE w.user_id = $1
+           ORDER BY a.wallet_id, a.chain_id, a.tx_hash,
+                    a.attempted_at DESC, a.id DESC
+        ) latest
+       WHERE latest.status IN ('failed', 'unsupported')
+       ORDER BY latest.attempted_at, latest.id`, [userId])).rows;
+  }
+
   const reconciliation = (await pool.query(`
     SELECT r.wallet_id, r.chain_id, r.asset_key, r.status, r.derived_units,
            r.live_units, r.delta_units, r.skip_reason, r.checked_at,
@@ -165,6 +232,13 @@ async function buildReport(userId) {
       review_rows: reviewRows.length,
       review_by_blocker: by(reviewRows, 'durable_blocker'),
       unmatched_bridge_rows: bridgeRows.length,
+      bridge_evidence_model_available: bridgeEvidenceModelAvailable,
+      bridge_movements: bridgeMovements.length,
+      bridge_movements_by_status: by(bridgeMovements, 'status'),
+      bridge_suggestions: bridgeSuggestions.length,
+      bridge_ambiguous_suggestions: bridgeSuggestions.filter((row) => row.ambiguous).length,
+      bridge_verdicts: bridgeVerdicts.length,
+      bridge_receipt_failures: bridgeReceiptFailures.length,
       reconciliation_rows: reconciliation.length,
       reconciliation_by_status: by(reconciliation, 'status'),
       unpriced_rows: unpriced.length,
@@ -174,6 +248,10 @@ async function buildReport(userId) {
     },
     review_rows: reviewRows,
     unmatched_bridge_rows: bridgeRows,
+    bridge_movements: bridgeMovements,
+    bridge_suggestions: bridgeSuggestions,
+    bridge_verdicts: bridgeVerdicts,
+    bridge_receipt_failures: bridgeReceiptFailures,
     reconciliation,
     unpriced,
     exchange_exceptions: exchangeExceptions,
@@ -198,4 +276,4 @@ if (require.main === module) {
   }).finally(() => pool.end().catch(() => {}));
 }
 
-module.exports = { buildReport, reviewBlocker, unpricedReason };
+module.exports = { buildReport, reviewBlocker, tableExists, unpricedReason };

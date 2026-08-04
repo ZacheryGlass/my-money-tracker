@@ -10,10 +10,16 @@ const {
   TOPICS, decodeEnvelope, opSourceHash,
 } = require('../src/services/bridge/adapters');
 const {
-  buildProtocolMovements, suggestBridgeLegs, verdictMovement,
+  buildProtocolMovements, resolveProtocolCoordinateConflicts,
+  suggestBridgeLegs, verdictMovement,
 } = require('../src/services/bridge/matcher');
 const { validateEvidence } = require('../src/models/EthBridgeReceipt');
-const { endpointApplies, unsupportedMovement } = require('../src/services/BridgeMatchingService');
+const BridgeMatchingService = require('../src/services/BridgeMatchingService');
+const EthBridgeEndpoint = require('../src/models/EthBridgeEndpoint');
+const EthBridgeMovement = require('../src/models/EthBridgeMovement');
+const EthActivityLink = require('../src/models/EthActivityLink');
+const pool = require('../src/config/database');
+const { endpointApplies, unsupportedMovement } = BridgeMatchingService;
 const { buildFinalityBoundary } = require('../src/services/EtherscanService');
 
 const hash = (digit) => `0x${digit.repeat(64)}`;
@@ -321,6 +327,148 @@ test('duplicate members, incompatible fields, failures, and refunds never become
   assert.equal(buildProtocolMovements([
     event(), event({ role: 'refund', direction: 'in', chain_id: 1 }),
   ])[0].status, 'refunded');
+});
+
+test('multiple protocol messages in one transaction remain unsupported instead of colliding', () => {
+  const sharedSource = hash('1');
+  const movements = buildProtocolMovements([
+    event({ correlation_key: 'id:1', tx_hash: sharedSource, log_index: 0 }),
+    event({ correlation_key: 'id:1', role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2') }),
+    event({ correlation_key: 'id:2', tx_hash: sharedSource, log_index: 1 }),
+    event({ correlation_key: 'id:2', role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('3') }),
+  ]);
+  assert.ok(movements.every((movement) => movement.status === 'protocol_verified'));
+
+  const resolved = resolveProtocolCoordinateConflicts(movements);
+  assert.ok(resolved.every((movement) => movement.status === 'unsupported'));
+  assert.ok(resolved.every((movement) => (
+    movement.evidence.ambiguity === 'shared_transaction_multiple_protocol_identities'
+  )));
+});
+
+test('a durable user confirmation owns its transaction coordinates', () => {
+  const automatic = buildProtocolMovements([
+    event(),
+    event({ role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2') }),
+  ]);
+  const manual = [verdictMovement({
+    id: 9, out_wallet_id: 1, out_chain_id: 1, out_tx_hash: hash('1'),
+    in_wallet_id: 3, in_chain_id: 8453, in_tx_hash: hash('3'),
+  })];
+  const [resolved] = resolveProtocolCoordinateConflicts(automatic, manual);
+  assert.equal(resolved.status, 'unsupported');
+  assert.equal(resolved.evidence.ambiguity, 'user_verdict_claims_transaction');
+});
+
+test('a transaction-scoped user lock precedes every bridge rebuild snapshot', async (t) => {
+  const calls = [];
+  const originals = {
+    activities: BridgeMatchingService._activitiesForUser,
+    acquire: BridgeMatchingService._acquire,
+    endpoints: EthBridgeEndpoint.findForTransactions,
+    verdicts: EthBridgeMovement.findVerdictsForUser,
+    replace: EthBridgeMovement.replaceForUser,
+    project: EthBridgeMovement.rebuildProjectionForUser,
+    review: EthActivityLink.syncBridgeReviewState,
+  };
+  t.after(() => {
+    BridgeMatchingService._activitiesForUser = originals.activities;
+    BridgeMatchingService._acquire = originals.acquire;
+    EthBridgeEndpoint.findForTransactions = originals.endpoints;
+    EthBridgeMovement.findVerdictsForUser = originals.verdicts;
+    EthBridgeMovement.replaceForUser = originals.replace;
+    EthBridgeMovement.rebuildProjectionForUser = originals.project;
+    EthActivityLink.syncBridgeReviewState = originals.review;
+  });
+
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ kind: 'query', sql, params });
+      return { rows: [] };
+    },
+  };
+  BridgeMatchingService._activitiesForUser = async () => { calls.push({ kind: 'activities' }); return []; };
+  EthBridgeEndpoint.findForTransactions = async () => [];
+  BridgeMatchingService._acquire = async () => [];
+  EthBridgeMovement.findVerdictsForUser = async () => { calls.push({ kind: 'verdicts' }); return []; };
+  EthBridgeMovement.replaceForUser = async () => {};
+  EthBridgeMovement.rebuildProjectionForUser = async () => 0;
+  EthActivityLink.syncBridgeReviewState = async () => 0;
+
+  await BridgeMatchingService.rebuildForUser(7, { client, acquireReceipts: false });
+  assert.match(calls[0].sql, /pg_advisory_xact_lock/);
+  assert.deepEqual(calls[0].params, [1112688964, 7]);
+  assert.ok(calls.findIndex((call) => call.kind === 'activities') > 0);
+  assert.ok(calls.findIndex((call) => call.kind === 'verdicts') > 0);
+});
+
+test('bridge suggestions page independently and report visible truncation', async (t) => {
+  const generation = '0123456789abcdef0123456789abcdef';
+  const originalConnect = pool.connect;
+  const calls = [];
+  t.after(() => { pool.connect = originalConnect; });
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM eth_bridge_suggestions s\s+JOIN eth_wallets/.test(sql)) {
+        return { rows: [{ id: 2 }] };
+      }
+      if (/AS protocol_verified/.test(sql)) {
+        return { rows: [{ suggestions: 3, suggestion_generation: generation }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  pool.connect = async () => client;
+
+  const result = await EthBridgeMovement.findAuditForUser(7, {
+    limit: 20, offset: 0, suggestionLimit: 1, suggestionOffset: 1,
+    suggestionGeneration: generation,
+  });
+  const suggestionQuery = calls.find(({ sql }) => /FROM eth_bridge_suggestions s\s+JOIN eth_wallets/.test(sql));
+  assert.deepEqual(suggestionQuery.params, [7, 1, 1]);
+  assert.deepEqual(result.pagination.suggestions, {
+    limit: 1, offset: 1, total: 3, generation, has_more: true,
+  });
+  const summaryQuery = calls.find(({ sql }) => /AS protocol_verified/.test(sql));
+  assert.match(summaryQuery.sql, /md5\(COALESCE\(string_agg/);
+  assert.match(summaryQuery.sql, /out_wallet_id::text/);
+  assert.doesNotMatch(summaryQuery.sql, /MAX\(s\.id\)/);
+  assert.match(calls[0].sql, /REPEATABLE READ READ ONLY/);
+  assert.equal(calls.at(-1).sql, 'COMMIT');
+});
+
+test('bridge continuation rejects and rolls back when its generation changed', async (t) => {
+  const originalGeneration = '0123456789abcdef0123456789abcdef';
+  const changedGeneration = 'fedcba9876543210fedcba9876543210';
+  await assert.rejects(
+    EthBridgeMovement.findAuditForUser(7, { suggestionOffset: 1 }),
+    (error) => error.code === 'BRIDGE_SUGGESTION_GENERATION_REQUIRED'
+  );
+
+  const originalConnect = pool.connect;
+  const calls = [];
+  t.after(() => { pool.connect = originalConnect; });
+  pool.connect = async () => ({
+    query: async (sql) => {
+      calls.push(sql);
+      if (/AS protocol_verified/.test(sql)) {
+        return { rows: [{ suggestions: 3, suggestion_generation: changedGeneration }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  });
+
+  await assert.rejects(
+    EthBridgeMovement.findAuditForUser(7, {
+      suggestionOffset: 1, suggestionGeneration: originalGeneration,
+    }),
+    (error) => error.code === 'BRIDGE_SUGGESTION_PAGE_STALE'
+  );
+  assert.equal(calls.at(-1), 'ROLLBACK');
+  assert.ok(!calls.includes('COMMIT'));
 });
 
 test('amount and time enumerate every alternative as a suggestion and create no movement', () => {

@@ -186,6 +186,68 @@ describe('CryptoLedger', () => {
     ));
   });
 
+  it('makes truncated bridge alternatives explicit and loads the next independent page', async () => {
+    const secondTx = `0x${'3'.repeat(64)}`;
+    apiMocks.crypto.getBridgeAudit
+      .mockResolvedValueOnce({
+        summary: { suggestions: 2 }, movements: [], verdicts: [], receipt_failures: [],
+        suggestions: [{
+          id: 1, protocol: 'base', out_wallet_id: 1, out_chain_id: 1,
+          out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 8453, in_tx_hash: TX2,
+          ambiguous: true, suggestion_reason: 'asset_amount',
+        }],
+        pagination: { suggestions: { limit: 1, offset: 0, total: 2, generation: '2:2', has_more: true } },
+      })
+      .mockResolvedValueOnce({
+        summary: { suggestions: 2 }, movements: [], verdicts: [], receipt_failures: [],
+        suggestions: [{
+          id: 2, protocol: 'optimism', out_wallet_id: 1, out_chain_id: 1,
+          out_tx_hash: TX, in_wallet_id: 3, in_chain_id: 10, in_tx_hash: secondTx,
+          ambiguous: true, suggestion_reason: 'asset_amount',
+        }],
+        pagination: { suggestions: { limit: 1, offset: 1, total: 2, generation: '2:2', has_more: false } },
+      });
+
+    render(<CryptoLedger />);
+
+    expect(await screen.findByText(/Showing 1 of 2 plausible alternatives/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show more alternatives' }));
+    await waitFor(() => expect(apiMocks.crypto.getBridgeAudit).toHaveBeenLastCalledWith({
+      suggestion_limit: 1, suggestion_offset: 1, suggestion_generation: '2:2', limit: 1,
+    }));
+    expect(await screen.findByText(/optimism · chain 1/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Show more alternatives' })).not.toBeInTheDocument());
+  });
+
+  it('restarts suggestion review when a rebuild invalidates the page generation', async () => {
+    const firstPage = {
+      summary: { suggestions: 2 }, movements: [], verdicts: [], receipt_failures: [],
+      suggestions: [{
+        id: 1, protocol: 'base', out_wallet_id: 1, out_chain_id: 1,
+        out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 8453, in_tx_hash: TX2,
+        ambiguous: true, suggestion_reason: 'asset_amount',
+      }],
+      pagination: { suggestions: { limit: 1, offset: 0, total: 2, generation: '2:2', has_more: true } },
+    };
+    const restarted = {
+      ...firstPage,
+      summary: { suggestions: 1 },
+      suggestions: [{ ...firstPage.suggestions[0], id: 9, protocol: 'linea', in_chain_id: 59144 }],
+      pagination: { suggestions: { limit: 500, offset: 0, total: 1, generation: '9:1', has_more: false } },
+    };
+    apiMocks.crypto.getBridgeAudit
+      .mockResolvedValueOnce(firstPage)
+      .mockRejectedValueOnce({ response: { status: 409, data: { error: 'stale generation' } } })
+      .mockResolvedValueOnce(restarted);
+
+    render(<CryptoLedger />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show more alternatives' }));
+
+    expect(await screen.findByText(/Bridge evidence changed during review/)).toBeInTheDocument();
+    expect(await screen.findByText(/linea · chain 1/)).toBeInTheDocument();
+    expect(apiMocks.crypto.getBridgeAudit).toHaveBeenCalledTimes(3);
+  });
+
   it('interleaves both sources in one stream, newest first', async () => {
     setLedger([onchain(), exchange()]);
 
