@@ -268,6 +268,10 @@ function buildActivityRows(walletAddress, transfers, {
   // The owner's 'bridge'-labeled addresses, precedence already resolved in SQL.
   // Drives the ladder's rule 3; see _addressesOfKindForUser.
   bridgeAddresses = new Set(),
+  // Decoder endpoints are chain-scoped. A map entry wins over the legacy flat
+  // set for that chain; user-created bridge labels remain in the flat set
+  // because the address-label UI does not ask for a chain yet.
+  bridgeAddressesByChain = new Map(),
   // The owner's 'service'-labeled addresses (instant-swap deposit addresses),
   // resolved the same way. Drives the ladder's rule 4.
   serviceAddresses = new Set(), custodyAddresses = new Set(),
@@ -298,7 +302,8 @@ function buildActivityRows(walletAddress, transfers, {
   }
   return [...byTx.values()].map(({ chainId, txHash, legs }) =>
     buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks, spamInputs,
-      bridgeAddresses, serviceAddresses, custodyAddresses));
+      new Set([...(bridgeAddressesByChain.get(chainId) || []), ...bridgeAddresses]),
+      serviceAddresses, custodyAddresses));
 }
 
 module.exports = {

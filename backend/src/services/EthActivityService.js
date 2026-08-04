@@ -11,8 +11,8 @@ const pool = require('../config/database');
 const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const EthActivity = require('../models/EthActivity');
-const EthActivityLink = require('../models/EthActivityLink');
 const ExchangeMatchService = require('./ExchangeMatchService');
+const BridgeMatchingService = require('./BridgeMatchingService');
 const { DEFAULT_CHAIN_ID } = require('../config/chains');
 const {
   CATEGORIES, ZERO_ADDRESS, REVIEW_REASONS, SPAM_REASONS, SPAM_DUST_USD,
@@ -20,8 +20,7 @@ const {
 const { buildActivityRows } = require('./ethActivity/rows');
 const { interpretProtocolActivity } = require('./ethActivity/protocolInterpretation');
 const {
-  bridgeMovement, pairBridgeLegs, bridgeAsset,
-  BRIDGE_MAX_FEE_BPS, BRIDGE_DEPOSIT_WINDOW_MS, BRIDGE_WITHDRAWAL_WINDOW_MS,
+  bridgeAsset, BRIDGE_DEPOSIT_WINDOW_MS, BRIDGE_WITHDRAWAL_WINDOW_MS,
 } = require('./ethActivity/bridge');
 
 class EthActivityService {
@@ -39,7 +38,7 @@ class EthActivityService {
 
     const [
       transfersResult, ignoredResult, labeledResult, ownWalletsResult, coverageResult,
-      bridgeAddresses, serviceAddresses, custodyAddresses,
+      bridgeEndpoints, bridgeAddresses, serviceAddresses, custodyAddresses,
     ] = await Promise.all([
       pool.query(
         'SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id',
@@ -96,8 +95,10 @@ class EthActivityService {
       pool.query(
         "SELECT asset_key FROM asset_price_coverage WHERE status IN ('unlisted', 'empty')"
       ),
-      // The owner's bridge-labeled counterparties (#59), driving rule 3.
-      this._bridgeAddressesForUser(wallet.user_id),
+      // Protocol endpoints are chain-scoped. User-created bridge labels remain
+      // global until the label UI grows a chain field.
+      this._bridgeEndpointAddressesForUser(wallet.user_id),
+      this._manualBridgeAddressesForUser(wallet.user_id),
       // The owner's swap-service counterparties (046), driving rule 4.
       this._serviceAddressesForUser(wallet.user_id),
       this._custodyAddressesForUser(wallet.user_id),
@@ -115,10 +116,16 @@ class EthActivityService {
     ];
 
     const unlistedAssets = new Set(coverageResult.rows.map((row) => row.asset_key));
+    const bridgeAddressesByChain = new Map();
+    for (const endpoint of bridgeEndpoints) {
+      const chainId = Number(endpoint.chain_id);
+      if (!bridgeAddressesByChain.has(chainId)) bridgeAddressesByChain.set(chainId, new Set());
+      bridgeAddressesByChain.get(chainId).add(endpoint.address);
+    }
 
     const rows = buildActivityRows(wallet.address, transfersResult.rows, {
       ignoredContracts, labeledAddresses, ownAddresses, unlistedAssets,
-      bridgeAddresses, serviceAddresses, custodyAddresses,
+      bridgeAddresses, bridgeAddressesByChain, serviceAddresses, custodyAddresses,
     });
     const labels = await this._nameCounterparties(wallet.user_id, rows);
     for (const row of rows) {
@@ -180,6 +187,27 @@ class EthActivityService {
     return this._addressesOfKindForUser(userId, 'bridge');
   }
 
+  static async _bridgeEndpointAddressesForUser(userId) {
+    const { rows } = await pool.query(
+      `SELECT e.chain_id, e.address
+         FROM eth_bridge_endpoints e
+         LEFT JOIN eth_address_labels u
+           ON u.user_id = $1 AND u.address = e.address
+        WHERE e.enabled AND (u.id IS NULL OR u.kind = 'bridge')`,
+      [userId]
+    );
+    return rows;
+  }
+
+  static async _manualBridgeAddressesForUser(userId) {
+    const { rows } = await pool.query(
+      `SELECT address FROM eth_address_labels
+        WHERE user_id = $1 AND kind = 'bridge'`,
+      [userId]
+    );
+    return new Set(rows.map((row) => row.address));
+  }
+
   static _serviceAddressesForUser(userId) {
     return this._addressesOfKindForUser(userId, 'service');
   }
@@ -198,67 +226,11 @@ class EthActivityService {
     return new Set(rows.map((row) => row.address));
   }
 
-  // Pairs each bridge_out with the bridge_in that completes it, across chains
-  // and across every wallet the user owns -- a bridge from one of their
-  // addresses to another is still one movement.
-  //
-  // DERIVED WHOLESALE, like eth_activity itself: the links are recomputed from
-  // the current rows every time, never patched. That is what makes them
-  // self-healing -- rebuilding wallet A cascades away any link that pointed at
-  // one of its rows (ON DELETE CASCADE), and re-running this restores the ones
-  // that are still true. It also means the review flag has to be re-asserted in
-  // BOTH directions below: a leg matched an hour ago can be orphaned by a
-  // resync of the wallet on the other side, and leaving it unflagged would
-  // claim a completed transfer that no longer has a far side.
-  //
-  // Per USER, not per wallet, because the two legs of one bridge can sit on two
-  // different wallet rows. Callers run it once after the per-wallet rebuilds.
-  static async matchBridgeTransfersForUser(userId) {
+  // Evidence-first user-wide movement rebuild. The compatibility method name
+  // is retained for callers, but the old amount/time matcher no longer exists.
+  static async matchBridgeTransfersForUser(userId, options = {}) {
     if (!userId) throw new Error('EthActivityService.matchBridgeTransfersForUser requires a userId');
-
-    // The RESOLVED category, never the derived one. Every other reader
-    // COALESCEs eth_activity_overrides over eth_activity (EthActivity's
-    // RESOLVED_COLUMNS), and a matcher that skipped that would keep pairing a
-    // transaction the user has explicitly re-categorized as a plain send --
-    // handing it a link, and silently un-flagging the far side on the strength
-    // of a verdict the user withdrew. It reads the other way too: a row the user
-    // overrode INTO bridge_out becomes matchable, which is the same rule.
-    const { rows } = await pool.query(
-      `SELECT a.id, a.chain_id, a.block_time,
-              COALESCE(o.category, a.category) AS category, a.legs
-       FROM eth_activity a
-       JOIN eth_wallets w ON w.id = a.wallet_id
-       LEFT JOIN eth_activity_overrides o
-         ON o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash
-       WHERE w.user_id = $1
-         AND COALESCE(o.category, a.category) IN ('bridge_out', 'bridge_in')
-       -- Time first: block_number is a per-chain sequence (039) and means
-       -- nothing across chains, and the greedy pairing below depends on both
-       -- sides being in true chronological order. The rest of the key only
-       -- makes the order total, so a rebuild cannot reshuffle equal timestamps.
-       ORDER BY a.block_time, a.chain_id, a.id`,
-      [userId]
-    );
-
-    const candidates = (direction, category) => rows
-      .filter((row) => row.category === category)
-      .map((row) => {
-        const movement = bridgeMovement(row, direction);
-        if (!movement) return null;
-        return { id: row.id, chain_id: row.chain_id, ...movement };
-      })
-      .filter(Boolean);
-
-    const links = pairBridgeLegs(candidates('out', 'bridge_out'), candidates('in', 'bridge_in'));
-    const written = await EthActivityLink.replaceForUser(userId, links);
-    const flagged = await EthActivityLink.syncBridgeReviewState(userId, REVIEW_REASONS.unmatched_bridge);
-
-    // A many-to-one settlement writes one link per source component, but it is
-    // one completed movement. Keep the public count movement-oriented while
-    // retaining the per-source rows needed for exact constituent hashes.
-    const matched = new Set(links.map((link) => link.in_activity_id)).size;
-    logger.info({ userId, matched, linkRows: written, unmatched: flagged }, 'ETH bridge legs matched');
-    return { matched, unmatched: flagged };
+    return BridgeMatchingService.rebuildForUser(userId, options);
   }
 
   // Fills counterparty_name for display from the owner's labels, resolved with
@@ -296,10 +268,6 @@ module.exports.ZERO_ADDRESS = ZERO_ADDRESS;
 module.exports.REVIEW_REASONS = REVIEW_REASONS;
 module.exports.SPAM_REASONS = SPAM_REASONS;
 module.exports.SPAM_DUST_USD = SPAM_DUST_USD;
-// The pairing policy, exported pure so every bound (fee tolerance, window,
-// direction, cross-chain requirement) is testable without a database.
-module.exports.pairBridgeLegs = pairBridgeLegs;
 module.exports.bridgeAsset = bridgeAsset;
-module.exports.BRIDGE_MAX_FEE_BPS = BRIDGE_MAX_FEE_BPS;
 module.exports.BRIDGE_DEPOSIT_WINDOW_MS = BRIDGE_DEPOSIT_WINDOW_MS;
 module.exports.BRIDGE_WITHDRAWAL_WINDOW_MS = BRIDGE_WITHDRAWAL_WINDOW_MS;

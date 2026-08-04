@@ -8,7 +8,7 @@
     "start": "node src/server.js",
     "start:prod": "node scripts/migrate.js && node src/server.js",
     "migrate": "node scripts/migrate.js",
-    "lint": "eslint src/ scripts/generate-label-seed.js scripts/generate-bridge-seed.js scripts/rebuildExchangeMatches.js scripts/report-exchange-duplicates.js scripts/report-exchange-match-gaps.js scripts/report-evm-history-gaps.js scripts/resolve-exchange-duplicates.js scripts/audit-exchange-archive.js scripts/audit-history.js scripts/verify-ledger-sql.js",
+    "lint": "eslint src/ scripts/generate-label-seed.js scripts/generate-bridge-seed.js scripts/generate-bridge-endpoint-seed.js scripts/rebuildExchangeMatches.js scripts/report-exchange-duplicates.js scripts/report-exchange-match-gaps.js scripts/report-evm-history-gaps.js scripts/resolve-exchange-duplicates.js scripts/audit-exchange-archive.js scripts/audit-history.js scripts/verify-ledger-sql.js",
     "test": "node --test --test-reporter=spec \"tests/*.test.js\"",
     "rebuild:exchange-matches": "node scripts/rebuildExchangeMatches.js",
     "import": "node scripts/importFromCsv.js",
@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@noble/hashes": "^1.8.0",
     "axios": "^1.13.1",
     "cors": "^2.8.5",
     "csv-parser": "^3.2.0",

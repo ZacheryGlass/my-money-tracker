@@ -37,6 +37,37 @@ const MAX_LOG_PAGES = 200;
 // because a new indexed head arrives every night in a long-running process.
 const BLOCK_TIMESTAMP_CACHE_MAX = 500;
 const blockTimestampCache = new Map();
+const FINALIZED_BLOCK_CACHE_MS = 60 * 1000;
+const finalizedBlockCache = new Map();
+
+function rpcQuantity(value) {
+  if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) return null;
+  try { return BigInt(value); } catch { return null; }
+}
+
+function buildFinalityBoundary(receipt, finalizedBlock, error = null) {
+  const method = 'eth_getBlockByNumber(finalized)';
+  if (error) {
+    return {
+      status: 'unknown', method,
+      error_code: error.code || 'FINALIZED_BLOCK_UNAVAILABLE',
+    };
+  }
+  const receiptNumber = rpcQuantity(receipt?.blockNumber);
+  const finalizedNumber = rpcQuantity(finalizedBlock?.number);
+  const finalizedHash = String(finalizedBlock?.hash || '').toLowerCase();
+  if (receiptNumber == null || finalizedNumber == null
+      || !/^0x[0-9a-f]{64}$/.test(finalizedHash)) {
+    return { status: 'unknown', method, error_code: 'INVALID_FINALIZED_BLOCK' };
+  }
+  return {
+    status: receiptNumber <= finalizedNumber ? 'finalized' : 'pending',
+    method,
+    receipt_block_number: receiptNumber.toString(),
+    finalized_block_number: finalizedNumber.toString(),
+    finalized_block_hash: finalizedHash,
+  };
+}
 
 // An EVM address as a 32-byte indexed log topic: 12 zero bytes then the 20
 // address bytes. This is how getLogs matches on an indexed `address` argument
@@ -222,6 +253,78 @@ class EtherscanService {
       throw error;
     }
     return payload.result;
+  }
+
+  // A bounded, independently verifiable transaction envelope for bridge
+  // adapters. Public JSON-RPC is preferred where the chain registry declares
+  // it; otherwise Etherscan V2's proxy module supplies the same two methods.
+  // Both halves are required. A provider returning null for either half is a
+  // failed boundary, never an empty successful receipt.
+  static async getTransactionEvidence(txHash, apiKey, chainId = etherscan.CHAIN_ID) {
+    const hash = String(txHash || '').toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(hash)) {
+      throw new Error('Invalid transaction hash for bridge receipt lookup');
+    }
+    const chain = chains.getChain(chainId);
+    let transaction;
+    let receipt;
+    let provider;
+    if (chain?.rpcUrl) {
+      provider = 'json-rpc';
+      transaction = await this._rpcRequest(chainId, 'eth_getTransactionByHash', [hash]);
+      receipt = await this._rpcRequest(chainId, 'eth_getTransactionReceipt', [hash]);
+    } else {
+      provider = this._provider(chainId).name;
+      transaction = await this._request(
+        { module: 'proxy', action: 'eth_getTransactionByHash', txhash: hash },
+        { apiKey, chainId }
+      );
+      receipt = await this._request(
+        { module: 'proxy', action: 'eth_getTransactionReceipt', txhash: hash },
+        { apiKey, chainId }
+      );
+    }
+    if (!transaction || !receipt) {
+      const error = new Error(`Transaction evidence is unavailable on chain ${chainId}`);
+      error.code = 'BRIDGE_RECEIPT_UNAVAILABLE';
+      throw error;
+    }
+    let finalizedBlock;
+    let finalityError = null;
+    const cachedFinality = finalizedBlockCache.get(Number(chainId));
+    if (cachedFinality && Date.now() - cachedFinality.checkedAt < FINALIZED_BLOCK_CACHE_MS) {
+      finalizedBlock = cachedFinality.block;
+      finalityError = cachedFinality.error;
+    } else {
+      try {
+        finalizedBlock = chain?.rpcUrl
+          ? await this._rpcRequest(chainId, 'eth_getBlockByNumber', ['finalized', false])
+          : await this._request(
+            { module: 'proxy', action: 'eth_getBlockByNumber', tag: 'finalized', boolean: 'false' },
+            { apiKey, chainId }
+          );
+      } catch (error) {
+        finalityError = { code: error.code || 'FINALIZED_BLOCK_UNAVAILABLE' };
+      }
+      finalizedBlockCache.set(Number(chainId), {
+        block: finalizedBlock || null, error: finalityError, checkedAt: Date.now(),
+      });
+    }
+    const finality = buildFinalityBoundary(receipt, finalizedBlock, finalityError);
+    return {
+      transaction,
+      receipt,
+      provider,
+      providerBoundary: {
+        chain_id: chainId,
+        methods: [
+          'eth_getTransactionByHash', 'eth_getTransactionReceipt',
+          'eth_getBlockByNumber(finalized)',
+        ],
+        complete: true,
+        finality,
+      },
+    };
   }
 
   // JSON-RPC batch transport for bounded historical log walks. IDs are local
@@ -1176,3 +1279,4 @@ class EtherscanService {
 }
 
 module.exports = EtherscanService;
+module.exports.buildFinalityBoundary = buildFinalityBoundary;

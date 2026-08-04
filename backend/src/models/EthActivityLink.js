@@ -10,18 +10,18 @@ const pool = require('../config/database');
 // exactly like eth_transfers and eth_activity_overrides. A denormalized owner
 // would be a second answer to "whose row is this", and the two can disagree.
 //
-// Every write below is delete-then-insert for the whole user. These rows are
-// DERIVED (from amounts and timestamps), not corrections -- unlike
-// eth_activity_overrides, which exists precisely because a rebuild must never
-// erase a human's verdict.
+// Every write below is delete-then-insert for the whole user. Since migration
+// 072 these rows are only a compatibility projection of durable bridge
+// movements. The database trigger rejects a projection whose movement is not
+// protocol-verified or user-confirmed.
 class EthActivityLink {
-  static async replaceForUser(userId, links) {
+  static async replaceForUser(userId, links, client = pool) {
     if (!userId) throw new Error('EthActivityLink.replaceForUser requires a userId');
 
     // Joining out_activity_id alone is enough: both endpoints of a link belong
     // to the same owner (the matcher only ever pairs rows from one user's
     // query), and every link has an out side.
-    await pool.query(
+    await client.query(
       `DELETE FROM eth_activity_links l
        USING eth_activity a, eth_wallets w
        WHERE l.out_activity_id = a.id AND a.wallet_id = w.id AND w.user_id = $1`,
@@ -32,9 +32,9 @@ class EthActivityLink {
     const values = [];
     const hasBundleDetails = links.some((link) => Array.isArray(link.asset_details));
     const columns = hasBundleDetails
-      ? '(out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount, asset_details)'
-      : '(out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount)';
-    const width = hasBundleDetails ? 7 : 6;
+      ? '(out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount, asset_details, movement_id, evidence_method)'
+      : '(out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount, movement_id, evidence_method)';
+    const width = hasBundleDetails ? 9 : 8;
     const placeholders = links.map((link, i) => {
       const base = i * width;
       values.push(
@@ -44,7 +44,9 @@ class EthActivityLink {
         link.out_amount,
         link.in_amount,
         link.fee_amount,
-        ...(hasBundleDetails ? [link.asset_details ? JSON.stringify(link.asset_details) : null] : [])
+        ...(hasBundleDetails ? [link.asset_details ? JSON.stringify(link.asset_details) : null] : []),
+        link.movement_id,
+        link.evidence_method
       );
       return `(${Array.from({ length: width }, (_, j) => `$${base + j + 1}${hasBundleDetails && j === 6 ? '::jsonb' : ''}`).join(', ')})`;
     });
@@ -54,7 +56,7 @@ class EthActivityLink {
     // -- a bug that must surface, not a duplicate to swallow. A destination
     // may legitimately repeat when one settlement bundles several source
     // activities; each row then carries that source's conserved asset slice.
-    const result = await pool.query(
+    const result = await client.query(
       `INSERT INTO eth_activity_links
          ${columns}
        VALUES ${placeholders.join(', ')}`,
@@ -73,7 +75,7 @@ class EthActivityLink {
   // "no transaction unexplained" cannot afford.
   //
   // Returns the number of legs left unmatched (i.e. still flagged).
-  static async syncBridgeReviewState(userId, reviewReason) {
+  static async syncBridgeReviewState(userId, reviewReason, client = pool) {
     if (!userId) throw new Error('EthActivityLink.syncBridgeReviewState requires a userId');
 
     const matched = `EXISTS (SELECT 1 FROM eth_activity_links l
@@ -91,7 +93,7 @@ class EthActivityLink {
         WHERE o.wallet_id = a.wallet_id AND o.chain_id = a.chain_id AND o.tx_hash = a.tx_hash),
       a.category)`;
 
-    await pool.query(
+    await client.query(
       `UPDATE eth_activity a
        SET needs_review = FALSE, review_reason = NULL, confidence = 'high'
        FROM eth_wallets w
@@ -100,7 +102,7 @@ class EthActivityLink {
          AND ${matched}`,
       [userId]
     );
-    const result = await pool.query(
+    const result = await client.query(
       `UPDATE eth_activity a
        SET needs_review = TRUE, review_reason = $2, confidence = 'medium'
        FROM eth_wallets w

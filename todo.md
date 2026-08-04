@@ -1,15 +1,15 @@
 # Remaining work for a fully explained EVM history
 
-Last reviewed: 2026-08-03 (autonomous production refresh and local completion pass)
+Last reviewed: 2026-08-03 (evidence-first bridge implementation and read-only production dry run)
 
 ## Repository and deployment state
 
 - Production is still running `1efcefc`.
-- Local `main` contains `6b1b033` and the implementation commit `2a59bf1`;
-  it is two commits ahead of `origin/main` and has not been pushed or deployed.
-- The protocol-interpretation migration and UI are therefore local-only. The
-  production audit counts below describe the deployed schema and existing
-  evidence, not post-deployment protocol-interpretation rows.
+- Local `main` has three prior unpushed commits; this pass adds a fourth local
+  commit. Nothing from this pass has been pushed or deployed.
+- The protocol-interpretation and bridge migrations/UI are therefore
+  local-only. Production audit counts below describe deployed schema and
+  evidence, not post-deployment interpretation or bridge-movement rows.
 
 ## Definition of done
 
@@ -34,8 +34,17 @@ address has a label, or a transaction has a note.
   There are 704 unmatched deposit/withdrawal records (241 deposits and 463
   withdrawals). This is correct under match-v3 until stronger evidence or a
   user verdict exists.
-- Bridge evidence has 8 links and 3 unmatched legs. Fiat evidence has 2 links
-  and 2 unmatched fiat records.
+- Production still has 8 legacy amount/time bridge links and 3 unmatched legs.
+  A read-only receipt dry run fetched complete public transaction envelopes for
+  all 16 EVM candidates (plus 2 zkSync Lite archive candidates), but none of
+  the 8 old links had a complete protocol-defined identity under bridge-match
+  v1. All 8 therefore remain inconclusive and will migrate to ambiguous
+  suggestions, not automatic folds. One legacy Gnosis destination and one
+  zkSync Lite initiation decoded as pending halves without an exact opposite
+  half. Of the 16 EVM receipt envelopes, 1 had a provider-proven finalized
+  boundary and 15 had an explicit unknown-finality boundary; none was silently
+  approximated from confirmation depth. Fiat evidence has 2 links and 2
+  unmatched fiat records.
 - ETH/token reconciliation has 195 matches, 13 mismatches, and 55 skipped
   rows. Exchange reconciliation has 10 open exceptions: Coinbase and Kraken
   remain mismatched, Coinbase Pro has no complete provider balance snapshot,
@@ -87,16 +96,48 @@ address has a label, or a transaction has a note.
       evidence remain suggestions, and ambiguous candidates match nothing.
 - [x] Used only stored prices. No ledger-derived asset, address, or date was
       sent to a public price provider.
+- [x] Researched and specified bridge-match v1 from first-party protocol
+      contracts/docs for OP Stack, Arbitrum Classic/Nitro, Polygon PoS/Plasma,
+      Gnosis xDAI/USDS, zkSync Era/Lite, Linea, and Across V2/V3. The evidence
+      matrix, finality/reorg behavior, upgrade/version boundaries, API/UI
+      states, and fail-closed rules are in `docs/bridge-matching-v1.md`.
+- [x] Replaced automatic bridge amount/time pairing in local code. Automatic
+      folding now requires a protocol-defined identity or a durable user
+      confirmation. Address/asset/amount and amount/time evidence create only
+      suggestions; every plausible alternative is retained and ambiguity
+      matches none.
+- [x] Added durable bridge endpoints, receipt envelopes and attempts,
+      movements/members, suggestions, verdicts, lifecycle states, and database
+      projection guards. Migration 072 converts old heuristic links to
+      ambiguous suggestions before removing their folds. The database also
+      rejects cross-user projections and rows that are not members of the
+      verified movement.
+- [x] Added exact v1 decoders where the researched evidence permits: OP Stack,
+      Arbitrum Nitro, Linea, legacy Gnosis, zkSync Era deposits, zkSync Lite
+      deposits, and Across V3. Polygon PoS/Plasma, Gnosis USDS Router, zkSync
+      withdrawals, and Across V2 intentionally remain suggestion-only until
+      stronger proof/calldata or deployment-version evidence is implemented.
+- [x] Added bridge audit/verdict UI and atomic derived rebuild behavior. Pending,
+      refunded, failed, unsupported, suggested, ambiguous, protocol-verified,
+      and user-confirmed states remain distinct and visible.
+- [x] Added a fail-closed finality gate. Protocol identity can fold only after
+      both EVM receipt blocks are at or below provider-reported `finalized`
+      heads. No confirmation-count approximation is used; providers without
+      the standard tag leave exact pairs pending. Official committed zkSync
+      Lite archive records carry an explicit archive-finality boundary.
 
 ## Local implementation awaiting authorization to publish
 
-- [ ] Push/deploy the local protocol-interpretation migration, UI, private gap
-      reporter, and explorer backoff. The local commit must remain unpushed
-      until the user explicitly authorizes publication.
+- [ ] Push/deploy the local protocol-interpretation and evidence-first bridge
+      migrations, UI, private gap reporter, and explorer backoff. The local
+      commit must remain unpushed until the user explicitly authorizes it.
 - [ ] After deployment, run one wallet rebuild so stored activity rows receive
-      the new protocol interpretations, then retry Base with the new backoff
-      and regenerate the private audit. A code-only local audit cannot make an
-      undeployed derived column appear in production data.
+      the new protocol interpretations and bridge receipt scan, then retry Base
+      with the new backoff and regenerate the private audit. A code-only local
+      audit cannot make undeployed derived tables appear in production data.
+- [ ] After migration, review the 8 imported legacy bridge suggestions. The
+      receipt dry run proved none eligible for automatic v1 folding; they need
+      stronger protocol evidence or an explicit confirm/reject verdict.
 
 ## Evidence-gated or user-gated residuals
 
@@ -140,8 +181,22 @@ address has a label, or a transaction has a note.
 - [ ] Resolve the 10 exchange balance exceptions with complete provider
       snapshots or source exports. Documented dust and opening-balance evidence
       remains an exception, not a silently accepted match.
-- [ ] Resolve the 3 unmatched bridge legs only with a compatible opposite leg,
-      bridge receipt, or explicit user evidence.
+- [ ] Resolve the 3 currently unmatched bridge legs and the 8 legacy-link
+      suggestions only with a protocol identity, missing compatible opposite
+      evidence, or an explicit user verdict. Amount/time proximity is not
+      enough. The current dry run also leaves one decoded Gnosis destination
+      and one zkSync Lite initiation pending because their exact opposite
+      evidence is absent from the tracked history.
+- [ ] Extend automatic bridge support only when exact evidence is available:
+      Polygon PoS/Plasma proof/state-sync identity, Gnosis USDS Router,
+      zkSync Era/Lite withdrawals, and Across V2's block-bounded ABI/partial-
+      fill model. Until then those paths must remain suggestions or unsupported.
+- [ ] Add a finality-capable read-only provider for Ethereum, Polygon,
+      Arbitrum, and Linea if protocol-exact pairs on those chains should fold
+      automatically. Their configured Etherscan proxy returns no standard
+      `finalized` block, so exact pairs remain pending unless the user confirms
+      them. OP Mainnet, Base, Gnosis, and zkSync Era public RPCs expose the
+      finalized tag.
 - [ ] Keep the 296 unpriced legs explicit. Contract-verified aliases and stored
       prices may be added when reliable local evidence exists; malformed,
       spoofed, ignored, spam, NFT, and unavailable assets remain marked as such.
@@ -168,13 +223,15 @@ closure list is empty. Do not close issues automatically.
 
 ## Verification and private evidence
 
-- [x] Backend tests: 1,017 passed.
+- [x] Backend tests: 1,007 passed in a serialized full run. The first parallel
+      run had one transient localhost test-port collision and its isolated
+      rerun passed 73/73.
 - [x] Backend lint: passed.
-- [x] Frontend tests: 190 passed (existing React `act(...)` warnings only).
+- [x] Frontend tests: 191 passed (existing React `act(...)` warnings only).
 - [x] Frontend lint: passed with 12 existing TanStack/React Compiler warnings
       and no errors.
 - [x] Frontend production build: passed.
-- [x] Ledger SQL verifier: both migration passes and all 88 checks passed.
+- [x] Ledger SQL verifier: both migration passes and all 91 checks passed.
 - [x] Final aggregate audit and detailed evidence manifests were written under
       `/private/tmp` with mode 0600:
       `my-money-evm-final-2026-08-03.json`,
@@ -182,3 +239,9 @@ closure list is empty. Do not close issues automatically.
       `my-money-exchange-match-final-2026-08-03.json`,
       `my-money-exchange-duplicates-final-2026-08-03.json`, and
       `my-money-exchange-duplicate-resolution-dry-run-final-2026-08-03.json`.
+- [x] Bridge-specific private artifacts were written with mode 0600:
+      `/private/tmp/my-money-bridge-baseline-2026-08-03.json`,
+      `/private/tmp/my-money-bridge-final-2026-08-03.json`, and
+      `/private/tmp/my-money-bridge-legacy-evidence-2026-08-03.json`.
+      The final aggregate audit explicitly reports
+      `evidence_model_available=false` because production is undeployed.

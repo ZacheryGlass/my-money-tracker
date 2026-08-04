@@ -18,7 +18,10 @@ const apiMocks = vi.hoisted(() => ({
     getReconciliation: vi.fn(),
     getUnpricedAssets: vi.fn(),
   },
-  crypto: { getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn() },
+  crypto: {
+    getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn(),
+    getBridgeAudit: vi.fn(), setBridgeVerdict: vi.fn(), clearBridgeVerdict: vi.fn(),
+  },
   exchanges: {
     getAll: vi.fn(), resolveRecord: vi.fn(), setMatchVerdict: vi.fn(), clearMatchVerdict: vi.fn(),
   },

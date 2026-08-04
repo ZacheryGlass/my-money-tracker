@@ -10,7 +10,10 @@ const apiMocks = vi.hoisted(() => ({
   accounts: { getAll: vi.fn() },
   holdings: { getAll: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
   history: { getAccounts: vi.fn() },
-  crypto: { getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn() },
+  crypto: {
+    getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn(),
+    getBridgeAudit: vi.fn(), setBridgeVerdict: vi.fn(), clearBridgeVerdict: vi.fn(),
+  },
   eth: {
     addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), syncWallet: vi.fn(), removeWallet: vi.fn(),
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),

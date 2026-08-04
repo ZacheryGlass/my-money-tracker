@@ -5,6 +5,9 @@ const requireUser = require('../middleware/auth');
 const CryptoLedger = require('../models/CryptoLedger');
 const EthWallet = require('../models/EthWallet');
 const ExchangeAccount = require('../models/ExchangeAccount');
+const EthBridgeMovement = require('../models/EthBridgeMovement');
+const BridgeMatchingService = require('../services/BridgeMatchingService');
+const pool = require('../config/database');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const { toCsv } = require('../utils/csv');
@@ -321,6 +324,72 @@ router.get('/ledger/export', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Export crypto ledger error');
     return res.status(500).json({ error: 'Failed to export the crypto ledger' });
+  }
+});
+
+// Evidence-first bridge audit. Suggestions are inert alternatives; only
+// protocol_verified/user_confirmed movements are folded into the ledger.
+router.get('/bridges', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 500, 1), 1000);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    return res.status(200).json(await EthBridgeMovement.findAuditForUser(
+      req.user.id, { limit, offset }
+    ));
+  } catch (error) {
+    logger.error({ err: error }, 'Get bridge audit error');
+    return res.status(500).json({ error: 'Failed to retrieve bridge evidence' });
+  }
+});
+
+router.post('/bridges/verdict', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const verdict = await EthBridgeMovement.upsertVerdict(req.user.id, req.body || {}, client);
+    const rebuilt = await BridgeMatchingService.rebuildForUser(
+      req.user.id, { acquireReceipts: false, client }
+    );
+    await client.query('COMMIT');
+    return res.status(200).json({ verdict, rebuilt });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.code === 'INVALID_BRIDGE_VERDICT') {
+      return res.status(400).json({ error: error.message });
+    }
+    if (error.code === 'BRIDGE_VERDICT_NOT_FOUND') {
+      return res.status(404).json({ error: error.message });
+    }
+    if (error.code === 'BRIDGE_VERDICT_CONFLICT' || error.code === '23505') {
+      return res.status(409).json({ error: error.message });
+    }
+    logger.error({ err: error }, 'Set bridge verdict error');
+    return res.status(500).json({ error: 'Failed to save the bridge verdict' });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/bridges/verdict', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const removed = await EthBridgeMovement.deleteVerdict(req.user.id, req.body || {}, client);
+    if (!removed) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Bridge verdict not found' });
+    }
+    const rebuilt = await BridgeMatchingService.rebuildForUser(
+      req.user.id, { acquireReceipts: false, client }
+    );
+    await client.query('COMMIT');
+    return res.status(200).json({ removed: true, rebuilt });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error({ err: error }, 'Delete bridge verdict error');
+    return res.status(500).json({ error: 'Failed to remove the bridge verdict' });
+  } finally {
+    client.release();
   }
 });
 

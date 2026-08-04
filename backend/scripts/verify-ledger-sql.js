@@ -748,10 +748,30 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     [walletId, wallet2Id, BRIDGE_OUT_TX, BRIDGE_IN_TX, addr('f')]
   );
   const bridgeId = (hash) => bridgeRows.rows.find((r) => r.tx_hash === hash).id;
+  const verifiedMovement = await pool.query(
+    `INSERT INTO eth_bridge_movements
+       (user_id, protocol, family_version, status, verification_method,
+        correlation_key, evidence)
+     VALUES (1, 'arbitrum', 'nitro', 'protocol_verified', 'protocol_identity',
+             'verifier:arbitrum:nitro:1', '{"identity":"synthetic_fixture"}'::jsonb)
+     RETURNING id`
+  );
+  const movementId = verifiedMovement.rows[0].id;
   await pool.query(
-    `INSERT INTO eth_activity_links (out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount)
-     VALUES ($1, $2, 'ETH', 3, 2.998, 0.002)`,
-    [bridgeId(BRIDGE_OUT_TX), bridgeId(BRIDGE_IN_TX)]
+    `INSERT INTO eth_bridge_movement_members
+       (movement_id, wallet_id, chain_id, tx_hash, role, amount, evidence)
+     VALUES
+       ($1, $2, 1, $4, 'initiation', 3, '{"identity":"synthetic_fixture"}'::jsonb),
+       ($1, $3, 42161, $5, 'destination_execution', 2.998,
+        '{"identity":"synthetic_fixture"}'::jsonb)`,
+    [movementId, walletId, wallet2Id, BRIDGE_OUT_TX, BRIDGE_IN_TX]
+  );
+  await pool.query(
+    `INSERT INTO eth_activity_links
+       (out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount,
+        movement_id, evidence_method)
+     VALUES ($1, $2, 'ETH', 3, 2.998, 0.002, $3, 'protocol_identity')`,
+    [bridgeId(BRIDGE_OUT_TX), bridgeId(BRIDGE_IN_TX), movementId]
   );
 
   const bridged = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
@@ -807,6 +827,48 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('an unlinked bridge leg stays a single, still-flagged row',
     lone && lone.bridge_match === null && lone.needs_review === true);
 
+  // A failed refresh must make the previously complete envelope ineligible
+  // for the next verdict-only rebuild without erasing its raw audit evidence.
+  const EthBridgeReceipt = require('../src/models/EthBridgeReceipt');
+  const RECEIPT_TX = tx('8');
+  const RECEIPT_BLOCK = tx('9');
+  await EthBridgeReceipt.upsertComplete({
+    walletId, chainId: 1, txHash: RECEIPT_TX, provider: 'verify-rpc',
+    providerBoundary: { complete: true },
+    transaction: { hash: RECEIPT_TX, blockHash: RECEIPT_BLOCK },
+    receipt: {
+      transactionHash: RECEIPT_TX, blockHash: RECEIPT_BLOCK,
+      blockNumber: '0x64', status: '0x1', logs: [],
+    },
+  });
+  await EthBridgeReceipt.upsertFailure({
+    walletId, chainId: 1, txHash: RECEIPT_TX, provider: 'verify-rpc',
+    providerBoundary: { complete: false }, status: 'failed',
+    errorCode: 'VERIFY_REFRESH_FAILED', errorDetail: 'synthetic verifier failure',
+  });
+  const failedReceipt = await EthBridgeReceipt.findOne(walletId, 1, RECEIPT_TX);
+  ok('a failed receipt refresh preserves raw evidence but makes it ineligible for matching',
+    failedReceipt?.fetch_status === 'failed'
+      && failedReceipt.transaction_json?.hash === RECEIPT_TX
+      && failedReceipt.receipt_json?.transactionHash === RECEIPT_TX
+      && failedReceipt.provider_boundary?.stale_evidence?.block_hash === RECEIPT_BLOCK);
+
+  let nonMemberRejected = false;
+  try {
+    await pool.query(
+      `INSERT INTO eth_activity_links
+         (out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount,
+          movement_id, evidence_method)
+       SELECT loose.id, linked.id, 'ETH', 1, 2.998, 0, $3, 'protocol_identity'
+         FROM eth_activity loose, eth_activity linked
+        WHERE loose.tx_hash = $1 AND linked.tx_hash = $2`,
+      [LONE_BRIDGE_TX, BRIDGE_IN_TX, movementId]
+    );
+  } catch (error) {
+    nonMemberRejected = error.message.includes('must be members of the verified movement');
+  }
+  ok('the database rejects an owned row that is not a verified movement member', nonMemberRejected);
+
   // --- a cross-user link cannot leak ------------------------------------------
   //
   // eth_activity_links has no owner column (scope is inherited through
@@ -825,11 +887,20 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
      RETURNING id`,
     [foreignWallet.rows[0].id, tx('d'), addr('f')]
   );
-  await pool.query(
-    `INSERT INTO eth_activity_links (out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount)
-     SELECT id, $2, 'ETH', 1, 1, 0 FROM eth_activity WHERE tx_hash = $1`,
-    [LONE_BRIDGE_TX, foreignLeg.rows[0].id]
-  );
+  let crossUserRejected = false;
+  try {
+    await pool.query(
+      `INSERT INTO eth_activity_links
+         (out_activity_id, in_activity_id, asset, out_amount, in_amount, fee_amount,
+          movement_id, evidence_method)
+       SELECT id, $2, 'ETH', 1, 1, 0, $3, 'protocol_identity'
+         FROM eth_activity WHERE tx_hash = $1`,
+      [LONE_BRIDGE_TX, foreignLeg.rows[0].id, movementId]
+    );
+  } catch (error) {
+    crossUserRejected = error.message.includes('must share one owner');
+  }
+  ok('the database rejects a cross-user bridge projection', crossUserRejected);
   const afterForeignLink = await CryptoLedger.findForUser(1, { limit: 200, offset: 0 });
   ok('a cross-user link folds NOTHING into the owner\'s feed',
     afterForeignLink.rows.find((r) => r.tx_hash === LONE_BRIDGE_TX)?.bridge_match === null);

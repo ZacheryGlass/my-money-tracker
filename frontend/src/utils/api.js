@@ -536,6 +536,28 @@ export const crypto = {
     });
     return response.data;
   },
+  getBridgeAudit: async (params = {}) => {
+    const response = await api.get('/api/crypto/bridges', { params });
+    return response.data;
+  },
+  setBridgeVerdict: async ({
+    outWalletId, outChainId, outTxHash,
+    inWalletId, inChainId, inTxHash, verdict, note,
+  }) => {
+    const response = await api.post('/api/crypto/bridges/verdict', {
+      outWalletId, outChainId, outTxHash,
+      inWalletId, inChainId, inTxHash, verdict, note,
+    });
+    return response.data;
+  },
+  clearBridgeVerdict: async ({
+    outWalletId, outChainId, outTxHash, inWalletId, inChainId, inTxHash,
+  }) => {
+    const response = await api.delete('/api/crypto/bridges/verdict', {
+      data: { outWalletId, outChainId, outTxHash, inWalletId, inChainId, inTxHash },
+    });
+    return response.data;
+  },
   // Built as a URL rather than fetched: the browser's own download handles the
   // Content-Disposition, and buffering an entire ledger through axios to
   // re-emit it as a Blob would only add a copy.

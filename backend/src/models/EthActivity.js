@@ -83,6 +83,11 @@ const RESOLVED_COLUMNS = `
     -- destination bundle may have several source link rows; the lateral
     -- aggregate below keeps this transaction-level reader one row per activity.
     COALESCE(lo.id, li.id) AS bridge_link_id,
+    COALESCE(lo.movement_id, li.movement_id) AS bridge_movement_id,
+    COALESCE(lo.evidence_method, li.evidence_method) AS bridge_verification_method,
+    COALESCE(lo.movement_status, li.movement_status) AS bridge_movement_status,
+    COALESCE(lo.protocol, li.protocol) AS bridge_protocol,
+    COALESCE(lo.rule_version, li.rule_version) AS bridge_rule_version,
     COALESCE(lo.asset, li.asset) AS bridge_asset,
     COALESCE(lo.out_amount, li.out_amount) AS bridge_out_amount,
     COALESCE(lo.in_amount, li.in_amount) AS bridge_in_amount,
@@ -110,14 +115,21 @@ const RESOLVED_FROM = `
      AND mv.tx_hash = a.tx_hash
     LEFT JOIN LATERAL (
       SELECT l.id, l.in_activity_id, l.asset, l.out_amount, l.in_amount,
-             l.fee_amount, l.asset_details
+             l.fee_amount, l.asset_details, l.movement_id, l.evidence_method,
+             bm.status AS movement_status, bm.protocol, bm.rule_version
       FROM eth_activity_links l
+      JOIN eth_bridge_movements bm ON bm.id = l.movement_id
       WHERE l.out_activity_id = a.id
       ORDER BY l.id
       LIMIT 1
     ) lo ON TRUE
     LEFT JOIN LATERAL (
       SELECT MIN(l.id) AS id,
+             (array_agg(l.movement_id ORDER BY l.id))[1] AS movement_id,
+             (array_agg(l.evidence_method ORDER BY l.id))[1] AS evidence_method,
+             (array_agg(bm.status ORDER BY l.id))[1] AS movement_status,
+             (array_agg(bm.protocol ORDER BY l.id))[1] AS protocol,
+             (array_agg(bm.rule_version ORDER BY l.id))[1] AS rule_version,
              (array_agg(l.out_activity_id ORDER BY l.id))[1] AS first_out_activity_id,
              (array_agg(l.asset ORDER BY l.id))[1] AS asset,
              SUM(l.out_amount) AS out_amount,
@@ -133,6 +145,7 @@ const RESOLVED_FROM = `
                   ) ORDER BY l.id)
              END AS asset_details
       FROM eth_activity_links l
+      JOIN eth_bridge_movements bm ON bm.id = l.movement_id
       WHERE l.in_activity_id = a.id
     ) li ON TRUE
     LEFT JOIN LATERAL (

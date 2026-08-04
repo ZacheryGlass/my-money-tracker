@@ -268,6 +268,12 @@ const ONCHAIN_RAW_CTE = `
       -- fold below instead pairs two rows that are BOTH already inside this
       -- user-scoped CTE, which is the only way both ends are guaranteed theirs.
       COALESCE(lo.id, li.id) AS bridge_link_id,
+      COALESCE(lo.movement_id, li.movement_id) AS bridge_movement_id,
+      COALESCE(lo.evidence_method, li.evidence_method)::text AS bridge_verification_method,
+      COALESCE(lo.movement_status, li.movement_status)::text AS bridge_movement_status,
+      COALESCE(lo.protocol, li.protocol)::text AS bridge_protocol,
+      COALESCE(lo.rule_version, li.rule_version)::text AS bridge_rule_version,
+      COALESCE(lo.movement_evidence, li.movement_evidence) AS bridge_movement_evidence,
       COALESCE(lo.in_activity_id, li.in_activity_id) AS bridge_group_key,
       -- Which half this row is. lo first: a row is the out side of at most one
       -- link and the in side of at most one; a destination bundle aggregates
@@ -318,8 +324,11 @@ const ONCHAIN_RAW_CTE = `
     ) rv ON TRUE
     LEFT JOIN LATERAL (
       SELECT l.id, l.in_activity_id, l.asset, l.out_amount, l.in_amount,
-             l.fee_amount, l.asset_details
+             l.fee_amount, l.asset_details, l.movement_id, l.evidence_method,
+             bm.status AS movement_status, bm.protocol, bm.rule_version,
+             bm.evidence AS movement_evidence
       FROM eth_activity_links l
+      JOIN eth_bridge_movements bm ON bm.id = l.movement_id
       WHERE l.out_activity_id = a.id
       ORDER BY l.id
       LIMIT 1
@@ -327,6 +336,12 @@ const ONCHAIN_RAW_CTE = `
     LEFT JOIN LATERAL (
       SELECT CASE WHEN COUNT(l.id) > 0 THEN a.id END AS in_activity_id,
              MIN(l.id) AS id,
+             (array_agg(l.movement_id ORDER BY l.id))[1] AS movement_id,
+             (array_agg(l.evidence_method ORDER BY l.id))[1] AS evidence_method,
+             (array_agg(bm.status ORDER BY l.id))[1] AS movement_status,
+             (array_agg(bm.protocol ORDER BY l.id))[1] AS protocol,
+             (array_agg(bm.rule_version ORDER BY l.id))[1] AS rule_version,
+             (array_agg(bm.evidence ORDER BY l.id))[1] AS movement_evidence,
              (array_agg(l.asset ORDER BY l.id))[1] AS asset,
              SUM(l.out_amount) AS out_amount,
              SUM(l.in_amount) AS in_amount,
@@ -341,6 +356,7 @@ const ONCHAIN_RAW_CTE = `
                   ) ORDER BY l.id)
              END AS asset_details
       FROM eth_activity_links l
+      JOIN eth_bridge_movements bm ON bm.id = l.movement_id
       WHERE l.in_activity_id = a.id
     ) li ON TRUE
     WHERE w.user_id = $1
@@ -407,7 +423,9 @@ const ONCHAIN_CTE = `
       fold.wallet_ids AS fold_wallet_ids,
       r.group_spam AS spam,
       r.spam_reason,
-      r.bridge_link_id, r.bridge_role, r.bridge_asset,
+      r.bridge_link_id, r.bridge_movement_id, r.bridge_verification_method,
+      r.bridge_movement_status, r.bridge_protocol, r.bridge_rule_version,
+      r.bridge_movement_evidence, r.bridge_role, r.bridge_asset,
       r.bridge_out_amount, r.bridge_in_amount, r.bridge_fee_amount,
       r.bridge_asset_details, r.bridge_group_key,
       CASE WHEN r.bridge_group_key IS NULL THEN 1
@@ -522,6 +540,12 @@ const ONCHAIN_BRIDGE_CTE = `
       h.spam_reason,
       CASE WHEN b.row_id IS NULL THEN NULL ELSE jsonb_build_object(
         'link_id', h.bridge_link_id,
+        'movement_id', h.bridge_movement_id,
+        'status', h.bridge_movement_status,
+        'verification_method', h.bridge_verification_method,
+        'protocol', h.bridge_protocol,
+        'rule_version', h.bridge_rule_version,
+        'evidence', h.bridge_movement_evidence,
         'wallet_id', b.wallet_id,
         'wallet_label', b.wallet_label,
         'wallet_address', b.wallet_address,

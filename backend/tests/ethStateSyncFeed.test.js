@@ -51,7 +51,7 @@ const EthReconciliationService = require('../src/services/EthReconciliationServi
 const MethodSignatureService = require('../src/services/MethodSignatureService');
 const EthActivityService = require('../src/services/EthActivityService');
 
-const { pairBridgeLegs, bridgeAsset, buildActivityRows } = EthActivityService;
+const { bridgeAsset, buildActivityRows } = EthActivityService;
 
 // Synthetic actors by rule -- real wallet addresses, tx hashes and amounts are
 // personal history and the repo is public. The precompile, DepositManager and
@@ -1019,22 +1019,7 @@ test('the state-sync credit classifies bridge_in and the L1 leg bridge_out', () 
   assert.equal(outRows[0].legs[0].asset, 'POL');
 });
 
-test('the two POL halves pair inside the 24h L1-deposit window', () => {
-  const scaled = (text) => {
-    const [whole, frac = ''] = String(text).split('.');
-    return BigInt(whole) * 10n ** 18n + BigInt(`${frac}${'0'.repeat(18)}`.slice(0, 18));
-  };
-  const T0 = Date.parse('2026-03-19T11:35:00.000Z');
-  const out = { id: 2, chain_id: 1, asset: 'POL', amount: scaled('47.25'), rawAmount: '47.25', time: T0 };
-  // State-sync credits land in ~25 minutes, well inside the 24h deposit window.
-  const inLeg = { id: 1, chain_id: 137, asset: 'POL', amount: scaled('47.25'), rawAmount: '47.25', time: T0 + 25 * 60 * 1000 };
-
-  const links = pairBridgeLegs([out], [inLeg]);
-  assert.equal(links.length, 1);
-  assert.deepEqual([links[0].out_activity_id, links[0].in_activity_id], [2, 1]);
-  assert.equal(links[0].asset, 'POL');
-  assert.equal(links[0].fee_amount, '0', 'a canonical deposit takes no cut');
-  // POL is its own money on both chains -- no normalization fuses or splits it.
+test('Polygon asset aliases are display-only and never establish bridge identity', () => {
   assert.equal(bridgeAsset('POL'), 'POL');
 });
 

@@ -10,6 +10,9 @@ vi.mock('../utils/api', () => ({
     getLedger: vi.fn().mockResolvedValue({ data: [], pagination: { total: 0 } }),
     getLedgerSummary: vi.fn().mockResolvedValue({ summary: { total: 0, needs_review_count: 0 } }),
     ledgerExportUrl: vi.fn(),
+    getBridgeAudit: vi.fn().mockResolvedValue({ movements: [], suggestions: [], verdicts: [], summary: {} }),
+    setBridgeVerdict: vi.fn(),
+    clearBridgeVerdict: vi.fn(),
   },
   eth: {
     getWallets: vi.fn().mockResolvedValue({ wallets: [] }),

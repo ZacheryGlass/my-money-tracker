@@ -1,10 +1,13 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import CryptoLedger from './CryptoLedger';
 import { LEDGER_CATEGORIES } from '../utils/dataLabels';
 
 const apiMocks = vi.hoisted(() => ({
-  crypto: { getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn() },
+  crypto: {
+    getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn(),
+    getBridgeAudit: vi.fn(), setBridgeVerdict: vi.fn(), clearBridgeVerdict: vi.fn(),
+  },
   eth: {
     getTransfers: vi.fn(),
     setActivityOverride: vi.fn(),
@@ -119,6 +122,9 @@ describe('CryptoLedger', () => {
       },
     });
     apiMocks.crypto.ledgerExportUrl.mockReturnValue('/api/crypto/ledger/export');
+    apiMocks.crypto.getBridgeAudit.mockResolvedValue({
+      movements: [], suggestions: [], verdicts: [], receipt_failures: [], summary: {},
+    });
     apiMocks.eth.getTransfers.mockResolvedValue({ data: [], pagination: { total: 0 } });
     apiMocks.eth.getReconciliation.mockResolvedValue({ data: [], summary: {} });
     apiMocks.eth.getUnpricedAssets.mockResolvedValue({ data: [], total: 0 });
@@ -137,6 +143,47 @@ describe('CryptoLedger', () => {
     render(<CryptoLedger />);
 
     expect((await screen.findAllByText('+ 0.00000042 ETH')).length).toBeGreaterThan(0);
+  });
+
+  it('keeps ambiguous bridge candidates suggested and exposes lifecycle/verdict controls', async () => {
+    apiMocks.crypto.getBridgeAudit.mockResolvedValue({
+      summary: { protocol_verified: 0, user_confirmed: 0, suggestions: 1, receipt_failures: 1 },
+      movements: [{
+        id: 20, protocol: 'polygon', family_version: 'pos-plasma', status: 'pending',
+        members: [{ chain_id: 1, tx_hash: TX }],
+        evidence: { ambiguity: 'awaiting_chain_finality' },
+      }],
+      suggestions: [{
+        id: 30, protocol: 'polygon', out_wallet_id: 1, out_chain_id: 1,
+        out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 137, in_tx_hash: TX2,
+        ambiguous: true, suggestion_reason: 'asset_amount',
+      }],
+      verdicts: [{
+        id: 40, verdict: 'rejected', out_wallet_id: 1, out_chain_id: 1,
+        out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 10, in_tx_hash: TX2,
+      }],
+      receipt_failures: [{
+        id: 50, chain_id: 8453, tx_hash: TX, provider: 'json-rpc',
+        status: 'failed', error_code: 'BRIDGE_RECEIPT_UNAVAILABLE',
+      }],
+    });
+    apiMocks.crypto.setBridgeVerdict.mockResolvedValue({ verdict: { id: 30 } });
+    apiMocks.crypto.clearBridgeVerdict.mockResolvedValue({ removed: 1 });
+
+    render(<CryptoLedger />);
+
+    expect(await screen.findByText('Amounts and timing never fold automatically.')).toBeInTheDocument();
+    expect(screen.getByText(/Ambiguous — review every alternative/)).toBeInTheDocument();
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+    expect(screen.getByText(/Exact protocol identity found; waiting for finalized/)).toBeInTheDocument();
+    expect(screen.getByText(/Receipt evidence unavailable/)).toBeInTheDocument();
+    expect(screen.getAllByText('Failed').length).toBeGreaterThan(0);
+    expect(screen.getByText(/User rejected/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(apiMocks.crypto.setBridgeVerdict).toHaveBeenCalledWith(
+      expect.objectContaining({ verdict: 'confirmed', outTxHash: TX, inTxHash: TX2 })
+    ));
   });
 
   it('interleaves both sources in one stream, newest first', async () => {
@@ -932,6 +979,7 @@ describe('CryptoLedger', () => {
       bridge_match: {
         link_id: 4, wallet_id: 2, wallet_label: 'Second', chain_id: 42161,
         chain_label: 'Arbitrum One', tx_hash: TX2, category: 'bridge_in',
+        movement_status: 'protocol_verified', verification_method: 'protocol_identity',
         needs_review: false, usd_value: '5996.00', usd_basis: 'exact',
         asset: 'ETH', out_amount: '3', in_amount: '2.998', fee_amount: '0.002',
         legs: [{ asset: 'ETH', direction: 'in', amount: '2.998', units: '2998', decimals: 3 }],
@@ -941,7 +989,7 @@ describe('CryptoLedger', () => {
     render(<CryptoLedger />);
 
     expect(await screen.findByText('Showing 1 of 1')).toBeInTheDocument();
-    expect(screen.getAllByText('Bridged').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Protocol verified').length).toBeGreaterThan(0);
     // The out side hosts, so the row's own dollars are the mover's -- $6,000,
     // not $11,996.
     expect(screen.getAllByText('$6,000.00').length).toBeGreaterThan(0);
@@ -949,7 +997,7 @@ describe('CryptoLedger', () => {
 
     fireEvent.click(screen.getAllByText('− 3 ETH')[0]);
     // The arrival is stated rather than dropped, with what the bridge took.
-    expect((await screen.findAllByText(/Bridged to Arbitrum One/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/Protocol verified · bridged to Arbitrum One/)).length).toBeGreaterThan(0);
     expect(screen.getAllByText('+ 2.998 ETH').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/bridge fee 0.002 ETH/).length).toBeGreaterThan(0);
   });

@@ -1,0 +1,441 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = 'postgresql://test:test@localhost/test';
+
+const {
+  TOPICS, decodeEnvelope, opSourceHash,
+} = require('../src/services/bridge/adapters');
+const {
+  buildProtocolMovements, suggestBridgeLegs, verdictMovement,
+} = require('../src/services/bridge/matcher');
+const { validateEvidence } = require('../src/models/EthBridgeReceipt');
+const { endpointApplies, unsupportedMovement } = require('../src/services/BridgeMatchingService');
+const { buildFinalityBoundary } = require('../src/services/EtherscanService');
+
+const hash = (digit) => `0x${digit.repeat(64)}`;
+const address = (digit) => `0x${digit.repeat(40)}`;
+const word = (value) => `0x${BigInt(value).toString(16).padStart(64, '0')}`;
+const addressWord = (value) => `0x${value.slice(2).padStart(64, '0')}`;
+const data = (...words) => `0x${words.map((value) => value.slice(2)).join('')}`;
+
+function log({ txHash, blockHash, logAddress, index = 0, topics, body = '0x' }) {
+  return {
+    address: logAddress,
+    logIndex: `0x${index.toString(16)}`,
+    transactionHash: txHash,
+    blockHash,
+    topics,
+    data: body,
+  };
+}
+
+function envelope({
+  walletId = 1, chainId, txHash, category, tx = {}, logs = [], endpoints = [],
+  blockHash = hash('b'), methodName = null,
+  providerBoundary = { finality: { status: 'finalized', method: 'synthetic-fixture' } },
+}) {
+  return {
+    wallet_id: walletId,
+    chain_id: chainId,
+    tx_hash: txHash,
+    category,
+    method_name: methodName,
+    receipt_id: walletId * 10 + chainId,
+    transaction: { hash: txHash, blockHash, ...tx },
+    receipt: { transactionHash: txHash, blockHash, blockNumber: '0x64', status: '0x1', logs },
+    endpoints,
+    provider_boundary: providerBoundary,
+  };
+}
+
+function endpoint(protocol, chainId, endpointAddress, familyVersion = 'fixture') {
+  return { protocol, family_version: familyVersion, chain_id: chainId, address: endpointAddress };
+}
+
+function event(overrides = {}) {
+  return {
+    protocol: 'fixture', family_version: 'v1', correlation_key: 'id:1',
+    role: 'initiation', direction: 'out', status: 'pending',
+    wallet_id: 1, chain_id: 1, tx_hash: hash('1'), log_index: 0,
+    evidence: { finality: { status: 'finalized', method: 'synthetic-fixture' } },
+    ...overrides,
+  };
+}
+
+test('OP Stack L1 endpoints route Base separately from Optimism and sourceHash proves identity', () => {
+  const sourceTx = hash('1');
+  const destinationTx = hash('2');
+  const blockHash = hash('a');
+  const portal = address('1');
+  const source = envelope({
+    chainId: 1, txHash: sourceTx, category: 'bridge_out', blockHash,
+    endpoints: [endpoint('base', 1, portal), endpoint('optimism', 1, address('2'))],
+  });
+  source.receipt.logs = [log({
+    txHash: sourceTx, blockHash, logAddress: portal, index: 7,
+    topics: [TOPICS.opTransactionDeposited],
+  })];
+  const sourceHash = opSourceHash(blockHash, 7);
+  const destination = envelope({
+    walletId: 2, chainId: 8453, txHash: destinationTx, category: 'bridge_in',
+    tx: { sourceHash, type: '0x7e' },
+  });
+
+  const decoded = [...decodeEnvelope(destination), ...decodeEnvelope(source)];
+  assert.equal(decoded.length, 2);
+  assert.deepEqual(new Set(decoded.map((row) => row.protocol)), new Set(['base']));
+  const movements = buildProtocolMovements(decoded);
+  assert.equal(movements.length, 1);
+  assert.equal(movements[0].status, 'protocol_verified');
+  assert.equal(movements[0].correlation_key, `op-deposit:${sourceHash}`);
+
+  destination.receipt.status = '0x0';
+  assert.equal(buildProtocolMovements([
+    ...decodeEnvelope(destination), ...decodeEnvelope(source),
+  ])[0].status, 'failed');
+});
+
+test('Arbitrum Nitro uses non-indexed Outbox transactionIndex, not indexed compatibility zero', () => {
+  const position = 43n;
+  const sourceTx = hash('3');
+  const destinationTx = hash('4');
+  const arbSys = address('3');
+  const outbox = address('4');
+  const l2 = envelope({
+    chainId: 42161, txHash: sourceTx, category: 'bridge_out',
+    endpoints: [endpoint('arbitrum', 42161, arbSys)],
+  });
+  l2.receipt.logs = [log({
+    txHash: sourceTx, blockHash: l2.receipt.blockHash, logAddress: arbSys,
+    topics: [TOPICS.arbL2ToL1Tx, word(0), word(0), word(position)],
+  })];
+  const l1 = envelope({
+    walletId: 2, chainId: 1, txHash: destinationTx, category: 'bridge_in',
+    endpoints: [endpoint('arbitrum', 1, outbox)],
+  });
+  l1.receipt.logs = [log({
+    txHash: destinationTx, blockHash: l1.receipt.blockHash, logAddress: outbox,
+    topics: [TOPICS.arbOutboxExecuted, word(0), word(0), word(0)],
+    body: data(word(position)),
+  })];
+
+  const movement = buildProtocolMovements([
+    ...decodeEnvelope(l1), ...decodeEnvelope(l2),
+  ])[0];
+  assert.equal(movement.status, 'protocol_verified');
+  assert.equal(movement.correlation_key, `arbitrum-nitro-withdrawal:42161:${position}`);
+});
+
+test('Linea joins MessageSent and MessageClaimed by indexed message hash', () => {
+  const messageHash = hash('5');
+  const sourceTx = hash('6');
+  const destinationTx = hash('7');
+  const l1Service = address('5');
+  const l2Service = address('6');
+  const source = envelope({
+    chainId: 1, txHash: sourceTx, category: 'bridge_out',
+    endpoints: [endpoint('linea', 1, l1Service)],
+  });
+  source.receipt.logs = [log({
+    txHash: sourceTx, blockHash: source.receipt.blockHash, logAddress: l1Service,
+    topics: [TOPICS.lineaMessageSent, addressWord(address('a')), addressWord(address('b')), messageHash],
+  })];
+  const destination = envelope({
+    walletId: 2, chainId: 59144, txHash: destinationTx, category: 'bridge_in',
+    endpoints: [endpoint('linea', 59144, l2Service)],
+  });
+  destination.receipt.logs = [log({
+    txHash: destinationTx, blockHash: destination.receipt.blockHash, logAddress: l2Service,
+    topics: [TOPICS.lineaMessageClaimed, messageHash],
+  })];
+
+  assert.equal(buildProtocolMovements([
+    ...decodeEnvelope(destination), ...decodeEnvelope(source),
+  ])[0].status, 'protocol_verified');
+});
+
+test('Gnosis legacy decodes the third non-indexed word as source transaction hash', () => {
+  const sourceTx = hash('8');
+  const destinationTx = hash('9');
+  const l1Bridge = address('7');
+  const l2Bridge = address('8');
+  const source = envelope({
+    chainId: 1, txHash: sourceTx, category: 'bridge_out',
+    tx: { to: l1Bridge }, endpoints: [endpoint('gnosis', 1, l1Bridge, 'legacy-xdai')],
+  });
+  const destination = envelope({
+    walletId: 2, chainId: 100, txHash: destinationTx, category: 'bridge_in',
+    endpoints: [endpoint('gnosis', 100, l2Bridge, 'legacy-xdai')],
+  });
+  destination.receipt.logs = [log({
+    txHash: destinationTx, blockHash: destination.receipt.blockHash, logAddress: l2Bridge,
+    topics: [TOPICS.gnosisAffirmationCompleted],
+    body: data(addressWord(address('9')), word(250), sourceTx),
+  })];
+
+  const movement = buildProtocolMovements([
+    ...decodeEnvelope(source), ...decodeEnvelope(destination),
+  ])[0];
+  assert.equal(movement.status, 'protocol_verified');
+  assert.equal(movement.correlation_key, `gnosis-legacy:${sourceTx}`);
+
+  source.endpoints = [endpoint('gnosis', 1, l1Bridge, 'usds-router')];
+  assert.deepEqual(decodeEnvelope(source), []);
+});
+
+test('zkSync Era Bridgehub destination hash and Lite archive hash are exact identities', () => {
+  const eraL2Hash = hash('a');
+  const eraSourceTx = hash('b');
+  const router = address('a');
+  const eraSource = envelope({
+    chainId: 1, txHash: eraSourceTx, category: 'bridge_out',
+    endpoints: [endpoint('zksync', 1, router)],
+  });
+  eraSource.receipt.logs = [log({
+    txHash: eraSourceTx, blockHash: eraSource.receipt.blockHash, logAddress: router,
+    topics: [TOPICS.zksyncDepositFinalized, word(324), hash('c'), eraL2Hash],
+  })];
+  const eraDestination = envelope({
+    walletId: 2, chainId: 324, txHash: eraL2Hash, category: 'bridge_in',
+  });
+  assert.equal(buildProtocolMovements([
+    ...decodeEnvelope(eraSource), ...decodeEnvelope(eraDestination),
+  ])[0].status, 'protocol_verified');
+
+  const liteHash = hash('d');
+  const liteMain = address('d');
+  const liteSource = envelope({
+    chainId: 1, txHash: liteHash, category: 'bridge_out', tx: { to: liteMain },
+    endpoints: [endpoint('zksync-lite', 1, liteMain)],
+  });
+  const liteDestination = envelope({
+    walletId: 2, chainId: 32401, txHash: liteHash, category: 'bridge_in',
+    methodName: 'zkSync Lite Deposit',
+  });
+  assert.equal(buildProtocolMovements([
+    ...decodeEnvelope(liteDestination), ...decodeEnvelope(liteSource),
+  ])[0].status, 'protocol_verified');
+});
+
+test('Across V3 compares protocol key and common relay fields; V2 remains suggestion-only', () => {
+  const sourceTx = hash('e');
+  const destinationTx = hash('f');
+  const sourcePool = address('e');
+  const destinationPool = address('f');
+  const token = address('1');
+  const outputToken = address('2');
+  const depositor = address('3');
+  const recipient = address('4');
+  const source = envelope({
+    chainId: 1, txHash: sourceTx, category: 'bridge_out',
+    endpoints: [endpoint('across', 1, sourcePool)],
+  });
+  source.receipt.logs = [log({
+    txHash: sourceTx, blockHash: source.receipt.blockHash, logAddress: sourcePool,
+    topics: [TOPICS.acrossV3Deposit, word(8453), word(77), addressWord(depositor)],
+    body: data(
+      addressWord(token), addressWord(outputToken), word(1_000_000), word(995_000),
+      word(100), word(200), word(0), addressWord(recipient), addressWord(address('5')), word(320)
+    ),
+  })];
+  const destination = envelope({
+    walletId: 2, chainId: 8453, txHash: destinationTx, category: 'bridge_in',
+    endpoints: [endpoint('across', 8453, destinationPool)],
+  });
+  destination.receipt.logs = [log({
+    txHash: destinationTx, blockHash: destination.receipt.blockHash, logAddress: destinationPool,
+    topics: [TOPICS.acrossV3Fill, word(1), word(77), addressWord(address('6'))],
+    body: data(
+      addressWord(token), addressWord(outputToken), word(1_000_000), word(995_000),
+      word(1), word(200), word(0), addressWord(address('5')), addressWord(depositor),
+      addressWord(recipient), word(352)
+    ),
+  })];
+  assert.equal(buildProtocolMovements([
+    ...decodeEnvelope(source), ...decodeEnvelope(destination),
+  ])[0].status, 'protocol_verified');
+
+  destination.receipt.logs[0].data = data(
+    addressWord(token), addressWord(outputToken), word(1_000_000), word(995_000)
+  );
+  assert.deepEqual(decodeEnvelope(destination), []);
+
+  source.receipt.logs[0].topics[0] = TOPICS.acrossV2Deposit;
+  assert.deepEqual(decodeEnvelope(source), []);
+});
+
+test('Polygon PoS and Plasma stay suggestion-only without a shared proof identifier', () => {
+  const txHash = hash('1');
+  const bridge = address('1');
+  const candidate = envelope({
+    chainId: 1, txHash, category: 'bridge_out',
+    endpoints: [endpoint('polygon', 1, bridge)],
+  });
+  candidate.receipt.logs = [log({
+    txHash, blockHash: candidate.receipt.blockHash, logAddress: bridge,
+    topics: [hash('2')], body: data(word(1)),
+  })];
+  assert.deepEqual(decodeEnvelope(candidate), []);
+  const unsupported = unsupportedMovement(candidate, new Set());
+  assert.equal(unsupported.status, 'unsupported');
+  assert.equal(unsupported.protocol, 'polygon');
+  assert.equal(unsupported.members[0].role, 'initiation');
+});
+
+test('matching is set-based across out-of-order, concurrent, and cross-protocol identities', () => {
+  const events = [
+    event({ protocol: 'base', correlation_key: 'deposit:2', role: 'destination_execution', direction: 'in', chain_id: 8453, tx_hash: hash('4') }),
+    event({ protocol: 'optimism', correlation_key: 'deposit:1', tx_hash: hash('1') }),
+    event({ protocol: 'base', correlation_key: 'deposit:2', tx_hash: hash('3') }),
+    event({ protocol: 'optimism', correlation_key: 'deposit:1', role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2') }),
+    // Same textual key in another protocol is intentionally independent.
+    event({ protocol: 'linea', correlation_key: 'deposit:1', tx_hash: hash('5') }),
+    event({ protocol: 'linea', correlation_key: 'deposit:1', role: 'destination_execution', direction: 'in', chain_id: 59144, tx_hash: hash('6') }),
+  ];
+  const movements = buildProtocolMovements(events);
+  assert.equal(movements.length, 3);
+  assert.ok(movements.every((movement) => movement.status === 'protocol_verified'));
+});
+
+test('duplicate members, incompatible fields, failures, and refunds never become successful folds', () => {
+  const duplicate = buildProtocolMovements([
+    event(),
+    event({ role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2') }),
+    event({ role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('3') }),
+  ])[0];
+  assert.equal(duplicate.status, 'unsupported');
+
+  const incompatible = buildProtocolMovements([
+    event({ evidence: { identity_fields: { recipient: address('1') } } }),
+    event({ role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2'), evidence: { identity_fields: { recipient: address('2') } } }),
+  ])[0];
+  assert.equal(incompatible.status, 'unsupported');
+
+  assert.equal(buildProtocolMovements([
+    event(), event({ role: 'finalization', direction: 'in', chain_id: 10, status: 'failed' }),
+  ])[0].status, 'failed');
+  assert.equal(buildProtocolMovements([
+    event(), event({ role: 'refund', direction: 'in', chain_id: 1 }),
+  ])[0].status, 'refunded');
+});
+
+test('amount and time enumerate every alternative as a suggestion and create no movement', () => {
+  const base = {
+    wallet_id: 1, block_time: '2026-01-01T00:00:00.000Z',
+    legs: [{ asset: 'ETH', amount: '1', token_standard: null, symbol_known: true }],
+  };
+  const rows = [
+    { ...base, chain_id: 1, tx_hash: hash('1'), category: 'bridge_out', endpoint_protocol: 'base', legs: [{ ...base.legs[0], direction: 'out' }] },
+    { ...base, wallet_id: 2, chain_id: 8453, tx_hash: hash('2'), category: 'bridge_in', endpoint_protocol: 'base', block_time: '2026-01-01T00:05:00.000Z', legs: [{ ...base.legs[0], direction: 'in' }] },
+    { ...base, wallet_id: 3, chain_id: 10, tx_hash: hash('3'), category: 'bridge_in', block_time: '2026-01-01T00:06:00.000Z', legs: [{ ...base.legs[0], direction: 'in' }] },
+  ];
+  const suggestions = suggestBridgeLegs(rows);
+  assert.equal(suggestions.length, 2);
+  assert.ok(suggestions.every((suggestion) => suggestion.ambiguous));
+  assert.deepEqual(buildProtocolMovements([]), []);
+});
+
+test('protocol identity remains pending until both receipt chains are finalized', () => {
+  const movement = buildProtocolMovements([
+    event(),
+    event({
+      role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2'),
+      evidence: { finality: { status: 'pending', method: 'eth_getBlockByNumber(finalized)' } },
+    }),
+  ])[0];
+  assert.equal(movement.status, 'pending');
+  assert.equal(movement.evidence.ambiguity, 'awaiting_chain_finality');
+});
+
+test('finality boundaries use the standard finalized block and fail closed when unavailable', () => {
+  assert.deepEqual(buildFinalityBoundary(
+    { blockNumber: '0x64' }, { number: '0x65', hash: hash('a') }
+  ), {
+    status: 'finalized', method: 'eth_getBlockByNumber(finalized)',
+    receipt_block_number: '100', finalized_block_number: '101',
+    finalized_block_hash: hash('a'),
+  });
+  assert.equal(buildFinalityBoundary(
+    { blockNumber: '0x66' }, { number: '0x65', hash: hash('a') }
+  ).status, 'pending');
+  assert.equal(buildFinalityBoundary(
+    { blockNumber: '0x64' }, null, { code: 'ETHERSCAN_API_ERROR' }
+  ).status, 'unknown');
+});
+
+test('a durable confirmation is the only non-protocol path to a fold', () => {
+  const movement = verdictMovement({
+    id: 9, out_wallet_id: 1, out_chain_id: 1, out_tx_hash: hash('1'),
+    in_wallet_id: 2, in_chain_id: 10, in_tx_hash: hash('2'), note: 'confirmed by user',
+  });
+  assert.equal(movement.status, 'user_confirmed');
+  assert.equal(movement.verification_method, 'user_verdict');
+});
+
+test('malformed or inconsistent provider receipts fail closed before decoding', () => {
+  const txHash = hash('1');
+  const blockHash = hash('2');
+  const transaction = { hash: txHash, blockHash };
+  const receipt = {
+    transactionHash: txHash, blockHash, blockNumber: '0x10', status: '0x1', logs: [],
+  };
+  assert.deepEqual(validateEvidence(txHash, transaction, receipt), {
+    hash: txHash, blockNumber: 16, blockHash, status: 1,
+  });
+  assert.throws(() => validateEvidence(txHash, transaction, {
+    ...receipt,
+    logs: [log({ txHash, blockHash, logAddress: address('1'), topics: [hash('3')], body: '0x123' })],
+  }), /malformed/);
+  assert.throws(() => validateEvidence(txHash, transaction, {
+    ...receipt, blockHash: hash('4'),
+  }), /disagree/);
+  assert.throws(() => validateEvidence(txHash, transaction, {
+    ...receipt, status: null,
+  }), /execution status/);
+});
+
+test('migration enforces evidence-only folds and cross-owner isolation', () => {
+  const migration = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../migrations/072_evidence_first_bridge_matching.sql'),
+    'utf8'
+  );
+  assert.match(migration, /verification_method = 'protocol_identity'/);
+  assert.match(migration, /verification_method = 'user_verdict'/);
+  assert.doesNotMatch(migration, /verification_method = '(?:amount|address|time)/);
+  assert.match(migration, /out_owner <> movement\.user_id OR in_owner <> movement\.user_id/);
+  assert.match(migration, /movement_owner <> wallet_owner/);
+  assert.match(migration, /out_owner <> NEW\.user_id OR in_owner <> NEW\.user_id/);
+  assert.match(migration, /bridge link activities must be members of the verified movement/);
+  assert.match(migration, /uq_eth_bridge_confirmed_out_member/);
+  assert.match(migration, /uq_eth_bridge_confirmed_in_member/);
+  assert.match(migration, /column_name = 'movement_id'/);
+});
+
+test('endpoint deployment bounds route only receipts from the reviewed version window', () => {
+  const bounded = {
+    chain_id: 1, valid_from_block: 100, valid_to_block: 200,
+  };
+  assert.equal(endpointApplies(bounded, { chain_id: 1, block_number: 100 }), true);
+  assert.equal(endpointApplies(bounded, { chain_id: 1, block_number: 200 }), true);
+  assert.equal(endpointApplies(bounded, { chain_id: 1, block_number: 99 }), false);
+  assert.equal(endpointApplies(bounded, { chain_id: 1, block_number: 201 }), false);
+  assert.equal(endpointApplies(bounded, { chain_id: 10, block_number: 150 }), false);
+  assert.equal(endpointApplies(bounded, { chain_id: 1, block_number: null }), false);
+});
+
+test('the reviewed endpoint pack and generated migration seed cannot drift', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { buildSeed } = require('../scripts/generate-bridge-endpoint-seed');
+  const pack = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '../data/builtin-bridge-labels.json'), 'utf8'
+  ));
+  const migration = fs.readFileSync(
+    path.join(__dirname, '../migrations/072_evidence_first_bridge_matching.sql'), 'utf8'
+  );
+  assert.ok(migration.includes(buildSeed(pack)));
+});

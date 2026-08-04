@@ -86,6 +86,24 @@ const TONE_STYLES = {
 
 const categoryChipClass = (category) => TONE_STYLES[CATEGORY_TONES[category] || 'neutral'];
 
+const bridgeVerificationLabel = (match) => {
+  if (match?.verification_method === 'protocol_identity') return 'Protocol verified';
+  if (match?.verification_method === 'user_verdict') return 'User confirmed';
+  return 'Bridged';
+};
+
+const BRIDGE_STATUS_LABELS = {
+  protocol_verified: 'Protocol verified',
+  user_confirmed: 'User confirmed',
+  pending: 'Pending',
+  refunded: 'Refunded',
+  failed: 'Failed',
+  unsupported: 'Unsupported',
+  invalidated: 'Invalidated',
+};
+
+const bridgeStatusLabel = (status) => BRIDGE_STATUS_LABELS[status] || status || 'Unsupported';
+
 // A uint256 token id runs to 78 digits and would blow the column out.
 const shortTokenId = (id) => {
   const text = String(id);
@@ -215,6 +233,8 @@ const CryptoLedger = ({
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
   const [reconciliation, setReconciliation] = useState(null);
   const [unpriced, setUnpriced] = useState([]);
+  const [bridgeAudit, setBridgeAudit] = useState(null);
+  const [bridgeJudging, setBridgeJudging] = useState(null);
   const [source, setSource] = useState('');
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
@@ -326,6 +346,62 @@ const CryptoLedger = ({
     });
     return () => { cancelled = true; };
   }, [reload, refreshKey]);
+
+  useEffect(() => {
+    if (walletId != null) { setBridgeAudit(null); return undefined; }
+    let cancelled = false;
+    Promise.resolve(cryptoAPI.getBridgeAudit())
+      .then((result) => { if (!cancelled) setBridgeAudit(result); })
+      .catch(() => { if (!cancelled) setBridgeAudit(null); });
+    return () => { cancelled = true; };
+  }, [reload, refreshKey, walletId]);
+
+  const judgeBridgeSuggestion = async (suggestion, verdict) => {
+    const key = `${suggestion.id}:${verdict}`;
+    if (bridgeJudging) return;
+    setBridgeJudging(key);
+    setError(null);
+    try {
+      await cryptoAPI.setBridgeVerdict({
+        outWalletId: suggestion.out_wallet_id,
+        outChainId: suggestion.out_chain_id,
+        outTxHash: suggestion.out_tx_hash,
+        inWalletId: suggestion.in_wallet_id,
+        inChainId: suggestion.in_chain_id,
+        inTxHash: suggestion.in_tx_hash,
+        verdict,
+      });
+      refresh();
+      onDataChanged?.();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save the bridge verdict');
+    } finally {
+      setBridgeJudging(null);
+    }
+  };
+
+  const clearBridgeVerdict = async (verdict) => {
+    const key = `clear:${verdict.id}`;
+    if (bridgeJudging) return;
+    setBridgeJudging(key);
+    setError(null);
+    try {
+      await cryptoAPI.clearBridgeVerdict({
+        outWalletId: verdict.out_wallet_id,
+        outChainId: verdict.out_chain_id,
+        outTxHash: verdict.out_tx_hash,
+        inWalletId: verdict.in_wallet_id,
+        inChainId: verdict.in_chain_id,
+        inTxHash: verdict.in_tx_hash,
+      });
+      refresh();
+      onDataChanged?.();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to clear the bridge verdict');
+    } finally {
+      setBridgeJudging(null);
+    }
+  };
 
   const incompleteAccounts = useMemo(() => exchangeAccounts.filter(
     (account) => ['mismatch', 'stale', 'unknown'].includes(account.reconciliation_status)
@@ -448,10 +524,10 @@ const CryptoLedger = ({
             {entry.bridge_match && (
               <Chip
                 className="border-teal-500/20 bg-teal-500/10 text-teal-400"
-                title={`Completed on ${entry.bridge_match.chain_label || 'the far chain'}; one movement, shown once`}
+                title={`${bridgeVerificationLabel(entry.bridge_match)}; completed on ${entry.bridge_match.chain_label || 'the far chain'}; one movement, shown once`}
               >
                 <Link2 size={9} />
-                Bridged
+                {bridgeVerificationLabel(entry.bridge_match)}
               </Chip>
             )}
             {entry.exchange_match && (
@@ -693,6 +769,126 @@ const CryptoLedger = ({
           </a>
         </div>
       </div>
+
+      {bridgeAudit && (
+        <div className="mb-3 border border-border bg-surface">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
+            <div>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-secondary">Bridge evidence</p>
+              <p className="mt-0.5 text-caption text-tertiary">
+                {(bridgeAudit.summary?.protocol_verified || 0).toLocaleString()} protocol verified · {(bridgeAudit.summary?.user_confirmed || 0).toLocaleString()} user confirmed · {(bridgeAudit.summary?.suggestions || 0).toLocaleString()} need confirmation · {(bridgeAudit.summary?.receipt_failures || 0).toLocaleString()} receipt failures
+              </p>
+            </div>
+            <span className="text-caption text-tertiary">Amounts and timing never fold automatically.</span>
+          </div>
+          {(bridgeAudit.suggestions || []).length > 0 && (
+            <ul className="divide-y divide-border">
+              {bridgeAudit.suggestions.map((suggestion) => (
+                <li key={suggestion.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0 text-caption text-secondary">
+                    <p>
+                      {suggestion.protocol || 'Possible bridge'} · chain {suggestion.out_chain_id} {shortEthAddress(suggestion.out_tx_hash)} → chain {suggestion.in_chain_id} {shortEthAddress(suggestion.in_tx_hash)}
+                    </p>
+                    <p className="mt-0.5 text-tertiary">
+                      {suggestion.ambiguous ? 'Ambiguous — review every alternative' : suggestion.suggestion_reason.replaceAll('_', ' ')} · confirmation required
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={bridgeJudging != null}
+                      onClick={() => judgeBridgeSuggestion(suggestion, 'confirmed')}
+                      className="inline-flex h-7 items-center gap-1 rounded border border-gain/30 bg-gain/10 px-2 text-[9px] font-bold uppercase tracking-wide text-gain disabled:opacity-40"
+                    >
+                      {bridgeJudging === `${suggestion.id}:confirmed` ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />}
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      disabled={bridgeJudging != null}
+                      onClick={() => judgeBridgeSuggestion(suggestion, 'rejected')}
+                      className="inline-flex h-7 items-center gap-1 rounded border border-loss/30 bg-loss/10 px-2 text-[9px] font-bold uppercase tracking-wide text-loss disabled:opacity-40"
+                    >
+                      {bridgeJudging === `${suggestion.id}:rejected` ? <RefreshCw size={10} className="animate-spin" /> : <X size={10} />}
+                      Not the same
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {(bridgeAudit.movements || []).some((movement) => (
+            !['protocol_verified', 'user_confirmed', 'invalidated'].includes(movement.status)
+          )) && (
+            <ul className="divide-y divide-border border-t border-border">
+              {bridgeAudit.movements.filter((movement) => (
+                !['protocol_verified', 'user_confirmed', 'invalidated'].includes(movement.status)
+              )).map((movement) => (
+                <li key={`movement:${movement.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0 text-caption text-secondary">
+                    <p>{movement.protocol} {movement.family_version}</p>
+                    <p className="mt-0.5 text-tertiary">
+                      {(movement.members || []).map((member) => (
+                        `chain ${member.chain_id} ${shortEthAddress(member.tx_hash)}`
+                      )).join(' → ') || 'No complete destination evidence'}
+                    </p>
+                    {movement.evidence?.ambiguity === 'awaiting_chain_finality' && (
+                      <p className="mt-0.5 text-tertiary">
+                        Exact protocol identity found; waiting for finalized receipt boundaries.
+                      </p>
+                    )}
+                  </div>
+                  <Chip className={movement.status === 'failed' ? TONE_STYLES.failed : TONE_STYLES.neutral}>
+                    {bridgeStatusLabel(movement.status)}
+                  </Chip>
+                </li>
+              ))}
+            </ul>
+          )}
+          {(bridgeAudit.receipt_failures || []).length > 0 && (
+            <ul className="divide-y divide-border border-t border-border">
+              {bridgeAudit.receipt_failures.map((failure) => (
+                <li key={`receipt:${failure.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0 text-caption text-secondary">
+                    <p>
+                      Receipt evidence unavailable · chain {failure.chain_id} {shortEthAddress(failure.tx_hash)}
+                    </p>
+                    <p className="mt-0.5 text-tertiary">
+                      {failure.provider} · {failure.error_code || 'provider boundary not proven'}
+                    </p>
+                  </div>
+                  <Chip className={failure.status === 'failed' ? TONE_STYLES.failed : TONE_STYLES.neutral}>
+                    {bridgeStatusLabel(failure.status)}
+                  </Chip>
+                </li>
+              ))}
+            </ul>
+          )}
+          {(bridgeAudit.verdicts || []).length > 0 && (
+            <ul className="divide-y divide-border border-t border-border">
+              {bridgeAudit.verdicts.map((verdict) => (
+                <li key={`verdict:${verdict.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0 text-caption text-secondary">
+                    <p>
+                      {verdict.verdict === 'confirmed' ? 'User confirmed' : 'User rejected'} · chain {verdict.out_chain_id} {shortEthAddress(verdict.out_tx_hash)} → chain {verdict.in_chain_id} {shortEthAddress(verdict.in_tx_hash)}
+                    </p>
+                    <p className="mt-0.5 text-tertiary">Durable verdict · amounts and timing were not treated as proof</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={bridgeJudging != null}
+                    onClick={() => clearBridgeVerdict(verdict)}
+                    className="inline-flex h-7 items-center gap-1 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-secondary disabled:opacity-40"
+                  >
+                    {bridgeJudging === `clear:${verdict.id}` ? <RefreshCw size={10} className="animate-spin" /> : <Undo2 size={10} />}
+                    Undo verdict
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* ONE labeled filter bar, not three unlabeled tab strips: underline
           tabs above this mean navigation, so everything here has to look like
@@ -1248,7 +1444,7 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
       {row.bridge_match && (
         <div className="border border-teal-500/20 bg-teal-500/5 p-2">
           <p className="text-[9px] font-bold uppercase tracking-wide text-teal-400">
-            Bridged to {row.bridge_match.chain_label || 'another chain'} · one movement, shown once
+            {bridgeVerificationLabel(row.bridge_match)} · bridged to {row.bridge_match.chain_label || 'another chain'} · one movement, shown once
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-secondary">
             <span className="font-money">{describeLegs(row.bridge_match.legs)}</span>

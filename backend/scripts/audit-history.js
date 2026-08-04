@@ -35,9 +35,22 @@ function gitRevision() {
   }
 }
 
+function gitDirty() {
+  try {
+    return execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0;
+  } catch {
+    return null;
+  }
+}
+
 async function rows(sql, params) {
   const result = await pool.query(sql, params);
   return result.rows;
+}
+
+async function tableExists(tableName) {
+  const result = await rows('SELECT to_regclass($1) IS NOT NULL AS exists', [tableName]);
+  return result[0]?.exists === true;
 }
 
 async function buildReport(userId, archiveReportPath = null) {
@@ -160,7 +173,7 @@ async function buildReport(userId, archiveReportPath = null) {
     [userId]
   ))[0] || {};
 
-  const bridge = (await rows(
+  const bridgeLegacy = (await rows(
     `SELECT COUNT(*)::int AS links,
             (SELECT COUNT(*)::int
                FROM eth_activity a
@@ -187,6 +200,51 @@ async function buildReport(userId, archiveReportPath = null) {
       WHERE w.user_id = $1`,
     [userId]
   ))[0] || {};
+
+  const bridgeEvidenceModelAvailable = await tableExists('eth_bridge_movements');
+  let bridgeEvidence = {};
+  if (bridgeEvidenceModelAvailable) {
+    bridgeEvidence = (await rows(
+      `SELECT
+         (SELECT COUNT(*)::int FROM eth_bridge_movements
+           WHERE user_id = $1 AND invalidated_at IS NULL) AS movements,
+         (SELECT COUNT(*)::int FROM eth_bridge_movements
+           WHERE user_id = $1 AND status = 'protocol_verified'
+             AND invalidated_at IS NULL) AS protocol_verified,
+         (SELECT COUNT(*)::int FROM eth_bridge_movements
+           WHERE user_id = $1 AND status = 'user_confirmed'
+             AND invalidated_at IS NULL) AS user_confirmed,
+         (SELECT COUNT(*)::int FROM eth_bridge_movements
+           WHERE user_id = $1 AND status = 'pending'
+             AND invalidated_at IS NULL) AS pending,
+         (SELECT COUNT(*)::int FROM eth_bridge_movements
+           WHERE user_id = $1 AND status = 'refunded'
+             AND invalidated_at IS NULL) AS refunded,
+         (SELECT COUNT(*)::int FROM eth_bridge_movements
+           WHERE user_id = $1 AND status = 'failed'
+             AND invalidated_at IS NULL) AS failed,
+         (SELECT COUNT(*)::int FROM eth_bridge_movements
+           WHERE user_id = $1 AND status = 'unsupported'
+             AND invalidated_at IS NULL) AS unsupported,
+         (SELECT COUNT(*)::int FROM eth_bridge_suggestions
+           WHERE user_id = $1) AS suggestions,
+         (SELECT COUNT(*)::int FROM eth_bridge_suggestions
+           WHERE user_id = $1 AND ambiguous) AS ambiguous_suggestions,
+         (SELECT COUNT(*)::int FROM eth_bridge_verdicts
+           WHERE user_id = $1) AS verdicts,
+         (SELECT COUNT(*)::int
+            FROM eth_bridge_receipts r
+            JOIN eth_wallets w ON w.id = r.wallet_id
+           WHERE w.user_id = $1 AND r.fetch_status = 'complete'
+             AND r.invalidated_at IS NULL) AS complete_receipts,
+         (SELECT COUNT(*)::int
+            FROM eth_bridge_receipt_attempts a
+            JOIN eth_wallets w ON w.id = a.wallet_id
+           WHERE w.user_id = $1 AND a.status IN ('failed', 'unsupported'))
+           AS failed_receipt_attempts`,
+      [userId]
+    ))[0] || {};
+  }
 
   const reconciliation = await rows(
     `SELECT status, COUNT(*)::int AS rows
@@ -255,6 +313,7 @@ async function buildReport(userId, archiveReportPath = null) {
   return {
     generated_at: new Date().toISOString(),
     code_revision: gitRevision(),
+    code_dirty: gitDirty(),
     read_only: true,
     scope: { wallet_count: number(wallets.wallet_count), chain_count: number(wallets.chain_count) },
     wallet_sync: {
@@ -280,7 +339,11 @@ async function buildReport(userId, archiveReportPath = null) {
       unmatched_transfer_records: number(matching.unmatched_transfer_records),
       fiat: Object.fromEntries(Object.entries(fiat).map(([key, value]) => [key, number(value)])),
     },
-    bridges: Object.fromEntries(Object.entries(bridge).map(([key, value]) => [key, number(value)])),
+    bridges: {
+      evidence_model_available: bridgeEvidenceModelAvailable,
+      ...Object.fromEntries(Object.entries(bridgeLegacy).map(([key, value]) => [key, number(value)])),
+      ...Object.fromEntries(Object.entries(bridgeEvidence).map(([key, value]) => [key, number(value)])),
+    },
     reconciliation: { eth: reconciliation, exchange_exceptions: exchangeExceptions },
     prices: Object.fromEntries(Object.entries(prices).map(([key, value]) => [key, number(value)])),
     discovery: { candidates: discovery, fetch_receipts: fetchReceipts },
