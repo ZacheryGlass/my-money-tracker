@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
-import { me, crypto as cryptoAPI } from '../utils/api';
+import { me, crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
 
 // Login happens upstream (Azure Easy Auth); the app assumes it is already
 // authenticated and only fetches /api/me for the sidebar display name, plus
@@ -14,7 +14,13 @@ vi.mock('../utils/api', () => ({
   crypto: {
     getLedgerSummary: vi.fn().mockResolvedValue({ summary: { needs_review_count: 0 } }),
   },
-  eth: { getWallets: vi.fn().mockResolvedValue({ wallets: [] }) },
+  eth: {
+    getWallets: vi.fn().mockResolvedValue({ wallets: [] }),
+    getUnreviewedCounterparties: vi.fn().mockResolvedValue({ summary: { count: 0 } }),
+  },
+  exchanges: {
+    getBalanceExceptions: vi.fn().mockResolvedValue({ summary: { count: 0 } }),
+  },
   history: {
     getPortfolio: vi.fn(),
     getTickers: vi.fn(),
@@ -76,6 +82,20 @@ describe('App smoke test', () => {
     );
 
     expect(await screen.findByTitle('Crypto Review (3)')).toBeInTheDocument();
+  });
+
+  it('includes counterparty and balance decisions in the Review badge', async () => {
+    cryptoAPI.getLedgerSummary.mockResolvedValueOnce({ summary: { needs_review_count: 0 } });
+    ethAPI.getUnreviewedCounterparties.mockResolvedValueOnce({ summary: { count: 2 } });
+    exchangesAPI.getBalanceExceptions.mockResolvedValueOnce({ summary: { count: 3 } });
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTitle('Crypto Review (5)')).toBeInTheDocument();
   });
 
   it('keeps the old Discovery URL as a Wallets alias', async () => {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { me, crypto as cryptoAPI, eth as ethAPI } from './utils/api';
+import { me, crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from './utils/api';
 import lazyWithReload from './utils/lazyWithReload';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
@@ -104,10 +104,10 @@ function App() {
   // The sidebar's Crypto badge: the "something needs my attention" signal,
   // visible from anywhere without entering the page. Fetched once at boot for
   // the initial value; afterwards CryptoPage reports through onAttentionChange
-  // every time its own data refetches, so draining the review queue moves the
-  // badge live without polling. Both requests fail soft -- a badge may not
-  // break the shell.
-  const [cryptoAttention, setCryptoAttention] = useState({ errored: 0, needsReview: 0 });
+  // every time its own data refetches, so draining any review queue moves the
+  // badge live without polling. Requests fail soft -- a badge may not break
+  // the shell.
+  const [cryptoAttention, setCryptoAttention] = useState({ errored: 0, needsReview: 0, reviewDecisions: 0 });
   // A report carries null for a half whose fetch FAILED: unknown must not
   // downgrade a red badge to all-clear, so applying a report merges, keeping
   // the previous value for any null half.
@@ -115,34 +115,63 @@ function App() {
     setCryptoAttention((prev) => ({
       errored: next.errored ?? prev.errored,
       needsReview: next.needsReview ?? prev.needsReview,
+      reviewDecisions: next.reviewDecisions ?? prev.reviewDecisions,
     }));
   }, []);
-  // Once CryptoPage has reported live numbers, the boot fetch discards its
-  // own response: on a direct /crypto load the two race, and the boot copy
-  // (which can land late through the interceptor's 5xx retry) is the stale one.
-  const liveAttentionRef = useRef(false);
+  // Keep freshness per attention half. A direct Crypto load reports wallet and
+  // ledger counts before its lazy management queues load; discarding the whole
+  // boot response at that point would lose the Review badge forever.
+  const liveAttentionRef = useRef({ errored: false, needsReview: false, reviewDecisions: false });
   const handleCryptoAttention = useCallback((next) => {
-    liveAttentionRef.current = true;
+    liveAttentionRef.current = {
+      errored: liveAttentionRef.current.errored || (next.errored !== null && next.errored !== undefined),
+      needsReview: liveAttentionRef.current.needsReview || (next.needsReview !== null && next.needsReview !== undefined),
+      reviewDecisions: liveAttentionRef.current.reviewDecisions || (next.reviewDecisions !== null && next.reviewDecisions !== undefined),
+    };
     applyCryptoAttention(next);
   }, [applyCryptoAttention]);
+  const applyBootCryptoAttention = useCallback((next) => {
+    setCryptoAttention((prev) => ({
+      errored: liveAttentionRef.current.errored ? prev.errored : (next.errored ?? prev.errored),
+      needsReview: liveAttentionRef.current.needsReview ? prev.needsReview : (next.needsReview ?? prev.needsReview),
+      reviewDecisions: liveAttentionRef.current.reviewDecisions
+        ? prev.reviewDecisions
+        : (next.reviewDecisions ?? prev.reviewDecisions),
+    }));
+  }, []);
   useEffect(() => {
     let cancelled = false;
+    const counterpartyPromise = typeof ethAPI?.getUnreviewedCounterparties === 'function'
+      ? ethAPI.getUnreviewedCounterparties().catch(() => null)
+      : Promise.resolve(undefined);
+    const balanceExceptionPromise = typeof exchangesAPI?.getBalanceExceptions === 'function'
+      ? exchangesAPI.getBalanceExceptions({ limit: 1 }).catch(() => null)
+      : Promise.resolve(undefined);
     Promise.all([
       cryptoAPI.getLedgerSummary().catch(() => null),
       ethAPI.getWallets().catch(() => null),
-    ]).then(([ledger, wallets]) => {
-      if (cancelled || liveAttentionRef.current) return;
-      applyCryptoAttention({
+      counterpartyPromise,
+      balanceExceptionPromise,
+    ]).then(([ledger, wallets, counterparties, balanceExceptions]) => {
+      if (cancelled) return;
+      const reviewDecisions = counterparties && (
+        balanceExceptions !== null
+        || typeof exchangesAPI?.getBalanceExceptions !== 'function'
+      )
+        ? (counterparties.summary?.count || 0) + (balanceExceptions?.summary?.count || 0)
+        : null;
+      applyBootCryptoAttention({
         errored: wallets
           ? (wallets.wallets || []).filter((wallet) => (
             wallet.error_code || wallet.reconciliation?.needs_review
-          )).length
+        )).length
           : null,
         needsReview: ledger ? (ledger.summary?.needs_review_count || 0) : null,
+        reviewDecisions,
       });
     });
     return () => { cancelled = true; };
-  }, [applyCryptoAttention]);
+  }, [applyBootCryptoAttention]);
 
   // Route each kind of attention to the page where it can be resolved. These
   // are intentionally independent: a wallet problem must not hide review work.
@@ -150,8 +179,13 @@ function App() {
     ...(cryptoAttention.errored > 0
       ? { 'crypto-wallets': { count: cryptoAttention.errored, tone: 'error' } }
       : {}),
-    ...(cryptoAttention.needsReview > 0
-      ? { 'crypto-review': { count: cryptoAttention.needsReview, tone: 'review' } }
+    ...(cryptoAttention.needsReview + cryptoAttention.reviewDecisions > 0
+      ? {
+        'crypto-review': {
+          count: cryptoAttention.needsReview + cryptoAttention.reviewDecisions,
+          tone: 'review',
+        },
+      }
       : {}),
   };
 
@@ -167,6 +201,8 @@ function App() {
     if (import.meta.env.DEV) return;
     window.location.href = '/.auth/logout?post_logout_redirect_uri=/';
   };
+
+  const mobileNavPage = currentPage === 'crypto-discovery' ? 'crypto-wallets' : currentPage;
 
   const renderPage = () => {
     if (!currentPage) {
@@ -220,7 +256,7 @@ function App() {
             <Menu size={20} />
           </button>
           <span className="ml-1 min-w-0 truncate text-body-sm font-semibold text-primary">
-            {navItems.find((n) => n.id === currentPage)?.label || 'Not Found'}
+            {navItems.find((n) => n.id === mobileNavPage)?.label || 'Not Found'}
           </span>
         </div>
 

@@ -291,6 +291,10 @@ const CryptoLedger = ({
     silentRef.current = true;
     setReload((n) => n + 1);
   }, []);
+  const handleRowChanged = useCallback(async () => {
+    refresh();
+    await onDataChanged?.();
+  }, [onDataChanged, refresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -379,7 +383,7 @@ const CryptoLedger = ({
         verdict,
       });
       refresh();
-      onDataChanged?.();
+      await onDataChanged?.();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save the bridge verdict');
     } finally {
@@ -450,7 +454,7 @@ const CryptoLedger = ({
         inTxHash: verdict.in_tx_hash,
       });
       refresh();
-      onDataChanged?.();
+      await onDataChanged?.();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to clear the bridge verdict');
     } finally {
@@ -1118,7 +1122,7 @@ const CryptoLedger = ({
               key={row.original.id}
               row={row.original}
               onError={setError}
-              onChanged={() => { refresh(); onDataChanged?.(); }}
+              onChanged={handleRowChanged}
               addressNote={addressNoteByAddress.get(row.original.counterparty_address) || ''}
             />
           ) : null)}
@@ -1169,7 +1173,7 @@ const CryptoLedger = ({
                       key={entry.id}
                       row={entry}
                       onError={setError}
-                      onChanged={() => { refresh(); onDataChanged?.(); }}
+                      onChanged={handleRowChanged}
                       addressNote={addressNoteByAddress.get(entry.counterparty_address) || ''}
                     />
                   </div>
@@ -1216,7 +1220,7 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
     onError(null);
     try {
       await action();
-      onChanged();
+      await onChanged();
     } catch (err) {
       onError(err.response?.data?.error || 'That action failed');
     } finally {

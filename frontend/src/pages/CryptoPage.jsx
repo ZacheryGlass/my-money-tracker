@@ -92,18 +92,18 @@ const TRANSFERS_VIEW = 'transfers';
 // Sentinel for "sync every wallet"; real wallet ids are >= 1.
 const SYNC_ALL = 'all';
 
-// `onAttentionChange` reports { errored, needsReview } up to the app shell,
-// which renders it as the sidebar's Crypto badge -- so resolving a row here
-// moves the badge without the shell polling for it.
+// onAttentionChange reports the wallet, ledger and management attention counts
+// up to the app shell, which renders them as page-specific Crypto badges.
 const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [wallets, setWallets] = useState([]);
   const [holdings, setHoldings] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [historyRows, setHistoryRows] = useState([]);
-  // Counts for the Transactions badge and for whether the tab exists at all.
-  // Exchange records create no account and no wallet, so a user whose crypto
-  // history is entirely CSV imports has nothing else to gate the tab on.
+  // Counts for the Activity/Review summaries. Exchange records create no
+  // account and no wallet, so a user whose crypto history is entirely CSV
+  // imports has nothing else to gate the page on.
   const [ledgerSummary, setLedgerSummary] = useState(null);
+  const [ledgerSummaryState, setLedgerSummaryState] = useState('loading');
   const [txView, setTxView] = useState(LEDGER_VIEW);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -168,7 +168,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const fetchData = useCallback(async () => {
     try {
       const summaryRequest = ++ledgerSummaryRequestRef.current;
-      const ledgerPromise = cryptoAPI.getLedgerSummary().catch(() => null);
+      const ledgerPromise = cryptoAPI.getLedgerSummary()
+        .then((data) => ({ ok: true, data }))
+        .catch(() => ({ ok: false, data: null }));
       const [walletsData, holdingsData, accountsData, historyData, notesData] = await Promise.all([
         ethAPI.getWallets().catch(() => null),
         holdingsAPI.getAll(),
@@ -186,9 +188,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       // The summary keeps running after the portfolio is renderable. Review
       // actions still refresh the badge, but a slow fold query cannot hide the
       // Notes/Labels/Wallets surfaces behind "Loading Crypto".
-      void ledgerPromise.then((ledgerData) => {
+      void ledgerPromise.then(({ ok, data: ledgerData }) => {
         if (summaryRequest !== ledgerSummaryRequestRef.current) return;
-        setLedgerSummary(ledgerData?.summary || null);
+        setLedgerSummary(ok ? (ledgerData?.summary || null) : null);
+        setLedgerSummaryState(ok ? 'ready' : 'error');
         // A half whose fetch failed reports NULL, never zero: "unknown"
         // downgrading a red badge to all-clear is the lossy direction.
         onAttentionChange?.({
@@ -197,7 +200,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
               wallet.error_code || wallet.reconciliation?.needs_review
             )).length
             : null,
-          needsReview: ledgerData ? (ledgerData.summary?.needs_review_count || 0) : null,
+          needsReview: ok ? (ledgerData?.summary?.needs_review_count || 0) : null,
         });
       });
       setError(null);
@@ -213,7 +216,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // Each list degrades on its own: a failed labels request must not blank the
   // exchange accounts beside it, and the two nullable ones say so themselves.
   const fetchManageData = useCallback(async () => {
-    const exchangeExceptionsPromise = typeof exchangesAPI.getBalanceExceptions === 'function'
+    const hasExchangeExceptionQueue = typeof exchangesAPI.getBalanceExceptions === 'function';
+    const exchangeExceptionsPromise = hasExchangeExceptionQueue
       ? exchangesAPI.getBalanceExceptions({ limit: 50 }).catch(() => null)
       : Promise.resolve(undefined);
     const [ignoredResult, labelsResult, counterpartyResult, spamResult, exchangeResult, exchangeExceptionResult] = await Promise.all([
@@ -244,8 +248,15 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       setExchangeExceptions(exchangeExceptionResult);
       setExchangeExceptionsError(exchangeExceptionResult ? null : 'Couldn\'t load the exchange balance review queue.');
     }
+    const reviewDecisions = counterpartyResult && (
+      exchangeExceptionResult !== null
+      || !hasExchangeExceptionQueue
+    )
+      ? (counterpartyResult.summary?.count || 0) + (exchangeExceptionResult?.summary?.count || 0)
+      : null;
+    onAttentionChange?.({ reviewDecisions });
     setManageLoaded(true);
-  }, []);
+  }, [onAttentionChange]);
 
   // A management action changes both halves -- labelling an address rewrites
   // the ledger behind it, ignoring a token drops holdings -- so both refetch.
@@ -255,6 +266,16 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     // reclassifies rows they are already showing.
     setSyncNonce((nonce) => nonce + 1);
   }, [fetchData, fetchManageData]);
+
+  // Ledger actions re-derive both the visible feed and the hidden page copy.
+  // Keep management queues in sync only after they have been loaded; Activity
+  // should not pay for six management requests just because it has a label
+  // button.
+  const handleLedgerChanged = useCallback(async () => {
+    await fetchData();
+    if (manageLoaded) await fetchManageData();
+    setSyncNonce((nonce) => nonce + 1);
+  }, [fetchData, fetchManageData, manageLoaded]);
 
   const cryptoAccounts = useMemo(
     () => accounts.filter((account) => account.type === 'crypto'),
@@ -325,17 +346,17 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // user to ignore the badge.
   const exchangeExceptionAttentionCount = exchangeExceptions?.summary?.count || 0;
   const reviewAttentionCount = (counterpartyData?.summary?.count || 0) + exchangeExceptionAttentionCount;
-  const reviewAttentionUnknown = counterpartyData === null || exchangeExceptions === null;
+  const reviewAttentionUnknown = !manageLoaded
+    || counterpartyData === null
+    || (typeof exchangesAPI.getBalanceExceptions === 'function' && exchangeExceptions === null);
   // Typeahead for the triage form keeps every exchange name, builtins included.
   const exchangeNameOptions = useMemo(
     () => [...new Set(addressLabels.filter((l) => !l.kind || l.kind === 'exchange').map((l) => l.name))],
     [addressLabels]
   );
 
-  // Falls back to Overview for an unknown tab, and for Transactions when there
-  // are no wallets to show -- covers a bookmarked /crypto/transactions after
-  // the last wallet is disconnected. Everything downstream reads activeTab,
-  // never the raw `tab` prop.
+  // Falls back to Overview for an unknown tab. Everything downstream reads
+  // activeTab, never the raw tab prop.
   //
   // These three hooks MUST stay above the `if (loading)` return below: hooks
   // declared after an early return run on some renders and not others, which
@@ -344,7 +365,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // The ledger spans wallets AND exchange accounts. Activity remains a valid
   // empty page so a saved URL never opens with a different sidebar item active.
   const hasLedger = wallets.length > 0 || (ledgerSummary?.total || 0) > 0;
-  const isEmpty = wallets.length === 0 && cryptoAccounts.length === 0 && !hasLedger;
+  const isEmpty = wallets.length === 0
+    && cryptoAccounts.length === 0
+    && !hasLedger
+    && ledgerSummaryState !== 'error';
 
   // Discovery used to be a separate tab. Its old URL now lands on Wallets,
   // while every unknown Crypto page fails safely to Overview.
@@ -521,6 +545,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     return <LoadingState label="Loading Crypto" />;
   }
 
+  const needsReviewUnknown = ledgerSummaryState !== 'ready';
   const needsReviewCount = ledgerSummary?.needs_review_count || 0;
   const pageMeta = PAGE_META[activeTab];
 
@@ -567,7 +592,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         )}
         {activeTab === REVIEW_TAB && (
           <SummaryStats stats={[
-            { label: 'Events', value: needsReviewCount },
+            { label: 'Events', value: needsReviewUnknown ? '?' : needsReviewCount },
             { label: 'Decisions', value: reviewAttentionUnknown ? '?' : reviewAttentionCount },
           ]} />
         )}
@@ -761,7 +786,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   walletId={selectedWalletId}
                   refreshKey={syncNonce}
                   addressNotes={addressNotes}
-                  onDataChanged={fetchData}
+                  onDataChanged={handleLedgerChanged}
                   // The raw feed is entered from a quiet link on the ledger's
                   // filter bar, not a sibling mode toggle: it is a drill-down
                   // (and the one place a token can be ignored in context), not
@@ -787,7 +812,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                     key={`${selectedWalletId ?? 'all'}:${syncNonce}`}
                     walletId={selectedWalletId}
                     walletNames={selectedWalletId == null ? walletNames : undefined}
-                    onDataChanged={fetchData}
+                    onDataChanged={handleLedgerChanged}
                   />
                 </>
               )}
@@ -826,7 +851,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
           {tabBody(REVIEW_TAB, (
             <>
-              {needsReviewCount > 0 && (
+              {(needsReviewUnknown || needsReviewCount > 0) && (
                 <section>
                   <div className="mb-3 px-2">
                     <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Transactions needing review</h2>
@@ -838,7 +863,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                     refreshKey={syncNonce}
                     addressNotes={addressNotes}
                     initialNeedsReview="true"
-                    onDataChanged={fetchData}
+                    onDataChanged={handleLedgerChanged}
                   />
                 </section>
               )}

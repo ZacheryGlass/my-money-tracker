@@ -20,10 +20,12 @@ const apiMocks = vi.hoisted(() => ({
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
     getAddressNotes: vi.fn(), saveAddressNote: vi.fn(), deleteAddressNote: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getActivity: vi.fn(), setActivitySpam: vi.fn(),
+    getReconciliation: vi.fn(), getUnpricedAssets: vi.fn(),
   },
   exchanges: {
     getAll: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(),
     importCsv: vi.fn(), getRecords: vi.fn(), resolveRecord: vi.fn(),
+    getBalanceExceptions: vi.fn(),
   },
 }));
 
@@ -71,7 +73,10 @@ beforeEach(() => {
   apiMocks.eth.getActivity.mockResolvedValue({
     data: [], summary: { spam_count: 0, needs_review_count: 0 }, pagination: { total: 0 },
   });
+  apiMocks.eth.getReconciliation.mockResolvedValue({ data: [], summary: {} });
+  apiMocks.eth.getUnpricedAssets.mockResolvedValue({ data: [], total: 0 });
   apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
+  apiMocks.exchanges.getBalanceExceptions.mockResolvedValue({ summary: { count: 0 } });
   apiMocks.accounts.getAll.mockResolvedValue({ accounts: [] });
   apiMocks.holdings.getAll.mockResolvedValue({ holdings: [] });
   apiMocks.history.getAccounts.mockResolvedValue({ data: [] });
@@ -79,7 +84,40 @@ beforeEach(() => {
   apiMocks.crypto.getLedger.mockResolvedValue({ data: [], pagination: { total: 0 } });
 });
 
-const renderReview = () => render(<CryptoPage tab="crypto-review" onTabChange={vi.fn()} />);
+const renderReview = (props = {}) => render(<CryptoPage tab="crypto-review" onTabChange={vi.fn()} {...props} />);
+
+it('keeps the filtered ledger visible when its summary request fails', async () => {
+  apiMocks.crypto.getLedgerSummary.mockRejectedValue(new Error('summary unavailable'));
+  apiMocks.crypto.getLedger.mockResolvedValue({
+    data: [],
+    pagination: { total: 0 },
+  });
+
+  renderReview();
+
+  expect(await screen.findByRole('heading', { level: 1, name: 'Review' })).toBeInTheDocument();
+  await waitFor(() => {
+    expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
+      expect.objectContaining({ needsReview: 'true' })
+    );
+  });
+  expect(screen.getByText('Transactions needing review')).toBeInTheDocument();
+});
+
+it('reports all Review decision queues to the sidebar', async () => {
+  apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
+    data: [],
+    summary: { count: 2, dust_count: 0, usd_volume: 0 },
+  });
+  apiMocks.exchanges.getBalanceExceptions.mockResolvedValue({ summary: { count: 3 } });
+  const onAttentionChange = vi.fn();
+
+  renderReview({ onAttentionChange });
+
+  await waitFor(() => {
+    expect(onAttentionChange).toHaveBeenCalledWith({ reviewDecisions: 5 });
+  });
+});
 
 describe('unknown counterparty triage', () => {
   const openReviewTab = async (queue = { data: [MATERIAL], summary: { count: 1, dust_count: 0, usd_volume: 12403 } }) => {

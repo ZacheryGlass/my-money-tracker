@@ -156,6 +156,18 @@ describe('CryptoLedger', () => {
     expect(screen.getByRole('button', { name: /Needs review/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('refetches when the shared parent revision changes', async () => {
+    const { rerender } = render(<CryptoLedger refreshKey={0} />);
+    await screen.findAllByText('No ledger entries match these filters.');
+    const callsBefore = apiMocks.crypto.getLedger.mock.calls.length;
+
+    rerender(<CryptoLedger refreshKey={1} />);
+
+    await waitFor(() => {
+      expect(apiMocks.crypto.getLedger.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+  });
+
   it('keeps ambiguous bridge candidates suggested and exposes lifecycle/verdict controls', async () => {
     apiMocks.crypto.getBridgeAudit.mockResolvedValue({
       summary: { protocol_verified: 0, user_confirmed: 0, suggestions: 1, receipt_failures: 1 },
