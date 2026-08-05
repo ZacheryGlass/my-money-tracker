@@ -145,6 +145,17 @@ describe('CryptoLedger', () => {
     expect((await screen.findAllByText('+ 0.00000042 ETH')).length).toBeGreaterThan(0);
   });
 
+  it('can open directly as the Review page queue', async () => {
+    render(<CryptoLedger initialNeedsReview="true" />);
+
+    await waitFor(() => {
+      expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(expect.objectContaining({
+        needsReview: 'true',
+      }));
+    });
+    expect(screen.getByRole('button', { name: /Needs review/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('keeps ambiguous bridge candidates suggested and exposes lifecycle/verdict controls', async () => {
     apiMocks.crypto.getBridgeAudit.mockResolvedValue({
       summary: { protocol_verified: 0, user_confirmed: 0, suggestions: 1, receipt_failures: 1 },

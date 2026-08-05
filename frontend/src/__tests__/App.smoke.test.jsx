@@ -51,10 +51,7 @@ describe('App smoke test', () => {
     expect(me).toHaveBeenCalled();
   });
 
-  // The only automated guard on collapsePageId: a sub-tab path must resolve to
-  // the page AND keep the one sidebar entry highlighted. Get the collapse wrong
-  // and every tab click remounts the page and refires its whole data fetch.
-  it('routes a crypto sub-tab to the page with the sidebar entry still active', async () => {
+  it('routes a Crypto page and highlights its own sidebar destination', async () => {
     render(
       <MemoryRouter initialEntries={['/crypto/holdings']}>
         <App />
@@ -64,14 +61,12 @@ describe('App smoke test', () => {
     expect(await screen.findByText('Crypto stub: crypto-holdings')).toBeInTheDocument();
     // jsdom's matchMedia stub collapses the sidebar, so the label is a title
     // attribute and the active state is the accent background, not aria.
-    const cryptoNav = screen.getByTitle('Crypto');
-    expect(cryptoNav.className).toContain('bg-[#3994BC26]');
+    const holdingsNav = screen.getByTitle('Crypto Holdings');
+    expect(holdingsNav.className).toContain('bg-[#3994BC26]');
   });
 
-  // The sidebar badge: the unexplained count is visible from anywhere, not
-  // only after entering the Crypto page. In jsdom the sidebar is collapsed to
-  // the icon rail, so the count rides in the tooltip.
-  it('badges the Crypto entry with the unexplained count from anywhere', async () => {
+  // Review owns the actionable queue, so its badge is visible from anywhere.
+  it('badges Crypto Review with the unexplained count from anywhere', async () => {
     cryptoAPI.getLedgerSummary.mockResolvedValueOnce({ summary: { needs_review_count: 3 } });
 
     render(
@@ -80,6 +75,17 @@ describe('App smoke test', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByTitle('Crypto (3)')).toBeInTheDocument();
+    expect(await screen.findByTitle('Crypto Review (3)')).toBeInTheDocument();
+  });
+
+  it('keeps the old Discovery URL as a Wallets alias', async () => {
+    render(
+      <MemoryRouter initialEntries={['/crypto/discovery']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Crypto stub: crypto-discovery')).toBeInTheDocument();
+    expect(screen.getByTitle('Crypto Wallets').className).toContain('bg-[#3994BC26]');
   });
 });

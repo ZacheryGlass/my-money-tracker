@@ -116,31 +116,26 @@ describe('CryptoPage', () => {
     expect(screen.queryByText('Vanguard Total Market')).toBeNull();
   });
 
-  it('switches tabs by navigating, so a sub-tab is a real URL', async () => {
-    const onTabChange = vi.fn();
+  it('renders Activity as a standalone Crypto page without a local tab strip', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
     apiMocks.eth.getWallets.mockResolvedValue({
       wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '1' }],
     });
 
-    render(<CryptoPage onTabChange={onTabChange} />);
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: /^Transactions/ }));
-
-    // The id must match App.jsx's navItems entry or handleNavigate silently
-    // swallows it and the tab becomes a dead click.
-    expect(onTabChange).toHaveBeenCalledWith('crypto-transactions');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Activity' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab')).toBeNull();
   });
 
-  it('falls back to Overview when a wallet-less user deep-links to Transactions', async () => {
+  it('keeps Activity reachable as an empty standalone page', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [{ ...CRYPTO_ACCOUNT, eth_wallet_id: null }] });
 
     render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
 
-    // Overview's content, not an empty activity feed.
-    await screen.findByText('Total Value');
-    expect(screen.queryByText('On-chain Activity')).toBeNull();
-    expect(screen.queryByRole('tab', { name: /^Transactions/ })).toBeNull();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Activity' })).toBeInTheDocument();
+    expect((await screen.findAllByText('No ledger entries match these filters.')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Total Value')).toBeNull();
   });
 
   it('defaults the activity feed to every wallet and tags rows with their wallet', async () => {

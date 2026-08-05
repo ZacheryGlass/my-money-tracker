@@ -231,6 +231,7 @@ const CryptoLedger = ({
   onDataChanged,
   onShowTransferLegs,
   addressNotes = [],
+  initialNeedsReview = '',
 }) => {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -242,7 +243,7 @@ const CryptoLedger = ({
   const [bridgeJudging, setBridgeJudging] = useState(null);
   const [bridgeSuggestionsLoading, setBridgeSuggestionsLoading] = useState(false);
   const [source, setSource] = useState('');
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState(initialNeedsReview);
   const [category, setCategory] = useState('');
   const [spam, setSpam] = useState('');
   const [loading, setLoading] = useState(true);

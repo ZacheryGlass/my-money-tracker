@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import CryptoPage from './CryptoPage';
 
@@ -21,6 +21,7 @@ const apiMocks = vi.hoisted(() => ({
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getReconciliation: vi.fn(),
     getActivity: vi.fn(), setActivitySpam: vi.fn(),
+    getDiscoveryCandidates: vi.fn(), getDiscoveryReceipts: vi.fn(), runDiscovery: vi.fn(), decideDiscovery: vi.fn(),
     addReconciliationAdjustment: vi.fn(), removeReconciliationAdjustment: vi.fn(),
   },
   exchanges: {
@@ -83,6 +84,8 @@ describe('Crypto -> Wallets tab', () => {
     apiMocks.eth.getActivity.mockResolvedValue({
       data: [], summary: { spam_count: 0, needs_review_count: 0 }, pagination: { total: 0 },
     });
+    apiMocks.eth.getDiscoveryCandidates.mockResolvedValue({ candidates: [] });
+    apiMocks.eth.getDiscoveryReceipts.mockResolvedValue({ receipts: [] });
     apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [] });
     apiMocks.holdings.getAll.mockResolvedValue({ holdings: [] });
@@ -91,10 +94,11 @@ describe('Crypto -> Wallets tab', () => {
     apiMocks.crypto.getLedger.mockResolvedValue({ data: [], pagination: { total: 0 } });
   });
 
-  const openEthereumTab = async (wallets) => {
+  const openEthereumTab = async (wallets, onAttentionChange = vi.fn()) => {
     apiMocks.eth.getWallets.mockResolvedValue({ wallets });
-    render(<CryptoPage tab="crypto-wallets" onTabChange={vi.fn()} />);
+    render(<CryptoPage tab="crypto-wallets" onTabChange={vi.fn()} onAttentionChange={onAttentionChange} />);
     await screen.findByText('EVM Wallets');
+    return onAttentionChange;
   };
 
   // The list is a table now: the row states the verdict and the expanded panel
@@ -139,8 +143,8 @@ describe('Crypto -> Wallets tab', () => {
     expect(await screen.findByText(/Ethereum: ledger is -1 ETH off/)).toBeInTheDocument();
   });
 
-  it('counts a drifting wallet in the Wallets tab badge', async () => {
-    await openEthereumTab([wallet(report({
+  it('reports a drifting wallet to the Wallets sidebar badge', async () => {
+    const onAttentionChange = await openEthereumTab([wallet(report({
       mismatched: 1, native_mismatches: 1, needs_review: true,
       issues: [{
         id: 1, chain_id: 1, asset_key: 'ETH', asset_type: 'native', token_symbol: 'ETH',
@@ -149,10 +153,10 @@ describe('Crypto -> Wallets tab', () => {
       }],
     }))]);
 
-    // The tab carries the attention count; a silent drift would defeat the
-    // point of auditing at all.
-    const tab = await screen.findByRole('tab', { name: /Wallets/ });
-    await waitFor(() => expect(within(tab).getByText('1')).toBeInTheDocument());
+    await waitFor(() => expect(onAttentionChange).toHaveBeenCalledWith({
+      errored: 1,
+      needsReview: 0,
+    }));
   });
 
   it('names the offending contract on a token mismatch rather than a bare number', async () => {
@@ -174,8 +178,8 @@ describe('Crypto -> Wallets tab', () => {
     expect(screen.getByText(/on Arbitrum One is 1 off/)).toBeInTheDocument();
   });
 
-  it('does not badge the tab for token drift alone', async () => {
-    await openEthereumTab([wallet(report({
+  it('does not badge Wallets for token drift alone', async () => {
+    const onAttentionChange = await openEthereumTab([wallet(report({
       mismatched: 1, native_mismatches: 0, needs_review: false,
       issues: [{
         id: 2, chain_id: 1, asset_key: DAI, asset_type: 'token', token_symbol: 'DAI',
@@ -189,8 +193,10 @@ describe('Crypto -> Wallets tab', () => {
     // badge that cannot reach zero gets ignored -- taking the ETH signal with it.
     await expandWallet();
     await screen.findByText(/Token balances that do not add up/i);
-    const tab = screen.getByRole('tab', { name: /Wallets/ });
-    expect(within(tab).queryByText('1')).toBeNull();
+    await waitFor(() => expect(onAttentionChange).toHaveBeenCalledWith({
+      errored: 0,
+      needsReview: 0,
+    }));
   });
 
   it('says what it could not check instead of implying everything passed', async () => {
@@ -349,9 +355,7 @@ describe('Crypto -> Wallets tab', () => {
     // stops the sync, it does not delete history.
     expect(screen.getByText('Base')).toBeInTheDocument();
     expect(screen.getByText('off')).toBeInTheDocument();
-    // And none of this touches the wallet-level attention badge.
-    const tab = screen.getByRole('tab', { name: /Wallets/ });
-    expect(within(tab).queryByText('1')).toBeNull();
+    // Chain-level coverage detail alone does not inflate the Wallets badge.
   });
 
   it('shows a single chain\u2019s standing gap, which a chain-count gate hid entirely', async () => {

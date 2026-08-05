@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import CryptoPage from './CryptoPage';
 
-// The two triage queues on the Crypto page's Review tab (#75, moved off
+// The triage queues on the Crypto section's Review page (#75, moved off
 // Settings): counterparties nobody has judged, and the transactions the spam
 // heuristics judged for you.
 
@@ -176,7 +176,7 @@ describe('unknown counterparty triage', () => {
     });
   });
 
-  it('counts only material counterparties in the Review tab badge', async () => {
+  it('counts only material counterparties in the Review page summary', async () => {
     // 1 material + 3 dust must read 1, not 4. A badge that cannot reach zero
     // gets ignored, taking the queue it points at with it.
     apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
@@ -185,8 +185,8 @@ describe('unknown counterparty triage', () => {
     });
     renderReview();
 
-    const tab = await screen.findByRole('tab', { name: /Review/ });
-    await waitFor(() => expect(within(tab).getByText('1')).toBeInTheDocument());
+    const summary = await screen.findByText('Decisions');
+    await waitFor(() => expect(within(summary.parentElement).getByText('1')).toBeInTheDocument());
   });
 
   it('collapses low-value counterparties behind a disclosure', async () => {

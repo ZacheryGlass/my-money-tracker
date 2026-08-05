@@ -28,13 +28,16 @@ const navItems = [
   { id: 'cash', label: 'Cash', path: '/cash' },
   { id: 'liabilities', label: 'Liabilities', path: '/liabilities' },
   { id: 'accounts', label: 'Accounts', path: '/accounts' },
-  { id: 'crypto', label: 'Crypto', path: '/crypto' },
+  { id: 'crypto', label: 'Crypto Overview', path: '/crypto' },
   { id: 'crypto-holdings', label: 'Crypto Holdings', path: '/crypto/holdings' },
-  { id: 'crypto-transactions', label: 'Crypto Transactions', path: '/crypto/transactions' },
+  { id: 'crypto-transactions', label: 'Crypto Activity', path: '/crypto/transactions' },
   { id: 'crypto-wallets', label: 'Crypto Wallets', path: '/crypto/wallets' },
   { id: 'crypto-exchanges', label: 'Crypto Exchanges', path: '/crypto/exchanges' },
   { id: 'crypto-review', label: 'Crypto Review', path: '/crypto/review' },
-  { id: 'crypto-labels', label: 'Crypto Labels', path: '/crypto/labels' },
+  { id: 'crypto-labels', label: 'Crypto Labels & Rules', path: '/crypto/labels' },
+  // Compatibility alias. Discovery now belongs to the Wallets page, but this
+  // route remains valid for saved links and highlights Wallets in the sidebar.
+  { id: 'crypto-discovery', label: 'Crypto Wallet Discovery', path: '/crypto/discovery' },
   { id: 'ticker-history', label: 'Ticker History', path: '/ticker-history' },
   { id: 'account-history', label: 'Account History', path: '/account-history' },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', path: '/portfolio-timeline' },
@@ -54,22 +57,27 @@ const pagesByPath = Object.fromEntries(navItems.map((item) => [item.path, item.i
 const BALANCES_TABS = new Set(['assets', 'cash', 'liabilities']);
 pagePaths.balances = pagePaths.assets;
 
-// Crypto's sub-tabs. Unlike balances these need no pagePaths alias: 'crypto' is
-// itself a registered nav item, and it is the tab the page lands on.
-const CRYPTO_TABS = new Set([
+// The pages in the Crypto sidebar section share one mounted workspace so
+// filters, expanded ledger rows and loaded pages survive navigation between
+// them. Discovery is a compatibility alias for the Wallets page.
+const CRYPTO_PAGES = new Set([
   'crypto', 'crypto-holdings', 'crypto-transactions',
-  // The management tabs, moved off Settings with #75.
   'crypto-wallets', 'crypto-exchanges', 'crypto-review', 'crypto-labels',
+  'crypto-discovery',
 ]);
 
-// The remount key and the sidebar highlight both work in collapsed ids: every
-// tab of a multi-tab page must map to its one sidebar entry. Miss it on the key
-// and switching tabs remounts the page and refires its whole data fetch; miss
-// it on the sidebar and the entry de-highlights on every sub-tab. One helper so
-// the two can never disagree.
+// The remount key deliberately collapses all Crypto routes so switching pages
+// keeps the shared workspace alive. Sidebar highlighting is separate now that
+// each Crypto destination has its own entry.
 function collapsePageId(page) {
   if (BALANCES_TABS.has(page)) return 'balances';
-  if (CRYPTO_TABS.has(page)) return 'crypto';
+  if (CRYPTO_PAGES.has(page)) return 'crypto';
+  return page;
+}
+
+function sidebarPageId(page) {
+  if (BALANCES_TABS.has(page)) return 'balances';
+  if (page === 'crypto-discovery') return 'crypto-wallets';
   return page;
 }
 
@@ -125,21 +133,27 @@ function App() {
     ]).then(([ledger, wallets]) => {
       if (cancelled || liveAttentionRef.current) return;
       applyCryptoAttention({
-        errored: wallets ? (wallets.wallets || []).filter((wallet) => wallet.error_code).length : null,
+        errored: wallets
+          ? (wallets.wallets || []).filter((wallet) => (
+            wallet.error_code || wallet.reconciliation?.needs_review
+          )).length
+          : null,
         needsReview: ledger ? (ledger.summary?.needs_review_count || 0) : null,
       });
     });
     return () => { cancelled = true; };
   }, [applyCryptoAttention]);
 
-  // Same precedence as the Transactions tab's own badge: a failed wallet sync
-  // outranks the review count, because an incomplete feed makes that count
-  // untrustworthy.
-  const cryptoBadge = cryptoAttention.errored > 0
-    ? { count: cryptoAttention.errored, tone: 'error' }
-    : cryptoAttention.needsReview > 0
-      ? { count: cryptoAttention.needsReview, tone: 'review' }
-      : null;
+  // Route each kind of attention to the page where it can be resolved. These
+  // are intentionally independent: a wallet problem must not hide review work.
+  const cryptoBadges = {
+    ...(cryptoAttention.errored > 0
+      ? { 'crypto-wallets': { count: cryptoAttention.errored, tone: 'error' } }
+      : {}),
+    ...(cryptoAttention.needsReview > 0
+      ? { 'crypto-review': { count: cryptoAttention.needsReview, tone: 'review' } }
+      : {}),
+  };
 
   const handleNavigate = (page, state) => {
     const path = pagePaths[page];
@@ -163,7 +177,7 @@ function App() {
         {currentPage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
         {BALANCES_TABS.has(currentPage) && <BalancesPage tab={currentPage} onTabChange={handleNavigate} />}
         {currentPage === 'accounts' && <AccountsPage />}
-        {CRYPTO_TABS.has(currentPage) && (
+        {CRYPTO_PAGES.has(currentPage) && (
           <CryptoPage
             tab={currentPage}
             onTabChange={handleNavigate}
@@ -186,13 +200,13 @@ function App() {
   return (
     <div className="flex min-h-screen bg-base font-sans">
       <Sidebar
-        currentPage={collapsePageId(currentPage)}
+        currentPage={sidebarPageId(currentPage)}
         onNavigate={handleNavigate}
         user={user}
         onLogout={handleLogout}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
-        badges={cryptoBadge ? { crypto: cryptoBadge } : {}}
+        badges={cryptoBadges}
       />
       <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
         {/* Mobile Header */}

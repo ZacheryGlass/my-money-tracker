@@ -23,7 +23,6 @@ import DataTable, { DataTablePagination } from '../components/DataTable';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
 import MetricCard from '../components/MetricCard';
-import FilterTabs from '../components/FilterTabs';
 import OnChainActivity, { EthWalletBadge } from '../components/OnChainActivity';
 import SummaryStats from '../components/SummaryStats';
 import WalletsPanel from '../components/crypto/WalletsPanel';
@@ -41,24 +40,46 @@ const isSyncManaged = (holding) => Boolean(holding.is_plaid_managed || holding.a
 const formatEthQuantity = (quantity) =>
   Number(quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 
-// Ids double as page ids, so the tab strip's onChange is just handleNavigate.
+// Each id is a real page in the Crypto sidebar section. They share this mounted
+// workspace so expensive ledger state survives navigation, but the user sees
+// page titles and sidebar destinations rather than one eight-tab workbench.
 const OVERVIEW_TAB = 'crypto';
 const HOLDINGS_TAB = 'crypto-holdings';
 const TRANSACTIONS_TAB = 'crypto-transactions';
-// The management tabs, moved off Settings with #75: a wallet, an exchange
-// account, a counterparty verdict and an ignored token are all crypto data, and
-// living under Settings put each of them several clicks from the feed it
-// changes. The Ethereum tab's five stacked sections became three tabs on the
-// split that already existed between them -- what is tracked (Wallets), what
-// needs a decision (Review), and the reference lists those decisions write
-// (Labels).
 const WALLETS_TAB = 'crypto-wallets';
 const EXCHANGES_TAB = 'crypto-exchanges';
 const REVIEW_TAB = 'crypto-review';
 const LABELS_TAB = 'crypto-labels';
-const DISCOVERY_TAB = 'crypto-discovery';
-const MANAGE_TAB_IDS = [WALLETS_TAB, EXCHANGES_TAB, REVIEW_TAB, LABELS_TAB, DISCOVERY_TAB];
+const DISCOVERY_ALIAS = 'crypto-discovery';
+const MANAGE_TAB_IDS = [WALLETS_TAB, EXCHANGES_TAB, REVIEW_TAB, LABELS_TAB];
 const CRYPTO_TAB_IDS = [OVERVIEW_TAB, HOLDINGS_TAB, TRANSACTIONS_TAB, ...MANAGE_TAB_IDS];
+
+const PAGE_META = {
+  [HOLDINGS_TAB]: {
+    title: 'Holdings',
+    description: 'Inspect every crypto position and maintain holdings in manual accounts.',
+  },
+  [TRANSACTIONS_TAB]: {
+    title: 'Activity',
+    description: 'Follow the unified event ledger across wallets, chains and exchange accounts.',
+  },
+  [WALLETS_TAB]: {
+    title: 'Wallets',
+    description: 'Connect EVM addresses, verify source coverage and recover forgotten wallets.',
+  },
+  [EXCHANGES_TAB]: {
+    title: 'Exchanges',
+    description: 'Connect read-only venue APIs, import exports and monitor historical coverage.',
+  },
+  [REVIEW_TAB]: {
+    title: 'Review',
+    description: 'Resolve unexplained activity, counterparties, matching evidence and balance exceptions.',
+  },
+  [LABELS_TAB]: {
+    title: 'Labels & Rules',
+    description: 'Maintain the durable address classifications, notes and token exclusions that shape the ledger.',
+  },
+};
 
 // Inside the Transactions tab. The unified ledger (#63) is the tab -- one
 // chronological line per EVENT across wallets, chains and exchange accounts.
@@ -98,9 +119,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // sitting right under the Sync button would stay stale.
   const [syncNonce, setSyncNonce] = useState(0);
 
-  // Everything the four management tabs read. Fetched separately from the page
-  // data and only once a management tab is opened: none of it is needed to
-  // render Overview, Holdings or the ledger, and six extra requests on every
+  // Everything the management pages read. Fetched separately from the page
+  // data and only once a management page is opened: none of it is needed to
+  // render Overview, Holdings or Activity, and six extra requests on every
   // landing would be paid by the users who never manage anything.
   const [ignoredTokens, setIgnoredTokens] = useState([]);
   const [addressLabels, setAddressLabels] = useState([]);
@@ -172,7 +193,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         // downgrading a red badge to all-clear is the lossy direction.
         onAttentionChange?.({
           errored: walletsData
-            ? (walletsData.wallets || []).filter((wallet) => wallet.error_code).length
+            ? (walletsData.wallets || []).filter((wallet) => (
+              wallet.error_code || wallet.reconciliation?.needs_review
+            )).length
             : null,
           needsReview: ledgerData ? (ledgerData.summary?.needs_review_count || 0) : null,
         });
@@ -297,27 +320,12 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
   const erroredWallets = useMemo(() => wallets.filter((wallet) => wallet.error_code), [wallets]);
 
-  // A wallet whose ETH ledger does not reproduce the chain's balance counts
-  // here too, but only ONCE even when it also carries a sync error -- the two
-  // are the same wallet asking for the same look. Token drift deliberately does
-  // not count: rebasing and fee-on-transfer contracts drift with no missed
-  // transfer behind it, so badging them would pin the number above zero for
-  // anyone who ever held one.
-  const walletAttentionCount = useMemo(
-    () => wallets.filter((wallet) => wallet.error_code || wallet.reconciliation?.needs_review).length,
-    [wallets]
-  );
   // Material only, deliberately. A badge that cannot reach zero -- because a
   // single airdrop wave parked 40 dust counterparties behind it -- teaches the
   // user to ignore the badge.
   const exchangeExceptionAttentionCount = exchangeExceptions?.summary?.count || 0;
   const reviewAttentionCount = (counterpartyData?.summary?.count || 0) + exchangeExceptionAttentionCount;
   const reviewAttentionUnknown = counterpartyData === null || exchangeExceptions === null;
-  const exchangeAttentionCount = useMemo(
-    () => exchangeAccounts.reduce((sum, account) => sum + (account.needs_review_count || 0), 0),
-    [exchangeAccounts]
-  );
-
   // Typeahead for the triage form keeps every exchange name, builtins included.
   const exchangeNameOptions = useMemo(
     () => [...new Set(addressLabels.filter((l) => !l.kind || l.kind === 'exchange').map((l) => l.name))],
@@ -333,27 +341,24 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // declared after an early return run on some renders and not others, which
   // React rejects outright ("rendered more hooks than during the previous
   // render") the moment loading flips false.
-  // The ledger spans wallets AND exchange accounts, so the tab exists whenever
-  // either has anything in it.
+  // The ledger spans wallets AND exchange accounts. Activity remains a valid
+  // empty page so a saved URL never opens with a different sidebar item active.
   const hasLedger = wallets.length > 0 || (ledgerSummary?.total || 0) > 0;
   const isEmpty = wallets.length === 0 && cryptoAccounts.length === 0 && !hasLedger;
 
-  // Transactions falls back to Overview when there is no ledger, which covers a
-  // bookmarked /crypto/transactions after the last wallet is disconnected.
-  // Every other tab always exists -- a condition here that depends on data
-  // arriving later would fall back on the first, still-loading render and mount
-  // Overview permanently, since tab bodies are mounted once and then hidden.
-  const activeTab = CRYPTO_TAB_IDS.includes(tab)
-    && (tab !== TRANSACTIONS_TAB || hasLedger)
-    ? tab
+  // Discovery used to be a separate tab. Its old URL now lands on Wallets,
+  // while every unknown Crypto page fails safely to Overview.
+  const requestedTab = tab === DISCOVERY_ALIAS ? WALLETS_TAB : tab;
+  const activeTab = CRYPTO_TAB_IDS.includes(requestedTab)
+    ? requestedTab
     : OVERVIEW_TAB;
-  // Set by the Overview empty state and the failed-sync banner, which point at
-  // a management tab rather than at Settings now that both live here.
+  // Set by cross-page actions such as the Overview empty state and the
+  // failed-sync banner. Sidebar navigation itself is owned by App.
   const goToTab = (id) => onTabChange?.(id);
 
-  // Tab bodies are hidden with CSS, never unmounted: unmounting OnChainActivity
+  // Page bodies are hidden with CSS, never unmounted: unmounting OnChainActivity
   // would throw away its accumulated Load More pages, transfer-type filter and
-  // label cache on every tab hop. The Set still defers each body's FIRST mount,
+  // label cache on every page hop. The Set still defers each body's FIRST mount,
   // so landing on Overview never fires the feed's requests.
   const [mountedTabs, setMountedTabs] = useState(() => new Set([activeTab]));
   useEffect(() => {
@@ -516,67 +521,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     return <LoadingState label="Loading Crypto" />;
   }
 
-  const countBadge = (count, tone) => (
-    <span className={`ml-1 rounded border px-1.5 py-0.5 text-[10px] font-bold ${tone}`}>{count}</span>
-  );
-
-  // Transactions is dropped entirely when there is nothing to show, rather
-  // than offered as a tab that opens onto an empty body.
-  //
-  // Its badge answers "what is unexplained", which is the ledger's whole
-  // promise, and it can actually reach zero -- every flagged row is resolvable
-  // by hand. A failed wallet sync outranks it: an incomplete feed makes the
-  // review count itself untrustworthy.
   const needsReviewCount = ledgerSummary?.needs_review_count || 0;
-  const tabOptions = [
-    { value: OVERVIEW_TAB, label: 'Overview' },
-    {
-      value: HOLDINGS_TAB,
-      label: 'Holdings',
-      badge: cryptoHoldings.length > 0
-        ? countBadge(cryptoHoldings.length, 'border-accent/20 bg-accent/10 text-accent')
-        : null,
-    },
-    ...(hasLedger ? [{
-      value: TRANSACTIONS_TAB,
-      label: 'Transactions',
-      badge: erroredWallets.length > 0
-        ? countBadge(erroredWallets.length, 'border-loss/20 bg-loss/10 text-loss')
-        : needsReviewCount > 0
-          ? countBadge(needsReviewCount, 'border-orange-500/30 bg-orange-500/10 text-orange-400')
-          : null,
-    }] : []),
-    // The management tabs are always offered, empty portfolio included: adding
-    // the first wallet or exchange account is what they are for. The divider
-    // splits the strip into what the user READS (Overview, Holdings,
-    // Transactions) and what they MANAGE, so seven tabs scan as 3 + 4.
-    { divider: true, hint: 'Manage' },
-    {
-      value: WALLETS_TAB,
-      label: 'Wallets',
-      badge: walletAttentionCount > 0
-        ? countBadge(walletAttentionCount, 'border-loss/20 bg-loss/10 text-loss')
-        : null,
-    },
-    {
-      value: EXCHANGES_TAB,
-      label: 'Exchanges',
-      badge: exchangeAttentionCount > 0
-        ? countBadge(exchangeAttentionCount, 'border-loss/20 bg-loss/10 text-loss')
-        : null,
-    },
-    {
-      value: REVIEW_TAB,
-      label: 'Review',
-      badge: reviewAttentionUnknown
-        ? countBadge('?', 'border-loss/20 bg-loss/10 text-loss')
-        : reviewAttentionCount > 0
-        ? countBadge(reviewAttentionCount, 'border-orange-500/30 bg-orange-500/10 text-orange-400')
-        : null,
-    },
-    { value: LABELS_TAB, label: 'Labels' },
-    { value: DISCOVERY_TAB, label: 'Discovery' },
-  ];
+  const pageMeta = PAGE_META[activeTab];
 
   // Body wrapper: mounted once visited, then hidden rather than unmounted.
   const tabBody = (id, children) => (
@@ -587,37 +533,45 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
   return (
     <div className="mx-auto w-full max-w-[1240px] px-3 py-6 sm:px-4 md:py-8">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">Crypto</p>
-          <h1 className="font-money text-display-lg text-primary">
-            {formatCurrency(totalCryptoValue)}
-          </h1>
-          <p className="text-body-sm text-tertiary">
-            Across {wallets.length} {wallets.length === 1 ? 'wallet' : 'wallets'} · {cryptoAccounts.length} {cryptoAccounts.length === 1 ? 'account' : 'accounts'}
-            {wallets.length > 0 && (lastSyncedAt ? ` · Synced ${formatRelativeTime(lastSyncedAt)}` : ' · Never synced')}
-          </p>
-        </div>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        {activeTab === OVERVIEW_TAB ? (
+          <div>
+            <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">Crypto Overview</p>
+            <h1 className="font-money text-display-lg text-primary">
+              {formatCurrency(totalCryptoValue)}
+            </h1>
+            <p className="text-body-sm text-tertiary">
+              Across {wallets.length} {wallets.length === 1 ? 'wallet' : 'wallets'} · {cryptoAccounts.length} {cryptoAccounts.length === 1 ? 'account' : 'accounts'}
+              {wallets.length > 0 && (lastSyncedAt ? ` · Synced ${formatRelativeTime(lastSyncedAt)}` : ' · Never synced')}
+            </p>
+          </div>
+        ) : (
+          <div className="max-w-3xl">
+            <p className="mb-0.5 text-caption uppercase tracking-wide text-tertiary">Crypto</p>
+            <h1 className="text-display-lg font-semibold text-primary">{pageMeta.title}</h1>
+            <p className="mt-1 text-body-sm text-tertiary">{pageMeta.description}</p>
+          </div>
+        )}
 
-        <SummaryStats stats={[
-          { label: 'ETH', value: formatEthQuantity(ethQuantity), valueClassName: 'font-money font-semibold text-accent' },
-          { label: 'Positions', value: cryptoHoldings.length },
-        ]} />
+        {activeTab === OVERVIEW_TAB && (
+          <SummaryStats stats={[
+            { label: 'ETH', value: formatEthQuantity(ethQuantity), valueClassName: 'font-money font-semibold text-accent' },
+            { label: 'Positions', value: cryptoHoldings.length },
+          ]} />
+        )}
+        {activeTab === HOLDINGS_TAB && (
+          <SummaryStats stats={[
+            { label: 'Value', value: formatCurrency(totalCryptoValue), valueClassName: 'font-money font-semibold text-accent' },
+            { label: 'Positions', value: cryptoHoldings.length },
+          ]} />
+        )}
+        {activeTab === REVIEW_TAB && (
+          <SummaryStats stats={[
+            { label: 'Events', value: needsReviewCount },
+            { label: 'Decisions', value: reviewAttentionUnknown ? '?' : reviewAttentionCount },
+          ]} />
+        )}
       </div>
-
-      {/* Header -> tabs -> banners, following BalancesPage. The banners are
-          transient (useTransientMessage clears after 3s); above the strip they
-          would jump the tab bar vertically as they come and go. */}
-      {/* Always rendered, empty portfolio included: the management tabs are how
-          the first wallet or exchange account gets added. */}
-      <FilterTabs
-        id="crypto-section"
-        label="Section"
-        className="mb-6"
-        options={tabOptions}
-        value={activeTab}
-        onChange={goToTab}
-      />
 
       {successMessage && (
         <div className="mb-4 border border-gain/20 bg-gain-bg p-3 text-body-sm text-gain">
@@ -743,7 +697,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             </section>
           ))}
 
-          {hasLedger && tabBody(TRANSACTIONS_TAB, (
+          {tabBody(TRANSACTIONS_TAB, (
             <section>
               {/* A <select>, not a tab strip: these labels are notes-to-self
                   ("Use to store EOS ERC20 tokens before mainnet...") that no
@@ -841,12 +795,19 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
           ))}
 
           {tabBody(WALLETS_TAB, (
-            <WalletsPanel
-              wallets={wallets}
-              onChanged={handleManageChanged}
-              onError={setError}
-              showSuccess={showSuccess}
-            />
+            <>
+              <WalletsPanel
+                wallets={wallets}
+                onChanged={handleManageChanged}
+                onError={setError}
+                showSuccess={showSuccess}
+              />
+              <DiscoveryPanel
+                onChanged={handleManageChanged}
+                onError={setError}
+                showSuccess={showSuccess}
+              />
+            </>
           ))}
 
           {tabBody(EXCHANGES_TAB, (
@@ -864,29 +825,47 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
           ))}
 
           {tabBody(REVIEW_TAB, (
-            <ReviewPanel
-              counterpartyData={counterpartyData && {
-                ...counterpartyData,
-                data: (counterpartyData.data || []).map((counterparty) => ({
-                  ...counterparty,
-                  note: addressNotes.find((item) => item.address === counterparty.address)?.note || '',
-                })),
-              }}
-              spamActivity={spamActivity}
-              onSpamPageLoaded={(next) => { spamPagesRef.current += 1; setSpamActivity(next); }}
-              exchangeNameOptions={exchangeNameOptions}
-              hasWallets={wallets.length > 0}
-              onChanged={handleManageChanged}
-              onError={setError}
-              showSuccess={showSuccess}
-              onRetry={fetchManageData}
-              exchangeExceptions={exchangeExceptions}
-              exchangeExceptionsError={exchangeExceptionsError}
-              onOpenExchanges={(accountId) => {
-                setExchangeFocusAccountId(accountId);
-                onTabChange?.(EXCHANGES_TAB);
-              }}
-            />
+            <>
+              {needsReviewCount > 0 && (
+                <section>
+                  <div className="mb-3 px-2">
+                    <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Transactions needing review</h2>
+                    <p className="mt-1 text-xs text-secondary">
+                      Unexplained wallet and exchange events, with the same durable notes and corrections available in Activity.
+                    </p>
+                  </div>
+                  <CryptoLedger
+                    refreshKey={syncNonce}
+                    addressNotes={addressNotes}
+                    initialNeedsReview="true"
+                    onDataChanged={fetchData}
+                  />
+                </section>
+              )}
+              <ReviewPanel
+                counterpartyData={counterpartyData && {
+                  ...counterpartyData,
+                  data: (counterpartyData.data || []).map((counterparty) => ({
+                    ...counterparty,
+                    note: addressNotes.find((item) => item.address === counterparty.address)?.note || '',
+                  })),
+                }}
+                spamActivity={spamActivity}
+                onSpamPageLoaded={(next) => { spamPagesRef.current += 1; setSpamActivity(next); }}
+                exchangeNameOptions={exchangeNameOptions}
+                hasWallets={wallets.length > 0}
+                onChanged={handleManageChanged}
+                onError={setError}
+                showSuccess={showSuccess}
+                onRetry={fetchManageData}
+                exchangeExceptions={exchangeExceptions}
+                exchangeExceptionsError={exchangeExceptionsError}
+                onOpenExchanges={(accountId) => {
+                  setExchangeFocusAccountId(accountId);
+                  onTabChange?.(EXCHANGES_TAB);
+                }}
+              />
+            </>
           ))}
 
           {tabBody(LABELS_TAB, (
@@ -901,13 +880,6 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             />
           ))}
 
-          {tabBody(DISCOVERY_TAB, (
-            <DiscoveryPanel
-              onChanged={handleManageChanged}
-              onError={setError}
-              showSuccess={showSuccess}
-            />
-          ))}
       </>
 
       <HoldingForm

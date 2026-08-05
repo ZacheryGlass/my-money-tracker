@@ -19,6 +19,11 @@ import {
   ReceiptText,
   Store,
   Coins,
+  Activity,
+  CircleGauge,
+  Landmark,
+  ListChecks,
+  Tags,
 } from 'lucide-react';
 import { useMediaQuery, useIsDesktop } from '../hooks/useMediaQuery';
 
@@ -26,7 +31,14 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'balances', label: 'Balances', icon: Wallet },
   { id: 'accounts', label: 'Accounts', icon: Building2 },
-  { id: 'crypto', label: 'Crypto', icon: Coins },
+  { id: '_separator_crypto', section: 'CRYPTO' },
+  { id: 'crypto', label: 'Overview', fullLabel: 'Crypto Overview', icon: CircleGauge },
+  { id: 'crypto-holdings', label: 'Holdings', fullLabel: 'Crypto Holdings', icon: Coins },
+  { id: 'crypto-transactions', label: 'Activity', fullLabel: 'Crypto Activity', icon: Activity },
+  { id: 'crypto-wallets', label: 'Wallets', fullLabel: 'Crypto Wallets', icon: Wallet },
+  { id: 'crypto-exchanges', label: 'Exchanges', fullLabel: 'Crypto Exchanges', icon: Landmark },
+  { id: 'crypto-review', label: 'Review', fullLabel: 'Crypto Review', icon: ListChecks },
+  { id: 'crypto-labels', label: 'Labels & Rules', fullLabel: 'Crypto Labels & Rules', icon: Tags },
   { id: '_separator_portfolio', section: 'PORTFOLIO' },
   { id: 'holdings-analysis', label: 'Holdings Analysis', icon: Grid3X3 },
   { id: 'portfolio-timeline', label: 'Portfolio Timeline', icon: Calendar },
@@ -144,6 +156,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
             const Icon = item.icon;
             const isActive = currentPage === item.id;
             const badge = badges[item.id];
+            const tooltipLabel = item.fullLabel || item.label;
 
             return (
               <button
@@ -156,7 +169,7 @@ export default function Sidebar({ currentPage, onNavigate, user, onLogout, mobil
                     : 'text-secondary hover:bg-surface-2 hover:text-primary'}
                 `}
                 title={(!showExpanded && !isMobile)
-                  ? (badge ? `${item.label} (${badge.count.toLocaleString()})` : item.label)
+                  ? (badge ? `${tooltipLabel} (${badge.count.toLocaleString()})` : tooltipLabel)
                   : undefined}
               >
                 <Icon size={16} strokeWidth={isActive ? 2 : 1.5} className="flex-shrink-0" />

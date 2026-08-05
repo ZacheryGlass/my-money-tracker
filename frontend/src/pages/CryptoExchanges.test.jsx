@@ -106,11 +106,10 @@ const FLAGGED = [
   },
 ];
 
-// Exchange accounts live on the Crypto page's Exchanges tab (#75); App routes
-// /crypto/exchanges to it, which is what the `tab` prop stands in for here.
+// Exchange accounts live on the Crypto section's Exchanges page.
 const renderSettings = async () => {
   render(<CryptoPage tab="crypto-exchanges" onTabChange={vi.fn()} />);
-  return screen.findByRole('tab', { name: /Exchanges/ });
+  return screen.findByRole('heading', { level: 1, name: 'Exchanges' });
 };
 
 beforeEach(() => {
