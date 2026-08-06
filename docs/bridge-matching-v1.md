@@ -279,10 +279,11 @@ matrix](https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb00
 with deployment bounds, canonical/Hop token variants, bridge and wrapper
 addresses, and the source commit stored with every route.
 
-For an L2 initiation, `TransferSent` is the identity-bearing source event. It
-contains the destination chain, recipient, gross amount, transfer nonce,
-bonder fee, destination token index, `amountOutMin`, deadline, and bonder. The
-adapter derives the v1 transfer id as:
+For an L2 initiation, the pinned `TransferSent` is the identity-bearing source
+event. Its indexed fields carry the emitted transfer id, destination chain,
+and recipient; its data carries the gross amount, transfer nonce, bonder fee,
+transfer index, `amountOutMin`, and deadline. The adapter recomputes and
+requires the emitted id to equal the v1 transfer id:
 
 ```text
 keccak256(abi.encode(
@@ -293,19 +294,21 @@ keccak256(abi.encode(
 
 The exact field order follows the [pinned Hop transfer-ID
 helper](https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb004a4d0c587/packages/hop-node/src/utils/getTransferId.ts).
-The event's `tokenIndex` is still checked against the registered route, but it
-is deliberately not added to the hash because it is not part of that deployed
-v1 helper. `send` and `swapAndSend` calldata is decoded only to corroborate the
-event and endpoint target; the destination swap tuple is checked for the
-token index, minimum, and deadline. Unknown or malformed calldata does not
-become a match.
+The pinned deployed ABI uses static `send`/`swapAndSend` calls, so it does not
+expose a token index in this event or hash. Newer tuple-shaped Hop source
+revisions are kept as a separate ABI variant: if registered, their adapter
+path hashes the tuple's token index as well. Calldata is decoded only to
+corroborate the event and endpoint target; unknown or malformed calldata does
+not become a match.
 
 The destination identity-bearing event is `Withdrew(transferId, recipient,
 amount, transferNonce)`. The recipient must equal the destination wallet and
 the observed destination asset must be one of the route's registered canonical
-or Hop token addresses. The destination amount must equal `gross amount −
-bonder fee` exactly. A `WithdrawalBonded` log is a bonder accounting step, not
-proof that the user's wallet received funds, and `TransferSentToL2`/
+or Hop token addresses. The event amount is gross (including the bonder fee),
+so it must equal the source gross amount exactly; the recipient's net amount is
+gross minus fee because the contract distributes the fee separately. A
+`WithdrawalBonded` log is a bonder accounting step, not proof that the user's
+wallet received funds, and `TransferSentToL2`/
 `TransferFromL1Completed` are left unsupported because the current v1 evidence
 does not provide one shared source/destination transfer id for those L1-to-L2
 paths. They remain visible for review rather than being amount-matched.

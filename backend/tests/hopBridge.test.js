@@ -56,24 +56,26 @@ function hopEndpoints(chainId, bridge, wrapper) {
 }
 
 function transferSentLog(txHash, blockHash, {
-  amount = AMOUNT, fee = FEE, tokenIndex = 0n, recipient = WALLET,
+  amount = AMOUNT, fee = FEE, recipient = WALLET,
   amountOutMin = MIN, deadline = DEADLINE,
 } = {}) {
+  const transferId = hopTransferId(
+    DESTINATION_CHAIN, recipient, amount, NONCE, fee, amountOutMin, deadline
+  );
   return {
     address: SOURCE_BRIDGE,
     logIndex: '0x7',
     transactionHash: txHash,
     blockHash,
-    topics: [TOPICS.hopTransferSent, word(DESTINATION_CHAIN), word(12), addressWord(recipient)],
+    topics: [TOPICS.hopTransferSentPinned, transferId, word(DESTINATION_CHAIN), addressWord(recipient)],
     data: data(
-      word(amount), NONCE, word(fee), word(4), word(tokenIndex),
-      word(amountOutMin), word(deadline), addressWord(BONDER),
+      word(amount), NONCE, word(fee), word(12), word(amountOutMin), word(deadline),
     ),
   };
 }
 
 function withdrewLog(txHash, blockHash, transferId, {
-  amount = NET, recipient = WALLET, nonce = NONCE,
+  amount = AMOUNT, recipient = WALLET, nonce = NONCE,
 } = {}) {
   return {
     address: DESTINATION_BRIDGE,
@@ -87,13 +89,13 @@ function withdrewLog(txHash, blockHash, transferId, {
 
 function sourceEnvelope({
   txHash = hash('1'), blockHash = hash('a'), amount = AMOUNT, fee = FEE,
-  tokenIndex = 0n, recipient = WALLET, amountOutMin = MIN, deadline = DEADLINE,
+  recipient = WALLET, amountOutMin = MIN, deadline = DEADLINE,
   status = '0x1', input = null, legs = [{ direction: 'out', contract: SOURCE_TOKEN }],
   providerBoundary = { finality: { status: 'finalized', method: 'synthetic-fixture' } },
 } = {}) {
   const transactionInput = input || call(
-    HOP_SELECTORS.send, word(DESTINATION_CHAIN), addressWord(recipient), word(amount),
-    word(fee), word(tokenIndex), word(amountOutMin), word(deadline), addressWord(BONDER),
+    HOP_SELECTORS.sendLegacy, word(DESTINATION_CHAIN), addressWord(recipient), word(amount),
+    word(fee), word(amountOutMin), word(deadline),
   );
   return {
     wallet_id: 1, wallet_address: address('1'), chain_id: SOURCE_CHAIN, tx_hash: txHash,
@@ -102,7 +104,7 @@ function sourceEnvelope({
     receipt: {
       transactionHash: txHash, blockHash, blockNumber: '0x1000000', status,
       logs: [transferSentLog(txHash, blockHash, {
-        amount, fee, tokenIndex, recipient, amountOutMin, deadline,
+        amount, fee, recipient, amountOutMin, deadline,
       })],
     },
     endpoints: hopEndpoints(SOURCE_CHAIN, SOURCE_BRIDGE, SOURCE_WRAPPER),
@@ -113,7 +115,7 @@ function sourceEnvelope({
 }
 
 function destinationEnvelope({
-  txHash = hash('2'), blockHash = hash('b'), transferId, amount = NET,
+  txHash = hash('2'), blockHash = hash('b'), transferId, amount = AMOUNT,
   recipient = WALLET, chainId = DESTINATION_CHAIN, status = '0x1',
   legs = [{ direction: 'in', contract: DESTINATION_TOKEN }],
   providerBoundary = { finality: { status: 'finalized', method: 'synthetic-fixture' } },
@@ -163,7 +165,7 @@ test('Hop v1 derives the canonical transfer ID and folds a finalized route exact
   assert.equal(sourceEvents[0].correlation_key, `hop:v1:${transferId}`);
   assert.equal(sourceEvents[0].evidence.hop.transfer_id, transferId);
   assert.equal(sourceEvents[0].fee_amount, FEE.toString());
-  assert.equal(destinationEvents[0].amount, NET.toString());
+  assert.equal(destinationEvents[0].amount, AMOUNT.toString());
 
   const [movement] = buildProtocolMovements([...sourceEvents, ...destinationEvents]);
   assert.equal(movement.status, 'protocol_verified');
@@ -173,33 +175,40 @@ test('Hop v1 derives the canonical transfer ID and folds a finalized route exact
   assert.equal(movement.evidence.hop_pair.route.route_key, ROUTE.route_key);
 });
 
-test('Hop swapAndSend validates destination token index while allowing AMM amount conversion', () => {
+test('Hop pinned TransferSent rejects an emitted transfer ID that does not recompute', () => {
+  const source = sourceEnvelope();
+  source.receipt.logs[0].topics[1] = hash('d');
+  const [event] = decodeEnvelope(source);
+  assert.equal(event.status, 'unsupported');
+  assert.equal(event.evidence.hop.reason, 'transfer_id_mismatch');
+});
+
+test('Hop pinned swapAndSend validates destination swap bounds while allowing AMM conversion', () => {
   const input = call(
-    HOP_SELECTORS.swapAndSend,
-    word(DESTINATION_CHAIN), addressWord(WALLET), word(123_456), word(9_000),
-    word(1), word(120_000), word(DEADLINE), word(0), word(880_000), word(DEADLINE),
-    addressWord(BONDER),
+    HOP_SELECTORS.swapAndSendLegacy,
+    word(DESTINATION_CHAIN), addressWord(WALLET), word(900_000), word(9_000),
+    word(120_000), word(DEADLINE), word(880_000), word(DEADLINE),
   );
   const { sourceEvents } = decodePair({
     source: {
       input, amount: 900_000n, fee: 9_000n, amountOutMin: 880_000n,
       legs: [{ direction: 'out', contract: SOURCE_TOKEN }],
     },
-    destination: { amount: 891_000n },
+    destination: { amount: 900_000n },
   });
   assert.equal(sourceEvents.length, 1);
-  assert.equal(sourceEvents[0].evidence.hop.source_calldata.kind, 'swap_and_send');
-  assert.equal(sourceEvents[0].evidence.hop.source_calldata.source_token_index, '1');
+  assert.equal(sourceEvents[0].evidence.hop.source_calldata.kind, 'swap_and_send_legacy');
+  assert.equal(sourceEvents[0].evidence.hop.source_calldata.destination_amount_out_min, '880000');
 });
 
-test('Hop identity does not fold when gross, fee, net, asset, route, or recipient evidence disagrees', () => {
-  const wrongNet = decodePair({ destination: { amount: NET + 1n } });
-  const wrongNetMovements = buildProtocolMovements([
-    ...wrongNet.sourceEvents, ...wrongNet.destinationEvents,
+test('Hop identity does not fold when gross, fee, asset, route, or recipient evidence disagrees', () => {
+  const wrongGross = decodePair({ destination: { amount: NET + 1n } });
+  const wrongGrossMovements = buildProtocolMovements([
+    ...wrongGross.sourceEvents, ...wrongGross.destinationEvents,
   ]);
-  assert.equal(wrongNetMovements.some((movement) => movement.status === 'protocol_verified'), false);
-  assert.equal(wrongNetMovements.find((movement) => movement.protocol === 'hop')?.evidence.ambiguity,
-    'gross_fee_net_mismatch');
+  assert.equal(wrongGrossMovements.some((movement) => movement.status === 'protocol_verified'), false);
+  assert.equal(wrongGrossMovements.find((movement) => movement.protocol === 'hop')?.evidence.ambiguity,
+    'gross_amount_mismatch');
 
   const wrongAsset = decodePair({
     destination: { legs: [{ direction: 'in', contract: address('e') }] },
@@ -245,7 +254,7 @@ test('Hop failures, non-finalized receipts, incomplete token coverage, and settl
   destination.receipt.logs = [{
     address: DESTINATION_BRIDGE, logIndex: '0x3', transactionHash: destination.tx_hash,
     blockHash: destination.receipt.blockHash,
-    topics: [TOPICS.hopWithdrawalBonded, transferId], data: data(word(NET), addressWord(BONDER)),
+    topics: [TOPICS.hopWithdrawalBonded, transferId], data: data(word(AMOUNT), addressWord(BONDER)),
   }];
   const settlement = decodeEnvelope(destination);
   assert.equal(settlement.length, 1);

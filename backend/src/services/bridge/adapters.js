@@ -138,6 +138,11 @@ const TOPICS = Object.freeze({
   acrossV3Fill: eventTopic('FilledV3Relay(address,address,uint256,uint256,uint256,uint256,uint32,uint32,uint32,address,address,address,address,bytes,(address,bytes,uint256,uint8))'),
   acrossCurrentDeposit: eventTopic('FundsDeposited(bytes32,bytes32,uint256,uint256,uint256,uint256,uint32,uint32,uint32,bytes32,bytes32,bytes32,bytes)'),
   acrossCurrentFill: eventTopic('FilledRelay(bytes32,bytes32,uint256,uint256,uint256,uint256,uint256,uint32,uint32,bytes32,bytes32,bytes32,bytes32,bytes32,(bytes32,bytes32,uint256,uint8))'),
+  // The pinned mainnet v1 ABI emits the transfer id as an indexed event
+  // field and uses the six-word static send ABI. Newer source revisions use
+  // the tuple-shaped SwapData ABI and no longer emit the id; keep that event
+  // as a separate variant so a route can never silently mix the two.
+  hopTransferSentPinned: eventTopic('TransferSent(bytes32,uint256,address,uint256,bytes32,uint256,uint256,uint256,uint256)'),
   hopTransferSent: eventTopic('TransferSent(uint256,uint256,address,uint256,bytes32,uint256,uint256,uint8,uint256,uint256,address)'),
   hopTransferSentToL2: eventTopic('TransferSentToL2(uint256,address,uint256,uint256,uint256,address,uint256)'),
   hopTransferFromL1Completed: eventTopic('TransferFromL1Completed(address,uint256,uint8,uint256,uint256,address,uint256)'),
@@ -509,12 +514,13 @@ function routeTokenIndexApplies(route, field, tokenIndex) {
 
 function hopRouteCandidates(envelope, {
   side, destinationChainId = null, tokenIndex = null, sourceTokenIndex = null,
-  log = null,
+  log = null, abiVariant = null,
 }) {
   const chainId = Number(envelope.chain_id);
   const assets = observedHopAssets(envelope, side === 'source' ? 'out' : 'in');
   return (envelope.hop_routes || []).filter((route) => {
     if (route.enabled === false || route.family_version !== 'v1') return false;
+    if (abiVariant && route.abi_variant !== abiVariant) return false;
     if (side === 'source') {
       if (Number(route.source_chain_id) !== chainId
           || Number(route.destination_chain_id) !== Number(destinationChainId)) return false;
@@ -593,6 +599,18 @@ function hopTransferId(chainId, recipient, amount, transferNonce, bonderFee, amo
   const words = [
     abiUintWord(chainId), abiAddressWord(recipient), abiUintWord(amount),
     abiBytes32Word(transferNonce), abiUintWord(bonderFee),
+    abiUintWord(amountOutMin), abiUintWord(deadline),
+  ];
+  if (words.some((word) => word == null)) return null;
+  return `0x${bytesToHex(keccak_256(hexToBytes(words.join(''))))}`;
+}
+
+function hopTransferIdCurrent(
+  chainId, recipient, amount, transferNonce, bonderFee, tokenIndex, amountOutMin, deadline
+) {
+  const words = [
+    abiUintWord(chainId), abiAddressWord(recipient), abiUintWord(amount),
+    abiBytes32Word(transferNonce), abiUintWord(bonderFee), abiUintWord(tokenIndex),
     abiUintWord(amountOutMin), abiUintWord(deadline),
   ];
   if (words.some((word) => word == null)) return null;
@@ -778,41 +796,56 @@ function decodeHop(envelope) {
   const events = [];
   for (const log of envelope.receipt?.logs || []) {
     const topic0 = lower(log.topics?.[0]);
-    if (![TOPICS.hopTransferSent, TOPICS.hopTransferSentToL2,
+    if (![TOPICS.hopTransferSentPinned, TOPICS.hopTransferSent, TOPICS.hopTransferSentToL2,
       TOPICS.hopTransferFromL1Completed, TOPICS.hopWithdrawalBonded,
       TOPICS.hopWithdrawalBondedLegacy, TOPICS.hopWithdrew]
       .includes(topic0)) continue;
     if (!hopEndpointMentioned(envelope, log)) continue;
 
-    if (topic0 === TOPICS.hopTransferSent) {
+    if (topic0 === TOPICS.hopTransferSentPinned || topic0 === TOPICS.hopTransferSent) {
       if (envelope.category !== 'bridge_out') continue;
-      if (log.topics?.length !== 4 || dataWordCount(log.data) !== 8) {
+      const pinnedEvent = topic0 === TOPICS.hopTransferSentPinned;
+      const expectedDataWords = pinnedEvent ? 6 : 8;
+      if (log.topics?.length !== 4 || dataWordCount(log.data) !== expectedDataWords) {
         events.push(hopDiagnostic(envelope, log, 'malformed_transfer_sent_log'));
         continue;
       }
-      const destinationChainId = uintWord(log.topics[1]);
+      const eventTransferId = pinnedEvent ? bytes32(log.topics[1]) : null;
+      const destinationChainId = uintWord(log.topics[pinnedEvent ? 2 : 1]);
       const recipient = addressWord(log.topics[3]);
       const amount = uintWord(dataWord(log.data, 0));
       const transferNonce = bytes32(dataWord(log.data, 1));
       const bonderFee = uintWord(dataWord(log.data, 2));
-      const tokenIndex = uintWord(dataWord(log.data, 4));
-      const amountOutMin = uintWord(dataWord(log.data, 5));
-      const deadline = uintWord(dataWord(log.data, 6));
-      const bonder = addressWord(dataWord(log.data, 7));
-      if (destinationChainId == null || !recipient || amount == null || !transferNonce
-          || bonderFee == null || tokenIndex == null || tokenIndex > 255n
-          || amountOutMin == null || deadline == null || !bonder) {
+      const tokenIndex = pinnedEvent ? null : uintWord(dataWord(log.data, 4));
+      const amountOutMin = uintWord(dataWord(log.data, pinnedEvent ? 4 : 5));
+      const deadline = uintWord(dataWord(log.data, pinnedEvent ? 5 : 6));
+      const bonder = pinnedEvent ? null : addressWord(dataWord(log.data, 7));
+      if (destinationChainId == null || (pinnedEvent && !eventTransferId) || !recipient
+          || amount == null || !transferNonce || bonderFee == null
+          || (!pinnedEvent && (tokenIndex == null || tokenIndex > 255n || !bonder))
+          || amountOutMin == null || deadline == null) {
         events.push(hopDiagnostic(envelope, log, 'malformed_transfer_sent_fields'));
         continue;
       }
-      const transferId = hopTransferId(
-        destinationChainId, recipient, amount, transferNonce, bonderFee, amountOutMin, deadline
-      );
+      const computedTransferId = pinnedEvent
+        ? hopTransferId(
+          destinationChainId, recipient, amount, transferNonce, bonderFee, amountOutMin, deadline
+        )
+        : hopTransferIdCurrent(
+          destinationChainId, recipient, amount, transferNonce, bonderFee,
+          tokenIndex, amountOutMin, deadline
+        );
+      const transferId = eventTransferId || computedTransferId;
+      const transferIdMatches = Boolean(computedTransferId)
+        && (!eventTransferId || eventTransferId === computedTransferId);
       const input = transactionInput(envelope.transaction);
       const call = decodeHopCall(input);
       const routes = hopRouteCandidates(envelope, {
         side: 'source', destinationChainId: destinationChainId.toString(),
-        tokenIndex: tokenIndex.toString(), sourceTokenIndex: call.source_token_index, log,
+        tokenIndex: tokenIndex == null ? null : tokenIndex.toString(),
+        sourceTokenIndex: call.source_token_index, log,
+        abiVariant: pinnedEvent ? 'hop-v1-transfer-sent-withdrawal-v1'
+          : 'hop-v1-current-transfer-sent',
       });
       const routeSummaries = routes.map(hopRouteSummary);
       const callKnown = call.kind !== 'missing';
@@ -820,19 +853,21 @@ function decodeHop(envelope) {
       const sourceTargets = new Set(routes.flatMap((route) => [
         lower(route.source_bridge_address), lower(route.source_wrapper_address),
       ]));
-      if (!transferId || !routes.length
+      if (!transferIdMatches || !routes.length
           || (callKnown && (!sourceTargets.has(target) || !hopCallMatchesSource(call, {
             destination_chain_id: destinationChainId.toString(), recipient,
             amount: amount.toString(), bonder_fee: bonderFee.toString(),
-            token_index: tokenIndex.toString(), amount_out_min: amountOutMin.toString(),
-            deadline: deadline.toString(), bonder,
+            token_index: tokenIndex == null ? null : tokenIndex.toString(),
+            amount_out_min: amountOutMin.toString(), deadline: deadline.toString(), bonder,
           })))) {
-        const reason = !routes.length ? 'unsupported_route'
+        const reason = !transferIdMatches ? 'transfer_id_mismatch'
+          : !routes.length ? 'unsupported_route'
           : call.kind === 'malformed' ? 'malformed_source_calldata'
             : call.kind === 'unknown' ? 'unsupported_source_calldata_selector'
               : !sourceTargets.has(target) ? 'source_endpoint_mismatch' : 'source_calldata_mismatch';
         events.push(hopDiagnostic(envelope, log, reason, {
-          transfer_id: transferId, destination_chain_id: destinationChainId.toString(),
+          transfer_id: transferId, computed_transfer_id: computedTransferId,
+          destination_chain_id: destinationChainId.toString(),
           route_candidates: routeSummaries, call,
         }));
         continue;
@@ -856,7 +891,7 @@ function decodeHop(envelope) {
             recipient,
             gross_amount: amount.toString(),
             bonder_fee: bonderFee.toString(),
-            token_index: tokenIndex.toString(),
+            token_index: tokenIndex == null ? null : tokenIndex.toString(),
             amount_out_min: amountOutMin.toString(),
             deadline: deadline.toString(),
             bonder,
@@ -1014,9 +1049,11 @@ function validateHopPair(sourceEvent, destinationEvent) {
     return reject('malformed_hop_amounts');
   }
   const net = gross - fee;
-  if (destinationAmount !== net) return reject('gross_fee_net_mismatch', {
+  // Hop's Withdrew event records the amount including the bonder fee. The
+  // contract subtracts that fee only when distributing the recipient's funds.
+  if (destinationAmount !== gross) return reject('gross_amount_mismatch', {
     gross_amount: gross.toString(), bonder_fee: fee.toString(),
-    destination_amount: destinationAmount.toString(), expected_net_amount: net.toString(),
+    destination_amount: destinationAmount.toString(), expected_gross_amount: gross.toString(),
   });
 
   const coverage = destination.destination_coverage;
@@ -1069,6 +1106,7 @@ module.exports = {
   decodeHopCall,
   eventTopic,
   hopTransferId,
+  hopTransferIdCurrent,
   logIndex,
   opSourceHash,
   receiptStatus,
