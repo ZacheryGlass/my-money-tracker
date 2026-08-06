@@ -41,25 +41,30 @@ function log({ txHash, blockHash, logAddress, index = 0, topics, body = '0x' }) 
 
 function envelope({
   walletId = 1, chainId, txHash, category, tx = {}, logs = [], endpoints = [],
-  blockHash = hash('b'), methodName = null,
+  blockHash = hash('b'), methodName = null, walletAddress = null,
+  blockNumber = '0x64', status = '0x1',
   providerBoundary = { finality: { status: 'finalized', method: 'synthetic-fixture' } },
 }) {
   return {
     wallet_id: walletId,
+    wallet_address: walletAddress,
     chain_id: chainId,
     tx_hash: txHash,
     category,
     method_name: methodName,
     receipt_id: walletId * 10 + chainId,
     transaction: { hash: txHash, blockHash, ...tx },
-    receipt: { transactionHash: txHash, blockHash, blockNumber: '0x64', status: '0x1', logs },
+    receipt: { transactionHash: txHash, blockHash, blockNumber, status, logs },
     endpoints,
     provider_boundary: providerBoundary,
   };
 }
 
-function endpoint(protocol, chainId, endpointAddress, familyVersion = 'fixture') {
-  return { protocol, family_version: familyVersion, chain_id: chainId, address: endpointAddress };
+function endpoint(protocol, chainId, endpointAddress, familyVersion = 'fixture', extras = {}) {
+  return {
+    protocol, family_version: familyVersion, chain_id: chainId, address: endpointAddress,
+    ...extras,
+  };
 }
 
 function event(overrides = {}) {
@@ -193,6 +198,171 @@ test('Gnosis legacy decodes the third non-indexed word as source transaction has
   assert.deepEqual(decodeEnvelope(source), []);
 });
 
+test('Gnosis legacy decodes an allowlisted ERC-20 Transfer recipient and exact RelayedMessage reference', () => {
+  const sourceTx = hash('a');
+  const destinationTx = hash('b');
+  const wallet = address('c');
+  const token = address('d');
+  const sourceBridge = address('e');
+  const destinationBridge = address('f');
+  const amount = 123456789n;
+  const deploymentKey = 'gnosis-xdai-legacy-pre-usds';
+  const requiredIdentityFields = [
+    'protocol_asset', 'source_chain_id', 'destination_chain_id',
+    'deployment_key', 'reference_type',
+  ];
+  const sourceEndpoint = endpoint('gnosis', 100, sourceBridge, 'legacy-xdai', {
+    role: 'bridge', direction: 'out',
+    metadata: {
+      deployment_key: deploymentKey,
+      abi_variants: {
+        erc20_transfer_source: {
+          supported: true, direction: 'out', source_chain_id: 100,
+          destination_chain_id: 1, canonical_asset: 'XDAI',
+          source_asset_contracts: [token], reference_type: 'source_transaction_hash',
+          required_identity_fields: requiredIdentityFields,
+        },
+      },
+    },
+  });
+  const destinationEndpoint = endpoint('gnosis', 1, destinationBridge, 'legacy-xdai', {
+    role: 'bridge', direction: 'in',
+    metadata: {
+      deployment_key: deploymentKey,
+      abi_variants: {
+        relayed_message_destination: {
+          supported: true, direction: 'in', source_chain_id: 100,
+          destination_chain_id: 1, canonical_asset: 'XDAI',
+          reference_type: 'source_transaction_hash',
+          required_identity_fields: requiredIdentityFields,
+        },
+      },
+    },
+  });
+  const source = envelope({
+    chainId: 100, txHash: sourceTx, category: 'bridge_out', walletAddress: wallet,
+    tx: { from: wallet, to: token }, endpoints: [sourceEndpoint],
+  });
+  source.receipt.logs = [log({
+    txHash: sourceTx, blockHash: source.receipt.blockHash, logAddress: token,
+    topics: [TOPICS.erc20Transfer, addressWord(wallet), addressWord(sourceBridge)],
+    body: word(amount),
+  })];
+  const destination = envelope({
+    walletId: 2, chainId: 1, txHash: destinationTx, category: 'bridge_in',
+    endpoints: [destinationEndpoint],
+  });
+  destination.receipt.logs = [log({
+    txHash: destinationTx, blockHash: destination.receipt.blockHash,
+    logAddress: destinationBridge, topics: [TOPICS.gnosisRelayedMessage],
+    body: data(addressWord(wallet), word(amount), sourceTx),
+  })];
+
+  const sourceEvents = decodeEnvelope(source);
+  assert.equal(sourceEvents.length, 1);
+  assert.equal(sourceEvents[0].asset_id, `erc20:100:${token}`);
+  assert.equal(sourceEvents[0].amount, amount.toString());
+  assert.deepEqual(sourceEvents[0].evidence.raw_log, source.receipt.logs[0]);
+  assert.deepEqual({
+    token_contract: sourceEvents[0].evidence.token_contract,
+    amount: sourceEvents[0].evidence.amount,
+    sender: sourceEvents[0].evidence.sender,
+    recipient: sourceEvents[0].evidence.recipient,
+    source_tx_hash: sourceEvents[0].evidence.source_tx_hash,
+  }, {
+    token_contract: token, amount: amount.toString(), sender: wallet,
+    recipient: sourceBridge, source_tx_hash: sourceTx,
+  });
+
+  const destinationEvents = decodeEnvelope(destination);
+  assert.equal(destinationEvents.length, 1);
+  assert.equal(destinationEvents[0].correlation_key, `gnosis-legacy:${sourceTx}`);
+  const movement = buildProtocolMovements([...sourceEvents, ...destinationEvents])[0];
+  assert.equal(movement.status, 'protocol_verified');
+  assert.equal(movement.members[0].asset_id, `erc20:100:${token}`);
+
+  const failedDestination = structuredClone(destination);
+  failedDestination.receipt.status = '0x0';
+  assert.equal(buildProtocolMovements([
+    ...sourceEvents, ...decodeEnvelope(failedDestination),
+  ])[0].status, 'failed');
+
+  const pendingDestination = structuredClone(destination);
+  pendingDestination.provider_boundary = {
+    finality: { status: 'pending', method: 'eth_getBlockByNumber(finalized)' },
+  };
+  assert.equal(buildProtocolMovements([
+    ...sourceEvents, ...decodeEnvelope(pendingDestination),
+  ])[0].status, 'pending');
+});
+
+test('Gnosis ERC-20 bridge evidence fails closed for wrong token, recipient, receipt, ABI, and deployment', () => {
+  const sourceTx = hash('c');
+  const wallet = address('1');
+  const token = address('2');
+  const bridge = address('3');
+  const wrongToken = address('4');
+  const wrongRecipient = address('5');
+  const deploymentKey = 'gnosis-xdai-legacy-pre-usds';
+  const variant = {
+    supported: true, direction: 'out', source_chain_id: 100,
+    destination_chain_id: 1, canonical_asset: 'XDAI',
+    source_asset_contracts: [token], reference_type: 'source_transaction_hash',
+    required_identity_fields: [
+      'protocol_asset', 'source_chain_id', 'destination_chain_id',
+      'deployment_key', 'reference_type',
+    ],
+  };
+  const sourceEndpoint = endpoint('gnosis', 100, bridge, 'legacy-xdai', {
+    role: 'bridge', direction: 'out',
+    valid_from_block: 50, valid_to_block: 200,
+    metadata: { deployment_key: deploymentKey, abi_variants: { erc20_transfer_source: variant } },
+  });
+  const makeSource = (overrides = {}) => {
+    const candidate = envelope({
+      chainId: 100, txHash: sourceTx, category: 'bridge_out', walletAddress: wallet,
+      tx: { from: wallet, to: token }, endpoints: [sourceEndpoint], ...overrides,
+    });
+    candidate.receipt.logs = [log({
+      txHash: sourceTx, blockHash: candidate.receipt.blockHash, logAddress: token,
+      topics: [TOPICS.erc20Transfer, addressWord(wallet), addressWord(bridge)],
+      body: word(10),
+    })];
+    return candidate;
+  };
+
+  const wrongRecipientSource = makeSource();
+  wrongRecipientSource.receipt.logs[0].topics[2] = addressWord(wrongRecipient);
+  assert.deepEqual(decodeEnvelope(wrongRecipientSource), []);
+
+  const wrongTokenSource = makeSource({ tx: { from: wallet, to: wrongToken } });
+  wrongTokenSource.receipt.logs[0].address = wrongToken;
+  assert.deepEqual(decodeEnvelope(wrongTokenSource), []);
+
+  const failedSource = makeSource({ status: '0x0' });
+  assert.deepEqual(decodeEnvelope(failedSource), []);
+  assert.equal(unsupportedMovement(failedSource, new Set()).status, 'unsupported');
+
+  const malformedSource = makeSource();
+  malformedSource.receipt.logs[0].data = '0x1234';
+  assert.deepEqual(decodeEnvelope(malformedSource), []);
+  assert.equal(unsupportedMovement(malformedSource, new Set()).status, 'unsupported');
+
+  const outOfWindowSource = makeSource({ blockNumber: '0xc9' });
+  assert.deepEqual(decodeEnvelope(outOfWindowSource), []);
+  assert.equal(unsupportedMovement(outOfWindowSource, new Set()).status, 'unsupported');
+
+  const sourceOnly = buildProtocolMovements(decodeEnvelope(makeSource()))[0];
+  assert.equal(sourceOnly.status, 'pending');
+
+  const unknownVariant = makeSource();
+  unknownVariant.endpoints[0].metadata.abi_variants.erc20_transfer_source = {
+    ...variant, supported: false, unsupported_reason: 'unreviewed_deployment',
+  };
+  assert.deepEqual(decodeEnvelope(unknownVariant), []);
+  assert.equal(unsupportedMovement(unknownVariant, new Set()).status, 'unsupported');
+});
+
 test('zkSync Era Bridgehub destination hash and Lite archive hash are exact identities', () => {
   const eraL2Hash = hash('a');
   const eraSourceTx = hash('b');
@@ -320,6 +490,15 @@ test('duplicate members, incompatible fields, failures, and refunds never become
     event({ role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2'), evidence: { identity_fields: { recipient: address('2') } } }),
   ])[0];
   assert.equal(incompatible.status, 'unsupported');
+
+  const missingRequired = buildProtocolMovements([
+    event({ evidence: {
+      required_identity_fields: ['deployment_key'],
+      identity_fields: { deployment_key: 'legacy-a' },
+    } }),
+    event({ role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2') }),
+  ])[0];
+  assert.equal(missingRequired.status, 'unsupported');
 
   assert.equal(buildProtocolMovements([
     event(), event({ role: 'finalization', direction: 'in', chain_id: 10, status: 'failed' }),
@@ -561,6 +740,20 @@ test('migration enforces evidence-only folds and cross-owner isolation', () => {
   assert.match(migration, /uq_eth_bridge_confirmed_out_member/);
   assert.match(migration, /uq_eth_bridge_confirmed_in_member/);
   assert.match(migration, /column_name = 'movement_id'/);
+});
+
+test('Gnosis endpoint migration records deployment bounds, ABI variants, and finality policy', () => {
+  const migration = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../migrations/074_gnosis_bridge_endpoint_variants.sql'),
+    'utf8'
+  );
+  assert.match(migration, /valid_to_block = 23748178/);
+  assert.match(migration, /valid_to_block = 43027712/);
+  assert.match(migration, /"erc20_transfer_source"/);
+  assert.match(migration, /"source_asset_contracts"/);
+  assert.match(migration, /"required_identity_fields"/);
+  assert.match(migration, /"finality_policy"/);
+  assert.match(migration, /"router_message_identity_not_decoded"/);
 });
 
 test('endpoint deployment bounds route only receipts from the reviewed version window', () => {

@@ -20,6 +20,13 @@ function memberKey(row) {
 function compatibleIdentityFields(left, right) {
   const a = left?.evidence?.identity_fields || {};
   const b = right?.evidence?.identity_fields || {};
+  const required = new Set([
+    ...(left?.evidence?.required_identity_fields || []),
+    ...(right?.evidence?.required_identity_fields || []),
+  ]);
+  for (const key of required) {
+    if (a[key] == null || b[key] == null) return false;
+  }
   for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
     if (a[key] != null && b[key] != null
         && String(a[key]).toLowerCase() !== String(b[key]).toLowerCase()) return false;
