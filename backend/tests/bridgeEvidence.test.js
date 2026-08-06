@@ -180,6 +180,7 @@ test('Gnosis legacy decodes the third non-indexed word as source transaction has
   });
   const destination = envelope({
     walletId: 2, chainId: 100, txHash: destinationTx, category: 'bridge_in',
+    walletAddress: address('9'),
     endpoints: [endpoint('gnosis', 100, l2Bridge, 'legacy-xdai')],
   });
   destination.receipt.logs = [log({
@@ -250,6 +251,7 @@ test('Gnosis legacy decodes an allowlisted ERC-20 Transfer recipient and exact R
   })];
   const destination = envelope({
     walletId: 2, chainId: 1, txHash: destinationTx, category: 'bridge_in',
+    walletAddress: wallet,
     endpoints: [destinationEndpoint],
   });
   destination.receipt.logs = [log({
@@ -277,6 +279,9 @@ test('Gnosis legacy decodes an allowlisted ERC-20 Transfer recipient and exact R
   const destinationEvents = decodeEnvelope(destination);
   assert.equal(destinationEvents.length, 1);
   assert.equal(destinationEvents[0].correlation_key, `gnosis-legacy:${sourceTx}`);
+  const wrongWalletDestination = structuredClone(destination);
+  wrongWalletDestination.wallet_address = address('0');
+  assert.deepEqual(decodeEnvelope(wrongWalletDestination), []);
   const movement = buildProtocolMovements([...sourceEvents, ...destinationEvents])[0];
   assert.equal(movement.status, 'protocol_verified');
   assert.equal(movement.members[0].asset_id, `erc20:100:${token}`);

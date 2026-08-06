@@ -199,6 +199,7 @@ const EthTransfer = require('../src/models/EthTransfer');
 const {
   buildActivityRows, bridgeAsset, REVIEW_REASONS,
 } = EthActivityService;
+const { projectionAmounts } = require('../src/models/EthBridgeMovement');
 
 // --- leg fixtures ----------------------------------------------------------
 
@@ -443,6 +444,44 @@ test('bridge asset aliases stay deterministic for suggestion display only', () =
   assert.equal(bridgeAsset('USDS'), 'XDAI');
   assert.equal(bridgeAsset('.e'), null);
   assert.notEqual(bridgeAsset('USDT'), bridgeAsset('USDC'));
+});
+
+test('bridge projection preserves cross-contract assets instead of zeroing the link', () => {
+  const outToken = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const inToken = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const projection = projectionAmounts(
+    { legs: [{ asset: 'WXDAI', contract: outToken, token_standard: 'erc20', direction: 'out', amount: '1' }] },
+    { legs: [{ asset: 'DAI', contract: inToken, token_standard: 'erc20', direction: 'in', amount: '0.99' }] },
+    { asset_id: `erc20:100:${outToken}` },
+    { asset_id: 'XDAI' },
+  );
+
+  assert.equal(projection.asset, 'BRIDGE');
+  assert.equal(projection.out_amount, '0');
+  assert.equal(projection.in_amount, '0');
+  assert.deepEqual(projection.asset_details, [
+    {
+      asset: 'WXDAI', asset_id: `erc20:100:${outToken}`,
+      out_amount: '1', in_amount: '0', fee_amount: '0',
+    },
+    {
+      asset: 'DAI', asset_id: 'xdai',
+      out_amount: '0', in_amount: '0.99', fee_amount: '0',
+    },
+  ]);
+});
+
+test('bridge projection uses member asset identity when display symbols differ', () => {
+  const projection = projectionAmounts(
+    { legs: [{ asset: 'DAI', direction: 'out', amount: '1' }] },
+    { legs: [{ asset: 'USDS', direction: 'in', amount: '1' }] },
+    { asset_id: 'XDAI' },
+    { asset_id: 'XDAI' },
+  );
+
+  assert.deepEqual(projection, {
+    asset: 'DAI', out_amount: '1', in_amount: '1', fee_amount: '0',
+  });
 });
 
 // --- the seeded bridge pack ------------------------------------------------

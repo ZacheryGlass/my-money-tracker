@@ -408,7 +408,14 @@ function decodeGnosis(envelope) {
       const recipient = addressWord(dataWord(log.data, 0));
       const amount = uintWord(dataWord(log.data, 1));
       const sourceTxHash = nonZeroBytes32(dataWord(log.data, 2));
-      if (!recipient || amount == null || amount <= 0n || !sourceTxHash) continue;
+      // The event is emitted by the bridge contract, not by the wallet. A
+      // transaction can contain several bridge executions, so the recipient
+      // is the only message-level binding between this receipt and the
+      // wallet-scoped activity row. Without this check, a valid execution for
+      // another recipient could be folded into the tracked wallet's bridge.
+      const walletAddress = lower(envelope.wallet_address);
+      if (!recipient || !ADDRESS_RE.test(walletAddress) || recipient !== walletAddress
+          || amount == null || amount <= 0n || !sourceTxHash) continue;
 
       events.push(evidence(envelope, log, {
         protocol: 'gnosis', family_version: 'legacy-xdai',
