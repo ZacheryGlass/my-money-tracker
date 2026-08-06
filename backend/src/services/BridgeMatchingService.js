@@ -10,7 +10,9 @@ const EthBridgeReceipt = require('../models/EthBridgeReceipt');
 const EthBridgeMovement = require('../models/EthBridgeMovement');
 const EthActivityLink = require('../models/EthActivityLink');
 const { REVIEW_REASONS } = require('../utils/ethActivityVocabulary');
-const { decodeEnvelope, RULE_VERSION } = require('./bridge/adapters');
+const {
+  TOPICS, addressWord, decodeEnvelope, RULE_VERSION,
+} = require('./bridge/adapters');
 const {
   buildProtocolMovements, resolveProtocolCoordinateConflicts,
   suggestBridgeLegs, suggestionPairKey, verdictMovement,
@@ -36,8 +38,12 @@ function unsupportedMovement(envelope, decodedCoordinates) {
   const addresses = new Set([
     lower(envelope.counterparty_address), lower(envelope.transaction?.to), lower(envelope.receipt?.to),
     ...(envelope.receipt?.logs || []).map((log) => lower(log.address)),
+    ...(envelope.receipt?.logs || [])
+      .filter((log) => lower(log.topics?.[0]) === TOPICS.erc20Transfer)
+      .map((log) => addressWord(log.topics?.[2]))
+      .filter(Boolean),
   ]);
-  const families = new Map((envelope.endpoints || [])
+  const families = new Map((envelope.known_endpoints || envelope.endpoints || [])
     .filter((endpoint) => addresses.has(lower(endpoint.address)))
     .map((endpoint) => [
       `${endpoint.protocol}:${endpoint.family_version}`,
@@ -82,7 +88,7 @@ function pairKeyFromVerdict(verdict) {
 class BridgeMatchingService {
   static async _activitiesForUser(userId, client = pool) {
     const { rows } = await client.query(
-      `SELECT a.id, a.wallet_id, a.chain_id, a.tx_hash, a.block_number,
+      `SELECT a.id, a.wallet_id, w.address AS wallet_address, a.chain_id, a.tx_hash, a.block_number,
               a.block_time, a.counterparty_address, a.method_name, a.legs,
               COALESCE(o.category, a.category) AS category
          FROM eth_activity a
@@ -139,10 +145,13 @@ class BridgeMatchingService {
       const chainEndpoints = endpoints.filter(
         (endpoint) => endpointApplies(endpoint, activity)
       );
+      const knownEndpoints = endpoints.filter(
+        (endpoint) => Number(endpoint.chain_id) === Number(activity.chain_id)
+      );
       if (Number(activity.chain_id) === 32401) {
         envelopes.push({
           ...activity,
-          endpoints: chainEndpoints,
+          endpoints: chainEndpoints, known_endpoints: knownEndpoints,
           transaction: null,
           receipt: null,
           provider_boundary: {
@@ -199,6 +208,7 @@ class BridgeMatchingService {
         receipt: record.receipt_json,
         provider_boundary: record.provider_boundary,
         endpoints: chainEndpoints,
+        known_endpoints: knownEndpoints,
       });
     }
     return envelopes;

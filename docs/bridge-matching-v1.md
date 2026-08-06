@@ -197,12 +197,29 @@ and [state transfer guide](https://docs.polygon.technology/pos/how-to/bridging/l
 
 - Legacy Ethereum to Gnosis: destination `AffirmationCompleted` carries the
   Ethereum reference transaction hash. It must equal the source transaction.
+- Legacy Gnosis to Ethereum ERC-20 deposits: the source activity may call the
+  ERC-20 token rather than the bridge. The adapter accepts exactly one
+  successful, well-shaped `Transfer` whose recipient is the registered
+  Gnosis-side bridge, whose token is in the deployment's allowlist, and whose
+  sender is the tracked wallet. It retains the token contract, raw amount,
+  sender, recipient, source transaction hash, and raw log evidence.
 - Legacy Gnosis to Ethereum: destination `RelayedMessage` carries the Gnosis
-  reference transaction hash. It must equal the source transaction.
+  reference transaction hash. It must equal the source transaction and agree
+  with the registry's chain direction, deployment key, canonical asset, and
+  protocol amount when both sides provide it. `AffirmationCompleted` follows
+  the corresponding Ethereum-to-Gnosis path.
 - `UserRequestForAffirmation`/`UserRequestForSignature` provide initiation and
   asset evidence but no second-side identity by themselves.
-- New BridgeRouter/USDS paths remain suggestions until their exact router
-  message identifier is present in both receipts.
+- Migration `074_gnosis_bridge_endpoint_variants.sql` adds the reviewed
+  legacy/current endpoint variants, source-token policy, deployment bounds,
+  and the standard finalized-block policy. The legacy rows stop at the
+  pre-USDS migration blocks (`23748178` on Ethereum and `43027712` on Gnosis);
+  the post-migration BridgeRouter/USDS paths remain unsupported suggestions
+  until their exact router message identifier is decoded in both receipts.
+- This is a bounded legacy decoder, not a claim of complete Gnosis bridge feed
+  coverage. Unknown variants, unsupported provider/finality boundaries,
+  malformed receipts, wrong recipients/tokens, and failed receipts remain
+  visible as pending or unsupported evidence.
 
 First-party source: Gnosis'
 [token bridge contracts](https://github.com/gnosischain/tokenbridge-contracts) and

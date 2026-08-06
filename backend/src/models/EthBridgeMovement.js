@@ -9,21 +9,72 @@ const DESTINATION_ROLES = new Set(['destination_execution', 'fill', 'finalizatio
 const lower = (value) => String(value || '').toLowerCase();
 const coordinate = (walletId, chainId, txHash) => `${Number(walletId)}:${Number(chainId)}:${lower(txHash)}`;
 
-function projectionAmounts(outActivity, inActivity) {
+function validProjectionAmount(value) {
+  return /^\d+(?:\.\d+)?$/.test(String(value));
+}
+
+function memberAssetId(member) {
+  const value = String(member?.asset_id || '').trim().toLowerCase();
+  return value || null;
+}
+
+function legAssetIdentity(leg) {
+  const contract = lower(leg?.contract);
+  if (contract) return `contract:${contract}`;
+  return `${String(leg?.token_standard || 'native').toLowerCase()}:`
+    + `${String(leg?.asset || '').trim().toUpperCase()}`;
+}
+
+function sameProjectionAsset(outLeg, inLeg, outMember, inMember) {
+  const outAssetId = memberAssetId(outMember);
+  const inAssetId = memberAssetId(inMember);
+  if (outAssetId && inAssetId) return outAssetId === inAssetId;
+  return legAssetIdentity(outLeg) === legAssetIdentity(inLeg);
+}
+
+function projectionAssetDetail(leg, direction, member) {
+  return {
+    asset: leg.asset,
+    ...(memberAssetId(member) ? { asset_id: memberAssetId(member) } : {}),
+    out_amount: direction === 'out' ? String(leg.amount) : '0',
+    in_amount: direction === 'in' ? String(leg.amount) : '0',
+    fee_amount: '0',
+  };
+}
+
+function projectionAmounts(outActivity, inActivity, outMember = null, inMember = null) {
   const outLegs = (outActivity.legs || []).filter((leg) => leg.direction === 'out');
   const inLegs = (inActivity.legs || []).filter((leg) => leg.direction === 'in');
-  if (outLegs.length === 1 && inLegs.length === 1
-      && outLegs[0].asset === inLegs[0].asset
-      && /^\d+(?:\.\d+)?$/.test(String(outLegs[0].amount))
-      && /^\d+(?:\.\d+)?$/.test(String(inLegs[0].amount))) {
-    const outAmount = String(outLegs[0].amount);
-    const inAmount = String(inLegs[0].amount);
+  if (outLegs.length !== 1 || inLegs.length !== 1
+      || !validProjectionAmount(outLegs[0].amount)
+      || !validProjectionAmount(inLegs[0].amount)) {
+    return { asset: 'BRIDGE', out_amount: '0', in_amount: '0', fee_amount: '0' };
+  }
+
+  const [outLeg] = outLegs;
+  const [inLeg] = inLegs;
+  if (sameProjectionAsset(outLeg, inLeg, outMember, inMember)) {
+    const outAmount = String(outLeg.amount);
+    const inAmount = String(inLeg.amount);
     // NUMERIC subtraction is left to Postgres on insert in the old model, so
     // avoid binary floats here. The compatibility fee is display-only; exact
     // protocol fee fields live on movement members.
-    return { asset: outLegs[0].asset, out_amount: outAmount, in_amount: inAmount, fee_amount: '0' };
+    return { asset: outLeg.asset, out_amount: outAmount, in_amount: inAmount, fee_amount: '0' };
   }
-  return { asset: 'BRIDGE', out_amount: '0', in_amount: '0', fee_amount: '0' };
+
+  // A protocol-verified bridge may exchange representations (for example a
+  // wrapped Gnosis ERC-20 for the destination's DAI representation). The
+  // scalar link columns cannot express two different asset units. Preserve
+  // both sides in the bundle column instead of discarding their quantities as
+  // a zero-valued BRIDGE row. `asset_id` keeps identical display symbols from
+  // becoming ambiguous to API consumers.
+  return {
+    asset: 'BRIDGE', out_amount: '0', in_amount: '0', fee_amount: '0',
+    asset_details: [
+      projectionAssetDetail(outLeg, 'out', outMember),
+      projectionAssetDetail(inLeg, 'in', inMember),
+    ],
+  };
 }
 
 class EthBridgeMovement {
@@ -151,7 +202,8 @@ class EthBridgeMovement {
         `SELECT m.id, m.status, m.verification_method,
                 COALESCE(jsonb_agg(jsonb_build_object(
                   'wallet_id', mm.wallet_id, 'chain_id', mm.chain_id,
-                  'tx_hash', mm.tx_hash, 'role', mm.role
+                  'tx_hash', mm.tx_hash, 'role', mm.role,
+                  'asset_id', mm.asset_id
                 ) ORDER BY mm.id) FILTER (WHERE mm.id IS NOT NULL), '[]'::jsonb) AS members
            FROM eth_bridge_movements m
            LEFT JOIN eth_bridge_movement_members mm ON mm.movement_id = m.id
@@ -183,7 +235,7 @@ class EthBridgeMovement {
         in_activity_id: incoming.id,
         movement_id: Number(movement.id),
         evidence_method: movement.verification_method,
-        ...projectionAmounts(out, incoming),
+        ...projectionAmounts(out, incoming, sourceMembers[0], destinationMembers[0]),
       });
     }
     return EthActivityLink.replaceForUser(userId, links, client);
