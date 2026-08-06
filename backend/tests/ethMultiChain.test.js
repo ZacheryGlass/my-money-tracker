@@ -37,6 +37,7 @@ require.cache[pgModulePath] = {
 };
 
 const chains = require('../src/config/chains');
+const etherscanConfig = require('../src/config/etherscan');
 const EthWalletService = require('../src/services/EthWalletService');
 const EtherscanService = require('../src/services/EtherscanService');
 const EthWallet = require('../src/models/EthWallet');
@@ -596,6 +597,52 @@ test('a transient failure and an unsupported feed are told apart', async (t) => 
   assert.equal(calls.walletCleared, undefined);
 });
 
+test('a provider rate limit defers the remaining feeds without spending more requests', async (t) => {
+  const rateLimited = () => {
+    const error = new Error('Blockscout rate limit reached');
+    error.code = 'EXPLORER_RATE_LIMITED';
+    error.retryAfterMs = 10000;
+    throw error;
+  };
+  const { calls } = harness(t, {
+    chainSet: '1',
+    feedBehavior: { '1:normal': rateLimited },
+  });
+
+  const result = await EthWalletService.syncWallet(7);
+
+  assert.deepEqual(calls.fetches.map((call) => call.feed), ['normal']);
+  assert.deepEqual(result.skippedFeeds, [
+    'Ethereum/normal', 'Ethereum/internal', 'Ethereum/token',
+    'Ethereum/nft', 'Ethereum/nft1155',
+  ]);
+  assert.equal(result.chains[0].rateLimited, true);
+  assert.equal(calls.deletes.length, 0, 'no feed is deleted after a rate-limited fetch');
+  assert.equal(calls.cursors.every((cursor) => Object.values(cursor).every((value) => value == null || value === 1)), true);
+  assert.equal(calls.chainErrors.find((entry) => entry.chainId === 1).code, 'FEED_SKIPPED');
+  assert.match(calls.walletError.message, /rate limited/);
+});
+
+test('a rate-limited coverage boundary returns a deferred chain instead of failing the wallet', async (t) => {
+  const { calls, stub } = harness(t, { chainSet: '8453' });
+  stub(EtherscanService, 'coverageBoundary', async () => {
+    const error = new Error('Blockscout rate limit reached; retry after 10s');
+    error.code = 'EXPLORER_RATE_LIMITED';
+    error.retryAfterMs = 10000;
+    throw error;
+  });
+
+  const result = await EthWalletService.syncWallet(7);
+
+  assert.deepEqual(calls.fetches, [], 'the boundary failure prevents every feed request');
+  assert.deepEqual(result.skippedFeeds, [
+    'Base/normal', 'Base/internal', 'Base/token', 'Base/nft', 'Base/nft1155', 'Base/statesync',
+  ]);
+  assert.equal(result.chains[0].rateLimited, true);
+  assert.equal(calls.deletes.length, 0);
+  assert.match(calls.walletError.message, /rate limited/);
+});
+
 // A row on the given chain, so a chain can be told apart by what it inserts.
 const nativeRow = (block) => ({
   blockNumber: String(block), timeStamp: '1700000000', hash: `0x${block}`,
@@ -747,9 +794,48 @@ test('an HTTP 429 from a chain explorer backs off and retries without accepting 
     return { data: { status: '1', result: '0' } };
   };
   t.after(() => { axios.get = original; });
+  t.after(() => { etherscanConfig.resetRateLimits(); });
 
   assert.equal(await EtherscanService.getEthBalance(WALLET, 'key', 1), '0');
   assert.equal(requests, 2);
+});
+
+test('a persistent explorer 429 pauses its provider queue and fails fast on the next request', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    const error = new Error('Request failed with status code 429');
+    error.response = { status: 429, headers: { 'retry-after': '10' } };
+    throw error;
+  };
+  t.after(() => { axios.get = original; });
+  t.after(() => { etherscanConfig.resetRateLimits(); });
+
+  const rateLimited = (err) => err.code === 'EXPLORER_RATE_LIMITED'
+    && err.retryAfterMs >= 9000;
+  await assert.rejects(() => EtherscanService.getEthBalance(WALLET, 'key', 1), rateLimited);
+  await assert.rejects(() => EtherscanService.getEthBalance(WALLET, 'key', 1), rateLimited);
+  assert.equal(requests, 1, 'the provider pause prevents a second network request');
+});
+
+test('provider pauses are isolated by host instead of using one global queue', async (t) => {
+  etherscanConfig.resetRateLimits();
+  t.after(() => { etherscanConfig.resetRateLimits(); });
+  etherscanConfig.pause('account:https://base.blockscout.com/api', 10000);
+
+  let etherscanCalled = false;
+  await etherscanConfig.throttled(() => {
+    etherscanCalled = true;
+  }, { key: 'etherscan:isolated-test', spacingMs: 0 });
+  assert.equal(etherscanCalled, true);
+  await assert.rejects(
+    () => etherscanConfig.throttled(() => {}, {
+      key: 'account:https://base.blockscout.com/api', spacingMs: 0,
+    }),
+    (err) => err.code === 'EXPLORER_RATE_LIMITED'
+  );
 });
 
 test('the chain id reaches Etherscan as the chainid param', async (t) => {

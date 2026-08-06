@@ -126,6 +126,10 @@ function coverageFailureStatus(error) {
     : 'failed';
 }
 
+function isExplorerRateLimited(error) {
+  return error?.code === 'EXPLORER_RATE_LIMITED';
+}
+
 class EthWalletService {
   static async _syncZkSyncLiteWalletChain(wallet, chain) {
     const ingestVersion = Number(chain.ingestVersion || 0);
@@ -714,6 +718,26 @@ class EthWalletService {
             status: 'not_applicable',
           }
       )));
+      if (isExplorerRateLimited(error)) {
+        const skippedFeeds = FEED_SPECS.filter(feedActive).map((spec) => spec.key);
+        await EthWalletChain.setError(
+          wallet.id,
+          chain.id,
+          'FEED_SKIPPED',
+          `Partial sync: ${chain.name} explorer rate limited; feeds deferred and will retry next sync (${error.message})`
+        );
+        await EthWalletChain.updateSyncTime(wallet.id, chain.id);
+        return {
+          chainId: chain.id,
+          chainName: chain.name,
+          inserted: 0,
+          skippedFeeds,
+          unsupportedFeeds: state?.unsupported_feeds || [],
+          unavailable: false,
+          rateLimited: true,
+          fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, 0])),
+        };
+      }
       throw error;
     }
     const indexedHead = boundary.throughBlock;
@@ -726,11 +750,12 @@ class EthWalletService {
 
     // Set by the first feed that reports the CHAIN as unreadable. The remaining
     // feeds are then marked unsupported WITHOUT being called: they would answer
-    // identically, and the throttle they would spend is global across every
-    // user, so proving the same point five times delays everyone else's sync.
+    // identically, and the provider queue they would spend is shared across
+    // wallets, so proving the same point five times delays everyone else's sync.
     // They still land in unsupported_feeds, so the gap record stays complete
     // and the whole-chain verdict below can still recognise itself.
     let chainUnreadable = false;
+    let rateLimited = null;
 
     for (const spec of FEED_SPECS) {
       feeds[spec.key] = [];
@@ -746,6 +771,12 @@ class EthWalletService {
         fetchedOk[spec.key] = false;
         unsupported.push(spec.key);
         feedErrors[spec.key] = chainUnreadable;
+        continue;
+      }
+      if (rateLimited) {
+        fetchedOk[spec.key] = false;
+        skipped.push(spec.key);
+        feedErrors[spec.key] = rateLimited;
         continue;
       }
       try {
@@ -776,7 +807,17 @@ class EthWalletService {
       } catch (err) {
         fetchedOk[spec.key] = false;
         feedErrors[spec.key] = err;
-        if (err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE' || err.code === 'ETHERSCAN_FEED_UNSUPPORTED') {
+        if (isExplorerRateLimited(err)) {
+          rateLimited = err;
+          skipped.push(spec.key);
+          logger.warn({
+            walletId: wallet.id,
+            chainId: chain.id,
+            feed: spec.key,
+            provider: providerName(chain, spec),
+            retryAfterMs: err.retryAfterMs,
+          }, 'Explorer rate limited; remaining feeds deferred for this chain');
+        } else if (err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE' || err.code === 'ETHERSCAN_FEED_UNSUPPORTED') {
           // Only the whole-chain verdict cascades. A single missing feed says
           // nothing about its neighbours, and assuming otherwise would freeze
           // four healthy cursors and report four gaps that do not exist.
@@ -868,8 +909,10 @@ class EthWalletService {
       await EthWalletChain.setError(wallet.id, chain.id, 'CHAIN_UNAVAILABLE',
         `${chain.name} is not readable with this Etherscan key. Upgrade the plan or remove ${chain.id} from ETH_CHAINS.`);
     } else if (skipped.length) {
-      await EthWalletChain.setError(wallet.id, chain.id, 'FEED_SKIPPED',
-        `Partial sync: ${skipped.join(', ')} feed failed; will retry next sync`);
+      const message = rateLimited
+        ? `Partial sync: ${chain.name} explorer rate limited; ${skipped.join(', ')} feeds deferred; will retry next sync`
+        : `Partial sync: ${skipped.join(', ')} feed failed; will retry next sync`;
+      await EthWalletChain.setError(wallet.id, chain.id, 'FEED_SKIPPED', message);
     } else if (unsupported.length) {
       await EthWalletChain.setError(wallet.id, chain.id, 'FEED_UNSUPPORTED',
         `${unsupported.join(', ')} unavailable on ${chain.name}; derived balances there may drift`);
@@ -885,6 +928,7 @@ class EthWalletService {
       skippedFeeds: skipped,
       unsupportedFeeds: unsupported,
       unavailable: unsupported.length === activeCount,
+      rateLimited: Boolean(rateLimited),
       fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, feeds[spec.key].length])),
     };
   }
@@ -1049,8 +1093,11 @@ class EthWalletService {
       if (partial.length === 0) {
         await EthWallet.clearError(walletId);
       } else {
-        await EthWallet.setError(walletId, failedChains.length ? 'CHAIN_SYNC_FAILED' : 'FEED_SKIPPED',
-          `Partial sync: ${partial.join(', ')} failed; will retry next sync`);
+        const providerPaused = perChain.some((result) => result.rateLimited);
+        const message = providerPaused
+          ? `Partial sync: ${partial.join(', ')} deferred because the explorer is rate limited; will retry next sync`
+          : `Partial sync: ${partial.join(', ')} failed; will retry next sync`;
+        await EthWallet.setError(walletId, failedChains.length ? 'CHAIN_SYNC_FAILED' : 'FEED_SKIPPED', message);
       }
       await EthWallet.updateSyncTime(walletId);
 
@@ -1413,6 +1460,15 @@ class EthWalletService {
       try {
         wei = await EtherscanService.getEthBalance(wallet.address, apiKey, chain.id);
       } catch (err) {
+        // A provider-wide 429 is transient and must not turn a safe partial
+        // history sync into the generic "Failed to sync wallet" error. Keep
+        // this chain's previous holding and let reconciliation mark its live
+        // figure unavailable until the next attempt.
+        if (isExplorerRateLimited(err)) {
+          logger.warn({ walletId, chainId: chain.id, retryAfterMs: err.retryAfterMs },
+            'ETH balance provider rate limited; chain keeps its previous holdings');
+          continue;
+        }
         // Mainnet keeps its pre-#58 fail-loud behavior: an unreadable mainnet
         // balance means the whole sync is untrustworthy. An L2 failing must not
         // take the wallet down with it, and must not delete the position it

@@ -4,8 +4,8 @@
 // API V2 from one host and one key, selected per request by the `chainid`
 // param. A chain may instead declare `accountApi`: the same five account-feed
 // contract is then served by that per-chain explorer. Every provider still
-// shares the single global throttle in ./etherscan.js; adding chains must not
-// multiply the request rate.
+// shares its provider-host queue in ./etherscan.js; adding chains must not
+// multiply the request rate against the same explorer.
 //
 // EVERY ENTRY BELOW WAS PROBED LIVE, not taken from documentation:
 // GET https://api.etherscan.io/v2/chainlist (64 chains served), then each of

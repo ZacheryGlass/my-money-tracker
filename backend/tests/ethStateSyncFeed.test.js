@@ -363,6 +363,7 @@ test('a saturated Blockscout window splits before accepting a cursor', async (t)
 
 test('Base retries a rate-limited JSON-RPC batch before failing the feed', async (t) => {
   const axios = require('axios');
+  const etherscanConfig = require('../src/config/etherscan');
   const original = axios.post;
   let requests = 0;
   axios.post = async () => {
@@ -371,6 +372,7 @@ test('Base retries a rate-limited JSON-RPC batch before failing the feed', async
     return { data: [{ jsonrpc: '2.0', id: 1, result: [] }] };
   };
   t.after(() => { axios.post = original; });
+  t.after(() => { etherscanConfig.resetRateLimits(); });
 
   const result = await EtherscanService._rpcBatchRequest(8453, [{
     method: 'eth_getLogs',
@@ -1065,14 +1067,16 @@ test('a decimal blockNumber is rejected, not misparsed as hex', async (t) => {
 test('an off-shape 200 is a transport failure, not an empty feed', async (t) => {
   stubScanHead(t);
   const axios = require('axios');
+  const etherscanConfig = require('../src/config/etherscan');
   const original = axios.get;
   // "Fetched OK" is what authorizes the destructive delete of the resume
   // window; reading garbage as "no deposits" would wipe stored credits.
   axios.get = async () => ({ data: { status: '1', result: 'Max rate limit reached' } });
   t.after(() => { axios.get = original; });
+  t.after(() => { etherscanConfig.resetRateLimits(); });
   await assert.rejects(
     EtherscanService.fetchStateSyncDeposits(WALLET, 0, 'key', 137, chains.getChain(137).stateSyncDeposits),
-    /non-array/
+    (err) => err.code === 'EXPLORER_RATE_LIMITED'
   );
 });
 

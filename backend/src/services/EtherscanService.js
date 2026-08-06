@@ -1,6 +1,7 @@
 'use strict';
 
 const axios = require('axios');
+const crypto = require('node:crypto');
 const etherscan = require('../config/etherscan');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
@@ -12,7 +13,7 @@ const PAGE_SIZE = 1000;
 
 // Bounds the account-feed walk for the same reason MAX_LOG_PAGES bounds
 // getLogs below. A provider that ignores startblock can otherwise keep one
-// wallet inside the global throttle forever. Two hundred full pages is
+// wallet inside its provider queue forever. Two hundred full pages is
 // 200,000 rows for ONE wallet/feed/chain; exceeding that is unusual enough to
 // require a deliberate provider/export path rather than silently tying up the
 // nightly job.
@@ -26,7 +27,7 @@ const LOG_PAGE_SIZE = 1000;
 
 // Bounds the state-sync log walk. Hitting it means the API is not honouring
 // fromBlock (or pages that never advance) -- a walk that spins would sit
-// INSIDE the per-user rebuild lane holding the global throttle, blocking every
+// INSIDE the per-user rebuild lane holding the provider queue, blocking every
 // label write and sync for that user. Exhaustion is a transport failure: the
 // feed is skipped, the cursor stays frozen, and the next sync retries.
 const MAX_LOG_PAGES = 200;
@@ -106,15 +107,128 @@ const FEED_UNSUPPORTED_RE = /missing or invalid (action|module) name|internal tr
 // batch may carry it. Retry the complete batch so no partial window can ever
 // be accepted as coverage.
 const RPC_RATE_LIMIT_RE = /rate limit|over rate|too many requests|429/i;
-const RPC_BATCH_MAX_RETRIES = 3;
-const EXPLORER_MAX_RETRIES = 4;
+const EXPLORER_RATE_LIMIT_RETRIES = 1;
+const INLINE_RATE_LIMIT_RETRY_MAX_MS = 5000;
+const MAX_EXPLORER_PAUSE_MS = 5 * 60 * 1000;
+const EXPLORER_RATE_LIMIT_RE = /rate[\s_-]*limit|too many requests|\b429\b/i;
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function parseRetryAfter(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    return Math.max(0, Number(text) * 1000);
+  }
+  const timestamp = Date.parse(text);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : null;
+}
 
 function explorerRetryDelay(error, attempt) {
-  const header = error?.response?.headers?.['retry-after'];
-  if (header != null && /^\d+(?:\.\d+)?$/.test(String(header))) {
-    return Math.min(30000, Math.max(0, Number(header) * 1000));
+  const headers = error?.response?.headers || {};
+  const header = headers['retry-after'] ?? headers['Retry-After'];
+  const retryAfterMs = parseRetryAfter(header);
+  if (retryAfterMs != null) return Math.min(MAX_EXPLORER_PAUSE_MS, retryAfterMs);
+  return Math.min(MAX_EXPLORER_PAUSE_MS, 1100 * (2 ** attempt));
+}
+
+function isRateLimitedDetail(value) {
+  if (value == null) return false;
+  if (typeof value === 'number' && value === 429) return true;
+  if (typeof value === 'object') {
+    return isRateLimitedDetail(value.code)
+      || isRateLimitedDetail(value.status)
+      || isRateLimitedDetail(value.message)
+      || isRateLimitedDetail(value.error)
+      || isRateLimitedDetail(value.result);
   }
-  return Math.min(30000, 1100 * (2 ** attempt));
+  return EXPLORER_RATE_LIMIT_RE.test(String(value));
+}
+
+function isRateLimitedError(error) {
+  return error?.response?.status === 429
+    || isRateLimitedDetail(error?.response?.data)
+    || isRateLimitedDetail(error?.message);
+}
+
+function keyFingerprint(apiKey) {
+  if (!apiKey) return 'anonymous';
+  return crypto.createHash('sha256').update(String(apiKey)).digest('hex').slice(0, 16);
+}
+
+function rpcProvider(chainId, rpcUrl) {
+  return {
+    name: `Chain ${chainId} JSON-RPC`,
+    key: `rpc:${keyFingerprint(rpcUrl)}`,
+    spacingMs: etherscan.RPC_REQUEST_SPACING_MS,
+  };
+}
+
+function rateLimitError(provider, chainId, params, retryAfterMs, cause = null) {
+  const error = new Error(
+    `${provider.name} rate limit reached; retry after ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s`
+  );
+  error.code = 'EXPLORER_RATE_LIMITED';
+  error.provider = provider.name;
+  error.providerKey = provider.key;
+  error.chainId = chainId;
+  error.retryAfterMs = retryAfterMs;
+  error.params = {
+    module: params?.module,
+    action: params?.action,
+  };
+  if (cause) error.cause = cause;
+  return error;
+}
+
+async function retryAfterRateLimit({
+  provider,
+  chainId,
+  params,
+  attempt,
+  error,
+  retry,
+  inlineRetry = true,
+}) {
+  const delayMs = explorerRetryDelay(error, attempt);
+  etherscan.pause(provider.key, delayMs);
+  if (inlineRetry && attempt < EXPLORER_RATE_LIMIT_RETRIES
+      && delayMs <= INLINE_RATE_LIMIT_RETRY_MAX_MS) {
+    logger.warn({
+      chainId, provider: provider.name, attempt: attempt + 1, delayMs,
+      params: { module: params?.module, action: params?.action },
+    }, 'Explorer provider rate limited; pausing before one retry');
+    await sleep(delayMs);
+    return retry(attempt + 1);
+  }
+  throw rateLimitError(provider, chainId, params, delayMs, error);
+}
+
+async function runThrottledRequest({ provider, chainId, params, attempt = 0, fn }) {
+  try {
+    return await etherscan.throttled(fn, {
+      key: provider.key,
+      spacingMs: provider.spacingMs,
+      // This is the one retry explicitly authorized for the request that
+      // received the 429. Other queued work must fail fast during the pause.
+      bypassPause: attempt > 0,
+    });
+  } catch (error) {
+    if (error?.code === 'EXPLORER_RATE_LIMITED') {
+      error.provider ||= provider.name;
+      error.chainId ||= chainId;
+      throw error;
+    }
+    if (!isRateLimitedError(error)) throw error;
+    return retryAfterRateLimit({
+      provider, chainId, params, attempt, error,
+      retry: (nextAttempt) => runThrottledRequest({
+        provider, chainId, params, attempt: nextAttempt, fn,
+      }),
+    });
+  }
 }
 
 class EtherscanService {
@@ -122,7 +236,7 @@ class EtherscanService {
   // Etherscan-shaped account feeds through a different explorer. The caller
   // still passes one chain id and receives the same normalized raw rows; only
   // transport selection lives here.
-  static _provider(chainId) {
+  static _provider(chainId, apiKey = null) {
     const custom = chains.getChain(chainId)?.accountApi;
     if (custom) {
       return {
@@ -130,6 +244,11 @@ class EtherscanService {
         baseUrl: custom.baseUrl,
         requiresApiKey: custom.requiresApiKey !== false,
         params: {},
+        key: `account:${custom.baseUrl}`,
+        spacingMs: custom.requestSpacingMs
+          ?? (custom.provider === 'Blockscout'
+            ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
+            : etherscan.REQUEST_SPACING_MS),
       };
     }
     return {
@@ -137,6 +256,8 @@ class EtherscanService {
       baseUrl: etherscan.BASE_URL,
       requiresApiKey: true,
       params: { chainid: chainId },
+      key: `etherscan:${keyFingerprint(apiKey)}`,
+      spacingMs: etherscan.REQUEST_SPACING_MS,
     };
   }
 
@@ -144,36 +265,26 @@ class EtherscanService {
   // caller and threaded through every fetch. chainId defaults to mainnet so
   // every pre-#58 call site keeps its exact behavior.
   static async _request(params, { apiKey, chainId = etherscan.CHAIN_ID, attempt = 0 }) {
-    const provider = this._provider(chainId);
+    const provider = this._provider(chainId, apiKey);
     if (provider.requiresApiKey && !apiKey) {
       const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
       throw error;
     }
-    let response;
-    try {
-      response = await etherscan.throttled(() =>
-        axios.get(provider.baseUrl, {
-          timeout: 15000,
-          params: {
-            ...provider.params,
-            ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
-            ...params,
-          },
-        })
-      );
-    } catch (error) {
-      if (error?.response?.status === 429 && attempt < EXPLORER_MAX_RETRIES) {
-        const delayMs = explorerRetryDelay(error, attempt);
-        logger.warn({
-          chainId, provider: provider.name, attempt: attempt + 1, delayMs,
-          params: { module: params.module, action: params.action },
-        }, 'Chain explorer returned HTTP 429, backing off before retry');
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        return this._request(params, { apiKey, chainId, attempt: attempt + 1 });
-      }
-      throw error;
-    }
+    const response = await runThrottledRequest({
+      provider,
+      chainId,
+      params,
+      attempt,
+      fn: () => axios.get(provider.baseUrl, {
+        timeout: 15000,
+        params: {
+          ...provider.params,
+          ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
+          ...params,
+        },
+      }),
+    });
 
     const payload = response.data || {};
     const { status, message, result } = payload;
@@ -187,14 +298,40 @@ class EtherscanService {
     if (payload.jsonrpc === '2.0') {
       if (!payload.error && payload.result != null) return payload.result;
       const detail = payload.error?.message || 'invalid JSON-RPC response';
+      if (isRateLimitedDetail(payload.error) || isRateLimitedDetail(detail)) {
+        return retryAfterRateLimit({
+          provider,
+          chainId,
+          params,
+          attempt,
+          error: new Error(detail),
+          inlineRetry: false,
+          retry: (nextAttempt) => this._request(params, {
+            apiKey, chainId, attempt: nextAttempt,
+          }),
+        });
+      }
       const error = new Error(`${provider.name} JSON-RPC error: ${detail}`);
       error.code = 'ETHERSCAN_API_ERROR';
       throw error;
     }
 
+    const detail = `${message || ''} ${typeof result === 'string' ? result : ''}`;
+    if (isRateLimitedDetail(detail)) {
+      return retryAfterRateLimit({
+        provider,
+        chainId,
+        params,
+        attempt,
+        error: new Error(detail.trim() || `${provider.name} rate limited`),
+        inlineRetry: false,
+        retry: (nextAttempt) => this._request(params, {
+          apiKey, chainId, attempt: nextAttempt,
+        }),
+      });
+    }
     if (status === '1') return result;
 
-    const detail = `${message || ''} ${typeof result === 'string' ? result : ''}`;
     // Standing provider limitations must be classified BEFORE the empty-array
     // shortcut below. Blockscout can return status=2 + result=[] while an
     // internal range is only partially indexed; accepting that as an empty
@@ -220,34 +357,43 @@ class EtherscanService {
         || (Array.isArray(result) && result.length === 0)) {
       return [];
     }
-    if (typeof result === 'string' && result.includes('rate limit') && attempt < EXPLORER_MAX_RETRIES) {
-      const delayMs = explorerRetryDelay(null, attempt);
-      logger.warn({
-        chainId, provider: provider.name, attempt: attempt + 1, delayMs,
-        params: { module: params.module, action: params.action },
-      }, 'Chain explorer rate limited, backing off before retry');
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      return this._request(params, { apiKey, chainId, attempt: attempt + 1 });
-    }
 
     const error = new Error(`${provider.name} error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());
     error.code = 'ETHERSCAN_API_ERROR';
     throw error;
   }
 
-  static async _rpcRequest(chainId, method, params) {
+  static async _rpcRequest(chainId, method, params, attempt = 0) {
     const rpcUrl = chains.getChain(chainId)?.rpcUrl;
     if (!rpcUrl) return null;
-    const response = await etherscan.throttled(() =>
-      axios.post(rpcUrl, {
+    const provider = rpcProvider(chainId, rpcUrl);
+    const rpcParams = { module: 'rpc', action: method };
+    const response = await runThrottledRequest({
+      provider,
+      chainId,
+      params: rpcParams,
+      attempt,
+      fn: () => axios.post(rpcUrl, {
         jsonrpc: '2.0',
         id: 1,
         method,
         params,
-      }, { timeout: 15000 })
-    );
+      }, { timeout: 15000 }),
+    });
     const payload = response.data || {};
     if (payload.error || payload.result == null) {
+      const detail = payload.error?.message || 'invalid response';
+      if (isRateLimitedDetail(payload.error) || isRateLimitedDetail(detail)) {
+        return retryAfterRateLimit({
+          provider,
+          chainId,
+          params: rpcParams,
+          attempt,
+          error: new Error(detail),
+          inlineRetry: false,
+          retry: (nextAttempt) => this._rpcRequest(chainId, method, params, nextAttempt),
+        });
+      }
       const error = new Error(`Chain RPC error: ${payload.error?.message || 'invalid response'}`);
       error.code = 'ETHERSCAN_API_ERROR';
       throw error;
@@ -347,28 +493,26 @@ class EtherscanService {
       method,
       params,
     }));
-    let response;
-    try {
-      response = await axios.post(rpcUrl, body, { timeout: 30000 });
-    } catch (error) {
-      const detail = error?.response?.data?.error?.message || error?.message || '';
-      if (attempt < RPC_BATCH_MAX_RETRIES && RPC_RATE_LIMIT_RE.test(String(detail))) {
-        const delayMs = 1100 * (attempt + 1);
-        logger.warn({ chainId, attempt: attempt + 1, delayMs },
-          'Chain RPC batch rate limited, retrying');
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        return this._rpcBatchRequest(chainId, calls, attempt + 1);
-      }
-      throw error;
-    }
+    const provider = rpcProvider(chainId, rpcUrl);
+    const rpcParams = { module: 'rpc', action: 'batch' };
+    const response = await runThrottledRequest({
+      provider,
+      chainId,
+      params: rpcParams,
+      attempt,
+      fn: () => axios.post(rpcUrl, body, { timeout: 30000 }),
+    });
     if (!Array.isArray(response.data)) {
       const detail = response.data?.error?.message || response.data?.message || '';
-      if (attempt < RPC_BATCH_MAX_RETRIES && RPC_RATE_LIMIT_RE.test(String(detail))) {
-        const delayMs = 1100 * (attempt + 1);
-        logger.warn({ chainId, attempt: attempt + 1, delayMs },
-          'Chain RPC batch rate limited, retrying');
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        return this._rpcBatchRequest(chainId, calls, attempt + 1);
+      if (RPC_RATE_LIMIT_RE.test(String(detail))) {
+        return retryAfterRateLimit({
+          provider,
+          chainId,
+          params: rpcParams,
+          attempt,
+          error: new Error(detail),
+          retry: (nextAttempt) => this._rpcBatchRequest(chainId, calls, nextAttempt),
+        });
       }
       const suffix = detail ? `: ${detail}` : '';
       const error = new Error(`Chain RPC batch returned a non-array response${suffix}`);
@@ -377,12 +521,15 @@ class EtherscanService {
     }
     const rateLimited = response.data.find((item) =>
       RPC_RATE_LIMIT_RE.test(String(item?.error?.message || item?.error || '')));
-    if (rateLimited && attempt < RPC_BATCH_MAX_RETRIES) {
-      const delayMs = 1100 * (attempt + 1);
-      logger.warn({ chainId, attempt: attempt + 1, delayMs },
-        'Chain RPC batch item rate limited, retrying');
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      return this._rpcBatchRequest(chainId, calls, attempt + 1);
+    if (rateLimited) {
+      return retryAfterRateLimit({
+        provider,
+        chainId,
+        params: rpcParams,
+        attempt,
+        error: new Error(String(rateLimited.error?.message || rateLimited.error)),
+        retry: (nextAttempt) => this._rpcBatchRequest(chainId, calls, nextAttempt),
+      });
     }
     const byId = new Map(response.data.map((item) => [item?.id, item]));
     return body.map(({ id, method }) => {
@@ -405,10 +552,14 @@ class EtherscanService {
       // head. The indexer can lag; persisting an RPC block that getLogs has not
       // indexed yet would skip a late-arriving deposit forever.
       const blocksUrl = new URL('/api/v2/blocks?type=block', chain.accountApi.baseUrl).toString();
+      const provider = this._provider(chainId, apiKey);
       try {
-        const response = await etherscan.throttled(() =>
-          axios.get(blocksUrl, { timeout: 15000 })
-        );
+        const response = await runThrottledRequest({
+          provider,
+          chainId,
+          params: { module: 'v2', action: 'blocks' },
+          fn: () => axios.get(blocksUrl, { timeout: 15000 }),
+        });
         // `total_blocks` from /api/v2/stats is an aggregate count, not a block
         // height (Base's value was ~200k behind its newest indexed height).
         // Blockscout orders this endpoint newest-first; the first item is the
@@ -426,6 +577,7 @@ class EtherscanService {
         // ahead of the explorer whose logs we are about to scan.
         logger.warn({ chainId, provider: chain.accountApi.baseUrl, err: err.message },
           'Blockscout v2 head failed; using legacy explorer block-number endpoint');
+        if (err.code === 'EXPLORER_RATE_LIMITED') throw err;
         result = await this._request(
           { module: 'block', action: 'eth_block_number' },
           { apiKey, chainId }
@@ -587,7 +739,7 @@ class EtherscanService {
   //
   // One request per (chain, contract), which is why the balance audit budgets
   // these and rotates through a wallet's tokens rather than checking every one
-  // every night: the Etherscan throttle is global across users AND chains
+  // every night: the keyed-provider queue is shared across users AND chains
   // (the rate limit is per key), so a wallet holding fifty tokens on three
   // chains would otherwise monopolise it for minutes.
   static async getTokenBalance(address, contractAddress, apiKey, chainId = etherscan.CHAIN_ID) {
@@ -846,8 +998,8 @@ class EtherscanService {
   // makes nativeBalanceDeltas, the mirror, activity classification and dated
   // valuation all read the credit with no change of their own.
   //
-  // Runs under the ONE global throttle like every other Etherscan call: five
-  // chains and a sixth feed still share one key's rate limit.
+  // Runs under the provider-host queue like every other explorer call: five
+  // chains and a sixth feed still share the same host's rate limit.
   static async fetchStateSyncDeposits(
     address,
     startBlock = 0,

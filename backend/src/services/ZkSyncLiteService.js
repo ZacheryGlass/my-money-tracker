@@ -60,8 +60,9 @@ class ZkSyncLiteService {
   static get BRIDGE_ADDRESS() { return BRIDGE_ADDRESS; }
 
   static async _request(path, params = {}, { allowNull = false } = {}) {
-    const response = await etherscan.throttled(() =>
-      axios.get(`${API_BASE_URL}${path}`, { timeout: 15000, params })
+    const response = await etherscan.throttled(
+      () => axios.get(`${API_BASE_URL}${path}`, { timeout: 15000, params }),
+      { key: `zksync-lite:${API_BASE_URL}`, spacingMs: etherscan.REQUEST_SPACING_MS }
     );
     const payload = response.data || {};
     if (payload.status !== 'success' || payload.error
