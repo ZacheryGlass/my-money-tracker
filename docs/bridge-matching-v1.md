@@ -2,7 +2,7 @@
 
 Status: implementation specification
 Rule version: `bridge-match-v1`
-Research cut: 2026-08-03
+Research cut: 2026-08-05
 
 ## Purpose
 
@@ -283,6 +283,66 @@ First-party sources: Across'
 [tracking guide](https://docs.across.to/introduction/tracking-deposits),
 [migration guide](https://docs.across.to/developer-quickstart/migration-guides/migration-guide-v2-to-v3),
 and [contract interfaces](https://github.com/across-protocol/contracts).
+
+### Hop v1
+
+Issue #86 adds a registry-scoped Hop v1 adapter for the reviewed mainnet
+USDC.e deployment. The initial registry covers Ethereum plus Gnosis, Polygon,
+Optimism, Arbitrum, and Base: 11 endpoint rows and 25 directed asset routes
+(each supported L2 to Ethereum route and each supported L2-to-L2 route). It
+does not imply that every Hop asset, chain, or newer deployment is supported.
+The registry is generated from the pinned [Hop mainnet address
+matrix](https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb004a4d0c587/packages/sdk/src/addresses/mainnet.ts),
+with deployment bounds, canonical/Hop token variants, bridge and wrapper
+addresses, and the source commit stored with every route.
+
+For an L2 initiation, the pinned `TransferSent` is the identity-bearing source
+event. Its indexed fields carry the emitted transfer id, destination chain,
+and recipient; its data carries the gross amount, transfer nonce, bonder fee,
+transfer index, `amountOutMin`, and deadline. The adapter recomputes and
+requires the emitted id to equal the v1 transfer id:
+
+```text
+keccak256(abi.encode(
+  destinationChainId, recipient, amount, transferNonce,
+  bonderFee, amountOutMin, deadline
+))
+```
+
+The exact field order follows the [pinned Hop transfer-ID
+helper](https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb004a4d0c587/packages/hop-node/src/utils/getTransferId.ts).
+The pinned deployed ABI uses static `send`/`swapAndSend` calls, so it does not
+expose a token index in this event or hash. Newer tuple-shaped Hop source
+revisions are kept as a separate ABI variant: if registered, their adapter
+path hashes the tuple's token index as well. Calldata is decoded only to
+corroborate the event and endpoint target; unknown or malformed calldata does
+not become a match.
+
+The destination identity-bearing event is `Withdrew(transferId, recipient,
+amount, transferNonce)`. The recipient must equal the destination wallet and
+the observed destination asset must be one of the route's registered canonical
+or Hop token addresses. The event amount is gross (including the bonder fee),
+so it must equal the source gross amount exactly; the recipient's net amount is
+gross minus fee because the contract distributes the fee separately. A
+`WithdrawalBonded` log is a bonder accounting step, not proof that the user's
+wallet received funds, and `TransferSentToL2`/
+`TransferFromL1Completed` are left unsupported because the current v1 evidence
+does not provide one shared source/destination transfer id for those L1-to-L2
+paths. They remain visible for review rather than being amount-matched.
+
+Both receipts require the normal finalized RPC boundary. Destination token-feed
+coverage must also be complete through the receipt block; a missing, failed, or
+behind feed leaves the Hop movement pending. Route intersection, exact
+recipient ownership, asset observation, amount arithmetic, receipt status,
+finality, and coverage are all checked before the existing evidence-first
+projection can fold the pair. Recapture/refetch re-evaluates the durable raw
+receipts without changing user labels, overrides, or verdicts.
+
+First-party sources: the [Hop v1 L2 bridge
+contract](https://github.com/hop-protocol/contracts/blob/master/contracts/bridges/L2_Bridge.sol),
+the [L2 AMM wrapper](https://github.com/hop-protocol/contracts/blob/master/contracts/bridges/L2_AmmWrapper.sol),
+the [pinned SDK ABI](https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb004a4d0c587/packages/sdk/src/contracts/Bridge.ts),
+and the [pinned mainnet deployment registry](https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb004a4d0c587/packages/sdk/src/addresses/mainnet.ts).
 
 ## API and UI
 

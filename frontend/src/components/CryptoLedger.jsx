@@ -159,6 +159,24 @@ const describeBridgeFees = (match) => {
   return fees.join(' + ');
 };
 
+// Hop's protocol identity is a hash over the source event fields, while the
+// movement evidence also records the gross amount, bonder fee, and exact net
+// amount accepted from the destination receipt. Keep those raw units visible:
+// the bridge registry does not guess token decimals, and a rounded display
+// would make the identity audit less useful than the underlying evidence.
+const hopPairEvidence = (match) => match?.protocol === 'hop'
+  && match?.evidence?.hop_pair
+  ? match.evidence.hop_pair
+  : null;
+
+const describeHopPair = (match) => {
+  const pair = hopPairEvidence(match);
+  if (!pair) return null;
+  const transferId = pair.transfer_id ? shortEthAddress(pair.transfer_id) : 'unknown ID';
+  const route = pair.route?.route_key || 'registered route';
+  return `Hop v1 ${transferId} · ${route} · gross ${pair.gross_amount} − bonder fee ${pair.bonder_fee} = net ${pair.net_amount} base units`;
+};
+
 const describeBridgeSource = (member) => {
   const amount = member?.out_amount != null ? `${member.out_amount} ${member.asset || ''}`.trim() : null;
   return amount || member?.tx_hash || 'Source transaction';
@@ -912,6 +930,16 @@ const CryptoLedger = ({
                         Exact protocol identity found; waiting for finalized receipt boundaries.
                       </p>
                     )}
+                    {movement.protocol === 'hop' && movement.evidence?.hop_pair && (
+                      <p className="mt-0.5 break-words text-tertiary" title={movement.evidence.hop_pair.transfer_id || undefined}>
+                        {describeHopPair({ protocol: 'hop', evidence: { hop_pair: movement.evidence.hop_pair } })}
+                      </p>
+                    )}
+                    {movement.evidence?.ambiguity && movement.evidence.ambiguity !== 'awaiting_chain_finality' && (
+                      <p className="mt-0.5 text-tertiary">
+                        Evidence state: {movement.evidence.ambiguity.replaceAll('_', ' ')}.
+                      </p>
+                    )}
                   </div>
                   <Chip className={movement.status === 'failed' ? TONE_STYLES.failed : TONE_STYLES.neutral}>
                     {bridgeStatusLabel(movement.status)}
@@ -1540,6 +1568,14 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
               </a>
             )}
           </div>
+          {hopPairEvidence(row.bridge_match) && (
+            <p
+              className="mt-1 break-words text-caption text-tertiary"
+              title={hopPairEvidence(row.bridge_match).transfer_id || undefined}
+            >
+              {describeHopPair(row.bridge_match)}
+            </p>
+          )}
           {row.bridge_match.source_members?.length > 1 && (
             <div className="mt-2 border-t border-teal-500/10 pt-2">
               <p className="text-[9px] font-bold uppercase tracking-wide text-teal-400">

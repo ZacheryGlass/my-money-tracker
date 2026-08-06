@@ -9,6 +9,8 @@ const EthBridgeEndpoint = require('../models/EthBridgeEndpoint');
 const EthBridgeReceipt = require('../models/EthBridgeReceipt');
 const EthBridgeMovement = require('../models/EthBridgeMovement');
 const EthActivityLink = require('../models/EthActivityLink');
+const EthHopBridgeRoute = require('../models/EthHopBridgeRoute');
+const EthFeedCoverage = require('../models/EthFeedCoverage');
 const { REVIEW_REASONS } = require('../utils/ethActivityVocabulary');
 const {
   TOPICS, addressWord, decodeEnvelope, RULE_VERSION,
@@ -108,7 +110,7 @@ class BridgeMatchingService {
     return rows;
   }
 
-  static _withEndpointMetadata(activities, endpoints) {
+  static _withEndpointMetadata(activities, endpoints, coverageByCoordinate = null) {
     const byCoordinate = new Map();
     for (const endpoint of endpoints) {
       const key = `${Number(endpoint.chain_id)}:${lower(endpoint.address)}`;
@@ -120,16 +122,20 @@ class BridgeMatchingService {
         `${Number(activity.chain_id)}:${lower(activity.counterparty_address)}`
       )?.filter((endpoint) => endpointApplies(endpoint, activity)) || [];
       const endpoint = matches.length === 1 ? matches[0] : null;
+      const coverageKey = `${Number(activity.wallet_id)}:${Number(activity.chain_id)}`;
       return {
         ...activity,
         endpoint_protocol: endpoint?.protocol || null,
         endpoint_family_version: endpoint?.family_version || null,
+        ...(coverageByCoordinate ? {
+          feed_coverage: coverageByCoordinate.get(coverageKey) || [],
+        } : {}),
       };
     });
   }
 
   static async _acquire(userId, activities, endpoints, {
-    acquireReceipts = true, client = pool,
+    acquireReceipts = true, client = pool, hopRoutes = [],
   } = {}) {
     const stored = new Map((await EthBridgeReceipt.findForUser(userId, client)).map((receipt) => [
       `${receipt.wallet_id}:${receipt.chain_id}:${receipt.tx_hash}`,
@@ -151,7 +157,9 @@ class BridgeMatchingService {
       if (Number(activity.chain_id) === 32401) {
         envelopes.push({
           ...activity,
-          endpoints: chainEndpoints, known_endpoints: knownEndpoints,
+          endpoints: chainEndpoints,
+          known_endpoints: knownEndpoints,
+          hop_routes: hopRoutes,
           transaction: null,
           receipt: null,
           provider_boundary: {
@@ -209,6 +217,7 @@ class BridgeMatchingService {
         provider_boundary: record.provider_boundary,
         endpoints: chainEndpoints,
         known_endpoints: knownEndpoints,
+        hop_routes: hopRoutes,
       });
     }
     return envelopes;
@@ -265,9 +274,20 @@ class BridgeMatchingService {
     if (!queryClient) throw new Error('Locked bridge rebuild requires a transaction client');
     const activities = await this._activitiesForUser(userId, queryClient);
     const endpoints = await EthBridgeEndpoint.findForTransactions(activities, queryClient);
-    const annotatedActivities = this._withEndpointMetadata(activities, endpoints);
+    const hopRoutes = await EthHopBridgeRoute.findForTransactions(activities, queryClient);
+    const coverageRows = activities.length
+      ? await EthFeedCoverage.findBridgeCoverageForUser(userId, queryClient) : [];
+    const coverageByCoordinate = new Map();
+    for (const row of coverageRows) {
+      const key = `${Number(row.wallet_id)}:${Number(row.chain_id)}`;
+      if (!coverageByCoordinate.has(key)) coverageByCoordinate.set(key, []);
+      coverageByCoordinate.get(key).push(row);
+    }
+    const annotatedActivities = this._withEndpointMetadata(
+      activities, endpoints, coverageByCoordinate
+    );
     const envelopes = await this._acquire(
-      userId, annotatedActivities, endpoints, { ...options, client: queryClient }
+      userId, annotatedActivities, endpoints, { ...options, client: queryClient, hopRoutes }
     );
     const decoderEvents = envelopes.flatMap((envelope) => decodeEnvelope(envelope));
     const decodedCoordinates = new Set(decoderEvents.map((event) => (

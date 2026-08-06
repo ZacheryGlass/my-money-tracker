@@ -1121,6 +1121,35 @@ describe('CryptoLedger', () => {
     expect(screen.getAllByTitle(TX2).length).toBeGreaterThan(0);
   });
 
+  it('shows Hop identity and gross-fee-net evidence on the folded row', async () => {
+    setLedger([onchain({
+      category: 'bridge_out',
+      chain_id: 100,
+      legs: [{ asset: 'USDC.e', direction: 'out', amount: '1', units: '1000000', decimals: 6 }],
+      bridge_match: {
+        protocol: 'hop', chain_id: 8453, chain_label: 'Base', tx_hash: TX2,
+        category: 'bridge_in', movement_status: 'protocol_verified',
+        verification_method: 'protocol_identity',
+        legs: [{ asset: 'USDC.e', direction: 'in', amount: '0.99', units: '990000', decimals: 6 }],
+        assets: [{ asset: 'USDC.e', fee_amount: '0.01' }],
+        evidence: {
+          hop_pair: {
+            transfer_id: `0x${'c'.repeat(64)}`,
+            route: { route_key: 'USDC.e:100->8453' },
+            gross_amount: '1000000', bonder_fee: '10000', net_amount: '990000',
+          },
+        },
+      },
+    })]);
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('− 1 USDC.e'))[0]);
+
+    expect(await screen.findByText(/Hop v1 0xcccc…cccc/)).toBeInTheDocument();
+    expect(screen.getByText(/USDC\.e:100->8453/)).toBeInTheDocument();
+    expect(screen.getByText(/gross 1000000 − bonder fee 10000 = net 990000 base units/)).toBeInTheDocument();
+  });
+
   it('leaves an unlinked bridge leg as its own flagged row', async () => {
     // Nothing may present a half-finished bridge as a completed transfer.
     setLedger([onchain({

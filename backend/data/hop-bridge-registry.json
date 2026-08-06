@@ -1,0 +1,70 @@
+{
+  "researchedOn": "2026-08-05",
+  "deploymentKey": "hop-mainnet-v1",
+  "familyVersion": "v1",
+  "abiVariant": "hop-v1-transfer-sent-withdrawal-v1",
+  "sourceCommit": "3ae90badbed5708d72cec46d0efeb004a4d0c587",
+  "sourceUrl": "https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb004a4d0c587/packages/sdk/src/addresses/mainnet.ts",
+  "finalityPolicy": {
+    "mode": "rpc_finalized",
+    "required_on": "both_sides"
+  },
+  "assets": [
+    {
+      "assetKey": "USDC.e",
+      "l1": {
+        "chainId": 1,
+        "canonicalToken": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "bridge": "0x3666f603cc164936c1b87e207f36beba4ac5f18a",
+        "validFromBlock": 12650032
+      },
+      "chains": [
+        {
+          "chainId": 100,
+          "name": "Gnosis",
+          "canonicalToken": "0xddafbb505ad214d7b80b1f830fccc89b60fb7a83",
+          "hopToken": "0x9ec9551d4a1a1593b0ee8124d98590cc71b3b09d",
+          "bridge": "0x25d8039bb044dc227f741a9e381ca4ceae2e6ae8",
+          "wrapper": "0x76b22b8c1079a44f1211d867d68b1eda76a635a7",
+          "validFromBlock": 16617211
+        },
+        {
+          "chainId": 137,
+          "name": "Polygon",
+          "canonicalToken": "0x2791bca1f2de4661ed88a30c99a7a9449aa84174",
+          "hopToken": "0x9ec9551d4a1a1593b0ee8124d98590cc71b3b09d",
+          "bridge": "0x25d8039bb044dc227f741a9e381ca4ceae2e6ae8",
+          "wrapper": "0x76b22b8c1079a44f1211d867d68b1eda76a635a7",
+          "validFromBlock": 15810014
+        },
+        {
+          "chainId": 10,
+          "name": "Optimism",
+          "canonicalToken": "0x7f5c764cbc14f9669b88837ca1490cca17c31607",
+          "hopToken": "0x25d8039bb044dc227f741a9e381ca4ceae2e6ae8",
+          "bridge": "0xa81d244a1814468c734e5b4101f7b9c0c577a8fc",
+          "wrapper": "0x2ad09850b0ca4c7c1b33f5acd6cbabcab5d6e796",
+          "validFromBlock": 1
+        },
+        {
+          "chainId": 42161,
+          "name": "Arbitrum",
+          "canonicalToken": "0xff970a61a04b1ca14834a43f5de4533ebddb5cc8",
+          "hopToken": "0x0ce6c85cf43553de10fc56ceca0aef6ff0dd444d",
+          "bridge": "0x0e0e3d2c5c292161999474247956ef542cabf8dd",
+          "wrapper": "0xe22d2bedb3eca35e6397e0c6d62857094aa26f52",
+          "validFromBlock": 440027
+        },
+        {
+          "chainId": 8453,
+          "name": "Base",
+          "canonicalToken": "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca",
+          "hopToken": "0x74fa978eaffa312bc92e76df40fcc1bfe7637aeb",
+          "bridge": "0x46ae9bab8cea96610807a275ebd36f8e916b5c61",
+          "wrapper": "0x7d269d3e0d61a05a0ba976b7dbf8805bf844af3f",
+          "validFromBlock": 2077758
+        }
+      ]
+    }
+  ]
+}
