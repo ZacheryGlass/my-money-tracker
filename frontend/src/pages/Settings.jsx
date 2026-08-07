@@ -35,6 +35,38 @@ const JOB_TRIGGER_NAMES = {
   'snapshot-creation': 'snapshot',
 };
 
+const jobRunPresentation = (name, lastRun) => {
+  if (!lastRun) return { text: 'Never run', tone: 'text-tertiary' };
+  const when = formatRelativeTime(lastRun.completed_at || lastRun.started_at);
+  if (lastRun.status === 'running') {
+    return { text: `Running since ${when}`, tone: 'text-accent' };
+  }
+  if (lastRun.status === 'failed') {
+    return { text: `Last run ${when} — failed`, tone: 'text-loss' };
+  }
+  if (name !== 'eth-sync') {
+    return { text: `Last run ${when} — ${lastRun.status}`, tone: 'text-tertiary' };
+  }
+  const details = lastRun.details && typeof lastRun.details === 'object'
+    ? lastRun.details
+    : {};
+  const counts = {
+    processed: Number(lastRun.tickers_processed || 0),
+    succeeded: Number(lastRun.tickers_succeeded || 0),
+    failed: Number(lastRun.tickers_failed || 0),
+    deferred: Number(details.deferred || 0),
+    unsupported: Number(details.unsupported || 0),
+    unverified: Number(details.unverified || 0),
+    skipped: Number(details.skipped || 0),
+  };
+  const text = `Last run ${when} — ${counts.succeeded}/${counts.processed} succeeded · ${counts.failed} failed · ${counts.deferred} deferred · ${counts.unsupported} unsupported · ${counts.unverified} unverified · ${counts.skipped} skipped`;
+  const degraded = counts.deferred + counts.unsupported + counts.unverified + counts.skipped > 0;
+  return {
+    text,
+    tone: counts.failed > 0 ? 'text-loss' : degraded ? 'text-amber-400' : 'text-tertiary',
+  };
+};
+
 // Rows on the API Keys tab. Plaid/Etherscan pull the signed-in user's own
 // financial data; the price keys are shared app-wide (prices are global).
 const USER_KEY_ROWS = [
@@ -255,6 +287,7 @@ const Settings = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [successMessage, showSuccess] = useTransientMessage();
+  const [noticeMessage, showNotice] = useTransientMessage();
   const [syncingId, setSyncingId] = useState(null);
   const [disconnectingItem, setDisconnectingItem] = useState(null);
   const [removeDataOnDisconnect, setRemoveDataOnDisconnect] = useState(true);
@@ -280,6 +313,7 @@ const Settings = ({ user }) => {
   const [activeTab, setActiveTab] = useState(() =>
     SETTINGS_TABS.some((t) => t.id === location.state?.tab) ? location.state.tab : 'appearance'
   );
+  const ethSyncRunning = adminOverview?.jobs?.jobs?.['eth-sync']?.lastRun?.status === 'running';
 
   const institutionSummary = useMemo(
     () => buildInstitutionSummary(items, consentItems),
@@ -339,6 +373,26 @@ const Settings = ({ user }) => {
       .then((data) => { if (!cancelled) setAdminOverview(data || null); });
     return () => { cancelled = true; };
   }, [isAdmin]);
+
+  // The full wallet scan is deliberately detached from the trigger request so
+  // provider cooldowns cannot hit Azure's HTTP timeout. Keep its durable
+  // JobLog row live while the operator is looking at Server, and stop polling
+  // as soon as the row reaches a terminal state or the page is left.
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'server' || !ethSyncRunning) return undefined;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      adminAPI.getOverview()
+        .catch(() => null)
+        .then((data) => {
+          if (!cancelled && data) setAdminOverview(data);
+        });
+    }, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeTab, ethSyncRunning, isAdmin]);
 
   const handlePlaidSuccess = async (publicToken, metadata) => {
     setConnecting(true);
@@ -449,8 +503,19 @@ const Settings = ({ user }) => {
     setTriggeringJob(statusKey);
     setError(null);
     try {
-      await adminAPI.triggerJob(JOB_TRIGGER_NAMES[statusKey] || statusKey);
-      showSuccess('Job completed');
+      const response = await adminAPI.triggerJob(JOB_TRIGGER_NAMES[statusKey] || statusKey);
+      const result = response?.result || {};
+      if (response?.status === 'started' || result.started) {
+        showSuccess('Job started. Live status and the final outcome appear below.');
+      } else if (statusKey === 'eth-sync' && Number(result.failed || 0) > 0) {
+        setError(`Wallet scan completed with ${result.failed} failed wallet${result.failed === 1 ? '' : 's'}.`);
+      } else if (statusKey === 'eth-sync'
+          && Number(result.deferred || 0) + Number(result.unsupported || 0)
+            + Number(result.unverified || 0) + Number(result.skipped || 0) > 0) {
+        showNotice(`Wallet scan completed with ${Number(result.deferred || 0)} deferred, ${Number(result.unsupported || 0)} unsupported, ${Number(result.unverified || 0)} unverified, and ${Number(result.skipped || 0)} skipped.`);
+      } else {
+        showSuccess('Job completed');
+      }
       // Keep the previous overview if the refresh fails: clearing it used to
       // unmount the tab the user is standing on and leave a blank page.
       const refreshed = await adminAPI.getOverview().catch(() => null);
@@ -607,6 +672,12 @@ const Settings = ({ user }) => {
         <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 p-4 bg-gain-bg border border-gain/20 text-gain rounded text-xs flex items-center gap-3">
           <Check size={16} />
           {successMessage}
+        </Motion.div>
+      )}
+      {noticeMessage && (
+        <Motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 flex items-center gap-3 rounded border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-300">
+          <AlertTriangle size={16} />
+          {noticeMessage}
         </Motion.div>
       )}
       {error && (
@@ -1186,31 +1257,33 @@ const Settings = ({ user }) => {
       <section className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Scheduled Jobs</h2>
-          <p className="mt-1 text-xs text-secondary">Nightly pipeline (all times UTC). Manual runs execute immediately with your permissions.</p>
+          <p className="mt-1 text-xs text-secondary">Nightly pipeline (all times UTC). Manual runs execute with your permissions; long wallet scans continue in the background.</p>
         </div>
         <div className="card divide-y divide-border overflow-hidden">
-          {Object.entries(adminOverview.jobs?.jobs || {}).map(([name, job]) => (
-            <div key={name} className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto] sm:items-center">
-              <div className="min-w-0">
-                <span className="block text-body-sm font-semibold text-primary">{name}</span>
-                <span className="block font-mono text-[10px] text-tertiary">{job.schedule} UTC</span>
+          {Object.entries(adminOverview.jobs?.jobs || {}).map(([name, job]) => {
+            const run = jobRunPresentation(name, job.lastRun);
+            const running = job.lastRun?.status === 'running';
+            return (
+              <div key={name} className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto] sm:items-center">
+                <div className="min-w-0">
+                  <span className="block text-body-sm font-semibold text-primary">{name}</span>
+                  <span className="block font-mono text-[10px] text-tertiary">{job.schedule} UTC</span>
+                </div>
+                <span className={`min-w-0 text-caption ${run.tone}`}>
+                  {run.text}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleTriggerJob(name)}
+                  disabled={triggeringJob !== null || running}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+                >
+                  {triggeringJob === name || running ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                  {running ? 'Running' : 'Run Now'}
+                </button>
               </div>
-              <span className="min-w-0 truncate text-caption text-tertiary">
-                {job.lastRun
-                  ? `Last run ${formatRelativeTime(job.lastRun.completed_at || job.lastRun.started_at)} — ${job.lastRun.status}`
-                  : 'Never run'}
-              </span>
-              <button
-                type="button"
-                onClick={() => handleTriggerJob(name)}
-                disabled={triggeringJob !== null}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
-              >
-                {triggeringJob === name ? <RefreshCw size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                Run Now
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

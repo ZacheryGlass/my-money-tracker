@@ -76,6 +76,27 @@ function unitsToDecimalString(value, decimals) {
 // Ethereum's finality window (~2 epochs = 64 blocks).
 const REORG_OVERLAP_BLOCKS = 64;
 
+const DEFAULT_DEFERRED_RETRY_MS = 1100;
+const MAX_PROVIDER_RETRY_WAIT_MS = 5 * 60 * 1000;
+
+function boundedEnvInteger(name, fallback, maximum) {
+  const value = Number(process.env[name]);
+  if (!Number.isInteger(value) || value < 0) return fallback;
+  return Math.min(value, maximum);
+}
+
+const SYNC_DEFERRED_RETRY_ATTEMPTS = boundedEnvInteger(
+  'ETH_SYNC_DEFERRED_RETRY_ATTEMPTS', 2, 5
+);
+const SYNC_DEFERRED_RETRY_MAX_MS = boundedEnvInteger(
+  'ETH_SYNC_DEFERRED_RETRY_MAX_MS', MAX_PROVIDER_RETRY_WAIT_MS,
+  MAX_PROVIDER_RETRY_WAIT_MS
+);
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 // A full-history replay is expensive. The derived pipeline already serializes
 // all wallet work for one user, but without this guard two clicks would still
 // queue two complete replays. This map covers one running process; after a
@@ -121,13 +142,36 @@ function providerName(chain, spec = null) {
 }
 
 function coverageFailureStatus(error) {
+  if (isExplorerRateLimited(error)) return 'deferred';
   return ['ETHERSCAN_CHAIN_UNAVAILABLE', 'ETHERSCAN_FEED_UNSUPPORTED'].includes(error?.code)
-    ? 'unsupported'
-    : 'failed';
+    ? 'unsupported' : 'failed';
 }
 
 function isExplorerRateLimited(error) {
   return error?.code === 'EXPLORER_RATE_LIMITED';
+}
+
+function retryAfterAt(error) {
+  const explicit = error?.retryAfterAt instanceof Date
+    ? error.retryAfterAt
+    : new Date(error?.retryAfterAt || NaN);
+  if (!Number.isNaN(explicit.getTime())) return explicit;
+  const delay = Math.min(
+    MAX_PROVIDER_RETRY_WAIT_MS,
+    Math.max(1, Number(error?.retryAfterMs) || DEFAULT_DEFERRED_RETRY_MS)
+  );
+  return new Date(Date.now() + delay);
+}
+
+function retryAfterMsForResult(result) {
+  const retryAt = new Date(result?.retryAfterAt || NaN);
+  if (!Number.isNaN(retryAt.getTime())) {
+    return Math.max(0, retryAt.getTime() - Date.now());
+  }
+  return Math.min(
+    MAX_PROVIDER_RETRY_WAIT_MS,
+    Math.max(1, Number(result?.retryAfterMs) || DEFAULT_DEFERRED_RETRY_MS)
+  );
 }
 
 class EthWalletService {
@@ -156,16 +200,19 @@ class EthWalletService {
         { accountId: account.committed.accountId }
       );
     } catch (error) {
+      const failureStatus = coverageFailureStatus(error);
+      const retryAt = failureStatus === 'deferred' ? retryAfterAt(error) : null;
       await EthFeedCoverage.recordAttempts(wallet.id, chain.id, FEED_SPECS.map((spec) => (
         spec.key === 'normal'
           ? {
             feed: spec.key,
             cursorKind: 'archive_serial',
             provider: providerName(chain),
-            status: coverageFailureStatus(error),
+            status: failureStatus,
             attemptedFromBlock: resume,
             errorCode: error.code || 'ZKSYNC_LITE_ARCHIVE_ERROR',
             errorMessage: error.message,
+            retryAfterAt: retryAt,
           }
           : {
             feed: spec.key,
@@ -247,6 +294,8 @@ class EthWalletService {
       chainName: chain.name,
       inserted,
       skippedFeeds: [],
+      failedFeeds: [],
+      deferredFeeds: [],
       unsupportedFeeds: normalized.limitations,
       unavailable: false,
       fetched: {
@@ -635,8 +684,10 @@ class EthWalletService {
   // caller after all chains have landed.
   //
   // Failure is isolated per (chain, feed), in three flavours:
-  //   * transient (rate limit, timeout, 5xx) -> 'skipped'. Retried next sync,
-  //     and it badges the wallet.
+  //   * rate limit -> 'deferred'. Retried after the provider cooldown without
+  //     a red wallet failure.
+  //   * other transient/transport errors -> 'failed'. Retried next sync and
+  //     badged as a real wallet failure.
   //   * ETHERSCAN_FEED_UNSUPPORTED -> 'unsupported', this feed only.
   //   * ETHERSCAN_CHAIN_UNAVAILABLE -> 'unsupported', and a verdict on the whole
   //     chain, so the remaining feeds are marked without being called.
@@ -702,15 +753,18 @@ class EthWalletService {
         prefetchedStateSync?.indexedHead ?? null
       );
     } catch (error) {
+      const failureStatus = coverageFailureStatus(error);
+      const retryAt = failureStatus === 'deferred' ? retryAfterAt(error) : null;
       await EthFeedCoverage.recordAttempts(wallet.id, chain.id, FEED_SPECS.map((spec) => (
         feedActive(spec)
           ? {
             feed: spec.key,
             provider: providerName(chain, spec),
-            status: coverageFailureStatus(error),
+            status: failureStatus,
             attemptedFromBlock: resume[spec.key],
             errorCode: error.code || 'ETHERSCAN_API_ERROR',
             errorMessage: error.message,
+            retryAfterAt: retryAt,
           }
           : {
             feed: spec.key,
@@ -723,8 +777,8 @@ class EthWalletService {
         await EthWalletChain.setError(
           wallet.id,
           chain.id,
-          'FEED_SKIPPED',
-          `Partial sync: ${chain.name} explorer rate limited; feeds deferred and will retry next sync (${error.message})`
+          'SYNC_DEFERRED',
+          `Partial sync: ${chain.name} explorer rate limited; feeds deferred; automatic retry pending (${error.message})`
         );
         await EthWalletChain.updateSyncTime(wallet.id, chain.id);
         return {
@@ -732,9 +786,13 @@ class EthWalletService {
           chainName: chain.name,
           inserted: 0,
           skippedFeeds,
+          failedFeeds: [],
+          deferredFeeds: skippedFeeds,
           unsupportedFeeds: state?.unsupported_feeds || [],
           unavailable: false,
           rateLimited: true,
+          retryAfterMs: Math.max(1, Number(error.retryAfterMs) || DEFAULT_DEFERRED_RETRY_MS),
+          retryAfterAt: retryAt.toISOString(),
           fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, 0])),
         };
       }
@@ -745,7 +803,8 @@ class EthWalletService {
     const feeds = {};
     const fetchedOk = {};
     const feedErrors = {};
-    const skipped = [];
+    const failed = [];
+    const deferred = [];
     const unsupported = [];
 
     // Set by the first feed that reports the CHAIN as unreadable. The remaining
@@ -775,7 +834,7 @@ class EthWalletService {
       }
       if (rateLimited) {
         fetchedOk[spec.key] = false;
-        skipped.push(spec.key);
+        deferred.push(spec.key);
         feedErrors[spec.key] = rateLimited;
         continue;
       }
@@ -809,7 +868,7 @@ class EthWalletService {
         feedErrors[spec.key] = err;
         if (isExplorerRateLimited(err)) {
           rateLimited = err;
-          skipped.push(spec.key);
+          deferred.push(spec.key);
           logger.warn({
             walletId: wallet.id,
             chainId: chain.id,
@@ -826,7 +885,7 @@ class EthWalletService {
           logger.warn({ walletId: wallet.id, chainId: chain.id, feed: spec.key, code: err.code, err: err.message },
             'Etherscan cannot serve this feed; cursor frozen and gap recorded');
         } else {
-          skipped.push(spec.key);
+          failed.push(spec.key);
           logger.warn({ walletId: wallet.id, chainId: chain.id, feed: spec.key, err },
             'Feed fetch failed; feed skipped this sync and its cursor left unchanged');
         }
@@ -880,14 +939,16 @@ class EthWalletService {
         };
       }
       const error = feedErrors[spec.key];
+      const status = coverageFailureStatus(error);
       return {
         feed: spec.key,
         provider: providerName(chain, spec),
-        status: coverageFailureStatus(error),
+        status,
         indexedHead,
         attemptedFromBlock: resume[spec.key],
         errorCode: error?.code || 'ETHERSCAN_API_ERROR',
         errorMessage: error?.message || 'Feed was not attempted after the chain provider became unavailable',
+        retryAfterAt: status === 'deferred' ? retryAfterAt(error) : null,
       };
     }));
     // Coverage lands before the resume cursor. If that audit write fails, the
@@ -908,11 +969,20 @@ class EthWalletService {
     if (unsupported.length === activeCount) {
       await EthWalletChain.setError(wallet.id, chain.id, 'CHAIN_UNAVAILABLE',
         `${chain.name} is not readable with this Etherscan key. Upgrade the plan or remove ${chain.id} from ETH_CHAINS.`);
-    } else if (skipped.length) {
-      const message = rateLimited
-        ? `Partial sync: ${chain.name} explorer rate limited; ${skipped.join(', ')} feeds deferred; will retry next sync`
-        : `Partial sync: ${skipped.join(', ')} feed failed; will retry next sync`;
-      await EthWalletChain.setError(wallet.id, chain.id, 'FEED_SKIPPED', message);
+    } else if (failed.length) {
+      await EthWalletChain.setError(
+        wallet.id,
+        chain.id,
+        'FEED_SKIPPED',
+        `Partial sync: ${failed.join(', ')} feed failed; will retry next sync`
+      );
+    } else if (deferred.length) {
+      await EthWalletChain.setError(
+        wallet.id,
+        chain.id,
+        'SYNC_DEFERRED',
+        `Partial sync: ${chain.name} explorer rate limited; ${deferred.join(', ')} feeds deferred; automatic retry pending`
+      );
     } else if (unsupported.length) {
       await EthWalletChain.setError(wallet.id, chain.id, 'FEED_UNSUPPORTED',
         `${unsupported.join(', ')} unavailable on ${chain.name}; derived balances there may drift`);
@@ -925,10 +995,16 @@ class EthWalletService {
       chainId: chain.id,
       chainName: chain.name,
       inserted,
-      skippedFeeds: skipped,
+      skippedFeeds: [...failed, ...deferred],
+      failedFeeds: failed,
+      deferredFeeds: deferred,
       unsupportedFeeds: unsupported,
       unavailable: unsupported.length === activeCount,
       rateLimited: Boolean(rateLimited),
+      retryAfterMs: rateLimited
+        ? Math.max(1, Number(rateLimited.retryAfterMs) || DEFAULT_DEFERRED_RETRY_MS)
+        : null,
+      retryAfterAt: rateLimited ? retryAfterAt(rateLimited).toISOString() : null,
       fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, feeds[spec.key].length])),
     };
   }
@@ -991,6 +1067,8 @@ class EthWalletService {
             chainName: chain.name,
             inserted: 0,
             skippedFeeds: [],
+            failedFeeds: [],
+            deferredFeeds: [],
             unsupportedFeeds: [],
             unavailable: false,
             error: err.message,
@@ -1070,38 +1148,60 @@ class EthWalletService {
       // on another.
       const skippedFeeds = perChain.flatMap((result) =>
         result.skippedFeeds.map((feed) => `${result.chainName}/${feed}`));
+      const failedFeeds = perChain.flatMap((result) =>
+        (result.failedFeeds || []).map((feed) => `${result.chainName}/${feed}`));
+      const deferredFeeds = perChain.flatMap((result) =>
+        (result.deferredFeeds || []).map((feed) => `${result.chainName}/${feed}`));
       const unsupportedFeeds = perChain.flatMap((result) =>
         result.unsupportedFeeds.map((feed) => `${result.chainName}/${feed}`));
 
       // A partial sync must not report clean: the error slot doubles as the
       // degraded-feed badge until a sync fetches every feed.
       //
-      // Only TRANSIENT skips reach the wallet badge. An unsupported feed is a
-      // standing property of the chain and the key, so badging it would pin the
+      // Only real failures reach the red wallet badge. An unsupported feed is
+      // a standing property of the chain and the key, so badging it would pin the
       // wallet's attention count above zero permanently -- and a badge that
       // cannot reach zero gets ignored, which would cost us the real sync
       // errors too. Those gaps live on the chain row, which the wallets API
       // returns, and are what #62 reconciles against.
       //
       // A chain that threw outright badges the wallet for the same reason a
-      // skipped feed does: it is transient by assumption and it retries, so the
+      // failed feed does: it is transient by assumption and it retries, so the
       // badge can still reach zero.
-      const partial = [
-        ...skippedFeeds.map((feed) => `${feed} feed`),
+      const failures = [
+        ...failedFeeds.map((feed) => `${feed} feed`),
         ...failedChains.map((result) => `${result.chainName} chain`),
       ];
-      if (partial.length === 0) {
-        await EthWallet.clearError(walletId);
-      } else {
-        const providerPaused = perChain.some((result) => result.rateLimited);
-        const message = providerPaused
-          ? `Partial sync: ${partial.join(', ')} deferred because the explorer is rate limited; will retry next sync`
-          : `Partial sync: ${partial.join(', ')} failed; will retry next sync`;
+      if (failures.length > 0) {
+        const message = `Partial sync: ${failures.join(', ')} failed; will retry next sync`;
         await EthWallet.setError(walletId, failedChains.length ? 'CHAIN_SYNC_FAILED' : 'FEED_SKIPPED', message);
+      } else if (deferredFeeds.length > 0) {
+        await EthWallet.setError(
+          walletId,
+          'SYNC_DEFERRED',
+          `Partial sync: ${deferredFeeds.map((feed) => `${feed} feed`).join(', ')} deferred because the explorer is rate limited; automatic retry pending`
+        );
+      } else {
+        await EthWallet.clearError(walletId);
       }
       await EthWallet.updateSyncTime(walletId);
 
+      const retryAtValues = perChain
+        .map((result) => new Date(result.retryAfterAt || NaN))
+        .filter((value) => !Number.isNaN(value.getTime()));
+      const latestRetryAt = retryAtValues.length
+        ? new Date(Math.max(...retryAtValues.map((value) => value.getTime())))
+        : null;
+      const status = failures.length > 0
+        ? 'failed'
+        : deferredFeeds.length > 0
+          ? 'deferred'
+          : unsupportedFeeds.length > 0
+            ? 'unsupported'
+            : 'complete';
+
       const results = {
+        status,
         inserted: perChain.reduce((sum, result) => sum + result.inserted, 0),
         holdings: derived.holdings,
         mirror: derived.mirror,
@@ -1111,7 +1211,13 @@ class EthWalletService {
         valued: derived.valued,
         methods,
         skippedFeeds,
+        failedFeeds,
+        deferredFeeds,
         unsupportedFeeds,
+        retryAfterMs: latestRetryAt
+          ? Math.max(0, latestRetryAt.getTime() - Date.now())
+          : null,
+        retryAfterAt: latestRetryAt?.toISOString() || null,
         chains: perChain,
         // Cross-chain totals, so the shape callers already read still means
         // "how much did this sync bring in".
@@ -1132,77 +1238,147 @@ class EthWalletService {
   // here: the historical price job at 8:10 owns the provider walk for every
   // wallet, so the 7:50 sync must not do it first. A caller that wants the
   // interactive behaviour passes it explicitly.
-  static async syncAllWallets({ fillPrices = false } = {}) {
+  static async syncAllWallets({
+    fillPrices = false,
+    deferredRetryAttempts = SYNC_DEFERRED_RETRY_ATTEMPTS,
+    deferredRetryMaxMs = SYNC_DEFERRED_RETRY_MAX_MS,
+  } = {}) {
     const wallets = await EthWallet.findAllForJobs();
-    const summary = { processed: 0, succeeded: 0, failed: 0, results: [] };
-    const stateSyncPrefetch = await this._prefetchStateSyncForWallets(wallets);
+    const outcomes = new Map();
 
-    const byUser = new Map();
-    for (const wallet of wallets) {
-      const key = wallet.user_id ?? null;
-      if (!byUser.has(key)) byUser.set(key, []);
-      byUser.get(key).push(wallet);
-    }
+    const runBatch = async (batch) => {
+      const stateSyncPrefetch = await this._prefetchStateSyncForWallets(batch);
+      const byUser = new Map();
+      for (const wallet of batch) {
+        const key = wallet.user_id ?? null;
+        if (!byUser.has(key)) byUser.set(key, []);
+        byUser.get(key).push(wallet);
+      }
 
-    // Keep the entire owner block inside one rebuild lane. The previous flat
-    // walk ran finishUser once per wallet, repeating the same cross-wallet
-    // bridge matching, legacy mirror rebuild, and global classification pass.
-    // The raw ingest and per-wallet derived rows still run once per wallet;
-    // only the user-wide tail is coalesced here.
-    for (const [userId, userWallets] of byUser) {
-      await EthDerivedPipeline.serializedForUser(userId, async () => {
-        const successful = [];
-        for (const wallet of userWallets) {
-          summary.processed++;
-          try {
-            const result = await this._syncWallet(wallet.id, {
-              fillPrices,
-              prefetchedStateSync: stateSyncPrefetch.get(wallet.id) || null,
-              deferUserFinish: true,
-              rebuildMatches: false,
-            });
-            summary.succeeded++;
-            const entry = { walletId: wallet.id, address: wallet.address, ...result };
-            summary.results.push(entry);
-            successful.push({ wallet, entry });
-          } catch (err) {
-            if (err.code === 'ETHERSCAN_NOT_CONFIGURED') {
-              summary.skipped = (summary.skipped || 0) + 1;
-              summary.results.push({ walletId: wallet.id, address: wallet.address, skipped: 'not_configured' });
-              logger.warn({ walletId: wallet.id, userId: wallet.user_id }, 'Skipping ETH wallet: owner has no Etherscan key');
-              continue;
-            }
-            summary.failed++;
-            summary.results.push({ walletId: wallet.id, address: wallet.address, error: err.message });
-            logger.error({ walletId: wallet.id, err }, 'Failed to sync ETH wallet');
-          }
-        }
-
-        if (!successful.length) return;
-        try {
-          await EthDerivedPipeline.finishUser(userId, {
-            match: userId != null,
-            context: 'nightly ETH sync',
-          });
-        } catch (err) {
-          // Match the old per-wallet failure semantics: a failed user-wide
-          // tail invalidates every wallet whose ingest succeeded in this block.
-          for (const { wallet, entry } of successful) {
-            entry.error = err.message;
+      // Keep one owner's raw and derived writes inside the established lane.
+      // Retry waits happen outside this function, so a provider cooldown never
+      // blocks that owner's label writes or unrelated wallet actions.
+      for (const [userId, userWallets] of byUser) {
+        await EthDerivedPipeline.serializedForUser(userId, async () => {
+          const successful = [];
+          for (const wallet of userWallets) {
+            const attempts = Number(outcomes.get(wallet.id)?.attempts || 0) + 1;
             try {
-              await EthWallet.setError(wallet.id, err.code || 'SYNC_ERROR', err.message);
-            } catch (recordErr) {
-              logger.error({ walletId: wallet.id, err: recordErr },
-                'Could not record coalesced nightly ETH tail error');
+              const result = await this._syncWallet(wallet.id, {
+                fillPrices,
+                prefetchedStateSync: stateSyncPrefetch.get(wallet.id) || null,
+                deferUserFinish: true,
+                rebuildMatches: false,
+              });
+              const entry = {
+                walletId: wallet.id,
+                address: wallet.address,
+                attempts,
+                ...result,
+              };
+              outcomes.set(wallet.id, entry);
+              successful.push({ wallet, entry });
+            } catch (err) {
+              if (err.code === 'ETHERSCAN_NOT_CONFIGURED') {
+                outcomes.set(wallet.id, {
+                  walletId: wallet.id,
+                  address: wallet.address,
+                  attempts,
+                  status: 'skipped',
+                  skipped: 'not_configured',
+                });
+                logger.warn({ walletId: wallet.id, userId: wallet.user_id },
+                  'Skipping ETH wallet: owner has no Etherscan key');
+                continue;
+              }
+              outcomes.set(wallet.id, {
+                walletId: wallet.id,
+                address: wallet.address,
+                attempts,
+                status: 'failed',
+                error: err.message,
+              });
+              logger.error({ walletId: wallet.id, err }, 'Failed to sync ETH wallet');
             }
           }
-          summary.succeeded -= successful.length;
-          summary.failed += successful.length;
-          logger.error({ userId, err }, 'Nightly ETH user-wide tail failed');
-        }
-      });
+
+          if (!successful.length) return;
+          try {
+            await EthDerivedPipeline.finishUser(userId, {
+              match: userId != null,
+              context: 'nightly ETH sync',
+            });
+          } catch (err) {
+            // Match the old per-wallet failure semantics: a failed user-wide
+            // tail invalidates every wallet whose ingest succeeded in this block.
+            for (const { wallet, entry } of successful) {
+              entry.status = 'failed';
+              entry.error = err.message;
+              try {
+                await EthWallet.setError(wallet.id, err.code || 'SYNC_ERROR', err.message);
+              } catch (recordErr) {
+                logger.error({ walletId: wallet.id, err: recordErr },
+                  'Could not record coalesced nightly ETH tail error');
+              }
+            }
+            logger.error({ userId, err }, 'Nightly ETH user-wide tail failed');
+          }
+        });
+      }
+    };
+
+    await runBatch(wallets);
+
+    // A provider pause is shared across wallets. Wait once outside every user
+    // lane, then retry only wallets that actually deferred. A fresh state-sync
+    // prefetch is taken on each pass, so an RPC 429 is not replayed forever from
+    // the first pass's cached error. The bounded attempts and wait budget keep
+    // one unhealthy public endpoint from holding the nightly job indefinitely.
+    const retryLimit = Math.min(5, Math.max(0, Number(deferredRetryAttempts) || 0));
+    const waitLimit = Math.min(
+      MAX_PROVIDER_RETRY_WAIT_MS,
+      Math.max(0, Number(deferredRetryMaxMs) || 0)
+    );
+    let waitedMs = 0;
+    for (let retry = 0; retry < retryLimit; retry++) {
+      const pending = wallets.filter((wallet) => (
+        outcomes.get(wallet.id)?.deferredFeeds?.length > 0
+      ));
+      if (!pending.length) break;
+      const delayMs = Math.max(...pending.map((wallet) =>
+        retryAfterMsForResult(outcomes.get(wallet.id))));
+      if (waitedMs + delayMs > waitLimit) {
+        logger.warn({ pending: pending.length, delayMs, waitedMs, waitLimit },
+          'Deferred ETH wallet retry exceeds the bounded job wait budget');
+        break;
+      }
+      logger.warn({ pending: pending.length, delayMs, attempt: retry + 1 },
+        'Waiting for explorer cooldown before retrying deferred wallets');
+      await sleep(delayMs);
+      waitedMs += delayMs;
+      await runBatch(pending);
     }
 
+    const summary = {
+      processed: wallets.length,
+      succeeded: 0,
+      failed: 0,
+      deferred: 0,
+      unsupported: 0,
+      unverified: 0,
+      skipped: 0,
+      results: wallets.map((wallet) => outcomes.get(wallet.id)),
+    };
+    for (const entry of summary.results) {
+      if (entry?.status === 'skipped') summary.skipped += 1;
+      else if (entry?.status === 'failed') summary.failed += 1;
+      else if (entry?.status === 'deferred') summary.deferred += 1;
+      else {
+        summary.succeeded += 1;
+        if (entry?.status === 'unsupported') summary.unsupported += 1;
+        if (entry?.status === 'unverified') summary.unverified += 1;
+      }
+    }
     return summary;
   }
 

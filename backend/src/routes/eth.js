@@ -402,6 +402,7 @@ router.get('/coverage', async (req, res) => {
       enabled_rows: rows.filter((row) => row.enabled).length,
       complete: 0,
       failed: 0,
+      deferred: 0,
       unsupported: 0,
       not_applicable: 0,
       unverified: 0,
@@ -409,7 +410,7 @@ router.get('/coverage', async (req, res) => {
     };
     for (const row of rows) {
       if (Object.hasOwn(summary, row.status)) summary[row.status] += 1;
-      if (row.enabled && ['failed', 'unsupported', 'unverified'].includes(row.status)) {
+      if (row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)) {
         summary.gaps += 1;
       }
     }

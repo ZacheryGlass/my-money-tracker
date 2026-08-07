@@ -31,6 +31,7 @@ import ReviewPanel, { SPAM_PAGE_SIZE, SPAM_MAX_LIMIT } from '../components/crypt
 import LabelsPanel from '../components/crypto/LabelsPanel';
 import DiscoveryPanel from '../components/crypto/DiscoveryPanel';
 import useTransientMessage from '../hooks/useTransientMessage';
+import { isWalletSyncFailure } from '../utils/walletSync';
 
 const getHoldingValue = (holding) => parseFloat(holding.current_value ?? holding.manual_value ?? 0) || 0;
 
@@ -91,7 +92,6 @@ const TRANSFERS_VIEW = 'transfers';
 
 // Sentinel for "sync every wallet"; real wallet ids are >= 1.
 const SYNC_ALL = 'all';
-
 // onAttentionChange reports the wallet, ledger and management attention counts
 // up to the app shell, which renders them as page-specific Crypto badges.
 const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
@@ -114,6 +114,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState(null);
   const [successMessage, showSuccess] = useTransientMessage();
+  const [noticeMessage, showNotice] = useTransientMessage();
   // Bumped after a sync so the feed refetches: OnChainActivity is keyed on the
   // selected wallet, which a sync does not change, so without this the rows
   // sitting right under the Sync button would stay stale.
@@ -197,7 +198,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         onAttentionChange?.({
           errored: walletsData
             ? (walletsData.wallets || []).filter((wallet) => (
-              wallet.error_code || wallet.reconciliation?.needs_review
+              isWalletSyncFailure(wallet) || wallet.reconciliation?.needs_review
             )).length
             : null,
           needsReview: ok ? (ledgerData?.summary?.needs_review_count || 0) : null,
@@ -339,7 +340,11 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     [wallets, accountDisplayNames]
   );
 
-  const erroredWallets = useMemo(() => wallets.filter((wallet) => wallet.error_code), [wallets]);
+  const erroredWallets = useMemo(() => wallets.filter(isWalletSyncFailure), [wallets]);
+  const deferredWallets = useMemo(
+    () => wallets.filter((wallet) => wallet.error_code === 'SYNC_DEFERRED'),
+    [wallets]
+  );
 
   // Material only, deliberately. A badge that cannot reach zero -- because a
   // single airdrop wave parked 40 dust counterparties behind it -- teaches the
@@ -407,10 +412,18 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     setSyncingWalletId(walletId);
     setError(null);
     try {
-      await ethAPI.syncWallet(walletId);
+      const result = await ethAPI.syncWallet(walletId);
       await fetchData();
       setSyncNonce((nonce) => nonce + 1);
-      showSuccess('Wallet synced');
+      if (result.sync?.status === 'failed') {
+        setError('Wallet sync completed with feed errors. Open Wallets for details.');
+      } else if (result.sync?.status === 'deferred') {
+        showNotice('Wallet sync deferred while the explorer cools down. Retry after the time shown in Coverage; scheduled full scans also retry automatically.');
+      } else if (result.sync?.status === 'unsupported') {
+        showNotice('Wallet synced with limited explorer coverage.');
+      } else {
+        showSuccess('Wallet synced');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to sync wallet');
     } finally {
@@ -427,9 +440,14 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     setSyncingWalletId(SYNC_ALL);
     setError(null);
     const failed = [];
+    const deferred = [];
+    const limited = [];
     for (const wallet of wallets) {
       try {
-        await ethAPI.syncWallet(wallet.id);
+        const result = await ethAPI.syncWallet(wallet.id);
+        if (result.sync?.status === 'failed') failed.push(walletLabel(wallet));
+        else if (result.sync?.status === 'deferred') deferred.push(walletLabel(wallet));
+        else if (result.sync?.status === 'unsupported') limited.push(walletLabel(wallet));
       } catch {
         failed.push(walletLabel(wallet));
       }
@@ -437,8 +455,15 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     await fetchData();
     setSyncNonce((nonce) => nonce + 1);
     setSyncingWalletId(null);
-    if (failed.length) setError(`${failed.length} of ${wallets.length} wallets failed to sync: ${failed.join(', ')}`);
-    else showSuccess('Wallets synced');
+    if (failed.length) {
+      setError(`${failed.length} of ${wallets.length} wallets failed to sync: ${failed.join(', ')}`);
+    } else if (deferred.length) {
+      showNotice(`${deferred.length} of ${wallets.length} wallets deferred while an explorer cools down. Retry after the time shown in Coverage; scheduled full scans also retry automatically.`);
+    } else if (limited.length) {
+      showNotice(`Wallets synced; ${limited.length} have evidence-backed explorer coverage limits.`);
+    } else {
+      showSuccess('Wallets synced');
+    }
   };
 
   const handleSyncClick = () => (
@@ -601,6 +626,11 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       {successMessage && (
         <div className="mb-4 border border-gain/20 bg-gain-bg p-3 text-body-sm text-gain">
           {successMessage}
+        </div>
+      )}
+      {noticeMessage && (
+        <div className="mb-4 border border-amber-500/30 bg-amber-500/10 p-3 text-body-sm text-amber-300">
+          {noticeMessage}
         </div>
       )}
       {error && (
@@ -780,6 +810,20 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   </button>
                 </div>
               )}
+              {deferredWallets.length > 0 && (
+                <div className="mb-4 flex flex-wrap items-center gap-2 border border-accent/20 bg-accent/5 p-2 text-body-sm text-accent">
+                  <AlertTriangle size={14} className="shrink-0" />
+                  <span>
+                    {deferredWallets.length} {deferredWallets.length === 1 ? 'wallet is' : 'wallets are'} waiting for an explorer cooldown.
+                  </span>
+                  <button
+                    onClick={() => goToTab(WALLETS_TAB)}
+                    className="underline hover:text-primary"
+                  >
+                    View details
+                  </button>
+                </div>
+              )}
 
               {txView === LEDGER_VIEW ? (
                 <CryptoLedger
@@ -826,6 +870,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                 onChanged={handleManageChanged}
                 onError={setError}
                 showSuccess={showSuccess}
+                showNotice={showNotice}
               />
               <DiscoveryPanel
                 onChanged={handleManageChanged}

@@ -356,6 +356,62 @@ describe('Crypto -> Wallets tab', () => {
     expect(screen.getByText('Base')).toBeInTheDocument();
     expect(screen.getByText('off')).toBeInTheDocument();
     // Chain-level coverage detail alone does not inflate the Wallets badge.
+    expect(screen.getAllByText('Limited coverage').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Sync failed')).toBeNull();
+  });
+
+  it('shows provider cooldowns as deferred instead of failed', async () => {
+    await openEthereumTab([{
+      ...CHAIN_WALLET,
+      error_code: 'SYNC_DEFERRED',
+      error_message: 'Base explorer rate limited; automatic retry pending',
+      chains: [{
+        chain_id: 8453,
+        name: 'Base',
+        enabled: true,
+        error_code: 'SYNC_DEFERRED',
+        error_message: 'Base explorer rate limited; automatic retry pending',
+        unsupported_feeds: [],
+        last_synced_at: '2026-07-26T09:00:00Z',
+      }],
+    }]);
+
+    expect(screen.getAllByText('Sync deferred').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Sync failed')).toBeNull();
+    await expandWallet();
+    expect(await screen.findByText(/automatic retry pending/i)).toBeInTheDocument();
+  });
+
+  it('keeps genuine feed failures red even when another chain has a standing limit', async () => {
+    await openEthereumTab([{
+      ...CHAIN_WALLET,
+      error_code: 'FEED_SKIPPED',
+      error_message: 'Polygon token feed timed out',
+      chains: [
+        {
+          chain_id: 137, name: 'Polygon', enabled: true,
+          error_code: 'FEED_SKIPPED', error_message: 'token feed timed out',
+          unsupported_feeds: [], last_synced_at: '2026-07-26T09:00:00Z',
+        },
+        {
+          chain_id: 100, name: 'Gnosis Chain', enabled: true,
+          error_code: 'FEED_UNSUPPORTED', error_message: 'internal traces unavailable',
+          unsupported_feeds: ['internal'], last_synced_at: '2026-07-26T09:00:00Z',
+        },
+      ],
+    }]);
+
+    expect(screen.getAllByText('Sync failed').length).toBeGreaterThan(0);
+  });
+
+  it('reports a deferred Sync click without a red failure banner', async () => {
+    apiMocks.eth.syncWallet.mockResolvedValue({ sync: { status: 'deferred' } });
+    await openEthereumTab([wallet(report())]);
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /sync main/i }))[0]);
+
+    expect(await screen.findByText(/wallet sync deferred while the explorer cools down/i)).toBeInTheDocument();
+    expect(screen.queryByText('Failed to sync wallet')).toBeNull();
   });
 
   it('shows a single chain\u2019s standing gap, which a chain-count gate hid entirely', async () => {
@@ -406,8 +462,8 @@ describe('Crypto -> Wallets tab', () => {
     apiMocks.eth.getCoverage.mockResolvedValue({
       generated_at: '2026-07-30T22:00:00.000Z',
       summary: {
-        rows: 2, enabled_rows: 2, complete: 1, failed: 0,
-        unsupported: 1, not_applicable: 0, unverified: 0, gaps: 1,
+        rows: 3, enabled_rows: 3, complete: 1, failed: 0,
+        deferred: 1, unsupported: 1, not_applicable: 0, unverified: 0, gaps: 2,
       },
       coverage: [
         {
@@ -422,6 +478,14 @@ describe('Crypto -> Wallets tab', () => {
           error_message: 'Internal traces unavailable for blocks 0-123',
           covered_through_block: 99,
         },
+        {
+          wallet_id: 1, wallet_label: 'Main', wallet_address: wallet().address,
+          chain_id: 8453, chain_name: 'Base', feed: 'token',
+          status: 'deferred', enabled: true, provider: 'Blockscout',
+          error_message: 'Provider cooldown; retry after 10 seconds',
+          retry_after_at: '2026-07-30T22:00:10.000Z',
+          covered_through_block: 49999999,
+        },
       ],
     });
     await openEthereumTab([wallet(report())]);
@@ -431,6 +495,8 @@ describe('Crypto -> Wallets tab', () => {
     expect(await screen.findByRole('dialog', { name: /evm source coverage/i })).toBeInTheDocument();
     expect(screen.getByText(/main · gnosis chain · internal/i)).toBeInTheDocument();
     expect(screen.getByText(/internal traces unavailable for blocks 0-123/i)).toBeInTheDocument();
+    expect(screen.getByText(/main · base · token/i)).toBeInTheDocument();
+    expect(screen.getByText(/provider cooldown; retry after 10 seconds/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download json/i })).toBeInTheDocument();
   });
 

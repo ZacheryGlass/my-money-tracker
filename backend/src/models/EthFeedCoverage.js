@@ -3,7 +3,7 @@
 const pool = require('../config/database');
 
 const FEEDS = new Set(['normal', 'internal', 'token', 'nft', 'nft1155', 'statesync']);
-const STATUSES = new Set(['complete', 'failed', 'unsupported', 'not_applicable', 'unverified']);
+const STATUSES = new Set(['complete', 'failed', 'deferred', 'unsupported', 'not_applicable', 'unverified']);
 const CURSOR_KINDS = new Set(['evm_block', 'archive_serial']);
 
 // One upsert for a chain's six verdicts. Besides avoiding six round trips, this
@@ -29,8 +29,13 @@ class EthFeedCoverage {
           && (entry.coveredFromBlock == null || entry.coveredThroughBlock == null)) {
         throw new Error(`Complete feed coverage requires both boundaries for ${entry.feed}`);
       }
-      if (['failed', 'unsupported'].includes(entry.status) && !entry.errorMessage) {
+      if (['failed', 'deferred', 'unsupported'].includes(entry.status) && !entry.errorMessage) {
         throw new Error(`Failed feed coverage requires an error message for ${entry.feed}`);
+      }
+      if (entry.status === 'deferred'
+          && (!(entry.retryAfterAt instanceof Date)
+            || Number.isNaN(entry.retryAfterAt.getTime()))) {
+        throw new Error(`Deferred feed coverage requires a retry time for ${entry.feed}`);
       }
 
       const offset = params.length;
@@ -48,13 +53,14 @@ class EthFeedCoverage {
         entry.indexedHead ?? null,
         entry.attemptedFromBlock ?? null,
         entry.errorCode ?? null,
-        entry.errorMessage ?? null
+        entry.errorMessage ?? null,
+        entry.retryAfterAt ?? null
       );
       values.push(`(
         $${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4},
         $${offset + 5}, $${offset + 6}::varchar(20), $${offset + 7}, $${offset + 8},
         $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12},
-        $${offset + 13}, $${offset + 14},
+        $${offset + 13}, $${offset + 14}, $${offset + 15},
         CASE WHEN $${offset + 6}::text = 'complete' THEN CURRENT_TIMESTAMP ELSE NULL END
       )`);
     }
@@ -64,7 +70,8 @@ class EthFeedCoverage {
          wallet_id, chain_id, feed, cursor_kind, provider, status,
          covered_from_block, covered_through_block,
          covered_from_at, covered_through_at, indexed_head,
-         attempted_from_block, error_code, error_message, last_success_at
+         attempted_from_block, error_code, error_message, retry_after_at,
+         last_success_at
        ) VALUES ${values.join(',')}
        ON CONFLICT (wallet_id, chain_id, feed) DO UPDATE SET
          cursor_kind = EXCLUDED.cursor_kind,
@@ -104,6 +111,10 @@ class EthFeedCoverage {
          attempted_from_block = EXCLUDED.attempted_from_block,
          error_code = EXCLUDED.error_code,
          error_message = EXCLUDED.error_message,
+         retry_after_at = CASE
+           WHEN EXCLUDED.status = 'deferred' THEN EXCLUDED.retry_after_at
+           ELSE NULL
+         END,
          last_attempt_at = CURRENT_TIMESTAMP,
          last_success_at = CASE
            WHEN EXCLUDED.status = 'complete' THEN CURRENT_TIMESTAMP

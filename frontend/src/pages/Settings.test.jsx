@@ -302,6 +302,71 @@ describe('Settings display names', () => {
     expect(screen.getByText('Market Data Keys')).toBeInTheDocument();
   });
 
+  it('shows wallet-scan outcome counts and reports a background trigger as started', async () => {
+    const completedOverview = {
+      encryptionConfigured: true,
+      appSettings: { cg_api_key: { source: 'none', masked: null }, cmc_api_key: { source: 'none', masked: null } },
+      env: [],
+      users: [],
+      jobs: {
+        jobs: {
+          'eth-sync': {
+            schedule: '50 7 * * *',
+            timezone: 'Etc/UTC',
+            description: '',
+            lastRun: {
+              status: 'completed',
+              started_at: new Date().toISOString(),
+              completed_at: new Date().toISOString(),
+              tickers_processed: 2,
+              tickers_succeeded: 2,
+              tickers_failed: 0,
+              details: { deferred: 0, unsupported: 1, unverified: 0, skipped: 0 },
+            },
+          },
+        },
+      },
+      health: { dbReachable: true, encryptionConfigured: true, latestPriceFetchedAt: null, migrationCount: 75 },
+    };
+    apiMocks.admin.getOverview
+      .mockResolvedValueOnce(completedOverview)
+      .mockResolvedValueOnce({
+        ...completedOverview,
+        jobs: {
+          jobs: {
+            'eth-sync': {
+              ...completedOverview.jobs.jobs['eth-sync'],
+              lastRun: {
+                status: 'running',
+                started_at: new Date().toISOString(),
+              },
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce(completedOverview);
+    apiMocks.admin.triggerJob.mockResolvedValue({
+      status: 'started',
+      result: { started: true, jobLogId: 91 },
+    });
+
+    renderSettings({ id: 1, username: 'zachery', isAdmin: true });
+    fireEvent.click(await screen.findByRole('tab', { name: 'Server' }));
+
+    const outcome = await screen.findByText(/2\/2 succeeded · 0 failed · 0 deferred · 1 unsupported/);
+    expect(outcome.className).toContain('text-amber-400');
+
+    fireEvent.click(screen.getByRole('button', { name: /run now/i }));
+    expect(await screen.findByText(/Job started\. Live status and the final outcome appear below/)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Running' })).toBeDisabled();
+    expect(await screen.findByText(
+      /2\/2 succeeded · 0 failed · 0 deferred · 1 unsupported/,
+      {},
+      { timeout: 3000 }
+    )).toBeInTheDocument();
+    expect(apiMocks.admin.getOverview).toHaveBeenCalledTimes(3);
+  });
+
   it('loads all accounts and toggles account visibility', async () => {
     renderSettings();
     await openAccountsTab();

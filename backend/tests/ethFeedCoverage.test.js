@@ -52,6 +52,14 @@ test('migration creates six-feed durable coverage without blessing old cursors a
   assert.match(migration, /coverage_recapture_version < 1/);
   assert.match(migration, /ALTER COLUMN coverage_recapture_version SET DEFAULT 1/);
   assert.match(migration, /last_block_normal = 0/);
+
+  const deferredMigration = fs.readFileSync(
+    path.join(__dirname, '..', 'migrations', '075_eth_feed_coverage_deferred.sql'),
+    'utf8'
+  );
+  assert.match(deferredMigration, /ADD COLUMN IF NOT EXISTS retry_after_at TIMESTAMPTZ/);
+  assert.match(deferredMigration, /'deferred'/);
+  assert.match(deferredMigration, /pg_get_constraintdef\(oid\) LIKE '%deferred%'/);
 });
 
 test('one chain attempt is written as one six-feed snapshot with exact errors', async () => {
@@ -99,9 +107,11 @@ test('one chain attempt is written as one six-feed snapshot with exact errors', 
   assert.match(sqlOf(queries[0]), /\$6::varchar\(20\)/, 'status parameters are explicitly typed for PostgreSQL inference');
   assert.match(sqlOf(queries[0]), /ON CONFLICT \(wallet_id, chain_id, feed\) DO UPDATE/);
   assert.match(sqlOf(queries[0]), /ELSE eth_feed_coverage\.covered_through_block/);
-  assert.equal(queries[0].params.length, 6 * 14);
+  assert.equal(queries[0].params.length, 6 * 15);
   assert.ok(queries[0].params.includes('ETHERSCAN_FEED_UNSUPPORTED'));
   assert.ok(queries[0].params.includes('internal traces are unavailable for blocks 0-123'));
+  assert.match(sqlOf(queries[0]), /WHEN EXCLUDED\.status = 'deferred' THEN EXCLUDED\.retry_after_at ELSE NULL/,
+    'a later success or standing limitation clears stale provider cooldown state');
 });
 
 test('failed coverage entries cannot omit their exact reason', async () => {
@@ -115,6 +125,30 @@ test('failed coverage entries cannot omit their exact reason', async () => {
   );
 });
 
+test('deferred coverage requires and stores a durable retry time', async () => {
+  await assert.rejects(
+    EthFeedCoverage.recordAttempts(7, 1, [{
+      feed: 'normal',
+      provider: 'Blockscout',
+      status: 'deferred',
+      errorMessage: 'rate limited',
+    }]),
+    /requires a retry time/
+  );
+
+  queries.length = 0;
+  const retryAt = new Date('2026-08-07T01:00:00Z');
+  await EthFeedCoverage.recordAttempts(7, 8453, [{
+    feed: 'normal',
+    provider: 'Blockscout',
+    status: 'deferred',
+    errorCode: 'EXPLORER_RATE_LIMITED',
+    errorMessage: 'rate limited',
+    retryAfterAt: retryAt,
+  }]);
+  assert.ok(queries[0].params.includes(retryAt));
+});
+
 test('coverage report reads only wallets owned by the requesting user', async () => {
   queries.length = 0;
   returnedRows = [{ wallet_id: 7, chain_id: 1, feed: 'normal' }];
@@ -123,6 +157,17 @@ test('coverage report reads only wallets owned by the requesting user', async ()
   assert.match(sqlOf(queries[0]), /JOIN eth_wallets w ON w\.id = c\.wallet_id/);
   assert.match(sqlOf(queries[0]), /WHERE w\.user_id = \$1/);
   assert.deepEqual(queries[0].params, [42]);
+});
+
+test('history audit counts deferred coverage as an incomplete gap', () => {
+  const auditScript = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'audit-history.js'),
+    'utf8'
+  );
+  assert.match(
+    auditScript,
+    /c\.status IN \('failed', 'deferred', 'unsupported'\)/
+  );
 });
 
 test('an explicit shared-scan head bounds every feed without taking a newer head', async (t) => {

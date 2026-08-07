@@ -385,17 +385,27 @@ test('GET /api/eth/coverage returns a user-scoped gap summary', async () => {
         error_code: 'ETHERSCAN_FEED_UNSUPPORTED',
         error_message: 'trace index incomplete for blocks 0-123',
       },
+      {
+        wallet_id: 7,
+        chain_id: 8453,
+        feed: 'token',
+        status: 'deferred',
+        error_code: 'EXPLORER_RATE_LIMITED',
+        error_message: 'retry after 10s',
+        retry_after_at: '2026-08-07T01:00:00Z',
+      },
       { wallet_id: 7, chain_id: 1, feed: 'statesync', status: 'not_applicable' },
     ];
   };
   try {
     const response = await request(app).get('/api/eth/coverage');
     assert.equal(response.status, 200);
-    assert.equal(response.body.summary.rows, 3);
+    assert.equal(response.body.summary.rows, 4);
     assert.equal(response.body.summary.complete, 1);
+    assert.equal(response.body.summary.deferred, 1);
     assert.equal(response.body.summary.unsupported, 1);
     assert.equal(response.body.summary.not_applicable, 1);
-    assert.equal(response.body.summary.gaps, 1);
+    assert.equal(response.body.summary.gaps, 2);
     assert.equal(response.body.coverage[1].chain_name, 'Gnosis Chain');
     assert.equal(response.body.coverage[1].enabled, true);
   } finally {

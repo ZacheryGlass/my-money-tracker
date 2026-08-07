@@ -45,6 +45,7 @@ const EthWalletChain = require('../src/models/EthWalletChain');
 const EthFeedCoverage = require('../src/models/EthFeedCoverage');
 const EthTransfer = require('../src/models/EthTransfer');
 const SecretsService = require('../src/services/SecretsService');
+const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
 const MirrorService = require('../src/services/EthTransactionMirrorService');
 const TransactionClassificationService = require('../src/services/TransactionClassificationService');
 const { collapseDuplicateKeys } = require('../src/services/SnapshotService');
@@ -617,10 +618,193 @@ test('a provider rate limit defers the remaining feeds without spending more req
     'Ethereum/nft', 'Ethereum/nft1155',
   ]);
   assert.equal(result.chains[0].rateLimited, true);
+  assert.equal(result.status, 'deferred');
+  assert.deepEqual(result.deferredFeeds, result.skippedFeeds);
   assert.equal(calls.deletes.length, 0, 'no feed is deleted after a rate-limited fetch');
   assert.equal(calls.cursors.every((cursor) => Object.values(cursor).every((value) => value == null || value === 1)), true);
-  assert.equal(calls.chainErrors.find((entry) => entry.chainId === 1).code, 'FEED_SKIPPED');
+  assert.equal(calls.chainErrors.find((entry) => entry.chainId === 1).code, 'SYNC_DEFERRED');
+  assert.equal(calls.walletError.code, 'SYNC_DEFERRED');
+  assert.ok(calls.coverage[0].entries.every((entry) => (
+    entry.status === 'not_applicable'
+    || (entry.status === 'deferred' && entry.retryAfterAt instanceof Date)
+  )));
   assert.match(calls.walletError.message, /rate limited/);
+});
+
+test('a mid-feed 429 preserves completed cursors and defers only the unfetched tail', async (t) => {
+  const rateLimited = () => {
+    const error = new Error('Blockscout rate limit reached');
+    error.code = 'EXPLORER_RATE_LIMITED';
+    error.retryAfterMs = 10000;
+    throw error;
+  };
+  const { calls } = harness(t, {
+    chainSet: '1',
+    feedBehavior: { '1:token': rateLimited },
+  });
+
+  const result = await EthWalletService.syncWallet(7);
+
+  assert.deepEqual(calls.fetches.map((call) => call.feed), ['normal', 'internal', 'token']);
+  assert.deepEqual(result.deferredFeeds, [
+    'Ethereum/token', 'Ethereum/nft', 'Ethereum/nft1155',
+  ]);
+  assert.equal(calls.deletes.length, 2, 'only feeds fetched completely replace their overlap window');
+  assert.equal(calls.cursors[0].normal, 50000000);
+  assert.equal(calls.cursors[0].internal, 50000000);
+  assert.equal(calls.cursors[0].token, null);
+  const verdicts = new Map(calls.coverage[0].entries.map((entry) => [entry.feed, entry.status]));
+  assert.equal(verdicts.get('normal'), 'complete');
+  assert.equal(verdicts.get('internal'), 'complete');
+  for (const feed of ['token', 'nft', 'nft1155']) assert.equal(verdicts.get(feed), 'deferred');
+});
+
+test('a healthy retry clears stale deferred coverage and sync errors', async (t) => {
+  let shouldLimit = true;
+  const { calls } = harness(t, {
+    chainSet: '1',
+    feedBehavior: {
+      '1:normal': () => {
+        if (!shouldLimit) return [];
+        const error = new Error('Blockscout rate limit reached');
+        error.code = 'EXPLORER_RATE_LIMITED';
+        error.retryAfterMs = 1;
+        throw error;
+      },
+    },
+  });
+
+  assert.equal((await EthWalletService.syncWallet(7)).status, 'deferred');
+  shouldLimit = false;
+  const retried = await EthWalletService.syncWallet(7);
+
+  assert.equal(retried.status, 'complete');
+  assert.ok(calls.cleared.includes(1), 'the recovered chain clears its stale warning');
+  assert.equal(calls.walletCleared, true, 'the recovered wallet clears its stale warning');
+  const finalCoverage = calls.coverage.at(-1).entries;
+  assert.ok(finalCoverage.every((entry) => (
+    entry.status === 'complete' || entry.status === 'not_applicable'
+  )));
+});
+
+test('the full-wallet job waits outside the user lane and retries deferred wallets automatically', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    prefetch: EthWalletService._prefetchStateSyncForWallets,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWalletService._prefetchStateSyncForWallets = originals.prefetch;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [
+    { id: 7, user_id: 1, address: WALLET },
+    { id: 8, user_id: 1, address: '0x1111111111111111111111111111111111111111' },
+  ];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthWalletService._prefetchStateSyncForWallets = async () => new Map();
+  const laneEvents = [];
+  EthDerivedPipeline.serializedForUser = async (userId, fn) => {
+    laneEvents.push(`enter:${userId}`);
+    const value = await fn();
+    laneEvents.push(`exit:${userId}`);
+    return value;
+  };
+  EthDerivedPipeline.finishUser = async () => ({});
+  const attempts = new Map();
+  EthWalletService._syncWallet = async (walletId) => {
+    const attempt = Number(attempts.get(walletId) || 0) + 1;
+    attempts.set(walletId, attempt);
+    if (walletId === 7 && attempt === 1) {
+      return {
+        status: 'deferred',
+        deferredFeeds: ['Base/normal'],
+        skippedFeeds: ['Base/normal'],
+        unsupportedFeeds: [],
+        retryAfterMs: 1,
+      };
+    }
+    return {
+      status: walletId === 8 ? 'unsupported' : 'complete',
+      deferredFeeds: [],
+      skippedFeeds: [],
+      unsupportedFeeds: walletId === 8 ? ['Gnosis Chain/internal'] : [],
+    };
+  };
+
+  const summary = await EthWalletService.syncAllWallets({
+    deferredRetryAttempts: 1,
+    deferredRetryMaxMs: 100,
+  });
+
+  assert.equal(attempts.get(7), 2);
+  assert.equal(attempts.get(8), 1, 'healthy and limited wallets are not needlessly replayed');
+  assert.equal(summary.processed, 2);
+  assert.equal(summary.succeeded, 2);
+  assert.equal(summary.failed, 0);
+  assert.equal(summary.deferred, 0);
+  assert.equal(summary.unsupported, 1);
+  assert.equal(summary.results.find((entry) => entry.walletId === 7).attempts, 2);
+  assert.deepEqual(laneEvents, ['enter:1', 'exit:1', 'enter:1', 'exit:1'],
+    'the cooldown wait occurs between serialized lane acquisitions');
+});
+
+test('the full-wallet job retries deferred feeds even when another feed failed', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    prefetch: EthWalletService._prefetchStateSyncForWallets,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWalletService._prefetchStateSyncForWallets = originals.prefetch;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  EthWallet.findAllForJobs = async () => [{ id: 7, user_id: 1, address: WALLET }];
+  EthWalletService._prefetchStateSyncForWallets = async () => new Map();
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  EthDerivedPipeline.finishUser = async () => ({});
+  let attempts = 0;
+  EthWalletService._syncWallet = async () => {
+    attempts += 1;
+    return attempts === 1
+      ? {
+        status: 'failed',
+        failedFeeds: ['Polygon/token'],
+        deferredFeeds: ['Base/normal'],
+        skippedFeeds: ['Polygon/token', 'Base/normal'],
+        unsupportedFeeds: [],
+        retryAfterMs: 1,
+      }
+      : {
+        status: 'failed',
+        failedFeeds: ['Polygon/token'],
+        deferredFeeds: [],
+        skippedFeeds: ['Polygon/token'],
+        unsupportedFeeds: [],
+      };
+  };
+
+  const summary = await EthWalletService.syncAllWallets({
+    deferredRetryAttempts: 1,
+    deferredRetryMaxMs: 100,
+  });
+
+  assert.equal(attempts, 2, 'deferral is retried independently of the red failure status');
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.deferred, 0);
+  assert.equal(summary.results[0].attempts, 2);
 });
 
 test('a rate-limited coverage boundary returns a deferred chain instead of failing the wallet', async (t) => {
@@ -639,7 +823,14 @@ test('a rate-limited coverage boundary returns a deferred chain instead of faili
     'Base/normal', 'Base/internal', 'Base/token', 'Base/nft', 'Base/nft1155', 'Base/statesync',
   ]);
   assert.equal(result.chains[0].rateLimited, true);
+  assert.equal(result.status, 'deferred');
   assert.equal(calls.deletes.length, 0);
+  assert.equal(calls.chainErrors[0].code, 'SYNC_DEFERRED');
+  assert.equal(calls.walletError.code, 'SYNC_DEFERRED');
+  assert.ok(calls.coverage[0].entries.every((entry) => (
+    entry.status === 'not_applicable'
+    || (entry.status === 'deferred' && entry.retryAfterAt instanceof Date)
+  )));
   assert.match(calls.walletError.message, /rate limited/);
 });
 
@@ -797,6 +988,26 @@ test('an HTTP 429 from a chain explorer backs off and retries without accepting 
   t.after(() => { etherscanConfig.resetRateLimits(); });
 
   assert.equal(await EtherscanService.getEthBalance(WALLET, 'key', 1), '0');
+  assert.equal(requests, 2);
+});
+
+test('a one-off explorer timeout is retried before the feed is marked failed', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    if (requests === 1) {
+      const error = new Error('timeout of 15000ms exceeded');
+      error.code = 'ECONNABORTED';
+      throw error;
+    }
+    return { data: { status: '1', result: '0' } };
+  };
+  t.after(() => { axios.get = original; });
+  t.after(() => { etherscanConfig.resetRateLimits(); });
+
+  assert.equal(await EtherscanService.getEthBalance(WALLET, 'key', 137), '0');
   assert.equal(requests, 2);
 });
 
@@ -1041,6 +1252,56 @@ test('Blockscout log coverage uses the explorer indexed head, not the newer RPC 
   assert.equal(seenUrl, 'https://base.blockscout.com/api/v2/blocks?type=block');
 });
 
+test('a body-level Blockscout throttle on the indexed-head boundary is retried', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    if (requests === 1) {
+      return {
+        headers: { 'retry-after': '0' },
+        data: { message: 'Too many requests' },
+      };
+    }
+    return { data: { items: [{ height: 49295092 }] } };
+  };
+  t.after(() => { axios.get = originalGet; });
+  t.after(() => { etherscanConfig.resetRateLimits(); });
+
+  assert.equal(await EtherscanService._latestBlockNumber(null, 8453), 49295092);
+  assert.equal(requests, 2);
+});
+
+test('HTTP and body-level throttles share one bounded retry budget', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    if (requests === 2) {
+      return {
+        headers: { 'retry-after': '0' },
+        data: { status: '0', message: 'Too many requests', result: 'rate limit reached' },
+      };
+    }
+    const error = new Error('HTTP 429');
+    error.response = { status: 429, headers: { 'retry-after': '0' } };
+    throw error;
+  };
+  t.after(() => { axios.get = originalGet; });
+  t.after(() => { etherscanConfig.resetRateLimits(); });
+
+  await assert.rejects(
+    () => EtherscanService._request(
+      { module: 'account', action: 'txlist', address: WALLET },
+      { apiKey: null, chainId: 8453 }
+    ),
+    (error) => error.code === 'EXPLORER_RATE_LIMITED'
+  );
+  assert.equal(requests, 3, 'two configured retries permit three total attempts');
+});
+
 test('Etherscan proxy JSON-RPC responses supply the Polygon log coverage head', async (t) => {
   const axios = require('axios');
   const originalGet = axios.get;
@@ -1075,9 +1336,11 @@ test('Blockscout head falls back to the documented legacy explorer endpoint', as
 
   assert.equal(await EtherscanService._latestBlockNumber(null, 8453), 49328373);
   assert.equal(calls[0].url, 'https://base.blockscout.com/api/v2/blocks?type=block');
-  assert.equal(calls[1].url, 'https://base.blockscout.com/api');
-  assert.equal(calls[1].params.module, 'block');
-  assert.equal(calls[1].params.action, 'eth_block_number');
+  assert.equal(calls[1].url, 'https://base.blockscout.com/api/v2/blocks?type=block',
+    'one transient v2 failure is retried before changing endpoints');
+  assert.equal(calls[2].url, 'https://base.blockscout.com/api');
+  assert.equal(calls[2].params.module, 'block');
+  assert.equal(calls[2].params.action, 'eth_block_number');
 });
 
 test('a direct OP Stack self-deposit becomes one bridge-classifiable inbound credit', () => {
