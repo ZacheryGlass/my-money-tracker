@@ -145,9 +145,9 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
       if (chain.id === 8453) {
         assert.deepEqual(chain.stateSyncDeposits.rpcScan, {
-          provider: 'blockscout',
+          provider: 'rpc',
           blockRange: 10000,
-          batchSize: 1,
+          batchSize: 10,
           concurrency: 1,
           allowExtraneousTopics: true,
         });
@@ -240,6 +240,36 @@ test('Base scans bounded RPC windows once for several wallet receiver topics', a
   assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), ['0xwallet2new']);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
   assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 19999);
+});
+
+test('Base shared prefetch keeps the oldest cursor when two users track one address', async (t) => {
+  const original = EtherscanService._rpcBatchRequest;
+  EtherscanService._rpcBatchRequest = async (chainId, batch) => {
+    assert.equal(chainId, 8453);
+    if (batch[0].method === 'eth_getLogs') {
+      return batch.map(() => [
+        ethBridgeFinalizedLog({ block: 5000, wallet: WALLET, hash: '0xshared' }),
+      ]);
+    }
+    return batch.map(() => ({ timestamp: '0x65' }));
+  };
+  t.after(() => { EtherscanService._rpcBatchRequest = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [
+      { address: WALLET, startBlock: 0 },
+      { address: WALLET.toUpperCase(), startBlock: 10000 },
+    ],
+    8453,
+    {
+      ...chains.getChain(8453).stateSyncDeposits,
+      rpcScan: { provider: 'rpc', blockRange: 10000, batchSize: 10 },
+    },
+    19999
+  );
+
+  assert.equal(rowsByAddress.size, 1);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xshared']);
 });
 
 test('Base Blockscout windows share receiver topics and use returned timestamps', async (t) => {
