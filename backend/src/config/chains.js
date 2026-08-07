@@ -265,24 +265,14 @@ const REGISTRY = [
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
-      // Base's public JSON-RPC caps eth_getLogs ranges at 10,000 blocks. All
-      // tracked receiver topics share each bounded request, so the nightly
-      // incremental scan walks the public chain once rather than once per
-      // wallet. The legacy Blockscout logs facade is deliberately not used:
-      // it is behind the same standing anonymous 429 as its account facade.
+      // Base's public JSON-RPC is explicitly rate-limited and not intended for
+      // production history walks. Blockscout v2 can filter the StandardBridge
+      // address-log feed by an indexed receiver topic, so each wallet walks
+      // only its own bridge events through the same paced provider queue as
+      // the account feeds. The legacy Blockscout logs facade is deliberately
+      // not used: it is behind a standing anonymous 429 on this instance.
       rpcScan: {
-        provider: 'rpc',
-        blockRange: 10000,
-        // The public Base endpoint accepts at most 10 JSON-RPC calls per
-        // batch. Use that verified ceiling so the one-time genesis walk is
-        // about 500 HTTP requests rather than about 5,000.
-        batchSize: 10,
-        concurrency: 1,
-        // Some public Base log responses include valid ETHBridgeFinalized
-        // events outside the requested receiver OR-set. The scanner validates
-        // their shape and ignores only those out-of-scope receivers; malformed
-        // events still fail closed and freeze coverage.
-        allowExtraneousTopics: true,
+        provider: 'blockscout-v2',
       },
     },
   },

@@ -244,7 +244,7 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
   const base = chains.getChain(8453);
   assert.equal(base.accountApi.apiStyle, 'blockscout-v2');
   assert.equal(base.accountApi.v2BaseUrl, 'https://base.blockscout.com/api/v2');
-  assert.equal(base.stateSyncDeposits.rpcScan.provider, 'rpc');
+  assert.equal(base.stateSyncDeposits.rpcScan.provider, 'blockscout-v2');
   const lite = chains.getChain(32401);
   assert.equal(lite.historyProvider, 'zksync-lite');
   assert.equal(lite.requiresApiKey, false);
@@ -1823,7 +1823,7 @@ test('empty OP Stack feeds persist indexed coverage and resume incrementally on 
     'all account and native-credit feeds share one indexed coverage boundary');
 });
 
-test('coverage names the actual Base v2 and JSON-RPC providers', async (t) => {
+test('coverage names the actual Base v2 providers', async (t) => {
   const { calls } = harness(t, { chainSet: '8453' });
 
   await EthWalletService.syncWallet(7);
@@ -1835,7 +1835,7 @@ test('coverage names the actual Base v2 and JSON-RPC providers', async (t) => {
   );
   assert.equal(
     entries.find((row) => row.feed === 'statesync').provider,
-    'JSON-RPC (https://mainnet.base.org)'
+    'Blockscout (https://base.blockscout.com/api/v2)'
   );
 });
 
