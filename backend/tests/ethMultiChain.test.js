@@ -1729,19 +1729,19 @@ test('Etherscan proxy JSON-RPC responses supply the Polygon log coverage head', 
   assert.equal(seen.params.action, 'eth_blockNumber');
 });
 
-test('Polygon head retries one malformed JSON-RPC envelope before succeeding', async (t) => {
+test('Polygon head retries repeated malformed JSON-RPC envelopes before succeeding', async (t) => {
   const axios = require('axios');
   const originalGet = axios.get;
   let requests = 0;
   axios.get = async () => {
     requests += 1;
-    if (requests === 1) return { data: { jsonrpc: '2.0', id: 83 } };
+    if (requests <= 2) return { data: { jsonrpc: '2.0', id: 83 } };
     return { data: { jsonrpc: '2.0', id: 83, result: '0x56f00de' } };
   };
   t.after(() => { axios.get = originalGet; });
 
   assert.equal(await EtherscanService._latestBlockNumber('test-key', 137), 91160798);
-  assert.equal(requests, 2);
+  assert.equal(requests, 3);
 });
 
 test('Polygon head remains fail-closed after repeated malformed JSON-RPC envelopes', async (t) => {
@@ -1759,7 +1759,7 @@ test('Polygon head remains fail-closed after repeated malformed JSON-RPC envelop
     (error) => error.code === 'ETHERSCAN_API_ERROR'
       && /invalid JSON-RPC response/.test(error.message)
   );
-  assert.equal(requests, 2);
+  assert.equal(requests, 3);
 });
 
 test('legacy Blockscout head falls back to the documented explorer endpoint', async (t) => {
