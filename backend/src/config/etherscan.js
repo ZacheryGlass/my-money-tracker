@@ -38,6 +38,7 @@ function pausedError(key, retryAfterMs) {
   error.code = 'EXPLORER_RATE_LIMITED';
   error.providerKey = key;
   error.retryAfterMs = retryAfterMs;
+  error.retryAfterAt = new Date(Date.now() + retryAfterMs);
   return error;
 }
 

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
 import { me, crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
@@ -43,6 +43,10 @@ vi.mock('../pages/CryptoPage', () => ({
 }));
 
 describe('App smoke test', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('renders the app shell for the authenticated user', async () => {
     render(
       <MemoryRouter>
@@ -96,6 +100,35 @@ describe('App smoke test', () => {
     );
 
     expect(await screen.findByTitle('Crypto Review (5)')).toBeInTheDocument();
+  });
+
+  it('does not badge a provider cooldown as a red wallet failure during boot', async () => {
+    ethAPI.getWallets.mockResolvedValueOnce({
+      wallets: [{ id: 7, error_code: 'SYNC_DEFERRED', reconciliation: null }],
+    });
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(ethAPI.getWallets).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTitle('Crypto Wallets (1)')).not.toBeInTheDocument();
+  });
+
+  it('still badges a genuine wallet sync failure during boot', async () => {
+    ethAPI.getWallets.mockResolvedValueOnce({
+      wallets: [{ id: 7, error_code: 'FEED_SKIPPED', reconciliation: null }],
+    });
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTitle('Crypto Wallets (1)')).toBeInTheDocument();
   });
 
   it('keeps the old Discovery URL as a Wallets alias', async () => {

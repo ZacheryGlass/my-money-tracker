@@ -71,7 +71,7 @@ async function buildReport(userId, archiveReportPath = null) {
             MIN(c.covered_from_block) AS min_covered_from_block,
             MAX(c.covered_through_block) AS max_covered_through_block,
             MAX(c.indexed_head) AS max_indexed_head,
-            COUNT(*) FILTER (WHERE c.status IN ('failed', 'unsupported'))::int AS gap_rows,
+            COUNT(*) FILTER (WHERE c.status IN ('failed', 'deferred', 'unsupported'))::int AS gap_rows,
             COUNT(*) FILTER (WHERE c.status = 'unverified')::int AS unverified_rows
        FROM eth_feed_coverage c
        JOIN eth_wallets w ON w.id = c.wallet_id

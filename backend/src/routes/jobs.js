@@ -162,7 +162,18 @@ router.post('/trigger/plaid-sync', requireAdmin, async (req, res, next) => {
 // POST /api/jobs/trigger/eth-sync - Manually trigger ETH wallet sync for every wallet
 router.post('/trigger/eth-sync', requireAdmin, async (req, res, next) => {
   try {
-    await runTrigger(res, { job: EthSyncJob, label: 'ETH wallet sync job' });
+    const result = await EthSyncJob.enqueue();
+    if (result?.skipped && result.reason === 'concurrent_execution') {
+      return res.status(409).json({
+        error: 'Job already running',
+        message: 'ETH wallet sync job is currently in progress'
+      });
+    }
+    return res.status(202).json({
+      message: 'ETH wallet sync job started',
+      status: 'started',
+      result,
+    });
   } catch (error) {
     next(error);
   }

@@ -6,6 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
 import Sidebar from './components/Sidebar';
 import LoadingState from './components/LoadingState';
+import { isWalletSyncFailure } from './utils/walletSync';
 import { Menu } from 'lucide-react';
 
 const Dashboard = lazyWithReload(() => import('./components/Dashboard'));
@@ -163,7 +164,7 @@ function App() {
       applyBootCryptoAttention({
         errored: wallets
           ? (wallets.wallets || []).filter((wallet) => (
-            wallet.error_code || wallet.reconciliation?.needs_review
+            isWalletSyncFailure(wallet) || wallet.reconciliation?.needs_review
         )).length
           : null,
         needsReview: ledger ? (ledger.summary?.needs_review_count || 0) : null,

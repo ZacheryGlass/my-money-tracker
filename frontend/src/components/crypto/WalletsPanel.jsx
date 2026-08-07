@@ -6,6 +6,7 @@ import { eth as ethAPI } from '../../utils/api';
 import { formatExactUnits, formatRelativeTime, shortEthAddress as shortEthAddressOrUnknown } from '../../utils/format';
 import { getAccountDisplayName } from '../../utils/accountDisplay';
 import { explorerAddressUrl } from '../../utils/chains';
+import { DEFERRED_SYNC_CODES, LIMITED_SYNC_CODES } from '../../utils/walletSync';
 import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 
@@ -311,8 +312,27 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
 // carries the verdict and the expanded panel carries the evidence -- a table
 // cannot hold the audit's several lines, but it must never round the audit down
 // to silence either, so every state has words rather than only a colour.
+const chainIssueTone = (chain) => {
+  if (!chain.enabled) return 'neutral';
+  if (DEFERRED_SYNC_CODES.has(chain.error_code)) return 'deferred';
+  if (chain.error_code && !LIMITED_SYNC_CODES.has(chain.error_code)) return 'failed';
+  if (LIMITED_SYNC_CODES.has(chain.error_code) || chain.unsupported_feeds?.length > 0) {
+    return 'limited';
+  }
+  return 'neutral';
+};
+
 const walletStatus = (wallet) => {
+  if (DEFERRED_SYNC_CODES.has(wallet.error_code)) {
+    return { label: 'Sync deferred', tone: 'text-amber-400' };
+  }
+  if (LIMITED_SYNC_CODES.has(wallet.error_code)) {
+    return { label: 'Limited coverage', tone: 'text-amber-400' };
+  }
   if (wallet.error_code) return { label: 'Sync failed', tone: 'text-loss' };
+  if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'limited')) {
+    return { label: 'Limited coverage', tone: 'text-amber-400' };
+  }
   const report = wallet.reconciliation;
   if (!report) return { label: 'Not audited', tone: 'text-tertiary' };
   const { nativeDrift, tokenDrift } = splitAuditIssues(report);
@@ -330,11 +350,14 @@ const walletStatus = (wallet) => {
 const chainSummary = (wallet) => {
   const chains = wallet.chains || [];
   const live = chains.filter((chain) => chain.enabled);
+  const tones = live.map(chainIssueTone);
   return {
     label: chains.length === 0 ? '—'
       : live.length === 1 ? live[0].name
       : `${live.length} chains`,
-    degraded: chains.some((chain) => chain.enabled && (chain.error_code || chain.unsupported_feeds?.length > 0)),
+    tone: tones.includes('failed') ? 'failed'
+      : tones.some((tone) => ['deferred', 'limited'].includes(tone)) ? 'limited'
+        : 'neutral',
   };
 };
 
@@ -343,7 +366,7 @@ const ROW_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border bo
 // The tracked-wallet list and everything that changes it: add, sync, disconnect.
 // Moved off Settings with #75 -- a wallet is crypto data, not an app preference,
 // and the add form was three clicks from the feed it fills.
-function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
+function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = showSuccess }) {
   const [addOpen, setAddOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
   const [walletLabel, setWalletLabel] = useState('');
@@ -433,9 +456,17 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
     setSyncingId(id);
     onError(null);
     try {
-      await ethAPI.syncWallet(id);
-      showSuccess('Wallet synced successfully');
+      const result = await ethAPI.syncWallet(id);
       await onChanged();
+      if (result.sync?.status === 'failed') {
+        onError('Wallet sync completed with feed errors. Open the wallet for details.');
+      } else if (result.sync?.status === 'deferred') {
+        showNotice('Wallet sync deferred while the explorer cools down. Retry after the time shown in Coverage; scheduled full scans also retry automatically.');
+      } else if (result.sync?.status === 'unsupported') {
+        showNotice('Wallet synced with limited coverage on feeds the explorer does not support.');
+      } else {
+        showSuccess('Wallet synced successfully');
+      }
     } catch (err) {
       onError(err.response?.data?.error || 'Failed to sync wallet');
     } finally {
@@ -582,10 +613,10 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
       header: 'Chains',
       meta: { width: '9rem', cellClassName: 'whitespace-nowrap' },
       cell: ({ row }) => {
-        const { label, degraded } = chainSummary(row.original);
+        const { label, tone } = chainSummary(row.original);
         return (
-          <span className={`inline-flex items-center gap-1.5 text-caption ${degraded ? 'text-loss' : 'text-secondary'}`}>
-            {degraded && <AlertTriangle size={11} className="shrink-0" />}
+          <span className={`inline-flex items-center gap-1.5 text-caption ${tone === 'failed' ? 'text-loss' : tone === 'limited' ? 'text-amber-400' : 'text-secondary'}`}>
+            {tone !== 'neutral' && <AlertTriangle size={11} className="shrink-0" />}
             {label}
           </span>
         );
@@ -652,11 +683,12 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
                 || (chain.enabled ? `Last synced ${formatRelativeTime(chain.last_synced_at)}` : 'Chain turned off; stored history kept')}
               className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold uppercase tracking-wide ${
                 !chain.enabled ? 'bg-surface-3 border-border text-tertiary'
-                  : chain.error_code ? 'bg-loss/5 border-loss/20 text-loss'
+                  : chainIssueTone(chain) === 'failed' ? 'bg-loss/5 border-loss/20 text-loss'
+                    : chainIssueTone(chain) !== 'neutral' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
                   : 'bg-surface-3 border-border text-secondary'
               }`}
             >
-              {chain.enabled && chain.error_code && <AlertTriangle size={10} />}
+              {chain.enabled && chainIssueTone(chain) !== 'neutral' && <AlertTriangle size={10} />}
               {chain.name}
               {!chain.enabled && <span className="font-normal normal-case">off</span>}
               {chain.unsupported_feeds?.length > 0 && (
@@ -670,7 +702,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
       )}
 
       {wallet.error_code && (
-        <div className="rounded border border-loss/20 bg-loss/5 p-3 text-xs leading-relaxed text-loss">
+        <div className={`rounded p-3 text-xs leading-relaxed ${DEFERRED_SYNC_CODES.has(wallet.error_code) || LIMITED_SYNC_CODES.has(wallet.error_code) ? 'border border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border border-loss/20 bg-loss/5 text-loss'}`}>
           <div className="flex items-start gap-3">
             <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
             <p>{wallet.error_message || `Wallet sync reported an error: ${wallet.error_code}`}</p>
@@ -813,15 +845,16 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
                 </button>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
                 {[
                   ['Complete', coverageReport.summary.complete],
-                  ['Gaps', coverageReport.summary.gaps],
+                  ['Failed', coverageReport.summary.failed],
+                  ['Deferred', coverageReport.summary.deferred],
                   ['Unsupported', coverageReport.summary.unsupported],
                   ['Unverified', coverageReport.summary.unverified],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded border border-border bg-surface-2 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-tertiary">{label}</p>
+                    <p className={`text-[10px] font-bold uppercase tracking-wider ${['Deferred', 'Unsupported'].includes(label) ? 'text-amber-400' : label === 'Complete' ? 'text-tertiary' : 'text-loss'}`}>{label}</p>
                     <p className="mt-1 font-money text-xl text-primary">{value}</p>
                   </div>
                 ))}
@@ -832,7 +865,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
                   Enabled-feed gaps
                 </h3>
                 {coverageReport.coverage.filter((row) => (
-                  row.enabled && ['failed', 'unsupported', 'unverified'].includes(row.status)
+                  row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)
                 )).length === 0 ? (
                   <p className="mt-2 rounded border border-gain/20 bg-gain/5 p-3 text-sm text-gain">
                     Every enabled feed has a verified boundary.
@@ -840,14 +873,14 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
                 ) : (
                   <div className="mt-2 divide-y divide-border overflow-hidden rounded border border-border">
                     {coverageReport.coverage.filter((row) => (
-                      row.enabled && ['failed', 'unsupported', 'unverified'].includes(row.status)
+                      row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)
                     )).map((row) => (
                       <div key={`${row.wallet_id}:${row.chain_id}:${row.feed}`} className="bg-surface-2 p-3">
                         <div className="flex flex-wrap items-baseline justify-between gap-2">
                           <p className="text-sm font-semibold text-primary">
                             {row.wallet_label || shortEthAddress(row.wallet_address)} · {row.chain_name} · {row.feed}
                           </p>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-loss">{row.status}</span>
+                          <span className={`text-[10px] font-bold uppercase tracking-wider ${['deferred', 'unsupported'].includes(row.status) ? 'text-amber-400' : 'text-loss'}`}>{row.status}</span>
                         </div>
                         <p className="mt-1 break-words text-xs text-secondary">
                           {row.error_message || 'A pre-report cursor exists, but this feed has not completed a post-report sync yet.'}
@@ -855,6 +888,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess }) {
                         <p className="mt-1 text-[10px] text-tertiary">
                           Provider: {row.provider}
                           {row.covered_through_block != null ? ` · last proven block ${row.covered_through_block}` : ''}
+                          {row.retry_after_at ? ` · retry after ${new Date(row.retry_after_at).toLocaleString()}` : ''}
                         </p>
                       </div>
                     ))}
