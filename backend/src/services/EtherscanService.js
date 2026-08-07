@@ -2270,9 +2270,14 @@ class EtherscanService {
         } catch (error) {
           // Repeated timeout/5xx responses can be caused by a dense range even
           // when a successful response never arrives to advertise saturation.
-          // Bisect that range after the transport's own bounded retry, while a
-          // 429 continues to cool down rather than multiplying requests.
-          if (!isTransientExplorerError(error) || fromBlock === toBlock || depth >= 12) {
+          // A dense legacy-log window can likewise remain rate-limited after
+          // requestBlockscoutWindow has already honored its bounded cooldown
+          // retries. Bisect either persistent condition instead of replaying
+          // the same expensive query forever; a one-block leaf still fails
+          // closed and every child remains inside the scan-wide budgets.
+          const splittableProviderFailure = isTransientExplorerError(error)
+            || error?.code === 'EXPLORER_RATE_LIMITED';
+          if (!splittableProviderFailure || fromBlock === toBlock || depth >= 12) {
             throw error;
           }
           const midpoint = Math.floor((fromBlock + toBlock) / 2);

@@ -878,6 +878,39 @@ test('Base bisects a persistently timing-out window and accepts successful child
   ]);
 });
 
+test('Base cools down then bisects a persistently rate-limited dense window', async (t) => {
+  const original = EtherscanService._request;
+  const calls = [];
+  EtherscanService._request = async (params) => {
+    calls.push([params.fromBlock, params.toBlock]);
+    if (params.fromBlock === 0 && params.toBlock === 249999) {
+      const error = new Error('Blockscout rate limit reached; retry after 1ms');
+      error.code = 'EXPLORER_RATE_LIMITED';
+      error.retryAfterMs = 1;
+      throw error;
+    }
+    return params.fromBlock === 0
+      ? [ethBridgeFinalizedLog({ wallet: WALLET, block: 100000, hash: '0xchild' })]
+      : [];
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [{ address: WALLET, startBlock: 0 }],
+    8453,
+    chains.getChain(8453).stateSyncDeposits,
+    249999
+  );
+
+  assert.deepEqual(calls, [
+    [0, 249999], [0, 249999], [0, 249999],
+    [0, 124999], [125000, 249999],
+  ]);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [
+    testTxHash('0xchild'),
+  ]);
+});
+
 test('Base event-wide scans fail closed when a scan-wide budget is exhausted', async (t) => {
   const original = EtherscanService._request;
   const originalNow = Date.now;
