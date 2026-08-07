@@ -248,7 +248,7 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
   assert.equal(EtherscanService._provider(8453).spacingMs, 15000);
   assert.equal(base.stateSyncDeposits.rpcScan.provider, 'blockscout');
   assert.equal(base.stateSyncDeposits.rpcScan.blockRange, 250000);
-  assert.equal(base.stateSyncDeposits.rpcScan.requestSpacingMs, 15000);
+  assert.equal(base.stateSyncDeposits.rpcScan.requestSpacingMs, 30000);
   assert.equal(base.stateSyncDeposits.rpcScan.maxRequests, 2000);
   assert.equal(base.stateSyncDeposits.rpcScan.maxElapsedMs, 3 * 60 * 60 * 1000);
   assert.equal(base.stateSyncDeposits.rpcScan.maxResponseRows, 1000000);
@@ -1079,6 +1079,35 @@ test('provider pauses are isolated by host instead of using one global queue', a
     }),
     (err) => err.code === 'EXPLORER_RATE_LIMITED'
   );
+});
+
+test('a shared provider handoff enforces the stricter incoming and preceding spacing', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  etherscanConfig.resetRateLimits();
+  t.after(() => { etherscanConfig.resetRateLimits(); });
+  const key = 'account:https://mixed-spacing.test/api';
+  const startedAt = [];
+  const run = (spacingMs) => etherscanConfig.throttled(() => {
+    startedAt.push(Date.now());
+  }, { key, spacingMs });
+
+  await run(15);
+  t.mock.timers.tick(20);
+  const incoming = run(30);
+  await Promise.resolve();
+  assert.equal(startedAt.length, 1,
+    'the stricter incoming floor still waits after the old 15ms floor expired');
+  t.mock.timers.tick(10);
+  await incoming;
+
+  const following = run(10);
+  await Promise.resolve();
+  assert.equal(startedAt.length, 2,
+    'the stricter preceding floor delays the following lower-floor request');
+  t.mock.timers.tick(30);
+  await following;
+
+  assert.deepEqual(startedAt, [1000, 1030, 1060]);
 });
 
 test('the chain id reaches Etherscan as the chainid param', async (t) => {

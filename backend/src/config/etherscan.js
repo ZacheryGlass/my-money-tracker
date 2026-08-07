@@ -20,6 +20,16 @@ function envMilliseconds(name, fallback) {
 const REQUEST_SPACING_MS = envMilliseconds('ETHERSCAN_REQUEST_SPACING_MS', 250);
 const BLOCKSCOUT_REQUEST_SPACING_MS = envMilliseconds('BLOCKSCOUT_REQUEST_SPACING_MS', 1500);
 const RPC_REQUEST_SPACING_MS = envMilliseconds('RPC_REQUEST_SPACING_MS', 250);
+// EtherscanService accepts endpoint-specific floors up to one minute. Retain
+// each host's completion timestamp through that whole window so a stricter
+// incoming request cannot arrive after a shorter predecessor's state expired.
+// Operator defaults above one minute extend the retention automatically.
+const MAX_INCOMING_SPACING_MS = Math.max(
+  60_000,
+  REQUEST_SPACING_MS,
+  BLOCKSCOUT_REQUEST_SPACING_MS,
+  RPC_REQUEST_SPACING_MS
+);
 
 // A rate limit is scoped to the provider host (or to an Etherscan key), not to
 // the wallet/feed currently being fetched. Keep queues and cooldowns separate
@@ -49,20 +59,42 @@ function throttled(fn, {
   spacingMs = REQUEST_SPACING_MS,
   bypassPause = false,
 } = {}) {
-  const queue = queues.get(key) || Promise.resolve();
-  const run = queue.then(async () => {
-    const remaining = Math.max(0, (pausedUntil.get(key) || 0) - Date.now());
-    if (remaining > 0 && !bypassPause) throw pausedError(key, remaining);
-    return fn();
+  const requestedSpacingMs = Math.max(0, Number(spacingMs) || 0);
+  const state = queues.get(key) || {
+    tail: Promise.resolve(),
+    completedAt: 0,
+    spacingMs: 0,
+  };
+  const run = state.tail.then(async () => {
+    // Provider limits are host-wide, so a handoff between endpoint classes
+    // must satisfy both sides. Sleeping only the preceding request's floor
+    // lets a 15s account call hand off to a 30s state-sync call after 15s.
+    const requiredSpacingMs = Math.max(state.spacingMs, requestedSpacingMs);
+    const spacingRemainingMs = state.completedAt
+      ? Math.max(0, requiredSpacingMs - (Date.now() - state.completedAt))
+      : 0;
+    if (spacingRemainingMs > 0) await sleep(spacingRemainingMs);
+    try {
+      const pauseRemainingMs = Math.max(0, (pausedUntil.get(key) || 0) - Date.now());
+      if (pauseRemainingMs > 0 && !bypassPause) {
+        throw pausedError(key, pauseRemainingMs);
+      }
+      return await fn();
+    } finally {
+      state.completedAt = Date.now();
+      state.spacingMs = requestedSpacingMs;
+    }
   });
-  const tail = run
-    .catch(() => {})
-    .then(() => sleep(Math.max(0, spacingMs)));
-  queues.set(key, tail);
-  // Do not retain a resolved promise for every provider forever. The identity
-  // check preserves a newer queue when another request arrived meanwhile.
+  const tail = run.catch(() => {});
+  state.tail = tail;
+  queues.set(key, state);
+  // Retain the completed timestamp only while it can still constrain a new
+  // request. The identity checks preserve state when newer work arrived.
   tail.then(() => {
-    if (queues.get(key) === tail) queues.delete(key);
+    const cleanupTimer = setTimeout(() => {
+      if (queues.get(key) === state && state.tail === tail) queues.delete(key);
+    }, Math.max(state.spacingMs, MAX_INCOMING_SPACING_MS));
+    cleanupTimer.unref?.();
   });
   return run;
 }
