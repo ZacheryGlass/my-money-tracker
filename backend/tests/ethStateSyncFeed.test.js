@@ -125,6 +125,20 @@ function ethBridgeFinalizedLog({
   };
 }
 
+function blockscoutV2BridgeLog(options = {}) {
+  const log = ethBridgeFinalizedLog(options);
+  return {
+    address_hash: { hash: log.address },
+    topics: [...log.topics, null],
+    data: log.data,
+    block_number: parseInt(log.blockNumber, 16),
+    block_timestamp: new Date(parseInt(log.timeStamp, 16) * 1000).toISOString(),
+    index: parseInt(log.logIndex, 16),
+    transaction_hash: log.transactionHash,
+    block_hash: `0x${'b'.repeat(64)}`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The registry declaration
 // ---------------------------------------------------------------------------
@@ -145,11 +159,7 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
       if (chain.id === 8453) {
         assert.deepEqual(chain.stateSyncDeposits.rpcScan, {
-          provider: 'rpc',
-          blockRange: 10000,
-          batchSize: 10,
-          concurrency: 1,
-          allowExtraneousTopics: true,
+          provider: 'blockscout-v2',
         });
       }
     } else {
@@ -240,6 +250,126 @@ test('Base scans bounded RPC windows once for several wallet receiver topics', a
   assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), ['0xwallet2new']);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
   assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 19999);
+});
+
+test('Base Blockscout v2 pages bridge logs by receiver topic and cursor', async (t) => {
+  const original = EtherscanService._requestBlockscoutV2;
+  const calls = [];
+  const walletTopic = `0x${'0'.repeat(24)}${WALLET.slice(2)}`;
+  const wallet2Topic = `0x${'0'.repeat(24)}${WALLET_2.slice(2)}`;
+  const pageCursor = {
+    block_number: 100,
+    index: 2,
+    topic: walletTopic,
+    items_count: 50,
+  };
+  EtherscanService._requestBlockscoutV2 = async (path, query, options) => {
+    calls.push({ path, query, options });
+    if (query.topic === wallet2Topic) return { items: [], nextPageParams: null };
+    if (query.block_number === 100) {
+      return {
+        items: [blockscoutV2BridgeLog({
+          block: 90,
+          hash: `0x${'d'.repeat(64)}`,
+          wallet: WALLET,
+        })],
+        nextPageParams: { ...pageCursor, block_number: 50 },
+      };
+    }
+    const unrelated = blockscoutV2BridgeLog({
+      block: 180,
+      hash: `0x${'e'.repeat(64)}`,
+      wallet: WALLET,
+    });
+    unrelated.topics = [`0x${'f'.repeat(64)}`, walletTopic];
+    const observedBaseShape = blockscoutV2BridgeLog({
+      block: 150,
+      hash: `0x${'c'.repeat(64)}`,
+      wallet: WALLET,
+    });
+    observedBaseShape.address = observedBaseShape.address_hash;
+    delete observedBaseShape.address_hash;
+    return {
+      items: [
+        blockscoutV2BridgeLog({
+          block: 210,
+          hash: `0x${'a'.repeat(64)}`,
+          wallet: WALLET,
+        }),
+        unrelated,
+        observedBaseShape,
+      ],
+      nextPageParams: pageCursor,
+    };
+  };
+  t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [
+      { address: WALLET, startBlock: 100 },
+      { address: WALLET_2, startBlock: 0 },
+    ],
+    8453,
+    chains.getChain(8453).stateSyncDeposits,
+    200
+  );
+
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].path, `addresses/${OP_STACK_BRIDGE}/logs`);
+  assert.deepEqual(calls[0].query, { topic: walletTopic });
+  assert.deepEqual(calls[1].query, pageCursor);
+  assert.deepEqual(calls[0].options, { apiKey: null, chainId: 8453 });
+  assert.equal(calls[2].query.topic, wallet2Topic);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [
+    `0x${'c'.repeat(64)}`,
+  ]);
+  assert.deepEqual(rowsByAddress.get(WALLET_2), []);
+  assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 200);
+  assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 200);
+});
+
+test('Base Blockscout v2 rejects a response that ignores its wallet topic', async (t) => {
+  const original = EtherscanService._requestBlockscoutV2;
+  EtherscanService._requestBlockscoutV2 = async () => ({
+    items: [blockscoutV2BridgeLog({ wallet: WALLET_2 })],
+    nextPageParams: null,
+  });
+  t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      50000000
+    ),
+    /ignored the topic filter/
+  );
+});
+
+test('Base Blockscout v2 rejects a repeated page cursor', async (t) => {
+  const original = EtherscanService._requestBlockscoutV2;
+  const topic = `0x${'0'.repeat(24)}${WALLET.slice(2)}`;
+  const cursor = { block_number: 100, index: 1, topic, items_count: 50 };
+  EtherscanService._requestBlockscoutV2 = async () => ({
+    items: [blockscoutV2BridgeLog({
+      block: 200,
+      hash: `0x${'a'.repeat(64)}`,
+      wallet: WALLET,
+    })],
+    nextPageParams: cursor,
+  });
+  t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      300
+    ),
+    /repeated a page cursor/
+  );
 });
 
 test('Base shared prefetch keeps the oldest cursor when two users track one address', async (t) => {

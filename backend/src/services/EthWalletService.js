@@ -129,8 +129,11 @@ function providerName(chain, spec = null) {
     return 'Matter Labs zkSync Lite archive';
   }
   const scan = spec?.chainFeed ? chain[spec.chainFeed]?.rpcScan : null;
-  if (scan?.provider === 'blockscout' && chain.accountApi) {
-    return `${chain.accountApi.provider || 'chain explorer'} (${chain.accountApi.baseUrl})`;
+  if (scan?.provider?.startsWith('blockscout') && chain.accountApi) {
+    const accountUrl = scan.provider === 'blockscout-v2'
+      ? chain.accountApi.v2BaseUrl
+      : chain.accountApi.baseUrl;
+    return `${chain.accountApi.provider || 'chain explorer'} (${accountUrl})`;
   }
   if (scan) {
     return `JSON-RPC (${chain.rpcUrl})`;
@@ -1412,10 +1415,9 @@ class EthWalletService {
     return summary;
   }
 
-  // Base's public RPC limits eth_getLogs to 10,000 blocks. A nightly sync over
-  // many wallets must scan those public windows once, not repeat the same
-  // 49-million-block walk for every address. EtherscanService ORs the tracked
-  // receiver topics and returns one feed-shaped array per wallet.
+  // Prefetch provider-backed state-sync deposits for all wallets before their
+  // ordinary account feeds. EtherscanService applies the provider's supported
+  // receiver filtering and returns one feed-shaped array per wallet.
   //
   // A batch failure is copied to each affected wallet's state-sync slot. The
   // normal per-feed catch then preserves every cursor and stored row while
@@ -1466,7 +1468,7 @@ class EthWalletService {
         }
       } catch (error) {
         logger.warn({ chainId: chain.id, err: error },
-          'Shared state-sync RPC scan failed; every affected cursor remains frozen');
+          'Shared state-sync provider scan failed; every affected cursor remains frozen');
         for (const wallet of wallets) {
           const entry = byWallet.get(wallet.id) || new Map();
           entry.set(chain.id, { error });
