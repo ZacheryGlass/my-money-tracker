@@ -4,12 +4,14 @@ const pool = require('../config/database');
 const logger = require('../config/logger');
 const secretCrypto = require('../utils/secretCrypto');
 
-// Resolution order everywhere: decrypted DB value -> env var fallback -> null.
-// If SECRETS_ENCRYPTION_KEY is unset, reads skip the DB entirely (env-only)
-// and writes throw SECRETS_NOT_CONFIGURED. A DB value that fails to decrypt
-// (rotated key) logs a warning and falls back to env rather than breaking.
+// Resolution order: decrypted DB value -> configured env fallback -> null.
+// Only services listed in ENV_FALLBACKS can use an environment value; Moralis
+// is deliberately per-user and resolves to null when no stored key is usable.
+// If SECRETS_ENCRYPTION_KEY is unset, reads skip the DB entirely and writes
+// throw SECRETS_NOT_CONFIGURED. A DB value that fails to decrypt logs a warning
+// and uses its configured environment fallback, if any, rather than breaking.
 
-const USER_SERVICES = ['plaid_client_id', 'plaid_secret', 'etherscan'];
+const USER_SERVICES = ['plaid_client_id', 'plaid_secret', 'etherscan', 'moralis'];
 const APP_KEYS = ['cg_api_key', 'cmc_api_key'];
 
 const ENV_FALLBACKS = {
@@ -63,7 +65,13 @@ async function readRow(sql, params, name) {
   try {
     return { value: secretCrypto.decrypt(row.encrypted_value), last4: row.last4 };
   } catch (err) {
-    logger.warn({ err, name }, 'Stored secret failed to decrypt; falling back to env');
+    const fallbackAvailable = Boolean(envValue(name));
+    logger.warn(
+      { err, name, fallbackAvailable },
+      fallbackAvailable
+        ? 'Stored secret failed to decrypt; falling back to configured environment value'
+        : 'Stored secret failed to decrypt; no environment fallback is configured for this service'
+    );
     // Distinct from "no row at all": the row still exists and can be cleared
     // or overwritten. Collapsing the two hid the stored value from the UI, and
     // with it the Clear button that is the only way to remove it.

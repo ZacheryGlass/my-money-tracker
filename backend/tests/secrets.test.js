@@ -87,6 +87,19 @@ test('getUserKey returns null with no row and no env', async () => {
   assert.equal(await SecretsService.getUserKey(1, 'etherscan'), null);
 });
 
+test('Moralis is a per-user encrypted key with no shared env fallback', async () => {
+  process.env.MORALIS_API_KEY = 'must-not-be-used';
+  assert.ok(SecretsService.USER_SERVICES.includes('moralis'));
+  assert.equal(await SecretsService.getUserKey(1, 'moralis'), null);
+
+  await SecretsService.setUserKey(2, 'moralis', 'user-two-moralis-key');
+  const insert = queries.find((q) => q.text.includes('INSERT INTO user_api_keys'));
+  assert.equal(insert.params[0], 2);
+  assert.equal(insert.params[1], 'moralis');
+  assert.ok(!insert.params[2].includes('user-two-moralis-key'));
+  delete process.env.MORALIS_API_KEY;
+});
+
 test('reads skip the DB entirely when encryption is unconfigured', async () => {
   delete process.env.SECRETS_ENCRYPTION_KEY;
   process.env.ETHERSCAN_API_KEY = 'env-value';

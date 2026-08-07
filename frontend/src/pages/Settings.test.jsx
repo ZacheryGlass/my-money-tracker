@@ -112,6 +112,7 @@ describe('Settings display names', () => {
         plaid_client_id: { source: 'none', masked: null },
         plaid_secret: { source: 'none', masked: null },
         etherscan: { source: 'none', masked: null },
+        moralis: { source: 'none', masked: null },
       },
       appSettings: {
         cg_api_key: { source: 'none', masked: null },
@@ -171,6 +172,7 @@ describe('Settings display names', () => {
         plaid_client_id: { source: 'none', masked: null },
         plaid_secret: { source: 'env', masked: null },
         etherscan: { source: 'db', masked: '••••1234' },
+        moralis: { source: 'none', masked: null },
       },
       appSettings: {
         cg_api_key: { source: 'none', masked: null },
@@ -182,6 +184,8 @@ describe('Settings display names', () => {
     fireEvent.click(await screen.findByRole('tab', { name: 'API Keys' }));
 
     await screen.findByText('Your Keys');
+    expect(screen.getByText('Moralis API Key')).toBeInTheDocument();
+    expect(screen.getByText(/Moralis requires a stored per-user key/)).toBeInTheDocument();
     expect(screen.getByText('••••1234')).toBeInTheDocument();
     expect(screen.getByText('Using server default')).toBeInTheDocument();
     // Only the stored (db) key row offers Clear.
@@ -194,6 +198,15 @@ describe('Settings display names', () => {
     await waitFor(() => {
       expect(apiMocks.keys.set).toHaveBeenCalledWith('etherscan', 'new-key-value');
     });
+
+    const moralisForm = screen.getByText('Moralis API Key').closest('form');
+    const moralisInput = moralisForm.querySelector('input');
+    fireEvent.change(moralisInput, { target: { value: 'moralis-key-value' } });
+    fireEvent.click(moralisForm.querySelector('button[type="submit"]'));
+
+    await waitFor(() => {
+      expect(apiMocks.keys.set).toHaveBeenCalledWith('moralis', 'moralis-key-value');
+    });
   });
 
   it('disables key inputs and explains when encryption is unconfigured', async () => {
@@ -203,6 +216,7 @@ describe('Settings display names', () => {
         plaid_client_id: { source: 'env', masked: null },
         plaid_secret: { source: 'env', masked: null },
         etherscan: { source: 'none', masked: null },
+        moralis: { source: 'none', masked: null },
       },
       appSettings: {
         cg_api_key: { source: 'none', masked: null },
@@ -253,6 +267,7 @@ describe('Settings display names', () => {
         plaid_client_id: { source: 'none', masked: null },
         plaid_secret: { source: 'none', masked: null },
         etherscan: { source: 'none', masked: null },
+        moralis: { source: 'none', masked: null },
       },
       appSettings: {
         cg_api_key: { source: 'db', masked: '••••7777' },
