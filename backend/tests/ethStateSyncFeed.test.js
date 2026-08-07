@@ -187,7 +187,7 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
           blockRange: 250000,
           batchSize: 1,
           concurrency: 1,
-          requestSpacingMs: 15000,
+          requestSpacingMs: 30000,
           maxRequests: 2000,
           maxElapsedMs: 3 * 60 * 60 * 1000,
           maxResponseRows: 1000000,
@@ -591,7 +591,7 @@ test('Base uses bounded event-wide Blockscout windows and distributes receivers 
     blockRange: 250000,
     batchSize: 1,
     concurrency: 1,
-    requestSpacingMs: 15000,
+    requestSpacingMs: 30000,
     maxRequests: 2000,
     maxElapsedMs: 3 * 60 * 60 * 1000,
     maxResponseRows: 1000000,
@@ -611,7 +611,7 @@ test('Base uses bounded event-wide Blockscout windows and distributes receivers 
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.chainId, 8453);
-  assert.equal(calls[0].options.spacingMs, 15000);
+  assert.equal(calls[0].options.spacingMs, 30000);
   assert.equal(calls[0].params.fromBlock, 0);
   assert.equal(calls[0].params.toBlock, 249999);
   assert.equal(calls[0].params.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);

@@ -276,18 +276,18 @@ const REGISTRY = [
       // away hours of otherwise valid progress. The legacy logs facade handles
       // bounded event-signature windows quickly. Its live response headers
       // expose an anonymous bucket whose advertised size does not describe its
-      // sustained refill rate. Production scan #276 still reached that bucket
-      // at seven-second spacing. Fifteen seconds keeps the genesis walk below
-      // the observed refill rate while remaining inside the three-hour scan
-      // budget. Split every saturated 1,000-row window and distribute validated
-      // receivers locally. Do not send a comma-separated receiver filter: Base
-      // currently ignores it.
+      // sustained refill rate. Production scans #276 and #278 still reached
+      // that bucket at seven- and fifteen-second spacing respectively. Thirty
+      // seconds keeps the genesis walk below the observed sustained rate while
+      // remaining inside the three-hour scan budget. Split every saturated
+      // 1,000-row window and distribute validated receivers locally. Do not
+      // send a comma-separated receiver filter: Base currently ignores it.
       rpcScan: {
         provider: 'blockscout',
         blockRange: 250000,
         batchSize: 1,
         concurrency: 1,
-        requestSpacingMs: 15000,
+        requestSpacingMs: 30000,
         maxRequests: 2000,
         maxElapsedMs: 3 * 60 * 60 * 1000,
         maxResponseRows: 1000000,
