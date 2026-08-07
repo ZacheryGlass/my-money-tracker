@@ -465,6 +465,7 @@ class EtherscanService {
     rateLimitState = { attempt: 0 },
     spacingMs = null,
     beforeAttempt = null,
+    malformedResponseAttempt = 0,
   }) {
     if (spacingMs != null
         && (!Number.isSafeInteger(Number(spacingMs))
@@ -523,7 +524,34 @@ class EtherscanService {
           error: responseDetailError(detail, response),
           retry: () => this._request(params, {
             apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
+            malformedResponseAttempt,
           }),
+        });
+      }
+      // Etherscan occasionally returns a nominal JSON-RPC envelope with
+      // neither a result nor an error for eth_blockNumber. That is not an
+      // authoritative chain response and must not fail every feed sharing the
+      // head immediately. Retry it through the same provider queue exactly as
+      // a transient transport failure, then remain fail-closed if it repeats.
+      if (!payload.error && payload.result == null
+          && malformedResponseAttempt < EXPLORER_TRANSIENT_RETRIES) {
+        const delayMs = EXPLORER_TRANSIENT_RETRY_BASE_MS
+          * (2 ** malformedResponseAttempt);
+        logger.warn({
+          chainId,
+          provider: provider.name,
+          attempt: malformedResponseAttempt + 1,
+          delayMs,
+          params: { module: params?.module, action: params?.action },
+        }, 'Explorer returned a malformed JSON-RPC envelope; retrying');
+        await sleep(delayMs);
+        return this._request(params, {
+          apiKey,
+          chainId,
+          rateLimitState,
+          spacingMs,
+          beforeAttempt,
+          malformedResponseAttempt: malformedResponseAttempt + 1,
         });
       }
       const error = new Error(`${provider.name} JSON-RPC error: ${detail}`);
@@ -544,6 +572,7 @@ class EtherscanService {
         ),
         retry: () => this._request(params, {
           apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
+          malformedResponseAttempt,
         }),
       });
     }
