@@ -278,10 +278,11 @@ const REGISTRY = [
       // expose an anonymous bucket whose advertised size does not describe its
       // sustained refill rate. Production scans #276 and #278 still reached
       // that bucket at seven- and fifteen-second spacing respectively. Thirty
-      // seconds keeps the genesis walk below the observed sustained rate while
-      // remaining inside the three-hour scan budget. Split every saturated
-      // 1,000-row window and distribute validated receivers locally. Do not
-      // send a comma-separated receiver filter: Base currently ignores it.
+      // seconds lowers the sustained rate while remaining inside the three-hour
+      // scan budget. Split every saturated 1,000-row window, and bisect a dense
+      // window that remains rate-limited after its bounded cooldown retries.
+      // Distribute validated receivers locally. Do not send a comma-separated
+      // receiver filter: Base currently ignores it.
       rpcScan: {
         provider: 'blockscout',
         blockRange: 250000,
