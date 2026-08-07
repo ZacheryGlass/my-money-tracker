@@ -255,6 +255,11 @@ const REGISTRY = [
       apiStyle: 'blockscout-v2',
       v2BaseUrl: 'https://base.blockscout.com/api/v2',
       requiresApiKey: false,
+      // The legacy state-sync walk and v2 account feeds share one host/IP
+      // bucket. Production scan #277 proved that dropping back to the generic
+      // 1.5s Blockscout spacing at that handoff can 429 the first wallet even
+      // after the 15s state-sync walk itself succeeds.
+      requestSpacingMs: 15000,
     },
     rpcUrl: 'https://mainnet.base.org',
     ingestVersion: 1,
