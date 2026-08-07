@@ -266,11 +266,11 @@ const REGISTRY = [
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
       // Base's public JSON-RPC is explicitly rate-limited and not intended for
-      // production history walks. Blockscout v2 can filter the StandardBridge
-      // address-log feed by an indexed receiver topic, so each wallet walks
-      // only its own bridge events through the same paced provider queue as
-      // the account feeds. The legacy Blockscout logs facade is deliberately
-      // not used: it is behind a standing anonymous 429 on this instance.
+      // production history walks. Blockscout v2 serves the StandardBridge's
+      // event-signature stream efficiently, so one shared walk distributes
+      // credits to every tracked receiver. Receiver-topic queries time out on
+      // this instance, while its legacy logs facade is behind a standing
+      // anonymous 429; neither is a safe production fallback.
       rpcScan: {
         provider: 'blockscout-v2',
       },

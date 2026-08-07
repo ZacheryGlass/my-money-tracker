@@ -260,36 +260,49 @@ test('Base scans bounded RPC windows once for several wallet receiver topics', a
   assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 19999);
 });
 
-test('Base Blockscout v2 pages bridge logs by receiver topic and cursor', async (t) => {
+test('Base Blockscout v2 walks one event stream and distributes receiver rows', async (t) => {
   const original = EtherscanService._requestBlockscoutV2;
   const calls = [];
-  const walletTopic = `0x${'0'.repeat(24)}${WALLET.slice(2)}`;
-  const wallet2Topic = `0x${'0'.repeat(24)}${WALLET_2.slice(2)}`;
   const pageCursor = {
     block_number: 100,
     index: 2,
-    topic: walletTopic,
+    topic: ETH_BRIDGE_FINALIZED_TOPIC0,
     items_count: 50,
   };
   EtherscanService._requestBlockscoutV2 = async (path, query, options) => {
     calls.push({ path, query, options });
-    if (query.topic === wallet2Topic) return { items: [], nextPageParams: null };
     if (query.block_number === 100) {
       return {
-        items: [blockscoutV2BridgeLog({
-          block: 90,
-          hash: `0x${'d'.repeat(64)}`,
-          wallet: WALLET,
-        })],
-        nextPageParams: { ...pageCursor, block_number: 50 },
+        items: [
+          blockscoutV2BridgeLog({
+            block: 90,
+            hash: `0x${'d'.repeat(64)}`,
+            wallet: WALLET,
+          }),
+          blockscoutV2BridgeLog({
+            block: 80,
+            hash: `0x${'8'.repeat(64)}`,
+            wallet: WALLET_2,
+          }),
+        ],
+        nextPageParams: null,
       };
     }
-    const unrelated = blockscoutV2BridgeLog({
-      block: 180,
+    const untracked = blockscoutV2BridgeLog({
+      block: 160,
       hash: `0x${'e'.repeat(64)}`,
+      wallet: '0x1111111111111111111111111111111111111111',
+    });
+    const otherSignature = blockscoutV2BridgeLog({
+      block: 170,
+      hash: `0x${'f'.repeat(64)}`,
       wallet: WALLET,
     });
-    unrelated.topics = [`0x${'f'.repeat(64)}`, walletTopic];
+    otherSignature.topics = [
+      `0x${'9'.repeat(64)}`,
+      ETH_BRIDGE_FINALIZED_TOPIC0,
+      otherSignature.topics[2],
+    ];
     const observedBaseShape = blockscoutV2BridgeLog({
       block: 150,
       hash: `0x${'c'.repeat(64)}`,
@@ -304,8 +317,14 @@ test('Base Blockscout v2 pages bridge logs by receiver topic and cursor', async 
           hash: `0x${'a'.repeat(64)}`,
           wallet: WALLET,
         }),
-        unrelated,
+        otherSignature,
+        untracked,
         observedBaseShape,
+        blockscoutV2BridgeLog({
+          block: 140,
+          hash: `0x${'4'.repeat(64)}`,
+          wallet: WALLET_2,
+        }),
       ],
       nextPageParams: pageCursor,
     };
@@ -322,22 +341,71 @@ test('Base Blockscout v2 pages bridge logs by receiver topic and cursor', async 
     200
   );
 
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 2, 'all wallets share one paginated event stream');
   assert.equal(calls[0].path, `addresses/${OP_STACK_BRIDGE}/logs`);
-  assert.deepEqual(calls[0].query, { topic: walletTopic });
+  assert.deepEqual(calls[0].query, { topic: ETH_BRIDGE_FINALIZED_TOPIC0 });
   assert.deepEqual(calls[1].query, pageCursor);
   assert.deepEqual(calls[0].options, {
     apiKey: null,
     chainId: 8453,
     timeoutMs: EXPECTED_BLOCKSCOUT_LOG_TIMEOUT_MS,
   });
-  assert.equal(calls[2].query.topic, wallet2Topic);
   assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [
     `0x${'c'.repeat(64)}`,
   ]);
-  assert.deepEqual(rowsByAddress.get(WALLET_2), []);
+  assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), [
+    `0x${'8'.repeat(64)}`,
+    `0x${'4'.repeat(64)}`,
+  ]);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 200);
   assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 200);
+});
+
+test('Base chain-wide event walk can cross the old per-wallet safety limits', async (t) => {
+  const original = EtherscanService._requestBlockscoutV2;
+  const head = 1000000;
+  const pagesPastOldLimit = 5001;
+  let calls = 0;
+  EtherscanService._requestBlockscoutV2 = async () => {
+    calls += 1;
+    if (calls <= pagesPastOldLimit) {
+      const untracked = blockscoutV2BridgeLog({
+        block: head - calls,
+        wallet: '0x1111111111111111111111111111111111111111',
+      });
+      return {
+        items: Array(40).fill(untracked),
+        nextPageParams: {
+          block_number: head - calls,
+          index: calls,
+          topic: ETH_BRIDGE_FINALIZED_TOPIC0,
+          items_count: 40,
+        },
+      };
+    }
+    return {
+      items: [blockscoutV2BridgeLog({
+        block: 100,
+        hash: `0x${'7'.repeat(64)}`,
+        wallet: WALLET,
+      })],
+      nextPageParams: null,
+    };
+  };
+  t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [{ address: WALLET, startBlock: 0 }],
+    8453,
+    chains.getChain(8453).stateSyncDeposits,
+    head
+  );
+
+  assert.equal(calls, pagesPastOldLimit + 1);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [
+    `0x${'7'.repeat(64)}`,
+  ]);
+  assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, head);
 });
 
 test('Base bridge-log requests use the bounded extended provider timeout', async (t) => {
@@ -365,15 +433,16 @@ test('Base bridge-log requests use the bounded extended provider timeout', async
 
   assert.equal(seen.url, `https://base.blockscout.com/api/v2/addresses/${OP_STACK_BRIDGE}/logs`);
   assert.equal(seen.options.timeout, EXPECTED_BLOCKSCOUT_LOG_TIMEOUT_MS);
-  assert.equal(seen.options.params.topic, `0x${'0'.repeat(24)}${WALLET.slice(2)}`);
+  assert.equal(seen.options.params.topic, ETH_BRIDGE_FINALIZED_TOPIC0);
 });
 
-test('Base Blockscout v2 rejects a response that ignores its wallet topic', async (t) => {
+test('Base Blockscout v2 rejects a response that ignores its event topic', async (t) => {
   const original = EtherscanService._requestBlockscoutV2;
-  EtherscanService._requestBlockscoutV2 = async () => ({
-    items: [blockscoutV2BridgeLog({ wallet: WALLET_2 })],
-    nextPageParams: null,
-  });
+  EtherscanService._requestBlockscoutV2 = async () => {
+    const row = blockscoutV2BridgeLog({ wallet: WALLET_2 });
+    row.topics[0] = `0x${'f'.repeat(64)}`;
+    return { items: [row], nextPageParams: null };
+  };
   t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
 
   await assert.rejects(
@@ -383,14 +452,18 @@ test('Base Blockscout v2 rejects a response that ignores its wallet topic', asyn
       chains.getChain(8453).stateSyncDeposits,
       50000000
     ),
-    /ignored the topic filter/
+    /ignored the event topic filter/
   );
 });
 
 test('Base Blockscout v2 rejects a repeated page cursor', async (t) => {
   const original = EtherscanService._requestBlockscoutV2;
-  const topic = `0x${'0'.repeat(24)}${WALLET.slice(2)}`;
-  const cursor = { block_number: 100, index: 1, topic, items_count: 50 };
+  const cursor = {
+    block_number: 100,
+    index: 1,
+    topic: ETH_BRIDGE_FINALIZED_TOPIC0,
+    items_count: 50,
+  };
   EtherscanService._requestBlockscoutV2 = async () => ({
     items: [blockscoutV2BridgeLog({
       block: 200,
@@ -409,6 +482,34 @@ test('Base Blockscout v2 rejects a repeated page cursor', async (t) => {
       300
     ),
     /repeated a page cursor/
+  );
+});
+
+test('Base Blockscout v2 rejects a cursor that changes the event topic', async (t) => {
+  const original = EtherscanService._requestBlockscoutV2;
+  EtherscanService._requestBlockscoutV2 = async () => ({
+    items: [blockscoutV2BridgeLog({
+      block: 200,
+      hash: `0x${'a'.repeat(64)}`,
+      wallet: WALLET,
+    })],
+    nextPageParams: {
+      block_number: 100,
+      index: 1,
+      topic: `0x${'f'.repeat(64)}`,
+      items_count: 50,
+    },
+  });
+  t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      300
+    ),
+    /conflicting topic cursor/
   );
 });
 
