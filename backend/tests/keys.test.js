@@ -45,6 +45,8 @@ beforeEach(() => {
   delete process.env.CMC_PRO_API_KEY;
   delete process.env.PLAID_CLIENT_ID;
   delete process.env.PLAID_SECRET;
+  delete process.env.MORALIS_API_KEY;
+  process.env.DEV_AUTH_USER_ID = '1';
 });
 
 test('PUT rejects an unknown service', async () => {
@@ -92,6 +94,7 @@ test('GET reports statuses without ever returning plaintext', async () => {
   assert.equal(response.body.encryptionConfigured, true);
   assert.deepEqual(response.body.userKeys.etherscan, { source: 'env', masked: null });
   assert.deepEqual(response.body.userKeys.plaid_client_id, { source: 'none', masked: null });
+  assert.deepEqual(response.body.userKeys.moralis, { source: 'none', masked: null });
   assert.deepEqual(response.body.appSettings.cg_api_key, { source: 'none', masked: null });
   assert.ok(!JSON.stringify(response.body).includes('env-super-secret'));
 });
@@ -129,6 +132,61 @@ test('PUT routes user services to user_api_keys and app keys to app_settings', a
   assert.equal(appPut.status, 200);
   assert.ok(queries.some((q) => q.text.includes('INSERT INTO app_settings')));
   assert.ok(!queries.some((q) => q.text.includes('user_api_keys')));
+});
+
+test('PUT stores Moralis as a user-scoped encrypted service', async () => {
+  queryHandler = async (text) => (
+    text.startsWith('SELECT encrypted_value, last4')
+      ? { rows: [{ encrypted_value: secretCrypto.encrypt('moralis-abcd'), last4: 'abcd' }] }
+      : { rows: [] }
+  );
+
+  const response = await request(app)
+    .put('/api/keys/moralis')
+    .send({ value: 'moralis-abcd' })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.masked, '••••abcd');
+  const insert = queries.find((q) => q.text.includes('INSERT INTO user_api_keys'));
+  assert.equal(insert.params[0], 1);
+  assert.equal(insert.params[1], 'moralis');
+  assert.ok(!insert.params[2].includes('moralis-abcd'));
+});
+
+test('Moralis status and mutations stay scoped to the authenticated user', async () => {
+  const userOneCiphertext = secretCrypto.encrypt('user-one-moralis');
+  queryHandler = async (text, params) => {
+    if (text.startsWith('SELECT encrypted_value, last4') && params[1] === 'moralis' && params[0] === 1) {
+      return { rows: [{ encrypted_value: userOneCiphertext, last4: 'alis' }] };
+    }
+    return { rows: [] };
+  };
+
+  process.env.DEV_AUTH_USER_ID = '2';
+  const status = await request(app).get('/api/keys');
+  assert.equal(status.status, 200);
+  assert.deepEqual(status.body.userKeys.moralis, { source: 'none', masked: null });
+  assert.ok(
+    queries.filter((q) => q.text.startsWith('SELECT encrypted_value')).every((q) => q.params[0] === 2),
+    'every user-key status query uses the authenticated user id'
+  );
+
+  queries.length = 0;
+  queryHandler = async () => ({ rows: [] });
+  const put = await request(app)
+    .put('/api/keys/moralis')
+    .send({ value: 'user-two-moralis' })
+    .set('Content-Type', 'application/json');
+  assert.equal(put.status, 200);
+  const insert = queries.find((q) => q.text.includes('INSERT INTO user_api_keys'));
+  assert.deepEqual(insert.params.slice(0, 2), [2, 'moralis']);
+
+  queries.length = 0;
+  const del = await request(app).delete('/api/keys/moralis');
+  assert.equal(del.status, 200);
+  const deletion = queries.find((q) => q.text.includes('DELETE FROM user_api_keys'));
+  assert.deepEqual(deletion.params, [2, 'moralis']);
 });
 
 test('a stored key that no longer decrypts reports db_unreadable, not db or none', async () => {
