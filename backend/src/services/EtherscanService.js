@@ -231,6 +231,9 @@ const EXPLORER_RETRY_JITTER_MS = boundedEnvInteger(
 const EXPLORER_TRANSIENT_RETRIES = boundedEnvInteger(
   'EXPLORER_TRANSIENT_RETRIES', 1, 3
 );
+const EXPLORER_MALFORMED_RESPONSE_RETRIES = boundedEnvInteger(
+  'EXPLORER_MALFORMED_RESPONSE_RETRIES', 2, 3
+);
 const EXPLORER_TRANSIENT_RETRY_BASE_MS = boundedEnvInteger(
   'EXPLORER_TRANSIENT_RETRY_BASE_MS', 500, 10000
 );
@@ -539,10 +542,11 @@ class EtherscanService {
       // Etherscan occasionally returns a nominal JSON-RPC envelope with
       // neither a result nor an error for eth_blockNumber. That is not an
       // authoritative chain response and must not fail every feed sharing the
-      // head immediately. Retry it through the same provider queue exactly as
-      // a transient transport failure, then remain fail-closed if it repeats.
+      // head immediately. Retry it through the same provider queue as a
+      // transient transport failure, then remain fail-closed after the small
+      // bounded retry budget is exhausted.
       if (!payload.error && payload.result == null
-          && malformedResponseAttempt < EXPLORER_TRANSIENT_RETRIES) {
+          && malformedResponseAttempt < EXPLORER_MALFORMED_RESPONSE_RETRIES) {
         const delayMs = EXPLORER_TRANSIENT_RETRY_BASE_MS
           * (2 ** malformedResponseAttempt);
         logger.warn({
