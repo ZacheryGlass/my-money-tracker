@@ -1416,8 +1416,8 @@ class EthWalletService {
   }
 
   // Prefetch provider-backed state-sync deposits for all wallets before their
-  // ordinary account feeds. EtherscanService applies the provider's supported
-  // receiver filtering and returns one feed-shaped array per wallet.
+  // ordinary account feeds. EtherscanService uses the provider's safest
+  // supported bulk filter and returns one feed-shaped array per wallet.
   //
   // A batch failure is copied to each affected wallet's state-sync slot. The
   // normal per-feed catch then preserves every cursor and stored row while

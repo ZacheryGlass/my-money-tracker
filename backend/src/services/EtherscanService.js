@@ -25,6 +25,14 @@ const MAX_ACCOUNT_PAGES = 200;
 const MAX_ACCOUNT_ROWS = PAGE_SIZE * MAX_ACCOUNT_PAGES;
 const MAX_BLOCKSCOUT_V2_PAGES = 5000;
 
+// The Base state-sync path walks one chain-wide event stream rather than one
+// receiver-filtered account stream. Keep it bounded, but do not reuse the
+// per-wallet ceiling: unrelated bridge users legitimately make this stream
+// much larger. At Blockscout's 50-row page size these limits agree at one
+// million rows, while still stopping a fresh-cursor loop or oversized pages.
+const MAX_BLOCKSCOUT_V2_STATE_SYNC_ROWS = 1_000_000;
+const MAX_BLOCKSCOUT_V2_STATE_SYNC_PAGES = 20_000;
+
 const BLOCKSCOUT_V2_FEEDS = Object.freeze({
   txlist: { path: 'transactions' },
   txlistinternal: { path: 'internal-transactions' },
@@ -1681,12 +1689,13 @@ class EtherscanService {
     return result;
   }
 
-  // Blockscout v2's address-log endpoint is newest-first and accepts one
-  // `topic` filter that matches any indexed position. Query the bridge
-  // contract once per distinct receiver topic, then retain only rows whose
-  // event signature and configured receiver position both match. A wallet can
-  // legitimately appear in another indexed position (for example, `from`), so
-  // that case is ignored rather than misclassified as an inbound credit.
+  // Blockscout v2's address-log endpoint is newest-first and accepts a single
+  // `topic` filter that matches any indexed position. Filtering by an individual
+  // receiver topic makes Base's public instance run an expensive query that
+  // can time out even after two minutes. The event signature is indexed
+  // efficiently, so walk that stream ONCE and distribute matching receivers
+  // to every requested wallet. This is both faster and substantially less
+  // provider work than one full-history request per wallet.
   //
   // The endpoint supplies block timestamps directly. This avoids both the
   // production-unsupported public Base RPC history walk and a second request
@@ -1707,136 +1716,147 @@ class EtherscanService {
     }
 
     const path = `addresses/${contract}/logs`;
-    const parsedByAddress = new Map();
-    for (const request of requests) {
-      let cursor = {};
-      let previousBlock = null;
-      let walkedRows = 0;
-      let page = 0;
-      const seenCursors = new Set();
-      const rowsByKey = new Map();
+    const requestsByTopic = new Map(requests.map((request) => [request.topic, request]));
+    const rowsByAddress = new Map(
+      requests.map((request) => [request.address, new Map()])
+    );
+    const minStart = Math.min(...requests.map((request) => request.startBlock));
+    let cursor = {};
+    let previousBlock = null;
+    let walkedRows = 0;
+    let page = 0;
+    const seenCursors = new Set();
 
-      for (;;) {
-        page += 1;
-        if (page > MAX_BLOCKSCOUT_V2_PAGES) {
-          throw apiError(
-            `statesync Blockscout v2 walk exceeded ${MAX_BLOCKSCOUT_V2_PAGES} pages; cursor frozen`
-          );
-        }
-        const { items, nextPageParams } = await this._requestBlockscoutV2(
-          path,
-          { ...cursor, topic: request.topic },
-          { apiKey: null, chainId, timeoutMs: BLOCKSCOUT_V2_LOG_TIMEOUT_MS }
+    for (;;) {
+      page += 1;
+      if (page > MAX_BLOCKSCOUT_V2_STATE_SYNC_PAGES) {
+        throw apiError(
+          `statesync Blockscout v2 walk exceeded ${MAX_BLOCKSCOUT_V2_STATE_SYNC_PAGES} pages; cursor frozen`
         );
-        walkedRows += items.length;
-        if (walkedRows > MAX_ACCOUNT_ROWS) {
-          throw apiError(
-            `statesync Blockscout v2 walk exceeded ${MAX_ACCOUNT_ROWS} rows; cursor frozen`
-          );
-        }
-
-        let reachedStart = false;
-        for (const raw of items) {
-          const blockText = decimalString(raw?.block_number);
-          const block = blockText == null ? NaN : Number(blockText);
-          if (!Number.isSafeInteger(block)) {
-            throw apiError('statesync Blockscout v2 log has invalid block_number; cursor frozen');
-          }
-          if (previousBlock != null && block > previousBlock) {
-            throw apiError(
-              `statesync Blockscout v2 pages are not newest-first at block ${block}; cursor frozen`
-            );
-          }
-          previousBlock = block;
-
-          if (!Array.isArray(raw?.topics)
-              || raw.topics.length < 1
-              || raw.topics.length > 4) {
-            throw apiError('statesync Blockscout v2 log has invalid topics; cursor frozen');
-          }
-          const topics = raw.topics.map((topic) => {
-            if (topic == null) return null;
-            if (!/^0x[0-9a-f]{64}$/i.test(String(topic))) {
-              throw apiError('statesync Blockscout v2 log has invalid topic; cursor frozen');
-            }
-            return String(topic).toLowerCase();
-          });
-          if (!topics.includes(request.topic)) {
-            throw apiError('statesync Blockscout v2 ignored the topic filter; cursor frozen');
-          }
-
-          if (block < request.startBlock) {
-            reachedStart = true;
-            continue;
-          }
-          if (block > indexedHead || topics[0] !== topic0
-              || topics[userTopicIndex] !== request.topic) {
-            continue;
-          }
-
-          // Blockscout's published schema names this object `address_hash`,
-          // while the current Base instance returns the same object as
-          // `address`. Accept both observed contracts, but reject malformed or
-          // contradictory dual fields rather than guessing the emitter.
-          const hasAddressHash = Object.prototype.hasOwnProperty.call(raw || {}, 'address_hash');
-          const hasAddress = Object.prototype.hasOwnProperty.call(raw || {}, 'address');
-          const documentedAddress = hasAddressHash ? addressHash(raw.address_hash) : null;
-          const instanceAddress = hasAddress ? addressHash(raw.address) : null;
-          const address = documentedAddress || instanceAddress;
-          const conflictingAddresses = documentedAddress && instanceAddress
-            && documentedAddress.toLowerCase() !== instanceAddress.toLowerCase();
-          const transactionHash = String(raw?.transaction_hash || '').toLowerCase();
-          const blockHash = String(raw?.block_hash || '').toLowerCase();
-          const timestamp = unixTimestamp(raw?.block_timestamp);
-          const logIndexText = decimalString(raw?.index);
-          const logIndex = logIndexText == null ? NaN : Number(logIndexText);
-          const data = String(raw?.data || '').toLowerCase();
-          if ((hasAddressHash && !documentedAddress)
-              || (hasAddress && !instanceAddress)
-              || conflictingAddresses
-              || String(address || '').toLowerCase() !== contract
-              || !TX_HASH_RE.test(transactionHash)
-              || !TX_HASH_RE.test(blockHash)
-              || timestamp == null
-              || !Number.isSafeInteger(logIndex)
-              || !/^0x(?:[0-9a-f]{2})*$/.test(data)) {
-            throw apiError('statesync Blockscout v2 event row is malformed; cursor frozen');
-          }
-
-          const parsed = this._parseStateSyncLog({
-            address,
-            topics,
-            data,
-            blockNumber: `0x${block.toString(16)}`,
-            timeStamp: `0x${Number(timestamp).toString(16)}`,
-            logIndex: `0x${logIndex.toString(16)}`,
-            transactionHash,
-          }, request.address, feedConfig);
-          const prior = rowsByKey.get(parsed._key);
-          if (prior && JSON.stringify(prior) !== JSON.stringify(parsed)) {
-            throw apiError('statesync Blockscout v2 returned conflicting duplicate rows; cursor frozen');
-          }
-          rowsByKey.set(parsed._key, parsed);
-        }
-
-        if (reachedStart || !nextPageParams
-            || Object.keys(nextPageParams).length === 0) break;
-        if (items.length === 0) {
-          throw apiError('statesync Blockscout v2 returned an empty page with a cursor; cursor frozen');
-        }
-        if (nextPageParams.topic != null
-            && String(nextPageParams.topic).toLowerCase() !== request.topic) {
-          throw apiError('statesync Blockscout v2 returned a conflicting topic cursor; cursor frozen');
-        }
-        const cursorKey = stableCursor(nextPageParams);
-        if (seenCursors.has(cursorKey)) {
-          throw apiError('statesync Blockscout v2 repeated a page cursor; cursor frozen');
-        }
-        seenCursors.add(cursorKey);
-        cursor = nextPageParams;
+      }
+      const { items, nextPageParams } = await this._requestBlockscoutV2(
+        path,
+        { ...cursor, topic: topic0 },
+        { apiKey: null, chainId, timeoutMs: BLOCKSCOUT_V2_LOG_TIMEOUT_MS }
+      );
+      walkedRows += items.length;
+      if (walkedRows > MAX_BLOCKSCOUT_V2_STATE_SYNC_ROWS) {
+        throw apiError(
+          `statesync Blockscout v2 walk exceeded ${MAX_BLOCKSCOUT_V2_STATE_SYNC_ROWS} rows; cursor frozen`
+        );
       }
 
-      const parsed = [...rowsByKey.values()].sort(
+      let reachedStart = false;
+      for (const raw of items) {
+        const blockText = decimalString(raw?.block_number);
+        const block = blockText == null ? NaN : Number(blockText);
+        if (!Number.isSafeInteger(block)) {
+          throw apiError('statesync Blockscout v2 log has invalid block_number; cursor frozen');
+        }
+        if (previousBlock != null && block > previousBlock) {
+          throw apiError(
+            `statesync Blockscout v2 pages are not newest-first at block ${block}; cursor frozen`
+          );
+        }
+        previousBlock = block;
+
+        if (!Array.isArray(raw?.topics)
+            || raw.topics.length < 1
+            || raw.topics.length > 4) {
+          throw apiError('statesync Blockscout v2 log has invalid topics; cursor frozen');
+        }
+        const topics = raw.topics.map((topic) => {
+          if (topic == null) return null;
+          if (!/^0x[0-9a-f]{64}$/i.test(String(topic))) {
+            throw apiError('statesync Blockscout v2 log has invalid topic; cursor frozen');
+          }
+          return String(topic).toLowerCase();
+        });
+        if (!topics.includes(topic0)) {
+          throw apiError('statesync Blockscout v2 ignored the event topic filter; cursor frozen');
+        }
+
+        if (block < minStart) {
+          reachedStart = true;
+          continue;
+        }
+        if (block > indexedHead || topics[0] !== topic0) continue;
+
+        // Blockscout's published schema names this object `address_hash`,
+        // while the current Base instance returns the same object as
+        // `address`. Accept both observed contracts, but reject malformed or
+        // contradictory dual fields rather than guessing the emitter.
+        const hasAddressHash = Object.prototype.hasOwnProperty.call(raw || {}, 'address_hash');
+        const hasAddress = Object.prototype.hasOwnProperty.call(raw || {}, 'address');
+        const documentedAddress = hasAddressHash ? addressHash(raw.address_hash) : null;
+        const instanceAddress = hasAddress ? addressHash(raw.address) : null;
+        const address = documentedAddress || instanceAddress;
+        const conflictingAddresses = documentedAddress && instanceAddress
+          && documentedAddress.toLowerCase() !== instanceAddress.toLowerCase();
+        const transactionHash = String(raw?.transaction_hash || '').toLowerCase();
+        const blockHash = String(raw?.block_hash || '').toLowerCase();
+        const timestamp = unixTimestamp(raw?.block_timestamp);
+        const logIndexText = decimalString(raw?.index);
+        const logIndex = logIndexText == null ? NaN : Number(logIndexText);
+        const data = String(raw?.data || '').toLowerCase();
+        if ((hasAddressHash && !documentedAddress)
+            || (hasAddress && !instanceAddress)
+            || conflictingAddresses
+            || String(address || '').toLowerCase() !== contract
+            || !TX_HASH_RE.test(transactionHash)
+            || !TX_HASH_RE.test(blockHash)
+            || timestamp == null
+            || !Number.isSafeInteger(logIndex)
+            || !/^0x(?:[0-9a-f]{2})*$/.test(data)) {
+          throw apiError('statesync Blockscout v2 event row is malformed; cursor frozen');
+        }
+
+        const receiverTopic = topics[userTopicIndex];
+        const request = requestsByTopic.get(receiverTopic);
+        const receiverAddress = request?.address
+          || (receiverTopic ? `0x${receiverTopic.slice(-40)}` : null);
+        if (!receiverAddress || !ADDRESS_RE.test(receiverAddress)) {
+          throw apiError('statesync Blockscout v2 event has an invalid receiver; cursor frozen');
+        }
+
+        const parsed = this._parseStateSyncLog({
+          address,
+          topics,
+          data,
+          blockNumber: `0x${block.toString(16)}`,
+          timeStamp: `0x${Number(timestamp).toString(16)}`,
+          logIndex: `0x${logIndex.toString(16)}`,
+          transactionHash,
+        }, receiverAddress, feedConfig);
+        if (!request || block < request.startBlock) continue;
+        const rowsByKey = rowsByAddress.get(request.address);
+        const prior = rowsByKey.get(parsed._key);
+        if (prior && JSON.stringify(prior) !== JSON.stringify(parsed)) {
+          throw apiError('statesync Blockscout v2 returned conflicting duplicate rows; cursor frozen');
+        }
+        rowsByKey.set(parsed._key, parsed);
+      }
+
+      if (reachedStart || !nextPageParams
+          || Object.keys(nextPageParams).length === 0) break;
+      if (items.length === 0) {
+        throw apiError('statesync Blockscout v2 returned an empty page with a cursor; cursor frozen');
+      }
+      if (nextPageParams.topic != null
+          && String(nextPageParams.topic).toLowerCase() !== topic0) {
+        throw apiError('statesync Blockscout v2 returned a conflicting topic cursor; cursor frozen');
+      }
+      const cursorKey = stableCursor(nextPageParams);
+      if (seenCursors.has(cursorKey)) {
+        throw apiError('statesync Blockscout v2 repeated a page cursor; cursor frozen');
+      }
+      seenCursors.add(cursorKey);
+      cursor = nextPageParams;
+    }
+
+    const parsedByAddress = new Map();
+    for (const request of requests) {
+      const parsed = [...rowsByAddress.get(request.address).values()].sort(
         (left, right) => (left._block - right._block) || (left._logIndex - right._logIndex)
       );
       const result = parsed.map((row) => ({
@@ -1857,9 +1877,9 @@ class EtherscanService {
   }
 
   // Provider-specific bulk entrypoint for the state-sync prefetch. Base uses
-  // receiver-filtered Blockscout v2 address logs; older declarations can still
-  // use bounded Blockscout legacy windows or JSON-RPC batches with all tracked
-  // receiver topics OR-ed into each filter.
+  // one event-filtered Blockscout v2 address-log stream; older declarations can
+  // still use bounded Blockscout legacy windows or JSON-RPC batches with all
+  // tracked receiver topics OR-ed into each filter.
   //
   // Returns one account-feed-shaped array per lower-cased address. Every array
   // carries the same non-enumerable scannedThroughBlock boundary, including
