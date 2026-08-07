@@ -266,13 +266,26 @@ const REGISTRY = [
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
       // Base's public JSON-RPC is explicitly rate-limited and not intended for
-      // production history walks. Blockscout v2 serves the StandardBridge's
-      // event-signature stream efficiently, so one shared walk distributes
-      // credits to every tracked receiver. Receiver-topic queries time out on
-      // this instance, while its legacy logs facade is behind a standing
-      // anonymous 429; neither is a safe production fallback.
+      // production history walks. Blockscout v2's cursor walk also proved
+      // unsuitable for a genesis scan: one late 120-second page timeout throws
+      // away hours of otherwise valid progress. The legacy logs facade handles
+      // bounded event-signature windows quickly. Its live response headers
+      // expose a 10-request anonymous bucket; seven-second spacing leaves
+      // headroom even when empty windows return immediately. Split every
+      // saturated 1,000-row window and distribute validated receivers locally.
+      // Do not send a comma-separated receiver filter: Base currently ignores
+      // it.
       rpcScan: {
-        provider: 'blockscout-v2',
+        provider: 'blockscout',
+        blockRange: 250000,
+        batchSize: 1,
+        concurrency: 1,
+        requestSpacingMs: 7000,
+        maxRequests: 2000,
+        maxElapsedMs: 3 * 60 * 60 * 1000,
+        maxResponseRows: 1000000,
+        scanAllReceivers: true,
+        allowExtraneousTopics: true,
       },
     },
   },

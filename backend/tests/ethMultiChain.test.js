@@ -244,7 +244,14 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
   const base = chains.getChain(8453);
   assert.equal(base.accountApi.apiStyle, 'blockscout-v2');
   assert.equal(base.accountApi.v2BaseUrl, 'https://base.blockscout.com/api/v2');
-  assert.equal(base.stateSyncDeposits.rpcScan.provider, 'blockscout-v2');
+  assert.equal(base.stateSyncDeposits.rpcScan.provider, 'blockscout');
+  assert.equal(base.stateSyncDeposits.rpcScan.blockRange, 250000);
+  assert.equal(base.stateSyncDeposits.rpcScan.requestSpacingMs, 7000);
+  assert.equal(base.stateSyncDeposits.rpcScan.maxRequests, 2000);
+  assert.equal(base.stateSyncDeposits.rpcScan.maxElapsedMs, 3 * 60 * 60 * 1000);
+  assert.equal(base.stateSyncDeposits.rpcScan.maxResponseRows, 1000000);
+  assert.equal(base.stateSyncDeposits.rpcScan.scanAllReceivers, true);
+  assert.equal(base.stateSyncDeposits.rpcScan.allowExtraneousTopics, true);
   const lite = chains.getChain(32401);
   assert.equal(lite.historyProvider, 'zksync-lite');
   assert.equal(lite.requiresApiKey, false);
@@ -1589,6 +1596,53 @@ test('HTTP and body-level throttles share one bounded retry budget', async (t) =
     'an explicit Retry-After remains authoritative instead of using the anonymous-IP floor');
 });
 
+test('a stricter host spacing wins and survives a body-level throttle retry', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  const originalThrottled = etherscanConfig.throttled;
+  const originalProvider = EtherscanService._provider;
+  const spacings = [];
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    if (requests === 1) {
+      return {
+        headers: { 'retry-after': '0' },
+        data: { status: '0', message: 'Too many requests', result: 'rate limit reached' },
+      };
+    }
+    return { data: { status: '1', message: 'OK', result: [] } };
+  };
+  etherscanConfig.throttled = async (fn, options) => {
+    spacings.push(options.spacingMs);
+    return fn();
+  };
+  EtherscanService._provider = () => ({
+    name: 'Blockscout',
+    baseUrl: 'https://base.blockscout.com/api',
+    requiresApiKey: false,
+    params: {},
+    key: 'account:https://base.blockscout.com/api',
+    spacingMs: 9000,
+  });
+  t.after(() => {
+    axios.get = originalGet;
+    etherscanConfig.throttled = originalThrottled;
+    EtherscanService._provider = originalProvider;
+    etherscanConfig.resetRateLimits();
+  });
+
+  assert.deepEqual(
+    await EtherscanService._request(
+      { module: 'logs', action: 'getLogs' },
+      { apiKey: null, chainId: 8453, spacingMs: 7000 }
+    ),
+    []
+  );
+  assert.equal(requests, 2);
+  assert.deepEqual(spacings, [9000, 9000]);
+});
+
 test('anonymous Blockscout throttles defer for a full minute bucket', async (t) => {
   const axios = require('axios');
   const originalGet = axios.get;
@@ -1823,7 +1877,7 @@ test('empty OP Stack feeds persist indexed coverage and resume incrementally on 
     'all account and native-credit feeds share one indexed coverage boundary');
 });
 
-test('coverage names the actual Base v2 providers', async (t) => {
+test('coverage names the actual Base providers per feed', async (t) => {
   const { calls } = harness(t, { chainSet: '8453' });
 
   await EthWalletService.syncWallet(7);
@@ -1835,7 +1889,7 @@ test('coverage names the actual Base v2 providers', async (t) => {
   );
   assert.equal(
     entries.find((row) => row.feed === 'statesync').provider,
-    'Blockscout (https://base.blockscout.com/api/v2)'
+    'Blockscout (https://base.blockscout.com/api)'
   );
 });
 

@@ -32,6 +32,17 @@ const MAX_BLOCKSCOUT_V2_PAGES = 5000;
 // million rows, while still stopping a fresh-cursor loop or oversized pages.
 const MAX_BLOCKSCOUT_V2_STATE_SYNC_ROWS = 1_000_000;
 const MAX_BLOCKSCOUT_V2_STATE_SYNC_PAGES = 20_000;
+const DEFAULT_STATE_SYNC_SCAN_MAX_REQUESTS = 2000;
+const DEFAULT_STATE_SYNC_SCAN_MAX_ELAPSED_MS = 3 * 60 * 60 * 1000;
+const DEFAULT_STATE_SYNC_SCAN_MAX_RESPONSE_ROWS = 1_000_000;
+
+// A full event-history walk spans many bounded legacy-log windows. Retrying a
+// failed window in place preserves the already validated in-memory progress;
+// bubbling the first transient 429/timeout would force the job-level retry to
+// replay the whole history. The total pause remains bounded and no persistent
+// cursor moves until every window succeeds.
+const STATE_SYNC_WINDOW_RETRIES = 2;
+const STATE_SYNC_WINDOW_RETRY_MAX_MS = 5 * 60 * 1000;
 
 const BLOCKSCOUT_V2_FEEDS = Object.freeze({
   txlist: { path: 'transactions' },
@@ -116,6 +127,16 @@ const finalizedBlockCache = new Map();
 function rpcQuantity(value) {
   if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) return null;
   try { return BigInt(value); } catch { return null; }
+}
+
+function safeHexInteger(value) {
+  if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) return null;
+  try {
+    const parsed = BigInt(value);
+    return parsed <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(parsed) : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildFinalityBoundary(receipt, finalizedBlock, error = null) {
@@ -442,8 +463,22 @@ class EtherscanService {
     apiKey,
     chainId = etherscan.CHAIN_ID,
     rateLimitState = { attempt: 0 },
+    spacingMs = null,
+    beforeAttempt = null,
   }) {
-    const provider = this._provider(chainId, apiKey);
+    if (spacingMs != null
+        && (!Number.isSafeInteger(Number(spacingMs))
+          || Number(spacingMs) < 0
+          || Number(spacingMs) > 60000)) {
+      throw apiError('Explorer request spacingMs must be an integer between 0 and 60000');
+    }
+    const baseProvider = this._provider(chainId, apiKey);
+    const provider = spacingMs == null
+      ? baseProvider
+      : {
+        ...baseProvider,
+        spacingMs: Math.max(Number(baseProvider.spacingMs) || 0, Number(spacingMs)),
+      };
     if (provider.requiresApiKey && !apiKey) {
       const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
@@ -454,14 +489,17 @@ class EtherscanService {
       chainId,
       params,
       rateLimitState,
-      fn: () => axios.get(provider.baseUrl, {
-        timeout: 15000,
-        params: {
-          ...provider.params,
-          ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
-          ...params,
-        },
-      }),
+      fn: () => {
+        if (beforeAttempt) beforeAttempt();
+        return axios.get(provider.baseUrl, {
+          timeout: 15000,
+          params: {
+            ...provider.params,
+            ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
+            ...params,
+          },
+        });
+      },
     });
 
     const payload = response.data || {};
@@ -484,7 +522,7 @@ class EtherscanService {
           rateLimitState,
           error: responseDetailError(detail, response),
           retry: () => this._request(params, {
-            apiKey, chainId, rateLimitState,
+            apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
           }),
         });
       }
@@ -505,7 +543,7 @@ class EtherscanService {
           response
         ),
         retry: () => this._request(params, {
-          apiKey, chainId, rateLimitState,
+          apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
         }),
       });
     }
@@ -1876,10 +1914,11 @@ class EtherscanService {
     return parsedByAddress;
   }
 
-  // Provider-specific bulk entrypoint for the state-sync prefetch. Base uses
-  // one event-filtered Blockscout v2 address-log stream; older declarations can
-  // still use bounded Blockscout legacy windows or JSON-RPC batches with all
-  // tracked receiver topics OR-ed into each filter.
+  // Provider-specific bulk entrypoint for the state-sync prefetch. A chain may
+  // use bounded Blockscout legacy windows, a Blockscout v2 cursor stream, or
+  // JSON-RPC batches. Base intentionally uses event-wide legacy windows: its
+  // public instance ignores comma-separated receiver topics, but serves the
+  // event signature efficiently when the block range is bounded.
   //
   // Returns one account-feed-shaped array per lower-cased address. Every array
   // carries the same non-enumerable scannedThroughBlock boundary, including
@@ -1894,13 +1933,61 @@ class EtherscanService {
     const scan = feedConfig?.rpcScan;
     const useBlockscout = scan?.provider === 'blockscout';
     const useBlockscoutV2 = scan?.provider === 'blockscout-v2';
+    const scanAllReceivers = scan?.scanAllReceivers === true;
     const blockRange = Number(scan?.blockRange);
     const batchSize = Number(scan?.batchSize);
     const concurrency = Number(scan?.concurrency ?? 1);
+    const requestSpacingMs = Number(scan?.requestSpacingMs);
+    const maxRequests = Number(
+      scan?.maxRequests ?? DEFAULT_STATE_SYNC_SCAN_MAX_REQUESTS
+    );
+    const maxElapsedMs = Number(
+      scan?.maxElapsedMs ?? DEFAULT_STATE_SYNC_SCAN_MAX_ELAPSED_MS
+    );
+    const maxResponseRows = Number(
+      scan?.maxResponseRows ?? DEFAULT_STATE_SYNC_SCAN_MAX_RESPONSE_ROWS
+    );
     if (!useBlockscoutV2 && (!Number.isSafeInteger(blockRange) || blockRange < 1
         || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 100
         || !Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8)) {
       const error = new Error('statesync rpcScan requires blockRange >= 1, batchSize between 1 and 100, and concurrency between 1 and 8');
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    if (scanAllReceivers
+        && (!useBlockscout || scan?.allowExtraneousTopics !== true)) {
+      const error = new Error(
+        'statesync scanAllReceivers requires Blockscout windows with allowExtraneousTopics'
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    if (scanAllReceivers
+        && (!Number.isSafeInteger(requestSpacingMs)
+          || requestSpacingMs < 1000
+          || requestSpacingMs > 60000)) {
+      const error = new Error(
+        'statesync scanAllReceivers requires requestSpacingMs between 1000 and 60000'
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    if (scanAllReceivers
+        && (!Number.isSafeInteger(maxRequests) || maxRequests < 1 || maxRequests > 10000
+          || !Number.isSafeInteger(maxElapsedMs) || maxElapsedMs < 1000
+          || maxElapsedMs > 12 * 60 * 60 * 1000
+          || !Number.isSafeInteger(maxResponseRows) || maxResponseRows < 1
+          || maxResponseRows > 5_000_000)) {
+      const error = new Error(
+        'statesync scanAllReceivers requires bounded maxRequests, maxElapsedMs, and maxResponseRows'
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
+    if (useBlockscoutV2 && scan?.allowKnownSlowFullHistoryWalk !== true) {
+      const error = new Error(
+        'statesync blockscout-v2 is quarantined from production full-history scans'
+      );
       error.code = 'ETHERSCAN_API_ERROR';
       throw error;
     }
@@ -1918,10 +2005,16 @@ class EtherscanService {
         error.code = 'ETHERSCAN_API_ERROR';
         throw error;
       }
+      const numericStartBlock = Number(startBlock);
+      if (!Number.isSafeInteger(numericStartBlock) || numericStartBlock < 0) {
+        const error = new Error(`Invalid state-sync start block: ${startBlock}`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
       const candidate = {
         address: normalizedAddress,
         topic: addressTopic(normalizedAddress),
-        startBlock: Math.max(0, Number(startBlock) || 0),
+        startBlock: numericStartBlock,
       };
       const prior = requestsByAddress.get(normalizedAddress);
       if (!prior || candidate.startBlock < prior.startBlock) {
@@ -1930,6 +2023,11 @@ class EtherscanService {
     }
     const normalized = [...requestsByAddress.values()];
     const head = indexedHead ?? await this._latestBlockNumber(null, chainId);
+    if (!Number.isSafeInteger(head) || head < 0) {
+      const error = new Error(`statesync provider returned invalid head ${head}; cursor frozen`);
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
     for (const request of normalized) {
       if (head < request.startBlock) {
         const error = new Error(
@@ -1977,8 +2075,44 @@ class EtherscanService {
       error.code = 'ETHERSCAN_API_ERROR';
       throw error;
     }
+    if (useBlockscout && filters.length > maxRequests) {
+      const error = new Error(
+        `statesync Blockscout walk requires at least ${filters.length} requests, exceeding the ${maxRequests}-request budget; cursor frozen`
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
+    }
 
     const logs = [];
+    const parsedByAddress = new Map(normalized.map((request) => [request.address, []]));
+    const seen = new Map();
+    const observeParsed = (parsed, request = null, retain = true) => {
+      const priorEntry = seen.get(parsed._key);
+      const fields = ['hash', 'blockNumber', 'timeStamp', 'from', 'to', 'value'];
+      const fingerprint = fields.map((field) => parsed[field]).join('\u0000');
+      if (priorEntry) {
+        if (priorEntry.fingerprint !== fingerprint) {
+          const error = new Error(
+            `statesync provider returned conflicting duplicate log ${parsed._key}; cursor frozen`
+          );
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        if (request) priorEntry.wanted = true;
+        if (request && retain && !priorEntry.retained) {
+          priorEntry.retained = true;
+          parsedByAddress.get(request.address).push(parsed);
+        }
+        return;
+      }
+      const retained = Boolean(request && retain);
+      seen.set(parsed._key, {
+        fingerprint,
+        wanted: Boolean(request),
+        retained,
+      });
+      if (retained) parsedByAddress.get(request.address).push(parsed);
+    };
     if (useBlockscout) {
       // Blockscout's Etherscan-compatible logs endpoint returns the log
       // timestamp in the same hex shape as the RPC result, so it avoids one
@@ -1988,25 +2122,146 @@ class EtherscanService {
       const userTopicParam = `topic${userTopicIndex}`;
       const topicOperatorParam = `topic0_${userTopicIndex}_opr`;
       const topicParam = [...topicToRequest.keys()].join(',');
+      let windowRetryWaitMs = 0;
+      let walkedRows = 0;
+      let requestCount = 0;
+      const scanStartedAt = Date.now();
+      const assertScanBudget = () => {
+        if (requestCount >= maxRequests) {
+          const error = new Error(
+            `statesync Blockscout getLogs exceeded ${maxRequests} requests; cursor frozen`
+          );
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        if (Date.now() - scanStartedAt > maxElapsedMs) {
+          const error = new Error(
+            `statesync Blockscout getLogs exceeded ${maxElapsedMs}ms; cursor frozen`
+          );
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+      };
+      const requestBlockscoutWindow = async (params) => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            const rows = await this._request(params, {
+              apiKey: null,
+              chainId,
+              ...(scan?.requestSpacingMs == null ? {} : {
+                spacingMs: requestSpacingMs,
+              }),
+              beforeAttempt: () => {
+                assertScanBudget();
+                requestCount += 1;
+              },
+            });
+            if (Date.now() - scanStartedAt > maxElapsedMs) {
+              const error = new Error(
+                `statesync Blockscout getLogs exceeded ${maxElapsedMs}ms; cursor frozen`
+              );
+              error.code = 'ETHERSCAN_API_ERROR';
+              throw error;
+            }
+            return rows;
+          } catch (error) {
+            const rateLimited = error?.code === 'EXPLORER_RATE_LIMITED';
+            if (!rateLimited || attempt >= STATE_SYNC_WINDOW_RETRIES) throw error;
+            const delayMs = Math.min(
+              MAX_EXPLORER_PAUSE_MS,
+              Math.max(1, Number(error.retryAfterMs) || BLOCKSCOUT_DEFERRED_RETRY_MIN_MS)
+            );
+            if (windowRetryWaitMs + delayMs > STATE_SYNC_WINDOW_RETRY_MAX_MS) throw error;
+            windowRetryWaitMs += delayMs;
+            logger.warn({
+              chainId,
+              attempt: attempt + 1,
+              delayMs,
+              waitedMs: windowRetryWaitMs,
+              fromBlock: params.fromBlock,
+              toBlock: params.toBlock,
+              code: error.code,
+            }, 'Retrying the current state-sync window after a provider failure');
+            await sleep(delayMs);
+          }
+        }
+      };
+      const processBlockscoutRows = (rows, fromBlock, toBlock, retainTracked) => {
+        for (const log of rows) {
+          const block = safeHexInteger(log?.blockNumber);
+          if (block == null || block < fromBlock || block > toBlock || block > head) {
+            const error = new Error(
+              'statesync Blockscout getLogs returned a log outside the requested window; cursor frozen'
+            );
+            error.code = 'ETHERSCAN_API_ERROR';
+            throw error;
+          }
+          const receiverTopic = String(log?.topics?.[userTopicIndex] || '').toLowerCase();
+          const validReceiverTopic = /^0x[0-9a-f]{64}$/.test(receiverTopic);
+          const request = topicToRequest.get(receiverTopic);
+          if (!request && (!feedConfig.rpcScan?.allowExtraneousTopics || !validReceiverTopic)) {
+            const error = new Error('statesync RPC returned a receiver outside the requested topic set');
+            error.code = 'ETHERSCAN_API_ERROR';
+            throw error;
+          }
+          const receiverAddress = `0x${receiverTopic.slice(-40)}`;
+          const parsed = this._parseStateSyncLog(log, receiverAddress, feedConfig);
+          observeParsed(
+            parsed,
+            request && block >= request.startBlock ? request : null,
+            retainTracked
+          );
+        }
+      };
       const fetchBlockscoutWindow = async (fromBlock, toBlock, depth = 0) => {
-        if (fromBlock > toBlock) return [];
-        const rows = await this._request({
-          module: 'logs',
-          action: 'getLogs',
-          address: feedConfig.contract,
-          topic0: feedConfig.topic0,
-          [userTopicParam]: topicParam,
-          [topicOperatorParam]: 'and',
-          fromBlock,
-          toBlock,
-          page: 1,
-          offset: LOG_PAGE_SIZE,
-        }, { apiKey: null, chainId });
+        if (fromBlock > toBlock) return;
+        let rows;
+        try {
+          rows = await requestBlockscoutWindow({
+            module: 'logs',
+            action: 'getLogs',
+            address: feedConfig.contract,
+            topic0: feedConfig.topic0,
+            ...(scanAllReceivers ? {} : {
+              [userTopicParam]: topicParam,
+              [topicOperatorParam]: 'and',
+            }),
+            fromBlock,
+            toBlock,
+            page: 1,
+            offset: LOG_PAGE_SIZE,
+          });
+        } catch (error) {
+          // Repeated timeout/5xx responses can be caused by a dense range even
+          // when a successful response never arrives to advertise saturation.
+          // Bisect that range after the transport's own bounded retry, while a
+          // 429 continues to cool down rather than multiplying requests.
+          if (!isTransientExplorerError(error) || fromBlock === toBlock || depth >= 12) {
+            throw error;
+          }
+          const midpoint = Math.floor((fromBlock + toBlock) / 2);
+          await fetchBlockscoutWindow(fromBlock, midpoint, depth + 1);
+          await fetchBlockscoutWindow(midpoint + 1, toBlock, depth + 1);
+          return;
+        }
         if (!Array.isArray(rows)) {
           const error = new Error('statesync Blockscout getLogs returned a non-array result');
           error.code = 'ETHERSCAN_API_ERROR';
           throw error;
         }
+        walkedRows += rows.length;
+        if (walkedRows > maxResponseRows) {
+          const error = new Error(
+            `statesync Blockscout getLogs exceeded ${maxResponseRows} response rows; cursor frozen`
+          );
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        // Validate the provider's window, event shape and coordinates before
+        // treating a full page as evidence of density. Otherwise a provider
+        // that ignored the filters could force recursive pressure instead of
+        // failing immediately.
+        processBlockscoutRows(rows, fromBlock, toBlock, rows.length < LOG_PAGE_SIZE);
         // A full response is not proof that the range is complete. Split the
         // range rather than trusting page/offset, which this endpoint ignores.
         if (rows.length >= LOG_PAGE_SIZE) {
@@ -2018,20 +2273,21 @@ class EtherscanService {
             throw error;
           }
           const midpoint = Math.floor((fromBlock + toBlock) / 2);
-          const [left, right] = await Promise.all([
-            fetchBlockscoutWindow(fromBlock, midpoint, depth + 1),
-            fetchBlockscoutWindow(midpoint + 1, toBlock, depth + 1),
-          ]);
-          return left.concat(right);
+          // Keep split children strictly sequential. Both use one host-scoped
+          // queue; scheduling the sibling while the first branch handles a
+          // cooldown creates competing retry loops without increasing
+          // throughput.
+          await fetchBlockscoutWindow(fromBlock, midpoint, depth + 1);
+          await fetchBlockscoutWindow(midpoint + 1, toBlock, depth + 1);
+          return;
         }
-        return rows;
       };
       for (let offset = 0; offset < filters.length; offset++) {
         const filter = filters[offset].params[0];
-        logs.push(...await fetchBlockscoutWindow(
+        await fetchBlockscoutWindow(
           parseInt(filter.fromBlock, 16),
           parseInt(filter.toBlock, 16)
-        ));
+        );
       }
     } else for (let offset = 0; offset < filters.length; offset += batchSize * concurrency) {
       const chunks = [];
@@ -2100,11 +2356,11 @@ class EtherscanService {
       });
     }
 
-    const parsedByAddress = new Map(normalized.map((request) => [request.address, []]));
-    const seen = new Set();
     for (const log of logs) {
       const receiverTopic = String(log?.topics?.[userTopicIndex] || '').toLowerCase();
       const request = topicToRequest.get(receiverTopic);
+      const blockHex = String(log?.blockNumber || '').toLowerCase();
+      const timeStamp = timestamps.get(blockHex);
       if (!request) {
         // A few public log endpoints return valid events outside a large OR
         // filter. They cannot belong to any requested wallet, so retaining
@@ -2118,22 +2374,41 @@ class EtherscanService {
         if (feedConfig.rpcScan?.allowExtraneousTopics
             && topic0 === String(feedConfig.topic0).toLowerCase()
             && validReceiverTopic && validContract) {
+          // Event-wide Blockscout scans intentionally see every receiver. A
+          // syntactically valid topic is not enough evidence to skip a row:
+          // validate its block, timestamp, transaction coordinate and ABI data
+          // with the same parser used for tracked receivers before discarding
+          // it. Otherwise one malformed untracked event could sit behind a
+          // cursor that was incorrectly certified complete.
+          const receiverAddress = `0x${receiverTopic.slice(-40)}`;
+          const parsed = this._parseStateSyncLog(
+            { ...log, timeStamp }, receiverAddress, feedConfig
+          );
+          observeParsed(parsed);
           continue;
         }
         const error = new Error('statesync RPC returned a receiver outside the requested topic set');
         error.code = 'ETHERSCAN_API_ERROR';
         throw error;
       }
-      const blockHex = String(log.blockNumber).toLowerCase();
       const block = parseInt(blockHex, 16);
       if (block < request.startBlock) continue;
       const parsed = this._parseStateSyncLog({
         ...log,
-        timeStamp: timestamps.get(blockHex),
+        timeStamp,
       }, request.address, feedConfig);
-      if (seen.has(parsed._key)) continue;
-      seen.add(parsed._key);
-      parsedByAddress.get(request.address).push(parsed);
+      observeParsed(parsed, request);
+    }
+
+    const missingAfterSplit = [...seen.values()].some(
+      (entry) => entry.wanted && !entry.retained
+    );
+    if (missingAfterSplit) {
+      const error = new Error(
+        'statesync provider omitted a saturated-page log from its split windows; cursor frozen'
+      );
+      error.code = 'ETHERSCAN_API_ERROR';
+      throw error;
     }
 
     for (const [address, parsed] of parsedByAddress) {
@@ -2171,6 +2446,8 @@ class EtherscanService {
     const data = typeof log?.data === 'string' ? log.data : '';
     const contract = String(feedConfig.contract).toLowerCase();
     if (String(log?.address || '').toLowerCase() !== contract) fail('wrong emitting contract');
+    if (String(log?.topics?.[0] || '').toLowerCase()
+        !== String(feedConfig.topic0 || '').toLowerCase()) fail('wrong event topic');
     const userTopicIndex = Number(feedConfig.userTopicIndex ?? 2);
     if (String(log?.topics?.[userTopicIndex] || '').toLowerCase() !== addressTopic(walletAddress)) {
       fail('wrong receiver topic');
@@ -2181,15 +2458,16 @@ class EtherscanService {
     // The format is ENFORCED because a decimal still parses "successfully" --
     // parseInt('84421264', 16) is 2.2 billion, past any real tip -- which would
     // poison the cursor and stamp block_time centuries ahead.
-    if (!/^0x[0-9a-fA-F]+$/.test(String(log.blockNumber || ''))) fail('non-hex blockNumber');
-    if (!/^0x[0-9a-fA-F]+$/.test(String(log.timeStamp || ''))) fail('non-hex timeStamp');
-    const block = parseInt(log.blockNumber, 16);
-    const timeStamp = parseInt(log.timeStamp, 16);
-    if (!Number.isFinite(block) || !Number.isFinite(timeStamp)) fail('unreadable blockNumber/timeStamp');
-    const logIndex = /^0x[0-9a-fA-F]+$/.test(String(log.logIndex || '')) ? parseInt(log.logIndex, 16) : 0;
-    if (!log.transactionHash) fail('missing transactionHash');
+    const block = safeHexInteger(log?.blockNumber);
+    const timeStamp = safeHexInteger(log?.timeStamp);
+    const logIndex = safeHexInteger(log?.logIndex);
+    if (block == null) fail('invalid blockNumber');
+    if (timeStamp == null) fail('invalid timeStamp');
+    if (logIndex == null) fail('invalid logIndex');
+    const transactionHash = String(log?.transactionHash || '').toLowerCase();
+    if (!TX_HASH_RE.test(transactionHash)) fail('invalid transactionHash');
     return {
-      hash: log.transactionHash,
+      hash: transactionHash,
       blockNumber: String(block),
       timeStamp: String(timeStamp),
       from: contract,
@@ -2197,7 +2475,7 @@ class EtherscanService {
       value: BigInt(amountHex).toString(),
       _block: block,
       _logIndex: logIndex,
-      _key: `${log.transactionHash}:${logIndex}`,
+      _key: `${transactionHash}:${logIndex}`,
     };
   }
 }
