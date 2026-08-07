@@ -64,6 +64,27 @@ test('synthesizes a gas row with gasUsed * gasPrice for sent txs', () => {
   assert.equal(native[0].from_address, WALLET.toLowerCase());
 });
 
+test('uses an exact provider fee when OP Stack L1 data makes gas product incomplete', () => {
+  const rows = EthWalletService.normalizeFeeds(WALLET, {
+    normal: [{
+      blockNumber: '123',
+      timeStamp: '1700000000',
+      hash: '0xexactfee',
+      from: WALLET,
+      to: OTHER,
+      value: '0',
+      gasUsed: '21000',
+      gasPrice: '1000000',
+      feeWei: '21000000123',
+      isError: '0',
+    }],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].transfer_type, 'gas');
+  assert.equal(rows[0].value_wei, '21000000123');
+});
+
 test('failed sent tx keeps its gas row and flags the value row', () => {
   const rows = EthWalletService.normalizeFeeds(WALLET, {
     normal: [normalTx({ isError: '1' })],

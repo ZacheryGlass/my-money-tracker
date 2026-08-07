@@ -136,7 +136,8 @@ function providerName(chain, spec = null) {
     return `JSON-RPC (${chain.rpcUrl})`;
   }
   if (chain.accountApi) {
-    return `${chain.accountApi.provider || 'chain explorer'} (${chain.accountApi.baseUrl})`;
+    const accountUrl = chain.accountApi.v2BaseUrl || chain.accountApi.baseUrl;
+    return `${chain.accountApi.provider || 'chain explorer'} (${accountUrl})`;
   }
   return 'Etherscan V2';
 }
@@ -526,7 +527,12 @@ class EthWalletService {
         });
       }
       if ((raw.from || '').toLowerCase() === wallet) {
-        const fee = BigInt(raw.gasUsed || 0) * BigInt(raw.gasPrice || 0);
+        // Blockscout v2 exposes the exact OP Stack fee, including the L1-data
+        // component that gasUsed * gasPrice omits. Other providers retain the
+        // original multiplication contract.
+        const fee = raw.feeWei != null
+          ? BigInt(raw.feeWei)
+          : BigInt(raw.gasUsed || 0) * BigInt(raw.gasPrice || 0);
         rows.push({
           ...baseRow(raw, 'gas'),
           value_wei: fee.toString(),
@@ -752,6 +758,30 @@ class EthWalletService {
         chain.id,
         prefetchedStateSync?.indexedHead ?? null
       );
+      // A temporarily regressed explorer head must never shrink a persisted
+      // cursor. The overlap delete below is intentionally open-ended, so
+      // accepting a head behind any active feed's prior cursor would erase
+      // already-ingested rows above that head and then persist the regression.
+      const persistedCursors = {
+        normal: Number(state?.last_block_normal ?? 0),
+        internal: Number(state?.last_block_internal ?? 0),
+        token: Number(state?.last_block_token ?? 0),
+        nft: Number(state?.last_block_nft ?? 0),
+        nft1155: Number(state?.last_block_1155 ?? 0),
+        statesync: Number(state?.last_block_statesync ?? 0),
+      };
+      const regressedFeeds = chain.accountApi?.apiStyle === 'blockscout-v2'
+        ? FEED_SPECS
+          .filter((spec) => feedActive(spec) && persistedCursors[spec.key] > boundary.throughBlock)
+          .map((spec) => spec.key)
+        : [];
+      if (regressedFeeds.length > 0) {
+        const error = new Error(
+          `${chain.name} indexed head ${boundary.throughBlock} is behind persisted cursor for ${regressedFeeds.join(', ')}; cursors frozen`
+        );
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
     } catch (error) {
       const failureStatus = coverageFailureStatus(error);
       const retryAt = failureStatus === 'deferred' ? retryAfterAt(error) : null;

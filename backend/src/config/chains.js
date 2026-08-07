@@ -3,9 +3,10 @@
 // The chains an Ethereum wallet address is synced across. Most use Etherscan
 // API V2 from one host and one key, selected per request by the `chainid`
 // param. A chain may instead declare `accountApi`: the same five account-feed
-// contract is then served by that per-chain explorer. Every provider still
-// shares its provider-host queue in ./etherscan.js; adding chains must not
-// multiply the request rate against the same explorer.
+// contract is then served by that per-chain explorer, either through its
+// Etherscan-compatible API or a declared adapter. Every provider still shares
+// its provider-host queue in ./etherscan.js; adding chains must not multiply
+// the request rate against the same explorer.
 //
 // EVERY ENTRY BELOW WAS PROBED LIVE, not taken from documentation:
 // GET https://api.etherscan.io/v2/chainlist (64 chains served), then each of
@@ -26,11 +27,12 @@
 //     arriving from a contract is seen at all, so a chain without them silently
 //     drifts away from its own derived balance.
 //   * OP Mainnet (10) and Base (8453) remain paid-plan-only through Etherscan,
-//     so both use their public Blockscout instances instead. The five account
-//     feeds were probed separately on each chain. Their internal feed reports
-//     partially indexed ranges as status=2; that remains an explicit,
-//     cursor-frozen gap, while a per-chain ETHBridgeFinalized log feed records
-//     canonical native bridge credits independently.
+//     so both use their public Blockscout instances instead. OP still uses the
+//     Etherscan-compatible facade. Base's anonymous legacy facade began
+//     returning a standing 429 in August 2026 while its documented v2 REST API
+//     remained healthy, so Base has an explicit v2 adapter. A per-chain
+//     ETHBridgeFinalized log feed records canonical native bridge credits
+//     independently.
 //   * Polygon PoS (137) is served on the FREE key -- balance, txlist and
 //     txlistinternal all answered on a live probe, so it ships enabled. It is
 //     also the first chain here that is NOT ETH-native (see NATIVE_ASSETS).
@@ -250,6 +252,8 @@ const REGISTRY = [
     accountApi: {
       provider: 'Blockscout',
       baseUrl: 'https://base.blockscout.com/api',
+      apiStyle: 'blockscout-v2',
+      v2BaseUrl: 'https://base.blockscout.com/api/v2',
       requiresApiKey: false,
     },
     rpcUrl: 'https://mainnet.base.org',
@@ -261,15 +265,18 @@ const REGISTRY = [
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
-      // Base's Blockscout logs endpoint serves bounded 10,000-block windows,
-      // includes the event timestamp, and accepts a comma-separated OR of all
-      // tracked receiver topics. That avoids a 21-wallet archive RPC walk;
-      // full 1,000-log responses are recursively split rather than treated as
-      // an apparently complete window.
+      // Base's public JSON-RPC caps eth_getLogs ranges at 10,000 blocks. All
+      // tracked receiver topics share each bounded request, so the nightly
+      // incremental scan walks the public chain once rather than once per
+      // wallet. The legacy Blockscout logs facade is deliberately not used:
+      // it is behind the same standing anonymous 429 as its account facade.
       rpcScan: {
-        provider: 'blockscout',
+        provider: 'rpc',
         blockRange: 10000,
-        batchSize: 1,
+        // The public Base endpoint accepts at most 10 JSON-RPC calls per
+        // batch. Use that verified ceiling so the one-time genesis walk is
+        // about 500 HTTP requests rather than about 5,000.
+        batchSize: 10,
         concurrency: 1,
         // Some public Base log responses include valid ETHBridgeFinalized
         // events outside the requested receiver OR-set. The scanner validates
