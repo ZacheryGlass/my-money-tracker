@@ -126,6 +126,9 @@ const EXPLORER_RATE_LIMIT_RETRIES = boundedEnvInteger(
 const INLINE_RATE_LIMIT_RETRY_MAX_MS = boundedEnvInteger(
   'EXPLORER_INLINE_RETRY_MAX_MS', 5000, MAX_EXPLORER_PAUSE_MS
 );
+const BLOCKSCOUT_DEFERRED_RETRY_MIN_MS = boundedEnvInteger(
+  'BLOCKSCOUT_DEFERRED_RETRY_MIN_MS', 60 * 1000, MAX_EXPLORER_PAUSE_MS
+);
 const EXPLORER_RETRY_JITTER_MS = boundedEnvInteger(
   'EXPLORER_RETRY_JITTER_MS', 250, 5000
 );
@@ -150,15 +153,30 @@ function parseRetryAfter(value) {
   return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : null;
 }
 
-function explorerRetryDelay(error, attempt) {
+function responseRetryAfterMs(error) {
   const headers = error?.response?.headers || {};
-  const header = headers['retry-after'] ?? headers['Retry-After'];
-  const retryAfterMs = parseRetryAfter(header);
+  return parseRetryAfter(headers['retry-after'] ?? headers['Retry-After']);
+}
+
+function explorerRetryDelay(error, attempt) {
+  const retryAfterMs = responseRetryAfterMs(error);
   const base = retryAfterMs != null ? retryAfterMs : 1100 * (2 ** attempt);
   const jitter = EXPLORER_RETRY_JITTER_MS > 0
     ? Math.floor(Math.random() * (EXPLORER_RETRY_JITTER_MS + 1))
     : 0;
   return Math.min(MAX_EXPLORER_PAUSE_MS, base + jitter);
+}
+
+function deferredRetryDelay(provider, error, attemptedDelayMs) {
+  // Base's public Blockscout instance returns a body-level throttle without a
+  // Retry-After header after sustained anonymous traffic. The short inline
+  // exponential delay is enough for a per-second burst, but production proved
+  // it immediately re-enters the same IP-wide minute bucket. Give that bucket
+  // time to drain. An explicit provider header remains authoritative.
+  if (provider.name === 'Blockscout' && responseRetryAfterMs(error) == null) {
+    return Math.max(attemptedDelayMs, BLOCKSCOUT_DEFERRED_RETRY_MIN_MS);
+  }
+  return attemptedDelayMs;
 }
 
 function isRateLimitedDetail(value) {
@@ -245,7 +263,12 @@ async function retryAfterRateLimit({
     await sleep(delayMs);
     return retry();
   }
-  throw rateLimitError(provider, chainId, params, delayMs, error);
+  const deferredDelayMs = deferredRetryDelay(provider, error, delayMs);
+  // Keep unrelated wallets and requests off the same host while the durable
+  // job waits. Otherwise they can consume the cooldown and make the retry fail
+  // before it begins.
+  etherscan.pause(provider.key, deferredDelayMs);
+  throw rateLimitError(provider, chainId, params, deferredDelayMs, error);
 }
 
 async function runThrottledRequest({

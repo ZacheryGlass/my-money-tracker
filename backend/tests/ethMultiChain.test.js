@@ -241,6 +241,11 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
   assert.equal(lite.enabledByDefault, true);
 });
 
+test('anonymous Blockscout requests stay below a conservative minute bucket', () => {
+  assert.equal(etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS, 1500);
+  assert.ok(60_000 / etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS <= 40);
+});
+
 test('all live-probed chains default on through their configured providers', () => {
   delete process.env.ETH_CHAINS;
   const byId = new Map(chains.allChains().map((chain) => [chain.id, chain]));
@@ -1277,6 +1282,7 @@ test('HTTP and body-level throttles share one bounded retry budget', async (t) =
   const axios = require('axios');
   const originalGet = axios.get;
   let requests = 0;
+  let terminalError;
   axios.get = async () => {
     requests += 1;
     if (requests === 2) {
@@ -1297,9 +1303,44 @@ test('HTTP and body-level throttles share one bounded retry budget', async (t) =
       { module: 'account', action: 'txlist', address: WALLET },
       { apiKey: null, chainId: 8453 }
     ),
-    (error) => error.code === 'EXPLORER_RATE_LIMITED'
+    (error) => {
+      terminalError = error;
+      return error.code === 'EXPLORER_RATE_LIMITED';
+    }
   );
   assert.equal(requests, 3, 'two configured retries permit three total attempts');
+  assert.ok(terminalError.retryAfterMs < 1000,
+    'an explicit Retry-After remains authoritative instead of using the anonymous-IP floor');
+});
+
+test('anonymous Blockscout throttles defer for a full minute bucket', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  let requests = 0;
+  let terminalError;
+  axios.get = async () => {
+    requests += 1;
+    return {
+      headers: {},
+      data: { status: '0', message: 'Too many requests', result: 'rate limit reached' },
+    };
+  };
+  t.after(() => { axios.get = originalGet; });
+  t.after(() => { etherscanConfig.resetRateLimits(); });
+
+  await assert.rejects(
+    () => EtherscanService._request(
+      { module: 'account', action: 'txlist', address: WALLET },
+      { apiKey: null, chainId: 8453 }
+    ),
+    (error) => {
+      terminalError = error;
+      return error.code === 'EXPLORER_RATE_LIMITED';
+    }
+  );
+  assert.equal(requests, 3, 'the minute cooldown begins only after bounded inline retries');
+  assert.ok(terminalError.retryAfterMs >= 60_000);
+  assert.ok(terminalError.retryAfterAt.getTime() - Date.now() > 55_000);
 });
 
 test('Etherscan proxy JSON-RPC responses supply the Polygon log coverage head', async (t) => {
