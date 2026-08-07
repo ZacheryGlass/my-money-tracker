@@ -77,6 +77,22 @@ const DEPOSIT_TX = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd
 const DEPOSIT_WEI = '47250000000000000000'; // 47.25 POL
 const WALLET_2 = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
 
+function testTxHash(value) {
+  const text = String(value).toLowerCase();
+  if (/^0x[0-9a-f]{64}$/.test(text)) return text;
+  return `0x${Buffer.from(text).toString('hex').slice(0, 64).padEnd(64, '0')}`;
+}
+
+function baseV2StateSyncConfig() {
+  return {
+    ...chains.getChain(8453).stateSyncDeposits,
+    rpcScan: {
+      provider: 'blockscout-v2',
+      allowKnownSlowFullHistoryWalk: true,
+    },
+  };
+}
+
 const sqlOf = (query) => query.text.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
 
 function stubScanHead(t, block = 90000000) {
@@ -96,7 +112,7 @@ function depositLog({ amountWei = DEPOSIT_WEI, block = 84000001, ts = 1742000000
     blockNumber: `0x${block.toString(16)}`,
     timeStamp: `0x${ts.toString(16)}`,
     logIndex: `0x${logIndex.toString(16)}`,
-    transactionHash: hash,
+    transactionHash: testTxHash(hash),
   };
 }
 
@@ -129,7 +145,7 @@ function ethBridgeFinalizedLog({
     blockNumber: `0x${block.toString(16)}`,
     timeStamp: `0x${ts.toString(16)}`,
     logIndex: `0x${logIndex.toString(16)}`,
-    transactionHash: hash,
+    transactionHash: testTxHash(hash),
   };
 }
 
@@ -167,7 +183,16 @@ test('Polygon, Gnosis, OP Mainnet, and Base declare verified native-credit logs'
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
       if (chain.id === 8453) {
         assert.deepEqual(chain.stateSyncDeposits.rpcScan, {
-          provider: 'blockscout-v2',
+          provider: 'blockscout',
+          blockRange: 250000,
+          batchSize: 1,
+          concurrency: 1,
+          requestSpacingMs: 7000,
+          maxRequests: 2000,
+          maxElapsedMs: 3 * 60 * 60 * 1000,
+          maxResponseRows: 1000000,
+          scanAllReceivers: true,
+          allowExtraneousTopics: true,
         });
       }
     } else {
@@ -254,8 +279,8 @@ test('Base scans bounded RPC windows once for several wallet receiver topics', a
   assert.deepEqual(calls[0].batch.map((call) => call.params[0].fromBlock), ['0x0', '0x2710']);
   assert.equal(calls[0].batch[0].params[0].topics[2].length, 2,
     'both receiver topics are OR-ed inside each bounded filter');
-  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xwallet1']);
-  assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), ['0xwallet2new']);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [testTxHash('0xwallet1')]);
+  assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), [testTxHash('0xwallet2new')]);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
   assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 19999);
 });
@@ -337,7 +362,7 @@ test('Base Blockscout v2 walks one event stream and distributes receiver rows', 
       { address: WALLET_2, startBlock: 0 },
     ],
     8453,
-    chains.getChain(8453).stateSyncDeposits,
+    baseV2StateSyncConfig(),
     200
   );
 
@@ -397,7 +422,7 @@ test('Base chain-wide event walk can cross the old per-wallet safety limits', as
   const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
     [{ address: WALLET, startBlock: 0 }],
     8453,
-    chains.getChain(8453).stateSyncDeposits,
+    baseV2StateSyncConfig(),
     head
   );
 
@@ -427,7 +452,7 @@ test('Base bridge-log requests use the bounded extended provider timeout', async
   await EtherscanService.fetchStateSyncDepositsBatch(
     [{ address: WALLET, startBlock: 0 }],
     8453,
-    chains.getChain(8453).stateSyncDeposits,
+    baseV2StateSyncConfig(),
     200
   );
 
@@ -449,7 +474,7 @@ test('Base Blockscout v2 rejects a response that ignores its event topic', async
     EtherscanService.fetchStateSyncDepositsBatch(
       [{ address: WALLET, startBlock: 0 }],
       8453,
-      chains.getChain(8453).stateSyncDeposits,
+      baseV2StateSyncConfig(),
       50000000
     ),
     /ignored the event topic filter/
@@ -478,7 +503,7 @@ test('Base Blockscout v2 rejects a repeated page cursor', async (t) => {
     EtherscanService.fetchStateSyncDepositsBatch(
       [{ address: WALLET, startBlock: 0 }],
       8453,
-      chains.getChain(8453).stateSyncDeposits,
+      baseV2StateSyncConfig(),
       300
     ),
     /repeated a page cursor/
@@ -506,7 +531,7 @@ test('Base Blockscout v2 rejects a cursor that changes the event topic', async (
     EtherscanService.fetchStateSyncDepositsBatch(
       [{ address: WALLET, startBlock: 0 }],
       8453,
-      chains.getChain(8453).stateSyncDeposits,
+      baseV2StateSyncConfig(),
       300
     ),
     /conflicting topic cursor/
@@ -540,7 +565,467 @@ test('Base shared prefetch keeps the oldest cursor when two users track one addr
   );
 
   assert.equal(rowsByAddress.size, 1);
-  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xshared']);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [testTxHash('0xshared')]);
+});
+
+test('Base uses bounded event-wide Blockscout windows and distributes receivers locally', async (t) => {
+  const original = EtherscanService._request;
+  const calls = [];
+  EtherscanService._request = async (params, options) => {
+    calls.push({ params, options });
+    return [
+      ethBridgeFinalizedLog({ block: 100000, wallet: WALLET, hash: '0xwallet1' }),
+      ethBridgeFinalizedLog({ block: 200000, wallet: WALLET_2, hash: '0xwallet2' }),
+      ethBridgeFinalizedLog({
+        block: 225000,
+        wallet: '0x1111111111111111111111111111111111111111',
+        hash: '0xuntracked',
+      }),
+    ];
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  const config = chains.getChain(8453).stateSyncDeposits;
+  assert.deepEqual(config.rpcScan, {
+    provider: 'blockscout',
+    blockRange: 250000,
+    batchSize: 1,
+    concurrency: 1,
+    requestSpacingMs: 7000,
+    maxRequests: 2000,
+    maxElapsedMs: 3 * 60 * 60 * 1000,
+    maxResponseRows: 1000000,
+    scanAllReceivers: true,
+    allowExtraneousTopics: true,
+  });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [
+      { address: WALLET, startBlock: 0 },
+      { address: WALLET_2, startBlock: 150000 },
+    ],
+    8453,
+    config,
+    249999
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.chainId, 8453);
+  assert.equal(calls[0].options.spacingMs, 7000);
+  assert.equal(calls[0].params.fromBlock, 0);
+  assert.equal(calls[0].params.toBlock, 249999);
+  assert.equal(calls[0].params.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);
+  assert.equal(calls[0].params.topic2, undefined,
+    'the provider never receives tracked receiver addresses');
+  assert.equal(calls[0].params.topic0_2_opr, undefined);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [testTxHash('0xwallet1')]);
+  assert.deepEqual(rowsByAddress.get(WALLET_2).map((row) => row.hash), [testTxHash('0xwallet2')]);
+  assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 249999);
+  assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 249999);
+});
+
+test('event-wide state-sync scans require the extraneous-row validation gate', async () => {
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      {
+        ...chains.getChain(8453).stateSyncDeposits,
+        rpcScan: {
+          provider: 'blockscout',
+          blockRange: 250000,
+          batchSize: 1,
+          concurrency: 1,
+          scanAllReceivers: true,
+        },
+      },
+      249999
+    ),
+    /scanAllReceivers requires Blockscout windows with allowExtraneousTopics/
+  );
+});
+
+test('event-wide state-sync scans require a bounded endpoint spacing', async () => {
+  for (const requestSpacingMs of [undefined, 999, 60001, 1.5]) {
+    await assert.rejects(
+      EtherscanService.fetchStateSyncDepositsBatch(
+        [{ address: WALLET, startBlock: 0 }],
+        8453,
+        {
+          ...chains.getChain(8453).stateSyncDeposits,
+          rpcScan: {
+            provider: 'blockscout',
+            blockRange: 250000,
+            batchSize: 1,
+            concurrency: 1,
+            requestSpacingMs,
+            scanAllReceivers: true,
+            allowExtraneousTopics: true,
+          },
+        },
+        249999
+      ),
+      /scanAllReceivers requires requestSpacingMs between 1000 and 60000/
+    );
+  }
+});
+
+test('the retired Blockscout v2 history walk requires an explicit quarantine bypass', async () => {
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      {
+        ...chains.getChain(8453).stateSyncDeposits,
+        rpcScan: { provider: 'blockscout-v2' },
+      },
+      249999
+    ),
+    /blockscout-v2 is quarantined/
+  );
+});
+
+test('Base event-wide windows reject a malformed untracked event before advancing', async (t) => {
+  const original = EtherscanService._request;
+  EtherscanService._request = async () => [{
+    ...ethBridgeFinalizedLog({
+      block: 200000,
+      wallet: '0x1111111111111111111111111111111111111111',
+      hash: '0xuntracked-malformed',
+    }),
+    data: '0x1234',
+  }];
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      249999
+    ),
+    /malformed/
+  );
+});
+
+test('Base event-wide windows reject a tracked row when the event filter is ignored', async (t) => {
+  const original = EtherscanService._request;
+  EtherscanService._request = async () => {
+    const row = ethBridgeFinalizedLog({ wallet: WALLET, block: 100000 });
+    row.topics[0] = `0x${'f'.repeat(64)}`;
+    return [row];
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      249999
+    ),
+    /wrong event topic/
+  );
+});
+
+test('Base event-wide windows reject rows outside the requested block window', async (t) => {
+  const original = EtherscanService._request;
+  EtherscanService._request = async () => [ethBridgeFinalizedLog({
+    wallet: WALLET,
+    block: 250000,
+  })];
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      249999
+    ),
+    /outside the requested window/
+  );
+});
+
+test('Base event-wide windows reject malformed tracked and untracked coordinates', async (t) => {
+  const original = EtherscanService._request;
+  t.after(() => { EtherscanService._request = original; });
+
+  for (const row of [
+    {
+      ...ethBridgeFinalizedLog({ wallet: WALLET, block: 100000 }),
+      transactionHash: '0x1234',
+    },
+    {
+      ...ethBridgeFinalizedLog({
+        wallet: '0x1111111111111111111111111111111111111111',
+        block: 100000,
+      }),
+      logIndex: null,
+    },
+  ]) {
+    EtherscanService._request = async () => [row];
+    await assert.rejects(
+      EtherscanService.fetchStateSyncDepositsBatch(
+        [{ address: WALLET, startBlock: 0 }],
+        8453,
+        chains.getChain(8453).stateSyncDeposits,
+        249999
+      ),
+      /malformed \(invalid (transactionHash|logIndex)\)/
+    );
+  }
+});
+
+test('Base event-wide windows fail on conflicting duplicate coordinates', async (t) => {
+  const original = EtherscanService._request;
+  const first = ethBridgeFinalizedLog({ wallet: WALLET, block: 100000 });
+  const conflict = ethBridgeFinalizedLog({
+    wallet: WALLET,
+    block: 100000,
+    amountWei: '2',
+    hash: first.transactionHash,
+    logIndex: parseInt(first.logIndex, 16),
+  });
+  EtherscanService._request = async () => [first, conflict];
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      249999
+    ),
+    /conflicting duplicate log/
+  );
+});
+
+test('Base detects a conflicting coordinate even when one receiver is untracked', async (t) => {
+  const original = EtherscanService._request;
+  const untracked = ethBridgeFinalizedLog({
+    wallet: '0x1111111111111111111111111111111111111111',
+    block: 100000,
+  });
+  const tracked = ethBridgeFinalizedLog({
+    wallet: WALLET,
+    block: 100000,
+    hash: untracked.transactionHash,
+    logIndex: parseInt(untracked.logIndex, 16),
+  });
+  EtherscanService._request = async () => [untracked, tracked];
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      249999
+    ),
+    /conflicting duplicate log/
+  );
+});
+
+test('Base validates a saturated response before considering a split', async (t) => {
+  const original = EtherscanService._request;
+  let calls = 0;
+  const outside = ethBridgeFinalizedLog({ wallet: WALLET, block: 250000 });
+  EtherscanService._request = async () => {
+    calls += 1;
+    return Array(1000).fill(outside);
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      chains.getChain(8453).stateSyncDeposits,
+      249999
+    ),
+    /outside the requested window/
+  );
+  assert.equal(calls, 1, 'invalid saturation never multiplies provider calls');
+});
+
+test('Base bisects a persistently timing-out window and accepts successful children', async (t) => {
+  const original = EtherscanService._request;
+  const calls = [];
+  EtherscanService._request = async (params) => {
+    calls.push([params.fromBlock, params.toBlock]);
+    if (params.fromBlock === 0 && params.toBlock === 249999) {
+      const error = new Error('timeout of 15000ms exceeded');
+      error.code = 'ECONNABORTED';
+      throw error;
+    }
+    return params.fromBlock === 0
+      ? [ethBridgeFinalizedLog({ wallet: WALLET, block: 100000, hash: '0xchild' })]
+      : [];
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [{ address: WALLET, startBlock: 0 }],
+    8453,
+    chains.getChain(8453).stateSyncDeposits,
+    249999
+  );
+
+  assert.deepEqual(calls, [[0, 249999], [0, 124999], [125000, 249999]]);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [
+    testTxHash('0xchild'),
+  ]);
+});
+
+test('Base event-wide scans fail closed when a scan-wide budget is exhausted', async (t) => {
+  const original = EtherscanService._request;
+  const originalNow = Date.now;
+  t.after(() => {
+    EtherscanService._request = original;
+    Date.now = originalNow;
+  });
+
+  let calls = 0;
+  EtherscanService._request = async () => { calls += 1; return []; };
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      {
+        ...chains.getChain(8453).stateSyncDeposits,
+        rpcScan: {
+          ...chains.getChain(8453).stateSyncDeposits.rpcScan,
+          maxRequests: 1,
+        },
+      },
+      499999
+    ),
+    /exceeding the 1-request budget/
+  );
+  assert.equal(calls, 0, 'a predictably impossible scan is rejected before provider work');
+
+  let now = 1000;
+  Date.now = () => now;
+  EtherscanService._request = async () => { now += 1001; return []; };
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      {
+        ...chains.getChain(8453).stateSyncDeposits,
+        rpcScan: {
+          ...chains.getChain(8453).stateSyncDeposits.rpcScan,
+          maxElapsedMs: 1000,
+        },
+      },
+      249999
+    ),
+    /exceeded 1000ms/
+  );
+
+  Date.now = originalNow;
+  EtherscanService._request = async () => [
+    ethBridgeFinalizedLog({ wallet: WALLET, block: 1 }),
+    ethBridgeFinalizedLog({ wallet: WALLET, block: 2, hash: '0xsecond-row' }),
+  ];
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      {
+        ...chains.getChain(8453).stateSyncDeposits,
+        rpcScan: {
+          ...chains.getChain(8453).stateSyncDeposits.rpcScan,
+          maxResponseRows: 1,
+        },
+      },
+      249999
+    ),
+    /exceeded 1 response rows/
+  );
+});
+
+test('the Base request budget counts transport-level retry attempts', async (t) => {
+  const axios = require('axios');
+  const etherscanConfig = require('../src/config/etherscan');
+  const originalGet = axios.get;
+  const originalThrottled = etherscanConfig.throttled;
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    return {
+      headers: { 'retry-after': '0' },
+      data: { status: '0', message: 'Too many requests', result: 'rate limit reached' },
+    };
+  };
+  etherscanConfig.throttled = (fn) => fn();
+  t.after(() => {
+    axios.get = originalGet;
+    etherscanConfig.throttled = originalThrottled;
+    etherscanConfig.resetRateLimits();
+  });
+
+  await assert.rejects(
+    EtherscanService.fetchStateSyncDepositsBatch(
+      [{ address: WALLET, startBlock: 0 }],
+      8453,
+      {
+        ...chains.getChain(8453).stateSyncDeposits,
+        rpcScan: {
+          ...chains.getChain(8453).stateSyncDeposits.rpcScan,
+          maxRequests: 1,
+        },
+      },
+      249999
+    ),
+    /exceeded 1 requests/
+  );
+  assert.equal(requests, 1, 'the retry is blocked before issuing a second HTTP request');
+});
+
+test('Base retries only the failed bounded window and retains prior progress', async (t) => {
+  const original = EtherscanService._request;
+  const calls = [];
+  let secondWindowAttempts = 0;
+  EtherscanService._request = async (params) => {
+    calls.push(params.fromBlock);
+    if (params.fromBlock === 0) {
+      return [ethBridgeFinalizedLog({
+        block: 100000,
+        wallet: WALLET,
+        hash: '0xfirst-window',
+      })];
+    }
+    secondWindowAttempts += 1;
+    if (secondWindowAttempts === 1) {
+      const error = new Error('Blockscout rate limit reached; retry after 1s');
+      error.code = 'EXPLORER_RATE_LIMITED';
+      error.retryAfterMs = 1;
+      throw error;
+    }
+    return [ethBridgeFinalizedLog({
+      block: 300000,
+      wallet: WALLET,
+      hash: '0xsecond-window',
+    })];
+  };
+  t.after(() => { EtherscanService._request = original; });
+
+  const rowsByAddress = await EtherscanService.fetchStateSyncDepositsBatch(
+    [{ address: WALLET, startBlock: 0 }],
+    8453,
+    chains.getChain(8453).stateSyncDeposits,
+    499999
+  );
+
+  assert.deepEqual(calls, [0, 250000, 250000],
+    'the completed first window is not replayed');
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [
+    testTxHash('0xfirst-window'),
+    testTxHash('0xsecond-window'),
+  ]);
+  assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 499999);
 });
 
 test('Base Blockscout windows share receiver topics and use returned timestamps', async (t) => {
@@ -548,7 +1033,9 @@ test('Base Blockscout windows share receiver topics and use returned timestamps'
   const calls = [];
   EtherscanService._request = async (params, options) => {
     calls.push({ params, options });
-    return [ethBridgeFinalizedLog({ wallet: WALLET, block: 5000, hash: '0xblockscout' })];
+    return params.fromBlock === 0
+      ? [ethBridgeFinalizedLog({ wallet: WALLET, block: 5000, hash: '0xblockscout' })]
+      : [];
   };
   t.after(() => { EtherscanService._request = original; });
 
@@ -573,7 +1060,7 @@ test('Base Blockscout windows share receiver topics and use returned timestamps'
   assert.equal(calls[0].params.topic0_2_opr, 'and');
   assert.match(calls[0].params.topic2, new RegExp(WALLET.slice(2)));
   assert.match(calls[0].params.topic2, new RegExp(WALLET_2.slice(2)));
-  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xblockscout']);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [testTxHash('0xblockscout')]);
   assert.deepEqual(rowsByAddress.get(WALLET_2), []);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 19999);
 });
@@ -602,7 +1089,7 @@ test('Base ignores only well-formed out-of-scope receivers from a public log res
     9999
   );
 
-  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xrequested']);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [testTxHash('0xrequested')]);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 9999);
 });
 
@@ -637,11 +1124,19 @@ test('a saturated Blockscout window splits before accepting a cursor', async (t)
   EtherscanService._request = async (params) => {
     calls.push(params);
     if (params.fromBlock === 0 && params.toBlock === 99999) {
-      return Array.from({ length: 1000 }, (_, index) =>
-        ethBridgeFinalizedLog({ block: index + 1, hash: `0xfull${index}` }));
+      return [
+        ethBridgeFinalizedLog({ block: 5000, hash: '0xleft' }),
+        ethBridgeFinalizedLog({ block: 75000, hash: '0xright' }),
+        ...Array.from({ length: 998 }, (_, index) => ethBridgeFinalizedLog({
+          block: index + 1,
+          wallet: '0x1111111111111111111111111111111111111111',
+          hash: `0xfull${index}`,
+          logIndex: index + 2,
+        })),
+      ];
     }
     return [ethBridgeFinalizedLog({
-      block: params.fromBlock === 0 ? 5000 : 15000,
+      block: params.fromBlock === 0 ? 5000 : 75000,
       hash: params.fromBlock === 0 ? '0xleft' : '0xright',
     })];
   };
@@ -652,13 +1147,22 @@ test('a saturated Blockscout window splits before accepting a cursor', async (t)
     8453,
     {
       ...chains.getChain(8453).stateSyncDeposits,
-      rpcScan: { provider: 'blockscout', blockRange: 100000, batchSize: 1, concurrency: 1 },
+      rpcScan: {
+        provider: 'blockscout',
+        blockRange: 100000,
+        batchSize: 1,
+        concurrency: 1,
+        allowExtraneousTopics: true,
+      },
     },
     99999
   );
 
   assert.equal(calls.length, 3, 'one full window plus two split windows');
-  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), ['0xleft', '0xright']);
+  assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [
+    testTxHash('0xleft'),
+    testTxHash('0xright'),
+  ]);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 99999);
 });
 
@@ -1361,7 +1865,7 @@ test('a decimal blockNumber is rejected, not misparsed as hex', async (t) => {
   t.after(() => { axios.get = original; });
   await assert.rejects(
     EtherscanService.fetchStateSyncDeposits(WALLET, 0, 'key', 137, chains.getChain(137).stateSyncDeposits),
-    /non-hex blockNumber/
+    /invalid blockNumber/
   );
 });
 
