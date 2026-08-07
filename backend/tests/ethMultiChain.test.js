@@ -246,7 +246,7 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
   assert.equal(base.accountApi.v2BaseUrl, 'https://base.blockscout.com/api/v2');
   assert.equal(base.stateSyncDeposits.rpcScan.provider, 'blockscout');
   assert.equal(base.stateSyncDeposits.rpcScan.blockRange, 250000);
-  assert.equal(base.stateSyncDeposits.rpcScan.requestSpacingMs, 7000);
+  assert.equal(base.stateSyncDeposits.rpcScan.requestSpacingMs, 15000);
   assert.equal(base.stateSyncDeposits.rpcScan.maxRequests, 2000);
   assert.equal(base.stateSyncDeposits.rpcScan.maxElapsedMs, 3 * 60 * 60 * 1000);
   assert.equal(base.stateSyncDeposits.rpcScan.maxResponseRows, 1000000);
@@ -1688,6 +1688,39 @@ test('Etherscan proxy JSON-RPC responses supply the Polygon log coverage head', 
   assert.equal(seen.params.chainid, 137);
   assert.equal(seen.params.module, 'proxy');
   assert.equal(seen.params.action, 'eth_blockNumber');
+});
+
+test('Polygon head retries one malformed JSON-RPC envelope before succeeding', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    if (requests === 1) return { data: { jsonrpc: '2.0', id: 83 } };
+    return { data: { jsonrpc: '2.0', id: 83, result: '0x56f00de' } };
+  };
+  t.after(() => { axios.get = originalGet; });
+
+  assert.equal(await EtherscanService._latestBlockNumber('test-key', 137), 91160798);
+  assert.equal(requests, 2);
+});
+
+test('Polygon head remains fail-closed after repeated malformed JSON-RPC envelopes', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  let requests = 0;
+  axios.get = async () => {
+    requests += 1;
+    return { data: { jsonrpc: '2.0', id: 83 } };
+  };
+  t.after(() => { axios.get = originalGet; });
+
+  await assert.rejects(
+    () => EtherscanService._latestBlockNumber('test-key', 137),
+    (error) => error.code === 'ETHERSCAN_API_ERROR'
+      && /invalid JSON-RPC response/.test(error.message)
+  );
+  assert.equal(requests, 2);
 });
 
 test('legacy Blockscout head falls back to the documented explorer endpoint', async (t) => {
