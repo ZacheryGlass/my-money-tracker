@@ -22,6 +22,9 @@ const MAX_ACCOUNT_PAGES = 200;
 // Blockscout v2 address feeds use cursor pagination with 50 rows per page.
 // Preserve the legacy walk's 200,000-row safety envelope while also bounding
 // a hostile endpoint that returns one row and a fresh cursor forever.
+// Keep these as request/data bounds rather than a wall-clock limit: at a
+// provider-safe pace, a valid deep history can exceed hours, and the opaque
+// cursor cannot be persisted safely midway through an atomic overlap rebuild.
 const MAX_ACCOUNT_ROWS = PAGE_SIZE * MAX_ACCOUNT_PAGES;
 const MAX_BLOCKSCOUT_V2_PAGES = 5000;
 
@@ -434,16 +437,21 @@ class EtherscanService {
   static _provider(chainId, apiKey = null) {
     const custom = chains.getChain(chainId)?.accountApi;
     if (custom) {
+      const providerDefaultSpacing = custom.provider === 'Blockscout'
+        ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
+        : etherscan.REQUEST_SPACING_MS;
       return {
         name: custom.provider || 'chain explorer',
         baseUrl: custom.baseUrl,
         requiresApiKey: custom.requiresApiKey !== false,
         params: {},
         key: `account:${custom.baseUrl}`,
-        spacingMs: custom.requestSpacingMs
-          ?? (custom.provider === 'Blockscout'
-            ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
-            : etherscan.REQUEST_SPACING_MS),
+        // A chain may raise the shared provider floor, but it must never
+        // weaken a stricter operator override.
+        spacingMs: Math.max(
+          Number(custom.requestSpacingMs) || 0,
+          providerDefaultSpacing
+        ),
       };
     }
     return {
@@ -879,7 +887,6 @@ class EtherscanService {
         `account provider head ${end} is behind requested block ${start}; cursor frozen`
       );
     }
-
     const path = `addresses/${String(address).toLowerCase()}/${feed.path}`;
     const fixedQuery = feed.type ? { type: feed.type } : {};
     let cursor = {};

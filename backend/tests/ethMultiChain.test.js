@@ -244,6 +244,8 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
   const base = chains.getChain(8453);
   assert.equal(base.accountApi.apiStyle, 'blockscout-v2');
   assert.equal(base.accountApi.v2BaseUrl, 'https://base.blockscout.com/api/v2');
+  assert.equal(base.accountApi.requestSpacingMs, 15000);
+  assert.equal(EtherscanService._provider(8453).spacingMs, 15000);
   assert.equal(base.stateSyncDeposits.rpcScan.provider, 'blockscout');
   assert.equal(base.stateSyncDeposits.rpcScan.blockRange, 250000);
   assert.equal(base.stateSyncDeposits.rpcScan.requestSpacingMs, 15000);
@@ -261,6 +263,14 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
 test('anonymous Blockscout requests stay below a conservative minute bucket', () => {
   assert.equal(etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS, 1500);
   assert.ok(60_000 / etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS <= 40);
+});
+
+test('a chain-specific Blockscout floor preserves stricter operator pacing', (t) => {
+  const original = etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS;
+  etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS = 20000;
+  t.after(() => { etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS = original; });
+
+  assert.equal(EtherscanService._provider(8453).spacingMs, 20000);
 });
 
 test('all live-probed chains default on through their configured providers', () => {
