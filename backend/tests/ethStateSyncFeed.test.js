@@ -19,6 +19,14 @@ const assert = require('node:assert/strict');
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = 'postgresql://test:test@localhost/test';
 
+const configuredBlockscoutLogTimeout = Number(process.env.BLOCKSCOUT_V2_LOG_TIMEOUT_MS);
+const EXPECTED_BLOCKSCOUT_LOG_TIMEOUT_MS = Math.max(
+  30000,
+  Number.isInteger(configuredBlockscoutLogTimeout) && configuredBlockscoutLogTimeout >= 0
+    ? Math.min(configuredBlockscoutLogTimeout, 5 * 60 * 1000)
+    : 120000
+);
+
 const queries = [];
 const pgModulePath = require.resolve('pg');
 require.cache[pgModulePath] = {
@@ -318,7 +326,11 @@ test('Base Blockscout v2 pages bridge logs by receiver topic and cursor', async 
   assert.equal(calls[0].path, `addresses/${OP_STACK_BRIDGE}/logs`);
   assert.deepEqual(calls[0].query, { topic: walletTopic });
   assert.deepEqual(calls[1].query, pageCursor);
-  assert.deepEqual(calls[0].options, { apiKey: null, chainId: 8453 });
+  assert.deepEqual(calls[0].options, {
+    apiKey: null,
+    chainId: 8453,
+    timeoutMs: EXPECTED_BLOCKSCOUT_LOG_TIMEOUT_MS,
+  });
   assert.equal(calls[2].query.topic, wallet2Topic);
   assert.deepEqual(rowsByAddress.get(WALLET).map((row) => row.hash), [
     `0x${'c'.repeat(64)}`,
@@ -326,6 +338,34 @@ test('Base Blockscout v2 pages bridge logs by receiver topic and cursor', async 
   assert.deepEqual(rowsByAddress.get(WALLET_2), []);
   assert.equal(rowsByAddress.get(WALLET).scannedThroughBlock, 200);
   assert.equal(rowsByAddress.get(WALLET_2).scannedThroughBlock, 200);
+});
+
+test('Base bridge-log requests use the bounded extended provider timeout', async (t) => {
+  const axios = require('axios');
+  const etherscanConfig = require('../src/config/etherscan');
+  const originalGet = axios.get;
+  const originalThrottled = etherscanConfig.throttled;
+  let seen;
+  axios.get = async (url, options) => {
+    seen = { url, options };
+    return { data: { items: [], next_page_params: null } };
+  };
+  etherscanConfig.throttled = (fn) => fn();
+  t.after(() => {
+    axios.get = originalGet;
+    etherscanConfig.throttled = originalThrottled;
+  });
+
+  await EtherscanService.fetchStateSyncDepositsBatch(
+    [{ address: WALLET, startBlock: 0 }],
+    8453,
+    chains.getChain(8453).stateSyncDeposits,
+    200
+  );
+
+  assert.equal(seen.url, `https://base.blockscout.com/api/v2/addresses/${OP_STACK_BRIDGE}/logs`);
+  assert.equal(seen.options.timeout, EXPECTED_BLOCKSCOUT_LOG_TIMEOUT_MS);
+  assert.equal(seen.options.params.topic, `0x${'0'.repeat(24)}${WALLET.slice(2)}`);
 });
 
 test('Base Blockscout v2 rejects a response that ignores its wallet topic', async (t) => {
