@@ -202,6 +202,14 @@ const EXPLORER_TRANSIENT_RETRIES = boundedEnvInteger(
 const EXPLORER_TRANSIENT_RETRY_BASE_MS = boundedEnvInteger(
   'EXPLORER_TRANSIENT_RETRY_BASE_MS', 500, 10000
 );
+// Topic-filtered bridge-history lookups are substantially heavier than the
+// ordinary address feeds on Base. Production observed the provider exceed the
+// generic 30-second transport timeout twice while still serving the other five
+// feeds normally. Keep the longer allowance scoped to this endpoint and
+// bounded; the existing transient retry count still prevents an endless walk.
+const BLOCKSCOUT_V2_LOG_TIMEOUT_MS = Math.max(30000, boundedEnvInteger(
+  'BLOCKSCOUT_V2_LOG_TIMEOUT_MS', 120000, 5 * 60 * 1000
+));
 
 function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -534,6 +542,7 @@ class EtherscanService {
     apiKey,
     chainId,
     rateLimitState = { attempt: 0 },
+    timeoutMs = 30000,
   }) {
     const chain = chains.getChain(chainId);
     const config = chain?.accountApi;
@@ -552,7 +561,7 @@ class EtherscanService {
       chainId,
       params,
       rateLimitState,
-      fn: () => axios.get(url, { timeout: 30000, params: query }),
+      fn: () => axios.get(url, { timeout: timeoutMs, params: query }),
     });
     const payload = response.data;
     if (!Array.isArray(payload?.items) && isRateLimitedDetail(payload)) {
@@ -566,7 +575,7 @@ class EtherscanService {
           response
         ),
         retry: () => this._requestBlockscoutV2(path, query, {
-          apiKey, chainId, rateLimitState,
+          apiKey, chainId, rateLimitState, timeoutMs,
         }),
       });
     }
@@ -1717,7 +1726,7 @@ class EtherscanService {
         const { items, nextPageParams } = await this._requestBlockscoutV2(
           path,
           { ...cursor, topic: request.topic },
-          { apiKey: null, chainId }
+          { apiKey: null, chainId, timeoutMs: BLOCKSCOUT_V2_LOG_TIMEOUT_MS }
         );
         walkedRows += items.length;
         if (walkedRows > MAX_ACCOUNT_ROWS) {
