@@ -578,6 +578,15 @@ class EvmAuditService {
       await EvmAudit.linkEffectEvidence(stored.id, effect.evidenceObservationIds);
     }
 
+    // Legacy rows may have the right economics but no immutable log index.
+    // Upgrade only the independently corroborated receipt effects before the
+    // strict reconciliation pass; unresolved economic matches remain gaps.
+    const identityRepair = await EvmAudit.repairCorroboratedTransferIdentities(
+      job.user_id, job.subject_id, chainId, boundary.number
+    );
+    legacyRows = await EvmAudit.storedTransferRows(
+      job.user_id, job.subject_id, chainId, boundary.number
+    );
     let canonicalEffects = await EvmAudit.canonicalEffects(job.subject_id, chainId, boundary.number);
     let effectReconciliation = reconcileEffects(canonicalEffects, legacyRows, job.address, chain);
     if (effectReconciliation.missing.length) {
@@ -705,6 +714,7 @@ class EvmAuditService {
           nonce_gaps: nonceGapCount,
           native_balance_match: delta === 0n,
           token_balance_gaps: tokenMismatches,
+          corroborated_identity_repairs: identityRepair.repaired,
           missing_activity: missingActivity,
           unresolved_bridges: bridgeAudit.unresolved,
           provisional_effects: provisionalEffects,

@@ -14,6 +14,9 @@ const {
   TOPICS, effectsFromInternalObservations, effectsFromRpc,
 } = require('../src/services/evmAudit/effectDecoder');
 const chains = require('../src/config/chains');
+const {
+  matchesLegacyTransfer, matchesMoralisTransfer,
+} = require('../src/services/evmAudit/corroboratedIdentity');
 
 const WALLET = '0x1111111111111111111111111111111111111111';
 const OTHER = '0x2222222222222222222222222222222222222222';
@@ -276,6 +279,31 @@ test('effect reconciliation counts missing or duplicate economic legs, not just 
   assert.ok(EvmAuditService._unmatchedEffectCount(
     canonical, [uncoordinated], WALLET, chains.getChain(8453)
   ) > 0, 'economic equality without immutable log identity remains a gap');
+});
+
+test('cross-provider transfer repair requires the exact Moralis log coordinate and payload', () => {
+  const effect = {
+    effect_type: 'erc20', effect_key: `erc20:${HASH}:3`, log_index: 3,
+    tx_hash: HASH, from_address: OTHER, to_address: WALLET, value_units: '8',
+    token_contract: CONTRACT, token_id: null,
+  };
+  const moralis = {
+    provider: 'moralis', evidence_kind: 'erc20_transfer', tx_hash: HASH, log_index: 3,
+    payload_json: {
+      address: CONTRACT, from_address: OTHER, to_address: WALLET, value: '8', log_index: 3,
+    },
+  };
+  const legacy = {
+    tx_hash: HASH, transfer_type: 'token', from_address: OTHER, to_address: WALLET,
+    value_wei: '8', token_contract: CONTRACT, token_id: null,
+  };
+  assert.equal(matchesMoralisTransfer(effect, moralis), true);
+  assert.equal(matchesLegacyTransfer(effect, legacy), true);
+  assert.equal(matchesMoralisTransfer(effect, { ...moralis, log_index: 4 }), false);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...moralis, payload_json: { ...moralis.payload_json, value: '9' },
+  }), false);
+  assert.equal(matchesLegacyTransfer(effect, { ...legacy, token_contract: OTHER }), false);
 });
 
 test('audit migration is additive, fail-closed, user-owned, and retires only Base routine state sync', () => {
