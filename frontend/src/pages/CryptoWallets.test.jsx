@@ -425,7 +425,7 @@ describe('Crypto -> Wallets tab', () => {
     await openEthereumTab([wallet(report())]);
 
     fireEvent.click((await screen.findAllByRole('button', { name: /audit mined history for main/i }))[0]);
-    await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1, { mode: 'full' }));
     expect(apiMocks.eth.syncWallet).not.toHaveBeenCalled();
     await expandWallet();
     expect(await screen.findByText(/History audit: queued/i)).toBeInTheDocument();
