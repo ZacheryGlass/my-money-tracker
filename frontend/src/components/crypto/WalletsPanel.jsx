@@ -11,8 +11,10 @@ import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-const auditIsPending = (audit) => ['queued', 'running', 'deferred'].includes(audit?.status)
-  && audit?.error_code !== 'MORALIS_NOT_CONFIGURED';
+// Deferred jobs are durable retry points, not active work. Keep their status
+// visible on the card while allowing an explicit Audit/Verify click to retry
+// after a provider cooldown or a newly entered credential.
+const auditIsPending = (audit) => ['queued', 'running'].includes(audit?.status);
 
 // Addresses render inside fallback chains and sentences composed here, so a
 // missing value must contribute nothing rather than 'unknown'.
@@ -536,9 +538,13 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
     try {
       const { job } = await ethAPI.startHistoryAudit(wallet.id, { mode });
       setAuditByWallet((current) => ({ ...current, [wallet.id]: job }));
-      showNotice(mode === 'full'
-        ? 'Full history audit queued. You can leave this page; progress and evidence are saved.'
-        : 'Incremental audit queued. It will resume from the last proven boundary and preserve prior evidence.');
+      if (job.status === 'deferred') {
+        showNotice('This audit is still deferred; its provider retry schedule remains in effect.');
+      } else {
+        showNotice(mode === 'full'
+          ? 'Full history audit queued. You can leave this page; progress and evidence are saved.'
+          : 'Incremental audit queued. It will resume from the last proven boundary and preserve prior evidence.');
+      }
     } catch (err) {
       onError(err.response?.data?.error || 'Failed to start history audit');
     } finally {

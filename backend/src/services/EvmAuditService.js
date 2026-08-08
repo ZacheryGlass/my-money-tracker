@@ -236,7 +236,7 @@ class EvmAuditService {
       requestedChains: [...new Set(selected)],
       credentialGeneration,
     });
-    this.enqueue(result.job.id);
+    if (result.job.status !== 'deferred') this.enqueue(result.job.id);
     return result;
   }
 

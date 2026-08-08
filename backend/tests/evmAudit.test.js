@@ -424,6 +424,28 @@ test('Moralis history scope is finalized after transaction lookup pages', () => 
     'lookup evidence must be followed by a final complete status before canonicalization');
 });
 
+test('deferred audits can be reopened after a credential generation change', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/models/EvmAudit.js'), 'utf8');
+  assert.match(source, /activeJob\.status === 'deferred'/);
+  assert.match(source, /startsWith\('MORALIS_'\)/);
+  assert.match(source, /SET status = 'queued'/);
+  assert.match(source, /credential_generation = \$2/);
+  assert.match(source, /credentialChanged/);
+  assert.match(source, /retry_after_at = NULL/);
+  assert.match(source, /error_code = NULL/);
+});
+
+test('same-credential deferred retries preserve provider cooldown', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
+  assert.match(source, /if \(result\.job\.status !== 'deferred'\) this\.enqueue\(result\.job\.id\);/);
+});
+
+test('audit claims cannot bypass a deferred retry deadline', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/models/EvmAudit.js'), 'utf8');
+  assert.match(source, /j\.status <> 'deferred'/);
+  assert.match(source, /j\.retry_after_at <= CURRENT_TIMESTAMP/);
+});
+
 test('consensus RPC requires matching receipt identity and canonical block membership', async () => {
   const rpc = new RpcClient(8453, { spacingMs: 0 });
   rpc.request = async (method) => ({
