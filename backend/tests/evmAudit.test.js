@@ -61,8 +61,9 @@ test('identity repair keeps its canonical-effect query user-scoped', () => {
   const methodStart = source.indexOf('static async repairCorroboratedTransferIdentities');
   const methodEnd = source.indexOf('\n  static async', methodStart + 1);
   const method = source.slice(methodStart, methodEnd);
-  assert.match(method, /s\.user_id = \$1/);
-  assert.match(method, /\[userId, subjectId, chainId, throughBlock/);
+  assert.match(method, /jo\.job_id = \$1/);
+  assert.match(method, /s\.user_id = \$2/);
+  assert.match(method, /\[jobId, userId, subjectId, chainId, throughBlock/);
 });
 
 test('Moralis history keeps receipt, log, internal and token evidence independently', () => {
@@ -224,6 +225,22 @@ test('Moralis pagination advances opaque cursors and exhausts exactly once', asy
   }
 });
 
+test('Moralis JSON parsing preserves large numeric token quantities', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(
+    '{"result":[{"value":650000000000000000}],"cursor":null}',
+    { status: 200, headers: { 'content-type': 'application/json' } }
+  );
+  try {
+    const response = await new MoralisClient('test-key', { spacingMs: 0 })
+      .activeChains(WALLET, ['base']);
+    assert.equal(response.body.result[0].value, '650000000000000000');
+    assert.deepEqual(response.body.result[0].__evm_json_numeric_fields, ['value']);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
   const originalFetch = global.fetch;
   const signals = [];
@@ -354,12 +371,54 @@ test('cross-provider transfer repair requires the exact Moralis log coordinate a
     value_wei: '8', token_contract: CONTRACT, token_id: null,
   };
   assert.equal(matchesMoralisTransfer(effect, moralis), true);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...moralis, payload_json: { ...moralis.payload_json, value: 8 },
+  }), true);
   assert.equal(matchesLegacyTransfer(effect, legacy), true);
   assert.equal(matchesMoralisTransfer(effect, { ...moralis, log_index: 4 }), false);
   assert.equal(matchesMoralisTransfer(effect, {
     ...moralis, payload_json: { ...moralis.payload_json, value: '9' },
   }), false);
   assert.equal(matchesLegacyTransfer(effect, { ...legacy, token_contract: OTHER }), false);
+});
+
+test('NFT corroboration uses Moralis amount units instead of its non-unit value field', () => {
+  const effect = {
+    effect_type: 'erc1155', effect_key: `erc1155:${HASH}:3:7`, log_index: 3,
+    tx_hash: HASH, from_address: OTHER, to_address: WALLET, value_units: '2',
+    token_contract: CONTRACT, token_id: '7',
+  };
+  const observation = {
+    provider: 'moralis', evidence_kind: 'erc1155_transfer', tx_hash: HASH, log_index: 3,
+    payload_json: {
+      token_address: CONTRACT, from_address: OTHER, to_address: WALLET,
+      amount: '2', value: '0.000000000000000001', token_id: '7',
+    },
+  };
+  assert.equal(matchesMoralisTransfer(effect, observation), true);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation, payload_json: { ...observation.payload_json, amount: '3' },
+  }), false);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation, payload_json: { ...observation.payload_json, amount: null, value: '2' },
+  }), false);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation, payload_json: { ...observation.payload_json, amount: [2] },
+  }), false);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation,
+    payload_json: {
+      ...observation.payload_json, amount: '9007199254740992',
+      __evm_json_numeric_fields: ['amount'],
+    },
+  }), false);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation,
+    payload_json: {
+      ...observation.payload_json, token_id: '9007199254740992',
+      __evm_json_numeric_fields: ['token_id'],
+    },
+  }), false);
 });
 
 test('audit migration is additive, fail-closed, user-owned, and retires only Base routine state sync', () => {

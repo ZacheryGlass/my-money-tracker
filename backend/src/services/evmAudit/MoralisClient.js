@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const JSONbig = require('json-bigint')({ useNativeBigInt: true });
 const { sha256 } = require('./normalizer');
 
 const ROOT = 'https://deep-index.moralis.io/api/v2.2';
@@ -8,7 +9,26 @@ const DEFAULT_SPACING_MS = 250;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_INLINE_RETRY_MS = 30_000;
 const MAX_ATTEMPTS = 3;
+const NUMERIC_FIELDS = '__evm_json_numeric_fields';
 const queues = new Map();
+
+function normalizeJsonNumbers(value) {
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map(normalizeJsonNumbers);
+  if (!value || typeof value !== 'object') return value;
+  const normalized = {};
+  const numericFields = [];
+  for (const [key, child] of Object.entries(value)) {
+    if (typeof child === 'bigint') {
+      normalized[key] = child.toString();
+      numericFields.push(key);
+    } else {
+      normalized[key] = normalizeJsonNumbers(child);
+    }
+  }
+  if (numericFields.length) normalized[NUMERIC_FIELDS] = numericFields;
+  return normalized;
+}
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -119,7 +139,7 @@ class MoralisClient {
         }
 
         let body;
-        try { body = JSON.parse(text); } catch { body = null; }
+        try { body = normalizeJsonNumbers(JSONbig.parse(text)); } catch { body = null; }
         if (response.ok && body && typeof body === 'object') {
           return {
             body,

@@ -1032,7 +1032,7 @@ class EvmAudit {
   // coordinate. Upgrade them only when the same receipt effect is proven by
   // consensus RPC and independently corroborated by Moralis at the exact
   // transaction/log coordinate. Economic equality alone remains a gap.
-  static async repairCorroboratedTransferIdentities(userId, subjectId, chainId, throughBlock) {
+  static async repairCorroboratedTransferIdentities(jobId, userId, subjectId, chainId, throughBlock) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1061,20 +1061,22 @@ class EvmAudit {
             AND o.provider = 'moralis'
             AND o.evidence_kind = e.effect_type || '_transfer'
             AND o.tx_hash = e.tx_hash AND o.log_index = e.log_index
+          JOIN evm_job_observations jo
+            ON jo.job_id = $1 AND jo.observation_id = o.id
           JOIN evm_mined_transactions tx
              ON tx.subject_id = e.subject_id AND tx.chain_id = e.chain_id
             AND tx.tx_hash = e.tx_hash
           WHERE EXISTS (
                   SELECT 1 FROM evm_subjects s
-                   WHERE s.id = e.subject_id AND s.user_id = $1
+                   WHERE s.id = e.subject_id AND s.user_id = $2
                 )
-            AND e.subject_id = $2 AND e.chain_id = $3
-            AND tx.block_number <= $4
-            AND e.effect_type = ANY($5::text[])
+            AND e.subject_id = $3 AND e.chain_id = $4
+            AND tx.block_number <= $5
+            AND e.effect_type = ANY($6::text[])
             AND e.resolution_status = 'verified'
             AND tx.resolution_status = 'verified'
           ORDER BY e.id, o.id`,
-        [userId, subjectId, chainId, throughBlock, Object.keys(TRANSFER_TYPES)]
+        [jobId, userId, subjectId, chainId, throughBlock, Object.keys(TRANSFER_TYPES)]
       );
       const legacyResult = await client.query(
         `SELECT * FROM eth_transfers
