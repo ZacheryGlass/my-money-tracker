@@ -329,7 +329,10 @@ class EvmAuditService {
         progress: { chains_finished: requested.length, gaps },
       });
     } catch (error) {
-      const deferred = ['MORALIS_RATE_LIMITED', 'MORALIS_TRANSPORT_ERROR', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR']
+      const deferred = [
+        'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
+        'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR',
+      ]
         .includes(error.code);
       if (String(error.code || '').startsWith('MORALIS_') || String(error.code || '').startsWith('RPC_')) {
         try {
@@ -499,11 +502,12 @@ class EvmAuditService {
           jobId: job.id, scopeId: historyScope.id, provider: 'moralis',
           endpoint: 'transaction-lookup',
           requestParams: { chain: providerConfig.moralis, transaction_hash: hash },
-          outcome: error.code === 'MORALIS_RATE_LIMITED' ? 'deferred' : 'failed',
+          outcome: ['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED'].includes(error.code)
+            ? 'deferred' : 'failed',
           httpStatus: error.httpStatus || null, errorCode: error.code || 'MORALIS_LOOKUP_FAILED',
           errorDetail: publicErrorDetail(error), requestId: error.requestId || null,
         });
-        if (error.code === 'MORALIS_RATE_LIMITED' || error.code === 'MORALIS_AUTH_FAILED') throw error;
+        if (['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_AUTH_FAILED'].includes(error.code)) throw error;
       }
     }
     // Transaction lookups use the same durable scope as the paginated history

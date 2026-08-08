@@ -241,6 +241,30 @@ test('Moralis JSON parsing preserves large numeric token quantities', async () =
   }
 });
 
+test('Moralis plan quota exhaustion is deferred instead of reported as bad credentials', async () => {
+  const originalFetch = global.fetch;
+  const attempts = [];
+  global.fetch = async () => new Response(
+    JSON.stringify({ message: 'Validation service blocked: Your plan: free-plan-daily total included usage has been consumed' }),
+    { status: 401, headers: { 'content-type': 'application/json' } }
+  );
+  try {
+    await assert.rejects(
+      new MoralisClient('test-key', {
+        spacingMs: 0,
+        onFailedAttempt: async (attempt) => attempts.push(attempt),
+      }).activeChains(WALLET, ['base']),
+      (error) => error.code === 'MORALIS_QUOTA_EXHAUSTED'
+        && error.retryAt instanceof Date
+    );
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0].errorCode, 'MORALIS_QUOTA_EXHAUSTED');
+    assert.equal(attempts[0].outcome, 'deferred');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
   const originalFetch = global.fetch;
   const signals = [];
