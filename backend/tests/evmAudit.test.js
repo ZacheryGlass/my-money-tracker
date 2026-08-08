@@ -215,6 +215,21 @@ test('Moralis pagination advances opaque cursors and exhausts exactly once', asy
   }
 });
 
+test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = () => new Promise(() => {});
+  try {
+    await assert.rejects(
+      new MoralisClient('test-key', { spacingMs: 0, requestTimeoutMs: 1, requestTimeoutGraceMs: 0 })
+        .activeChains(WALLET, ['base']),
+      (error) => error.code === 'MORALIS_TRANSPORT_ERROR'
+        && /deadline|request failed/.test(error.message)
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('Moralis history scope is finalized after transaction lookup pages', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
   const lookupPass = source.indexOf("for (const hash of hashes) {\n      if (moralisHashes.has(hash)) continue;");
