@@ -582,7 +582,7 @@ class EvmAuditService {
     // Upgrade only the independently corroborated receipt effects before the
     // strict reconciliation pass; unresolved economic matches remain gaps.
     const identityRepair = await EvmAudit.repairCorroboratedTransferIdentities(
-      job.user_id, job.subject_id, chainId, boundary.number
+      job.id, job.user_id, job.subject_id, chainId, boundary.number
     );
     legacyRows = await EvmAudit.storedTransferRows(
       job.user_id, job.subject_id, chainId, boundary.number

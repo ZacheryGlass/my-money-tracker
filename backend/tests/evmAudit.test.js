@@ -61,8 +61,9 @@ test('identity repair keeps its canonical-effect query user-scoped', () => {
   const methodStart = source.indexOf('static async repairCorroboratedTransferIdentities');
   const methodEnd = source.indexOf('\n  static async', methodStart + 1);
   const method = source.slice(methodStart, methodEnd);
-  assert.match(method, /s\.user_id = \$1/);
-  assert.match(method, /\[userId, subjectId, chainId, throughBlock/);
+  assert.match(method, /jo\.job_id = \$1/);
+  assert.match(method, /s\.user_id = \$2/);
+  assert.match(method, /\[jobId, userId, subjectId, chainId, throughBlock/);
 });
 
 test('Moralis history keeps receipt, log, internal and token evidence independently', () => {
