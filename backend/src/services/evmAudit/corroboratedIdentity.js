@@ -28,7 +28,9 @@ function moralisTransferFields(effect, payload) {
   const contract = normalizedAddress(payload.address ?? payload.token_address);
   const from = normalizedAddress(payload.from_address ?? payload.from);
   const to = normalizedAddress(payload.to_address ?? payload.to);
-  const value = decimal(payload.value ?? payload.amount ?? payload.value_wei);
+  const value = decimal(standard === 'erc20'
+    ? payload.value ?? payload.value_wei
+    : payload.amount ?? payload.value ?? payload.value_wei);
   const tokenId = standard === 'erc20' ? null : decimal(payload.token_id ?? payload.tokenId);
   if (!contract || !from || !to || value == null || (standard !== 'erc20' && tokenId == null)) {
     return null;

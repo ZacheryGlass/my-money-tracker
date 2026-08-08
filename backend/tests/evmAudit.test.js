@@ -362,6 +362,25 @@ test('cross-provider transfer repair requires the exact Moralis log coordinate a
   assert.equal(matchesLegacyTransfer(effect, { ...legacy, token_contract: OTHER }), false);
 });
 
+test('NFT corroboration uses Moralis amount units instead of its non-unit value field', () => {
+  const effect = {
+    effect_type: 'erc1155', effect_key: `erc1155:${HASH}:3:7`, log_index: 3,
+    tx_hash: HASH, from_address: OTHER, to_address: WALLET, value_units: '2',
+    token_contract: CONTRACT, token_id: '7',
+  };
+  const observation = {
+    provider: 'moralis', evidence_kind: 'erc1155_transfer', tx_hash: HASH, log_index: 3,
+    payload_json: {
+      token_address: CONTRACT, from_address: OTHER, to_address: WALLET,
+      amount: '2', value: '0.000000000000000001', token_id: '7',
+    },
+  };
+  assert.equal(matchesMoralisTransfer(effect, observation), true);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation, payload_json: { ...observation.payload_json, amount: '3' },
+  }), false);
+});
+
 test('audit migration is additive, fail-closed, user-owned, and retires only Base routine state sync', () => {
   const sql = fs.readFileSync(path.join(__dirname, '../migrations/077_evm_audit_evidence.sql'), 'utf8');
   assert.match(sql, /user_id INT NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
