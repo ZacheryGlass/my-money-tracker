@@ -990,7 +990,13 @@ class EtherscanService {
           params: rpcParams,
           rateLimitState,
           error: responseDetailError(detail, response),
-          retry: () => this._rpcRequest(chainId, method, params, rateLimitState),
+          retry: () => this._rpcRequest(
+            chainId,
+            method,
+            params,
+            rateLimitState,
+            malformedResponseAttempt
+          ),
         });
       }
       // Public chain RPCs occasionally return an empty JSON-RPC envelope while
