@@ -138,7 +138,10 @@ class EvmAudit {
         // durable job and its provider retry deadline: widening must never
         // bypass a Moralis quota/cooldown or create overlapping evidence
         // writers. A running job remains a real scope conflict.
-        if (mode === 'full' && activeJob.mode !== 'full' && activeJob.status !== 'running') {
+        const needsFullExpansion = mode === 'full'
+          && (activeJob.mode !== 'full'
+            || requestedChains.some((chainId) => !activeChains.has(Number(chainId))));
+        if (needsFullExpansion && activeJob.status !== 'running') {
           const expandedChains = [...new Set([
             ...activeChains,
             ...requestedChains.map(Number),
