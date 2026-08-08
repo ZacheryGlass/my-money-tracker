@@ -48,6 +48,10 @@ function providerError(message, code, extra = {}) {
   return error;
 }
 
+function isQuotaExceeded(detail) {
+  return /(?:plan|quota|usage).*(?:consum|exhaust|limit)|(?:consum|exhaust|limit).*(?:plan|quota|usage)/i.test(detail);
+}
+
 class MoralisClient {
   constructor(apiKey, {
     spacingMs = DEFAULT_SPACING_MS,
@@ -150,12 +154,14 @@ class MoralisClient {
         }
 
         const detail = String(body?.message || body?.error || '').slice(0, 500);
+        const quotaExceeded = isQuotaExceeded(detail);
         const retryable = response.status === 429 && attempt < MAX_ATTEMPTS;
         await this.onFailedAttempt?.({
           provider: 'moralis', endpoint, method: 'GET', attemptNo: attempt,
-          requestParams: params || {}, outcome: retryable ? 'deferred' : 'failed',
+          requestParams: params || {}, outcome: retryable || quotaExceeded ? 'deferred' : 'failed',
           httpStatus: response.status,
           errorCode: response.status === 429 ? 'MORALIS_RATE_LIMITED'
+            : quotaExceeded ? 'MORALIS_QUOTA_EXHAUSTED'
             : [401, 403].includes(response.status) ? 'MORALIS_AUTH_FAILED' : 'MORALIS_API_ERROR',
           errorDetail: detail || `HTTP ${response.status}`,
           requestId: response.headers.get('x-request-id') || null,
@@ -174,6 +180,13 @@ class MoralisClient {
           );
         }
         if (response.status === 401 || response.status === 403) {
+          if (quotaExceeded) {
+            throw providerError(
+              'Moralis daily plan quota is exhausted; audit deferred',
+              'MORALIS_QUOTA_EXHAUSTED',
+              { httpStatus: response.status, retryAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }
+            );
+          }
           throw providerError(
             'Moralis rejected the configured credential',
             'MORALIS_AUTH_FAILED',
