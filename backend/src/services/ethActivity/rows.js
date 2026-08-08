@@ -17,7 +17,8 @@ const {
 
 // Pure: one transaction's eth_transfers legs -> one eth_activity row body.
 function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks = new Map(),
-  spamInputs = EMPTY_SPAM_INPUTS, bridgeAddresses = new Set(), serviceAddresses = new Set(), custodyAddresses = new Set()) {
+  spamInputs = EMPTY_SPAM_INPUTS, bridgeAddresses = new Set(), serviceAddresses = new Set(),
+  custodyAddresses = new Set(), transaction = null) {
   const gasLegs = legs.filter((leg) => leg.transfer_type === 'gas');
   const feeWei = gasLegs.reduce((sum, leg) => sum + toBigIntLenient(leg.value_wei), 0n);
 
@@ -37,7 +38,8 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decim
   // capture: rows ingested before 038 have NULL and read as "not known to have
   // failed", so an old reverted approve still classifies contract_interaction.
   // Removing and re-adding the wallet re-ingests from block 0 and heals it.
-  const failed = legs.some((leg) => (leg.transfer_type !== 'gas' && leg.is_error) || leg.tx_is_error === true);
+  const failed = transaction?.receipt_status === 0
+    || legs.some((leg) => (leg.transfer_type !== 'gas' && leg.is_error) || leg.tx_is_error === true);
 
   // At most one leg per tx carries calldata (034): the native leg when ETH
   // moved, else the gas leg.
@@ -155,11 +157,15 @@ function buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decim
   return {
     chain_id: chainId,
     tx_hash: txHash,
-    block_number: Math.min(...legs.map((leg) => Number(leg.block_number))),
-    block_time: legs.reduce(
-      (earliest, leg) => (earliest && new Date(earliest) <= new Date(leg.block_time) ? earliest : leg.block_time),
-      null
-    ),
+    block_number: legs.length
+      ? Math.min(...legs.map((leg) => Number(leg.block_number)))
+      : Number(transaction?.block_number),
+    block_time: legs.length
+      ? legs.reduce(
+        (earliest, leg) => (earliest && new Date(earliest) <= new Date(leg.block_time) ? earliest : leg.block_time),
+        null
+      )
+      : transaction?.block_time,
     ...classification,
     counterparty_address: counterparty.address,
     counterparty_name: counterparty.name,
@@ -275,6 +281,9 @@ function buildActivityRows(walletAddress, transfers, {
   // The owner's 'service'-labeled addresses (instant-swap deposit addresses),
   // resolved the same way. Drives the ladder's rule 4.
   serviceAddresses = new Set(), custodyAddresses = new Set(),
+  // Canonical mined transactions include zero-value calls and externally signed
+  // receipts that produce no wallet leg. They still need one explanation.
+  transactions = [],
 } = {}) {
   const wallet = String(walletAddress).toLowerCase();
   // Wallet-wide, before the grouping: the SQL partition this mirrors spans the
@@ -300,10 +309,21 @@ function buildActivityRows(walletAddress, transfers, {
     if (existing) existing.legs.push(transfer);
     else byTx.set(groupKey, { chainId, txHash: transfer.tx_hash, legs: [transfer] });
   }
+  const transactionByKey = new Map(transactions.map((transaction) => [
+    `${transaction.chain_id ?? DEFAULT_CHAIN_ID}:${transaction.tx_hash}`,
+    transaction,
+  ]));
+  for (const transaction of transactions) {
+    const chainId = transaction.chain_id ?? DEFAULT_CHAIN_ID;
+    const groupKey = `${chainId}:${transaction.tx_hash}`;
+    if (!byTx.has(groupKey)) byTx.set(groupKey, {
+      chainId, txHash: transaction.tx_hash, legs: [],
+    });
+  }
   return [...byTx.values()].map(({ chainId, txHash, legs }) =>
     buildActivityRow(wallet, chainId, txHash, legs, ignoredContracts, decimalsFallbacks, spamInputs,
       new Set([...(bridgeAddressesByChain.get(chainId) || []), ...bridgeAddresses]),
-      serviceAddresses, custodyAddresses));
+      serviceAddresses, custodyAddresses, transactionByKey.get(`${chainId}:${txHash}`) || null));
 }
 
 module.exports = {

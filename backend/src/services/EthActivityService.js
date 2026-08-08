@@ -37,12 +37,36 @@ class EthActivityService {
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
     const [
-      transfersResult, ignoredResult, labeledResult, ownWalletsResult, coverageResult,
+      transfersResult, transactionsResult, ignoredResult, labeledResult, ownWalletsResult, coverageResult,
       bridgeEndpoints, bridgeAddresses, serviceAddresses, custodyAddresses,
     ] = await Promise.all([
       pool.query(
         'SELECT * FROM eth_transfers WHERE wallet_id = $1 ORDER BY block_number, id',
         [walletId]
+      ),
+      // A mined transaction is not guaranteed to produce a wallet leg: an
+      // externally signed zero-value contract call can have only a receipt.
+      // Keep those transactions in the explanation layer too, so the audit's
+      // every-mined-transaction invariant is not defeated by an empty leg set.
+      pool.query(
+        `SELECT tx.chain_id, tx.tx_hash, tx.block_number, tx.receipt_status,
+                COALESCE(
+                  (SELECT MIN(NULLIF(obs.payload_json->>'block_timestamp', '')::timestamptz)
+                     FROM evm_provider_observations obs
+                    WHERE obs.subject_id = s.id AND obs.chain_id = tx.chain_id
+                      AND obs.tx_hash = tx.tx_hash
+                      AND obs.evidence_kind = 'transaction'),
+                  tx.first_seen_at
+                ) AS block_time
+           FROM evm_mined_transactions tx
+           JOIN evm_subjects s ON s.id = tx.subject_id
+          WHERE s.user_id = $1 AND EXISTS (
+            SELECT 1 FROM eth_wallets w
+             WHERE w.user_id = s.user_id AND w.address = s.address
+               AND w.id = $2
+          )
+          ORDER BY tx.block_number, tx.id`,
+        [wallet.user_id, walletId]
       ),
       pool.query('SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1', [wallet.user_id]),
       // Which counterparties already carry a verdict, in ANY kind -- the same
@@ -126,6 +150,7 @@ class EthActivityService {
     const rows = buildActivityRows(wallet.address, transfersResult.rows, {
       ignoredContracts, labeledAddresses, ownAddresses, unlistedAssets,
       bridgeAddresses, bridgeAddressesByChain, serviceAddresses, custodyAddresses,
+      transactions: transactionsResult.rows,
     });
     const labels = await this._nameCounterparties(wallet.user_id, rows);
     for (const row of rows) {

@@ -103,6 +103,9 @@ function fakeQuery(text, params = []) {
   if (/^SELECT \* FROM eth_transfers WHERE wallet_id/.test(sql)) {
     return { rows: db.transfers.filter((t) => t.wallet_id === params[0]) };
   }
+  if (/^SELECT tx\.chain_id, tx\.tx_hash/.test(sql)) {
+    return { rows: [] };
+  }
   if (/^SELECT contract_address FROM eth_ignored_tokens/.test(sql)) {
     return { rows: db.ignoredTokens.map((contract_address) => ({ contract_address })) };
   }
@@ -379,6 +382,25 @@ test('rule 1: every value leg between own addresses is a self_transfer', () => {
   assert.equal(row.confidence, 'high');
   assert.deepEqual(row.legs.map((l) => [l.asset, l.direction, l.amount]), [['ETH', 'out', '1']]);
   assert.equal(row.fee_wei, '2100000000000000');
+});
+
+test('a mined zero-leg transaction still gets a reviewable activity explanation', () => {
+  const [row] = buildActivityRows(WALLET, [], {
+    transactions: [{
+      chain_id: 100,
+      tx_hash: TX,
+      block_number: 42,
+      block_time: '2023-01-01T00:00:00.000Z',
+      receipt_status: 1,
+    }],
+  });
+
+  assert.equal(row.category, 'contract_interaction');
+  assert.equal(row.needs_review, true);
+  assert.equal(row.review_reason, REVIEW_REASONS.no_legs);
+  assert.deepEqual(row.legs, []);
+  assert.equal(row.block_number, 42);
+  assert.equal(row.block_time, '2023-01-01T00:00:00.000Z');
 });
 
 test('rule 2: value out to a labeled exchange is an exchange_deposit', () => {
