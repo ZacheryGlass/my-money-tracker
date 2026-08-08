@@ -485,6 +485,12 @@ class EvmAudit {
     throughBlock = null, throughHash = null, cursor = null,
     providerOrder = null, coverageBasis = null, errorCode = null, errorDetail = null,
   }, fence = {}) {
+    // Migration 079 made provider_order NOT NULL so every persisted scope has
+    // an explicit ordering state. Initial scopes, unsupported scopes, and
+    // incremental scopes without prior coverage legitimately do not know the
+    // provider order yet; the INSERT turns that null into `unknown`. Keep the
+    // original parameter for the conflict arm so a restart cannot overwrite
+    // an already-proven direction with `unknown`.
     const transactional = Boolean(fence.jobId && fence.owner);
     const client = transactional ? await pool.connect() : pool;
     try {
@@ -502,7 +508,7 @@ class EvmAudit {
          job_id, chain_id, provider, capability, status,
          requested_from_block, requested_through_block, requested_through_hash,
          provider_cursor, provider_order, coverage_basis, error_code, error_detail
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, 'unknown'),$11,$12,$13)
        ON CONFLICT (job_id, chain_id, provider, capability)
        DO UPDATE SET
          status = EXCLUDED.status,
@@ -510,7 +516,8 @@ class EvmAudit {
          requested_through_block = COALESCE(EXCLUDED.requested_through_block, evm_audit_scopes.requested_through_block),
          requested_through_hash = COALESCE(EXCLUDED.requested_through_hash, evm_audit_scopes.requested_through_hash),
          provider_cursor = COALESCE(EXCLUDED.provider_cursor, evm_audit_scopes.provider_cursor),
-         provider_order = COALESCE(EXCLUDED.provider_order, evm_audit_scopes.provider_order),
+         provider_order = CASE WHEN $10 IS NULL
+           THEN evm_audit_scopes.provider_order ELSE EXCLUDED.provider_order END,
          coverage_basis = COALESCE(EXCLUDED.coverage_basis, evm_audit_scopes.coverage_basis),
          error_code = EXCLUDED.error_code,
          error_detail = EXCLUDED.error_detail,
@@ -813,6 +820,9 @@ class EvmAudit {
     paginationExhausted, status, jobId,
     owner = null,
   }) {
+    // Keep null as "no new ordering observation" for an existing coverage
+    // row, while the INSERT expression below satisfies migration 079's
+    // NOT NULL constraint for a first observation.
     const transactional = Boolean(owner);
     const client = transactional ? await pool.connect() : pool;
     try {
@@ -824,13 +834,14 @@ class EvmAudit {
       `INSERT INTO evm_source_coverage (
          subject_id, chain_id, provider, capability, from_block, through_block,
          through_block_hash, provider_order, coverage_basis, pagination_exhausted, status, source_job_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, 'unknown'),$9,$10,$11,$12)
        ON CONFLICT (
          subject_id, chain_id, provider, capability,
          from_block, through_block, source_job_id
        ) DO UPDATE SET
          through_block_hash = EXCLUDED.through_block_hash,
-         provider_order = EXCLUDED.provider_order,
+         provider_order = CASE WHEN $8 IS NULL
+           THEN evm_source_coverage.provider_order ELSE EXCLUDED.provider_order END,
          coverage_basis = EXCLUDED.coverage_basis,
          pagination_exhausted = EXCLUDED.pagination_exhausted,
          status = EXCLUDED.status,
