@@ -234,6 +234,7 @@ test('Moralis JSON parsing preserves large numeric token quantities', async () =
     const response = await new MoralisClient('test-key', { spacingMs: 0 })
       .activeChains(WALLET, ['base']);
     assert.equal(response.body.result[0].value, '650000000000000000');
+    assert.deepEqual(response.body.result[0].__evm_json_numeric_fields, ['value']);
   } finally {
     global.fetch = originalFetch;
   }
@@ -402,6 +403,13 @@ test('NFT corroboration uses Moralis amount units instead of its non-unit value 
   }), false);
   assert.equal(matchesMoralisTransfer(effect, {
     ...observation, payload_json: { ...observation.payload_json, amount: [2] },
+  }), false);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation,
+    payload_json: {
+      ...observation.payload_json, amount: '9007199254740992',
+      __evm_json_numeric_fields: ['amount'],
+    },
   }), false);
 });
 
