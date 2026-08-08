@@ -262,11 +262,15 @@ function effectsFromInternalObservations(context, observations) {
 
   const effects = [];
   for (const [hash, rows] of byTransaction) {
-    const moralis = rows.filter((row) => row.provider === 'moralis');
-    const explorer = rows.filter((row) => row.provider === 'blockscout');
+    const internalRows = rows.filter((row) => row.evidence_kind !== 'native_credit'
+      && row.payload_json?.native_credit !== true);
+    const moralis = internalRows.filter((row) => row.provider === 'moralis');
+    const explorer = internalRows.filter((row) => ['blockscout', 'etherscan'].includes(row.provider));
+    const explorerProvider = ['blockscout', 'etherscan']
+      .find((provider) => explorer.some((row) => row.provider === provider));
     const selectedProvider = moralis.length ? 'moralis'
-      : explorer.length ? 'blockscout' : 'existing-ledger';
-    const selected = rows.filter((row) => row.provider === selectedProvider);
+      : explorerProvider || 'existing-ledger';
+    const selected = internalRows.filter((row) => row.provider === selectedProvider);
     const legacyBySignature = new Map();
     for (const row of rows.filter((candidate) => candidate.provider === 'existing-ledger')) {
       const fields = internalObservationFields(row, wallet);
@@ -288,7 +292,7 @@ function effectsFromInternalObservations(context, observations) {
       const fields = internalObservationFields(row, wallet);
       if (!fields) continue;
       const signature = `${fields.from}:${fields.to}:${fields.value}`;
-      const legacyMatches = ['moralis', 'blockscout'].includes(row.provider)
+      const legacyMatches = ['moralis', 'blockscout', 'etherscan'].includes(row.provider)
         ? (legacyBySignature.get(signature) || []) : [];
       const independentlyVerified = row.trace_address != null
         && legacyMatches.length === 1
@@ -312,6 +316,22 @@ function effectsFromInternalObservations(context, observations) {
         evidenceObservationIds: [row.id, ...(independentlyVerified ? legacyMatches.map((match) => match.id) : [])],
       }));
     }
+  }
+  for (const row of observations.filter((candidate) => candidate.evidence_kind === 'native_credit'
+    || candidate.payload_json?.native_credit === true)) {
+    if (!row.tx_hash) continue;
+    const fields = internalObservationFields(row, wallet);
+    if (!fields) continue;
+    const logIndex = row.log_index ?? row.payload_json?.logIndex ?? null;
+    const coordinate = logIndex == null ? `native-credit:${row.tx_hash}:unproven`
+      : `native-credit:${row.tx_hash}:${Number(logIndex)}`;
+    effects.push(baseEffect(context, {
+      txHash: row.tx_hash, effectKey: coordinate, effectType: 'native_credit',
+      direction: fields.effectDirection, logIndex,
+      fromAddress: fields.from, toAddress: fields.to, valueUnits: fields.value,
+      resolutionStatus: 'provisional', selectedObservationId: row.id,
+      evidenceObservationIds: [row.id],
+    }));
   }
   return effects;
 }

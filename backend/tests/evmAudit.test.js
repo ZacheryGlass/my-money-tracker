@@ -9,6 +9,7 @@ const MoralisClient = require('../src/services/evmAudit/MoralisClient');
 const RpcClient = require('../src/services/evmAudit/RpcClient');
 const EvmAuditService = require('../src/services/EvmAuditService');
 const EvmAudit = require('../src/models/EvmAudit');
+const SecretsService = require('../src/services/SecretsService');
 const database = require('../src/config/database');
 const {
   TOPICS, effectsFromInternalObservations, effectsFromRpc,
@@ -49,6 +50,26 @@ test('history audit enumerates every configured chain', () => {
     if (original == null) delete process.env.ETH_CHAINS;
     else process.env.ETH_CHAINS = original;
   }
+});
+
+test('Moralis audit scope is limited to Base and Gnosis with explicit explorer fallbacks', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
+  assert.match(source, /\[100, \{\s*\n\s*moralis: 'gnosis', fallbackProvider: 'blockscout'/);
+  assert.match(source, /\[8453, \{\s*\n\s*moralis: 'base', fallbackProvider: 'blockscout'/);
+  assert.match(source, /\[1, \{ auditProvider: 'etherscan' \}\]/);
+  assert.match(source, /\[42161, \{ auditProvider: 'etherscan' \}\]/);
+  assert.match(source, /const useMoralis = Boolean\(providerConfig\.moralis && moralis\)/);
+  assert.match(source, /const nativeCredit = chain\?\.auditNativeCredits \|\| chain\?\.stateSyncDeposits/);
+  assert.match(source, /fetchStateSyncDeposits\(/);
+  assert.match(source, /evidenceKind: 'native_credit'/);
+});
+
+test('Moralis quota fallback remains visibly deferred and never marks discovery complete', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
+  assert.match(source, /status: 'deferred', source: 'moralis'/);
+  assert.match(source, /active_discovery = \{/);
+  assert.match(source, /key && moralisRequested\.length/);
+  assert.match(source, /let providerDeferred = Boolean\(moralisUnavailable \|\| unavailable\.length\)/);
 });
 
 test('unsupported audit chains become explicit amber scopes without a provider request', async () => {
@@ -226,6 +247,27 @@ test('Blockscout internal evidence can corroborate the existing ledger when Mora
   assert.deepEqual(effects[0].evidenceObservationIds, [11, 12]);
 });
 
+test('Etherscan internal evidence is selected and native-credit logs retain log identity', () => {
+  const etherscan = {
+    id: 14, provider: 'etherscan', provider_object_key: `account:internal:${HASH}:0`,
+    tx_hash: HASH, trace_address: [0],
+    payload_json: { from: OTHER, to: WALLET, value: '9', isError: '0' },
+  };
+  const effects = effectsFromInternalObservations(context(1), [etherscan]);
+  assert.equal(effects.length, 1);
+  assert.equal(effects[0].effectType, 'internal');
+
+  const nativeCredit = {
+    id: 15, provider: 'etherscan', evidence_kind: 'native_credit', tx_hash: HASH,
+    log_index: 7, payload_json: {
+      native_credit: true, from: OTHER, to: WALLET, value: '11', log_index: '7',
+    },
+  };
+  const nativeEffects = effectsFromInternalObservations(context(100), [nativeCredit]);
+  assert.equal(nativeEffects[0].effectType, 'native_credit');
+  assert.equal(nativeEffects[0].effectKey, `native-credit:${HASH}:7`);
+});
+
 test('failed Blockscout internal traces never become economic effects', () => {
   const effects = effectsFromInternalObservations(context(324), [{
     id: 13, provider: 'blockscout', tx_hash: HASH, trace_address: [3, 1],
@@ -362,6 +404,73 @@ test('Moralis plan quota exhaustion is deferred instead of reported as bad crede
   }
 });
 
+test('Moralis discovery quota exhaustion runs configured explorer fallbacks without certifying discovery', async () => {
+  const originalFetch = global.fetch;
+  const originals = {
+    acquireRunLock: EvmAudit.acquireRunLock,
+    releaseRunLock: EvmAudit.releaseRunLock,
+    claim: EvmAudit.claim,
+    findById: EvmAudit.findById,
+    heartbeat: EvmAudit.heartbeat,
+    credentialGeneration: EvmAudit.credentialGeneration,
+    setDiscoveredChains: EvmAudit.setDiscoveredChains,
+    recordProviderAttempt: EvmAudit.recordProviderAttempt,
+    finish: EvmAudit.finish,
+    getUserKey: SecretsService.getUserKey,
+    runChain: EvmAuditService.runChain,
+  };
+  const captured = [];
+  let finished;
+  global.fetch = async () => new Response(
+    JSON.stringify({ message: 'free-plan daily quota exhausted' }),
+    { status: 401, headers: { 'content-type': 'application/json' } }
+  );
+  EvmAudit.acquireRunLock = async () => ({ userId: 1 });
+  EvmAudit.releaseRunLock = async () => {};
+  EvmAudit.claim = async () => ({ id: 44 });
+  EvmAudit.findById = async () => ({
+    id: 44, user_id: 1, subject_id: 9, requested_wallet_id: 3,
+    address: WALLET, requested_chains: [100, 8453, 324], mode: 'full',
+    credential_generation: null,
+  });
+  EvmAudit.heartbeat = async () => ({ id: 44 });
+  EvmAudit.credentialGeneration = async () => null;
+  EvmAudit.setDiscoveredChains = async (_jobId, _owner, chainsFound) => chainsFound;
+  EvmAudit.recordProviderAttempt = async () => {};
+  EvmAudit.finish = async (_jobId, _owner, status, options) => {
+    finished = { status, options };
+    return finished;
+  };
+  SecretsService.getUserKey = async (_userId, service) => service === 'moralis' ? 'test-key' : null;
+  EvmAuditService.runChain = async (options) => {
+    captured.push({ chainId: options.chainId, moralis: Boolean(options.moralis) });
+    return { gaps: 0 };
+  };
+  try {
+    await EvmAuditService.run(44);
+    assert.deepEqual(captured, [
+      { chainId: 100, moralis: false },
+      { chainId: 8453, moralis: false },
+      { chainId: 324, moralis: false },
+    ]);
+    assert.equal(finished.status, 'deferred');
+    assert.equal(finished.options.errorCode, 'MORALIS_QUOTA_EXHAUSTED');
+  } finally {
+    global.fetch = originalFetch;
+    EvmAudit.acquireRunLock = originals.acquireRunLock;
+    EvmAudit.releaseRunLock = originals.releaseRunLock;
+    EvmAudit.claim = originals.claim;
+    EvmAudit.findById = originals.findById;
+    EvmAudit.heartbeat = originals.heartbeat;
+    EvmAudit.credentialGeneration = originals.credentialGeneration;
+    EvmAudit.setDiscoveredChains = originals.setDiscoveredChains;
+    EvmAudit.recordProviderAttempt = originals.recordProviderAttempt;
+    EvmAudit.finish = originals.finish;
+    SecretsService.getUserKey = originals.getUserKey;
+    EvmAuditService.runChain = originals.runChain;
+  }
+});
+
 test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
   const originalFetch = global.fetch;
   const signals = [];
@@ -413,7 +522,7 @@ test('Moralis history scope is finalized after transaction lookup pages', () => 
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
   assert.ok(source.includes("job.id, { chainId }"),
     'restart rehydration must inspect all provider evidence kinds, including explorer feeds');
-  const lookupPass = source.indexOf("for (const hash of hashes) {\n        if (providerTransactionHashes.has(hash)) continue;");
+  const lookupPass = source.indexOf('for (const hash of moralisLookupHashes)');
   const canonicalization = source.indexOf("await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });", lookupPass);
   const finalization = source.indexOf(
     "await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });",
@@ -428,6 +537,9 @@ test('deferred audits can be reopened after a credential generation change', () 
   const source = fs.readFileSync(path.join(__dirname, '../src/models/EvmAudit.js'), 'utf8');
   assert.match(source, /activeJob\.status === 'deferred'/);
   assert.match(source, /startsWith\('MORALIS_'\)/);
+  assert.match(source, /errorCode === 'ETHERSCAN_NOT_CONFIGURED'/);
+  assert.match(source, /etherscanConfigured/);
+  assert.match(source, /etherscanCredentialReady/);
   assert.match(source, /SET status = 'queued'/);
   assert.match(source, /credential_generation = \$2/);
   assert.match(source, /credentialChanged/);
