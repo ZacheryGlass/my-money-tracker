@@ -5,6 +5,7 @@ const pool = require('../config/database');
 
 const ACTIVE_JOB_STATUSES = ['queued', 'running', 'deferred'];
 const OBSERVATION_BATCH_SIZE = 500;
+const AUDIT_LEASE_SECONDS = 600;
 
 function observationIdentity(observation) {
   return JSON.stringify([
@@ -207,7 +208,7 @@ class EvmAudit {
     return rows;
   }
 
-  static async claim(jobId, owner, leaseSeconds = 120) {
+  static async claim(jobId, owner, leaseSeconds = AUDIT_LEASE_SECONDS) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -253,7 +254,7 @@ class EvmAudit {
     }
   }
 
-  static async heartbeat(jobId, owner, { stage = null, progress = null, leaseSeconds = 120 } = {}) {
+  static async heartbeat(jobId, owner, { stage = null, progress = null, leaseSeconds = AUDIT_LEASE_SECONDS } = {}) {
     const { rows } = await pool.query(
       `UPDATE evm_audit_jobs
           SET stage = COALESCE($3, stage),
