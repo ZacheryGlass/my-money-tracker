@@ -4,6 +4,22 @@ const crypto = require('node:crypto');
 const pool = require('../config/database');
 
 const ACTIVE_JOB_STATUSES = ['queued', 'running', 'deferred'];
+const OBSERVATION_BATCH_SIZE = 500;
+
+function observationIdentity(observation) {
+  return JSON.stringify([
+    String(observation.subjectId), String(observation.chainId), observation.provider,
+    observation.evidenceKind, observation.providerObjectKey, observation.payloadSha256,
+  ]);
+}
+
+function chunks(items, size) {
+  const result = [];
+  for (let index = 0; index < items.length; index += size) {
+    result.push(items.slice(index, index + size));
+  }
+  return result;
+}
 
 class EvmAudit {
   static async acquireRunLock(jobId) {
@@ -350,47 +366,76 @@ class EvmAudit {
         pageId = existing.rows[0].id;
       }
 
-      const observationResults = await Promise.all(observations.map(async (observation) => {
+      const preparedObservations = observations.map((observation) => {
         if (Number(observation.subjectId) !== Number(scope.subject_id)
             || Number(observation.chainId) !== Number(scope.chain_id)) {
           throw new Error('Provider observation ownership does not match its locked audit scope');
         }
-        const result = await client.query(
-          `INSERT INTO evm_provider_observations (
-             subject_id, chain_id, provider, evidence_kind, provider_object_key,
-             tx_hash, block_number, block_hash, transaction_index, log_index,
-             trace_address, payload_json, payload_sha256
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13)
-           ON CONFLICT (
-             subject_id, chain_id, provider, evidence_kind,
-             provider_object_key, payload_sha256
-           ) DO UPDATE SET last_observed_at = CURRENT_TIMESTAMP
-           RETURNING id`,
-          [
+        return { observation, identity: observationIdentity(observation) };
+      });
+      const uniqueObservations = [...new Map(
+        preparedObservations.map((entry) => [entry.identity, entry])
+      ).values()];
+      const observationIdsByIdentity = new Map();
+      for (const batch of chunks(uniqueObservations, OBSERVATION_BATCH_SIZE)) {
+        const values = [];
+        const placeholders = batch.map(({ observation }, index) => {
+          const offset = index * 13;
+          values.push(
             observation.subjectId, observation.chainId, observation.provider,
             observation.evidenceKind, observation.providerObjectKey,
             observation.txHash, observation.blockNumber, observation.blockHash,
             observation.transactionIndex, observation.logIndex,
             observation.traceAddress == null ? null : JSON.stringify(observation.traceAddress),
             JSON.stringify(observation.payload), observation.payloadSha256,
-          ]
+          );
+          return `($${offset + 1},$${offset + 2},$${offset + 3},$${offset + 4},$${offset + 5},$${offset + 6},$${offset + 7},$${offset + 8},$${offset + 9},$${offset + 10},$${offset + 11}::jsonb,$${offset + 12}::jsonb,$${offset + 13})`;
+        });
+        const insertedObservations = await client.query(
+          `INSERT INTO evm_provider_observations (
+             subject_id, chain_id, provider, evidence_kind, provider_object_key,
+             tx_hash, block_number, block_hash, transaction_index, log_index,
+             trace_address, payload_json, payload_sha256
+           ) VALUES ${placeholders.join(',')}
+           ON CONFLICT (
+             subject_id, chain_id, provider, evidence_kind,
+             provider_object_key, payload_sha256
+           ) DO UPDATE SET last_observed_at = CURRENT_TIMESTAMP
+           RETURNING id, subject_id, chain_id, provider, evidence_kind,
+                     provider_object_key, payload_sha256`,
+          values
         );
-        return { observation, result };
-      }));
-      const observationChanges = observationResults.reduce((sum, { result }) => sum + result.rowCount, 0);
-      const observationIds = observationResults.map(({ result }) => result.rows[0].id);
-      await Promise.all(observationResults.map(async ({ result }) => {
-        const observationId = result.rows[0].id;
+        for (const row of insertedObservations.rows) {
+          observationIdsByIdentity.set(observationIdentity({
+            subjectId: row.subject_id,
+            chainId: row.chain_id,
+            provider: row.provider,
+            evidenceKind: row.evidence_kind,
+            providerObjectKey: row.provider_object_key,
+            payloadSha256: row.payload_sha256,
+          }), row.id);
+        }
+      }
+      const observationIds = preparedObservations.map(({ identity }) => observationIdsByIdentity.get(identity));
+      const uniqueObservationIds = [...new Set(observationIds)];
+      for (const batch of chunks(uniqueObservationIds, OBSERVATION_BATCH_SIZE)) {
+        const values = [];
+        const placeholders = batch.map((observationId, index) => {
+          const offset = index * 5;
+          values.push(scope.job_id, scope.subject_id, scope.chain_id, observationId, pageId);
+          return `($${offset + 1},$${offset + 2},$${offset + 3},$${offset + 4},$${offset + 5})`;
+        });
         await client.query(
           `INSERT INTO evm_job_observations (
              job_id, subject_id, chain_id, observation_id, page_id
-           ) VALUES ($1, $2, $3, $4, $5)
+           ) VALUES ${placeholders.join(',')}
            ON CONFLICT (job_id, observation_id)
            DO UPDATE SET page_id = COALESCE(evm_job_observations.page_id, EXCLUDED.page_id),
                          observed_at = CURRENT_TIMESTAMP`,
-          [scope.job_id, scope.subject_id, scope.chain_id, observationId, pageId]
+          values
         );
-      }));
+      }
+      const observationChanges = observations.length;
 
       await client.query(
         `UPDATE evm_audit_scopes
