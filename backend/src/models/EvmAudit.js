@@ -810,6 +810,27 @@ class EvmAudit {
     return rows;
   }
 
+  // A committed consensus receipt is durable proof for a mined transaction.
+  // Restarting an audit must not replay every expensive RPC lookup when the
+  // prior run already verified the same finalized transaction. Reconciliation
+  // still reads all canonical effects below, and a transaction without both a
+  // verified row and a consensus receipt remains eligible for lookup.
+  static async verifiedConsensusReceiptHashes(subjectId, chainId) {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT tx.tx_hash
+         FROM evm_mined_transactions tx
+         JOIN evm_transaction_evidence te ON te.transaction_id = tx.id
+         JOIN evm_provider_observations obs ON obs.id = te.observation_id
+        WHERE tx.subject_id = $1 AND tx.chain_id = $2
+          AND tx.resolution_status = 'verified'
+          AND tx.finality_status = 'finalized'
+          AND obs.provider = 'consensus-rpc'
+          AND obs.evidence_kind = 'receipt'`,
+      [subjectId, chainId]
+    );
+    return new Set(rows.map((row) => row.tx_hash));
+  }
+
   static async transactionConflictCount(subjectId, chainId) {
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS count
