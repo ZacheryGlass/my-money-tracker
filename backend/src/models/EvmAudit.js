@@ -162,7 +162,7 @@ class EvmAudit {
           await client.query(
             `UPDATE evm_audit_scopes
                 SET status = 'queued',
-                    requested_from_block = 0,
+                    requested_from_block = CASE WHEN provider = 'consensus-rpc' THEN NULL ELSE 0 END,
                     requested_through_block = NULL,
                     requested_through_hash = NULL,
                     provider_cursor = NULL,

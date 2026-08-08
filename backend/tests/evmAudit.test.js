@@ -604,7 +604,7 @@ test('a deferred narrow audit can be widened to full without bypassing cooldown'
   assert.match(update.sql, /status <> 'running'/);
   const reset = calls.find(({ sql }) => /UPDATE evm_audit_scopes/.test(sql));
   assert.ok(reset);
-  assert.match(reset.sql, /requested_from_block = 0/);
+  assert.match(reset.sql, /requested_from_block = CASE WHEN provider = 'consensus-rpc' THEN NULL ELSE 0 END/);
   assert.match(reset.sql, /provider_cursor = NULL/);
   assert.match(reset.sql, /pagination_exhausted = FALSE/);
   assert.match(reset.sql, /provider <> 'existing-ledger'/);
