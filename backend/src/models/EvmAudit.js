@@ -2,6 +2,11 @@
 
 const crypto = require('node:crypto');
 const pool = require('../config/database');
+const {
+  matchesLegacyTransfer,
+  matchesMoralisTransfer,
+  TRANSFER_TYPES,
+} = require('../services/evmAudit/corroboratedIdentity');
 
 const ACTIVE_JOB_STATUSES = ['queued', 'running', 'deferred'];
 const OBSERVATION_BATCH_SIZE = 500;
@@ -1021,6 +1026,125 @@ class EvmAudit {
       [userId, subjectId, chainId, throughBlock]
     );
     return rows;
+  }
+
+  // Legacy explorer rows normally have economics but no immutable log
+  // coordinate. Upgrade them only when the same receipt effect is proven by
+  // consensus RPC and independently corroborated by Moralis at the exact
+  // transaction/log coordinate. Economic equality alone remains a gap.
+  static async repairCorroboratedTransferIdentities(userId, subjectId, chainId, throughBlock) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const walletResult = await client.query(
+        `SELECT w.id, w.address
+           FROM evm_subjects s
+           JOIN eth_wallets w ON w.user_id = s.user_id AND w.address = s.address
+          WHERE s.id = $2 AND s.user_id = $1
+          FOR UPDATE OF w`,
+        [userId, subjectId]
+      );
+      const wallet = walletResult.rows[0];
+      if (!wallet) throw new Error('Tracked wallet is unavailable for identity repair');
+
+      const effectsResult = await client.query(
+        `SELECT e.*,
+                o.id AS moralis_observation_id,
+                o.provider AS moralis_provider,
+                o.evidence_kind AS moralis_evidence_kind,
+                o.tx_hash AS moralis_tx_hash,
+                o.log_index AS moralis_log_index,
+                o.payload_json AS moralis_payload_json
+           FROM evm_canonical_effects e
+           JOIN evm_provider_observations o
+             ON o.subject_id = e.subject_id AND o.chain_id = e.chain_id
+            AND o.provider = 'moralis'
+            AND o.evidence_kind = e.effect_type || '_transfer'
+            AND o.tx_hash = e.tx_hash AND o.log_index = e.log_index
+          JOIN evm_mined_transactions tx
+             ON tx.subject_id = e.subject_id AND tx.chain_id = e.chain_id
+            AND tx.tx_hash = e.tx_hash
+          WHERE e.subject_id = $2 AND e.chain_id = $3
+            AND tx.block_number <= $4
+            AND e.effect_type = ANY($5::text[])
+            AND e.resolution_status = 'verified'
+            AND tx.resolution_status = 'verified'
+          ORDER BY e.id, o.id`,
+        [userId, subjectId, chainId, throughBlock, Object.keys(TRANSFER_TYPES)]
+      );
+      const legacyResult = await client.query(
+        `SELECT * FROM eth_transfers
+          WHERE wallet_id = $1 AND chain_id = $2 AND block_number <= $3
+            AND transfer_type = ANY($4::text[])
+            AND audit_effect_key IS NULL
+          ORDER BY id
+          FOR UPDATE`,
+        [wallet.id, chainId, throughBlock, Object.values(TRANSFER_TYPES)]
+      );
+
+      const legacyRows = legacyResult.rows;
+      const byEffect = new Map();
+      for (const row of effectsResult.rows) {
+        const list = byEffect.get(row.id) || [];
+        list.push(row);
+        byEffect.set(row.id, list);
+      }
+      const repaired = [];
+      for (const [effectId, observations] of byEffect) {
+        const effect = observations[0];
+        const moralisMatches = observations.filter((observation) => matchesMoralisTransfer(
+          effect,
+          {
+            provider: observation.moralis_provider,
+            evidence_kind: observation.moralis_evidence_kind,
+            tx_hash: observation.moralis_tx_hash,
+            log_index: observation.moralis_log_index,
+            payload_json: observation.moralis_payload_json,
+          }
+        ));
+        if (moralisMatches.length !== 1) continue;
+        const candidates = legacyRows.filter((row) => matchesLegacyTransfer(effect, row)
+          && (row.source_log_index == null || Number(row.source_log_index) === Number(effect.log_index)));
+        if (candidates.length !== 1) continue;
+        const legacy = candidates[0];
+        const conflict = await client.query(
+          `SELECT 1 FROM eth_transfers
+            WHERE wallet_id = $1 AND chain_id = $2 AND audit_effect_key = $3
+            LIMIT 1`,
+          [wallet.id, chainId, effect.effect_key]
+        );
+        if (conflict.rowCount) continue;
+        const updated = await client.query(
+          `UPDATE eth_transfers
+              SET source_log_index = $2,
+                  source_trace_address = $3::jsonb,
+                  audit_effect_key = $4,
+                  audit_observation_id = $5
+            WHERE id = $1 AND audit_effect_key IS NULL
+            RETURNING id`,
+          [
+            legacy.id, effect.log_index,
+            effect.trace_address == null ? null : JSON.stringify(effect.trace_address),
+            effect.effect_key, effect.selected_observation_id,
+          ]
+        );
+        if (!updated.rowCount) continue;
+        await client.query(
+          `INSERT INTO evm_effect_evidence (effect_id, subject_id, chain_id, observation_id)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT DO NOTHING`,
+          [effectId, subjectId, chainId, moralisMatches[0].moralis_observation_id]
+        );
+        repaired.push({ effectId: Number(effectId), transferId: legacy.id });
+      }
+      await client.query('COMMIT');
+      return { repaired: repaired.length, transferIds: repaired.map((row) => row.transferId) };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   static async storedFeedCoverage(userId, subjectId, chainId) {
