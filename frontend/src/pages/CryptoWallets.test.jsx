@@ -431,6 +431,27 @@ describe('Crypto -> Wallets tab', () => {
     expect(await screen.findByText(/History audit: queued/i)).toBeInTheDocument();
   });
 
+  it('surfaces the persisted reason when an audit remains deferred', async () => {
+    apiMocks.eth.startHistoryAudit.mockResolvedValue({
+      created: false,
+      job: {
+        id: '43',
+        requested_wallet_id: 1,
+        status: 'deferred',
+        stage: 'discovering',
+        error_detail: 'Moralis daily plan quota is exhausted; audit deferred',
+        retry_after_at: '2026-08-09T11:00:00.000Z',
+        progress: {},
+      },
+    });
+    await openEthereumTab([wallet(report())]);
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /audit mined history for main/i }))[0]);
+
+    expect(await screen.findByText(/Moralis daily plan quota is exhausted/i)).toBeInTheDocument();
+    expect(screen.getByText(/Retry after/)).toBeInTheDocument();
+  });
+
   it('offers an incremental verification run for idempotency checks', async () => {
     apiMocks.eth.startHistoryAudit.mockResolvedValue({
       created: true,

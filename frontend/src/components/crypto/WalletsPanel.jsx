@@ -16,6 +16,15 @@ const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 // after a provider cooldown or a newly entered credential.
 const auditIsPending = (audit) => ['queued', 'running'].includes(audit?.status);
 
+const auditDeferredMessage = (job) => {
+  const detail = String(job?.error_detail || '').trim();
+  const retryAt = job?.retry_after_at ? new Date(job.retry_after_at) : null;
+  const retryText = retryAt && Number.isFinite(retryAt.getTime())
+    ? ` Retry after ${retryAt.toLocaleString()}.`
+    : '';
+  return `Audit deferred${detail ? `: ${detail}` : '; its provider retry schedule remains in effect.'}${retryText}`;
+};
+
 // Addresses render inside fallback chains and sentences composed here, so a
 // missing value must contribute nothing rather than 'unknown'.
 const shortEthAddress = (address) => shortEthAddressOrUnknown(address, '');
@@ -539,7 +548,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
       const { job } = await ethAPI.startHistoryAudit(wallet.id, { mode });
       setAuditByWallet((current) => ({ ...current, [wallet.id]: job }));
       if (job.status === 'deferred') {
-        showNotice('This audit is still deferred; its provider retry schedule remains in effect.');
+        showNotice(auditDeferredMessage(job));
       } else {
         showNotice(mode === 'full'
           ? 'Full history audit queued. You can leave this page; progress and evidence are saved.'
