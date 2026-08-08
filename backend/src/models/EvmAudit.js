@@ -138,7 +138,7 @@ class EvmAudit {
   static async createOrFindActiveJob(userId, wallet, {
     mode = 'incremental', requestedChains = [], credentialGeneration = null,
     credentialGenerations = null,
-    etherscanConfigured = false, cdpConfigured = false,
+    etherscanConfigured = false, cdpConfigured = false, rpcConfigurationReady = false,
   } = {}) {
     const providerGenerations = credentialGenerations || {
       moralis: credentialGeneration,
@@ -179,6 +179,8 @@ class EvmAudit {
         const etherscanCredentialReady = errorCode === 'ETHERSCAN_NOT_CONFIGURED'
           && etherscanConfigured;
         const cdpCredentialReady = errorCode === 'CDP_NOT_CONFIGURED' && cdpConfigured;
+        const rpcConfigurationReadyNow = errorCode === 'RPC_UNSUPPORTED'
+          && rpcConfigurationReady;
         const deferredProviderGeneration = deferredProvider
           ? providerGenerations[deferredProvider] : null;
         const deferredProviderGenerationColumn = deferredProvider
@@ -199,7 +201,7 @@ class EvmAudit {
               || new Date(priorProviderGeneration).getTime()
                 !== new Date(deferredProviderGeneration).getTime());
         const credentialChanged = etherscanCredentialReady || cdpCredentialReady
-          || deferredProviderGenerationChanged;
+          || deferredProviderGenerationChanged || rpcConfigurationReadyNow;
         if (activeJob.status === 'deferred' && credentialChanged) {
           const refreshed = await client.query(
             `UPDATE evm_audit_jobs
