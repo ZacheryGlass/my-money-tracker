@@ -121,6 +121,60 @@ test('finishing an audit casts the status parameter consistently for PostgreSQL'
   }
 });
 
+test('new audit scopes persist unknown provider order instead of SQL NULL', async () => {
+  const originalQuery = database.query;
+  let sql;
+  let params;
+  database.query = async (query, queryParams) => {
+    sql = query;
+    params = queryParams;
+    return { rows: [{ id: 1, provider_order: 'unknown' }] };
+  };
+  try {
+    await EvmAudit.upsertScope(1, {
+      chainId: 8453,
+      provider: 'coinbase-cdp',
+      capability: 'active_chain',
+      providerOrder: null,
+    });
+    assert.equal(params[9], null);
+    assert.match(sql, /COALESCE\(\$10, 'unknown'\)/);
+    assert.match(sql, /CASE WHEN \$10 IS NULL/);
+  } finally {
+    database.query = originalQuery;
+  }
+});
+
+test('source coverage persists unknown provider order without erasing known order', async () => {
+  const originalQuery = database.query;
+  let sql;
+  let params;
+  database.query = async (query, queryParams) => {
+    sql = query;
+    params = queryParams;
+    return { rows: [{ id: 1, provider_order: 'unknown' }] };
+  };
+  try {
+    await EvmAudit.acceptCoverage({
+      subjectId: 3,
+      chainId: 8453,
+      provider: 'coinbase-cdp',
+      capability: 'wallet_history',
+      fromBlock: 0,
+      throughBlock: 1,
+      providerOrder: null,
+      paginationExhausted: true,
+      status: 'complete',
+      jobId: 1,
+    });
+    assert.equal(params[7], null);
+    assert.match(sql, /COALESCE\(\$8, 'unknown'\)/);
+    assert.match(sql, /CASE WHEN \$8 IS NULL/);
+  } finally {
+    database.query = originalQuery;
+  }
+});
+
 test('identity repair keeps its canonical-effect query user-scoped', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/models/EvmAudit.js'), 'utf8');
   const methodStart = source.indexOf('static async repairCorroboratedTransferIdentities');
