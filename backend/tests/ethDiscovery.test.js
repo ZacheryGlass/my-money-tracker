@@ -66,7 +66,7 @@ test('discovery frontier respects durable per-depth receipts', async () => {
   assert.match(call.text, /eth_discovery_fetches/);
   assert.match(call.text, /r\.depth = f\.depth/);
   assert.match(call.text, /f\.depth < \$3/);
-  assert.match(call.text, /r\.status IN \('complete', 'contract', 'high_traffic', 'dust'\)/);
+  assert.match(call.text, /r\.status IN \('complete', 'contract', 'high_traffic', 'dust', 'unsupported'\)/);
   assert.match(call.text, /jsonb_array_elements/);
 });
 

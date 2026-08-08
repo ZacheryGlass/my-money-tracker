@@ -52,16 +52,21 @@ test('history audit enumerates every configured chain', () => {
   }
 });
 
-test('Moralis audit scope is limited to Base and Gnosis with explicit explorer fallbacks', () => {
+test('Base audit scope uses CDP while Gnosis retains Moralis with an explorer fallback', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
   assert.match(source, /\[100, \{\s*\n\s*moralis: 'gnosis', fallbackProvider: 'blockscout'/);
-  assert.match(source, /\[8453, \{\s*\n\s*moralis: 'base', fallbackProvider: 'blockscout'/);
+  assert.match(source, /\[8453, \{\s*\n\s*cdp: 'base'/);
+  assert.doesNotMatch(source, /\[8453, \{[\s\S]{0,160}moralis:/);
   assert.match(source, /\[1, \{ auditProvider: 'etherscan' \}\]/);
   assert.match(source, /\[42161, \{ auditProvider: 'etherscan' \}\]/);
   assert.match(source, /const useMoralis = Boolean\(providerConfig\.moralis && moralis\)/);
+  assert.match(source, /const useCdp = Boolean\(providerConfig\.cdp && cdp\)/);
   assert.match(source, /const nativeCredit = chain\?\.auditNativeCredits \|\| chain\?\.stateSyncDeposits/);
   assert.match(source, /fetchStateSyncDeposits\(/);
   assert.match(source, /evidenceKind: 'native_credit'/);
+  assert.match(source, /discoveredChain\.bounded = true/);
+  assert.match(source, /discoveredChain\.status = 'bounded'/);
+  assert.match(source, /discoveredChain\.active_hint_proven = false/);
 });
 
 test('Moralis quota fallback remains visibly deferred and never marks discovery complete', () => {
@@ -69,7 +74,7 @@ test('Moralis quota fallback remains visibly deferred and never marks discovery 
   assert.match(source, /status: 'deferred', source: 'moralis'/);
   assert.match(source, /active_discovery = \{/);
   assert.match(source, /key && moralisRequested\.length/);
-  assert.match(source, /let providerDeferred = Boolean\(moralisUnavailable \|\| unavailable\.length\)/);
+  assert.match(source, /let providerDeferred = Boolean\(moralisUnavailable \|\| cdpUnavailable \|\| unavailable\.length\)/);
 });
 
 test('unsupported audit chains become explicit amber scopes without a provider request', async () => {
@@ -404,7 +409,7 @@ test('Moralis plan quota exhaustion is deferred instead of reported as bad crede
   }
 });
 
-test('Moralis discovery quota exhaustion runs configured explorer fallbacks without certifying discovery', async () => {
+test('Moralis discovery quota exhaustion defers Gnosis while Base still uses CDP', async () => {
   const originalFetch = global.fetch;
   const originals = {
     acquireRunLock: EvmAudit.acquireRunLock,
@@ -412,6 +417,7 @@ test('Moralis discovery quota exhaustion runs configured explorer fallbacks with
     claim: EvmAudit.claim,
     findById: EvmAudit.findById,
     heartbeat: EvmAudit.heartbeat,
+    credentialGenerations: EvmAudit.credentialGenerations,
     credentialGeneration: EvmAudit.credentialGeneration,
     setDiscoveredChains: EvmAudit.setDiscoveredChains,
     recordProviderAttempt: EvmAudit.recordProviderAttempt,
@@ -432,8 +438,11 @@ test('Moralis discovery quota exhaustion runs configured explorer fallbacks with
     id: 44, user_id: 1, subject_id: 9, requested_wallet_id: 3,
     address: WALLET, requested_chains: [100, 8453, 324], mode: 'full',
     credential_generation: null,
+    moralis_credential_generation: null,
+    cdp_credential_generation: null,
   });
   EvmAudit.heartbeat = async () => ({ id: 44 });
+  EvmAudit.credentialGenerations = async () => ({ moralis: null, cdp: null });
   EvmAudit.credentialGeneration = async () => null;
   EvmAudit.setDiscoveredChains = async (_jobId, _owner, chainsFound) => chainsFound;
   EvmAudit.recordProviderAttempt = async () => {};
@@ -441,17 +450,23 @@ test('Moralis discovery quota exhaustion runs configured explorer fallbacks with
     finished = { status, options };
     return finished;
   };
-  SecretsService.getUserKey = async (_userId, service) => service === 'moralis' ? 'test-key' : null;
+  SecretsService.getUserKey = async (_userId, service) => (
+    service === 'moralis' ? 'moralis-key' : service === 'cdp' ? 'cdp-key' : null
+  );
   EvmAuditService.runChain = async (options) => {
-    captured.push({ chainId: options.chainId, moralis: Boolean(options.moralis) });
+    captured.push({
+      chainId: options.chainId,
+      moralis: Boolean(options.moralis),
+      cdp: options.chainId === 8453 && Boolean(options.cdp),
+    });
     return { gaps: 0 };
   };
   try {
     await EvmAuditService.run(44);
     assert.deepEqual(captured, [
-      { chainId: 100, moralis: false },
-      { chainId: 8453, moralis: false },
-      { chainId: 324, moralis: false },
+      { chainId: 100, moralis: false, cdp: false },
+      { chainId: 8453, moralis: false, cdp: true },
+      { chainId: 324, moralis: false, cdp: false },
     ]);
     assert.equal(finished.status, 'deferred');
     assert.equal(finished.options.errorCode, 'MORALIS_QUOTA_EXHAUSTED');
@@ -462,6 +477,7 @@ test('Moralis discovery quota exhaustion runs configured explorer fallbacks with
     EvmAudit.claim = originals.claim;
     EvmAudit.findById = originals.findById;
     EvmAudit.heartbeat = originals.heartbeat;
+    EvmAudit.credentialGenerations = originals.credentialGenerations;
     EvmAudit.credentialGeneration = originals.credentialGeneration;
     EvmAudit.setDiscoveredChains = originals.setDiscoveredChains;
     EvmAudit.recordProviderAttempt = originals.recordProviderAttempt;
@@ -525,7 +541,7 @@ test('Moralis history scope is finalized after transaction lookup pages', () => 
   const lookupPass = source.indexOf('for (const hash of moralisLookupHashes)');
   const canonicalization = source.indexOf("await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });", lookupPass);
   const finalization = source.indexOf(
-    "await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });",
+    "await completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });",
     lookupPass
   );
   assert.ok(lookupPass >= 0);
@@ -542,6 +558,9 @@ test('deferred audits can be reopened after a credential generation change', () 
   assert.match(source, /etherscanCredentialReady/);
   assert.match(source, /SET status = 'queued'/);
   assert.match(source, /credential_generation = \$2/);
+  assert.match(source, /moralis_credential_generation = \$3/);
+  assert.match(source, /cdp_credential_generation = \$4/);
+  assert.match(source, /deferredProviderGenerationChanged/);
   assert.match(source, /credentialChanged/);
   assert.match(source, /retry_after_at = NULL/);
   assert.match(source, /error_code = NULL/);
@@ -627,17 +646,32 @@ test('audit claims cannot bypass a deferred retry deadline', () => {
 
 test('consensus RPC requires matching receipt identity and canonical block membership', async () => {
   const rpc = new RpcClient(8453, { spacingMs: 0 });
-  rpc.request = async (method) => ({
-    eth_getTransactionByHash: { hash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH },
-    eth_getTransactionReceipt: { transactionHash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH },
-    eth_getBlockByNumber: { number: '0xa', hash: BLOCK_HASH },
-  })[method];
+  rpc.requestWithEvidence = async (method, params) => {
+    const result = {
+      eth_getTransactionByHash: { hash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH },
+      eth_getTransactionReceipt: { transactionHash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH },
+      eth_getBlockByNumber: { number: '0xa', hash: BLOCK_HASH },
+    }[method];
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result });
+    return {
+      result, rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
   const result = await rpc.transactionAndReceipt(HASH);
   assert.equal(result.block.hash, BLOCK_HASH);
-  rpc.request = async (method) => ({
-    eth_getTransactionByHash: { hash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH },
-    eth_getTransactionReceipt: { transactionHash: `0x${'ef'.repeat(32)}`, blockNumber: '0xa', blockHash: BLOCK_HASH },
-  })[method];
+  assert.equal(result.evidence.length, 3);
+  rpc.requestWithEvidence = async (method, params) => {
+    const result = {
+      eth_getTransactionByHash: { hash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH },
+      eth_getTransactionReceipt: { transactionHash: `0x${'ef'.repeat(32)}`, blockNumber: '0xa', blockHash: BLOCK_HASH },
+    }[method];
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result });
+    return {
+      result, rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
   await assert.rejects(rpc.transactionAndReceipt(HASH), (error) => error.code === 'RPC_IDENTITY_MISMATCH');
 });
 

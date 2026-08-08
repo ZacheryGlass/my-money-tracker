@@ -247,9 +247,9 @@ function internalObservationFields(observation, wallet) {
 // pretending it is consensus evidence. When an independent trace provider and
 // the existing ledger contain one unambiguous identical effect, retain both
 // evidence links and mark that effect verified; otherwise it remains provisional
-// and therefore blocks a gap-free audit. Moralis takes precedence when both
-// independent providers are present; Blockscout is the fallback for chains
-// where Moralis does not enumerate history.
+// and therefore blocks a gap-free audit. Coinbase CDP takes precedence for Base
+// and Moralis remains the indexed source for Gnosis; Blockscout is only a finite
+// fallback for chains without either source.
 function effectsFromInternalObservations(context, observations) {
   const wallet = context.address.toLowerCase();
   const byTransaction = new Map();
@@ -264,12 +264,13 @@ function effectsFromInternalObservations(context, observations) {
   for (const [hash, rows] of byTransaction) {
     const internalRows = rows.filter((row) => row.evidence_kind !== 'native_credit'
       && row.payload_json?.native_credit !== true);
-    const moralis = internalRows.filter((row) => row.provider === 'moralis');
+    const indexedProviders = ['coinbase-cdp', 'moralis'];
     const explorer = internalRows.filter((row) => ['blockscout', 'etherscan'].includes(row.provider));
     const explorerProvider = ['blockscout', 'etherscan']
       .find((provider) => explorer.some((row) => row.provider === provider));
-    const selectedProvider = moralis.length ? 'moralis'
-      : explorerProvider || 'existing-ledger';
+    const selectedProvider = indexedProviders.find((provider) =>
+      internalRows.some((row) => row.provider === provider)
+    ) || explorerProvider || 'existing-ledger';
     const selected = internalRows.filter((row) => row.provider === selectedProvider);
     const legacyBySignature = new Map();
     for (const row of rows.filter((candidate) => candidate.provider === 'existing-ledger')) {
@@ -292,7 +293,7 @@ function effectsFromInternalObservations(context, observations) {
       const fields = internalObservationFields(row, wallet);
       if (!fields) continue;
       const signature = `${fields.from}:${fields.to}:${fields.value}`;
-      const legacyMatches = ['moralis', 'blockscout', 'etherscan'].includes(row.provider)
+      const legacyMatches = ['coinbase-cdp', 'moralis', 'blockscout', 'etherscan'].includes(row.provider)
         ? (legacyBySignature.get(signature) || []) : [];
       const independentlyVerified = row.trace_address != null
         && legacyMatches.length === 1

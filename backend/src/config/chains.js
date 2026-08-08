@@ -26,13 +26,11 @@
 //     included. That matters more than it looks: internal traces are how ETH
 //     arriving from a contract is seen at all, so a chain without them silently
 //     drifts away from its own derived balance.
-//   * OP Mainnet (10) and Base (8453) remain paid-plan-only through Etherscan,
-//     so both use their public Blockscout instances instead. OP still uses the
-//     Etherscan-compatible facade. Base's anonymous legacy facade began
-//     returning a standing 429 in August 2026 while its documented v2 REST API
-//     remained healthy, so Base has an explicit v2 adapter. A per-chain
-//     ETHBridgeFinalized log feed records canonical native bridge credits
-//     independently.
+//   * OP Mainnet (10) remains on its public Blockscout instance. Base (8453)
+//     is CDP-only for ordinary history and full audits; its Blockscout adapter
+//     remains available only for a future keyed, transaction-scoped repair.
+//     A per-transaction receipt decoder records Base native bridge credits, so
+//     no chain-wide anonymous bridge-log walk is part of the critical path.
 //   * Polygon PoS (137) is served on the FREE key -- balance, txlist and
 //     txlistinternal all answered on a live probe, so it ships enabled. It is
 //     also the first chain here that is NOT ETH-native (see NATIVE_ASSETS).
@@ -249,6 +247,10 @@ const REGISTRY = [
     nativeAsset: 'ETH',
     coingeckoPlatform: 'base',
     enabledByDefault: true,
+    // Base history is served by the user's separately encrypted Coinbase CDP
+    // Client API key. Blockscout remains configured below only as a keyed,
+    // transaction-scoped repair source; it is not an ordinary sync provider.
+    historyProvider: 'coinbase-cdp',
     accountApi: {
       provider: 'Blockscout',
       baseUrl: 'https://base.blockscout.com/api',
@@ -262,7 +264,7 @@ const REGISTRY = [
       requestSpacingMs: 15000,
     },
     rpcUrl: 'https://mainnet.base.org',
-    ingestVersion: 1,
+    ingestVersion: 2,
     opStackDeposits: {
       creditSource: '0x4200000000000000000000000000000000000010',
     },

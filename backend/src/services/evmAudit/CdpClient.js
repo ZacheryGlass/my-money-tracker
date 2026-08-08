@@ -1,0 +1,314 @@
+'use strict';
+
+const crypto = require('node:crypto');
+const JSONbig = require('json-bigint')({ useNativeBigInt: true });
+const { sha256 } = require('./normalizer');
+
+// CDP's address-history JSON-RPC endpoint is network-scoped. The client API
+// key is deliberately kept only in this instance; it is never part of a
+// persisted request parameter object or an error message.
+const ROOT = 'https://api.developer.coinbase.com/rpc/v1/base';
+const DEFAULT_SPACING_MS = 25;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_INLINE_RETRY_MS = 30_000;
+const MAX_ATTEMPTS = 3;
+const MAX_PAGES = 100_000;
+const MAX_PAGE_SIZE = 100;
+const queues = new Map();
+
+function providerError(message, code, extra = {}) {
+  const error = new Error(message);
+  error.code = code;
+  Object.assign(error, extra);
+  return error;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfter(value) {
+  if (!value) return null;
+  if (/^\d+(?:\.\d+)?$/.test(value)) return Math.ceil(Number(value) * 1000);
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
+function normalizeJsonNumbers(value) {
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map(normalizeJsonNumbers);
+  if (!value || typeof value !== 'object') return value;
+  const normalized = {};
+  const numericFields = [];
+  for (const [key, child] of Object.entries(value)) {
+    if (typeof child === 'bigint') {
+      normalized[key] = child.toString();
+      numericFields.push(key);
+    } else {
+      normalized[key] = normalizeJsonNumbers(child);
+    }
+  }
+  if (numericFields.length) normalized.__evm_json_numeric_fields = numericFields;
+  return normalized;
+}
+
+function isQuotaError(detail) {
+  return /(?:quota|credit|billing|usage).*(?:exhaust|limit|exceed)|(?:exhaust|limit|exceed).*(?:quota|credit|billing|usage)/i.test(detail);
+}
+
+function nextCalendarMonth() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
+}
+
+function responseError(response, body, method) {
+  const detail = String(body?.error?.message || body?.message || '').slice(0, 500);
+  if (response.status === 429) {
+    const retryAfterMs = parseRetryAfter(response.headers.get('retry-after')) ?? 5_000;
+    return providerError('Coinbase CDP rate limit reached; Base history deferred', 'CDP_RATE_LIMITED', {
+      httpStatus: response.status,
+      retryAfterMs,
+      retryAt: new Date(Date.now() + retryAfterMs),
+    });
+  }
+  if ([401, 403].includes(response.status)) {
+    if (isQuotaError(detail)) {
+      return providerError('Coinbase CDP usage limit reached; Base history deferred', 'CDP_QUOTA_EXHAUSTED', {
+        httpStatus: response.status,
+        // CDP Node's free billing-unit allowance is documented as a calendar-
+        // month allowance. A portal/account-specific quota may differ, so the
+        // UI still displays this as a provider retry boundary, not a promise
+        // that all credits reset after 24 hours.
+        retryAt: nextCalendarMonth(),
+      });
+    }
+    return providerError('Coinbase CDP rejected the configured credential', 'CDP_AUTH_FAILED', {
+      httpStatus: response.status,
+    });
+  }
+  if (body?.error) {
+    const code = String(body.error.code || '').toLowerCase();
+    return providerError(
+      `Coinbase CDP ${method} returned an error${detail ? `: ${detail}` : ''}`,
+      isQuotaError(detail) || /quota|credit|billing/.test(code) ? 'CDP_QUOTA_EXHAUSTED' : 'CDP_API_ERROR',
+      { httpStatus: response.status }
+    );
+  }
+  return providerError(
+    `Coinbase CDP ${method} returned HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
+    'CDP_API_ERROR',
+    { httpStatus: response.status }
+  );
+}
+
+function pageCursor(value, method) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') {
+    throw providerError(
+      `Coinbase CDP ${method} returned an invalid page cursor`,
+      'CDP_INVALID_RESPONSE'
+    );
+  }
+  return value;
+}
+
+class CdpClient {
+  constructor(apiKey, {
+    spacingMs = DEFAULT_SPACING_MS,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    requestTimeoutGraceMs = 1000,
+    maxAttempts = MAX_ATTEMPTS,
+    baseUrl = ROOT,
+    onFailedAttempt = null,
+  } = {}) {
+    if (!apiKey) throw providerError('Coinbase CDP Client API key is not configured', 'CDP_NOT_CONFIGURED');
+    this.apiKey = apiKey;
+    this.spacingMs = spacingMs;
+    this.requestTimeoutMs = requestTimeoutMs;
+    this.requestTimeoutGraceMs = requestTimeoutGraceMs;
+    this.maxAttempts = maxAttempts;
+    this.baseUrl = String(baseUrl).replace(/\/$/, '');
+    this.onFailedAttempt = onFailedAttempt;
+    this.queueKey = crypto.createHash('sha256').update(apiKey).digest('hex');
+  }
+
+  async _scheduled(task) {
+    const previous = queues.get(this.queueKey) || Promise.resolve();
+    const run = previous.catch(() => {}).then(async () => {
+      await wait(this.spacingMs);
+      return task();
+    });
+    const queued = run.catch(() => {}).finally(() => {
+      if (queues.get(this.queueKey) === queued) queues.delete(this.queueKey);
+    });
+    queues.set(this.queueKey, queued);
+    return run;
+  }
+
+  async _request(method, params, endpoint = method) {
+    return this._scheduled(async () => {
+      const url = `${this.baseUrl}/${encodeURIComponent(this.apiKey)}`;
+      for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+        let response;
+        let text;
+        let timedOut = false;
+        try {
+          const controller = new AbortController();
+          let timeout;
+          const request = (async () => {
+            const result = await fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', accept: 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0', id: 1, method,
+                params: [{ ...params, pageSize: Math.min(MAX_PAGE_SIZE, Number(params.pageSize || MAX_PAGE_SIZE)) }],
+              }),
+              signal: controller.signal,
+            });
+            return { response: result, text: await result.text() };
+          })();
+          request.catch(() => {});
+          try {
+            ({ response, text } = await Promise.race([
+              request,
+              new Promise((_, reject) => {
+                timeout = setTimeout(() => {
+                  timedOut = true;
+                  controller.abort();
+                  reject(providerError(`Coinbase CDP ${endpoint} request exceeded its deadline`, 'CDP_TRANSPORT_ERROR'));
+                }, this.requestTimeoutMs + this.requestTimeoutGraceMs);
+              }),
+            ]));
+          } finally {
+            clearTimeout(timeout);
+          }
+        } catch {
+          await this.onFailedAttempt?.({
+            provider: 'coinbase-cdp', endpoint, method: 'POST', attemptNo: attempt,
+            requestParams: params, outcome: attempt < this.maxAttempts && !timedOut ? 'deferred' : 'failed',
+            errorCode: 'CDP_TRANSPORT_ERROR', errorDetail: 'Network request failed before a response.',
+          });
+          if (attempt < this.maxAttempts && !timedOut) {
+            await wait(500 * (2 ** (attempt - 1)));
+            continue;
+          }
+          // Do not attach the fetch error as `cause`: some HTTP clients include
+          // the request URL in a transport error, and this URL contains the
+          // Client API key. The retained provider-attempt detail is deliberately
+          // generic for the same reason.
+          throw providerError(`Coinbase CDP ${endpoint} request failed`, 'CDP_TRANSPORT_ERROR');
+        }
+
+        let body;
+        try { body = normalizeJsonNumbers(JSONbig.parse(text)); } catch {
+          body = null;
+        }
+        const hasResult = body && typeof body === 'object' && !Array.isArray(body)
+          && body.result != null;
+        // Do not accept a malformed JSON-RPC envelope that contains both an
+        // error and a result. A partial result paired with an error is not a
+        // proven page and must not advance a durable cursor.
+        if (response.ok && hasResult && !body.error) {
+          return {
+            body: body.result,
+            rawText: text,
+            responseSha256: sha256(text),
+            requestId: response.headers.get('x-request-id') || null,
+          };
+        }
+
+        const error = responseError(response, body, method);
+        const retryable = error.code === 'CDP_RATE_LIMITED' && attempt < this.maxAttempts;
+        await this.onFailedAttempt?.({
+          provider: 'coinbase-cdp', endpoint, method: 'POST', attemptNo: attempt,
+          requestParams: params, outcome: retryable || error.code === 'CDP_QUOTA_EXHAUSTED' ? 'deferred' : 'failed',
+          httpStatus: error.httpStatus || response.status,
+          errorCode: error.code, errorDetail: error.message,
+          requestId: response.headers.get('x-request-id') || null,
+          responseSha256: sha256(text), responseRaw: text, responseJson: body,
+        });
+        if (retryable && error.retryAfterMs <= MAX_INLINE_RETRY_MS) {
+          await wait(error.retryAfterMs);
+          continue;
+        }
+        throw error;
+      }
+      throw providerError(`Coinbase CDP ${endpoint} retry budget exhausted`, 'CDP_TRANSPORT_ERROR');
+    });
+  }
+
+  async *addressTransactionPages(address, { cursor = null, pageSize = MAX_PAGE_SIZE } = {}) {
+    const normalizedAddress = String(address || '').toLowerCase();
+    let next = pageCursor(cursor, 'address history');
+    const seenCursors = new Set();
+    let pages = 0;
+    do {
+      if (next != null) {
+        if (seenCursors.has(next)) {
+          throw providerError('Coinbase CDP address history returned a repeated page token', 'CDP_PAGINATION_STALLED');
+        }
+        seenCursors.add(next);
+      }
+      const params = {
+        address: normalizedAddress,
+        pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Number(pageSize) || MAX_PAGE_SIZE)),
+        pageToken: next || '',
+      };
+      const response = await this._request('cdp_listAddressTransactions', params, 'address-history');
+      const items = response.body?.addressTransactions;
+      if (!Array.isArray(items)) {
+        throw providerError('Coinbase CDP address history returned an invalid result shape', 'CDP_INVALID_RESPONSE');
+      }
+      pages += 1;
+      if (pages > MAX_PAGES) {
+        throw providerError('Coinbase CDP address history exceeded the pagination safety bound', 'CDP_PAGINATION_STALLED');
+      }
+      const cursorOut = pageCursor(response.body?.nextPageToken, 'address history');
+      if (cursorOut && seenCursors.has(cursorOut)) {
+        throw providerError('Coinbase CDP address history returned a repeated page token', 'CDP_PAGINATION_STALLED');
+      }
+      yield { ...response, items, cursorIn: next, cursorOut };
+      next = cursorOut;
+    } while (next);
+  }
+
+  async *balancePages(address, { cursor = null, pageSize = MAX_PAGE_SIZE } = {}) {
+    const normalizedAddress = String(address || '').toLowerCase();
+    let next = pageCursor(cursor, 'balances');
+    const seenCursors = new Set();
+    let pages = 0;
+    do {
+      if (next != null) {
+        if (seenCursors.has(next)) {
+          throw providerError('Coinbase CDP balances returned a repeated page token', 'CDP_PAGINATION_STALLED');
+        }
+        seenCursors.add(next);
+      }
+      const params = {
+        address: normalizedAddress,
+        pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Number(pageSize) || MAX_PAGE_SIZE)),
+        pageToken: next || '',
+      };
+      const response = await this._request('cdp_listBalances', params, 'balance-history');
+      const items = response.body?.balances;
+      if (!Array.isArray(items)) {
+        throw providerError('Coinbase CDP balance history returned an invalid result shape', 'CDP_INVALID_RESPONSE');
+      }
+      pages += 1;
+      if (pages > MAX_PAGES) {
+        throw providerError('Coinbase CDP balances exceeded the pagination safety bound', 'CDP_PAGINATION_STALLED');
+      }
+      const cursorOut = pageCursor(response.body?.nextPageToken, 'balances');
+      if (cursorOut && seenCursors.has(cursorOut)) {
+        throw providerError('Coinbase CDP balances returned a repeated page token', 'CDP_PAGINATION_STALLED');
+      }
+      yield { ...response, items, cursorIn: next, cursorOut };
+      next = cursorOut;
+    } while (next);
+  }
+}
+
+module.exports = CdpClient;
+module.exports.parseRetryAfter = parseRetryAfter;
+module.exports.normalizeJsonNumbers = normalizeJsonNumbers;
+module.exports.providerError = providerError;

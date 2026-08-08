@@ -181,7 +181,9 @@ class EthTransfer {
   //     own delete was skipped -- preserving the "a failed feed keeps its rows"
   //     invariant across the shared transfer_type.
   // Both are no-ops on every other feed and chain, which pass neither.
-  static async deleteFromBlock(walletId, chainId, transferTypes, block, { fromAddress = null, excludeFromAddress = null } = {}) {
+  static async deleteFromBlock(walletId, chainId, transferTypes, block, {
+    fromAddress = null, excludeFromAddress = null, client = pool,
+  } = {}) {
     const params = [walletId, chainId, transferTypes, block];
     let addressClause = '';
     if (fromAddress) {
@@ -191,7 +193,7 @@ class EthTransfer {
       params.push(excludeFromAddress.toLowerCase());
       addressClause = ` AND from_address <> $${params.length}`;
     }
-    await pool.query(
+    await client.query(
       `DELETE FROM eth_transfers
        WHERE wallet_id = $1 AND chain_id = $2 AND transfer_type = ANY($3)
          AND block_number >= $4 AND audit_effect_key IS NULL${addressClause}`,
@@ -199,7 +201,7 @@ class EthTransfer {
     );
   }
 
-  static async bulkInsert(rows) {
+  static async bulkInsert(rows, { client = pool } = {}) {
     if (!rows.length) return 0;
     const cols = [
       'wallet_id', 'chain_id', 'tx_hash', 'ordinal', 'transfer_type', 'block_number',
@@ -234,7 +236,7 @@ class EthTransfer {
         );
         return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`;
       });
-      const result = await pool.query(
+      const result = await client.query(
         `INSERT INTO eth_transfers (${cols.join(', ')})
          VALUES ${placeholders.join(', ')}
          ON CONFLICT (wallet_id, chain_id, transfer_type, tx_hash, ordinal) DO NOTHING`,
@@ -243,6 +245,48 @@ class EthTransfer {
       inserted += result.rowCount;
     }
     return inserted;
+  }
+
+  // Base CDP history is one provider stream projected into several ordinary
+  // feeds. Replace every successfully fetched overlap window in one database
+  // transaction so a deadlock/constraint error cannot leave old rows deleted
+  // while the durable cursors still claim the provider walk succeeded.
+  static async replaceFeeds(walletId, chainId, replacements, rows, { scanId = null, owner = null } = {}) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (scanId) {
+        const owned = await client.query(
+          `SELECT 1 FROM eth_wallet_chains
+            WHERE wallet_id = $1 AND chain_id = $2
+              AND provider_scan_id = $3::uuid
+              AND provider_scan_owner = $4
+              AND provider_scan_status = 'running'
+              AND (provider_scan_lease_expires_at IS NULL OR provider_scan_lease_expires_at > CURRENT_TIMESTAMP)
+            FOR UPDATE`,
+          [walletId, chainId, scanId, owner]
+        );
+        if (!owned.rows[0]) {
+          const error = new Error('Base CDP scan is no longer the active writer');
+          error.code = 'CDP_SCAN_STALE';
+          throw error;
+        }
+      }
+      for (const replacement of replacements) {
+        await this.deleteFromBlock(
+          walletId, chainId, replacement.types, replacement.block,
+          { ...(replacement.options || {}), client }
+        );
+      }
+      const inserted = await this.bulkInsert(rows, { client });
+      await client.query('COMMIT');
+      return inserted;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Selectors this wallet has stored but cannot yet name -- the decode pass's

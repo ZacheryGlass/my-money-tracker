@@ -447,11 +447,23 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
     calls.deletes.push({ chainId, types: types.join(','), block, ...opts });
   });
   stub(EthTransfer, 'bulkInsert', async (rows) => { calls.inserted.push(...rows); return rows.length; });
+  stub(EthTransfer, 'replaceFeeds', async (walletId, chainId, replacements, rows) => {
+    for (const replacement of replacements) {
+      calls.deletes.push({
+        chainId, types: replacement.types.join(','), block: replacement.block,
+        ...(replacement.options || {}),
+      });
+    }
+    calls.inserted.push(...rows);
+    return rows.length;
+  });
   stub(EthWalletChain, 'updateCursors', async (walletId, chainId, next) => {
     calls.cursors.push({ chainId, ...next });
+    return { wallet_id: walletId, chain_id: chainId };
   });
   stub(EthWalletChain, 'setUnsupportedFeeds', async (walletId, chainId, list) => {
     calls.unsupported.push({ chainId, list });
+    return { wallet_id: walletId, chain_id: chainId };
   });
   stub(EthWalletChain, 'setError', async (walletId, chainId, code, message) => {
     calls.chainErrors.push({ chainId, code, message });
@@ -474,8 +486,8 @@ function harness(t, { chainSet, cursors = {}, feedBehavior = {} } = {}) {
   return { calls, stub };
 }
 
-test('the native-credit feed runs only on its declaring chains', async (t) => {
-  const { calls } = harness(t, { chainSet: '1,10,100,137,8453,42161' });
+test('the legacy native-credit feed runs only on its declaring chains', async (t) => {
+  const { calls } = harness(t, { chainSet: '1,10,100,137,42161' });
 
   await EthWalletService.syncWallet(7);
 
@@ -485,7 +497,6 @@ test('the native-credit feed runs only on its declaring chains', async (t) => {
   assert.equal(calls.fetches.filter((c) => c.chainId === 137).length, 6);
   assert.equal(calls.fetches.filter((c) => c.chainId === 100).length, 6);
   assert.equal(calls.fetches.filter((c) => c.chainId === 10).length, 6);
-  assert.equal(calls.fetches.filter((c) => c.chainId === 8453).length, 5);
   assert.equal(calls.fetches.filter((c) => c.chainId === 1).length, 5);
   assert.equal(calls.fetches.filter((c) => c.chainId === 42161).length, 5);
   // The feed receives the chain's declared config (the account feeds get none).
@@ -495,7 +506,6 @@ test('the native-credit feed runs only on its declaring chains', async (t) => {
   assert.equal(polygonCall.feedConfig.contract, PRECOMPILE);
   assert.equal(gnosisCall.feedConfig.contract, GNOSIS_REWARD);
   assert.equal(optimismCall.feedConfig.contract, OP_STACK_BRIDGE);
-  assert.ok(!calls.fetches.some((c) => c.feed === 'statesync' && c.chainId === 8453));
 });
 
 test('a state-sync deposit ingests as an internal leg from the precompile', async (t) => {
@@ -545,37 +555,12 @@ test('a Gnosis AddedReceiver credit ingests as a bridge-classifiable internal le
   assert.equal(credit.chain_id, 100);
 });
 
-test('an OP Stack ETHBridgeFinalized credit ingests once from the labeled bridge', async (t) => {
-  const { calls } = harness(t, {
-    chainSet: '8453',
-    feedBehavior: {
-      '8453:statesync': [{
-        hash: DEPOSIT_TX,
-        blockNumber: '49293680',
-        timeStamp: '1785370265',
-        from: OP_STACK_BRIDGE,
-        to: WALLET,
-        value: DEPOSIT_WEI,
-      }],
-      // If Blockscout later serves the same internal trace, the symmetric
-      // bridge-source filter must prevent a duplicate native credit.
-      '8453:internal': [{
-        hash: DEPOSIT_TX,
-        blockNumber: '49293680',
-        timeStamp: '1785370265',
-        from: OP_STACK_BRIDGE,
-        to: WALLET,
-        value: DEPOSIT_WEI,
-      }],
-    },
-  });
-
-  await EthWalletService.syncWallet(7);
-
-  const credits = calls.inserted.filter((row) => row.transfer_type === 'internal');
-  assert.equal(credits.length, 1);
-  assert.equal(credits[0].from_address, OP_STACK_BRIDGE);
-  assert.equal(credits[0].chain_id, 8453);
+test('Base bridge credits do not use the legacy anonymous state-sync feed', () => {
+  const base = chains.getChain(8453);
+  assert.equal(base.stateSyncDeposits, undefined);
+  assert.equal(base.historyProvider, 'coinbase-cdp');
+  assert.equal(base.auditNativeCredits.contract, OP_STACK_BRIDGE);
+  assert.equal(base.auditNativeCredits.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);
 });
 
 test('the two internal-typed feeds do not clear each other: delete windows split by from_address', async (t) => {

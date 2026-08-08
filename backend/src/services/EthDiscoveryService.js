@@ -54,6 +54,17 @@ class EthDiscoveryService {
         logger.info({ userId, address: candidate.address, chainId: candidate.chain_id }, 'Skipping discovery candidate with unknown chain');
         continue;
       }
+      if (chainId === 8453) {
+        // Base history is CDP-only. Candidate expansion is not a tracked-wallet
+        // audit and must not reintroduce the anonymous Blockscout account feeds
+        // that the Base provider pivot removed from critical paths.
+        await EthDiscoveryCandidate.recordFetch(userId, {
+          address: candidate.address, chainId, depth: Number(candidate.depth || 0),
+          status: 'unsupported', rowsFetched: 0,
+          errorMessage: 'Base candidate expansion is unsupported; CDP-backed tracked-wallet history is the canonical Base source.',
+        });
+        continue;
+      }
       const depth = Number.isInteger(candidate.depth)
         ? Math.max(0, candidate.depth)
         : Math.max(0, (candidate.evidence || []).reduce((max, item) => {

@@ -38,6 +38,7 @@ beforeEach(() => {
   process.env.SECRETS_ENCRYPTION_KEY = TEST_KEY;
   delete process.env.ETHERSCAN_API_KEY;
   delete process.env.CG_API_KEY;
+  delete process.env.CDP_API_KEY;
 });
 
 test('encrypt/decrypt roundtrip', () => {
@@ -98,6 +99,19 @@ test('Moralis is a per-user encrypted key with no shared env fallback', async ()
   assert.equal(insert.params[1], 'moralis');
   assert.ok(!insert.params[2].includes('user-two-moralis-key'));
   delete process.env.MORALIS_API_KEY;
+});
+
+test('CDP is a separate per-user encrypted key with no shared env fallback', async () => {
+  process.env.CDP_API_KEY = 'must-not-be-used';
+  assert.ok(SecretsService.USER_SERVICES.includes('cdp'));
+  assert.equal(await SecretsService.getUserKey(1, 'cdp'), null);
+
+  await SecretsService.setUserKey(2, 'cdp', 'user-two-cdp-key');
+  const insert = queries.find((q) => q.text.includes('INSERT INTO user_api_keys'));
+  assert.equal(insert.params[0], 2);
+  assert.equal(insert.params[1], 'cdp');
+  assert.ok(!insert.params[2].includes('user-two-cdp-key'));
+  delete process.env.CDP_API_KEY;
 });
 
 test('reads skip the DB entirely when encryption is unconfigured', async () => {

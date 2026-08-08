@@ -6,12 +6,14 @@ const secretCrypto = require('../utils/secretCrypto');
 
 // Resolution order: decrypted DB value -> configured env fallback -> null.
 // Only services listed in ENV_FALLBACKS can use an environment value; Moralis
-// is deliberately per-user and resolves to null when no stored key is usable.
+// and CDP are deliberately per-user and resolve to null when no stored key is
+// usable. CDP is the Coinbase Developer Platform address-history credential,
+// not the Coinbase exchange connector's credential.
 // If SECRETS_ENCRYPTION_KEY is unset, reads skip the DB entirely and writes
 // throw SECRETS_NOT_CONFIGURED. A DB value that fails to decrypt logs a warning
 // and uses its configured environment fallback, if any, rather than breaking.
 
-const USER_SERVICES = ['plaid_client_id', 'plaid_secret', 'etherscan', 'moralis'];
+const USER_SERVICES = ['plaid_client_id', 'plaid_secret', 'etherscan', 'moralis', 'cdp'];
 const APP_KEYS = ['cg_api_key', 'cmc_api_key'];
 
 const ENV_FALLBACKS = {

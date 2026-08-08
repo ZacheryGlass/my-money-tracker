@@ -46,6 +46,7 @@ beforeEach(() => {
   delete process.env.PLAID_CLIENT_ID;
   delete process.env.PLAID_SECRET;
   delete process.env.MORALIS_API_KEY;
+  delete process.env.CDP_API_KEY;
   process.env.DEV_AUTH_USER_ID = '1';
 });
 
@@ -95,6 +96,7 @@ test('GET reports statuses without ever returning plaintext', async () => {
   assert.deepEqual(response.body.userKeys.etherscan, { source: 'env', masked: null });
   assert.deepEqual(response.body.userKeys.plaid_client_id, { source: 'none', masked: null });
   assert.deepEqual(response.body.userKeys.moralis, { source: 'none', masked: null });
+  assert.deepEqual(response.body.userKeys.cdp, { source: 'none', masked: null });
   assert.deepEqual(response.body.appSettings.cg_api_key, { source: 'none', masked: null });
   assert.ok(!JSON.stringify(response.body).includes('env-super-secret'));
 });
@@ -152,6 +154,25 @@ test('PUT stores Moralis as a user-scoped encrypted service', async () => {
   assert.equal(insert.params[0], 1);
   assert.equal(insert.params[1], 'moralis');
   assert.ok(!insert.params[2].includes('moralis-abcd'));
+});
+
+test('PUT stores CDP separately from the Coinbase exchange credential', async () => {
+  queryHandler = async (text) => (
+    text.startsWith('SELECT encrypted_value, last4')
+      ? { rows: [{ encrypted_value: secretCrypto.encrypt('cdp-abcd'), last4: 'abcd' }] }
+      : { rows: [] }
+  );
+
+  const response = await request(app)
+    .put('/api/keys/cdp')
+    .send({ value: 'cdp-abcd' })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.masked, '••••abcd');
+  const insert = queries.find((q) => q.text.includes('INSERT INTO user_api_keys'));
+  assert.deepEqual(insert.params.slice(0, 2), [1, 'cdp']);
+  assert.ok(!insert.params[2].includes('cdp-abcd'));
 });
 
 test('Moralis status and mutations stay scoped to the authenticated user', async () => {

@@ -2,9 +2,10 @@
 
 const crypto = require('node:crypto');
 const pool = require('../config/database');
+const { sha256 } = require('../services/evmAudit/normalizer');
 const {
   matchesLegacyTransfer,
-  matchesMoralisTransfer,
+  matchesIndexedTransfer,
   TRANSFER_TYPES,
 } = require('../services/evmAudit/corroboratedIdentity');
 
@@ -25,6 +26,46 @@ function chunks(items, size) {
     result.push(items.slice(index, index + size));
   }
   return result;
+}
+
+function validateProviderPage(page) {
+  if (['coinbase-cdp', 'consensus-rpc'].includes(page.provider)
+      && typeof page.responseRaw !== 'string') {
+    const error = new Error(`${page.provider} evidence must retain the raw response body`);
+    error.code = 'EVM_INVALID_RAW_PAGE';
+    throw error;
+  }
+  if (page.responseRaw != null && sha256(page.responseRaw) !== page.responseSha256) {
+    const error = new Error('EVM provider raw page hash does not match its response body');
+    error.code = 'EVM_INVALID_RAW_PAGE';
+    throw error;
+  }
+}
+
+function pageConflict(existing, page) {
+  return existing.provider !== page.provider
+    || existing.endpoint !== page.endpoint
+    || sha256(existing.request_params || {}) !== sha256(page.requestParams || {})
+    || existing.cursor_in !== (page.cursorIn || null)
+    || existing.cursor_out !== (page.cursorOut || null)
+    || existing.response_raw !== (page.responseRaw ?? null)
+    || sha256(existing.response_json || {}) !== sha256(page.responseJson || {})
+    || Number(existing.item_count) !== Number(page.itemCount);
+}
+
+async function assertActiveLease(client, jobId, owner) {
+  const { rows } = await client.query(
+    `SELECT 1 FROM evm_audit_jobs
+      WHERE id = $1 AND status = 'running' AND lease_owner = $2
+        AND lease_expires_at > CURRENT_TIMESTAMP
+      FOR UPDATE`,
+    [jobId, owner]
+  );
+  if (!rows[0]) {
+    const error = new Error('EVM audit lease is no longer active');
+    error.code = 'EVM_AUDIT_LEASE_LOST';
+    throw error;
+  }
 }
 
 class EvmAudit {
@@ -60,12 +101,25 @@ class EvmAudit {
     }
   }
 
-  static async credentialGeneration(userId) {
+  static async credentialGenerations(userId) {
     const { rows } = await pool.query(
-      `SELECT updated_at FROM user_api_keys WHERE user_id = $1 AND service = 'moralis'`,
+      `SELECT service, MAX(updated_at) AS updated_at
+         FROM user_api_keys
+        WHERE user_id = $1 AND service IN ('moralis', 'cdp')
+        GROUP BY service`,
       [userId]
     );
-    return rows[0]?.updated_at || null;
+    return rows.reduce((result, row) => {
+      result[row.service] = row.updated_at || null;
+      return result;
+    }, { moralis: null, cdp: null });
+  }
+
+  static async credentialGeneration(userId) {
+    const generations = await this.credentialGenerations(userId);
+    return [generations.moralis, generations.cdp]
+      .filter(Boolean)
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
   }
 
   static async ensureSubject(userId, address, client = pool) {
@@ -83,8 +137,18 @@ class EvmAudit {
 
   static async createOrFindActiveJob(userId, wallet, {
     mode = 'incremental', requestedChains = [], credentialGeneration = null,
-    etherscanConfigured = false,
+    credentialGenerations = null,
+    etherscanConfigured = false, cdpConfigured = false,
   } = {}) {
+    const providerGenerations = credentialGenerations || {
+      moralis: credentialGeneration,
+      cdp: credentialGeneration,
+    };
+    const latestCredentialGeneration = credentialGeneration
+      || [providerGenerations.moralis, providerGenerations.cdp]
+        .filter(Boolean)
+        .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0]
+      || null;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -105,30 +169,53 @@ class EvmAudit {
       if (active.rows[0]) {
         let activeJob = active.rows[0];
         const errorCode = String(activeJob.error_code || '');
-        const moralisDeferred = errorCode.startsWith('MORALIS_');
+        const indexedProviderDeferred = errorCode.startsWith('MORALIS_')
+          || errorCode.startsWith('CDP_');
+        const deferredProvider = errorCode.startsWith('MORALIS_') ? 'moralis'
+          : errorCode.startsWith('CDP_') ? 'cdp' : null;
         // Etherscan's credential is also user-scoped, but its deferred job may
         // have no Moralis generation change to record. Re-open as soon as the
         // Settings key exists so a missing-key deferral is not sticky for 24h.
         const etherscanCredentialReady = errorCode === 'ETHERSCAN_NOT_CONFIGURED'
           && etherscanConfigured;
-        const credentialChanged = etherscanCredentialReady || (moralisDeferred && (activeJob.credential_generation == null
-          ? credentialGeneration != null
-          : credentialGeneration == null
-            || new Date(activeJob.credential_generation).getTime()
-              !== new Date(credentialGeneration).getTime()));
+        const cdpCredentialReady = errorCode === 'CDP_NOT_CONFIGURED' && cdpConfigured;
+        const deferredProviderGeneration = deferredProvider
+          ? providerGenerations[deferredProvider] : null;
+        const deferredProviderGenerationColumn = deferredProvider
+          ? `${deferredProvider}_credential_generation` : null;
+        const priorProviderGeneration = deferredProviderGenerationColumn
+          ? activeJob[deferredProviderGenerationColumn] || (
+            // Jobs created before provider-specific generations were added can
+            // fall back to the legacy value only when exactly one indexed
+            // provider was requested. A combined timestamp is ambiguous when
+            // both Moralis and CDP were in scope.
+            (activeJob.requested_chains || []).length === 1
+              ? activeJob.credential_generation : null
+          ) : null;
+        const deferredProviderGenerationChanged = indexedProviderDeferred && deferredProvider
+          && (priorProviderGeneration == null
+            ? deferredProviderGeneration != null
+            : deferredProviderGeneration == null
+              || new Date(priorProviderGeneration).getTime()
+                !== new Date(deferredProviderGeneration).getTime());
+        const credentialChanged = etherscanCredentialReady || cdpCredentialReady
+          || deferredProviderGenerationChanged;
         if (activeJob.status === 'deferred' && credentialChanged) {
           const refreshed = await client.query(
             `UPDATE evm_audit_jobs
                 SET status = 'queued',
                     stage = 'queued',
                     credential_generation = $2,
+                    moralis_credential_generation = $3,
+                    cdp_credential_generation = $4,
                     retry_after_at = NULL,
                     error_code = NULL,
                     error_detail = NULL,
                     updated_at = CURRENT_TIMESTAMP
               WHERE id = $1
             RETURNING *`,
-            [activeJob.id, credentialGeneration]
+            [activeJob.id, latestCredentialGeneration, providerGenerations.moralis,
+              providerGenerations.cdp]
           );
           activeJob = refreshed.rows[0];
         }
@@ -169,6 +256,7 @@ class EvmAudit {
                     requested_through_block = NULL,
                     requested_through_hash = NULL,
                     provider_cursor = NULL,
+                    provider_order = 'unknown',
                     pagination_exhausted = FALSE,
                     error_code = NULL,
                     error_detail = NULL,
@@ -191,12 +279,14 @@ class EvmAudit {
       const inserted = await client.query(
         `INSERT INTO evm_audit_jobs (
            user_id, subject_id, requested_wallet_id, mode, idempotency_key,
-           credential_generation, requested_chains
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+           credential_generation, moralis_credential_generation,
+           cdp_credential_generation, requested_chains
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
          RETURNING *`,
         [
           userId, subject.id, wallet.id, mode, idempotencyKey,
-          credentialGeneration, JSON.stringify(requestedChains),
+          latestCredentialGeneration, providerGenerations.moralis,
+          providerGenerations.cdp, JSON.stringify(requestedChains),
         ]
       );
       await client.query('COMMIT');
@@ -344,6 +434,7 @@ class EvmAudit {
               heartbeat_at = CURRENT_TIMESTAMP,
               updated_at = CURRENT_TIMESTAMP
         WHERE id = $1 AND lease_owner = $2 AND status = 'running'
+          AND lease_expires_at > CURRENT_TIMESTAMP
       RETURNING *`,
       [jobId, owner, stage, progress == null ? null : JSON.stringify(progress), leaseSeconds]
     );
@@ -367,7 +458,10 @@ class EvmAudit {
               lease_expires_at = NULL,
               heartbeat_at = CURRENT_TIMESTAMP,
               updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1 AND ($2::text IS NULL OR lease_owner = $2)
+        WHERE id = $1 AND (
+          $2::text IS NULL
+          OR (lease_owner = $2 AND status = 'running' AND lease_expires_at > CURRENT_TIMESTAMP)
+        )
       RETURNING *`,
       [jobId, owner, status, progress == null ? null : JSON.stringify(progress), errorCode, errorDetail, retryAt]
     );
@@ -379,6 +473,7 @@ class EvmAudit {
       `UPDATE evm_audit_jobs
           SET discovered_chains = $3::jsonb, updated_at = CURRENT_TIMESTAMP
         WHERE id = $1 AND lease_owner = $2 AND status = 'running'
+          AND lease_expires_at > CURRENT_TIMESTAMP
       RETURNING *`,
       [jobId, owner, JSON.stringify(discoveredChains)]
     );
@@ -388,14 +483,26 @@ class EvmAudit {
   static async upsertScope(jobId, {
     chainId, provider, capability, status = 'queued', fromBlock = null,
     throughBlock = null, throughHash = null, cursor = null,
-    errorCode = null, errorDetail = null,
-  }) {
-    const { rows } = await pool.query(
+    providerOrder = null, coverageBasis = null, errorCode = null, errorDetail = null,
+  }, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        if (Number(fence.jobId) !== Number(jobId)) {
+          const error = new Error('EVM audit scope fence does not match its job');
+          error.code = 'EVM_AUDIT_LEASE_LOST';
+          throw error;
+        }
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      const { rows } = await client.query(
       `INSERT INTO evm_audit_scopes (
          job_id, chain_id, provider, capability, status,
          requested_from_block, requested_through_block, requested_through_hash,
-         provider_cursor, error_code, error_detail
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         provider_cursor, provider_order, coverage_basis, error_code, error_detail
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (job_id, chain_id, provider, capability)
        DO UPDATE SET
          status = EXCLUDED.status,
@@ -403,16 +510,81 @@ class EvmAudit {
          requested_through_block = COALESCE(EXCLUDED.requested_through_block, evm_audit_scopes.requested_through_block),
          requested_through_hash = COALESCE(EXCLUDED.requested_through_hash, evm_audit_scopes.requested_through_hash),
          provider_cursor = COALESCE(EXCLUDED.provider_cursor, evm_audit_scopes.provider_cursor),
+         provider_order = COALESCE(EXCLUDED.provider_order, evm_audit_scopes.provider_order),
+         coverage_basis = COALESCE(EXCLUDED.coverage_basis, evm_audit_scopes.coverage_basis),
          error_code = EXCLUDED.error_code,
          error_detail = EXCLUDED.error_detail,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [jobId, chainId, provider, capability, status, fromBlock, throughBlock, throughHash, cursor, errorCode, errorDetail]
-    );
-    return rows[0];
+        [jobId, chainId, provider, capability, status, fromBlock, throughBlock, throughHash,
+          cursor, providerOrder, coverageBasis, errorCode, errorDetail]
+      );
+      if (transactional) await client.query('COMMIT');
+      return rows[0];
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
   }
 
-  static async commitPage(scopeId, page, observations) {
+  // Persist the provider response before normalizing it. If a malformed or
+  // conflicting page makes the scan fail, the raw page remains inspectable
+  // while the scope cursor stays at the last normalized checkpoint.
+  static async recordRawPage(scopeId, page, fence = {}) {
+    validateProviderPage(page);
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      const inserted = await client.query(
+      `INSERT INTO evm_provider_pages (
+         scope_id, job_id, provider, endpoint, request_params, cursor_in, cursor_out,
+         response_sha256, response_raw, response_json, request_id, item_count
+       )
+       SELECT sc.id, sc.job_id, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb, $10, $11
+         FROM evm_audit_scopes sc
+        WHERE sc.id = $1
+       ON CONFLICT (scope_id, response_sha256)
+       DO NOTHING
+       RETURNING id`,
+      [
+        scopeId, page.provider, page.endpoint, JSON.stringify(page.requestParams),
+        page.cursorIn, page.cursorOut, page.responseSha256, page.responseRaw,
+        JSON.stringify(page.responseJson), page.requestId, page.itemCount,
+      ]
+      );
+      let row = inserted.rows[0];
+      const pageWasNew = Boolean(row);
+      if (!row) {
+        const existing = await client.query(
+          `SELECT * FROM evm_provider_pages WHERE scope_id = $1 AND response_sha256 = $2`,
+          [scopeId, page.responseSha256]
+        );
+        row = existing.rows[0];
+      }
+      if (!row) throw new Error('Audit scope no longer exists');
+      if (!pageWasNew && pageConflict(row, page)) {
+        const error = new Error('EVM provider page identity conflicts with retained evidence');
+        error.code = 'EVM_CONFLICTING_PAGE';
+        throw error;
+      }
+      if (transactional) await client.query('COMMIT');
+      return row.id;
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
+  }
+
+  static async commitPage(scopeId, page, observations, fence = {}) {
+    validateProviderPage(page);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -425,6 +597,14 @@ class EvmAudit {
       );
       const scope = lockedScope.rows[0];
       if (!scope) throw new Error('Audit scope no longer exists');
+      if (fence.jobId && fence.owner) {
+        if (Number(scope.job_id) !== Number(fence.jobId)) {
+          const error = new Error('EVM audit page fence does not match its scope job');
+          error.code = 'EVM_AUDIT_LEASE_LOST';
+          throw error;
+        }
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
       const insertedPage = await client.query(
         `INSERT INTO evm_provider_pages (
            scope_id, job_id, provider, endpoint, request_params, cursor_in, cursor_out,
@@ -442,9 +622,15 @@ class EvmAudit {
       const pageWasNew = Boolean(pageId);
       if (!pageId) {
         const existing = await client.query(
-          `SELECT id FROM evm_provider_pages WHERE scope_id = $1 AND response_sha256 = $2`,
+          `SELECT * FROM evm_provider_pages WHERE scope_id = $1 AND response_sha256 = $2`,
           [scopeId, page.responseSha256]
         );
+        if (!existing.rows[0]) throw new Error('Audit provider page no longer exists');
+        if (pageConflict(existing.rows[0], page)) {
+          const error = new Error('EVM provider page identity conflicts with retained evidence');
+          error.code = 'EVM_CONFLICTING_PAGE';
+          throw error;
+        }
         pageId = existing.rows[0].id;
       }
 
@@ -523,12 +709,14 @@ class EvmAudit {
         `UPDATE evm_audit_scopes
             SET status = 'running',
                 provider_cursor = $2,
+                provider_order = COALESCE($5, provider_order),
                 pages_committed = pages_committed + $3,
                 items_committed = items_committed + $4,
                 last_checkpoint_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
           WHERE id = $1`,
-        [scopeId, page.cursorOut, pageWasNew ? 1 : 0, pageWasNew ? page.itemCount : 0]
+        [scopeId, page.cursorOut, pageWasNew ? 1 : 0, pageWasNew ? page.itemCount : 0,
+          page.providerOrder || null]
       );
       await client.query('COMMIT');
       return { pageId, pageWasNew, observationChanges, observationIds };
@@ -541,26 +729,58 @@ class EvmAudit {
   }
 
   static async completeScope(scopeId, {
-    status, paginationExhausted = false, errorCode = null, errorDetail = null,
-  }) {
-    const { rows } = await pool.query(
+    status, paginationExhausted = false, providerOrder = null,
+    coverageBasis = null, errorCode = null, errorDetail = null,
+  }, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        const scope = await client.query(
+          'SELECT job_id FROM evm_audit_scopes WHERE id = $1 FOR UPDATE', [scopeId]
+        );
+        if (!scope.rows[0] || Number(scope.rows[0].job_id) !== Number(fence.jobId)) {
+          const error = new Error('EVM audit scope fence does not match its job');
+          error.code = 'EVM_AUDIT_LEASE_LOST';
+          throw error;
+        }
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      const { rows } = await client.query(
       `UPDATE evm_audit_scopes
           SET status = $2,
               pagination_exhausted = $3,
               provider_cursor = CASE WHEN $3 THEN NULL ELSE provider_cursor END,
+              provider_order = COALESCE($6, provider_order),
+              coverage_basis = COALESCE($7, coverage_basis),
               error_code = $4,
               error_detail = $5,
               last_checkpoint_at = CURRENT_TIMESTAMP,
               updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
       RETURNING *`,
-      [scopeId, status, paginationExhausted, errorCode, errorDetail]
-    );
-    return rows[0];
+        [scopeId, status, paginationExhausted, errorCode, errorDetail, providerOrder, coverageBasis]
+      );
+      if (transactional) await client.query('COMMIT');
+      return rows[0];
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
   }
 
   static async recordProviderAttempt(row) {
-    const { rows } = await pool.query(
+    const transactional = Boolean(row.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, row.jobId, row.owner);
+      }
+      const { rows } = await client.query(
       `INSERT INTO evm_provider_attempts (
          job_id, scope_id, provider, endpoint, method, attempt_no,
          request_params, cursor_in, outcome, http_status, error_code,
@@ -577,33 +797,58 @@ class EvmAudit {
         row.responseJson == null ? null : JSON.stringify(row.responseJson),
       ]
     );
-    return rows[0];
+      if (transactional) await client.query('COMMIT');
+      return rows[0];
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
   }
 
   static async acceptCoverage({
     subjectId, chainId, provider, capability, fromBlock, throughBlock,
-    throughHash = null, paginationExhausted, status, jobId,
+    throughHash = null, providerOrder = 'unknown', coverageBasis = null,
+    paginationExhausted, status, jobId,
+    owner = null,
   }) {
-    const { rows } = await pool.query(
+    const transactional = Boolean(owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, jobId, owner);
+      }
+      const { rows } = await client.query(
       `INSERT INTO evm_source_coverage (
          subject_id, chain_id, provider, capability, from_block, through_block,
-         through_block_hash, pagination_exhausted, status, source_job_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         through_block_hash, provider_order, coverage_basis, pagination_exhausted, status, source_job_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (
          subject_id, chain_id, provider, capability,
          from_block, through_block, source_job_id
        ) DO UPDATE SET
          through_block_hash = EXCLUDED.through_block_hash,
+         provider_order = EXCLUDED.provider_order,
+         coverage_basis = EXCLUDED.coverage_basis,
          pagination_exhausted = EXCLUDED.pagination_exhausted,
          status = EXCLUDED.status,
          accepted_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [
-        subjectId, chainId, provider, capability, fromBlock, throughBlock,
-        throughHash, paginationExhausted, status, jobId,
-      ]
-    );
-    return rows[0];
+        [
+          subjectId, chainId, provider, capability, fromBlock, throughBlock,
+          throughHash, providerOrder, coverageBasis, paginationExhausted, status, jobId,
+        ]
+      );
+      if (transactional) await client.query('COMMIT');
+      return rows[0];
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
   }
 
   static async latestCoverage(subjectId, chainId, provider, capability) {
@@ -632,8 +877,29 @@ class EvmAudit {
     return rows;
   }
 
-  static async upsertMinedTransaction(transaction) {
+  static async transactionObservationsForSubject(
+    subjectId, chainId, provider, fromBlock = 0
+  ) {
     const { rows } = await pool.query(
+      `SELECT * FROM evm_provider_observations
+        WHERE subject_id = $1 AND chain_id = $2 AND provider = $3
+          AND evidence_kind = 'transaction'
+          AND (block_number IS NULL OR block_number >= $4)
+        ORDER BY block_number, transaction_index, id`,
+      [subjectId, chainId, provider, fromBlock]
+    );
+    return rows;
+  }
+
+  static async upsertMinedTransaction(transaction, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      const { rows } = await client.query(
       `INSERT INTO evm_mined_transactions (
          subject_id, chain_id, tx_hash, block_number, block_hash,
          transaction_index, from_address, to_address, nonce, value_wei, input,
@@ -717,12 +983,26 @@ class EvmAudit {
           ? null : JSON.stringify(transaction.conflictDetail),
       ]
     );
-    return rows[0];
+      if (transactional) await client.query('COMMIT');
+      return rows[0];
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
   }
 
-  static async linkTransactionEvidence(transactionId, evidence) {
-    for (const entry of evidence) {
-      await pool.query(
+  static async linkTransactionEvidence(transactionId, evidence, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      for (const entry of evidence) {
+        await client.query(
         `INSERT INTO evm_transaction_evidence (
            transaction_id, subject_id, chain_id, observation_id, evidence_role
          )
@@ -734,12 +1014,26 @@ class EvmAudit {
          ON CONFLICT (transaction_id, observation_id)
          DO UPDATE SET evidence_role = EXCLUDED.evidence_role`,
         [transactionId, entry.observationId, entry.role]
-      );
+        );
+      }
+      if (transactional) await client.query('COMMIT');
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
     }
   }
 
-  static async upsertCanonicalEffect(effect) {
-    const { rows } = await pool.query(
+  static async upsertCanonicalEffect(effect, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      const { rows } = await client.query(
       `INSERT INTO evm_canonical_effects (
          subject_id, chain_id, tx_hash, effect_key, effect_type, direction,
          log_index, trace_address, from_address, to_address, value_units,
@@ -822,13 +1116,27 @@ class EvmAudit {
         effect.selectedObservationId,
         effect.conflictDetail == null ? null : JSON.stringify(effect.conflictDetail),
       ]
-    );
-    return rows[0];
+      );
+      if (transactional) await client.query('COMMIT');
+      return rows[0];
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
   }
 
-  static async linkEffectEvidence(effectId, observationIds) {
-    for (const observationId of observationIds) {
-      await pool.query(
+  static async linkEffectEvidence(effectId, observationIds, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      for (const observationId of observationIds) {
+        await client.query(
         `INSERT INTO evm_effect_evidence (effect_id, subject_id, chain_id, observation_id)
          SELECT effect.id, effect.subject_id, effect.chain_id, obs.id
            FROM evm_canonical_effects effect
@@ -837,14 +1145,24 @@ class EvmAudit {
           WHERE effect.id = $1
          ON CONFLICT DO NOTHING`,
         [effectId, observationId]
-      );
+        );
+      }
+      if (transactional) await client.query('COMMIT');
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
     }
   }
 
-  static async invalidateMissingRpcEffects(subjectId, chainId, txHash, retainedKeys, receiptObservationId) {
+  static async invalidateMissingRpcEffects(
+    subjectId, chainId, txHash, retainedKeys, receiptObservationId, fence = {}
+  ) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      if (fence.jobId && fence.owner) await assertActiveLease(client, fence.jobId, fence.owner);
       const { rows } = await client.query(
         `UPDATE evm_canonical_effects
             SET resolution_status = 'invalidated',
@@ -934,7 +1252,7 @@ class EvmAudit {
           SELECT 1 FROM evm_audit_scopes sc
            WHERE sc.job_id = $1 AND sc.chain_id = $2
              AND sc.capability = r.capability
-             AND sc.provider IN ('moralis', 'blockscout', 'etherscan', 'existing-ledger')
+             AND sc.provider IN ('moralis', 'coinbase-cdp', 'blockscout', 'etherscan', 'existing-ledger')
              AND sc.status = 'complete' AND sc.pagination_exhausted = TRUE
         )`,
       [jobId, chainId]
@@ -968,11 +1286,12 @@ class EvmAudit {
     return rows;
   }
 
-  static async backfillVerifiedEffects(userId, subjectId, chainId, effectIds) {
+  static async backfillVerifiedEffects(userId, subjectId, chainId, effectIds, fence = {}) {
     if (!effectIds.length) return 0;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      if (fence.jobId && fence.owner) await assertActiveLease(client, fence.jobId, fence.owner);
       const wallet = await client.query(
         `SELECT w.id
            FROM evm_subjects s
@@ -1106,12 +1425,16 @@ class EvmAudit {
 
   // Legacy explorer rows normally have economics but no immutable log
   // coordinate. Upgrade them only when the same receipt effect is proven by
-  // consensus RPC and independently corroborated by Moralis at the exact
-  // transaction/log coordinate. Economic equality alone remains a gap.
-  static async repairCorroboratedTransferIdentities(jobId, userId, subjectId, chainId, throughBlock) {
+  // consensus RPC and independently corroborated by the configured indexed
+  // provider (Moralis for Gnosis or CDP for Base) at the exact transaction/log
+  // coordinate. Economic equality alone remains a gap.
+  static async repairCorroboratedTransferIdentities(
+    jobId, userId, subjectId, chainId, throughBlock, fence = {}
+  ) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      if (fence.jobId && fence.owner) await assertActiveLease(client, fence.jobId, fence.owner);
       const walletResult = await client.query(
         `SELECT w.id, w.address
            FROM evm_subjects s
@@ -1125,16 +1448,17 @@ class EvmAudit {
 
       const effectsResult = await client.query(
         `SELECT e.*,
-                o.id AS moralis_observation_id,
-                o.provider AS moralis_provider,
-                o.evidence_kind AS moralis_evidence_kind,
-                o.tx_hash AS moralis_tx_hash,
-                o.log_index AS moralis_log_index,
-                o.payload_json AS moralis_payload_json
+                o.id AS indexed_observation_id,
+                o.provider AS indexed_provider,
+                o.evidence_kind AS indexed_evidence_kind,
+                o.tx_hash AS indexed_tx_hash,
+                o.log_index AS indexed_log_index,
+                o.payload_json AS indexed_payload_json
            FROM evm_canonical_effects e
            JOIN evm_provider_observations o
              ON o.subject_id = e.subject_id AND o.chain_id = e.chain_id
-            AND o.provider = 'moralis'
+            AND o.provider IN ('moralis', 'coinbase-cdp')
+            AND NOT (o.provider = 'moralis' AND o.chain_id = 8453)
             AND o.evidence_kind = e.effect_type || '_transfer'
             AND o.tx_hash = e.tx_hash AND o.log_index = e.log_index
           JOIN evm_job_observations jo
@@ -1174,17 +1498,17 @@ class EvmAudit {
       const repaired = [];
       for (const [effectId, observations] of byEffect) {
         const effect = observations[0];
-        const moralisMatches = observations.filter((observation) => matchesMoralisTransfer(
+        const indexedMatches = observations.filter((observation) => matchesIndexedTransfer(
           effect,
           {
-            provider: observation.moralis_provider,
-            evidence_kind: observation.moralis_evidence_kind,
-            tx_hash: observation.moralis_tx_hash,
-            log_index: observation.moralis_log_index,
-            payload_json: observation.moralis_payload_json,
+            provider: observation.indexed_provider,
+            evidence_kind: observation.indexed_evidence_kind,
+            tx_hash: observation.indexed_tx_hash,
+            log_index: observation.indexed_log_index,
+            payload_json: observation.indexed_payload_json,
           }
         ));
-        if (moralisMatches.length !== 1) continue;
+        if (indexedMatches.length !== 1) continue;
         const candidates = legacyRows.filter((row) => matchesLegacyTransfer(effect, row)
           && (row.source_log_index == null || Number(row.source_log_index) === Number(effect.log_index)));
         if (candidates.length !== 1) continue;
@@ -1215,7 +1539,7 @@ class EvmAudit {
           `INSERT INTO evm_effect_evidence (effect_id, subject_id, chain_id, observation_id)
            VALUES ($1, $2, $3, $4)
            ON CONFLICT DO NOTHING`,
-          [effectId, subjectId, chainId, moralisMatches[0].moralis_observation_id]
+          [effectId, subjectId, chainId, indexedMatches[0].indexed_observation_id]
         );
         repaired.push({ effectId: Number(effectId), transferId: legacy.id });
       }
@@ -1318,8 +1642,15 @@ class EvmAudit {
     };
   }
 
-  static async storeNonceAudit(row) {
-    const { rows } = await pool.query(
+  static async storeNonceAudit(row, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      const { rows } = await client.query(
       `INSERT INTO evm_nonce_audits (
          job_id, subject_id, chain_id, boundary_block, boundary_block_hash,
          next_mined_nonce, observed_outgoing_count, missing_nonces,
@@ -1347,11 +1678,25 @@ class EvmAudit {
         row.errorDetail || null,
       ]
     );
-    return rows[0];
+      if (transactional) await client.query('COMMIT');
+      return rows[0];
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
   }
 
-  static async storeBalanceAudit(row) {
-    const { rows } = await pool.query(
+  static async storeBalanceAudit(row, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      const { rows } = await client.query(
       `INSERT INTO evm_balance_audits (
          job_id, subject_id, chain_id, asset_key, asset_type, boundary_block,
          derived_units, live_units, delta_units, status, detail
@@ -1372,7 +1717,14 @@ class EvmAudit {
         row.status, JSON.stringify(row.detail || {}),
       ]
     );
-    return rows[0];
+      if (transactional) await client.query('COMMIT');
+      return rows[0];
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
   }
 
   static async dueJobs(limit = 10) {

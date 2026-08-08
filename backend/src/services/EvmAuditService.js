@@ -9,6 +9,8 @@ const EtherscanService = require('./EtherscanService');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const MoralisClient = require('./evmAudit/MoralisClient');
+const CdpClient = require('./evmAudit/CdpClient');
+const CdpHistoryProvider = require('./evmAudit/CdpHistoryProvider');
 const RpcClient = require('./evmAudit/RpcClient');
 const normalizer = require('./evmAudit/normalizer');
 const { effectsFromInternalObservations, effectsFromRpc } = require('./evmAudit/effectDecoder');
@@ -31,7 +33,7 @@ const AUDIT_CHAINS = new Map([
     errorDetail: 'Moralis does not enumerate zkSync Era; the configured Blockscout account feeds provide finite indexed coverage, while consensus RPC verifies mined transactions and effects.',
   }],
   [8453, {
-    moralis: 'base', fallbackProvider: 'blockscout',
+    cdp: 'base',
     activeIds: new Set(['0x2105', '8453', 'base']),
   }],
   [42161, { auditProvider: 'etherscan' }],
@@ -43,6 +45,7 @@ const AUDIT_CHAINS = new Map([
   }],
 ]);
 const OVERLAP_BLOCKS = 64;
+const CDP_COVERAGE_BASIS = 'cdp_address_history_exhausted_to_finalized_boundary_v1';
 const EXPLORER_FEEDS = Object.freeze([
   { capability: 'normal', feed: 'normal', method: 'fetchNormalTxs' },
   { capability: 'internal', feed: 'internal', method: 'fetchInternalTxs' },
@@ -54,7 +57,8 @@ const OWNER = `${process.pid}:${crypto.randomUUID()}`;
 const queuedLocally = new Set();
 let resumeTimer = null;
 
-function pageRecord(provider, endpoint, requestParams, response, cursorIn = null, cursorOut = null, itemCount = 0) {
+function pageRecord(provider, endpoint, requestParams, response, cursorIn = null, cursorOut = null,
+  itemCount = 0, providerOrder = null) {
   return {
     provider,
     endpoint,
@@ -66,7 +70,65 @@ function pageRecord(provider, endpoint, requestParams, response, cursorIn = null
     responseJson: response.body,
     requestId: response.requestId || null,
     itemCount,
+    providerOrder,
   };
+}
+
+// Consensus RPC calls are authoritative point evidence, but a transaction
+// verification combines several JSON-RPC responses. Persist the exact raw
+// response text for every call inside one deterministic envelope so a later
+// audit can inspect the receipt, transaction, block, nonce, code, and balance
+// checks without relying on a provider replay.
+function rpcPageRecord(endpoint, requestParams, body, evidence = [], itemCount = 0) {
+  const rawText = JSON.stringify({
+    jsonrpc: '2.0',
+    requests: evidence.map((entry) => ({
+      method: entry.method,
+      params: entry.params,
+      response_raw: entry.rawText,
+    })),
+  });
+  const responseJson = {
+    ...body,
+    rpc_responses: evidence.map((entry) => ({
+      method: entry.method,
+      params: entry.params,
+      response: entry.responseJson,
+    })),
+  };
+  return pageRecord('consensus-rpc', endpoint, requestParams, {
+    body: responseJson,
+    rawText,
+    responseSha256: normalizer.sha256(rawText),
+    requestId: evidence.map((entry) => entry.requestId).filter(Boolean).join(',') || null,
+  }, null, null, itemCount);
+}
+
+function cdpItemBlockNumber(item) {
+  const value = item?.blockHeight
+    ?? item?.content?.ethereum?.blockNumber
+    ?? item?.ethereum?.blockNumber;
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    return Number(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function cdpItemsThroughBoundary(items, throughBlock) {
+  const bounded = [];
+  for (const item of items) {
+    const block = cdpItemBlockNumber(item);
+    if (block == null) {
+      const error = new Error('Coinbase CDP returned a transaction without a safe block height');
+      error.code = 'CDP_INVALID_RESPONSE';
+      throw error;
+    }
+    if (block <= throughBlock) bounded.push(item);
+  }
+  return bounded;
 }
 
 function activeRowMatches(row, config) {
@@ -92,6 +154,23 @@ function moralisQuotaFallbackError(error) {
     detail: error.message,
     retryAt: error.retryAt || new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
+}
+
+function cdpUnavailableError(error) {
+  if (!error) return null;
+  if (!['CDP_NOT_CONFIGURED', 'CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR']
+    .includes(error.code)) return null;
+  return {
+    code: error.code,
+    detail: error.message,
+    retryAt: error.retryAt || (error.code === 'CDP_QUOTA_EXHAUSTED'
+      ? nextCalendarMonth() : new Date(Date.now() + 60 * 60 * 1000)),
+  };
+}
+
+function nextCalendarMonth() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
 }
 
 function missingRanges(nonces, nextNonce) {
@@ -263,16 +342,22 @@ class EvmAuditService {
     if (!wallet) return null;
     const selected = (requestedChains || this.configuredChainIds())
       .map(Number).filter((chainId) => AUDIT_CHAINS.has(chainId));
-    const credentialGeneration = await EvmAudit.credentialGeneration(userId);
-    // Resolve without logging or returning the credential. This also detects
-    // an environment-backed Etherscan key, so a missing-key deferral can be
-    // reopened after the user configures either supported source.
+    const credentialGenerations = await EvmAudit.credentialGenerations(userId);
+    const credentialGeneration = [credentialGenerations.moralis, credentialGenerations.cdp]
+      .filter(Boolean)
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
+    // Resolve without logging or returning credentials. This also detects a
+    // newly entered indexed-provider key so a missing-key deferral can be
+    // reopened without exposing either secret.
     const etherscanConfigured = Boolean(await SecretsService.getUserKey(userId, 'etherscan'));
+    const cdpConfigured = Boolean(await SecretsService.getUserKey(userId, 'cdp'));
     const result = await EvmAudit.createOrFindActiveJob(userId, wallet, {
       mode,
       requestedChains: [...new Set(selected)],
       credentialGeneration,
+      credentialGenerations,
       etherscanConfigured,
+      cdpConfigured,
     });
     if (result.job.status !== 'deferred') this.enqueue(result.job.id);
     return result;
@@ -345,6 +430,7 @@ class EvmAuditService {
     try {
       const requested = (job.requested_chains || []).map(Number).filter((id) => AUDIT_CHAINS.has(id));
       const moralisRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).moralis);
+      const cdpRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).cdp);
       const explorerRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).auditProvider);
       const unsupportedRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).unsupported);
       if (!requested.length) {
@@ -358,31 +444,50 @@ class EvmAuditService {
       if (moralisRequested.length) {
         key = await SecretsService.getUserKey(job.user_id, 'moralis');
         if (!key) {
-          moralisUnavailable = moralisQuotaFallbackError({
-            code: 'MORALIS_NOT_CONFIGURED',
-            message: 'Configure a Moralis API key in Settings to run the Base/Gnosis audit source.',
+        moralisUnavailable = moralisQuotaFallbackError({
+          code: 'MORALIS_NOT_CONFIGURED',
+          message: 'Configure a Moralis API key in Settings to audit Gnosis Chain.',
           });
         }
       }
-      const credentialGeneration = await EvmAudit.credentialGeneration(job.user_id);
-      if (key && moralisRequested.length && job.credential_generation
-          && credentialGeneration
-          && new Date(job.credential_generation).getTime() !== new Date(credentialGeneration).getTime()) {
+      const cdpKey = cdpRequested.length
+        ? await SecretsService.getUserKey(job.user_id, 'cdp') : null;
+      const cdpUnavailable = cdpRequested.length && !cdpKey
+        ? cdpUnavailableError({
+          code: 'CDP_NOT_CONFIGURED',
+          message: 'Configure a separate Coinbase CDP Client API key in Settings to audit Base.',
+        }) : null;
+      const credentialGenerations = await EvmAudit.credentialGenerations(job.user_id);
+      const providerCredentialChanged = [
+        { name: 'moralis', requested: moralisRequested.length > 0 },
+        { name: 'cdp', requested: cdpRequested.length > 0 },
+      ].some(({ name, requested }) => {
+        if (!requested) return false;
+        const current = credentialGenerations[name] || null;
+        const stored = job[`${name}_credential_generation`]
+          || (moralisRequested.length + cdpRequested.length === 1
+            ? job.credential_generation : null);
+        return stored == null ? current != null
+          : current == null || new Date(stored).getTime() !== new Date(current).getTime();
+      });
+      if (providerCredentialChanged) {
         return EvmAudit.finish(jobId, OWNER, 'failed', {
           errorCode: 'CREDENTIAL_GENERATION_CHANGED',
-          errorDetail: 'The Moralis credential changed after this audit was requested. Start a new audit.',
+          errorDetail: 'An indexed-provider credential changed after this audit was requested. Start a new audit.',
         });
       }
 
       const retainAttempt = async (attempt) => {
         try {
-          await EvmAudit.recordProviderAttempt({ jobId, ...attempt });
+          await EvmAudit.recordProviderAttempt({ jobId, ...attempt, owner: OWNER });
         } catch (error) {
           logger.warn({ err: error, auditJobId: jobId }, 'Failed to retain provider attempt evidence');
         }
       };
       let moralis = key && moralisRequested.length
         ? new MoralisClient(key, { onFailedAttempt: retainAttempt }) : null;
+      let cdp = cdpKey && cdpRequested.length
+        ? new CdpClient(cdpKey, { onFailedAttempt: retainAttempt }) : null;
 
       let activeResponse = { body: { active_chains: [] } };
       let activeRows = [];
@@ -421,6 +526,21 @@ class EvmAuditService {
             fallback_source: config.fallbackProvider || null,
           };
         }
+        if (config.cdp && cdpUnavailable) {
+          return {
+            chain_id: chainId, active_hint: null, bounded: false,
+            status: 'deferred', source: 'coinbase-cdp',
+            error_code: cdpUnavailable.code,
+            error_detail: cdpUnavailable.detail,
+          };
+        }
+        if (config.cdp) {
+          return {
+            chain_id: chainId, active_hint: null, bounded: false,
+            status: 'configured', source: 'coinbase-cdp',
+            detail: 'CDP address history is configured for Base; active-chain discovery is not universal.',
+          };
+        }
         if (config.auditProvider) {
           return {
             chain_id: chainId, active_hint: null, bounded: false,
@@ -440,9 +560,11 @@ class EvmAuditService {
       await EvmAudit.setDiscoveredChains(jobId, OWNER, discovered);
 
       let gaps = 0;
+      let failed = false;
+      let failedProviderError = null;
       for (const chainId of unsupportedRequested) {
         assertLease(leaseState);
-        gaps += await this.runUnsupportedChain({ job, chainId });
+        gaps += await this.runUnsupportedChain({ job, chainId, owner: OWNER });
       }
       const explorerApiKey = explorerRequested.some((chainId) => explorerRequiresKey(chainId))
         ? await SecretsService.getUserKey(job.user_id, 'etherscan') : null;
@@ -454,9 +576,17 @@ class EvmAuditService {
           runnable.push(chainId);
           continue;
         }
+        if (config.cdp && cdp) {
+          runnable.push(chainId);
+          continue;
+        }
         const fallback = config.moralis ? config.fallbackProvider : config.auditProvider;
         if (!fallback) {
-          unavailable.push({ chainId, provider: 'moralis', error: moralisUnavailable });
+          unavailable.push({
+            chainId,
+            provider: config.cdp ? 'coinbase-cdp' : 'moralis',
+            error: config.cdp ? cdpUnavailable : moralisUnavailable,
+          });
         } else if (explorerRequiresKey(chainId) && !explorerApiKey) {
           unavailable.push({
             chainId, provider: configuredExplorerProvider(chainId),
@@ -472,32 +602,40 @@ class EvmAuditService {
       for (const item of unavailable) {
         assertLease(leaseState);
         gaps += await this.runUnavailableChain({ job, chainId: item.chainId,
-          provider: item.provider, error: item.error });
+          provider: item.provider, error: item.error, owner: OWNER });
       }
-      let providerDeferred = Boolean(moralisUnavailable || unavailable.length);
-      let deferredProviderError = moralisUnavailable;
+      let providerDeferred = Boolean(moralisUnavailable || cdpUnavailable || unavailable.length);
+      let deferredProviderError = moralisUnavailable || cdpUnavailable;
       for (const chainId of runnable) {
         assertLease(leaseState);
         const result = await this.runChain({
           job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
-          explorerApiKey, moralisUnavailable,
+          explorerApiKey, moralisUnavailable, cdp, cdpUnavailable,
         });
         gaps += result.gaps;
         if (result.deferred) {
           providerDeferred = true;
           deferredProviderError ||= result.deferredProviderError;
         }
+        if (result.failed) {
+          failed = true;
+          failedProviderError ||= result.failedProviderError;
+        }
       }
       const deferred = providerDeferred;
-      return EvmAudit.finish(jobId, OWNER, deferred ? 'deferred' : (gaps ? 'complete_with_gaps' : 'complete'), {
-        errorCode: deferredProviderError?.code || unavailable[0]?.error?.code || null,
-        errorDetail: deferredProviderError?.detail || unavailable[0]?.error?.detail || null,
+      return EvmAudit.finish(jobId, OWNER,
+        deferred ? 'deferred' : failed ? 'failed' : (gaps ? 'complete_with_gaps' : 'complete'), {
+        errorCode: deferredProviderError?.code || failedProviderError?.code
+          || unavailable[0]?.error?.code || null,
+        errorDetail: deferredProviderError?.detail || failedProviderError?.detail
+          || unavailable[0]?.error?.detail || null,
         retryAt: deferred ? (deferredProviderError?.retryAt || new Date(Date.now() + 24 * 60 * 60 * 1000)) : null,
         progress: { chains_finished: runnable.length + unsupportedRequested.length, gaps },
       });
     } catch (error) {
       const deferred = [
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
+        'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
         'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
         'ETHERSCAN_TRANSPORT_ERROR',
@@ -505,9 +643,10 @@ class EvmAuditService {
         .includes(error.code);
       const errorCode = String(error.code || '');
       const provider = errorCode.startsWith('MORALIS_') ? 'moralis'
+        : errorCode.startsWith('CDP_') ? 'coinbase-cdp'
         : errorCode.startsWith('RPC_') ? 'consensus-rpc'
           : errorCode.startsWith('ETHERSCAN_') ? 'etherscan' : 'blockscout';
-      if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('RPC_')
+      if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('CDP_') || errorCode.startsWith('RPC_')
           || errorCode.startsWith('BLOCKSCOUT_') || errorCode.startsWith('ETHERSCAN_')) {
         try {
           await EvmAudit.recordProviderAttempt({
@@ -516,6 +655,7 @@ class EvmAuditService {
             outcome: deferred ? 'deferred' : 'failed', httpStatus: error.httpStatus || null,
             errorCode: error.code || 'EVM_AUDIT_FAILED', errorDetail: publicErrorDetail(error),
             requestId: error.requestId || null,
+            owner: OWNER,
           });
         } catch (attemptError) {
           logger.warn({ err: attemptError, auditJobId: jobId }, 'Failed to retain EVM provider attempt');
@@ -532,55 +672,82 @@ class EvmAuditService {
     }
   }
 
-  static async runUnsupportedChain({ job, chainId }) {
+  static async runUnsupportedChain({ job, chainId, owner = null }) {
     const config = AUDIT_CHAINS.get(chainId);
     for (const capability of AUDIT_CAPABILITIES) {
       await EvmAudit.upsertScope(job.id, {
         chainId, provider: 'moralis', capability, status: 'unsupported',
         errorCode: config.errorCode, errorDetail: config.errorDetail,
-      });
+      }, owner ? { jobId: job.id, owner } : {});
     }
     return 1;
   }
 
-  static async runUnavailableChain({ job, chainId, provider, error }) {
+  static async runUnavailableChain({ job, chainId, provider, error, owner = null }) {
     for (const capability of AUDIT_CAPABILITIES) {
       await EvmAudit.upsertScope(job.id, {
         chainId, provider, capability, status: 'deferred',
         errorCode: error?.code || 'AUDIT_PROVIDER_UNAVAILABLE',
         errorDetail: error?.detail || 'No configured audit provider is available for this chain.',
-      });
+      }, owner ? { jobId: job.id, owner } : {});
     }
     return 1;
   }
 
   static async runChain({
-    job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
-    explorerApiKey = null, moralisUnavailable = null,
+    job, chainId, moralis, cdp, activeResponse, discovered, leaseState, retainAttempt,
+    explorerApiKey = null, moralisUnavailable = null, cdpUnavailable = null,
   }) {
     const chain = chains.getChain(chainId);
     const providerConfig = AUDIT_CHAINS.get(chainId);
     const useMoralis = Boolean(providerConfig.moralis && moralis);
-    const auditProvider = useMoralis
-      ? 'moralis'
-      : (providerConfig.moralis ? providerConfig.fallbackProvider : providerConfig.auditProvider);
+    const useCdp = Boolean(providerConfig.cdp && cdp);
+    const auditProvider = useCdp ? 'coinbase-cdp'
+      : useMoralis ? 'moralis'
+        : (providerConfig.moralis ? providerConfig.fallbackProvider : providerConfig.auditProvider);
     const rpc = new RpcClient(chainId, { onFailedAttempt: retainAttempt });
     const boundary = await rpc.finalizedBoundary();
     const context = {
       jobId: job.id, subjectId: job.subject_id, chainId,
       address: job.address, provider: auditProvider, chain,
     };
+    const writeFence = { jobId: job.id, owner: OWNER };
+    const upsertScope = (scope) => EvmAudit.upsertScope(job.id, scope, writeFence);
+    const recordRawPage = (scopeId, page) => EvmAudit.recordRawPage(scopeId, page, writeFence);
+    const commitPage = (scopeId, page, observations) =>
+      EvmAudit.commitPage(scopeId, page, observations, writeFence);
+    const completeScope = (scopeId, options) =>
+      EvmAudit.completeScope(scopeId, options, writeFence);
+    const acceptCoverage = (options) => EvmAudit.acceptCoverage({ ...options, owner: OWNER });
+    const upsertMinedTransaction = (transaction) =>
+      EvmAudit.upsertMinedTransaction(transaction, writeFence);
+    const linkTransactionEvidence = (transactionId, evidence) =>
+      EvmAudit.linkTransactionEvidence(transactionId, evidence, writeFence);
+    const upsertCanonicalEffect = (effect) => EvmAudit.upsertCanonicalEffect(effect, writeFence);
+    const linkEffectEvidence = (effectId, observations) =>
+      EvmAudit.linkEffectEvidence(effectId, observations, writeFence);
+    const storeNonceAudit = (row) => EvmAudit.storeNonceAudit(row, writeFence);
+    const storeBalanceAudit = (row) => EvmAudit.storeBalanceAudit(row, writeFence);
+    const recordProviderAttempt = (row) => EvmAudit.recordProviderAttempt({
+      ...row, jobId: job.id, owner: OWNER,
+    });
     await EvmAudit.heartbeat(job.id, OWNER, {
       stage: 'fetching', progress: { current_chain: chainId, boundary_block: boundary.number },
     });
 
     if (providerConfig.moralis && !useMoralis && moralisUnavailable) {
-      await EvmAudit.upsertScope(job.id, {
+      await upsertScope({
         chainId, provider: 'moralis', capability: 'active_chain', status: 'deferred',
         errorCode: moralisUnavailable.code, errorDetail: moralisUnavailable.detail,
       });
     }
-    const activeScope = await EvmAudit.upsertScope(job.id, {
+    if (providerConfig.cdp && !useCdp && cdpUnavailable) {
+      await upsertScope({
+        chainId, provider: 'coinbase-cdp', capability: 'active_chain', status: 'deferred',
+        errorCode: cdpUnavailable.code, errorDetail: cdpUnavailable.detail,
+      });
+    }
+    const activeScope = await upsertScope({
       chainId, provider: auditProvider, capability: 'active_chain', status: 'running',
       fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
     });
@@ -589,23 +756,32 @@ class EvmAuditService {
         active_chains: (activeResponse.body.active_chains || [])
           .filter((row) => activeRowMatches(row, providerConfig)),
       };
-      await EvmAudit.commitPage(activeScope.id, pageRecord(
+      await commitPage(activeScope.id, pageRecord(
         'moralis', 'active-chain-discovery', {
           chains: (job.requested_chains || []).map((id) => AUDIT_CHAINS.get(Number(id))?.moralis).filter(Boolean),
         },
         activeResponse, null, null, activeBody.active_chains.length
       ), normalizer.activeChainObservations(context, activeBody));
       // Active-chain discovery is a hint, not proof of historical absence.
-      await EvmAudit.completeScope(activeScope.id, { status: 'unverified', paginationExhausted: false });
+      await completeScope(activeScope.id, { status: 'unverified', paginationExhausted: false });
     } else {
-      await EvmAudit.commitPage(activeScope.id, pageRecord(
+      const activeBoundaryBody = {
+        chain_id: chainId, boundary_block: boundary.number, active_discovery: 'not_supported',
+      };
+      await commitPage(activeScope.id, pageRecord(
         auditProvider, 'indexed-account-feed-boundary', {
           chain_id: chainId, boundary_block: boundary.number,
         },
-        { body: { chain_id: chainId, boundary_block: boundary.number, active_discovery: 'not_supported' } },
+        auditProvider === 'coinbase-cdp'
+          ? {
+            body: activeBoundaryBody,
+            rawText: JSON.stringify(activeBoundaryBody),
+            responseSha256: normalizer.sha256(JSON.stringify(activeBoundaryBody)),
+          }
+          : { body: activeBoundaryBody },
         null, null, 0
       ), []);
-      await EvmAudit.completeScope(activeScope.id, {
+      await completeScope(activeScope.id, {
         status: 'unverified', paginationExhausted: false,
         errorCode: 'ACTIVE_DISCOVERY_UNSUPPORTED',
         errorDetail: moralisUnavailable
@@ -615,7 +791,7 @@ class EvmAuditService {
     }
 
     let indexedBoundary = null;
-    if (!useMoralis) {
+    if (!useMoralis && !useCdp) {
       try {
         indexedBoundary = await EtherscanService.coverageBoundary(explorerApiKey, chainId);
       } catch (error) {
@@ -628,7 +804,7 @@ class EvmAuditService {
           : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_BOUNDARY_FAILED`;
         wrapped.httpStatus = error.response?.status || error.httpStatus || null;
         wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
-        await EvmAudit.recordProviderAttempt({
+        await recordProviderAttempt({
           jobId: job.id, scopeId: activeScope.id, provider: auditProvider,
           endpoint: 'indexed-boundary', requestParams: { chain_id: chainId },
           outcome: transient ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
@@ -637,22 +813,26 @@ class EvmAuditService {
         throw wrapped;
       }
     }
-    const sourceThroughBlock = useMoralis
+    const sourceThroughBlock = useMoralis || useCdp
       ? boundary.number : Math.min(boundary.number, indexedBoundary.throughBlock);
     const prior = job.mode === 'incremental'
       ? await EvmAudit.latestCoverage(job.subject_id, chainId, auditProvider, 'wallet_history')
       : null;
     const fromBlock = prior ? Math.max(0, Number(prior.through_block) - OVERLAP_BLOCKS) : 0;
-    const historyScope = await EvmAudit.upsertScope(job.id, {
+    const priorProviderOrder = useCdp && job.mode === 'incremental'
+      ? prior?.provider_order || null : null;
+    const historyScope = await upsertScope({
       chainId, provider: auditProvider, capability: 'wallet_history', status: 'running',
       fromBlock, throughBlock: sourceThroughBlock,
-      throughHash: useMoralis ? boundary.hash : null,
+      throughHash: useMoralis || useCdp ? boundary.hash : null,
+      providerOrder: priorProviderOrder,
+      coverageBasis: useCdp ? CDP_COVERAGE_BASIS : null,
     });
     const fallbackAfterMoralis = async (error, scopeId) => {
       const deferredError = moralisQuotaFallbackError(error);
       if (!useMoralis || !deferredError || !providerConfig.fallbackProvider) throw error;
       assertLease(leaseState);
-      await EvmAudit.completeScope(scopeId, {
+      await completeScope(scopeId, {
         status: 'deferred', paginationExhausted: false,
         errorCode: deferredError.code, errorDetail: deferredError.detail,
       });
@@ -669,14 +849,33 @@ class EvmAuditService {
     };
     const hashes = new Set();
     const moralisLookupHashes = new Set();
+    const seenCdpTransactions = new Map();
+    const historicalCdpTransactions = new Map();
     // Rehydrate every durable observation before either provider path runs.
     // This is required when Moralis fails after committing pages and the
     // explorer fallback starts with a fresh in-memory hash set.
     const durableObservations = await EvmAudit.observationsForJob(job.id, { chainId });
     for (const observation of durableObservations) {
       if (observation.tx_hash) hashes.add(String(observation.tx_hash).toLowerCase());
-      if (observation.tx_hash && !['consensus-rpc', 'moralis'].includes(observation.provider)) {
+      if (observation.tx_hash && !['consensus-rpc', 'moralis', 'coinbase-cdp'].includes(observation.provider)) {
         moralisLookupHashes.add(String(observation.tx_hash).toLowerCase());
+      }
+    }
+    if (useCdp) {
+      const priorCdpObservations = await EvmAudit.transactionObservationsForSubject(
+        job.subject_id, chainId, 'coinbase-cdp', fromBlock
+      );
+      for (const observation of priorCdpObservations) {
+        const identity = CdpHistoryProvider.itemIdentity(observation.payload_json);
+        if (!identity.hash) continue;
+        const previous = historicalCdpTransactions.get(identity.hash);
+        if (previous && (previous.identity !== identity.identity
+            || previous.fingerprint !== identity.fingerprint)) {
+          const error = new Error(`Coinbase CDP retained conflicting data for ${identity.hash}`);
+          error.code = 'CDP_CONFLICTING_TRANSACTION';
+          throw error;
+        }
+        historicalCdpTransactions.set(identity.hash, identity);
       }
     }
     if (useMoralis) {
@@ -688,7 +887,7 @@ class EvmAuditService {
           assertLease(leaseState);
           const observations = page.items.flatMap((item) => normalizer.historyObservations(context, item));
           for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-          await EvmAudit.commitPage(historyScope.id, pageRecord(
+          await commitPage(historyScope.id, pageRecord(
             'moralis', 'wallet-history', {
               chain: providerConfig.moralis, from_block: fromBlock, to_block: boundary.number,
             }, page, page.cursorIn, page.cursorOut, page.items.length
@@ -699,8 +898,8 @@ class EvmAuditService {
       } catch (error) {
         return fallbackAfterMoralis(error, historyScope.id);
       }
-      await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
-      await EvmAudit.acceptCoverage({
+      await completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
+      await acceptCoverage({
         subjectId: job.subject_id, chainId, provider: 'moralis', capability: 'wallet_history',
         fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
         paginationExhausted: true, status: 'complete', jobId: job.id,
@@ -709,13 +908,146 @@ class EvmAuditService {
       // capabilities. Keep their finite bounds explicit; RPC receipt lookups
       // remain a separate non-enumerating scope.
       for (const capability of ['normal', 'internal', 'erc20', 'erc721', 'erc1155', 'native_credit']) {
-        const capabilityScope = await EvmAudit.upsertScope(job.id, {
+        const capabilityScope = await upsertScope({
           chainId, provider: 'moralis', capability, status: 'running',
           fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
         });
-        await EvmAudit.completeScope(capabilityScope.id, {
+        await completeScope(capabilityScope.id, {
           status: 'complete', paginationExhausted: true,
         });
+      }
+    } else if (useCdp) {
+      let cursor = historyScope.provider_cursor || null;
+      let order = historyScope.provider_order && historyScope.provider_order !== 'unknown'
+        ? historyScope.provider_order : (priorProviderOrder || 'unknown');
+      let previousBlock = null;
+      let orderDirection = null;
+      const stopAtProvenOverlap = job.mode === 'incremental'
+        && prior && priorProviderOrder === 'newest_first' && fromBlock > 0;
+      try {
+        for await (const page of cdp.addressTransactionPages(job.address, {
+          cursor,
+          pageSize: 100,
+        })) {
+          assertLease(leaseState);
+          const blocks = page.items
+            .map((item) => Number(item.blockHeight ?? item.content?.ethereum?.blockNumber
+              ?? item.ethereum?.blockNumber))
+            .filter(Number.isSafeInteger);
+          for (const currentBlock of blocks) {
+            if (previousBlock != null && currentBlock !== previousBlock) {
+              const direction = currentBlock < previousBlock ? 'newest_first' : 'oldest_first';
+              if (orderDirection && orderDirection !== direction) orderDirection = 'unknown';
+              else if (!orderDirection) orderDirection = direction;
+            }
+            previousBlock = currentBlock;
+          }
+          if (orderDirection === 'unknown') order = 'unknown';
+          else if (order === 'unknown' && orderDirection) order = orderDirection;
+          else if (orderDirection && order !== orderDirection) order = 'unknown';
+          const pageEvidence = pageRecord(
+            'coinbase-cdp', 'address-history', {
+              address: job.address.toLowerCase(), page_size: 100, page_token: page.cursorIn,
+            }, page, page.cursorIn, page.cursorOut, page.items.length, order
+          );
+          await recordRawPage(historyScope.id, pageEvidence);
+          // Validate the complete returned page after raw persistence, then
+          // only canonicalize transactions at or below the RPC-finalized
+          // boundary. Future-indexed rows remain evidence, but can never enter
+          // the audit projection before consensus has finalized them.
+          CdpHistoryProvider.normalizePage(job.address, page.items, {
+            nativeCredit: chain?.auditNativeCredits || chain?.stateSyncDeposits || null,
+          });
+          CdpHistoryProvider.assertNoConflicts(page.items, historicalCdpTransactions);
+          const uniqueItems = CdpHistoryProvider.dedupeItems(page.items, seenCdpTransactions);
+          const boundedItems = cdpItemsThroughBoundary(uniqueItems, boundary.number);
+          const boundedBlocks = boundedItems.map(cdpItemBlockNumber);
+          const observations = boundedItems.flatMap((item) =>
+            normalizer.cdpHistoryObservations(context, item)
+          );
+          for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+          await commitPage(historyScope.id, pageEvidence, observations);
+          cursor = page.cursorOut;
+          await EvmAudit.heartbeat(job.id, OWNER, {
+            progress: { current_cursor: cursor, transactions_seen: hashes.size },
+          });
+          if (stopAtProvenOverlap && orderDirection === 'newest_first'
+              && boundedBlocks.some((block) => block <= fromBlock)) break;
+        }
+      } catch (error) {
+        const deferredError = cdpUnavailableError(error);
+        const failedChain = discovered.find((row) => row.chain_id === chainId);
+        if (failedChain) {
+          failedChain.active_hint = null;
+          failedChain.bounded = false;
+          failedChain.status = deferredError ? 'deferred' : 'failed';
+          failedChain.source = 'coinbase-cdp';
+          failedChain.error_code = error.code || 'CDP_HISTORY_FAILED';
+          failedChain.error_detail = publicErrorDetail(error);
+          await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
+        }
+        await completeScope(historyScope.id, {
+          status: deferredError ? 'deferred' : 'failed',
+          paginationExhausted: false,
+          providerOrder: order,
+          errorCode: error.code || 'CDP_HISTORY_FAILED',
+          errorDetail: publicErrorDetail(error),
+        });
+        return {
+          gaps: 1,
+          deferred: Boolean(deferredError),
+          deferredProviderError: deferredError,
+          failed: !deferredError,
+          failedProviderError: deferredError ? null : {
+            code: error.code || 'CDP_HISTORY_FAILED',
+            detail: publicErrorDetail(error),
+          },
+          boundary,
+          transactions: hashes.size,
+          discovered,
+        };
+      }
+      await completeScope(historyScope.id, {
+        status: 'complete', paginationExhausted: true, providerOrder: order,
+        coverageBasis: CDP_COVERAGE_BASIS,
+      });
+      await acceptCoverage({
+        subjectId: job.subject_id, chainId, provider: 'coinbase-cdp', capability: 'wallet_history',
+        fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
+        providerOrder: order, coverageBasis: CDP_COVERAGE_BASIS,
+        paginationExhausted: true, status: 'complete', jobId: job.id,
+      });
+      for (const capability of ['normal', 'internal', 'erc20', 'erc721', 'erc1155', 'native_credit']) {
+        const capabilityScope = await upsertScope({
+          chainId, provider: 'coinbase-cdp', capability, status: 'running',
+          fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
+          providerOrder: order,
+          coverageBasis: CDP_COVERAGE_BASIS,
+        });
+        await completeScope(capabilityScope.id, {
+          status: 'complete', paginationExhausted: true,
+          coverageBasis: CDP_COVERAGE_BASIS,
+        });
+      }
+      // CDP does not offer Moralis-style active-chain discovery. A completed
+      // address-history walk still proves a finite configured Base boundary,
+      // so expose that bounded fact without turning it into a universal
+      // absence claim across every EVM or every future provider.
+      const discoveredChain = discovered.find((row) => row.chain_id === chainId);
+      if (discoveredChain) {
+        const providerObservations = await EvmAudit.observationsForJob(job.id, { chainId });
+        const foundBlocks = providerObservations
+          .filter((row) => row.provider === 'coinbase-cdp' && row.block_number != null)
+          .map((row) => Number(row.block_number))
+          .filter(Number.isSafeInteger);
+        discoveredChain.active_hint = hashes.size > 0;
+        discoveredChain.active_hint_proven = false;
+        discoveredChain.bounded = true;
+        discoveredChain.status = 'bounded';
+        discoveredChain.source = 'coinbase-cdp';
+        discoveredChain.first_block = foundBlocks.length ? Math.min(...foundBlocks) : null;
+        discoveredChain.last_block = foundBlocks.length ? Math.max(...foundBlocks) : null;
+        await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
       }
     } else {
       for (const feedSpec of EXPLORER_FEEDS) {
@@ -725,7 +1057,7 @@ class EvmAuditService {
           : null;
         const feedFromBlock = feedPrior
           ? Math.max(0, Number(feedPrior.through_block) - OVERLAP_BLOCKS) : 0;
-        const feedScope = await EvmAudit.upsertScope(job.id, {
+        const feedScope = await upsertScope({
           chainId, provider: auditProvider, capability: feedSpec.capability, status: 'running',
           fromBlock: feedFromBlock, throughBlock: sourceThroughBlock, throughHash: null,
         });
@@ -744,7 +1076,7 @@ class EvmAuditService {
             : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_FEED_FAILED`;
           wrapped.httpStatus = error.response?.status || error.httpStatus || null;
           wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
-          await EvmAudit.recordProviderAttempt({
+          await recordProviderAttempt({
             jobId: job.id, scopeId: feedScope.id, provider: auditProvider,
             endpoint: `account-${feedSpec.feed}`,
             requestParams: { address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock },
@@ -769,7 +1101,7 @@ class EvmAuditService {
             context, feedSpec.feed, pageRows
           );
           for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-          await EvmAudit.commitPage(feedScope.id, pageRecord(
+          await commitPage(feedScope.id, pageRecord(
             auditProvider, `account-${feedSpec.feed}`,
             { address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock },
             { body: { feed: feedSpec.feed, rows: pageRows } },
@@ -780,17 +1112,17 @@ class EvmAuditService {
             progress: { current_feed: feedSpec.feed, transactions_seen: hashes.size },
           });
         }
-        await EvmAudit.completeScope(feedScope.id, {
+          await completeScope(feedScope.id, {
           status: 'complete', paginationExhausted: true,
         });
-        await EvmAudit.acceptCoverage({
+          await acceptCoverage({
           subjectId: job.subject_id, chainId, provider: auditProvider,
           capability: feedSpec.capability, fromBlock: feedFromBlock,
           throughBlock: sourceThroughBlock, throughHash: null,
           paginationExhausted: true, status: 'complete', jobId: job.id,
         });
       }
-      const nativeCreditScope = await EvmAudit.upsertScope(job.id, {
+      const nativeCreditScope = await upsertScope({
         chainId, provider: auditProvider, capability: 'native_credit', status: 'running',
         fromBlock: 0, throughBlock: sourceThroughBlock, throughHash: null,
       });
@@ -810,7 +1142,7 @@ class EvmAuditService {
             : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_FEED_FAILED`;
           wrapped.httpStatus = error.response?.status || error.httpStatus || null;
           wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
-          await EvmAudit.recordProviderAttempt({
+          await recordProviderAttempt({
             jobId: job.id, scopeId: nativeCreditScope.id, provider: auditProvider,
             endpoint: 'native-credit', requestParams: {
               address: job.address, from_block: 0, to_block: sourceThroughBlock,
@@ -823,25 +1155,25 @@ class EvmAuditService {
           { ...context, provider: auditProvider }, 'internal', nativeCreditRows
         );
         for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-        await EvmAudit.commitPage(nativeCreditScope.id, pageRecord(
+        await commitPage(nativeCreditScope.id, pageRecord(
           auditProvider, 'native-credit', {
             address: job.address, from_block: 0, to_block: sourceThroughBlock,
           }, { body: { rows: nativeCreditRows } }, null, null, nativeCreditRows.length
         ), observations);
-        await EvmAudit.completeScope(nativeCreditScope.id, {
+        await completeScope(nativeCreditScope.id, {
           status: 'complete', paginationExhausted: true,
         });
-        await EvmAudit.acceptCoverage({
+        await acceptCoverage({
           subjectId: job.subject_id, chainId, provider: auditProvider,
           capability: 'native_credit', fromBlock: 0, throughBlock: sourceThroughBlock,
           throughHash: null, paginationExhausted: true, status: 'complete', jobId: job.id,
         });
       } else {
-        await EvmAudit.commitPage(nativeCreditScope.id, pageRecord(
+        await commitPage(nativeCreditScope.id, pageRecord(
           auditProvider, 'native-credit-not-applicable', { chain_id: chainId },
           { body: { chain_id: chainId, status: 'not_applicable' } }, null, null, 0
         ), []);
-        await EvmAudit.completeScope(nativeCreditScope.id, {
+        await completeScope(nativeCreditScope.id, {
           status: 'complete', paginationExhausted: true,
           errorCode: 'NOT_APPLICABLE',
           errorDetail: 'This chain has no configured account-independent native-credit feed; receipt logs remain canonical evidence.',
@@ -871,12 +1203,51 @@ class EvmAuditService {
         discoveredChain.last_block = foundBlocks.length ? Math.max(...foundBlocks) : null;
       }
       await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
-      await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
-      await EvmAudit.acceptCoverage({
+      await completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
+      await acceptCoverage({
         subjectId: job.subject_id, chainId, provider: auditProvider, capability: 'wallet_history',
         fromBlock, throughBlock: sourceThroughBlock, throughHash: null,
         paginationExhausted: true, status: 'complete', jobId: job.id,
       });
+    }
+    let cdpBalanceEvidenceFailed = false;
+    const cdpBalances = [];
+    if (useCdp) {
+      // CDP balances are retained as supplemental provider evidence. Consensus
+      // RPC remains authoritative for the native balance and the existing
+      // token-by-token RPC checks remain the completion gate.
+      const balanceScope = await upsertScope({
+        chainId, provider: 'coinbase-cdp', capability: 'token_balance', status: 'running',
+        fromBlock: null, throughBlock: boundary.number, throughHash: boundary.hash,
+        coverageBasis: 'cdp_list_balances_current_asset_index_v1',
+      });
+      try {
+        let cursor = balanceScope.provider_cursor || null;
+        for await (const page of cdp.balancePages(job.address, { cursor, pageSize: 100 })) {
+          assertLease(leaseState);
+          cdpBalances.push(...page.items);
+          const pageEvidence = pageRecord(
+            'coinbase-cdp', 'balance-history', {
+              address: job.address.toLowerCase(), page_size: 100, page_token: page.cursorIn,
+            }, page, page.cursorIn, page.cursorOut, page.items.length
+          );
+          await recordRawPage(balanceScope.id, pageEvidence);
+          const observations = normalizer.cdpBalanceObservations(context, page.items);
+          await commitPage(balanceScope.id, pageEvidence, observations);
+          cursor = page.cursorOut;
+        }
+        await completeScope(balanceScope.id, {
+          status: 'complete', paginationExhausted: true,
+          coverageBasis: 'cdp_list_balances_current_asset_index_v1',
+        });
+      } catch (error) {
+        cdpBalanceEvidenceFailed = true;
+        await completeScope(balanceScope.id, {
+          status: 'unverified', paginationExhausted: false,
+          errorCode: error.code || 'CDP_BALANCE_EVIDENCE_FAILED',
+          errorDetail: publicErrorDetail(error),
+        });
+      }
     }
     let legacyRows = await EvmAudit.storedTransferRows(job.user_id, job.subject_id, chainId, boundary.number);
     const coverageByFeed = new Map((await EvmAudit.storedFeedCoverage(
@@ -891,7 +1262,7 @@ class EvmAuditService {
       const coverage = coverageByFeed.get(feed);
       const coverageComplete = coverage?.status === 'complete'
         && coverage.covered_from_block != null && coverage.covered_through_block != null;
-      const scope = await EvmAudit.upsertScope(job.id, {
+      const scope = await upsertScope({
         chainId, provider: 'existing-ledger', capability, status: 'running',
         fromBlock: coverage?.covered_from_block ?? 0,
         throughBlock: coverage?.covered_through_block ?? boundary.number,
@@ -901,7 +1272,7 @@ class EvmAuditService {
       // restarted worker must not replay even an empty/unsupported feed page;
       // only restore the same finite coverage verdict and continue.
       if (scope.pages_committed > 0) {
-        await EvmAudit.completeScope(scope.id, {
+        await completeScope(scope.id, {
           status: coverageComplete ? 'complete' : 'unverified',
           paginationExhausted: coverageComplete,
           errorCode: coverageComplete ? null : (coverage?.error_code || 'LEDGER_COVERAGE_UNPROVEN'),
@@ -912,12 +1283,12 @@ class EvmAuditService {
       const observations = normalizer.legacyTransferObservations(
         { ...context, provider: 'existing-ledger' }, rows
       );
-      await EvmAudit.commitPage(scope.id, pageRecord(
+      await commitPage(scope.id, pageRecord(
         'existing-ledger', 'stored-transfer-evidence', {
           feed, through_block: coverage?.covered_through_block ?? null,
         }, { body: { rows } }, null, null, rows.length
       ), observations);
-      await EvmAudit.completeScope(scope.id, {
+      await completeScope(scope.id, {
         status: coverageComplete ? 'complete' : 'unverified',
         paginationExhausted: coverageComplete,
         errorCode: coverageComplete ? null : (coverage?.error_code || 'LEDGER_COVERAGE_UNPROVEN'),
@@ -949,13 +1320,13 @@ class EvmAuditService {
             assertLease(leaseState);
             const item = lookup.body;
             const observations = normalizer.historyObservations(context, item);
-            await EvmAudit.commitPage(historyScope.id, pageRecord(
+            await commitPage(historyScope.id, pageRecord(
               'moralis', 'transaction-lookup', { chain: providerConfig.moralis, transaction_hash: hash },
               lookup, null, null, 1
             ), observations);
           } catch (error) {
             providerLookupGaps += 1;
-            await EvmAudit.recordProviderAttempt({
+            await recordProviderAttempt({
               jobId: job.id, scopeId: historyScope.id, provider: 'moralis',
               endpoint: 'transaction-lookup',
               requestParams: { chain: providerConfig.moralis, transaction_hash: hash },
@@ -975,10 +1346,10 @@ class EvmAuditService {
     // stream. commitPage() correctly reopens a scope when it appends evidence,
     // so close it again after the lookup pass; otherwise a finite, exhausted
     // history can be reported as still running even though all pages committed.
-    await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
+    await completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
 
     await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });
-    const rpcScope = await EvmAudit.upsertScope(job.id, {
+    const rpcScope = await upsertScope({
       chainId, provider: 'consensus-rpc', capability: 'receipt_verification', status: 'running',
       fromBlock: null, throughBlock: boundary.number, throughHash: boundary.hash,
     });
@@ -993,15 +1364,15 @@ class EvmAuditService {
       });
       if (!renewedBeforeLookup) leaseState.lost = true;
       assertLease(leaseState);
-      const { transaction, receipt } = await rpc.transactionAndReceipt(hash);
+      const { transaction, receipt, block, evidence } = await rpc.transactionAndReceipt(hash);
       assertLease(leaseState);
       if (Number(BigInt(transaction.blockNumber)) > boundary.number) continue;
       const observations = normalizer.rpcTransactionObservations(
         { ...context, provider: 'consensus-rpc' }, transaction, receipt
       );
-      const committed = await EvmAudit.commitPage(rpcScope.id, pageRecord(
-        'consensus-rpc', 'transaction-and-receipt', { transaction_hash: hash, boundary_block: boundary.number },
-        { body: { transaction, receipt } }, null, null, 1
+      const committed = await commitPage(rpcScope.id, rpcPageRecord(
+        'transaction-and-receipt', { transaction_hash: hash, boundary_block: boundary.number },
+        { transaction, receipt, block }, evidence || [], 1
       ), observations);
       const observationIds = new Map(observations.map((observation, index) => [
         observation.providerObjectKey, committed.observationIds[index],
@@ -1009,19 +1380,19 @@ class EvmAuditService {
       const tx = normalizer.transactionFromRpc(
         context, transaction, receipt, observationIds.get(`transaction:${hash}`)
       );
-      const canonical = await EvmAudit.upsertMinedTransaction(tx);
-      await EvmAudit.linkTransactionEvidence(canonical.id, [
+      const canonical = await upsertMinedTransaction(tx);
+      await linkTransactionEvidence(canonical.id, [
         { observationId: observationIds.get(`transaction:${hash}`), role: 'transaction' },
         { observationId: observationIds.get(`receipt:${hash}`), role: 'receipt' },
       ].filter((entry) => entry.observationId));
       const rpcEffects = effectsFromRpc(context, transaction, receipt, observationIds);
       for (const effect of rpcEffects) {
-        const stored = await EvmAudit.upsertCanonicalEffect(effect);
-        await EvmAudit.linkEffectEvidence(stored.id, effect.evidenceObservationIds);
+        const stored = await upsertCanonicalEffect(effect);
+        await linkEffectEvidence(stored.id, effect.evidenceObservationIds);
       }
       await EvmAudit.invalidateMissingRpcEffects(
         job.subject_id, chainId, hash, rpcEffects.map((effect) => effect.effectKey),
-        observationIds.get(`receipt:${hash}`) || null
+        observationIds.get(`receipt:${hash}`) || null, writeFence
       );
       const renewedAfterCommit = await EvmAudit.heartbeat(job.id, OWNER, {
         stage: 'canonicalizing',
@@ -1029,10 +1400,27 @@ class EvmAuditService {
       if (!renewedAfterCommit) leaseState.lost = true;
       assertLease(leaseState);
     }
-    await EvmAudit.completeScope(rpcScope.id, {
+    await completeScope(rpcScope.id, {
       status: 'unverified', paginationExhausted: false,
       errorCode: 'POINT_LOOKUPS_ONLY',
       errorDetail: 'Consensus RPC verified known transaction receipts but did not enumerate account history.',
+    });
+
+    const pointCheckBasis = 'consensus_rpc_point_checks_at_finalized_boundary_v1';
+    const nonceScope = await upsertScope({
+      chainId, provider: 'consensus-rpc', capability: 'nonce', status: 'running',
+      fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
+      coverageBasis: pointCheckBasis,
+    });
+    const nativeBalanceScope = await upsertScope({
+      chainId, provider: 'consensus-rpc', capability: 'native_balance', status: 'running',
+      fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
+      coverageBasis: pointCheckBasis,
+    });
+    const tokenBalanceScope = await upsertScope({
+      chainId, provider: 'consensus-rpc', capability: 'token_balance', status: 'running',
+      fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
+      coverageBasis: pointCheckBasis,
     });
 
     const internalObservations = [
@@ -1044,15 +1432,15 @@ class EvmAuditService {
       })),
     ];
     for (const effect of effectsFromInternalObservations(context, internalObservations)) {
-      const stored = await EvmAudit.upsertCanonicalEffect(effect);
-      await EvmAudit.linkEffectEvidence(stored.id, effect.evidenceObservationIds);
+      const stored = await upsertCanonicalEffect(effect);
+      await linkEffectEvidence(stored.id, effect.evidenceObservationIds);
     }
 
     // Legacy rows may have the right economics but no immutable log index.
     // Upgrade only the independently corroborated receipt effects before the
     // strict reconciliation pass; unresolved economic matches remain gaps.
     const identityRepair = await EvmAudit.repairCorroboratedTransferIdentities(
-      job.id, job.user_id, job.subject_id, chainId, boundary.number
+      job.id, job.user_id, job.subject_id, chainId, boundary.number, writeFence
     );
     legacyRows = await EvmAudit.storedTransferRows(
       job.user_id, job.subject_id, chainId, boundary.number
@@ -1062,7 +1450,7 @@ class EvmAuditService {
     if (effectReconciliation.missing.length) {
       const inserted = await EvmAudit.backfillVerifiedEffects(
         job.user_id, job.subject_id, chainId,
-        effectReconciliation.missing.map((effect) => effect.id)
+        effectReconciliation.missing.map((effect) => effect.id), writeFence
       );
       if (inserted) {
         await EthDerivedPipeline.serializedForUser(job.user_id, async () => {
@@ -1080,23 +1468,35 @@ class EvmAuditService {
     const transactions = await EvmAudit.canonicalTransactions(job.subject_id, chainId);
     const transactionConflicts = await EvmAudit.transactionConflictCount(job.subject_id, chainId);
     await EvmAudit.heartbeat(job.id, OWNER, { stage: 'nonce_verification' });
-    const code = await rpc.code(job.address, boundary.numberHex);
+    const codeEvidence = await rpc.codeWithEvidence(job.address, boundary.numberHex);
+    await commitPage(nonceScope.id, rpcPageRecord(
+      'account-code', { address: job.address, block_tag: boundary.numberHex },
+      { address: job.address, block_tag: boundary.numberHex, code: codeEvidence.value },
+      [codeEvidence.evidence]
+    ), []);
+    const code = codeEvidence.value;
     let nonceGapCount = 0;
     if (code !== '0x') {
-      await EvmAudit.storeNonceAudit({
+      await storeNonceAudit({
         jobId: job.id, subjectId: job.subject_id, chainId,
         boundaryBlock: boundary.number, boundaryBlockHash: boundary.hash,
         nextMinedNonce: null, observedOutgoingCount: 0, status: 'unsupported',
         errorCode: 'SUBJECT_IS_CONTRACT', errorDetail: 'Nonce completeness applies only to EOAs.',
       });
     } else {
-      const nextNonce = await rpc.transactionCount(job.address, boundary.numberHex);
+      const nonceEvidence = await rpc.transactionCountWithEvidence(job.address, boundary.numberHex);
+      await commitPage(nonceScope.id, rpcPageRecord(
+        'account-nonce', { address: job.address, block_tag: boundary.numberHex },
+        { address: job.address, block_tag: boundary.numberHex, next_mined_nonce: nonceEvidence.value.toString() },
+        [nonceEvidence.evidence]
+      ), []);
+      const nextNonce = nonceEvidence.value;
       const outgoing = transactions.filter((row) => row.signedness === 'user_signed' && BigInt(row.nonce) < nextNonce);
       const missing = missingRanges(outgoing.map((row) => row.nonce), nextNonce);
       const conflicts = conflictNonces(outgoing);
       const unknown = transactions.filter((row) => row.signedness === 'unknown').length;
       nonceGapCount = missing.length + conflicts.length + unknown;
-      await EvmAudit.storeNonceAudit({
+      await storeNonceAudit({
         jobId: job.id, subjectId: job.subject_id, chainId,
         boundaryBlock: boundary.number, boundaryBlockHash: boundary.hash,
         nextMinedNonce: nextNonce.toString(), observedOutgoingCount: outgoing.length,
@@ -1104,31 +1504,73 @@ class EvmAuditService {
         status: nonceGapCount ? 'unverified' : 'complete',
       });
     }
+    await completeScope(nonceScope.id, {
+      status: 'complete', paginationExhausted: true, coverageBasis: pointCheckBasis,
+    });
 
     await EvmAudit.heartbeat(job.id, OWNER, { stage: 'balance_reconciliation' });
-    const [liveBalance, derivedBalance] = await Promise.all([
-      rpc.balance(job.address, boundary.numberHex),
+    const [liveBalanceEvidence, derivedBalance] = await Promise.all([
+      rpc.balanceWithEvidence(job.address, boundary.numberHex),
       EvmAudit.nativeDerivedAt(job.user_id, job.subject_id, chainId, boundary.number),
     ]);
+    await commitPage(nativeBalanceScope.id, rpcPageRecord(
+      'native-balance', { address: job.address, block_tag: boundary.numberHex },
+      { address: job.address, block_tag: boundary.numberHex,
+        balance_wei: liveBalanceEvidence.value.toString() },
+      [liveBalanceEvidence.evidence]
+    ), []);
+    const liveBalance = liveBalanceEvidence.value;
     const delta = liveBalance - BigInt(derivedBalance);
-    await EvmAudit.storeBalanceAudit({
+    await storeBalanceAudit({
       jobId: job.id, subjectId: job.subject_id, chainId,
       assetKey: 'native', assetType: 'native', boundaryBlock: boundary.number,
       derivedUnits: derivedBalance, liveUnits: liveBalance.toString(), deltaUnits: delta.toString(),
       status: delta === 0n ? 'match' : 'mismatch',
       detail: { boundary_hash: boundary.hash },
     });
+    await completeScope(nativeBalanceScope.id, {
+      status: 'complete', paginationExhausted: true, coverageBasis: pointCheckBasis,
+    });
 
     let tokenMismatches = 0;
+    let tokenEvidenceFailures = 0;
     const tokenBalances = await EvmAudit.tokenDerivedAt(
       job.user_id, job.subject_id, chainId, boundary.number
     );
-    for (const token of tokenBalances) {
+    const tokensByContract = new Map(tokenBalances.map((token) => [
+      String(token.token_contract).toLowerCase(), token,
+    ]));
+    // CDP's balance index is used to discover ERC-20 contracts that the
+    // derived ledger does not contain. Consensus RPC, not CDP's delayed
+    // balance value, is authoritative for the actual comparison.
+    for (const balance of cdpBalances) {
+      if (String(balance?.asset?.type || '').toLowerCase() !== 'erc20') continue;
+      const contract = String(balance.asset.groupId || '').toLowerCase();
+      if (!tokensByContract.has(contract)) {
+        tokensByContract.set(contract, {
+          token_contract: contract, token_decimals: balance.decimals, balance_units: '0',
+        });
+      }
+    }
+    for (const token of tokensByContract.values()) {
       try {
-        const live = await rpc.erc20Balance(token.token_contract, job.address, boundary.numberHex);
+        const liveEvidence = await rpc.erc20BalanceWithEvidence(
+          token.token_contract, job.address, boundary.numberHex
+        );
+        await commitPage(tokenBalanceScope.id, rpcPageRecord(
+          'erc20-balance', {
+            contract: token.token_contract, address: job.address, block_tag: boundary.numberHex,
+          },
+          {
+            contract: token.token_contract, address: job.address,
+            block_tag: boundary.numberHex, balance_units: liveEvidence.value.toString(),
+          },
+          [liveEvidence.evidence]
+        ), []);
+        const live = liveEvidence.value;
         const tokenDelta = live - BigInt(token.balance_units);
         if (tokenDelta !== 0n) tokenMismatches += 1;
-        await EvmAudit.storeBalanceAudit({
+        await storeBalanceAudit({
           jobId: job.id, subjectId: job.subject_id, chainId,
           assetKey: token.token_contract, assetType: 'erc20', boundaryBlock: boundary.number,
           derivedUnits: token.balance_units, liveUnits: live.toString(), deltaUnits: tokenDelta.toString(),
@@ -1136,7 +1578,8 @@ class EvmAuditService {
           detail: { boundary_hash: boundary.hash, token_decimals: Number(token.token_decimals) },
         });
       } catch (error) {
-        await EvmAudit.storeBalanceAudit({
+        tokenEvidenceFailures += 1;
+        await storeBalanceAudit({
           jobId: job.id, subjectId: job.subject_id, chainId,
           assetKey: token.token_contract, assetType: 'erc20', boundaryBlock: boundary.number,
           derivedUnits: token.balance_units, liveUnits: null, deltaUnits: null,
@@ -1146,6 +1589,14 @@ class EvmAuditService {
         tokenMismatches += 1;
       }
     }
+    await completeScope(tokenBalanceScope.id, {
+      status: tokenEvidenceFailures ? 'failed' : 'complete',
+      paginationExhausted: !tokenEvidenceFailures,
+      coverageBasis: pointCheckBasis,
+      errorCode: tokenEvidenceFailures ? 'TOKEN_BALANCE_EVIDENCE_FAILED' : null,
+      errorDetail: tokenEvidenceFailures
+        ? `${tokenEvidenceFailures} consensus token balance point check(s) failed.` : null,
+    });
 
     let activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
     let missingActivity = transactions.filter((row) => !activityHashes.has(row.tx_hash)).length;
@@ -1170,7 +1621,8 @@ class EvmAuditService {
     const provisionalEffects = await EvmAudit.provisionalEffectCount(job.subject_id, chainId);
     const unmatchedEffects = effectReconciliation.gaps;
     const capabilityGaps = await EvmAudit.requiredScopeGapCount(job.id, chainId);
-    const gaps = providerLookupGaps + nonceGapCount + transactionConflicts + capabilityGaps + (delta === 0n ? 0 : 1)
+    const gaps = providerLookupGaps + nonceGapCount + transactionConflicts + capabilityGaps
+      + (cdpBalanceEvidenceFailed ? 1 : 0) + (delta === 0n ? 0 : 1)
       + tokenMismatches + missingActivity + unresolvedBridges + provisionalEffects
       + unmatchedEffects;
     await EvmAudit.heartbeat(job.id, OWNER, {
@@ -1184,6 +1636,7 @@ class EvmAuditService {
           nonce_gaps: nonceGapCount,
           native_balance_match: delta === 0n,
           token_balance_gaps: tokenMismatches,
+          balance_evidence_gap: cdpBalanceEvidenceFailed,
           corroborated_identity_repairs: identityRepair.repaired,
           missing_activity: missingActivity,
           unresolved_bridges: bridgeAudit.unresolved,
