@@ -11,16 +11,19 @@ function normalizedAddress(value) {
   return /^0x[0-9a-f]{40}$/.test(text) ? text : null;
 }
 
-function quantity(value) {
+function quantity(value, { allowSafeNumber = false } = {}) {
   if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') {
+    return allowSafeNumber && Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : null;
+  }
   if (typeof value !== 'string') return null;
   const text = value.trim();
   if (!/^\d+$/.test(text)) return null;
   try { return BigInt(text); } catch { return null; }
 }
 
-function decimal(value) {
-  const parsed = quantity(value);
+function decimal(value, options) {
+  const parsed = quantity(value, options);
   return parsed == null ? null : parsed.toString();
 }
 
@@ -29,7 +32,10 @@ function moralisTransferFields(effect, payload) {
   const contract = normalizedAddress(payload.address ?? payload.token_address);
   const from = normalizedAddress(payload.from_address ?? payload.from);
   const to = normalizedAddress(payload.to_address ?? payload.to);
-  const value = decimal(standard === 'erc20' ? payload.value : payload.amount);
+  const value = decimal(
+    standard === 'erc20' ? payload.value : payload.amount,
+    { allowSafeNumber: standard === 'erc20' }
+  );
   const tokenId = standard === 'erc20' ? null : decimal(payload.token_id ?? payload.tokenId);
   if (!contract || !from || !to || value == null || (standard !== 'erc20' && tokenId == null)) {
     return null;

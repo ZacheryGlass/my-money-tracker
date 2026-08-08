@@ -354,6 +354,9 @@ test('cross-provider transfer repair requires the exact Moralis log coordinate a
     value_wei: '8', token_contract: CONTRACT, token_id: null,
   };
   assert.equal(matchesMoralisTransfer(effect, moralis), true);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...moralis, payload_json: { ...moralis.payload_json, value: 8 },
+  }), true);
   assert.equal(matchesLegacyTransfer(effect, legacy), true);
   assert.equal(matchesMoralisTransfer(effect, { ...moralis, log_index: 4 }), false);
   assert.equal(matchesMoralisTransfer(effect, {
