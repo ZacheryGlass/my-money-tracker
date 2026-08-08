@@ -781,6 +781,42 @@ class EvmAudit {
     }
   }
 
+  static async deferOpenScopes(jobId, chainId, {
+    errorCode = 'AUDIT_PROVIDER_UNAVAILABLE',
+    errorDetail = 'The provider did not complete this chain scope.',
+  }, fence = {}) {
+    const transactional = Boolean(fence.jobId && fence.owner);
+    const client = transactional ? await pool.connect() : pool;
+    try {
+      if (transactional) {
+        await client.query('BEGIN');
+        if (Number(fence.jobId) !== Number(jobId)) {
+          const error = new Error('EVM audit scope fence does not match its job');
+          error.code = 'EVM_AUDIT_LEASE_LOST';
+          throw error;
+        }
+        await assertActiveLease(client, fence.jobId, fence.owner);
+      }
+      const { rowCount } = await client.query(
+        `UPDATE evm_audit_scopes
+            SET status = 'deferred',
+                pagination_exhausted = FALSE,
+                error_code = $3,
+                error_detail = $4,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE job_id = $1 AND chain_id = $2 AND status IN ('queued', 'running')`,
+        [jobId, chainId, errorCode, errorDetail]
+      );
+      if (transactional) await client.query('COMMIT');
+      return rowCount;
+    } catch (error) {
+      if (transactional) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (transactional) client.release();
+    }
+  }
+
   static async recordProviderAttempt(row) {
     const transactional = Boolean(row.owner);
     const client = transactional ? await pool.connect() : pool;
