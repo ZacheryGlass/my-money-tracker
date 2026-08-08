@@ -506,6 +506,11 @@ class EvmAuditService {
         if (error.code === 'MORALIS_RATE_LIMITED' || error.code === 'MORALIS_AUTH_FAILED') throw error;
       }
     }
+    // Transaction lookups use the same durable scope as the paginated history
+    // stream. commitPage() correctly reopens a scope when it appends evidence,
+    // so close it again after the lookup pass; otherwise a finite, exhausted
+    // history can be reported as still running even though all pages committed.
+    await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
 
     await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });
     const rpcScope = await EvmAudit.upsertScope(job.id, {

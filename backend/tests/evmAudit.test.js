@@ -212,6 +212,19 @@ test('Moralis pagination advances opaque cursors and exhausts exactly once', asy
   }
 });
 
+test('Moralis history scope is finalized after transaction lookup pages', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
+  const lookupPass = source.indexOf("for (const hash of hashes) {\n      if (moralisHashes.has(hash)) continue;");
+  const canonicalization = source.indexOf("await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });", lookupPass);
+  const finalization = source.indexOf(
+    "await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });",
+    lookupPass
+  );
+  assert.ok(lookupPass >= 0);
+  assert.ok(finalization > lookupPass && finalization < canonicalization,
+    'lookup evidence must be followed by a final complete status before canonicalization');
+});
+
 test('consensus RPC requires matching receipt identity and canonical block membership', async () => {
   const rpc = new RpcClient(8453, { spacingMs: 0 });
   rpc.request = async (method) => ({
