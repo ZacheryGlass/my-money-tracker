@@ -547,6 +547,49 @@ test('deferred audits can be reopened after a credential generation change', () 
   assert.match(source, /error_code = NULL/);
 });
 
+test('a deferred narrow audit can be widened to full without bypassing cooldown', async (t) => {
+  const originalConnect = database.connect;
+  const originalEnsureSubject = EvmAudit.ensureSubject;
+  const calls = [];
+  const narrow = {
+    id: 44,
+    status: 'deferred',
+    mode: 'incremental',
+    requested_chains: [1],
+    error_code: 'MORALIS_QUOTA_EXHAUSTED',
+    retry_after_at: new Date(Date.now() + 60_000),
+  };
+  const widened = { ...narrow, mode: 'full', requested_chains: [1, 8453] };
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [narrow] };
+      if (/SET mode = 'full'/.test(sql)) return { rows: [widened] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  t.after(() => {
+    database.connect = originalConnect;
+    EvmAudit.ensureSubject = originalEnsureSubject;
+  });
+  database.connect = async () => client;
+  EvmAudit.ensureSubject = async () => ({ id: 8, address: WALLET });
+
+  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
+    mode: 'full', requestedChains: [1, 8453], credentialGeneration: null,
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.job.mode, 'full');
+  assert.deepEqual(result.job.requested_chains, [1, 8453]);
+  assert.equal(result.job.status, 'deferred');
+  const update = calls.find(({ sql }) => /SET mode = 'full'/.test(sql));
+  assert.ok(update);
+  assert.match(update.sql, /status <> 'running'/);
+  assert.equal(calls.at(-1).sql, 'COMMIT');
+});
+
 test('same-credential deferred retries preserve provider cooldown', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
   assert.match(source, /if \(result\.job\.status !== 'deferred'\) this\.enqueue\(result\.job\.id\);/);

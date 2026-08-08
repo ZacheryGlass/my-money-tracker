@@ -132,7 +132,29 @@ class EvmAudit {
           );
           activeJob = refreshed.rows[0];
         }
-        const activeChains = new Set((activeJob.requested_chains || []).map(Number));
+        let activeChains = new Set((activeJob.requested_chains || []).map(Number));
+        // A deferred or not-yet-running incremental request is safe to widen
+        // when the user explicitly asks for the genesis audit. Keep the same
+        // durable job and its provider retry deadline: widening must never
+        // bypass a Moralis quota/cooldown or create overlapping evidence
+        // writers. A running job remains a real scope conflict.
+        if (mode === 'full' && activeJob.mode !== 'full' && activeJob.status !== 'running') {
+          const expandedChains = [...new Set([
+            ...activeChains,
+            ...requestedChains.map(Number),
+          ])];
+          const expanded = await client.query(
+            `UPDATE evm_audit_jobs
+                SET mode = 'full',
+                    requested_chains = $2::jsonb,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE id = $1 AND status <> 'running'
+            RETURNING *`,
+            [activeJob.id, JSON.stringify(expandedChains)]
+          );
+          activeJob = expanded.rows[0] || activeJob;
+          activeChains = new Set((activeJob.requested_chains || []).map(Number));
+        }
         const modeCovered = activeJob.mode === 'full' || mode === 'incremental';
         const chainsCovered = requestedChains.every((chainId) => activeChains.has(Number(chainId)));
         if (!modeCovered || !chainsCovered) {
