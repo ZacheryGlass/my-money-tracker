@@ -58,6 +58,7 @@ const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
 const EthReconciliationService = require('../src/services/EthReconciliationService');
 const MethodSignatureService = require('../src/services/MethodSignatureService');
 const EthActivityService = require('../src/services/EthActivityService');
+const normalizer = require('../src/services/evmAudit/normalizer');
 
 const { bridgeAsset, buildActivityRows } = EthActivityService;
 
@@ -268,6 +269,16 @@ test('the fetch sends address+topic0+topic2 and parses the log into an internal-
     to: WALLET,
     value: DEPOSIT_WEI,
   });
+  assert.equal(rows[0].nativeCredit, true);
+  assert.equal(rows[0].logIndex, '3');
+  const observations = normalizer.explorerFeedObservations({
+    jobId: 1, subjectId: 1, chainId: 137, provider: 'etherscan',
+  }, 'internal', rows);
+  assert.equal(observations[0].evidenceKind, 'native_credit');
+  assert.equal(observations[0].logIndex, 3);
+  assert.equal(observations[0].payload.native_credit, true);
+  assert.deepEqual(observations[0].payload.topics, depositLog().topics);
+  assert.equal(observations[0].payload.data, depositLog().data);
 });
 
 test('the amount is the FIRST 32 bytes of data; the trailing words are ignored', async (t) => {

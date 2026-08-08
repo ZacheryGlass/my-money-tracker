@@ -1715,14 +1715,28 @@ class EtherscanService {
 
     // The internal cursor fields (_block/_logIndex/_key) stay here; only the
     // account-feed-shaped columns leave, so normalizeFeeds sees an internal row.
-    const result = out.map((row) => ({
-      hash: row.hash,
-      blockNumber: row.blockNumber,
-      timeStamp: row.timeStamp,
-      from: row.from,
-      to: row.to,
-      value: row.value,
-    }));
+    const result = out.map((row) => {
+      const mapped = {
+        hash: row.hash,
+        blockNumber: row.blockNumber,
+        timeStamp: row.timeStamp,
+        from: row.from,
+        to: row.to,
+        value: row.value,
+      };
+      if (row.nativeCredit) {
+        Object.defineProperties(mapped, {
+          nativeCredit: { value: true },
+          logIndex: { value: row.logIndex },
+          blockHash: { value: row.blockHash },
+          transactionIndex: { value: row.transactionIndex },
+          address: { value: row.address },
+          topics: { value: row.topics },
+          data: { value: row.data },
+        });
+      }
+      return mapped;
+    });
     Object.defineProperty(result, 'scannedThroughBlock', {
       value: scannedThroughBlock,
       enumerable: false,
@@ -1768,7 +1782,7 @@ class EtherscanService {
     if (logIndex == null) fail('invalid logIndex');
     const transactionHash = String(log?.transactionHash || '').toLowerCase();
     if (!TX_HASH_RE.test(transactionHash)) fail('invalid transactionHash');
-    return {
+    const result = {
       hash: transactionHash,
       blockNumber: String(block),
       timeStamp: String(timeStamp),
@@ -1779,6 +1793,19 @@ class EtherscanService {
       _logIndex: logIndex,
       _key: `${transactionHash}:${logIndex}`,
     };
+    // Keep the ordinary sync-facing row shape stable while exposing the
+    // immutable log coordinates to the audit normalizer. The normalizer
+    // copies these non-enumerable fields into the durable raw observation.
+    Object.defineProperties(result, {
+      nativeCredit: { value: true },
+      logIndex: { value: String(logIndex) },
+      blockHash: { value: log?.blockHash || null },
+      transactionIndex: { value: log?.transactionIndex || null },
+      address: { value: String(log?.address || '').toLowerCase() },
+      topics: { value: Array.isArray(log?.topics) ? log.topics : [] },
+      data: { value: data },
+    });
+    return result;
   }
 }
 

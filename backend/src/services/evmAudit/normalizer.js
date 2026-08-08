@@ -245,24 +245,38 @@ function legacyTransferObservations(context, rows) {
 }
 
 function explorerFeedObservations(context, feed, rows) {
-  const evidenceKind = feed === 'internal' ? 'internal_trace' : 'account_feed';
   return rows.map((row) => {
     const hash = txHash(row.hash || row.transactionHash);
     if (!hash) throw new Error(`Explorer ${feed} feed returned an invalid transaction hash`);
+    const nativeCredit = row.nativeCredit === true;
+    const evidenceKind = nativeCredit
+      ? 'native_credit' : feed === 'internal' ? 'internal_trace' : 'account_feed';
     const traceAddress = feed === 'internal'
       ? (row.traceAddress ?? row.trace_address
         ?? (/^\d+(?:_\d+)*$/.test(String(row.traceId || ''))
           ? String(row.traceId).split('_').map(Number) : null))
       : null;
-    const logIndex = feed === 'internal' ? null : safeInteger(row.logIndex);
+    const logIndex = nativeCredit || feed !== 'internal' ? safeInteger(row.logIndex) : null;
     const tokenId = row.tokenID ?? row.token_id ?? '';
-    const coordinate = feed === 'internal'
+    const coordinate = nativeCredit
+      ? (logIndex == null ? `provider:${sha256(row)}` : String(logIndex))
+      : feed === 'internal'
       ? (traceAddress == null ? `provider:${sha256(row)}` : stableJson(traceAddress))
       : (logIndex == null ? `provider:${sha256(row)}` : `${logIndex}:${tokenId}`);
+    const payload = nativeCredit ? {
+      ...row,
+      native_credit: true,
+      log_index: row.logIndex,
+      block_hash: row.blockHash,
+      transaction_index: row.transactionIndex,
+      address: row.address,
+      topics: row.topics,
+      data: row.data,
+    } : row;
     return baseObservation(context, {
       evidenceKind,
       providerObjectKey: `account:${feed}:${hash}:${coordinate}`,
-      payload: row,
+      payload,
       tx: hash,
       blockNumber: row.blockNumber,
       block: row.blockHash,

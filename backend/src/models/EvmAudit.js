@@ -83,6 +83,7 @@ class EvmAudit {
 
   static async createOrFindActiveJob(userId, wallet, {
     mode = 'incremental', requestedChains = [], credentialGeneration = null,
+    etherscanConfigured = false,
   } = {}) {
     const client = await pool.connect();
     try {
@@ -103,12 +104,18 @@ class EvmAudit {
       );
       if (active.rows[0]) {
         let activeJob = active.rows[0];
-        const moralisDeferred = String(activeJob.error_code || '').startsWith('MORALIS_');
-        const credentialChanged = moralisDeferred && (activeJob.credential_generation == null
+        const errorCode = String(activeJob.error_code || '');
+        const moralisDeferred = errorCode.startsWith('MORALIS_');
+        // Etherscan's credential is also user-scoped, but its deferred job may
+        // have no Moralis generation change to record. Re-open as soon as the
+        // Settings key exists so a missing-key deferral is not sticky for 24h.
+        const etherscanCredentialReady = errorCode === 'ETHERSCAN_NOT_CONFIGURED'
+          && etherscanConfigured;
+        const credentialChanged = etherscanCredentialReady || (moralisDeferred && (activeJob.credential_generation == null
           ? credentialGeneration != null
           : credentialGeneration == null
             || new Date(activeJob.credential_generation).getTime()
-              !== new Date(credentialGeneration).getTime());
+              !== new Date(credentialGeneration).getTime()));
         if (activeJob.status === 'deferred' && credentialChanged) {
           const refreshed = await client.query(
             `UPDATE evm_audit_jobs
@@ -883,7 +890,7 @@ class EvmAudit {
           SELECT 1 FROM evm_audit_scopes sc
            WHERE sc.job_id = $1 AND sc.chain_id = $2
              AND sc.capability = r.capability
-             AND sc.provider IN ('moralis', 'blockscout', 'existing-ledger')
+             AND sc.provider IN ('moralis', 'blockscout', 'etherscan', 'existing-ledger')
              AND sc.status = 'complete' AND sc.pagination_exhausted = TRUE
         )`,
       [jobId, chainId]

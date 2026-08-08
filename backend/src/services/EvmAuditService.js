@@ -19,17 +19,23 @@ const AUDIT_CAPABILITIES = [
   'token_balance', 'bridge', 'receipt_verification',
 ];
 const AUDIT_CHAINS = new Map([
-  [1, { moralis: 'eth', activeIds: new Set(['0x1', '1', 'eth', 'ethereum']) }],
-  [10, { moralis: 'optimism', activeIds: new Set(['0xa', '10', 'optimism']) }],
-  [100, { moralis: 'gnosis', activeIds: new Set(['0x64', '100', 'gnosis']) }],
-  [137, { moralis: 'polygon', activeIds: new Set(['0x89', '137', 'polygon']) }],
+  [1, { auditProvider: 'etherscan' }],
+  [10, { auditProvider: 'blockscout' }],
+  [100, {
+    moralis: 'gnosis', fallbackProvider: 'blockscout',
+    activeIds: new Set(['0x64', '100', 'gnosis']),
+  }],
+  [137, { auditProvider: 'etherscan' }],
   [324, {
     auditProvider: 'blockscout',
     errorDetail: 'Moralis does not enumerate zkSync Era; the configured Blockscout account feeds provide finite indexed coverage, while consensus RPC verifies mined transactions and effects.',
   }],
-  [8453, { moralis: 'base', activeIds: new Set(['0x2105', '8453', 'base']) }],
-  [42161, { moralis: 'arbitrum', activeIds: new Set(['0xa4b1', '42161', 'arbitrum']) }],
-  [59144, { moralis: 'linea', activeIds: new Set(['0xe708', '59144', 'linea']) }],
+  [8453, {
+    moralis: 'base', fallbackProvider: 'blockscout',
+    activeIds: new Set(['0x2105', '8453', 'base']),
+  }],
+  [42161, { auditProvider: 'etherscan' }],
+  [59144, { auditProvider: 'etherscan' }],
   [32401, {
     unsupported: true,
     errorCode: 'NON_EVM_CHAIN',
@@ -68,6 +74,24 @@ function activeRowMatches(row, config) {
     .filter((value) => value != null)
     .map((value) => String(value).toLowerCase());
   return candidates.some((value) => config.activeIds.has(value));
+}
+
+function configuredExplorerProvider(chainId) {
+  return String(chains.getChain(chainId)?.accountApi?.provider || 'Etherscan').toLowerCase();
+}
+
+function explorerRequiresKey(chainId) {
+  return chains.getChain(chainId)?.accountApi?.requiresApiKey !== false;
+}
+
+function moralisQuotaFallbackError(error) {
+  if (!error) return null;
+  if (!['MORALIS_NOT_CONFIGURED', 'MORALIS_QUOTA_EXHAUSTED'].includes(error.code)) return null;
+  return {
+    code: error.code,
+    detail: error.message,
+    retryAt: error.retryAt || new Date(Date.now() + 24 * 60 * 60 * 1000),
+  };
 }
 
 function missingRanges(nonces, nextNonce) {
@@ -116,7 +140,8 @@ function effectSignature(row, address, chain) {
     if (row.transfer_type === 'native'
         && chain?.opStackDeposits?.creditSource?.toLowerCase() === from) type = 'native_credit';
     if (row.transfer_type === 'internal') {
-      type = chain?.auditNativeCredits?.contract?.toLowerCase() === from ? 'native_credit' : 'internal';
+      const nativeCredit = chain?.auditNativeCredits || chain?.stateSyncDeposits;
+      type = nativeCredit?.contract?.toLowerCase() === from ? 'native_credit' : 'internal';
     }
   }
   if (!type) return null;
@@ -208,6 +233,14 @@ function isBlockscoutTransient(error) {
       .includes(error?.code);
 }
 
+function explorerFailurePrefix(provider) {
+  return provider === 'blockscout' ? 'BLOCKSCOUT' : 'ETHERSCAN';
+}
+
+function explorerDisplayName(provider) {
+  return provider === 'blockscout' ? 'Blockscout' : 'Etherscan';
+}
+
 function assertLease(leaseState) {
   if (!leaseState?.lost) return;
   const error = new Error('EVM audit lease ownership was lost; this worker stopped before further writes.');
@@ -231,10 +264,15 @@ class EvmAuditService {
     const selected = (requestedChains || this.configuredChainIds())
       .map(Number).filter((chainId) => AUDIT_CHAINS.has(chainId));
     const credentialGeneration = await EvmAudit.credentialGeneration(userId);
+    // Resolve without logging or returning the credential. This also detects
+    // an environment-backed Etherscan key, so a missing-key deferral can be
+    // reopened after the user configures either supported source.
+    const etherscanConfigured = Boolean(await SecretsService.getUserKey(userId, 'etherscan'));
     const result = await EvmAudit.createOrFindActiveJob(userId, wallet, {
       mode,
       requestedChains: [...new Set(selected)],
       credentialGeneration,
+      etherscanConfigured,
     });
     if (result.job.status !== 'deferred') this.enqueue(result.job.id);
     return result;
@@ -308,7 +346,6 @@ class EvmAuditService {
       const requested = (job.requested_chains || []).map(Number).filter((id) => AUDIT_CHAINS.has(id));
       const moralisRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).moralis);
       const explorerRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).auditProvider);
-      const providerRequested = [...new Set([...moralisRequested, ...explorerRequested])];
       const unsupportedRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).unsupported);
       if (!requested.length) {
         return EvmAudit.finish(jobId, OWNER, 'unsupported', {
@@ -317,21 +354,18 @@ class EvmAuditService {
       }
 
       let key = null;
+      let moralisUnavailable = null;
       if (moralisRequested.length) {
         key = await SecretsService.getUserKey(job.user_id, 'moralis');
         if (!key) {
-          return EvmAudit.finish(jobId, OWNER, 'deferred', {
-            errorCode: 'MORALIS_NOT_CONFIGURED',
-            errorDetail: 'Configure a Moralis API key in Settings to run this optional audit.',
-            // Do not wake this job every 30 seconds while configuration is
-            // absent. A user request still enqueues the active job immediately,
-            // so saving a key and pressing Audit resumes without waiting.
-            retryAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          moralisUnavailable = moralisQuotaFallbackError({
+            code: 'MORALIS_NOT_CONFIGURED',
+            message: 'Configure a Moralis API key in Settings to run the Base/Gnosis audit source.',
           });
         }
       }
       const credentialGeneration = await EvmAudit.credentialGeneration(job.user_id);
-      if (moralisRequested.length && job.credential_generation
+      if (key && moralisRequested.length && job.credential_generation
           && credentialGeneration
           && new Date(job.credential_generation).getTime() !== new Date(credentialGeneration).getTime()) {
         return EvmAudit.finish(jobId, OWNER, 'failed', {
@@ -347,17 +381,28 @@ class EvmAuditService {
           logger.warn({ err: error, auditJobId: jobId }, 'Failed to retain provider attempt evidence');
         }
       };
-      const moralis = moralisRequested.length ? new MoralisClient(key, { onFailedAttempt: retainAttempt }) : null;
+      let moralis = key && moralisRequested.length
+        ? new MoralisClient(key, { onFailedAttempt: retainAttempt }) : null;
 
       let activeResponse = { body: { active_chains: [] } };
       let activeRows = [];
-      if (moralisRequested.length) {
+      if (moralis) {
         await EvmAudit.heartbeat(jobId, OWNER, { stage: 'discovering' });
-        activeResponse = await moralis.activeChains(
-          job.address, moralisRequested.map((id) => AUDIT_CHAINS.get(id).moralis)
-        );
-        assertLease(leaseState);
-        activeRows = Array.isArray(activeResponse.body.active_chains) ? activeResponse.body.active_chains : [];
+        try {
+          activeResponse = await moralis.activeChains(
+            job.address, moralisRequested.map((id) => AUDIT_CHAINS.get(id).moralis)
+          );
+          assertLease(leaseState);
+          activeRows = Array.isArray(activeResponse.body.active_chains)
+            ? activeResponse.body.active_chains : [];
+        } catch (error) {
+          moralisUnavailable = moralisQuotaFallbackError(error);
+          if (!moralisUnavailable) throw error;
+          // A quota exhaustion is a provider limitation, not evidence that the
+          // wallet has no history. Preserve the failed discovery attempt and
+          // let chains with a configured explorer fallback proceed.
+          moralis = null;
+        }
       }
       const discovered = requested.map((chainId) => {
         const config = AUDIT_CHAINS.get(chainId);
@@ -367,10 +412,19 @@ class EvmAuditService {
             status: 'unsupported', error_code: config.errorCode, error_detail: config.errorDetail,
           };
         }
+        if (config.moralis && moralisUnavailable) {
+          return {
+            chain_id: chainId, active_hint: null, bounded: false,
+            status: 'deferred', source: 'moralis',
+            error_code: moralisUnavailable.code,
+            error_detail: moralisUnavailable.detail,
+            fallback_source: config.fallbackProvider || null,
+          };
+        }
         if (config.auditProvider) {
           return {
             chain_id: chainId, active_hint: null, bounded: false,
-            status: 'configured', source: config.auditProvider,
+            status: 'configured', source: configuredExplorerProvider(chainId),
             detail: config.errorDetail,
           };
         }
@@ -390,28 +444,71 @@ class EvmAuditService {
         assertLease(leaseState);
         gaps += await this.runUnsupportedChain({ job, chainId });
       }
-      for (const chainId of providerRequested) {
+      const explorerApiKey = explorerRequested.some((chainId) => explorerRequiresKey(chainId))
+        ? await SecretsService.getUserKey(job.user_id, 'etherscan') : null;
+      const runnable = [];
+      const unavailable = [];
+      for (const chainId of requested.filter((id) => !unsupportedRequested.includes(id))) {
+        const config = AUDIT_CHAINS.get(chainId);
+        if (config.moralis && moralis) {
+          runnable.push(chainId);
+          continue;
+        }
+        const fallback = config.moralis ? config.fallbackProvider : config.auditProvider;
+        if (!fallback) {
+          unavailable.push({ chainId, provider: 'moralis', error: moralisUnavailable });
+        } else if (explorerRequiresKey(chainId) && !explorerApiKey) {
+          unavailable.push({
+            chainId, provider: configuredExplorerProvider(chainId),
+            error: {
+              code: 'ETHERSCAN_NOT_CONFIGURED',
+              detail: 'Configure an Etherscan API key to audit this configured chain.',
+            },
+          });
+        } else {
+          runnable.push(chainId);
+        }
+      }
+      for (const item of unavailable) {
+        assertLease(leaseState);
+        gaps += await this.runUnavailableChain({ job, chainId: item.chainId,
+          provider: item.provider, error: item.error });
+      }
+      let providerDeferred = Boolean(moralisUnavailable || unavailable.length);
+      let deferredProviderError = moralisUnavailable;
+      for (const chainId of runnable) {
         assertLease(leaseState);
         const result = await this.runChain({
           job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
+          explorerApiKey, moralisUnavailable,
         });
         gaps += result.gaps;
+        if (result.deferred) {
+          providerDeferred = true;
+          deferredProviderError ||= result.deferredProviderError;
+        }
       }
-      return EvmAudit.finish(jobId, OWNER, gaps ? 'complete_with_gaps' : 'complete', {
-        progress: { chains_finished: requested.length, gaps },
+      const deferred = providerDeferred;
+      return EvmAudit.finish(jobId, OWNER, deferred ? 'deferred' : (gaps ? 'complete_with_gaps' : 'complete'), {
+        errorCode: deferredProviderError?.code || unavailable[0]?.error?.code || null,
+        errorDetail: deferredProviderError?.detail || unavailable[0]?.error?.detail || null,
+        retryAt: deferred ? (deferredProviderError?.retryAt || new Date(Date.now() + 24 * 60 * 60 * 1000)) : null,
+        progress: { chains_finished: runnable.length + unsupportedRequested.length, gaps },
       });
     } catch (error) {
       const deferred = [
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
         'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
-        'BLOCKSCOUT_TRANSPORT_ERROR',
+        'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
+        'ETHERSCAN_TRANSPORT_ERROR',
       ]
         .includes(error.code);
       const errorCode = String(error.code || '');
       const provider = errorCode.startsWith('MORALIS_') ? 'moralis'
-        : errorCode.startsWith('RPC_') ? 'consensus-rpc' : 'blockscout';
+        : errorCode.startsWith('RPC_') ? 'consensus-rpc'
+          : errorCode.startsWith('ETHERSCAN_') ? 'etherscan' : 'blockscout';
       if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('RPC_')
-          || errorCode.startsWith('BLOCKSCOUT_')) {
+          || errorCode.startsWith('BLOCKSCOUT_') || errorCode.startsWith('ETHERSCAN_')) {
         try {
           await EvmAudit.recordProviderAttempt({
             jobId, provider,
@@ -446,10 +543,27 @@ class EvmAuditService {
     return 1;
   }
 
-  static async runChain({ job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt }) {
+  static async runUnavailableChain({ job, chainId, provider, error }) {
+    for (const capability of AUDIT_CAPABILITIES) {
+      await EvmAudit.upsertScope(job.id, {
+        chainId, provider, capability, status: 'deferred',
+        errorCode: error?.code || 'AUDIT_PROVIDER_UNAVAILABLE',
+        errorDetail: error?.detail || 'No configured audit provider is available for this chain.',
+      });
+    }
+    return 1;
+  }
+
+  static async runChain({
+    job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
+    explorerApiKey = null, moralisUnavailable = null,
+  }) {
     const chain = chains.getChain(chainId);
     const providerConfig = AUDIT_CHAINS.get(chainId);
-    const auditProvider = providerConfig.moralis ? 'moralis' : providerConfig.auditProvider;
+    const useMoralis = Boolean(providerConfig.moralis && moralis);
+    const auditProvider = useMoralis
+      ? 'moralis'
+      : (providerConfig.moralis ? providerConfig.fallbackProvider : providerConfig.auditProvider);
     const rpc = new RpcClient(chainId, { onFailedAttempt: retainAttempt });
     const boundary = await rpc.finalizedBoundary();
     const context = {
@@ -460,11 +574,17 @@ class EvmAuditService {
       stage: 'fetching', progress: { current_chain: chainId, boundary_block: boundary.number },
     });
 
+    if (providerConfig.moralis && !useMoralis && moralisUnavailable) {
+      await EvmAudit.upsertScope(job.id, {
+        chainId, provider: 'moralis', capability: 'active_chain', status: 'deferred',
+        errorCode: moralisUnavailable.code, errorDetail: moralisUnavailable.detail,
+      });
+    }
     const activeScope = await EvmAudit.upsertScope(job.id, {
       chainId, provider: auditProvider, capability: 'active_chain', status: 'running',
       fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
     });
-    if (providerConfig.moralis) {
+    if (useMoralis) {
       const activeBody = {
         active_chains: (activeResponse.body.active_chains || [])
           .filter((row) => activeRowMatches(row, providerConfig)),
@@ -488,20 +608,24 @@ class EvmAuditService {
       await EvmAudit.completeScope(activeScope.id, {
         status: 'unverified', paginationExhausted: false,
         errorCode: 'ACTIVE_DISCOVERY_UNSUPPORTED',
-        errorDetail: 'This explorer exposes finite account-feed coverage but no active-chain discovery endpoint.',
+        errorDetail: moralisUnavailable
+          ? 'Moralis active-chain discovery was deferred; this fallback exposes finite account-feed coverage only.'
+          : 'This explorer exposes finite account-feed coverage but no active-chain discovery endpoint.',
       });
     }
 
     let indexedBoundary = null;
-    if (!providerConfig.moralis) {
+    if (!useMoralis) {
       try {
-        indexedBoundary = await EtherscanService.coverageBoundary(null, chainId);
+        indexedBoundary = await EtherscanService.coverageBoundary(explorerApiKey, chainId);
       } catch (error) {
         const transient = isBlockscoutTransient(error);
         const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
-        const wrapped = new Error(`Blockscout indexed boundary failed: ${publicErrorDetail(error)}`);
-        wrapped.code = rateLimited ? 'BLOCKSCOUT_RATE_LIMITED'
-          : transient ? 'BLOCKSCOUT_TRANSPORT_ERROR' : 'BLOCKSCOUT_BOUNDARY_FAILED';
+        const prefix = explorerFailurePrefix(auditProvider);
+        const name = explorerDisplayName(auditProvider);
+        const wrapped = new Error(`${name} indexed boundary failed: ${publicErrorDetail(error)}`);
+        wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
+          : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_BOUNDARY_FAILED`;
         wrapped.httpStatus = error.response?.status || error.httpStatus || null;
         wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
         await EvmAudit.recordProviderAttempt({
@@ -513,7 +637,7 @@ class EvmAuditService {
         throw wrapped;
       }
     }
-    const sourceThroughBlock = providerConfig.moralis
+    const sourceThroughBlock = useMoralis
       ? boundary.number : Math.min(boundary.number, indexedBoundary.throughBlock);
     const prior = job.mode === 'incremental'
       ? await EvmAudit.latestCoverage(job.subject_id, chainId, auditProvider, 'wallet_history')
@@ -522,24 +646,58 @@ class EvmAuditService {
     const historyScope = await EvmAudit.upsertScope(job.id, {
       chainId, provider: auditProvider, capability: 'wallet_history', status: 'running',
       fromBlock, throughBlock: sourceThroughBlock,
-      throughHash: providerConfig.moralis ? boundary.hash : null,
+      throughHash: useMoralis ? boundary.hash : null,
     });
+    const fallbackAfterMoralis = async (error, scopeId) => {
+      const deferredError = moralisQuotaFallbackError(error);
+      if (!useMoralis || !deferredError || !providerConfig.fallbackProvider) throw error;
+      assertLease(leaseState);
+      await EvmAudit.completeScope(scopeId, {
+        status: 'deferred', paginationExhausted: false,
+        errorCode: deferredError.code, errorDetail: deferredError.detail,
+      });
+      const fallbackResult = await this.runChain({
+        job, chainId, moralis: null, activeResponse: { body: { active_chains: [] } },
+        discovered, leaseState, retainAttempt, explorerApiKey,
+        moralisUnavailable: deferredError,
+      });
+      return {
+        ...fallbackResult,
+        deferred: true,
+        deferredProviderError: deferredError,
+      };
+    };
     const hashes = new Set();
-    if (providerConfig.moralis) {
+    const moralisLookupHashes = new Set();
+    // Rehydrate every durable observation before either provider path runs.
+    // This is required when Moralis fails after committing pages and the
+    // explorer fallback starts with a fresh in-memory hash set.
+    const durableObservations = await EvmAudit.observationsForJob(job.id, { chainId });
+    for (const observation of durableObservations) {
+      if (observation.tx_hash) hashes.add(String(observation.tx_hash).toLowerCase());
+      if (observation.tx_hash && !['consensus-rpc', 'moralis'].includes(observation.provider)) {
+        moralisLookupHashes.add(String(observation.tx_hash).toLowerCase());
+      }
+    }
+    if (useMoralis) {
       let cursor = historyScope.provider_cursor || null;
-      for await (const page of moralis.walletHistoryPages(job.address, {
-        chain: providerConfig.moralis, fromBlock, throughBlock: boundary.number, cursor,
-      })) {
-        assertLease(leaseState);
-        const observations = page.items.flatMap((item) => normalizer.historyObservations(context, item));
-        for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-        await EvmAudit.commitPage(historyScope.id, pageRecord(
-          'moralis', 'wallet-history', {
-            chain: providerConfig.moralis, from_block: fromBlock, to_block: boundary.number,
-          }, page, page.cursorIn, page.cursorOut, page.items.length
-        ), observations);
-        cursor = page.cursorOut;
-        await EvmAudit.heartbeat(job.id, OWNER, { progress: { current_cursor: cursor, transactions_seen: hashes.size } });
+      try {
+        for await (const page of moralis.walletHistoryPages(job.address, {
+          chain: providerConfig.moralis, fromBlock, throughBlock: boundary.number, cursor,
+        })) {
+          assertLease(leaseState);
+          const observations = page.items.flatMap((item) => normalizer.historyObservations(context, item));
+          for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+          await EvmAudit.commitPage(historyScope.id, pageRecord(
+            'moralis', 'wallet-history', {
+              chain: providerConfig.moralis, from_block: fromBlock, to_block: boundary.number,
+            }, page, page.cursorIn, page.cursorOut, page.items.length
+          ), observations);
+          cursor = page.cursorOut;
+          await EvmAudit.heartbeat(job.id, OWNER, { progress: { current_cursor: cursor, transactions_seen: hashes.size } });
+        }
+      } catch (error) {
+        return fallbackAfterMoralis(error, historyScope.id);
       }
       await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
       await EvmAudit.acceptCoverage({
@@ -574,14 +732,16 @@ class EvmAuditService {
         let rows;
         try {
           rows = await EtherscanService[feedSpec.method](
-            job.address, feedFromBlock, null, chainId, sourceThroughBlock
+            job.address, feedFromBlock, explorerApiKey, chainId, sourceThroughBlock
           );
         } catch (error) {
           const transient = isBlockscoutTransient(error);
           const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
-          const wrapped = new Error(`Blockscout ${feedSpec.feed} audit feed failed: ${publicErrorDetail(error)}`);
-          wrapped.code = rateLimited ? 'BLOCKSCOUT_RATE_LIMITED'
-            : transient ? 'BLOCKSCOUT_TRANSPORT_ERROR' : 'BLOCKSCOUT_FEED_FAILED';
+          const prefix = explorerFailurePrefix(auditProvider);
+          const name = explorerDisplayName(auditProvider);
+          const wrapped = new Error(`${name} ${feedSpec.feed} audit feed failed: ${publicErrorDetail(error)}`);
+          wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
+            : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_FEED_FAILED`;
           wrapped.httpStatus = error.response?.status || error.httpStatus || null;
           wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
           await EvmAudit.recordProviderAttempt({
@@ -595,8 +755,10 @@ class EvmAuditService {
           throw wrapped;
         }
         if (!Array.isArray(rows)) {
-          const error = new Error(`Blockscout ${feedSpec.feed} audit feed returned a non-array response`);
-          error.code = 'BLOCKSCOUT_FEED_FAILED';
+          const prefix = explorerFailurePrefix(auditProvider);
+          const name = explorerDisplayName(auditProvider);
+          const error = new Error(`${name} ${feedSpec.feed} audit feed returned a non-array response`);
+          error.code = `${prefix}_FEED_FAILED`;
           throw error;
         }
         const pageSize = 500;
@@ -632,15 +794,59 @@ class EvmAuditService {
         chainId, provider: auditProvider, capability: 'native_credit', status: 'running',
         fromBlock: 0, throughBlock: sourceThroughBlock, throughHash: null,
       });
-      await EvmAudit.commitPage(nativeCreditScope.id, pageRecord(
-        auditProvider, 'native-credit-not-applicable', { chain_id: chainId },
-        { body: { chain_id: chainId, status: 'not_applicable' } }, null, null, 0
-      ), []);
-      await EvmAudit.completeScope(nativeCreditScope.id, {
-        status: 'complete', paginationExhausted: true,
-        errorCode: 'NOT_APPLICABLE',
-        errorDetail: 'This chain has no configured account-independent native-credit feed; receipt logs remain canonical evidence.',
-      });
+      const nativeCreditConfig = chain?.stateSyncDeposits;
+      if (nativeCreditConfig) {
+        let nativeCreditRows;
+        try {
+          nativeCreditRows = await EtherscanService.fetchStateSyncDeposits(
+            job.address, 0, explorerApiKey, chainId, nativeCreditConfig, sourceThroughBlock
+          );
+        } catch (error) {
+          const transient = isBlockscoutTransient(error);
+          const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
+          const prefix = explorerFailurePrefix(auditProvider);
+          const wrapped = new Error(`Explorer native-credit audit feed failed: ${publicErrorDetail(error)}`);
+          wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
+            : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_FEED_FAILED`;
+          wrapped.httpStatus = error.response?.status || error.httpStatus || null;
+          wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
+          await EvmAudit.recordProviderAttempt({
+            jobId: job.id, scopeId: nativeCreditScope.id, provider: auditProvider,
+            endpoint: 'native-credit', requestParams: {
+              address: job.address, from_block: 0, to_block: sourceThroughBlock,
+            }, outcome: transient ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
+            errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
+          });
+          throw wrapped;
+        }
+        const observations = normalizer.explorerFeedObservations(
+          { ...context, provider: auditProvider }, 'internal', nativeCreditRows
+        );
+        for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+        await EvmAudit.commitPage(nativeCreditScope.id, pageRecord(
+          auditProvider, 'native-credit', {
+            address: job.address, from_block: 0, to_block: sourceThroughBlock,
+          }, { body: { rows: nativeCreditRows } }, null, null, nativeCreditRows.length
+        ), observations);
+        await EvmAudit.completeScope(nativeCreditScope.id, {
+          status: 'complete', paginationExhausted: true,
+        });
+        await EvmAudit.acceptCoverage({
+          subjectId: job.subject_id, chainId, provider: auditProvider,
+          capability: 'native_credit', fromBlock: 0, throughBlock: sourceThroughBlock,
+          throughHash: null, paginationExhausted: true, status: 'complete', jobId: job.id,
+        });
+      } else {
+        await EvmAudit.commitPage(nativeCreditScope.id, pageRecord(
+          auditProvider, 'native-credit-not-applicable', { chain_id: chainId },
+          { body: { chain_id: chainId, status: 'not_applicable' } }, null, null, 0
+        ), []);
+        await EvmAudit.completeScope(nativeCreditScope.id, {
+          status: 'complete', paginationExhausted: true,
+          errorCode: 'NOT_APPLICABLE',
+          errorDetail: 'This chain has no configured account-independent native-credit feed; receipt logs remain canonical evidence.',
+        });
+      }
       const foundBlocks = [...hashes].length
         ? [...(await EvmAudit.observationsForJob(job.id, { chainId }))]
           .filter((row) => row.provider === auditProvider && row.block_number != null)
@@ -653,6 +859,14 @@ class EvmAuditService {
         discoveredChain.bounded = true;
         discoveredChain.status = 'bounded';
         discoveredChain.source = auditProvider;
+        if (moralisUnavailable) {
+          discoveredChain.active_discovery = {
+            status: 'deferred', source: 'moralis',
+            error_code: moralisUnavailable.code,
+            error_detail: moralisUnavailable.detail,
+          };
+          discoveredChain.fallback_source = auditProvider;
+        }
         discoveredChain.first_block = foundBlocks.length ? Math.min(...foundBlocks) : null;
         discoveredChain.last_block = foundBlocks.length ? Math.max(...foundBlocks) : null;
       }
@@ -710,7 +924,11 @@ class EvmAuditService {
         errorDetail: coverageComplete ? null : (coverage?.error_message || `Stored ${feed} coverage is not proven complete.`),
       });
     }
-    for (const row of legacyRows) hashes.add(String(row.tx_hash).toLowerCase());
+    for (const row of legacyRows) {
+      const hash = String(row.tx_hash).toLowerCase();
+      hashes.add(hash);
+      moralisLookupHashes.add(hash);
+    }
 
     const providerTransactionHashes = new Set((await EvmAudit.observationsForJob(
       job.id, { chainId }
@@ -722,31 +940,35 @@ class EvmAuditService {
     // committed pages can never disappear from canonicalization.
     for (const hash of providerTransactionHashes) hashes.add(hash);
     let providerLookupGaps = 0;
-    if (providerConfig.moralis) {
-      for (const hash of hashes) {
-        if (providerTransactionHashes.has(hash)) continue;
-        try {
-          const lookup = await moralis.transactionByHash(hash, providerConfig.moralis);
-          assertLease(leaseState);
-          const item = lookup.body;
-          const observations = normalizer.historyObservations(context, item);
-          await EvmAudit.commitPage(historyScope.id, pageRecord(
-            'moralis', 'transaction-lookup', { chain: providerConfig.moralis, transaction_hash: hash },
-            lookup, null, null, 1
-          ), observations);
-        } catch (error) {
-          providerLookupGaps += 1;
-          await EvmAudit.recordProviderAttempt({
-            jobId: job.id, scopeId: historyScope.id, provider: 'moralis',
-            endpoint: 'transaction-lookup',
-            requestParams: { chain: providerConfig.moralis, transaction_hash: hash },
-            outcome: ['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED'].includes(error.code)
-              ? 'deferred' : 'failed',
-            httpStatus: error.httpStatus || null, errorCode: error.code || 'MORALIS_LOOKUP_FAILED',
-            errorDetail: publicErrorDetail(error), requestId: error.requestId || null,
-          });
-          if (['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_AUTH_FAILED'].includes(error.code)) throw error;
+    if (useMoralis) {
+      try {
+        for (const hash of moralisLookupHashes) {
+          if (providerTransactionHashes.has(hash)) continue;
+          try {
+            const lookup = await moralis.transactionByHash(hash, providerConfig.moralis);
+            assertLease(leaseState);
+            const item = lookup.body;
+            const observations = normalizer.historyObservations(context, item);
+            await EvmAudit.commitPage(historyScope.id, pageRecord(
+              'moralis', 'transaction-lookup', { chain: providerConfig.moralis, transaction_hash: hash },
+              lookup, null, null, 1
+            ), observations);
+          } catch (error) {
+            providerLookupGaps += 1;
+            await EvmAudit.recordProviderAttempt({
+              jobId: job.id, scopeId: historyScope.id, provider: 'moralis',
+              endpoint: 'transaction-lookup',
+              requestParams: { chain: providerConfig.moralis, transaction_hash: hash },
+              outcome: ['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED'].includes(error.code)
+                ? 'deferred' : 'failed',
+              httpStatus: error.httpStatus || null, errorCode: error.code || 'MORALIS_LOOKUP_FAILED',
+              errorDetail: publicErrorDetail(error), requestId: error.requestId || null,
+            });
+            if (['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_AUTH_FAILED'].includes(error.code)) throw error;
+          }
         }
+      } catch (error) {
+        return fallbackAfterMoralis(error, historyScope.id);
       }
     }
     // Transaction lookups use the same durable scope as the paginated history
@@ -813,9 +1035,14 @@ class EvmAuditService {
       errorDetail: 'Consensus RPC verified known transaction receipts but did not enumerate account history.',
     });
 
-    const internalObservations = await EvmAudit.observationsForJob(job.id, {
-      chainId, evidenceKind: 'internal_trace',
-    });
+    const internalObservations = [
+      ...(await EvmAudit.observationsForJob(job.id, {
+        chainId, evidenceKind: 'internal_trace',
+      })),
+      ...(await EvmAudit.observationsForJob(job.id, {
+        chainId, evidenceKind: 'native_credit',
+      })),
+    ];
     for (const effect of effectsFromInternalObservations(context, internalObservations)) {
       const stored = await EvmAudit.upsertCanonicalEffect(effect);
       await EvmAudit.linkEffectEvidence(stored.id, effect.evidenceObservationIds);
