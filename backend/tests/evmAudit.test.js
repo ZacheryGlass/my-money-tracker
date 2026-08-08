@@ -8,6 +8,8 @@ const normalizer = require('../src/services/evmAudit/normalizer');
 const MoralisClient = require('../src/services/evmAudit/MoralisClient');
 const RpcClient = require('../src/services/evmAudit/RpcClient');
 const EvmAuditService = require('../src/services/EvmAuditService');
+const EvmAudit = require('../src/models/EvmAudit');
+const database = require('../src/config/database');
 const {
   TOPICS, effectsFromInternalObservations, effectsFromRpc,
 } = require('../src/services/evmAudit/effectDecoder');
@@ -33,6 +35,22 @@ const context = (chainId = 8453) => ({
 test('stable evidence hashes ignore object key order but not payload changes', () => {
   assert.equal(normalizer.sha256({ b: 2, a: 1 }), normalizer.sha256({ a: 1, b: 2 }));
   assert.notEqual(normalizer.sha256({ a: 1 }), normalizer.sha256({ a: 2 }));
+});
+
+test('finishing an audit casts the status parameter consistently for PostgreSQL', async () => {
+  const originalQuery = database.query;
+  let sql;
+  database.query = async (query) => {
+    sql = query;
+    return { rows: [{ id: 1, status: 'complete' }] };
+  };
+  try {
+    await EvmAudit.finish(1, 'test-owner', 'complete');
+    assert.match(sql, /SET status = \$3::varchar/);
+    assert.match(sql, /CASE WHEN \$3::varchar IN/);
+  } finally {
+    database.query = originalQuery;
+  }
 });
 
 test('Moralis history keeps receipt, log, internal and token evidence independently', () => {
