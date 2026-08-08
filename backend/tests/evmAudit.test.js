@@ -59,13 +59,19 @@ test('unsupported audit chains become explicit amber scopes without a provider r
     return scope;
   };
   try {
-    assert.equal(await EvmAuditService.runUnsupportedChain({ job: { id: 7 }, chainId: 324 }), 1);
+    assert.equal(await EvmAuditService.runUnsupportedChain({ job: { id: 7 }, chainId: 32401 }), 1);
     assert.equal(scopes.length, 13);
     assert.ok(scopes.every((scope) => scope.status === 'unsupported'));
-    assert.ok(scopes.every((scope) => scope.errorCode === 'MORALIS_CHAIN_UNSUPPORTED'));
+    assert.ok(scopes.every((scope) => scope.errorCode === 'NON_EVM_CHAIN'));
   } finally {
     EvmAudit.upsertScope = originalUpsertScope;
   }
+});
+
+test('zkSync Era uses bounded Blockscout audit coverage instead of unsupported status', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
+  assert.match(source, /\[324, \{\s*auditProvider: 'blockscout'/);
+  assert.doesNotMatch(source, /\[324, \{\s*unsupported:/);
 });
 
 test('stable evidence hashes ignore object key order but not payload changes', () => {
@@ -118,6 +124,40 @@ test('Moralis history keeps receipt, log, internal and token evidence independen
     'an internal call without trace coordinates stays provider-scoped');
 });
 
+test('Blockscout account-feed evidence preserves internal trace identity and raw rows', () => {
+  const rows = normalizer.explorerFeedObservations({ ...context(324), provider: 'blockscout' }, 'internal', [{
+    hash: HASH, blockNumber: '12', blockHash: BLOCK_HASH, transactionIndex: '3',
+    traceId: '3_1', from: OTHER, to: WALLET, value: '7', isError: '0',
+  }]);
+  assert.equal(rows[0].provider, 'blockscout');
+  assert.equal(rows[0].evidenceKind, 'internal_trace');
+  assert.deepEqual(rows[0].traceAddress, [3, 1]);
+  assert.equal(rows[0].payload.value, '7');
+});
+
+test('Blockscout normal and token feeds use the additive account-feed evidence kind', () => {
+  const feeds = ['normal', 'erc20', 'erc721', 'erc1155'];
+  for (const feed of feeds) {
+    const [observation] = normalizer.explorerFeedObservations(
+      { ...context(324), provider: 'blockscout' },
+      feed,
+      [{ hash: HASH, blockNumber: '10', logIndex: '2', tokenID: '9' }]
+    );
+    assert.equal(observation.evidenceKind, 'account_feed');
+  }
+  const migration = fs.readFileSync(
+    path.join(__dirname, '../migrations/078_evm_account_feed_evidence.sql'), 'utf8'
+  );
+  assert.match(migration, /'account_feed'/);
+});
+
+test('Blockscout transient provider failures defer instead of becoming permanent gaps', () => {
+  assert.equal(EvmAuditService._isBlockscoutTransient({ response: { status: 408 } }), true);
+  assert.equal(EvmAuditService._isBlockscoutTransient({ response: { status: 503 } }), true);
+  assert.equal(EvmAuditService._isBlockscoutTransient({ code: 'EAI_AGAIN' }), true);
+  assert.equal(EvmAuditService._isBlockscoutTransient({ response: { status: 400 } }), false);
+});
+
 test('consensus canonicalization retains failed mined outgoing transactions and gas', () => {
   const transaction = {
     hash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH, transactionIndex: '0x2',
@@ -168,6 +208,30 @@ test('internal effects remain provisional unless Moralis and stored evidence mat
   }]);
   assert.equal(matched[0].resolutionStatus, 'provisional',
     'amount and counterparties cannot substitute for trace identity');
+});
+
+test('Blockscout internal evidence can corroborate the existing ledger when Moralis is unavailable', () => {
+  const payload = { from: OTHER, to: WALLET, value: '7', isError: '0' };
+  const blockscout = {
+    id: 11, provider: 'blockscout', provider_object_key: `account:internal:${HASH}:3`,
+    tx_hash: HASH, trace_address: [3, 1], payload_json: payload,
+  };
+  const ledger = {
+    id: 12, provider: 'existing-ledger', provider_object_key: `legacy:internal:${HASH}:0`,
+    tx_hash: HASH, trace_address: [3, 1],
+    payload_json: { from_address: OTHER, to_address: WALLET, value_wei: '7', is_error: false },
+  };
+  const effects = effectsFromInternalObservations(context(324), [blockscout, ledger]);
+  assert.equal(effects[0].resolutionStatus, 'verified');
+  assert.deepEqual(effects[0].evidenceObservationIds, [11, 12]);
+});
+
+test('failed Blockscout internal traces never become economic effects', () => {
+  const effects = effectsFromInternalObservations(context(324), [{
+    id: 13, provider: 'blockscout', tx_hash: HASH, trace_address: [3, 1],
+    payload_json: { from: OTHER, to: WALLET, value: '7', isError: '1' },
+  }]);
+  assert.deepEqual(effects, []);
 });
 
 test('OP Stack protocol deposits never consume the user nonce sequence', () => {
@@ -347,7 +411,9 @@ test('Moralis request deadlines cover body reads and abort before retrying', asy
 
 test('Moralis history scope is finalized after transaction lookup pages', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
-  const lookupPass = source.indexOf("for (const hash of hashes) {\n      if (moralisHashes.has(hash)) continue;");
+  assert.ok(source.includes("job.id, { chainId }"),
+    'restart rehydration must inspect all provider evidence kinds, including explorer feeds');
+  const lookupPass = source.indexOf("for (const hash of hashes) {\n        if (providerTransactionHashes.has(hash)) continue;");
   const canonicalization = source.indexOf("await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });", lookupPass);
   const finalization = source.indexOf(
     "await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });",
