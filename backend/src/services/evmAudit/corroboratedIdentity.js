@@ -27,41 +27,68 @@ function decimal(value, options) {
   return parsed == null ? null : parsed.toString();
 }
 
-function moralisTransferFields(effect, payload) {
+function indexedTransferFields(effect, payload, provider) {
   const standard = effect.effect_type;
   const numericFields = payload.__evm_json_numeric_fields;
   if (standard !== 'erc20' && Array.isArray(numericFields)
       && numericFields.some((field) => ['amount', 'token_id', 'tokenId'].includes(field))) {
     return null;
   }
-  const contract = normalizedAddress(payload.address ?? payload.token_address);
-  const from = normalizedAddress(payload.from_address ?? payload.from);
-  const to = normalizedAddress(payload.to_address ?? payload.to);
+  if (provider === 'moralis') {
+    const contract = normalizedAddress(payload.address ?? payload.token_address);
+    const from = normalizedAddress(payload.from_address ?? payload.from);
+    const to = normalizedAddress(payload.to_address ?? payload.to);
+    const value = decimal(
+      standard === 'erc20' ? payload.value : payload.amount,
+      { allowSafeNumber: standard === 'erc20' }
+    );
+    const tokenId = standard === 'erc20' ? null : decimal(payload.token_id ?? payload.tokenId);
+    if (!contract || !from || !to || value == null || (standard !== 'erc20' && tokenId == null)) {
+      return null;
+    }
+    return { contract, from, to, value, tokenId };
+  }
+  const nested = standard === 'erc20' ? payload.erc20
+    : standard === 'erc721' ? payload.erc721 : payload.erc1155;
+  const contract = normalizedAddress(payload.address ?? payload.token_address
+    ?? payload.tokenAddress);
+  const from = normalizedAddress(payload.from_address ?? payload.from
+    ?? payload.fromAddress ?? nested?.from_address ?? nested?.fromAddress);
+  const to = normalizedAddress(payload.to_address ?? payload.to
+    ?? payload.toAddress ?? nested?.to_address ?? nested?.toAddress);
   const value = decimal(
-    standard === 'erc20' ? payload.value : payload.amount,
+    standard === 'erc20'
+      ? (payload.value ?? payload.amount ?? nested?.value)
+      : (payload.amount ?? payload.value ?? nested?.amount ?? nested?.value ?? '1'),
     { allowSafeNumber: standard === 'erc20' }
   );
-  const tokenId = standard === 'erc20' ? null : decimal(payload.token_id ?? payload.tokenId);
+  const tokenId = standard === 'erc20' ? null : decimal(
+    payload.token_id ?? payload.tokenId ?? nested?.token_id ?? nested?.tokenId
+  );
   if (!contract || !from || !to || value == null || (standard !== 'erc20' && tokenId == null)) {
     return null;
   }
   return { contract, from, to, value, tokenId };
 }
 
-function matchesMoralisTransfer(effect, observation) {
+function matchesIndexedTransfer(effect, observation) {
   if (!effect || !observation || !TRANSFER_TYPES[effect.effect_type]) return false;
-  if (observation.provider !== 'moralis') return false;
+  if (!['moralis', 'coinbase-cdp'].includes(observation.provider)) return false;
   const expectedKind = `${effect.effect_type}_transfer`;
   if (observation.evidence_kind !== expectedKind
       || String(observation.tx_hash || '').toLowerCase() !== String(effect.tx_hash).toLowerCase()
       || Number(observation.log_index) !== Number(effect.log_index)) return false;
-  const fields = moralisTransferFields(effect, observation.payload_json || {});
+  const fields = indexedTransferFields(effect, observation.payload_json || {}, observation.provider);
   return Boolean(fields)
     && fields.contract === String(effect.token_contract || '').toLowerCase()
     && fields.from === String(effect.from_address || '').toLowerCase()
     && fields.to === String(effect.to_address || '').toLowerCase()
     && fields.value === decimal(effect.value_units)
     && fields.tokenId === (effect.effect_type === 'erc20' ? null : decimal(effect.token_id));
+}
+
+function matchesMoralisTransfer(effect, observation) {
+  return observation?.provider === 'moralis' && matchesIndexedTransfer(effect, observation);
 }
 
 function matchesLegacyTransfer(effect, row) {
@@ -80,5 +107,6 @@ function matchesLegacyTransfer(effect, row) {
 module.exports = {
   TRANSFER_TYPES,
   matchesLegacyTransfer,
+  matchesIndexedTransfer,
   matchesMoralisTransfer,
 };

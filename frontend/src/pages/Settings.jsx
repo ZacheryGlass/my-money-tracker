@@ -67,13 +67,14 @@ const jobRunPresentation = (name, lastRun) => {
   };
 };
 
-// Rows on the API Keys tab. Plaid/Etherscan/Moralis pull the signed-in user's
+// Rows on the API Keys tab. Plaid/Etherscan/Moralis/CDP pull the signed-in user's
 // own financial data; the price keys are shared app-wide (prices are global).
 const USER_KEY_ROWS = [
   { service: 'plaid_client_id', label: 'Plaid Client ID' },
   { service: 'plaid_secret', label: 'Plaid Secret' },
   { service: 'etherscan', label: 'Etherscan API Key' },
   { service: 'moralis', label: 'Moralis API Key' },
+  { service: 'cdp', label: 'Coinbase CDP Client API Key' },
 ];
 const APP_KEY_ROWS = [
   { service: 'cg_api_key', label: 'CoinGecko API Key' },
@@ -1084,7 +1085,7 @@ const Settings = ({ user }) => {
           <AlertTriangle size={16} className="mt-0.5 shrink-0" />
           <span>
             The server is missing SECRETS_ENCRYPTION_KEY, so keys cannot be stored here yet.
-            Integrations with configured server defaults can keep using them, but Moralis audits require an encrypted per-user key.
+            Integrations with configured server defaults can keep using them, but Moralis and Coinbase CDP audits require encrypted per-user keys.
           </span>
         </div>
       )}
@@ -1097,7 +1098,7 @@ const Settings = ({ user }) => {
       <section className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Your Keys</h2>
-          <p className="mt-1 text-xs text-secondary">Credentials for pulling your own financial data. Stored encrypted; only the last four characters are ever shown. Plaid and Etherscan may use configured server defaults; Moralis requires a stored per-user key.</p>
+          <p className="mt-1 text-xs text-secondary">Credentials for pulling your own financial data. Stored encrypted; only the last four characters are ever shown. Plaid and Etherscan may use configured server defaults; Moralis and Coinbase CDP require separate stored per-user keys. The CDP key is not your Coinbase exchange key.</p>
         </div>
         <div className="card divide-y divide-border overflow-hidden">
           {USER_KEY_ROWS.map(({ service, label }) => {

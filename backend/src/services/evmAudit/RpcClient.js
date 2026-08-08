@@ -47,7 +47,7 @@ class RpcClient {
     return run;
   }
 
-  async request(method, params) {
+  async requestWithEvidence(method, params) {
     return this._scheduled(async () => {
       let response;
       try {
@@ -84,8 +84,21 @@ class RpcClient {
           { httpStatus: response.status }
         );
       }
-      return body.result;
+      return {
+        result: body.result,
+        rawText: text,
+        responseJson: body,
+        responseSha256: sha256(text),
+        requestId: response.headers.get('x-request-id') || null,
+        httpStatus: response.status,
+        method,
+        params,
+      };
     });
+  }
+
+  async request(method, params) {
+    return (await this.requestWithEvidence(method, params)).result;
   }
 
   async finalizedBoundary() {
@@ -108,8 +121,26 @@ class RpcClient {
     );
   }
 
+  async transactionCountWithEvidence(address, blockTag) {
+    const response = await this.requestWithEvidence(
+      'eth_getTransactionCount', [address, blockTag]
+    );
+    return {
+      value: quantity(response.result, 'transaction count'),
+      evidence: response,
+    };
+  }
+
   async balance(address, blockTag) {
     return quantity(await this.request('eth_getBalance', [address, blockTag]), 'native balance');
+  }
+
+  async balanceWithEvidence(address, blockTag) {
+    const response = await this.requestWithEvidence('eth_getBalance', [address, blockTag]);
+    return {
+      value: quantity(response.result, 'native balance'),
+      evidence: response,
+    };
   }
 
   async code(address, blockTag) {
@@ -120,6 +151,17 @@ class RpcClient {
     return value.toLowerCase();
   }
 
+  async codeWithEvidence(address, blockTag) {
+    const response = await this.requestWithEvidence('eth_getCode', [address, blockTag]);
+    if (typeof response.result !== 'string' || !/^0x[0-9a-f]*$/i.test(response.result)) {
+      throw rpcError('Consensus RPC returned invalid account code', 'RPC_INVALID_RESPONSE');
+    }
+    return {
+      value: response.result.toLowerCase(),
+      evidence: response,
+    };
+  }
+
   async erc20Balance(contract, address, blockTag) {
     const data = `0x70a08231${address.toLowerCase().slice(2).padStart(64, '0')}`;
     return quantity(
@@ -128,9 +170,26 @@ class RpcClient {
     );
   }
 
+  async erc20BalanceWithEvidence(contract, address, blockTag) {
+    const data = `0x70a08231${address.toLowerCase().slice(2).padStart(64, '0')}`;
+    const response = await this.requestWithEvidence(
+      'eth_call', [{ to: contract, data }, blockTag]
+    );
+    return {
+      value: quantity(response.result, 'ERC-20 balance'),
+      evidence: response,
+    };
+  }
+
   async transactionAndReceipt(hash) {
-    const transaction = await this.request('eth_getTransactionByHash', [hash]);
-    const receipt = await this.request('eth_getTransactionReceipt', [hash]);
+    const transactionResponse = await this.requestWithEvidence(
+      'eth_getTransactionByHash', [hash]
+    );
+    const receiptResponse = await this.requestWithEvidence(
+      'eth_getTransactionReceipt', [hash]
+    );
+    const transaction = transactionResponse.result;
+    const receipt = receiptResponse.result;
     if (!transaction || !receipt) {
       throw rpcError('Consensus RPC could not find a mined transaction and receipt', 'RPC_TRANSACTION_NOT_FOUND');
     }
@@ -143,12 +202,20 @@ class RpcClient {
         || String(transaction.blockHash || '').toLowerCase() !== String(receipt.blockHash || '').toLowerCase()) {
       throw rpcError('Consensus RPC returned conflicting transaction/receipt coordinates', 'RPC_IDENTITY_MISMATCH');
     }
-    const block = await this.request('eth_getBlockByNumber', [transaction.blockNumber, false]);
+    const blockResponse = await this.requestWithEvidence(
+      'eth_getBlockByNumber', [transaction.blockNumber, false]
+    );
+    const block = blockResponse.result;
     if (String(block?.hash || '').toLowerCase() !== String(transaction.blockHash || '').toLowerCase()
         || BigInt(block?.number || '-1') !== BigInt(transaction.blockNumber)) {
       throw rpcError('Consensus RPC transaction is not in the canonical block at its height', 'RPC_CANONICALITY_MISMATCH');
     }
-    return { transaction, receipt, block };
+    return {
+      transaction,
+      receipt,
+      block,
+      evidence: [transactionResponse, receiptResponse, blockResponse],
+    };
   }
 }
 

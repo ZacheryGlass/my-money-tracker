@@ -39,7 +39,7 @@ class EthDiscoveryCandidate {
            AND r.address = f.address
            AND r.chain_id = f.chain_id
            AND r.depth = f.depth
-           AND r.status IN ('complete', 'contract', 'high_traffic', 'dust')
+           AND r.status IN ('complete', 'contract', 'high_traffic', 'dust', 'unsupported')
        )
        ORDER BY f.score DESC NULLS LAST, f.id ASC
        LIMIT $2`,

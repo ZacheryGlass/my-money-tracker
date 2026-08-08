@@ -44,7 +44,9 @@ const EthWallet = require('../src/models/EthWallet');
 const EthWalletChain = require('../src/models/EthWalletChain');
 const EthFeedCoverage = require('../src/models/EthFeedCoverage');
 const EthTransfer = require('../src/models/EthTransfer');
+const EthProviderPage = require('../src/models/EthProviderPage');
 const SecretsService = require('../src/services/SecretsService');
+const RpcClient = require('../src/services/evmAudit/RpcClient');
 const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
 const MirrorService = require('../src/services/EthTransactionMirrorService');
 const TransactionClassificationService = require('../src/services/TransactionClassificationService');
@@ -69,7 +71,9 @@ function harness(t, {
   cursors = {},
   feedBehavior = {},
   apiKey = 'key',
+  cdpApiKey = apiKey,
   indexedHead = 50000000,
+  cdpResponses = null,
 } = {}) {
   const restore = [];
   const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
@@ -85,7 +89,7 @@ function harness(t, {
   });
 
   const calls = {
-    fetches: [], heads: [], deletes: [], cursors: [], unsupported: [],
+    fetches: [], cdpPages: [], cdpRequests: [], heads: [], deletes: [], cursors: [], unsupported: [],
     chainErrors: [], cleared: [], inserted: [], coverage: [],
   };
   const chainStates = new Map();
@@ -104,9 +108,69 @@ function harness(t, {
   };
 
   stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
-  stub(SecretsService, 'getUserKey', async () => apiKey);
+  stub(SecretsService, 'getUserKey', async (_userId, service) => (
+    service === 'cdp' ? cdpApiKey : apiKey
+  ));
   stub(EthWalletChain, 'ensure', async (walletId, chainId, ingestVersion = 0) =>
     ({ ...stateFor(walletId, chainId, ingestVersion) }));
+  stub(EthWalletChain, 'startProviderScan', async (walletId, chainId, throughBlock) => {
+    const state = stateFor(walletId, chainId, 0);
+    const resumable = ['running', 'deferred', 'failed'].includes(state.provider_scan_status)
+      && Number(state.provider_scan_head) === Number(throughBlock);
+    if (!resumable) {
+      Object.assign(state, {
+        provider_cursor: null, provider_scan_id: 'test-scan-id', provider_scan_head: throughBlock,
+        provider_scan_status: 'running', provider_scan_order: state.provider_scan_order || 'unknown',
+      });
+    }
+    return { ...state };
+  });
+  stub(EthWalletChain, 'checkpointProviderScan', async (walletId, chainId, cursor) => {
+    const state = stateFor(walletId, chainId, 0);
+    state.provider_cursor = cursor;
+    state.provider_scan_status = 'running';
+    return { ...state };
+  });
+  stub(EthWalletChain, 'finishProviderScan', async (walletId, chainId) => {
+    const state = stateFor(walletId, chainId, 0);
+    state.provider_cursor = null;
+    state.provider_scan_status = 'complete';
+    return { ...state };
+  });
+  stub(EthWalletChain, 'failProviderScan', async (walletId, chainId, status) => {
+    const state = stateFor(walletId, chainId, 0);
+    state.provider_scan_status = status;
+    return { ...state };
+  });
+  stub(EthWalletChain, 'setProviderScanOrder', async (walletId, chainId, order) => {
+    const state = stateFor(walletId, chainId, 0);
+    state.provider_scan_order = order;
+    return { ...state };
+  });
+  stub(EthProviderPage, 'record', async (page) => {
+    calls.cdpPages.push(page);
+    return page;
+  });
+  stub(EthProviderPage, 'forWalletChain', async () => []);
+  stub(RpcClient.prototype, 'finalizedBoundary', async () => ({
+    number: indexedHead,
+    numberHex: `0x${Number(indexedHead).toString(16)}`,
+    hash: `0x${'f'.repeat(64)}`,
+  }));
+  const originalFetch = global.fetch;
+  stub(global, 'fetch', async (url, options) => {
+    if (!String(url).includes('/rpc/v1/base/')) return originalFetch(url, options);
+    const body = JSON.parse(options.body);
+    calls.cdpRequests.push(body);
+    if (cdpResponses?.length) {
+      return new Response(JSON.stringify({
+        jsonrpc: '2.0', id: 1, result: cdpResponses.shift(),
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({
+      jsonrpc: '2.0', id: 1, result: { addressTransactions: [], nextPageToken: null },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
   stub(EthWalletChain, 'resetForIngestVersion', async (walletId, chainId, ingestVersion) => {
     calls.resets ||= [];
     calls.resets.push({ chainId, ingestVersion });
@@ -180,6 +244,16 @@ function harness(t, {
     calls.deletes.push({ chainId, types: types.join(','), block });
   });
   stub(EthTransfer, 'bulkInsert', async (rows) => { calls.inserted.push(...rows); return rows.length; });
+  stub(EthTransfer, 'replaceFeeds', async (walletId, chainId, replacements, rows) => {
+    for (const replacement of replacements) {
+      calls.deletes.push({
+        chainId, types: replacement.types.join(','), block: replacement.block,
+        ...(replacement.options || {}),
+      });
+    }
+    calls.inserted.push(...rows);
+    return rows.length;
+  });
   stub(EthWalletChain, 'updateCursors', async (walletId, chainId, next) => {
     calls.cursors.push({ chainId, ...next });
     const state = stateFor(walletId, chainId, 0);
@@ -194,9 +268,11 @@ function harness(t, {
     for (const [key, value] of Object.entries(next)) {
       if (value != null) state[columns[key]] = value;
     }
+    return { ...state };
   });
   stub(EthWalletChain, 'setUnsupportedFeeds', async (walletId, chainId, list) => {
     calls.unsupported.push({ chainId, list });
+    return { ...stateFor(walletId, chainId, 0) };
   });
   stub(EthWalletChain, 'setError', async (walletId, chainId, code, message) => {
     calls.chainErrors.push({ chainId, code, message });
@@ -272,9 +348,8 @@ test('a chain-specific Blockscout floor preserves stricter operator pacing', (t)
 test('all live-probed chains default on through their configured providers', () => {
   delete process.env.ETH_CHAINS;
   const byId = new Map(chains.allChains().map((chain) => [chain.id, chain]));
-  // OP/Base use keyless Blockscout because Etherscan gates them by plan. A
-  // partial internal range stays a visible per-feed
-  // gap rather than disabling the other independently complete feeds.
+  // OP and Base remain enabled by default; Base's ordinary history provider is
+  // CDP and its old Blockscout transport is retained only for surgical gaps.
   for (const id of [1, 10, 100, 137, 324, 8453, 32401, 42161, 59144]) {
     assert.equal(byId.get(id).enabled, true, `chain ${id} defaults on through its configured provider`);
   }
@@ -574,37 +649,24 @@ test('an unsupported feed freezes its cursor, keeps its rows, and records the ga
   assert.equal(calls.walletError, undefined);
 });
 
-test('a wholly unreadable chain is isolated to its own row', async (t) => {
-  const unavailable = () => {
-    const err = new Error('Free API access is not supported for this chain.');
-    err.code = 'ETHERSCAN_CHAIN_UNAVAILABLE';
-    throw err;
-  };
+test('a Base wallet without a CDP key is isolated as a deferred chain row', async (t) => {
   const { calls } = harness(t, {
     chainSet: '1,8453',
-    // Only the FIRST feed is wired to fail. The rest must be recognised as
-    // unreadable without being called at all -- they would answer identically,
-    // and the throttle is global across every user.
-    feedBehavior: { '8453:normal': unavailable },
+    cdpApiKey: null,
   });
 
   const result = await EthWalletService.syncWallet(7);
 
-  assert.deepEqual(
-    calls.fetches.filter((c) => c.chainId === 8453).map((c) => c.feed),
-    ['normal'],
-    'an unreadable chain must cost one request, not six'
-  );
-  assert.deepEqual(calls.unsupported.find((u) => u.chainId === 8453).list,
-    ['normal', 'internal', 'token', 'nft', 'nft1155'],
-    'the gap record still names every feed that went unfetched');
+  assert.deepEqual(calls.fetches.filter((c) => c.chainId === 8453), []);
+  assert.deepEqual(calls.cdpRequests, [], 'a missing CDP key makes no provider request');
+  assert.deepEqual(calls.unsupported.find((u) => u.chainId === 8453).list, []);
   const baseError = calls.chainErrors.find((e) => e.chainId === 8453);
-  assert.equal(baseError.code, 'CHAIN_UNAVAILABLE');
-  // Actionable: the two things that actually fix it.
-  assert.match(baseError.message, /Upgrade the plan or remove 8453 from ETH_CHAINS/);
+  assert.equal(baseError.code, 'SYNC_DEFERRED');
+  assert.match(baseError.message, /CDP history deferred/);
   assert.ok(calls.cleared.includes(1), 'mainnet still syncs and reports clean');
-  assert.deepEqual(result.unsupportedFeeds.filter((f) => f.startsWith('Base')).length, 5);
-  assert.equal(calls.walletError, undefined, 'a config condition is not a wallet sync failure');
+  assert.deepEqual(result.deferredFeeds.filter((f) => f.startsWith('Base')).length, 6);
+  assert.equal(calls.walletError.code, 'SYNC_DEFERRED', 'the wallet exposes missing CDP as deferred');
+  assert.match(calls.walletError.message, /deferred because the explorer is rate limited/);
 });
 
 test('a transient failure and an unsupported feed are told apart', async (t) => {
@@ -831,9 +893,9 @@ test('the full-wallet job retries deferred feeds even when another feed failed',
 
 test('a rate-limited coverage boundary returns a deferred chain instead of failing the wallet', async (t) => {
   const { calls, stub } = harness(t, { chainSet: '8453' });
-  stub(EtherscanService, 'coverageBoundary', async () => {
-    const error = new Error('Blockscout rate limit reached; retry after 10s');
-    error.code = 'EXPLORER_RATE_LIMITED';
+  stub(RpcClient.prototype, 'finalizedBoundary', async () => {
+    const error = new Error('Consensus RPC rate limit reached; retry after 10s');
+    error.code = 'RPC_RATE_LIMITED';
     error.retryAfterMs = 10000;
     throw error;
   });
@@ -842,7 +904,7 @@ test('a rate-limited coverage boundary returns a deferred chain instead of faili
 
   assert.deepEqual(calls.fetches, [], 'the boundary failure prevents every feed request');
   assert.deepEqual(result.skippedFeeds, [
-    'Base/normal', 'Base/internal', 'Base/token', 'Base/nft', 'Base/nft1155',
+    'Base/normal', 'Base/internal', 'Base/token', 'Base/nft', 'Base/nft1155', 'Base/statesync',
   ]);
   assert.equal(result.chains[0].rateLimited, true);
   assert.equal(result.status, 'deferred');
@@ -853,7 +915,7 @@ test('a rate-limited coverage boundary returns a deferred chain instead of faili
     entry.status === 'not_applicable'
     || (entry.status === 'deferred' && entry.retryAfterAt instanceof Date)
   )));
-  assert.match(calls.walletError.message, /rate limited/);
+  assert.match(calls.walletError.message, /rate limit/);
 });
 
 // A row on the given chain, so a chain can be told apart by what it inserts.
@@ -1400,8 +1462,8 @@ test('an account feed freezes when the indexed head falls behind its resume bloc
   );
 });
 
-test('a regressed indexed head cannot delete or lower a persisted feed cursor', async (t) => {
-  const { calls } = harness(t, {
+test('a failed Base finalized-boundary check cannot delete or lower a persisted feed cursor', async (t) => {
+  const { calls, stub } = harness(t, {
     chainSet: '8453',
     indexedHead: 199,
     cursors: {
@@ -1416,15 +1478,19 @@ test('a regressed indexed head cannot delete or lower a persisted feed cursor', 
     },
   });
 
-  await assert.rejects(
-    () => EthWalletService.syncWallet(7),
-    (error) => error.code === 'ETHERSCAN_API_ERROR'
-      && /behind persisted cursor/.test(error.message)
-  );
+  stub(RpcClient.prototype, 'finalizedBoundary', async () => {
+    const error = new Error('finalized boundary unavailable');
+    error.code = 'RPC_API_ERROR';
+    throw error;
+  });
+
+  const result = await EthWalletService.syncWallet(7);
   assert.deepEqual(calls.fetches, []);
+  assert.deepEqual(calls.cdpRequests, []);
   assert.deepEqual(calls.deletes, []);
   assert.deepEqual(calls.cursors, []);
-  assert.match(calls.chainErrors[0].message, /behind persisted cursor/);
+  assert.equal(result.status, 'failed');
+  assert.match(calls.chainErrors[0].message, /finalized boundary unavailable/);
   assert.ok(calls.coverage[0].entries.every((entry) => (
     entry.status === 'not_applicable' || entry.status === 'failed'
   )));
@@ -1931,7 +1997,7 @@ test('an OP Stack deposit sent onward is net-zero for the tracked L2 sender', ()
     'mint and execution stay separate so exact balance math nets them to zero');
 });
 
-test('a pre-version OP/Base chain resets every cursor and reingests from genesis once', async (t) => {
+test('a pre-version Base chain resets every cursor and reingests from genesis once', async (t) => {
   const { calls } = harness(t, {
     chainSet: '8453',
     cursors: {
@@ -1949,14 +2015,14 @@ test('a pre-version OP/Base chain resets every cursor and reingests from genesis
 
   await EthWalletService.syncWallet(7);
 
-  assert.deepEqual(calls.resets, [{ chainId: 8453, ingestVersion: 1 }]);
-  assert.ok(calls.fetches.every((call) => call.startBlock === 0),
-    'the provider and normalization change heals every historical feed');
+  assert.deepEqual(calls.resets, [{ chainId: 8453, ingestVersion: 2 }]);
+  assert.ok(calls.cdpRequests.every((request) => request.params[0].pageToken === ''),
+    'the first CDP walk starts at its proven genesis boundary');
   assert.ok(calls.deletes.every((call) => call.block === 0),
     'each successful feed replaces its full old window');
 });
 
-test('empty OP Stack feeds persist indexed coverage and resume incrementally on the next sync', async (t) => {
+test('empty Base CDP pages persist coverage and resume with the CDP cursor contract', async (t) => {
   const { calls } = harness(t, { chainSet: '8453' });
 
   await EthWalletService.syncWallet(7);
@@ -1967,17 +2033,110 @@ test('empty OP Stack feeds persist indexed coverage and resume incrementally on 
   for (const field of ['normal', 'internal', 'token', 'nft', 'nft1155']) {
     assert.equal(cursorWrites[0][field], 50000000, `${field} records empty-feed coverage`);
   }
-  assert.equal(cursorWrites[0].statesync, null,
-    'Base native-credit discovery is audit-only and does not advance routine Sync');
-  const secondFetches = calls.fetches.filter((call) => call.chainId === 8453).slice(5);
-  assert.equal(secondFetches.length, 5);
-  assert.ok(secondFetches.every((call) => call.startBlock === 50000000 - 64),
-    'the second sync uses the stored indexed head with only the reorg overlap');
-  assert.ok(secondFetches.every((call) => call.coverage === 50000000),
-    'all account and native-credit feeds share one indexed coverage boundary');
+  assert.equal(cursorWrites[0].statesync, 50000000,
+    'CDP receipt logs advance the durable Base bridge-credit boundary');
+  assert.equal(calls.cdpRequests.length, 2);
+  assert.ok(calls.cdpRequests.every((request) => request.params[0].pageSize === 100));
+  assert.ok(calls.cdpRequests.every((request) => request.params[0].pageToken === ''),
+    'an exhausted one-page stream restarts at the provider boundary; order is unknown');
+  assert.equal(calls.fetches.filter((call) => call.chainId === 8453).length, 0,
+    'Base ordinary Sync does not call anonymous Blockscout feeds');
 });
 
-test('coverage retires Base state sync without making it a red feed', async (t) => {
+test('Base incremental overlap never stops before the current run proves newest-first order', async (t) => {
+  const item = (hash, blockHeight) => ({
+    hash: `0x${hash.repeat(64)}`,
+    blockHash: `0x${'f'.repeat(64)}`,
+    blockHeight: String(blockHeight),
+    status: 'confirmed',
+    content: { ethereum: {
+      hash: `0x${hash.repeat(64)}`,
+      blockHash: `0x${'f'.repeat(64)}`,
+      blockNumber: String(blockHeight),
+      blockTimestamp: '2026-01-01T00:00:00Z',
+      from: WALLET,
+      to: '0x1111111111111111111111111111111111111111',
+      value: '0', gas: '21000', gasPrice: '1',
+      receipt: { status: '1', gasUsed: '21000', effectiveGasPrice: '1', logs: [] },
+      flattenedTraces: [], tokenTransfers: [],
+    } },
+  });
+  const { calls } = harness(t, {
+    chainSet: '8453',
+    indexedHead: 1000,
+    cursors: {
+      8453: {
+        last_block_normal: 1000, last_block_internal: 1000, last_block_token: 1000,
+        last_block_nft: 1000, last_block_1155: 1000, last_block_statesync: 1000,
+        provider_scan_order: 'newest_first', provider_scan_status: 'complete',
+      },
+    },
+    cdpResponses: [
+      { addressTransactions: [item('a', 900)], nextPageToken: 'page-2' },
+      { addressTransactions: [item('b', 800)], nextPageToken: null },
+    ],
+  });
+
+  await EthWalletService.syncWallet(7);
+
+  assert.equal(calls.cdpRequests.length, 2,
+    'a one-item overlap page cannot terminate an incremental walk');
+});
+
+test('a resumable Base CDP scan rehydrates the journaled prefix before continuing', async (t) => {
+  const item = {
+    hash: `0x${'1'.repeat(64)}`,
+    blockHash: `0x${'2'.repeat(64)}`,
+    blockHeight: '100',
+    content: {
+      ethereum: {
+        hash: `0x${'1'.repeat(64)}`,
+        blockHash: `0x${'2'.repeat(64)}`,
+        blockNumber: '100',
+        blockTimestamp: '2026-01-01T00:00:00Z',
+        from: WALLET,
+        to: '0x1111111111111111111111111111111111111111',
+        value: '7',
+        gas: '21000',
+        gasUsed: '21000',
+        gasPrice: '1',
+        receipt: { status: '1', gasUsed: '21000', effectiveGasPrice: '1', logs: [] },
+        flattenedTraces: [],
+        tokenTransfers: [],
+      },
+    },
+  };
+  const { calls, stub } = harness(t, {
+    chainSet: '8453',
+    cursors: {
+      8453: {
+        last_block_normal: 100,
+        last_block_internal: 100,
+        last_block_token: 100,
+        last_block_nft: 100,
+        last_block_1155: 100,
+        last_block_statesync: 100,
+        provider_cursor: 'page-2',
+        provider_scan_id: 'test-scan-id',
+        provider_scan_head: 50000000,
+        provider_scan_status: 'deferred',
+      },
+    },
+  });
+  stub(EthProviderPage, 'forScan', async () => [{
+    cursor_in: 'page-1',
+    cursor_out: 'page-2',
+    response_json: { addressTransactions: [item] },
+  }]);
+
+  await EthWalletService.syncWallet(7);
+
+  assert.equal(calls.cdpRequests[0].params[0].pageToken, 'page-2');
+  assert.ok(calls.inserted.some((row) => row.tx_hash === item.hash && row.transfer_type === 'native'));
+  assert.ok(calls.inserted.some((row) => row.tx_hash === item.hash && row.transfer_type === 'gas'));
+});
+
+test('coverage reports Base CDP for ordinary feeds and its keyed bridge-credit feed', async (t) => {
   const { calls } = harness(t, { chainSet: '8453' });
 
   await EthWalletService.syncWallet(7);
@@ -1985,13 +2144,13 @@ test('coverage retires Base state sync without making it a red feed', async (t) 
   const entries = calls.coverage.find((attempt) => attempt.chainId === 8453).entries;
   assert.equal(
     entries.find((row) => row.feed === 'normal').provider,
-    'Blockscout (https://base.blockscout.com/api/v2)'
+    'Coinbase CDP address history (Base)'
   );
   assert.equal(
     entries.find((row) => row.feed === 'statesync').provider,
-    'Blockscout (https://base.blockscout.com/api/v2)'
+    'Coinbase CDP address history (Base)'
   );
-  assert.equal(entries.find((row) => row.feed === 'statesync').status, 'not_applicable');
+  assert.equal(entries.find((row) => row.feed === 'statesync').status, 'complete');
 });
 
 test('OP Stack deposit reshaping declines every off-shape enriched row', () => {
@@ -2192,7 +2351,7 @@ test('050 adds an idempotent conservative ingestion version marker', () => {
   assert.match(INGEST_VERSION_MIGRATION,
     /ADD COLUMN IF NOT EXISTS ingest_version INT NOT NULL DEFAULT 0/);
   assert.equal(chains.getChain(10).ingestVersion, 1);
-  assert.equal(chains.getChain(8453).ingestVersion, 1);
+  assert.equal(chains.getChain(8453).ingestVersion, 2);
 });
 
 test('054 converts raw and derived chain times from intended UTC wall clocks exactly once', () => {

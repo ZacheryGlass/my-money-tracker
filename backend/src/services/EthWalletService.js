@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
 const ZkSyncLiteService = require('./ZkSyncLiteService');
@@ -12,9 +13,13 @@ const EthWallet = require('../models/EthWallet');
 const EthWalletChain = require('../models/EthWalletChain');
 const EthFeedCoverage = require('../models/EthFeedCoverage');
 const EthTransfer = require('../models/EthTransfer');
+const EthProviderPage = require('../models/EthProviderPage');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
+const CdpClient = require('./evmAudit/CdpClient');
+const CdpHistoryProvider = require('./evmAudit/CdpHistoryProvider');
+const RpcClient = require('./evmAudit/RpcClient');
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 
@@ -103,6 +108,7 @@ function sleep(milliseconds) {
 // restart the reset cursors remain durable and the next normal sync resumes the
 // unfinished recapture from genesis.
 const recaptureRuns = new Map();
+const PROVIDER_SCAN_OWNER = `${process.pid}:${crypto.randomUUID()}`;
 
 function toTimestamp(unixSeconds) {
   return new Date(Number(unixSeconds) * 1000);
@@ -124,7 +130,23 @@ function scannedThroughBlock(rows) {
   return rows.scannedThroughBlock ?? maxBlock(rows);
 }
 
+function cdpItemBlockNumber(item) {
+  const value = item?.blockHeight
+    ?? item?.content?.ethereum?.blockNumber
+    ?? item?.ethereum?.blockNumber;
+  try {
+    const parsed = BigInt(value);
+    if (parsed < 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    return Number(parsed);
+  } catch {
+    return null;
+  }
+}
+
 function providerName(chain) {
+  if (chain.historyProvider === 'coinbase-cdp') {
+    return 'Coinbase CDP address history (Base)';
+  }
   if (chain.historyProvider === 'zksync-lite') {
     return 'Matter Labs zkSync Lite archive';
   }
@@ -136,7 +158,12 @@ function providerName(chain) {
 }
 
 function coverageFailureStatus(error) {
-  if (isExplorerRateLimited(error)) return 'deferred';
+  if (isExplorerRateLimited(error) || String(error?.code || '').startsWith('CDP_')
+      && ['CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
+        'CDP_SCAN_BUSY'].includes(error.code)) {
+    return 'deferred';
+  }
+  if (['RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR'].includes(error?.code)) return 'deferred';
   return ['ETHERSCAN_CHAIN_UNAVAILABLE', 'ETHERSCAN_FEED_UNSUPPORTED'].includes(error?.code)
     ? 'unsupported' : 'failed';
 }
@@ -169,6 +196,380 @@ function retryAfterMsForResult(result) {
 }
 
 class EthWalletService {
+  static async _syncCdpWalletChain(wallet, chain) {
+    const nativeCreditConfig = chain.auditNativeCredits || chain.stateSyncDeposits || null;
+    const activeSpecs = [
+      ...FEED_SPECS.filter((spec) => !spec.chainFeed),
+      ...(nativeCreditConfig ? [STATE_SYNC_SPEC] : []),
+    ];
+    const provider = providerName(chain);
+    let state = await EthWalletChain.ensure(wallet.id, chain.id, Number(chain.ingestVersion || 0));
+    if (Number(state?.ingest_version || 0) < Number(chain.ingestVersion || 0)) {
+      state = await EthWalletChain.resetForIngestVersion(
+        wallet.id, chain.id, Number(chain.ingestVersion || 0)
+      );
+    }
+    const resumeFrom = (cursor) => Math.max(0, Number(cursor ?? 0) - REORG_OVERLAP_BLOCKS);
+    const resume = {
+      normal: resumeFrom(state?.last_block_normal),
+      internal: resumeFrom(state?.last_block_internal),
+      token: resumeFrom(state?.last_block_token),
+      nft: resumeFrom(state?.last_block_nft),
+      nft1155: resumeFrom(state?.last_block_1155),
+      statesync: resumeFrom(state?.last_block_statesync),
+    };
+    let scanId = null;
+    const retryError = async (error, { scanStarted = false, persist = true } = {}) => {
+      let canPersist = persist;
+      const status = coverageFailureStatus(error);
+      const retryAt = status === 'deferred' ? retryAfterAt(error) : null;
+      if (canPersist) {
+        const scanFence = scanStarted
+          ? { scanId, owner: PROVIDER_SCAN_OWNER }
+          : {};
+        try {
+          await EthFeedCoverage.recordAttempts(wallet.id, chain.id, [
+            ...activeSpecs.map((spec) => ({
+              feed: spec.key,
+              provider,
+              status,
+              attemptedFromBlock: resume[spec.key],
+              errorCode: error.code || 'CDP_SYNC_FAILED',
+              errorMessage: error.message,
+              retryAfterAt: retryAt,
+            })),
+          ], scanFence);
+          const supportedState = await EthWalletChain.setUnsupportedFeeds(
+            wallet.id, chain.id, [], scanFence
+          );
+          if (scanStarted && !supportedState) throw Object.assign(
+            new Error('Base CDP scan lease was lost before failure metadata was written.'),
+            { code: 'CDP_SCAN_STALE' }
+          );
+          const errorState = await EthWalletChain.setError(
+            wallet.id,
+            chain.id,
+            status === 'deferred' ? 'SYNC_DEFERRED' : 'FEED_SKIPPED',
+            `Base CDP history ${status}: ${error.message}`,
+            scanFence
+          );
+          if (scanStarted && !errorState) throw Object.assign(
+            new Error('Base CDP scan lease was lost before failure status was written.'),
+            { code: 'CDP_SCAN_STALE' }
+          );
+          const timeState = await EthWalletChain.updateSyncTime(wallet.id, chain.id, scanFence);
+          if (scanStarted && !timeState) throw Object.assign(
+            new Error('Base CDP scan lease was lost before failure timestamp was written.'),
+            { code: 'CDP_SCAN_STALE' }
+          );
+          if (scanStarted) {
+            const failedState = await EthWalletChain.failProviderScan(
+              wallet.id, chain.id, status === 'deferred' ? 'deferred' : 'failed',
+              scanId, PROVIDER_SCAN_OWNER
+            );
+            // A stale worker must not overwrite the current worker's durable
+            // status/error slot after the database lease has moved on.
+            canPersist = failedState != null;
+          }
+        } catch {
+          canPersist = false;
+        }
+      }
+      return {
+        chainId: chain.id,
+        chainName: chain.name,
+        inserted: 0,
+        skippedFeeds: activeSpecs.map((spec) => spec.key),
+        failedFeeds: status === 'failed' ? activeSpecs.map((spec) => spec.key) : [],
+        deferredFeeds: status === 'deferred' ? activeSpecs.map((spec) => spec.key) : [],
+        unsupportedFeeds: [],
+        unavailable: false,
+        rateLimited: [
+          'CDP_RATE_LIMITED', 'RPC_RATE_LIMITED', 'EXPLORER_RATE_LIMITED',
+        ].includes(error.code),
+        retryAfterMs: retryAt ? Math.max(1, retryAt.getTime() - Date.now()) : null,
+        retryAfterAt: retryAt?.toISOString() || null,
+        fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, 0])),
+      };
+    };
+
+    const cdpKey = await SecretsService.getUserKey(wallet.user_id, 'cdp');
+    if (!cdpKey) {
+      return retryError(Object.assign(
+        new Error('Configure a separate Coinbase CDP Client API key in Settings -> API Keys to sync Base.'),
+        { code: 'CDP_NOT_CONFIGURED' }
+      ));
+    }
+
+    let boundary;
+    try {
+      // The indexer enumerates history; consensus RPC supplies the immutable
+      // finalized boundary used by cursors, reorg overlap and reconciliation.
+      boundary = await new RpcClient(chain.id).finalizedBoundary();
+    } catch (error) {
+      return retryError(error);
+    }
+
+    const previousOrder = state?.provider_scan_order || 'unknown';
+    const incrementalStop = state?.provider_scan_status === 'complete'
+      && previousOrder === 'newest_first'
+      && Math.min(...activeSpecs.map((spec) => resume[spec.key])) > 0;
+    state = await EthWalletChain.startProviderScan(
+      wallet.id, chain.id, boundary.number, boundary.hash, PROVIDER_SCAN_OWNER
+    );
+    if (!state) {
+      return retryError(Object.assign(
+        new Error('Another Base CDP sync currently owns this wallet-chain scan lease.'),
+        { code: 'CDP_SCAN_BUSY' }
+      ), { persist: false });
+    }
+    scanId = state.provider_scan_id;
+    const cdp = new CdpClient(cdpKey);
+    const feeds = { normal: [], internal: [], token: [], nft: [], nft1155: [], statesync: [] };
+    const seenCdpTransactions = new Map();
+    const historicalCdpTransactions = new Map();
+    try {
+      const journal = await EthProviderPage.forWalletChain(wallet.id, chain.id);
+      for (const page of journal) {
+        const body = typeof page.response_json === 'string'
+          ? JSON.parse(page.response_json) : page.response_json;
+        CdpHistoryProvider.assertNoConflicts(
+          body?.addressTransactions, historicalCdpTransactions
+        );
+      }
+    } catch (error) {
+      return retryError(error, { scanStarted: true });
+    }
+    let completePagination = false;
+    let order = previousOrder;
+    let previousBlock = null;
+    let orderDirection = null;
+    let stoppedAtOverlap = false;
+
+    const observeBlocks = (blocks) => {
+      for (const currentBlock of blocks) {
+        if (previousBlock != null && currentBlock !== previousBlock) {
+          const direction = currentBlock < previousBlock ? 'newest_first' : 'oldest_first';
+          if (orderDirection && orderDirection !== direction) orderDirection = 'unknown';
+          else if (!orderDirection) orderDirection = direction;
+        }
+        previousBlock = currentBlock;
+      }
+      if (orderDirection === 'unknown') order = 'unknown';
+      else if (order === 'unknown' && orderDirection) order = orderDirection;
+      else if (orderDirection && order !== orderDirection) order = 'unknown';
+    };
+
+    const addPage = (items) => {
+      const uniqueItems = CdpHistoryProvider.dedupeItems(items, seenCdpTransactions);
+      const normalized = CdpHistoryProvider.normalizePage(wallet.address, uniqueItems, {
+        nativeCredit: nativeCreditConfig,
+      });
+      for (const [feed, rows] of Object.entries(normalized.feeds)) {
+        feeds[feed].push(...rows.filter((row) => Number(row.blockNumber) <= boundary.number));
+      }
+      observeBlocks(uniqueItems.map(cdpItemBlockNumber)
+        .filter((block) => block != null && block <= boundary.number));
+    };
+
+    try {
+      // The raw page is durable before its cursor advances. Rehydrate every
+      // page through the last proven cursor before continuing a resumable
+      // scan; a process death or later provider error must not resume with an
+      // empty in-memory feed and delete the already-journaled prefix.
+      if (state.provider_cursor && scanId) {
+        const journal = await EthProviderPage.forScan(wallet.id, chain.id, scanId);
+        const checkpoint = journal.findIndex((page) => (
+          page.cursor_out != null && String(page.cursor_out) === String(state.provider_cursor)
+        ));
+        if (checkpoint < 0) {
+          const error = new Error('Coinbase CDP checkpoint has no matching raw page; Base sync is frozen safely.');
+          error.code = 'CDP_CHECKPOINT_MISSING';
+          throw error;
+        }
+        for (const page of journal.slice(0, checkpoint + 1)) {
+          const body = typeof page.response_json === 'string'
+            ? JSON.parse(page.response_json) : page.response_json;
+          if (!Array.isArray(body?.addressTransactions)) {
+            const error = new Error('Coinbase CDP journal page has an invalid address-history shape.');
+            error.code = 'CDP_INVALID_RESPONSE';
+            throw error;
+          }
+          addPage(body.addressTransactions);
+        }
+      }
+      for await (const page of cdp.addressTransactionPages(wallet.address, {
+        cursor: state.provider_cursor || null,
+        pageSize: 100,
+      })) {
+        const blocks = page.items.map(cdpItemBlockNumber)
+          .filter((block) => block != null && block <= boundary.number);
+        CdpHistoryProvider.assertNoConflicts(page.items, historicalCdpTransactions);
+        await EthProviderPage.record({
+          walletId: wallet.id, chainId: chain.id, provider: 'coinbase-cdp',
+          stream: 'address-history', scanId, cursorIn: page.cursorIn, cursorOut: page.cursorOut,
+          requestParams: { address: wallet.address.toLowerCase(), page_size: 100, page_token: page.cursorIn },
+          responseSha256: page.responseSha256, responseRaw: page.rawText,
+          responseJson: page.body, itemCount: page.items.length, owner: PROVIDER_SCAN_OWNER,
+        });
+        addPage(page.items);
+        const checkpointed = await EthWalletChain.checkpointProviderScan(
+          wallet.id, chain.id, scanId, page.cursorOut, PROVIDER_SCAN_OWNER
+        );
+        if (checkpointed == null) {
+          const error = new Error('Base CDP scan lease was lost before its cursor checkpoint.');
+          error.code = 'CDP_SCAN_STALE';
+          throw error;
+        }
+        state = { ...state, provider_cursor: page.cursorOut };
+        if (incrementalStop && orderDirection === 'newest_first'
+            && blocks.length && Math.min(...blocks) <= Math.min(...Object.values(resume))) {
+          stoppedAtOverlap = true;
+          break;
+        }
+      }
+      if (chain.opStackDeposits) {
+      const rpc = new RpcClient(chain.id);
+        for (const raw of feeds.normal.filter((row) => row.opStackType === '0x7e')) {
+          const { transaction } = await rpc.transactionAndReceipt(raw.hash);
+          if (String(transaction.type).toLowerCase() !== '0x7e'
+              || !/^0x[0-9a-f]{64}$/i.test(String(transaction.sourceHash || ''))
+              || !/^0x[0-9a-f]+$/i.test(String(transaction.mint || ''))
+              || !/^0x[0-9a-f]+$/i.test(String(transaction.value || ''))) {
+            const error = new Error(`OP Stack deposit ${raw.hash} is missing sourceHash, mint, or value`);
+            error.code = 'RPC_INVALID_RESPONSE';
+            throw error;
+          }
+          const rpcValue = BigInt(transaction.value).toString();
+          const rpcSourceHash = String(transaction.sourceHash).toLowerCase();
+          const rpcMint = BigInt(transaction.mint).toString();
+          const cdpFrom = String(raw.from || '').toLowerCase();
+          const cdpTo = String(raw.to || '').toLowerCase();
+          if (rpcValue !== String(raw.value)
+              || (raw.opStackSourceHash && rpcSourceHash !== String(raw.opStackSourceHash).toLowerCase())
+              || (raw.opStackMintWei != null && rpcMint !== String(raw.opStackMintWei))
+              || (cdpFrom && cdpFrom !== String(transaction.from || '').toLowerCase())
+              || (cdpTo && cdpTo !== String(transaction.to || '').toLowerCase())) {
+            const error = new Error(`OP Stack RPC value disagrees with CDP history for ${raw.hash}`);
+            error.code = 'RPC_IDENTITY_MISMATCH';
+            throw error;
+          }
+          raw.from = transaction.from;
+          raw.to = transaction.to;
+          raw.value = rpcValue;
+          raw.opStackSourceHash = rpcSourceHash;
+          raw.opStackMintWei = rpcMint;
+        }
+      }
+      completePagination = !stoppedAtOverlap;
+      if (orderDirection === 'unknown') order = 'unknown';
+      else if (order === 'unknown' && orderDirection) order = orderDirection;
+      else if (orderDirection && order !== orderDirection) order = 'unknown';
+    } catch (error) {
+      return retryError(error, { scanStarted: true });
+    }
+
+    // Re-derive the ordinary feeds only after the raw provider walk has
+    // completed or crossed a proven newest-first overlap. A failed page never
+    // reaches this delete phase, so omission cannot erase existing evidence.
+    let rows;
+    try {
+      rows = this.normalizeFeeds(wallet.address, feeds, {
+        preserveZeroValue: true,
+        stateSyncContract: nativeCreditConfig?.contract || null,
+        opStackDeposits: chain.opStackDeposits || null,
+      })
+        .map((row) => ({ ...row, wallet_id: wallet.id, chain_id: chain.id }))
+        .filter((row) => {
+          const feed = row.transfer_type === 'gas' || row.transfer_type === 'native'
+            ? 'normal' : row.transfer_type === 'internal' ? 'internal'
+              : row.transfer_type === 'token' ? 'token'
+                : row.transfer_type === 'nft' ? 'nft' : row.transfer_type === 'nft1155' ? 'nft1155' : null;
+          const effectiveFeed = feed === 'internal' && nativeCreditConfig
+            && row.from_address === nativeCreditConfig.contract.toLowerCase()
+            ? 'statesync' : feed;
+          return effectiveFeed && row.block_number >= resume[effectiveFeed];
+        });
+    } catch (error) {
+      return retryError(error, { scanStarted: true });
+    }
+    const replacements = activeSpecs.map((spec) => {
+      const deleteOpts = {};
+      if (spec.chainFeed) {
+        deleteOpts.fromAddress = nativeCreditConfig.contract;
+      } else if (spec.key === 'internal' && nativeCreditConfig) {
+        deleteOpts.excludeFromAddress = nativeCreditConfig.contract;
+      }
+      return { types: spec.types, block: resume[spec.key], options: deleteOpts };
+    });
+    const inserted = await EthTransfer.replaceFeeds(
+      wallet.id, chain.id, replacements, rows,
+      { scanId, owner: PROVIDER_SCAN_OWNER }
+    );
+    const throughBlock = boundary.number;
+    await EthFeedCoverage.recordAttempts(wallet.id, chain.id, activeSpecs.map((spec) => ({
+        feed: spec.key,
+        provider,
+        status: 'complete',
+        coveredFromBlock: 0,
+        coveredThroughBlock: throughBlock,
+        indexedHead: throughBlock,
+        attemptedFromBlock: resume[spec.key],
+      })), { scanId, owner: PROVIDER_SCAN_OWNER });
+    const cursorState = await EthWalletChain.updateCursors(wallet.id, chain.id, {
+      normal: throughBlock, internal: throughBlock, token: throughBlock,
+      nft: throughBlock, nft1155: throughBlock,
+      statesync: nativeCreditConfig ? throughBlock : null,
+    }, { scanId, owner: PROVIDER_SCAN_OWNER });
+    if (cursorState == null) {
+      const error = new Error('Base CDP scan lease was lost before cursor completion.');
+      error.code = 'CDP_SCAN_STALE';
+      throw error;
+    }
+    const supportedState = await EthWalletChain.setUnsupportedFeeds(
+      wallet.id, chain.id, [], { scanId, owner: PROVIDER_SCAN_OWNER }
+    );
+    if (supportedState == null) {
+      const error = new Error('Base CDP scan lease was lost before feed status completion.');
+      error.code = 'CDP_SCAN_STALE';
+      throw error;
+    }
+    const orderState = await EthWalletChain.setProviderScanOrder(
+      wallet.id, chain.id, order, scanId, PROVIDER_SCAN_OWNER
+    );
+    if (orderState == null) {
+      const error = new Error('Base CDP scan lease was lost before order completion.');
+      error.code = 'CDP_SCAN_STALE';
+      throw error;
+    }
+    const finished = await EthWalletChain.finishProviderScan(
+      wallet.id, chain.id, scanId, PROVIDER_SCAN_OWNER
+    );
+    if (finished == null) {
+      const error = new Error('Base CDP scan lease was lost before finalization.');
+      error.code = 'CDP_SCAN_STALE';
+      throw error;
+    }
+    const completedFence = { scanId, completed: true };
+    await EthWalletChain.clearError(wallet.id, chain.id, completedFence);
+    await EthWalletChain.updateSyncTime(wallet.id, chain.id, completedFence);
+    return {
+      chainId: chain.id,
+      chainName: chain.name,
+      inserted,
+      skippedFeeds: [],
+      failedFeeds: [],
+      deferredFeeds: [],
+      unsupportedFeeds: [],
+      unavailable: false,
+      rateLimited: false,
+      retryAfterMs: null,
+      retryAfterAt: null,
+      fetched: Object.fromEntries(FEED_SPECS.map((spec) => [spec.key, feeds[spec.key].length])),
+      cdp: { scanId, pagesComplete: completePagination, incremental: incrementalStop, order },
+    };
+  }
+
   static async _syncZkSyncLiteWalletChain(wallet, chain) {
     const ingestVersion = Number(chain.ingestVersion || 0);
     let state = await EthWalletChain.ensure(wallet.id, chain.id, ingestVersion);
@@ -375,7 +776,9 @@ class EthWalletService {
   // including failed txs, which still burn gas. Zero-value normal/internal
   // rows (contract calls, approvals) are dropped as noise; their economic
   // content is the gas row and/or the token row from the token feed.
-  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [], statesync = [] } = {}, { stateSyncContract = null, classicDeposits = null, opStackDeposits = null } = {}) {
+  static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [], statesync = [] } = {}, {
+    stateSyncContract = null, classicDeposits = null, opStackDeposits = null, preserveZeroValue = false,
+  } = {}) {
     const wallet = walletAddress.toLowerCase();
     const rows = [];
     const ordinals = new Map();
@@ -437,7 +840,7 @@ class EthWalletService {
       // uint256, past Number precision -- keep it a string end to end. A
       // malformed id must not reach NUMERIC(78,0) and abort the chunk.
       token_id: raw.tokenID != null && /^\d+$/.test(String(raw.tokenID)) ? String(raw.tokenID) : null,
-      is_error: false,
+      is_error: raw.isError === '1',
     });
 
     for (const raw of normal) {
@@ -517,12 +920,12 @@ class EthWalletService {
       }
 
       const hasNativeLeg = raw.value !== '0';
-      if (hasNativeLeg) {
+      if (hasNativeLeg || preserveZeroValue) {
         rows.push({
           ...baseRow(raw, 'native'),
           value_wei: raw.value,
-          method_id: methodId,
-          method_name: methodName,
+          method_id: hasNativeLeg || (raw.from || '').toLowerCase() !== wallet ? methodId : null,
+          method_name: hasNativeLeg || (raw.from || '').toLowerCase() !== wallet ? methodName : null,
         });
       }
       if ((raw.from || '').toLowerCase() === wallet) {
@@ -559,7 +962,7 @@ class EthWalletService {
     }
 
     for (const raw of internal) {
-      if (raw.value === '0') continue;
+      if (raw.value === '0' && !preserveZeroValue) continue;
       // A trace FROM the precompile belongs to the STATE-SYNC feed. Today
       // txlistinternal does not serve such traces (that absence is the sixth
       // feed's whole premise), but the internal feed's delete already excludes
@@ -605,7 +1008,7 @@ class EthWalletService {
         token_decimals: raw.tokenDecimal != null ? Number(raw.tokenDecimal) : null,
         // tokentx is ERC-20 only; the NFT standards have their own feeds.
         token_standard: 'erc20',
-        is_error: false,
+        is_error: raw.isError === '1',
       });
     }
 
@@ -705,6 +1108,9 @@ class EthWalletService {
   static async _syncWalletChain(wallet, chain, apiKey) {
     if (chain.historyProvider === 'zksync-lite') {
       return this._syncZkSyncLiteWalletChain(wallet, chain);
+    }
+    if (chain.historyProvider === 'coinbase-cdp') {
+      return this._syncCdpWalletChain(wallet, chain);
     }
     const ingestVersion = Number(chain.ingestVersion || 0);
     let state = await EthWalletChain.ensure(wallet.id, chain.id, ingestVersion);
