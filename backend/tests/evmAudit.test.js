@@ -35,6 +35,39 @@ const context = (chainId = 8453) => ({
   chain: chains.getChain(chainId),
 });
 
+test('history audit enumerates every configured chain', () => {
+  const original = process.env.ETH_CHAINS;
+  try {
+    delete process.env.ETH_CHAINS;
+    assert.deepEqual(EvmAuditService.supportedChainIds(), [
+      1, 10, 100, 137, 324, 8453, 42161, 59144, 32401,
+    ]);
+    assert.deepEqual(EvmAuditService.configuredChainIds(), [
+      1, 10, 100, 137, 324, 8453, 42161, 59144, 32401,
+    ]);
+  } finally {
+    if (original == null) delete process.env.ETH_CHAINS;
+    else process.env.ETH_CHAINS = original;
+  }
+});
+
+test('unsupported audit chains become explicit amber scopes without a provider request', async () => {
+  const originalUpsertScope = EvmAudit.upsertScope;
+  const scopes = [];
+  EvmAudit.upsertScope = async (_jobId, scope) => {
+    scopes.push(scope);
+    return scope;
+  };
+  try {
+    assert.equal(await EvmAuditService.runUnsupportedChain({ job: { id: 7 }, chainId: 324 }), 1);
+    assert.equal(scopes.length, 13);
+    assert.ok(scopes.every((scope) => scope.status === 'unsupported'));
+    assert.ok(scopes.every((scope) => scope.errorCode === 'MORALIS_CHAIN_UNSUPPORTED'));
+  } finally {
+    EvmAudit.upsertScope = originalUpsertScope;
+  }
+});
+
 test('stable evidence hashes ignore object key order but not payload changes', () => {
   assert.equal(normalizer.sha256({ b: 2, a: 1 }), normalizer.sha256({ a: 1, b: 2 }));
   assert.notEqual(normalizer.sha256({ a: 1 }), normalizer.sha256({ a: 2 }));

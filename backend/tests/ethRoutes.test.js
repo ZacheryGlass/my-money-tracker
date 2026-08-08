@@ -413,7 +413,7 @@ test('POST /api/eth/wallets/:id/audits rejects vacuous or ambiguous scope', asyn
     { chain_ids: [] },
     { chain_ids: [0] },
     { chain_ids: ['8453'] },
-    { chain_ids: [1] },
+    { chain_ids: [999] },
   ]) {
     const response = await request(app).post('/api/eth/wallets/7/audits').send(body);
     assert.equal(response.status, 400, JSON.stringify(body));

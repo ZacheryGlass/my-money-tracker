@@ -611,7 +611,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
         disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
         aria-label={`Audit mined history for ${walletName(wallet)}`}
         className={ROW_ACTION_CLASS}
-        title="Independently audit Base and Gnosis history without blocking ordinary Sync"
+        title="Independently audit configured EVM history without blocking ordinary Sync"
       >
         <FileCheck2 size={10} />
         Audit

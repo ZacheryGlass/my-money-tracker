@@ -12,9 +12,29 @@ const RpcClient = require('./evmAudit/RpcClient');
 const normalizer = require('./evmAudit/normalizer');
 const { effectsFromInternalObservations, effectsFromRpc } = require('./evmAudit/effectDecoder');
 
+const AUDIT_CAPABILITIES = [
+  'active_chain', 'wallet_history', 'normal', 'internal', 'erc20',
+  'erc721', 'erc1155', 'native_credit', 'nonce', 'native_balance',
+  'token_balance', 'bridge', 'receipt_verification',
+];
 const AUDIT_CHAINS = new Map([
+  [1, { moralis: 'eth', activeIds: new Set(['0x1', '1', 'eth', 'ethereum']) }],
+  [10, { moralis: 'optimism', activeIds: new Set(['0xa', '10', 'optimism']) }],
   [100, { moralis: 'gnosis', activeIds: new Set(['0x64', '100', 'gnosis']) }],
+  [137, { moralis: 'polygon', activeIds: new Set(['0x89', '137', 'polygon']) }],
+  [324, {
+    unsupported: true,
+    errorCode: 'MORALIS_CHAIN_UNSUPPORTED',
+    errorDetail: 'Moralis wallet history does not support zkSync Era; existing ledger coverage remains separate and unproven by this audit.',
+  }],
   [8453, { moralis: 'base', activeIds: new Set(['0x2105', '8453', 'base']) }],
+  [42161, { moralis: 'arbitrum', activeIds: new Set(['0xa4b1', '42161', 'arbitrum']) }],
+  [59144, { moralis: 'linea', activeIds: new Set(['0xe708', '59144', 'linea']) }],
+  [32401, {
+    unsupported: true,
+    errorCode: 'NON_EVM_CHAIN',
+    errorDetail: 'zkSync Lite is a legacy non-EVM history source and is outside the EVM audit contract.',
+  }],
 ]);
 const OVERLAP_BLOCKS = 64;
 const OWNER = `${process.pid}:${crypto.randomUUID()}`;
@@ -185,10 +205,15 @@ class EvmAuditService {
     return [...AUDIT_CHAINS.keys()];
   }
 
+  static configuredChainIds() {
+    const enabled = new Set(chains.enabledChainIds());
+    return [...AUDIT_CHAINS.keys()].filter((chainId) => enabled.has(chainId));
+  }
+
   static async request(userId, walletId, { mode = 'incremental', requestedChains = null } = {}) {
     const wallet = await EthWallet.findByIdForUser(walletId, userId);
     if (!wallet) return null;
-    const selected = (requestedChains || this.supportedChainIds())
+    const selected = (requestedChains || this.configuredChainIds())
       .map(Number).filter((chainId) => AUDIT_CHAINS.has(chainId));
     const credentialGeneration = await EvmAudit.credentialGeneration(userId);
     const result = await EvmAudit.createOrFindActiveJob(userId, wallet, {
@@ -265,19 +290,31 @@ class EvmAuditService {
     }, 30_000);
     heartbeatTimer.unref?.();
     try {
-      const key = await SecretsService.getUserKey(job.user_id, 'moralis');
-      if (!key) {
-        return EvmAudit.finish(jobId, OWNER, 'deferred', {
-          errorCode: 'MORALIS_NOT_CONFIGURED',
-          errorDetail: 'Configure a Moralis API key in Settings to run this optional audit.',
-          // Do not wake this job every 30 seconds while configuration is
-          // absent. A user request still enqueues the active job immediately,
-          // so saving a key and pressing Audit resumes without waiting.
-          retryAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      const requested = (job.requested_chains || []).map(Number).filter((id) => AUDIT_CHAINS.has(id));
+      const providerRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).moralis);
+      const unsupportedRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).unsupported);
+      if (!requested.length) {
+        return EvmAudit.finish(jobId, OWNER, 'unsupported', {
+          errorCode: 'NO_SUPPORTED_CHAINS', errorDetail: 'No configured audit chains were requested.',
         });
       }
+
+      let key = null;
+      if (providerRequested.length) {
+        key = await SecretsService.getUserKey(job.user_id, 'moralis');
+        if (!key) {
+          return EvmAudit.finish(jobId, OWNER, 'deferred', {
+            errorCode: 'MORALIS_NOT_CONFIGURED',
+            errorDetail: 'Configure a Moralis API key in Settings to run this optional audit.',
+            // Do not wake this job every 30 seconds while configuration is
+            // absent. A user request still enqueues the active job immediately,
+            // so saving a key and pressing Audit resumes without waiting.
+            retryAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          });
+        }
+      }
       const credentialGeneration = await EvmAudit.credentialGeneration(job.user_id);
-      if (job.credential_generation
+      if (providerRequested.length && job.credential_generation
           && credentialGeneration
           && new Date(job.credential_generation).getTime() !== new Date(credentialGeneration).getTime()) {
         return EvmAudit.finish(jobId, OWNER, 'failed', {
@@ -293,20 +330,27 @@ class EvmAuditService {
           logger.warn({ err: error, auditJobId: jobId }, 'Failed to retain provider attempt evidence');
         }
       };
-      const moralis = new MoralisClient(key, { onFailedAttempt: retainAttempt });
-      const requested = (job.requested_chains || []).map(Number).filter((id) => AUDIT_CHAINS.has(id));
-      if (!requested.length) {
-        return EvmAudit.finish(jobId, OWNER, 'unsupported', {
-          errorCode: 'NO_SUPPORTED_CHAINS', errorDetail: 'No supported audit chains were requested.',
-        });
-      }
+      const moralis = providerRequested.length ? new MoralisClient(key, { onFailedAttempt: retainAttempt }) : null;
 
-      await EvmAudit.heartbeat(jobId, OWNER, { stage: 'discovering' });
-      const activeResponse = await moralis.activeChains(job.address, requested.map((id) => AUDIT_CHAINS.get(id).moralis));
-      assertLease(leaseState);
-      const activeRows = Array.isArray(activeResponse.body.active_chains) ? activeResponse.body.active_chains : [];
+      let activeResponse = { body: { active_chains: [] } };
+      let activeRows = [];
+      if (providerRequested.length) {
+        await EvmAudit.heartbeat(jobId, OWNER, { stage: 'discovering' });
+        activeResponse = await moralis.activeChains(
+          job.address, providerRequested.map((id) => AUDIT_CHAINS.get(id).moralis)
+        );
+        assertLease(leaseState);
+        activeRows = Array.isArray(activeResponse.body.active_chains) ? activeResponse.body.active_chains : [];
+      }
       const discovered = requested.map((chainId) => {
-        const row = activeRows.find((candidate) => activeRowMatches(candidate, AUDIT_CHAINS.get(chainId)));
+        const config = AUDIT_CHAINS.get(chainId);
+        if (config.unsupported) {
+          return {
+            chain_id: chainId, active_hint: false, bounded: false,
+            status: 'unsupported', error_code: config.errorCode, error_detail: config.errorDetail,
+          };
+        }
+        const row = activeRows.find((candidate) => activeRowMatches(candidate, config));
         return {
           chain_id: chainId,
           active_hint: Boolean(row),
@@ -318,7 +362,11 @@ class EvmAuditService {
       await EvmAudit.setDiscoveredChains(jobId, OWNER, discovered);
 
       let gaps = 0;
-      for (const chainId of requested) {
+      for (const chainId of unsupportedRequested) {
+        assertLease(leaseState);
+        gaps += await this.runUnsupportedChain({ job, chainId });
+      }
+      for (const chainId of providerRequested) {
         assertLease(leaseState);
         const result = await this.runChain({
           job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
@@ -356,6 +404,17 @@ class EvmAuditService {
       clearInterval(heartbeatTimer);
       await EvmAudit.releaseRunLock(runLock);
     }
+  }
+
+  static async runUnsupportedChain({ job, chainId }) {
+    const config = AUDIT_CHAINS.get(chainId);
+    for (const capability of AUDIT_CAPABILITIES) {
+      await EvmAudit.upsertScope(job.id, {
+        chainId, provider: 'moralis', capability, status: 'unsupported',
+        errorCode: config.errorCode, errorDetail: config.errorDetail,
+      });
+    }
+    return 1;
   }
 
   static async runChain({ job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt }) {
