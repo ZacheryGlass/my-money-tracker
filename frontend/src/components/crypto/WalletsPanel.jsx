@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useReactTable, getCoreRowModel, getSortedRowModel } from '@tanstack/react-table';
 import { AlertTriangle, ChevronDown, ChevronRight, Download, FileCheck2, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
@@ -11,6 +11,8 @@ import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const auditIsPending = (audit) => ['queued', 'running', 'deferred'].includes(audit?.status)
+  && audit?.error_code !== 'MORALIS_NOT_CONFIGURED';
 
 // Addresses render inside fallback chains and sentences composed here, so a
 // missing value must contribute nothing rather than 'unknown'.
@@ -374,6 +376,8 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
   const [bulkResults, setBulkResults] = useState(null);
   const [adding, setAdding] = useState(false);
   const [syncingId, setSyncingId] = useState(null);
+  const [auditStartingId, setAuditStartingId] = useState(null);
+  const [auditByWallet, setAuditByWallet] = useState({});
   const [recapturing, setRecapturing] = useState(null);
   const [recaptureStartingId, setRecaptureStartingId] = useState(null);
   const [coverageReport, setCoverageReport] = useState(null);
@@ -383,6 +387,40 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
   const [expandedId, setExpandedId] = useState(null);
   const [sorting, setSorting] = useState([{ id: 'eth', desc: true }]);
   const isMobile = useIsMobile();
+
+  const visibleAudits = useMemo(() => ({
+    ...Object.fromEntries(
+      wallets.filter((wallet) => wallet.history_audit)
+        .map((wallet) => [wallet.id, wallet.history_audit])
+    ),
+    ...auditByWallet,
+  }), [auditByWallet, wallets]);
+
+  useEffect(() => {
+    const active = Object.values(visibleAudits).some(auditIsPending);
+    if (!active) return undefined;
+    const refresh = async () => {
+      try {
+        const activeAudits = Object.values(visibleAudits).filter(auditIsPending);
+        const { audits: refreshed } = await ethAPI.getHistoryAudits({
+          jobIds: activeAudits.map((audit) => audit.id),
+        });
+        setAuditByWallet((current) => {
+          const next = { ...current };
+          for (const audit of refreshed) {
+            const walletId = audit.requested_wallet_id;
+            if (walletId != null) next[walletId] = audit;
+          }
+          return next;
+        });
+      } catch {
+        // Durable server state remains authoritative; a later poll or page
+        // reload resumes visibility without turning a transient poll into red.
+      }
+    };
+    const timer = window.setInterval(refresh, 5000);
+    return () => window.clearInterval(timer);
+  }, [visibleAudits]);
 
   // Same split the submit handler uses, so the count in the label and the
   // number of wallets actually created can never disagree.
@@ -492,6 +530,20 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
     }
   };
 
+  const handleHistoryAudit = async (wallet) => {
+    setAuditStartingId(wallet.id);
+    onError(null);
+    try {
+      const { job } = await ethAPI.startHistoryAudit(wallet.id);
+      setAuditByWallet((current) => ({ ...current, [wallet.id]: job }));
+      showNotice('History audit queued. You can leave this page; progress and evidence are saved.');
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to start history audit');
+    } finally {
+      setAuditStartingId(null);
+    }
+  };
+
   const openCoverageReport = async () => {
     setCoverageLoading(true);
     onError(null);
@@ -551,6 +603,17 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
       >
         Explorer
       </a>
+      <button
+        type="button"
+        onClick={() => handleHistoryAudit(wallet)}
+        disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
+        aria-label={`Audit mined history for ${walletName(wallet)}`}
+        className={ROW_ACTION_CLASS}
+        title="Independently audit Base and Gnosis history without blocking ordinary Sync"
+      >
+        <FileCheck2 size={10} />
+        Audit
+      </button>
       <button
         type="button"
         onClick={() => handleSync(wallet.id)}
@@ -659,7 +722,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
       cell: ({ row }) => rowActions(row.original),
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [expandedId, syncingId]);
+  ], [auditStartingId, expandedId, syncingId, visibleAudits]);
 
   const table = useReactTable({
     data: wallets,
@@ -674,6 +737,30 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
   // and the balance audit. The row states the verdict; this states the case.
   const walletDetail = (wallet) => (
     <div className="space-y-3 px-4 py-4">
+      {visibleAudits[wallet.id] && (() => {
+        const audit = visibleAudits[wallet.id];
+        const amber = ['deferred', 'unsupported', 'complete_with_gaps'].includes(audit.status);
+        const failed = audit.status === 'failed';
+        return (
+          <div className={`rounded border p-3 text-xs ${failed
+            ? 'border-loss/20 bg-loss/5 text-loss'
+            : amber ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+              : 'border-border bg-surface-2 text-secondary'}`}>
+            <p className="font-bold uppercase tracking-wide">
+              History audit: {String(audit.status).replaceAll('_', ' ')}
+            </p>
+            <p className="mt-1">
+              Stage {String(audit.stage || 'queued').replaceAll('_', ' ')}
+              {audit.progress?.current_chain ? ` · chain ${audit.progress.current_chain}` : ''}
+              {audit.progress?.boundary_block ? ` · through block ${audit.progress.boundary_block}` : ''}
+            </p>
+            {audit.error_detail && <p className="mt-1">{audit.error_detail}</p>}
+            {audit.status === 'complete_with_gaps' && (
+              <p className="mt-1">Known limitations remain unproven and are not marked complete.</p>
+            )}
+          </div>
+        );
+      })()}
       {wallet.chains?.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {wallet.chains.map((chain) => (

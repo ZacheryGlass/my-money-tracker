@@ -16,6 +16,8 @@ const EthReconciliation = require('../models/EthReconciliation');
 const EthReconciliationAdjustment = require('../models/EthReconciliationAdjustment');
 const AssetPriceHistory = require('../models/AssetPriceHistory');
 const EthWalletService = require('../services/EthWalletService');
+const EvmAuditService = require('../services/EvmAuditService');
+const EvmAudit = require('../models/EvmAudit');
 const EthReconciliationService = require('../services/EthReconciliationService');
 const EthDerivedPipeline = require('../services/EthDerivedPipeline');
 const EthDiscoveryService = require('../services/EthDiscoveryService');
@@ -333,10 +335,11 @@ router.get('/wallets', async (req, res) => {
     // The balance audit rides along on the wallet status API, batched for the
     // same reason the chain rows are: a summary fetched per wallet inside the
     // map below is the N+1 this route already went out of its way to avoid.
-    const [reconciliationByWallet, reconciliationIssues, allAdjustments] = await Promise.all([
+    const [reconciliationByWallet, reconciliationIssues, allAdjustments, latestAudits] = await Promise.all([
       EthReconciliation.summaryForWallets(req.user.id, walletIds),
       EthReconciliation.openIssuesForWallets(req.user.id, walletIds),
       EthReconciliationAdjustment.findForUser(req.user.id),
+      EvmAudit.latestForWallets(req.user.id, walletIds),
     ]);
     const adjustmentsByWallet = new Map();
     for (const adjustment of allAdjustments) {
@@ -376,6 +379,7 @@ router.get('/wallets', async (req, res) => {
             reconciliationIssues.get(wallet.id),
             adjustmentsByWallet.get(wallet.id)
           ),
+          history_audit: latestAudits.get(wallet.id) || null,
         };
       })
     );
@@ -383,6 +387,95 @@ router.get('/wallets', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'Get ETH wallets error');
     res.status(500).json({ error: 'Failed to retrieve wallets' });
+  }
+});
+
+router.get('/audits', async (req, res) => {
+  try {
+    const walletId = req.query.wallet_id == null ? null : parseId(req.query.wallet_id);
+    if (req.query.wallet_id != null && !walletId) {
+      return res.status(400).json({ error: 'Invalid wallet_id' });
+    }
+    let jobIds = null;
+    if (req.query.job_ids != null) {
+      const rawIds = String(req.query.job_ids).split(',');
+      jobIds = [...new Set(rawIds.map(parseId))];
+      if (!rawIds.length || rawIds.length > 100 || jobIds.some((id) => !id)) {
+        return res.status(400).json({ error: 'job_ids must contain at most 100 positive integers' });
+      }
+    }
+    const options = { walletId, limit: 100 };
+    if (jobIds) options.jobIds = jobIds;
+    const audits = await EvmAudit.listForUser(req.user.id, options);
+    return res.status(200).json({ audits });
+  } catch (error) {
+    logger.error({ err: error }, 'List EVM history audits error');
+    return res.status(500).json({ error: 'Failed to retrieve history audits' });
+  }
+});
+
+router.get('/audits/:id', async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    const audit = id && await EvmAudit.findDetailedByIdForUser(id, req.user.id);
+    if (!audit) return res.status(404).json({ error: 'History audit not found' });
+    return res.status(200).json({ audit });
+  } catch (error) {
+    logger.error({ err: error, auditJobId: req.params.id }, 'Get EVM history audit error');
+    return res.status(500).json({ error: 'Failed to retrieve history audit' });
+  }
+});
+
+router.post('/audits/full', async (req, res) => {
+  try {
+    const wallets = await EthWallet.findAllByUser(req.user.id);
+    const jobs = [];
+    let conflicts = 0;
+    for (const wallet of wallets) {
+      try {
+        const result = await EvmAuditService.request(req.user.id, wallet.id, { mode: 'full' });
+        if (result?.job) jobs.push(result.job);
+      } catch (error) {
+        if (error.code === 'EVM_AUDIT_SCOPE_CONFLICT') conflicts += 1;
+        else throw error;
+      }
+    }
+    return res.status(202).json({ queued: jobs.length, conflicts, jobs });
+  } catch (error) {
+    logger.error({ err: error }, 'Start full EVM history audit error');
+    return res.status(500).json({ error: 'Failed to start full history audit' });
+  }
+});
+
+router.post('/wallets/:id/audits', async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Wallet not found' });
+    const mode = req.body?.mode ?? 'incremental';
+    if (!['full', 'incremental'].includes(mode)) {
+      return res.status(400).json({ error: 'mode must be full or incremental' });
+    }
+    let requestedChains = null;
+    if (req.body?.chain_ids != null) {
+      if (!Array.isArray(req.body.chain_ids) || req.body.chain_ids.length === 0
+          || req.body.chain_ids.some((chainId) => !Number.isInteger(chainId) || chainId <= 0)) {
+        return res.status(400).json({ error: 'chain_ids must be a non-empty array of positive integers' });
+      }
+      requestedChains = [...new Set(req.body.chain_ids)];
+      const supported = new Set(EvmAuditService.supportedChainIds());
+      if (requestedChains.some((chainId) => !supported.has(chainId))) {
+        return res.status(400).json({ error: 'chain_ids contains an unsupported audit chain' });
+      }
+    }
+    const result = await EvmAuditService.request(req.user.id, id, { mode, requestedChains });
+    if (!result) return res.status(404).json({ error: 'Wallet not found' });
+    return res.status(202).json(result);
+  } catch (error) {
+    if (error.code === 'EVM_AUDIT_SCOPE_CONFLICT') {
+      return res.status(409).json({ error: error.message });
+    }
+    logger.error({ err: error, walletId: req.params.id }, 'Start EVM history audit error');
+    return res.status(500).json({ error: 'Failed to start history audit' });
   }
 });
 

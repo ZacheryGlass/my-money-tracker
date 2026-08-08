@@ -17,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
   },
   eth: {
     addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), getCoverage: vi.fn(), syncWallet: vi.fn(), recaptureWallet: vi.fn(), removeWallet: vi.fn(),
+    startHistoryAudit: vi.fn(), getHistoryAudit: vi.fn(), getHistoryAudits: vi.fn(),
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getReconciliation: vi.fn(),
@@ -84,6 +85,8 @@ describe('Crypto -> Wallets tab', () => {
     apiMocks.eth.getActivity.mockResolvedValue({
       data: [], summary: { spam_count: 0, needs_review_count: 0 }, pagination: { total: 0 },
     });
+    apiMocks.eth.getHistoryAudits.mockResolvedValue({ audits: [] });
+    apiMocks.eth.getHistoryAudit.mockResolvedValue({ audit: null });
     apiMocks.eth.getDiscoveryCandidates.mockResolvedValue({ candidates: [] });
     apiMocks.eth.getDiscoveryReceipts.mockResolvedValue({ receipts: [] });
     apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
@@ -412,6 +415,34 @@ describe('Crypto -> Wallets tab', () => {
 
     expect(await screen.findByText(/wallet sync deferred while the explorer cools down/i)).toBeInTheDocument();
     expect(screen.queryByText('Failed to sync wallet')).toBeNull();
+  });
+
+  it('starts history audit separately from ordinary Sync and persists queued status', async () => {
+    apiMocks.eth.startHistoryAudit.mockResolvedValue({
+      created: true,
+      job: { id: '41', requested_wallet_id: 1, status: 'queued', stage: 'queued', progress: {} },
+    });
+    await openEthereumTab([wallet(report())]);
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /audit mined history for main/i }))[0]);
+    await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1));
+    expect(apiMocks.eth.syncWallet).not.toHaveBeenCalled();
+    await expandWallet();
+    expect(await screen.findByText(/History audit: queued/i)).toBeInTheDocument();
+  });
+
+  it('renders known audit limitations amber instead of a generic red failure', async () => {
+    await openEthereumTab([{
+      ...wallet(report()),
+      history_audit: {
+        id: '40', requested_wallet_id: 1, status: 'complete_with_gaps', stage: 'complete',
+        progress: { gaps: 2 }, error_detail: null,
+      },
+    }]);
+    await expandWallet();
+    const status = await screen.findByText(/History audit: complete with gaps/i);
+    expect(status.closest('div')).toHaveClass('text-amber-300');
+    expect(screen.queryByText(/History audit: failed/i)).toBeNull();
   });
 
   it('shows a single chain\u2019s standing gap, which a chain-count gate hid entirely', async () => {

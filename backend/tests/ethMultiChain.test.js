@@ -237,23 +237,19 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
     assert.equal(chain.enabledByDefault, true);
     assert.match(chain.rpcUrl, /^https:/);
     if (id === 324) continue;
-    assert.equal(chain.stateSyncDeposits.contract, '0x4200000000000000000000000000000000000010');
-    assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
-    assert.equal(chain.opStackDeposits.creditSource, chain.stateSyncDeposits.contract);
+    const nativeCredits = chain.stateSyncDeposits || chain.auditNativeCredits;
+    assert.equal(nativeCredits.contract, '0x4200000000000000000000000000000000000010');
+    assert.equal(nativeCredits.userTopicIndex, 2);
+    assert.equal(chain.opStackDeposits.creditSource, nativeCredits.contract);
   }
   const base = chains.getChain(8453);
   assert.equal(base.accountApi.apiStyle, 'blockscout-v2');
   assert.equal(base.accountApi.v2BaseUrl, 'https://base.blockscout.com/api/v2');
   assert.equal(base.accountApi.requestSpacingMs, 15000);
   assert.equal(EtherscanService._provider(8453).spacingMs, 15000);
-  assert.equal(base.stateSyncDeposits.rpcScan.provider, 'blockscout');
-  assert.equal(base.stateSyncDeposits.rpcScan.blockRange, 250000);
-  assert.equal(base.stateSyncDeposits.rpcScan.requestSpacingMs, 30000);
-  assert.equal(base.stateSyncDeposits.rpcScan.maxRequests, 2000);
-  assert.equal(base.stateSyncDeposits.rpcScan.maxElapsedMs, 3 * 60 * 60 * 1000);
-  assert.equal(base.stateSyncDeposits.rpcScan.maxResponseRows, 1000000);
-  assert.equal(base.stateSyncDeposits.rpcScan.scanAllReceivers, true);
-  assert.equal(base.stateSyncDeposits.rpcScan.allowExtraneousTopics, true);
+  assert.equal(base.stateSyncDeposits, undefined,
+    'ordinary Sync must not run Base anonymous chain-wide log discovery');
+  assert.equal(base.auditNativeCredits.contract, base.opStackDeposits.creditSource);
   const lite = chains.getChain(32401);
   assert.equal(lite.historyProvider, 'zksync-lite');
   assert.equal(lite.requiresApiKey, false);
@@ -600,14 +596,14 @@ test('a wholly unreadable chain is isolated to its own row', async (t) => {
     'an unreadable chain must cost one request, not six'
   );
   assert.deepEqual(calls.unsupported.find((u) => u.chainId === 8453).list,
-    ['normal', 'internal', 'token', 'nft', 'nft1155', 'statesync'],
+    ['normal', 'internal', 'token', 'nft', 'nft1155'],
     'the gap record still names every feed that went unfetched');
   const baseError = calls.chainErrors.find((e) => e.chainId === 8453);
   assert.equal(baseError.code, 'CHAIN_UNAVAILABLE');
   // Actionable: the two things that actually fix it.
   assert.match(baseError.message, /Upgrade the plan or remove 8453 from ETH_CHAINS/);
   assert.ok(calls.cleared.includes(1), 'mainnet still syncs and reports clean');
-  assert.deepEqual(result.unsupportedFeeds.filter((f) => f.startsWith('Base')).length, 6);
+  assert.deepEqual(result.unsupportedFeeds.filter((f) => f.startsWith('Base')).length, 5);
   assert.equal(calls.walletError, undefined, 'a config condition is not a wallet sync failure');
 });
 
@@ -722,14 +718,12 @@ test('a healthy retry clears stale deferred coverage and sync errors', async (t)
 test('the full-wallet job waits outside the user lane and retries deferred wallets automatically', async (t) => {
   const originals = {
     findAllForJobs: EthWallet.findAllForJobs,
-    prefetch: EthWalletService._prefetchStateSyncForWallets,
     sync: EthWalletService._syncWallet,
     serialized: EthDerivedPipeline.serializedForUser,
     finishUser: EthDerivedPipeline.finishUser,
   };
   t.after(() => {
     EthWallet.findAllForJobs = originals.findAllForJobs;
-    EthWalletService._prefetchStateSyncForWallets = originals.prefetch;
     EthWalletService._syncWallet = originals.sync;
     EthDerivedPipeline.serializedForUser = originals.serialized;
     EthDerivedPipeline.finishUser = originals.finishUser;
@@ -740,7 +734,6 @@ test('the full-wallet job waits outside the user lane and retries deferred walle
     { id: 8, user_id: 1, address: '0x1111111111111111111111111111111111111111' },
   ];
   EthWallet.findAllForJobs = async () => wallets;
-  EthWalletService._prefetchStateSyncForWallets = async () => new Map();
   const laneEvents = [];
   EthDerivedPipeline.serializedForUser = async (userId, fn) => {
     laneEvents.push(`enter:${userId}`);
@@ -790,21 +783,18 @@ test('the full-wallet job waits outside the user lane and retries deferred walle
 test('the full-wallet job retries deferred feeds even when another feed failed', async (t) => {
   const originals = {
     findAllForJobs: EthWallet.findAllForJobs,
-    prefetch: EthWalletService._prefetchStateSyncForWallets,
     sync: EthWalletService._syncWallet,
     serialized: EthDerivedPipeline.serializedForUser,
     finishUser: EthDerivedPipeline.finishUser,
   };
   t.after(() => {
     EthWallet.findAllForJobs = originals.findAllForJobs;
-    EthWalletService._prefetchStateSyncForWallets = originals.prefetch;
     EthWalletService._syncWallet = originals.sync;
     EthDerivedPipeline.serializedForUser = originals.serialized;
     EthDerivedPipeline.finishUser = originals.finishUser;
   });
 
   EthWallet.findAllForJobs = async () => [{ id: 7, user_id: 1, address: WALLET }];
-  EthWalletService._prefetchStateSyncForWallets = async () => new Map();
   EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
   EthDerivedPipeline.finishUser = async () => ({});
   let attempts = 0;
@@ -852,7 +842,7 @@ test('a rate-limited coverage boundary returns a deferred chain instead of faili
 
   assert.deepEqual(calls.fetches, [], 'the boundary failure prevents every feed request');
   assert.deepEqual(result.skippedFeeds, [
-    'Base/normal', 'Base/internal', 'Base/token', 'Base/nft', 'Base/nft1155', 'Base/statesync',
+    'Base/normal', 'Base/internal', 'Base/token', 'Base/nft', 'Base/nft1155',
   ]);
   assert.equal(result.chains[0].rateLimited, true);
   assert.equal(result.status, 'deferred');
@@ -1938,18 +1928,20 @@ test('empty OP Stack feeds persist indexed coverage and resume incrementally on 
 
   const cursorWrites = calls.cursors.filter((write) => write.chainId === 8453);
   assert.equal(cursorWrites.length, 2);
-  for (const field of ['normal', 'internal', 'token', 'nft', 'nft1155', 'statesync']) {
+  for (const field of ['normal', 'internal', 'token', 'nft', 'nft1155']) {
     assert.equal(cursorWrites[0][field], 50000000, `${field} records empty-feed coverage`);
   }
-  const secondFetches = calls.fetches.filter((call) => call.chainId === 8453).slice(6);
-  assert.equal(secondFetches.length, 6);
+  assert.equal(cursorWrites[0].statesync, null,
+    'Base native-credit discovery is audit-only and does not advance routine Sync');
+  const secondFetches = calls.fetches.filter((call) => call.chainId === 8453).slice(5);
+  assert.equal(secondFetches.length, 5);
   assert.ok(secondFetches.every((call) => call.startBlock === 50000000 - 64),
     'the second sync uses the stored indexed head with only the reorg overlap');
   assert.ok(secondFetches.every((call) => call.coverage === 50000000),
     'all account and native-credit feeds share one indexed coverage boundary');
 });
 
-test('coverage names the actual Base providers per feed', async (t) => {
+test('coverage retires Base state sync without making it a red feed', async (t) => {
   const { calls } = harness(t, { chainSet: '8453' });
 
   await EthWalletService.syncWallet(7);
@@ -1961,8 +1953,9 @@ test('coverage names the actual Base providers per feed', async (t) => {
   );
   assert.equal(
     entries.find((row) => row.feed === 'statesync').provider,
-    'Blockscout (https://base.blockscout.com/api)'
+    'Blockscout (https://base.blockscout.com/api/v2)'
   );
+  assert.equal(entries.find((row) => row.feed === 'statesync').status, 'not_applicable');
 });
 
 test('OP Stack deposit reshaping declines every off-shape enriched row', () => {

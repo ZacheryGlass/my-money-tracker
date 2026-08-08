@@ -30,6 +30,7 @@ const mcpRoutes = require('./routes/mcp');
 
 // Jobs
 const { initializeJobs, stopJobs } = require('./jobs');
+const EvmAuditService = require('./services/EvmAuditService');
 
 // Middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -139,6 +140,7 @@ app.use(errorHandler);
 if (require.main === module) {
   const server = app.listen(PORT, async () => {
     logger.info({ port: PORT }, 'Server running');
+    EvmAuditService.start();
     if (process.env.RUN_SCHEDULED_JOBS !== 'false') {
       try {
         await initializeJobs();
@@ -154,6 +156,7 @@ if (require.main === module) {
   process.on('SIGTERM', () => {
     logger.info('SIGTERM received, shutting down gracefully...');
     stopJobs();
+    EvmAuditService.stop();
     server.close(() => {
       logger.info('Server closed');
       process.exit(0);
@@ -163,6 +166,7 @@ if (require.main === module) {
   process.on('SIGINT', () => {
     logger.info('SIGINT received, shutting down gracefully...');
     stopJobs();
+    EvmAuditService.stop();
     server.close(() => {
       logger.info('Server closed');
       process.exit(0);

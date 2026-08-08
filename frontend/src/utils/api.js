@@ -361,6 +361,22 @@ export const eth = {
     const response = await api.post(`/api/eth/wallets/${id}/recapture`);
     return response.data;
   },
+  startHistoryAudit: async (id, { mode = 'incremental', chainIds } = {}) => {
+    const response = await api.post(`/api/eth/wallets/${id}/audits`, {
+      mode,
+      ...(chainIds ? { chain_ids: chainIds } : {}),
+    });
+    return response.data;
+  },
+  getHistoryAudits: async ({ walletId, jobIds } = {}) => {
+    const response = await api.get('/api/eth/audits', {
+      params: {
+        ...(walletId == null ? {} : { wallet_id: walletId }),
+        ...(jobIds?.length ? { job_ids: jobIds.join(',') } : {}),
+      },
+    });
+    return response.data;
+  },
   removeWallet: async (id, { removeData = false } = {}) => {
     const response = await api.delete(`/api/eth/wallets/${id}${removeData ? '?removeData=true' : ''}`);
     return response.data;
