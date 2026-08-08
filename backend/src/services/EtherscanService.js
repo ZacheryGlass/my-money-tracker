@@ -957,7 +957,13 @@ class EtherscanService {
     return result;
   }
 
-  static async _rpcRequest(chainId, method, params, rateLimitState = { attempt: 0 }) {
+  static async _rpcRequest(
+    chainId,
+    method,
+    params,
+    rateLimitState = { attempt: 0 },
+    malformedResponseAttempt = 0
+  ) {
     const rpcUrl = chains.getChain(chainId)?.rpcUrl;
     if (!rpcUrl) return null;
     const provider = rpcProvider(chainId, rpcUrl);
@@ -986,6 +992,30 @@ class EtherscanService {
           error: responseDetailError(detail, response),
           retry: () => this._rpcRequest(chainId, method, params, rateLimitState),
         });
+      }
+      // Public chain RPCs occasionally return an empty JSON-RPC envelope while
+      // the endpoint is healthy. Treat that as a bounded transient response,
+      // not as a missing transaction/balance, while still failing closed after
+      // the retry budget is exhausted.
+      if (!payload.error
+          && payload.result == null
+          && malformedResponseAttempt < EXPLORER_MALFORMED_RESPONSE_RETRIES) {
+        const delayMs = EXPLORER_TRANSIENT_RETRY_BASE_MS
+          * (2 ** malformedResponseAttempt);
+        logger.warn({
+          chainId,
+          method,
+          attempt: malformedResponseAttempt + 1,
+          delayMs,
+        }, 'Chain RPC returned a malformed JSON-RPC envelope; retrying');
+        await sleep(delayMs);
+        return this._rpcRequest(
+          chainId,
+          method,
+          params,
+          rateLimitState,
+          malformedResponseAttempt + 1
+        );
       }
       const error = new Error(`Chain RPC error: ${payload.error?.message || 'invalid response'}`);
       error.code = 'ETHERSCAN_API_ERROR';
