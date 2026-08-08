@@ -446,6 +446,18 @@ class EvmAuditService {
         throughBlock: coverage?.covered_through_block ?? boundary.number,
         throughHash: null,
       });
+      // The page and its raw evidence are already durable for this job. A
+      // restarted worker must not replay even an empty/unsupported feed page;
+      // only restore the same finite coverage verdict and continue.
+      if (scope.pages_committed > 0) {
+        await EvmAudit.completeScope(scope.id, {
+          status: coverageComplete ? 'complete' : 'unverified',
+          paginationExhausted: coverageComplete,
+          errorCode: coverageComplete ? null : (coverage?.error_code || 'LEDGER_COVERAGE_UNPROVEN'),
+          errorDetail: coverageComplete ? null : (coverage?.error_message || `Stored ${feed} coverage is not proven complete.`),
+        });
+        continue;
+      }
       const observations = normalizer.legacyTransferObservations(
         { ...context, provider: 'existing-ledger' }, rows
       );
