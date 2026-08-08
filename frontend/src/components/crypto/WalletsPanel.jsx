@@ -534,7 +534,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
     setAuditStartingId(wallet.id);
     onError(null);
     try {
-      const { job } = await ethAPI.startHistoryAudit(wallet.id);
+      const { job } = await ethAPI.startHistoryAudit(wallet.id, { mode: 'full' });
       setAuditByWallet((current) => ({ ...current, [wallet.id]: job }));
       showNotice('History audit queued. You can leave this page; progress and evidence are saved.');
     } catch (err) {
