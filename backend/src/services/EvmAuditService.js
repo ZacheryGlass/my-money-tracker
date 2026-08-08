@@ -501,6 +501,12 @@ class EvmAuditService {
       fromBlock: null, throughBlock: boundary.number, throughHash: boundary.hash,
     });
     for (const hash of hashes) {
+      const renewedBeforeLookup = await EvmAudit.heartbeat(job.id, OWNER, {
+        stage: 'canonicalizing',
+        progress: { current_tx_hash: hash },
+      });
+      if (!renewedBeforeLookup) leaseState.lost = true;
+      assertLease(leaseState);
       const { transaction, receipt } = await rpc.transactionAndReceipt(hash);
       assertLease(leaseState);
       if (Number(BigInt(transaction.blockNumber)) > boundary.number) continue;
@@ -531,6 +537,11 @@ class EvmAuditService {
         job.subject_id, chainId, hash, rpcEffects.map((effect) => effect.effectKey),
         observationIds.get(`receipt:${hash}`) || null
       );
+      const renewedAfterCommit = await EvmAudit.heartbeat(job.id, OWNER, {
+        stage: 'canonicalizing',
+      });
+      if (!renewedAfterCommit) leaseState.lost = true;
+      assertLease(leaseState);
     }
     await EvmAudit.completeScope(rpcScope.id, {
       status: 'unverified', paginationExhausted: false,
