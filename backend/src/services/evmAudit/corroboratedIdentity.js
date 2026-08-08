@@ -30,7 +30,8 @@ function decimal(value, options) {
 function moralisTransferFields(effect, payload) {
   const standard = effect.effect_type;
   const numericFields = payload.__evm_json_numeric_fields;
-  if (standard !== 'erc20' && Array.isArray(numericFields) && numericFields.includes('amount')) {
+  if (standard !== 'erc20' && Array.isArray(numericFields)
+      && numericFields.some((field) => ['amount', 'token_id', 'tokenId'].includes(field))) {
     return null;
   }
   const contract = normalizedAddress(payload.address ?? payload.token_address);

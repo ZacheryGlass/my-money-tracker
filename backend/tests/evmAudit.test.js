@@ -411,6 +411,13 @@ test('NFT corroboration uses Moralis amount units instead of its non-unit value 
       __evm_json_numeric_fields: ['amount'],
     },
   }), false);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation,
+    payload_json: {
+      ...observation.payload_json, token_id: '9007199254740992',
+      __evm_json_numeric_fields: ['token_id'],
+    },
+  }), false);
 });
 
 test('audit migration is additive, fail-closed, user-owned, and retires only Base routine state sync', () => {
