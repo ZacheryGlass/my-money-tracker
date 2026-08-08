@@ -71,23 +71,44 @@ class MoralisClient {
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         let response;
+        let text;
         try {
+          const controller = new AbortController();
+          let timedOut = false;
           let timeout;
+          const request = (async () => {
+            const result = await fetch(url, {
+              headers: { 'X-API-Key': this.apiKey, Accept: 'application/json' },
+              signal: controller.signal,
+            });
+            return { response: result, text: await result.text() };
+          })();
+          // A custom fetch implementation may ignore abort, so the caller
+          // still needs a hard upper bound. Native fetch aborts the request
+          // before the next retry starts.
+          request.catch(() => {});
           try {
-            response = await Promise.race([
-              fetch(url, {
-                headers: { 'X-API-Key': this.apiKey, Accept: 'application/json' },
-                signal: AbortSignal.timeout(this.requestTimeoutMs),
-              }),
+            ({ response, text } = await Promise.race([
+              request,
               new Promise((_, reject) => {
-                timeout = setTimeout(() => reject(providerError(
-                  `Moralis ${endpoint} request exceeded its deadline`,
-                  'MORALIS_TRANSPORT_ERROR'
-                )), this.requestTimeoutMs + this.requestTimeoutGraceMs);
+                timeout = setTimeout(() => {
+                  timedOut = true;
+                  controller.abort();
+                  reject(providerError(
+                    `Moralis ${endpoint} request exceeded its deadline`,
+                    'MORALIS_TRANSPORT_ERROR'
+                  ));
+                }, this.requestTimeoutMs + this.requestTimeoutGraceMs);
               }),
-            ]);
+            ]));
           } finally {
             clearTimeout(timeout);
+          }
+          if (timedOut) {
+            throw providerError(
+              `Moralis ${endpoint} request exceeded its deadline`,
+              'MORALIS_TRANSPORT_ERROR'
+            );
           }
         } catch (cause) {
           await this.onFailedAttempt?.({
@@ -102,7 +123,6 @@ class MoralisClient {
           throw providerError(`Moralis ${endpoint} request failed`, 'MORALIS_TRANSPORT_ERROR', { cause });
         }
 
-        const text = await response.text();
         let body;
         try { body = JSON.parse(text); } catch { body = null; }
         if (response.ok && body && typeof body === 'object') {
