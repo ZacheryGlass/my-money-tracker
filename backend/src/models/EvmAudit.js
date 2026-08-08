@@ -102,7 +102,29 @@ class EvmAudit {
         [subject.id, ACTIVE_JOB_STATUSES]
       );
       if (active.rows[0]) {
-        const activeJob = active.rows[0];
+        let activeJob = active.rows[0];
+        const moralisDeferred = String(activeJob.error_code || '').startsWith('MORALIS_');
+        const credentialChanged = moralisDeferred && (activeJob.credential_generation == null
+          ? credentialGeneration != null
+          : credentialGeneration == null
+            || new Date(activeJob.credential_generation).getTime()
+              !== new Date(credentialGeneration).getTime());
+        if (activeJob.status === 'deferred' && credentialChanged) {
+          const refreshed = await client.query(
+            `UPDATE evm_audit_jobs
+                SET status = 'queued',
+                    stage = 'queued',
+                    credential_generation = $2,
+                    retry_after_at = NULL,
+                    error_code = NULL,
+                    error_detail = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE id = $1
+            RETURNING *`,
+            [activeJob.id, credentialGeneration]
+          );
+          activeJob = refreshed.rows[0];
+        }
         const activeChains = new Set((activeJob.requested_chains || []).map(Number));
         const modeCovered = activeJob.mode === 'full' || mode === 'incremental';
         const chainsCovered = requestedChains.every((chainId) => activeChains.has(Number(chainId)));
@@ -239,6 +261,9 @@ class EvmAudit {
               updated_at = CURRENT_TIMESTAMP
         WHERE j.id = $1
           AND j.status IN ('queued', 'running', 'deferred')
+          AND (j.status <> 'deferred'
+            OR j.retry_after_at IS NULL
+            OR j.retry_after_at <= CURRENT_TIMESTAMP)
           AND (j.lease_expires_at IS NULL OR j.lease_expires_at < CURRENT_TIMESTAMP)
           AND NOT EXISTS (
             SELECT 1 FROM evm_audit_jobs sibling
