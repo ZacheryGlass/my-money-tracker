@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const JSONbig = require('json-bigint')({ storeAsString: true });
 const { sha256 } = require('./normalizer');
 
 const ROOT = 'https://deep-index.moralis.io/api/v2.2';
@@ -119,7 +120,7 @@ class MoralisClient {
         }
 
         let body;
-        try { body = JSON.parse(text); } catch { body = null; }
+        try { body = JSONbig.parse(text); } catch { body = null; }
         if (response.ok && body && typeof body === 'object') {
           return {
             body,

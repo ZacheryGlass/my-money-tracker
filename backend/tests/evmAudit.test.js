@@ -224,6 +224,21 @@ test('Moralis pagination advances opaque cursors and exhausts exactly once', asy
   }
 });
 
+test('Moralis JSON parsing preserves large numeric token quantities', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(
+    '{"result":[{"value":650000000000000000}],"cursor":null}',
+    { status: 200, headers: { 'content-type': 'application/json' } }
+  );
+  try {
+    const response = await new MoralisClient('test-key', { spacingMs: 0 })
+      .activeChains(WALLET, ['base']);
+    assert.equal(response.body.result[0].value, '650000000000000000');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
   const originalFetch = global.fetch;
   const signals = [];
