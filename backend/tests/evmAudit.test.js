@@ -226,7 +226,11 @@ test('Moralis pagination advances opaque cursors and exhausts exactly once', asy
 
 test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
   const originalFetch = global.fetch;
-  global.fetch = () => new Promise(() => {});
+  const signals = [];
+  global.fetch = (_url, { signal }) => {
+    signals.push(signal);
+    return new Promise(() => {});
+  };
   try {
     await assert.rejects(
       new MoralisClient('test-key', { spacingMs: 0, requestTimeoutMs: 1, requestTimeoutGraceMs: 0 })
@@ -234,6 +238,8 @@ test('Moralis requests have an explicit deadline even when fetch never settles',
       (error) => error.code === 'MORALIS_TRANSPORT_ERROR'
         && /deadline|request failed/.test(error.message)
     );
+    assert.equal(signals.length, 1, 'a non-cooperative request must not be retried while pending');
+    assert.equal(signals[0].aborted, true);
   } finally {
     global.fetch = originalFetch;
   }
@@ -258,7 +264,7 @@ test('Moralis request deadlines cover body reads and abort before retrying', asy
         .activeChains(WALLET, ['base']),
       (error) => error.code === 'MORALIS_TRANSPORT_ERROR'
     );
-    assert.equal(signals.length, 3);
+    assert.equal(signals.length, 1, 'a hard deadline must not overlap another attempt');
     assert.ok(signals.every((signal) => signal.aborted));
   } finally {
     global.fetch = originalFetch;

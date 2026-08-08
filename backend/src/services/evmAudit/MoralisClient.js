@@ -72,9 +72,9 @@ class MoralisClient {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         let response;
         let text;
+        let attemptTimedOut = false;
         try {
           const controller = new AbortController();
-          let timedOut = false;
           let timeout;
           const request = (async () => {
             const result = await fetch(url, {
@@ -92,7 +92,7 @@ class MoralisClient {
               request,
               new Promise((_, reject) => {
                 timeout = setTimeout(() => {
-                  timedOut = true;
+                  attemptTimedOut = true;
                   controller.abort();
                   reject(providerError(
                     `Moralis ${endpoint} request exceeded its deadline`,
@@ -104,19 +104,14 @@ class MoralisClient {
           } finally {
             clearTimeout(timeout);
           }
-          if (timedOut) {
-            throw providerError(
-              `Moralis ${endpoint} request exceeded its deadline`,
-              'MORALIS_TRANSPORT_ERROR'
-            );
-          }
         } catch (cause) {
           await this.onFailedAttempt?.({
             provider: 'moralis', endpoint, method: 'GET', attemptNo: attempt,
-            requestParams: params || {}, outcome: attempt < MAX_ATTEMPTS ? 'deferred' : 'failed',
+            requestParams: params || {},
+            outcome: attempt < MAX_ATTEMPTS && !attemptTimedOut ? 'deferred' : 'failed',
             errorCode: 'MORALIS_TRANSPORT_ERROR', errorDetail: 'Network request failed before a response.',
           });
-          if (attempt < MAX_ATTEMPTS) {
+          if (attempt < MAX_ATTEMPTS && !attemptTimedOut) {
             await wait(500 * (2 ** (attempt - 1)));
             continue;
           }
