@@ -858,7 +858,7 @@ class EvmAudit {
           SELECT 1 FROM evm_audit_scopes sc
            WHERE sc.job_id = $1 AND sc.chain_id = $2
              AND sc.capability = r.capability
-             AND sc.provider IN ('moralis', 'existing-ledger')
+             AND sc.provider IN ('moralis', 'blockscout', 'existing-ledger')
              AND sc.status = 'complete' AND sc.pagination_exhausted = TRUE
         )`,
       [jobId, chainId]

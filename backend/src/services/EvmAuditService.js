@@ -5,6 +5,7 @@ const EvmAudit = require('../models/EvmAudit');
 const EthWallet = require('../models/EthWallet');
 const SecretsService = require('./SecretsService');
 const EthDerivedPipeline = require('./EthDerivedPipeline');
+const EtherscanService = require('./EtherscanService');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const MoralisClient = require('./evmAudit/MoralisClient');
@@ -23,9 +24,8 @@ const AUDIT_CHAINS = new Map([
   [100, { moralis: 'gnosis', activeIds: new Set(['0x64', '100', 'gnosis']) }],
   [137, { moralis: 'polygon', activeIds: new Set(['0x89', '137', 'polygon']) }],
   [324, {
-    unsupported: true,
-    errorCode: 'MORALIS_CHAIN_UNSUPPORTED',
-    errorDetail: 'Moralis wallet history does not support zkSync Era; existing ledger coverage remains separate and unproven by this audit.',
+    auditProvider: 'blockscout',
+    errorDetail: 'Moralis does not enumerate zkSync Era; the configured Blockscout account feeds provide finite indexed coverage, while consensus RPC verifies mined transactions and effects.',
   }],
   [8453, { moralis: 'base', activeIds: new Set(['0x2105', '8453', 'base']) }],
   [42161, { moralis: 'arbitrum', activeIds: new Set(['0xa4b1', '42161', 'arbitrum']) }],
@@ -37,6 +37,13 @@ const AUDIT_CHAINS = new Map([
   }],
 ]);
 const OVERLAP_BLOCKS = 64;
+const EXPLORER_FEEDS = Object.freeze([
+  { capability: 'normal', feed: 'normal', method: 'fetchNormalTxs' },
+  { capability: 'internal', feed: 'internal', method: 'fetchInternalTxs' },
+  { capability: 'erc20', feed: 'erc20', method: 'fetchTokenTxs' },
+  { capability: 'erc721', feed: 'erc721', method: 'fetchNftTxs' },
+  { capability: 'erc1155', feed: 'erc1155', method: 'fetch1155Txs' },
+]);
 const OWNER = `${process.pid}:${crypto.randomUUID()}`;
 const queuedLocally = new Set();
 let resumeTimer = null;
@@ -193,6 +200,14 @@ function publicErrorDetail(error) {
   return String(error?.message || 'Audit failed').slice(0, 500);
 }
 
+function isBlockscoutTransient(error) {
+  const status = Number(error?.response?.status || error?.status);
+  return [408, 425].includes(status)
+    || (status >= 500 && status <= 599)
+    || ['EXPLORER_RATE_LIMITED', 'ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN', 'ERR_NETWORK']
+      .includes(error?.code);
+}
+
 function assertLease(leaseState) {
   if (!leaseState?.lost) return;
   const error = new Error('EVM audit lease ownership was lost; this worker stopped before further writes.');
@@ -291,7 +306,9 @@ class EvmAuditService {
     heartbeatTimer.unref?.();
     try {
       const requested = (job.requested_chains || []).map(Number).filter((id) => AUDIT_CHAINS.has(id));
-      const providerRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).moralis);
+      const moralisRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).moralis);
+      const explorerRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).auditProvider);
+      const providerRequested = [...new Set([...moralisRequested, ...explorerRequested])];
       const unsupportedRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).unsupported);
       if (!requested.length) {
         return EvmAudit.finish(jobId, OWNER, 'unsupported', {
@@ -300,7 +317,7 @@ class EvmAuditService {
       }
 
       let key = null;
-      if (providerRequested.length) {
+      if (moralisRequested.length) {
         key = await SecretsService.getUserKey(job.user_id, 'moralis');
         if (!key) {
           return EvmAudit.finish(jobId, OWNER, 'deferred', {
@@ -314,7 +331,7 @@ class EvmAuditService {
         }
       }
       const credentialGeneration = await EvmAudit.credentialGeneration(job.user_id);
-      if (providerRequested.length && job.credential_generation
+      if (moralisRequested.length && job.credential_generation
           && credentialGeneration
           && new Date(job.credential_generation).getTime() !== new Date(credentialGeneration).getTime()) {
         return EvmAudit.finish(jobId, OWNER, 'failed', {
@@ -330,14 +347,14 @@ class EvmAuditService {
           logger.warn({ err: error, auditJobId: jobId }, 'Failed to retain provider attempt evidence');
         }
       };
-      const moralis = providerRequested.length ? new MoralisClient(key, { onFailedAttempt: retainAttempt }) : null;
+      const moralis = moralisRequested.length ? new MoralisClient(key, { onFailedAttempt: retainAttempt }) : null;
 
       let activeResponse = { body: { active_chains: [] } };
       let activeRows = [];
-      if (providerRequested.length) {
+      if (moralisRequested.length) {
         await EvmAudit.heartbeat(jobId, OWNER, { stage: 'discovering' });
         activeResponse = await moralis.activeChains(
-          job.address, providerRequested.map((id) => AUDIT_CHAINS.get(id).moralis)
+          job.address, moralisRequested.map((id) => AUDIT_CHAINS.get(id).moralis)
         );
         assertLease(leaseState);
         activeRows = Array.isArray(activeResponse.body.active_chains) ? activeResponse.body.active_chains : [];
@@ -348,6 +365,13 @@ class EvmAuditService {
           return {
             chain_id: chainId, active_hint: false, bounded: false,
             status: 'unsupported', error_code: config.errorCode, error_detail: config.errorDetail,
+          };
+        }
+        if (config.auditProvider) {
+          return {
+            chain_id: chainId, active_hint: null, bounded: false,
+            status: 'configured', source: config.auditProvider,
+            detail: config.errorDetail,
           };
         }
         const row = activeRows.find((candidate) => activeRowMatches(candidate, config));
@@ -379,13 +403,18 @@ class EvmAuditService {
     } catch (error) {
       const deferred = [
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
-        'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR',
+        'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
+        'BLOCKSCOUT_TRANSPORT_ERROR',
       ]
         .includes(error.code);
-      if (String(error.code || '').startsWith('MORALIS_') || String(error.code || '').startsWith('RPC_')) {
+      const errorCode = String(error.code || '');
+      const provider = errorCode.startsWith('MORALIS_') ? 'moralis'
+        : errorCode.startsWith('RPC_') ? 'consensus-rpc' : 'blockscout';
+      if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('RPC_')
+          || errorCode.startsWith('BLOCKSCOUT_')) {
         try {
           await EvmAudit.recordProviderAttempt({
-            jobId, provider: String(error.code).startsWith('MORALIS_') ? 'moralis' : 'consensus-rpc',
+            jobId, provider,
             endpoint: job.stage || 'audit-worker', requestParams: { requested_chains: job.requested_chains || [] },
             outcome: deferred ? 'deferred' : 'failed', httpStatus: error.httpStatus || null,
             errorCode: error.code || 'EVM_AUDIT_FAILED', errorDetail: publicErrorDetail(error),
@@ -420,73 +449,219 @@ class EvmAuditService {
   static async runChain({ job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt }) {
     const chain = chains.getChain(chainId);
     const providerConfig = AUDIT_CHAINS.get(chainId);
+    const auditProvider = providerConfig.moralis ? 'moralis' : providerConfig.auditProvider;
     const rpc = new RpcClient(chainId, { onFailedAttempt: retainAttempt });
     const boundary = await rpc.finalizedBoundary();
     const context = {
       jobId: job.id, subjectId: job.subject_id, chainId,
-      address: job.address, provider: 'moralis', chain,
+      address: job.address, provider: auditProvider, chain,
     };
     await EvmAudit.heartbeat(job.id, OWNER, {
       stage: 'fetching', progress: { current_chain: chainId, boundary_block: boundary.number },
     });
 
     const activeScope = await EvmAudit.upsertScope(job.id, {
-      chainId, provider: 'moralis', capability: 'active_chain', status: 'running',
+      chainId, provider: auditProvider, capability: 'active_chain', status: 'running',
       fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
     });
-    const activeBody = {
-      active_chains: (activeResponse.body.active_chains || [])
-        .filter((row) => activeRowMatches(row, providerConfig)),
-    };
-    await EvmAudit.commitPage(activeScope.id, pageRecord(
-      'moralis', 'active-chain-discovery', {
-        chains: (job.requested_chains || []).map((id) => AUDIT_CHAINS.get(Number(id))?.moralis).filter(Boolean),
-      },
-      activeResponse, null, null, activeBody.active_chains.length
-    ), normalizer.activeChainObservations(context, activeBody));
-    // Active-chain discovery is a hint, not proof of historical absence.
-    await EvmAudit.completeScope(activeScope.id, { status: 'unverified', paginationExhausted: false });
+    if (providerConfig.moralis) {
+      const activeBody = {
+        active_chains: (activeResponse.body.active_chains || [])
+          .filter((row) => activeRowMatches(row, providerConfig)),
+      };
+      await EvmAudit.commitPage(activeScope.id, pageRecord(
+        'moralis', 'active-chain-discovery', {
+          chains: (job.requested_chains || []).map((id) => AUDIT_CHAINS.get(Number(id))?.moralis).filter(Boolean),
+        },
+        activeResponse, null, null, activeBody.active_chains.length
+      ), normalizer.activeChainObservations(context, activeBody));
+      // Active-chain discovery is a hint, not proof of historical absence.
+      await EvmAudit.completeScope(activeScope.id, { status: 'unverified', paginationExhausted: false });
+    } else {
+      await EvmAudit.commitPage(activeScope.id, pageRecord(
+        auditProvider, 'indexed-account-feed-boundary', {
+          chain_id: chainId, boundary_block: boundary.number,
+        },
+        { body: { chain_id: chainId, boundary_block: boundary.number, active_discovery: 'not_supported' } },
+        null, null, 0
+      ), []);
+      await EvmAudit.completeScope(activeScope.id, {
+        status: 'unverified', paginationExhausted: false,
+        errorCode: 'ACTIVE_DISCOVERY_UNSUPPORTED',
+        errorDetail: 'This explorer exposes finite account-feed coverage but no active-chain discovery endpoint.',
+      });
+    }
 
+    let indexedBoundary = null;
+    if (!providerConfig.moralis) {
+      try {
+        indexedBoundary = await EtherscanService.coverageBoundary(null, chainId);
+      } catch (error) {
+        const transient = isBlockscoutTransient(error);
+        const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
+        const wrapped = new Error(`Blockscout indexed boundary failed: ${publicErrorDetail(error)}`);
+        wrapped.code = rateLimited ? 'BLOCKSCOUT_RATE_LIMITED'
+          : transient ? 'BLOCKSCOUT_TRANSPORT_ERROR' : 'BLOCKSCOUT_BOUNDARY_FAILED';
+        wrapped.httpStatus = error.response?.status || error.httpStatus || null;
+        wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
+        await EvmAudit.recordProviderAttempt({
+          jobId: job.id, scopeId: activeScope.id, provider: auditProvider,
+          endpoint: 'indexed-boundary', requestParams: { chain_id: chainId },
+          outcome: transient ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
+          errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
+        });
+        throw wrapped;
+      }
+    }
+    const sourceThroughBlock = providerConfig.moralis
+      ? boundary.number : Math.min(boundary.number, indexedBoundary.throughBlock);
     const prior = job.mode === 'incremental'
-      ? await EvmAudit.latestCoverage(job.subject_id, chainId, 'moralis', 'wallet_history')
+      ? await EvmAudit.latestCoverage(job.subject_id, chainId, auditProvider, 'wallet_history')
       : null;
     const fromBlock = prior ? Math.max(0, Number(prior.through_block) - OVERLAP_BLOCKS) : 0;
     const historyScope = await EvmAudit.upsertScope(job.id, {
-      chainId, provider: 'moralis', capability: 'wallet_history', status: 'running',
-      fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
+      chainId, provider: auditProvider, capability: 'wallet_history', status: 'running',
+      fromBlock, throughBlock: sourceThroughBlock,
+      throughHash: providerConfig.moralis ? boundary.hash : null,
     });
     const hashes = new Set();
-    let cursor = historyScope.provider_cursor || null;
-    for await (const page of moralis.walletHistoryPages(job.address, {
-      chain: providerConfig.moralis, fromBlock, throughBlock: boundary.number, cursor,
-    })) {
-      assertLease(leaseState);
-      const observations = page.items.flatMap((item) => normalizer.historyObservations(context, item));
-      for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-      await EvmAudit.commitPage(historyScope.id, pageRecord(
-        'moralis', 'wallet-history', {
-          chain: providerConfig.moralis, from_block: fromBlock, to_block: boundary.number,
-        }, page, page.cursorIn, page.cursorOut, page.items.length
-      ), observations);
-      cursor = page.cursorOut;
-      await EvmAudit.heartbeat(job.id, OWNER, { progress: { current_cursor: cursor, transactions_seen: hashes.size } });
-    }
-    await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
-    await EvmAudit.acceptCoverage({
-      subjectId: job.subject_id, chainId, provider: 'moralis', capability: 'wallet_history',
-      fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
-      paginationExhausted: true, status: 'complete', jobId: job.id,
-    });
-    // One exhausted Moralis history stream carries these six ordinary
-    // capabilities. Keep their finite bounds explicit; RPC receipt lookups
-    // remain a separate non-enumerating scope.
-    for (const capability of ['normal', 'internal', 'erc20', 'erc721', 'erc1155', 'native_credit']) {
-      const capabilityScope = await EvmAudit.upsertScope(job.id, {
-        chainId, provider: 'moralis', capability, status: 'running',
+    if (providerConfig.moralis) {
+      let cursor = historyScope.provider_cursor || null;
+      for await (const page of moralis.walletHistoryPages(job.address, {
+        chain: providerConfig.moralis, fromBlock, throughBlock: boundary.number, cursor,
+      })) {
+        assertLease(leaseState);
+        const observations = page.items.flatMap((item) => normalizer.historyObservations(context, item));
+        for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+        await EvmAudit.commitPage(historyScope.id, pageRecord(
+          'moralis', 'wallet-history', {
+            chain: providerConfig.moralis, from_block: fromBlock, to_block: boundary.number,
+          }, page, page.cursorIn, page.cursorOut, page.items.length
+        ), observations);
+        cursor = page.cursorOut;
+        await EvmAudit.heartbeat(job.id, OWNER, { progress: { current_cursor: cursor, transactions_seen: hashes.size } });
+      }
+      await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
+      await EvmAudit.acceptCoverage({
+        subjectId: job.subject_id, chainId, provider: 'moralis', capability: 'wallet_history',
         fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
+        paginationExhausted: true, status: 'complete', jobId: job.id,
       });
-      await EvmAudit.completeScope(capabilityScope.id, {
+      // One exhausted Moralis history stream carries these six ordinary
+      // capabilities. Keep their finite bounds explicit; RPC receipt lookups
+      // remain a separate non-enumerating scope.
+      for (const capability of ['normal', 'internal', 'erc20', 'erc721', 'erc1155', 'native_credit']) {
+        const capabilityScope = await EvmAudit.upsertScope(job.id, {
+          chainId, provider: 'moralis', capability, status: 'running',
+          fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
+        });
+        await EvmAudit.completeScope(capabilityScope.id, {
+          status: 'complete', paginationExhausted: true,
+        });
+      }
+    } else {
+      for (const feedSpec of EXPLORER_FEEDS) {
+        assertLease(leaseState);
+        const feedPrior = job.mode === 'incremental'
+          ? await EvmAudit.latestCoverage(job.subject_id, chainId, auditProvider, feedSpec.capability)
+          : null;
+        const feedFromBlock = feedPrior
+          ? Math.max(0, Number(feedPrior.through_block) - OVERLAP_BLOCKS) : 0;
+        const feedScope = await EvmAudit.upsertScope(job.id, {
+          chainId, provider: auditProvider, capability: feedSpec.capability, status: 'running',
+          fromBlock: feedFromBlock, throughBlock: sourceThroughBlock, throughHash: null,
+        });
+        let rows;
+        try {
+          rows = await EtherscanService[feedSpec.method](
+            job.address, feedFromBlock, null, chainId, sourceThroughBlock
+          );
+        } catch (error) {
+          const transient = isBlockscoutTransient(error);
+          const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
+          const wrapped = new Error(`Blockscout ${feedSpec.feed} audit feed failed: ${publicErrorDetail(error)}`);
+          wrapped.code = rateLimited ? 'BLOCKSCOUT_RATE_LIMITED'
+            : transient ? 'BLOCKSCOUT_TRANSPORT_ERROR' : 'BLOCKSCOUT_FEED_FAILED';
+          wrapped.httpStatus = error.response?.status || error.httpStatus || null;
+          wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
+          await EvmAudit.recordProviderAttempt({
+            jobId: job.id, scopeId: feedScope.id, provider: auditProvider,
+            endpoint: `account-${feedSpec.feed}`,
+            requestParams: { address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock },
+            outcome: transient ? 'deferred' : 'failed',
+            httpStatus: wrapped.httpStatus, errorCode: wrapped.code,
+            errorDetail: publicErrorDetail(wrapped),
+          });
+          throw wrapped;
+        }
+        if (!Array.isArray(rows)) {
+          const error = new Error(`Blockscout ${feedSpec.feed} audit feed returned a non-array response`);
+          error.code = 'BLOCKSCOUT_FEED_FAILED';
+          throw error;
+        }
+        const pageSize = 500;
+        for (let offset = 0; offset < Math.max(rows.length, 1); offset += pageSize) {
+          assertLease(leaseState);
+          const pageRows = rows.slice(offset, offset + pageSize);
+          const observations = normalizer.explorerFeedObservations(
+            context, feedSpec.feed, pageRows
+          );
+          for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+          await EvmAudit.commitPage(feedScope.id, pageRecord(
+            auditProvider, `account-${feedSpec.feed}`,
+            { address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock },
+            { body: { feed: feedSpec.feed, rows: pageRows } },
+            String(offset), offset + pageRows.length >= rows.length ? null : String(offset + pageRows.length),
+            pageRows.length
+          ), observations);
+          await EvmAudit.heartbeat(job.id, OWNER, {
+            progress: { current_feed: feedSpec.feed, transactions_seen: hashes.size },
+          });
+        }
+        await EvmAudit.completeScope(feedScope.id, {
+          status: 'complete', paginationExhausted: true,
+        });
+        await EvmAudit.acceptCoverage({
+          subjectId: job.subject_id, chainId, provider: auditProvider,
+          capability: feedSpec.capability, fromBlock: feedFromBlock,
+          throughBlock: sourceThroughBlock, throughHash: null,
+          paginationExhausted: true, status: 'complete', jobId: job.id,
+        });
+      }
+      const nativeCreditScope = await EvmAudit.upsertScope(job.id, {
+        chainId, provider: auditProvider, capability: 'native_credit', status: 'running',
+        fromBlock: 0, throughBlock: sourceThroughBlock, throughHash: null,
+      });
+      await EvmAudit.commitPage(nativeCreditScope.id, pageRecord(
+        auditProvider, 'native-credit-not-applicable', { chain_id: chainId },
+        { body: { chain_id: chainId, status: 'not_applicable' } }, null, null, 0
+      ), []);
+      await EvmAudit.completeScope(nativeCreditScope.id, {
         status: 'complete', paginationExhausted: true,
+        errorCode: 'NOT_APPLICABLE',
+        errorDetail: 'This chain has no configured account-independent native-credit feed; receipt logs remain canonical evidence.',
+      });
+      const foundBlocks = [...hashes].length
+        ? [...(await EvmAudit.observationsForJob(job.id, { chainId }))]
+          .filter((row) => row.provider === auditProvider && row.block_number != null)
+          .map((row) => Number(row.block_number)).filter(Number.isSafeInteger)
+        : [];
+      const discoveredChain = discovered.find((row) => row.chain_id === chainId);
+      if (discoveredChain) {
+        discoveredChain.active_hint = hashes.size > 0;
+        discoveredChain.active_hint_proven = false;
+        discoveredChain.bounded = true;
+        discoveredChain.status = 'bounded';
+        discoveredChain.source = auditProvider;
+        discoveredChain.first_block = foundBlocks.length ? Math.min(...foundBlocks) : null;
+        discoveredChain.last_block = foundBlocks.length ? Math.max(...foundBlocks) : null;
+      }
+      await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
+      await EvmAudit.completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
+      await EvmAudit.acceptCoverage({
+        subjectId: job.subject_id, chainId, provider: auditProvider, capability: 'wallet_history',
+        fromBlock, throughBlock: sourceThroughBlock, throughHash: null,
+        paginationExhausted: true, status: 'complete', jobId: job.id,
       });
     }
     let legacyRows = await EvmAudit.storedTransferRows(job.user_id, job.subject_id, chainId, boundary.number);
@@ -537,36 +712,41 @@ class EvmAuditService {
     }
     for (const row of legacyRows) hashes.add(String(row.tx_hash).toLowerCase());
 
-    const moralisHashes = new Set((await EvmAudit.observationsForJob(job.id, { chainId, evidenceKind: 'transaction' }))
-      .filter((row) => row.provider === 'moralis').map((row) => row.tx_hash));
+    const providerTransactionHashes = new Set((await EvmAudit.observationsForJob(
+      job.id, { chainId }
+    ))
+      .filter((row) => row.provider === auditProvider && row.tx_hash)
+      .map((row) => row.tx_hash));
     // A restart may resume at a later provider cursor or overlap boundary.
     // Rehydrate every hash already linked to this durable job so previously
     // committed pages can never disappear from canonicalization.
-    for (const hash of moralisHashes) hashes.add(hash);
+    for (const hash of providerTransactionHashes) hashes.add(hash);
     let providerLookupGaps = 0;
-    for (const hash of hashes) {
-      if (moralisHashes.has(hash)) continue;
-      try {
-        const lookup = await moralis.transactionByHash(hash, providerConfig.moralis);
-        assertLease(leaseState);
-        const item = lookup.body;
-        const observations = normalizer.historyObservations(context, item);
-        await EvmAudit.commitPage(historyScope.id, pageRecord(
-          'moralis', 'transaction-lookup', { chain: providerConfig.moralis, transaction_hash: hash },
-          lookup, null, null, 1
-        ), observations);
-      } catch (error) {
-        providerLookupGaps += 1;
-        await EvmAudit.recordProviderAttempt({
-          jobId: job.id, scopeId: historyScope.id, provider: 'moralis',
-          endpoint: 'transaction-lookup',
-          requestParams: { chain: providerConfig.moralis, transaction_hash: hash },
-          outcome: ['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED'].includes(error.code)
-            ? 'deferred' : 'failed',
-          httpStatus: error.httpStatus || null, errorCode: error.code || 'MORALIS_LOOKUP_FAILED',
-          errorDetail: publicErrorDetail(error), requestId: error.requestId || null,
-        });
-        if (['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_AUTH_FAILED'].includes(error.code)) throw error;
+    if (providerConfig.moralis) {
+      for (const hash of hashes) {
+        if (providerTransactionHashes.has(hash)) continue;
+        try {
+          const lookup = await moralis.transactionByHash(hash, providerConfig.moralis);
+          assertLease(leaseState);
+          const item = lookup.body;
+          const observations = normalizer.historyObservations(context, item);
+          await EvmAudit.commitPage(historyScope.id, pageRecord(
+            'moralis', 'transaction-lookup', { chain: providerConfig.moralis, transaction_hash: hash },
+            lookup, null, null, 1
+          ), observations);
+        } catch (error) {
+          providerLookupGaps += 1;
+          await EvmAudit.recordProviderAttempt({
+            jobId: job.id, scopeId: historyScope.id, provider: 'moralis',
+            endpoint: 'transaction-lookup',
+            requestParams: { chain: providerConfig.moralis, transaction_hash: hash },
+            outcome: ['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED'].includes(error.code)
+              ? 'deferred' : 'failed',
+            httpStatus: error.httpStatus || null, errorCode: error.code || 'MORALIS_LOOKUP_FAILED',
+            errorDetail: publicErrorDetail(error), requestId: error.requestId || null,
+          });
+          if (['MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_AUTH_FAILED'].includes(error.code)) throw error;
+        }
       }
     }
     // Transaction lookups use the same durable scope as the paginated history
@@ -793,3 +973,4 @@ class EvmAuditService {
 module.exports = EvmAuditService;
 module.exports._missingRanges = missingRanges;
 module.exports._unmatchedEffectCount = unmatchedEffectCount;
+module.exports._isBlockscoutTransient = isBlockscoutTransient;

@@ -233,6 +233,7 @@ function effectsFromRpc(context, transaction, receipt, observationIds = new Map(
 function internalObservationFields(observation, wallet) {
   const payload = observation.payload_json || {};
   if (payload.is_error === true || payload.is_error === '1'
+      || payload.isError === true || payload.isError === '1'
       || payload.success === false || payload.error != null) return null;
   const from = normalizedAddress(payload.from_address ?? payload.from);
   const to = normalizedAddress(payload.to_address ?? payload.to);
@@ -243,10 +244,12 @@ function internalObservationFields(observation, wallet) {
 }
 
 // Receipts cannot prove internal calls. Promote trace-provider evidence without
-// pretending it is consensus evidence. When Moralis and the existing ledger
-// independently contain one unambiguous identical effect, retain both evidence
-// links and mark that effect verified; otherwise it remains provisional and
-// therefore blocks a gap-free audit.
+// pretending it is consensus evidence. When an independent trace provider and
+// the existing ledger contain one unambiguous identical effect, retain both
+// evidence links and mark that effect verified; otherwise it remains provisional
+// and therefore blocks a gap-free audit. Moralis takes precedence when both
+// independent providers are present; Blockscout is the fallback for chains
+// where Moralis does not enumerate history.
 function effectsFromInternalObservations(context, observations) {
   const wallet = context.address.toLowerCase();
   const byTransaction = new Map();
@@ -260,7 +263,10 @@ function effectsFromInternalObservations(context, observations) {
   const effects = [];
   for (const [hash, rows] of byTransaction) {
     const moralis = rows.filter((row) => row.provider === 'moralis');
-    const selected = moralis.length ? moralis : rows.filter((row) => row.provider === 'existing-ledger');
+    const explorer = rows.filter((row) => row.provider === 'blockscout');
+    const selectedProvider = moralis.length ? 'moralis'
+      : explorer.length ? 'blockscout' : 'existing-ledger';
+    const selected = rows.filter((row) => row.provider === selectedProvider);
     const legacyBySignature = new Map();
     for (const row of rows.filter((candidate) => candidate.provider === 'existing-ledger')) {
       const fields = internalObservationFields(row, wallet);
@@ -282,7 +288,8 @@ function effectsFromInternalObservations(context, observations) {
       const fields = internalObservationFields(row, wallet);
       if (!fields) continue;
       const signature = `${fields.from}:${fields.to}:${fields.value}`;
-      const legacyMatches = row.provider === 'moralis' ? (legacyBySignature.get(signature) || []) : [];
+      const legacyMatches = ['moralis', 'blockscout'].includes(row.provider)
+        ? (legacyBySignature.get(signature) || []) : [];
       const independentlyVerified = row.trace_address != null
         && legacyMatches.length === 1
         && legacyMatches[0].trace_address != null

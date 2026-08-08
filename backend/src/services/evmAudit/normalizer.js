@@ -244,6 +244,35 @@ function legacyTransferObservations(context, rows) {
   }));
 }
 
+function explorerFeedObservations(context, feed, rows) {
+  const evidenceKind = feed === 'internal' ? 'internal_trace' : 'account_feed';
+  return rows.map((row) => {
+    const hash = txHash(row.hash || row.transactionHash);
+    if (!hash) throw new Error(`Explorer ${feed} feed returned an invalid transaction hash`);
+    const traceAddress = feed === 'internal'
+      ? (row.traceAddress ?? row.trace_address
+        ?? (/^\d+(?:_\d+)*$/.test(String(row.traceId || ''))
+          ? String(row.traceId).split('_').map(Number) : null))
+      : null;
+    const logIndex = feed === 'internal' ? null : safeInteger(row.logIndex);
+    const tokenId = row.tokenID ?? row.token_id ?? '';
+    const coordinate = feed === 'internal'
+      ? (traceAddress == null ? `provider:${sha256(row)}` : stableJson(traceAddress))
+      : (logIndex == null ? `provider:${sha256(row)}` : `${logIndex}:${tokenId}`);
+    return baseObservation(context, {
+      evidenceKind,
+      providerObjectKey: `account:${feed}:${hash}:${coordinate}`,
+      payload: row,
+      tx: hash,
+      blockNumber: row.blockNumber,
+      block: row.blockHash,
+      transactionIndex: row.transactionIndex,
+      logIndex,
+      traceAddress,
+    });
+  });
+}
+
 function transactionFromRpc(context, transaction, receipt, selectedObservationId) {
   const wallet = context.address.toLowerCase();
   const sender = address(transaction.from);
@@ -284,6 +313,7 @@ module.exports = {
   blockHash,
   canonicalize,
   decimalInteger,
+  explorerFeedObservations,
   historyObservations,
   legacyTransferObservations,
   rpcTransactionObservations,
