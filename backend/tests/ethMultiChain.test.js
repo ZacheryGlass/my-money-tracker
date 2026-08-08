@@ -1752,6 +1752,42 @@ test('Polygon head remains fail-closed after repeated malformed JSON-RPC envelop
   assert.equal(requests, 3);
 });
 
+test('Gnosis JSON-RPC retries malformed envelopes before succeeding', async (t) => {
+  const axios = require('axios');
+  const originalPost = axios.post;
+  let requests = 0;
+  axios.post = async () => {
+    requests += 1;
+    if (requests <= 2) return { data: { jsonrpc: '2.0', id: 1 } };
+    return { data: { jsonrpc: '2.0', id: 1, result: '0x2d69a11' } };
+  };
+  t.after(() => { axios.post = originalPost; });
+
+  assert.equal(
+    await EtherscanService._rpcRequest(100, 'eth_blockNumber', []),
+    '0x2d69a11'
+  );
+  assert.equal(requests, 3);
+});
+
+test('Gnosis JSON-RPC remains fail-closed after malformed envelope retries', async (t) => {
+  const axios = require('axios');
+  const originalPost = axios.post;
+  let requests = 0;
+  axios.post = async () => {
+    requests += 1;
+    return { data: { jsonrpc: '2.0', id: 1 } };
+  };
+  t.after(() => { axios.post = originalPost; });
+
+  await assert.rejects(
+    () => EtherscanService._rpcRequest(100, 'eth_blockNumber', []),
+    (error) => error.code === 'ETHERSCAN_API_ERROR'
+      && /invalid response/.test(error.message)
+  );
+  assert.equal(requests, 3);
+});
+
 test('legacy Blockscout head falls back to the documented explorer endpoint', async (t) => {
   const axios = require('axios');
   const originalGet = axios.get;
