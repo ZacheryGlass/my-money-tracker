@@ -154,6 +154,25 @@ class EvmAudit {
           );
           activeJob = expanded.rows[0] || activeJob;
           activeChains = new Set((activeJob.requested_chains || []).map(Number));
+          // The job may already contain partial incremental pages. Those raw
+          // observations remain valuable evidence, but their cursors and
+          // finite bounds are not valid for a genesis run. Reset only the
+          // provider scopes; the existing-ledger projection is a separate
+          // reconciliation input and must not be replayed here.
+          await client.query(
+            `UPDATE evm_audit_scopes
+                SET status = 'queued',
+                    requested_from_block = 0,
+                    requested_through_block = NULL,
+                    requested_through_hash = NULL,
+                    provider_cursor = NULL,
+                    pagination_exhausted = FALSE,
+                    error_code = NULL,
+                    error_detail = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE job_id = $1 AND provider <> 'existing-ledger'`,
+            [activeJob.id]
+          );
         }
         const modeCovered = activeJob.mode === 'full' || mode === 'incremental';
         const chainsCovered = requestedChains.every((chainId) => activeChains.has(Number(chainId)));

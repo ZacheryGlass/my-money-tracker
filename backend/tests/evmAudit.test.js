@@ -560,11 +560,26 @@ test('a deferred narrow audit can be widened to full without bypassing cooldown'
     retry_after_at: new Date(Date.now() + 60_000),
   };
   const widened = { ...narrow, mode: 'full', requested_chains: [1, 8453] };
+  const partialScope = {
+    provider: 'moralis', provider_cursor: 'cursor-17',
+    requested_from_block: 123, requested_through_block: 456,
+    requested_through_hash: `0x${'ef'.repeat(32)}`,
+    pagination_exhausted: true,
+  };
   const client = {
     query: async (sql, params) => {
       calls.push({ sql, params });
       if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [narrow] };
       if (/SET mode = 'full'/.test(sql)) return { rows: [widened] };
+      if (/UPDATE evm_audit_scopes/.test(sql)) {
+        Object.assign(partialScope, {
+          status: 'queued', provider_cursor: null,
+          requested_from_block: 0, requested_through_block: null,
+          requested_through_hash: null, pagination_exhausted: false,
+          error_code: null, error_detail: null,
+        });
+        return { rows: [partialScope] };
+      }
       return { rows: [] };
     },
     release: () => {},
@@ -587,6 +602,15 @@ test('a deferred narrow audit can be widened to full without bypassing cooldown'
   const update = calls.find(({ sql }) => /SET mode = 'full'/.test(sql));
   assert.ok(update);
   assert.match(update.sql, /status <> 'running'/);
+  const reset = calls.find(({ sql }) => /UPDATE evm_audit_scopes/.test(sql));
+  assert.ok(reset);
+  assert.match(reset.sql, /requested_from_block = 0/);
+  assert.match(reset.sql, /provider_cursor = NULL/);
+  assert.match(reset.sql, /pagination_exhausted = FALSE/);
+  assert.match(reset.sql, /provider <> 'existing-ledger'/);
+  assert.equal(partialScope.provider_cursor, null);
+  assert.equal(partialScope.requested_from_block, 0);
+  assert.equal(partialScope.pagination_exhausted, false);
   assert.equal(calls.at(-1).sql, 'COMMIT');
 });
 
