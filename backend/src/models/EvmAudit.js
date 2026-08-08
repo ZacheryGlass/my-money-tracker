@@ -1064,7 +1064,11 @@ class EvmAudit {
           JOIN evm_mined_transactions tx
              ON tx.subject_id = e.subject_id AND tx.chain_id = e.chain_id
             AND tx.tx_hash = e.tx_hash
-          WHERE e.subject_id = $2 AND e.chain_id = $3
+          WHERE EXISTS (
+                  SELECT 1 FROM evm_subjects s
+                   WHERE s.id = e.subject_id AND s.user_id = $1
+                )
+            AND e.subject_id = $2 AND e.chain_id = $3
             AND tx.block_number <= $4
             AND e.effect_type = ANY($5::text[])
             AND e.resolution_status = 'verified'

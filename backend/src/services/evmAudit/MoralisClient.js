@@ -5,6 +5,7 @@ const { sha256 } = require('./normalizer');
 
 const ROOT = 'https://deep-index.moralis.io/api/v2.2';
 const DEFAULT_SPACING_MS = 250;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_INLINE_RETRY_MS = 30_000;
 const MAX_ATTEMPTS = 3;
 const queues = new Map();
@@ -28,10 +29,17 @@ function providerError(message, code, extra = {}) {
 }
 
 class MoralisClient {
-  constructor(apiKey, { spacingMs = DEFAULT_SPACING_MS, onFailedAttempt = null } = {}) {
+  constructor(apiKey, {
+    spacingMs = DEFAULT_SPACING_MS,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    requestTimeoutGraceMs = 1000,
+    onFailedAttempt = null,
+  } = {}) {
     if (!apiKey) throw providerError('Moralis API key is not configured', 'MORALIS_NOT_CONFIGURED');
     this.apiKey = apiKey;
     this.spacingMs = spacingMs;
+    this.requestTimeoutMs = requestTimeoutMs;
+    this.requestTimeoutGraceMs = requestTimeoutGraceMs;
     this.onFailedAttempt = onFailedAttempt;
     // Hashing avoids retaining the credential as a map key or loggable label.
     this.queueKey = crypto.createHash('sha256').update(apiKey).digest('hex');
@@ -43,7 +51,7 @@ class MoralisClient {
       await wait(this.spacingMs);
       return task();
     });
-    const queued = run.finally(() => {
+    const queued = run.catch(() => {}).finally(() => {
       if (queues.get(this.queueKey) === queued) queues.delete(this.queueKey);
     });
     queues.set(this.queueKey, queued);
@@ -63,25 +71,53 @@ class MoralisClient {
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         let response;
+        let text;
+        let attemptTimedOut = false;
         try {
-          response = await fetch(url, {
-            headers: { 'X-API-Key': this.apiKey, Accept: 'application/json' },
-            signal: AbortSignal.timeout(30_000),
-          });
+          const controller = new AbortController();
+          let timeout;
+          const request = (async () => {
+            const result = await fetch(url, {
+              headers: { 'X-API-Key': this.apiKey, Accept: 'application/json' },
+              signal: controller.signal,
+            });
+            return { response: result, text: await result.text() };
+          })();
+          // A custom fetch implementation may ignore abort, so the caller
+          // still needs a hard upper bound. Native fetch aborts the request
+          // before the next retry starts.
+          request.catch(() => {});
+          try {
+            ({ response, text } = await Promise.race([
+              request,
+              new Promise((_, reject) => {
+                timeout = setTimeout(() => {
+                  attemptTimedOut = true;
+                  controller.abort();
+                  reject(providerError(
+                    `Moralis ${endpoint} request exceeded its deadline`,
+                    'MORALIS_TRANSPORT_ERROR'
+                  ));
+                }, this.requestTimeoutMs + this.requestTimeoutGraceMs);
+              }),
+            ]));
+          } finally {
+            clearTimeout(timeout);
+          }
         } catch (cause) {
           await this.onFailedAttempt?.({
             provider: 'moralis', endpoint, method: 'GET', attemptNo: attempt,
-            requestParams: params || {}, outcome: attempt < MAX_ATTEMPTS ? 'deferred' : 'failed',
+            requestParams: params || {},
+            outcome: attempt < MAX_ATTEMPTS && !attemptTimedOut ? 'deferred' : 'failed',
             errorCode: 'MORALIS_TRANSPORT_ERROR', errorDetail: 'Network request failed before a response.',
           });
-          if (attempt < MAX_ATTEMPTS) {
+          if (attempt < MAX_ATTEMPTS && !attemptTimedOut) {
             await wait(500 * (2 ** (attempt - 1)));
             continue;
           }
           throw providerError(`Moralis ${endpoint} request failed`, 'MORALIS_TRANSPORT_ERROR', { cause });
         }
 
-        const text = await response.text();
         let body;
         try { body = JSON.parse(text); } catch { body = null; }
         if (response.ok && body && typeof body === 'object') {

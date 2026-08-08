@@ -56,6 +56,15 @@ test('finishing an audit casts the status parameter consistently for PostgreSQL'
   }
 });
 
+test('identity repair keeps its canonical-effect query user-scoped', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/models/EvmAudit.js'), 'utf8');
+  const methodStart = source.indexOf('static async repairCorroboratedTransferIdentities');
+  const methodEnd = source.indexOf('\n  static async', methodStart + 1);
+  const method = source.slice(methodStart, methodEnd);
+  assert.match(method, /s\.user_id = \$1/);
+  assert.match(method, /\[userId, subjectId, chainId, throughBlock/);
+});
+
 test('Moralis history keeps receipt, log, internal and token evidence independently', () => {
   const observations = normalizer.historyObservations(context(100), {
     hash: HASH,
@@ -210,6 +219,53 @@ test('Moralis pagination advances opaque cursors and exhausts exactly once', asy
       [null, 'opaque-next'], ['opaque-next', null],
     ]);
     assert.match(pages[0].rawText, /opaque-next/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
+  const originalFetch = global.fetch;
+  const signals = [];
+  global.fetch = (_url, { signal }) => {
+    signals.push(signal);
+    return new Promise(() => {});
+  };
+  try {
+    await assert.rejects(
+      new MoralisClient('test-key', { spacingMs: 0, requestTimeoutMs: 1, requestTimeoutGraceMs: 0 })
+        .activeChains(WALLET, ['base']),
+      (error) => error.code === 'MORALIS_TRANSPORT_ERROR'
+        && /deadline|request failed/.test(error.message)
+    );
+    assert.equal(signals.length, 1, 'a non-cooperative request must not be retried while pending');
+    assert.equal(signals[0].aborted, true);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('Moralis request deadlines cover body reads and abort before retrying', async () => {
+  const originalFetch = global.fetch;
+  const signals = [];
+  global.fetch = async (_url, { signal }) => {
+    signals.push(signal);
+    return {
+      ok: true,
+      headers: new Headers(),
+      text: () => new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')));
+      }),
+    };
+  };
+  try {
+    await assert.rejects(
+      new MoralisClient('test-key', { spacingMs: 0, requestTimeoutMs: 1, requestTimeoutGraceMs: 0 })
+        .activeChains(WALLET, ['base']),
+      (error) => error.code === 'MORALIS_TRANSPORT_ERROR'
+    );
+    assert.equal(signals.length, 1, 'a hard deadline must not overlap another attempt');
+    assert.ok(signals.every((signal) => signal.aborted));
   } finally {
     global.fetch = originalFetch;
   }
