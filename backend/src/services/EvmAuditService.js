@@ -351,6 +351,9 @@ class EvmAuditService {
     // reopened without exposing either secret.
     const etherscanConfigured = Boolean(await SecretsService.getUserKey(userId, 'etherscan'));
     const cdpConfigured = Boolean(await SecretsService.getUserKey(userId, 'cdp'));
+    const rpcConfigurationReady = selected
+      .filter((chainId) => !AUDIT_CHAINS.get(chainId).unsupported)
+      .every((chainId) => Boolean(chains.getChain(chainId)?.rpcUrl));
     const result = await EvmAudit.createOrFindActiveJob(userId, wallet, {
       mode,
       requestedChains: [...new Set(selected)],
@@ -358,6 +361,7 @@ class EvmAuditService {
       credentialGenerations,
       etherscanConfigured,
       cdpConfigured,
+      rpcConfigurationReady,
     });
     if (result.job.status !== 'deferred') this.enqueue(result.job.id);
     return result;
@@ -494,9 +498,13 @@ class EvmAuditService {
       if (moralis) {
         await EvmAudit.heartbeat(jobId, OWNER, { stage: 'discovering' });
         try {
-          activeResponse = await moralis.activeChains(
-            job.address, moralisRequested.map((id) => AUDIT_CHAINS.get(id).moralis)
-          );
+          const discoverableMoralisChains = moralisRequested
+            .filter((chainId) => Boolean(chains.getChain(chainId)?.rpcUrl));
+          activeResponse = discoverableMoralisChains.length
+            ? await moralis.activeChains(
+              job.address, discoverableMoralisChains.map((id) => AUDIT_CHAINS.get(id).moralis)
+            )
+            : { body: { active_chains: [] } };
           assertLease(leaseState);
           activeRows = Array.isArray(activeResponse.body.active_chains)
             ? activeResponse.body.active_chains : [];
@@ -515,6 +523,14 @@ class EvmAuditService {
           return {
             chain_id: chainId, active_hint: false, bounded: false,
             status: 'unsupported', error_code: config.errorCode, error_detail: config.errorDetail,
+          };
+        }
+        if (!chains.getChain(chainId)?.rpcUrl) {
+          return {
+            chain_id: chainId, active_hint: null, bounded: false,
+            status: 'deferred', source: 'consensus-rpc',
+            error_code: 'RPC_UNSUPPORTED',
+            error_detail: 'Configure a consensus RPC for this chain to complete its mined-history audit.',
           };
         }
         if (config.moralis && moralisUnavailable) {
@@ -572,6 +588,22 @@ class EvmAuditService {
       const unavailable = [];
       for (const chainId of requested.filter((id) => !unsupportedRequested.includes(id))) {
         const config = AUDIT_CHAINS.get(chainId);
+        if (!chains.getChain(chainId)?.rpcUrl) {
+          // Every runnable history provider still needs consensus RPC for
+          // finalized boundaries, mined receipt/nonce checks, and balance
+          // reconciliation. Defer only this chain when its RPC is absent so
+          // an unrelated configuration gap cannot prevent CDP Base history
+          // from being audited.
+          unavailable.push({
+            chainId,
+            provider: 'consensus-rpc',
+            error: {
+              code: 'RPC_UNSUPPORTED',
+              detail: 'Configure a consensus RPC for this chain to complete its mined-history audit.',
+            },
+          });
+          continue;
+        }
         if (config.moralis && moralis) {
           runnable.push(chainId);
           continue;
@@ -624,19 +656,19 @@ class EvmAuditService {
       }
       const deferred = providerDeferred;
       return EvmAudit.finish(jobId, OWNER,
-        deferred ? 'deferred' : failed ? 'failed' : (gaps ? 'complete_with_gaps' : 'complete'), {
-        errorCode: deferredProviderError?.code || failedProviderError?.code
+        failed ? 'failed' : deferred ? 'deferred' : (gaps ? 'complete_with_gaps' : 'complete'), {
+        errorCode: failedProviderError?.code || deferredProviderError?.code
           || unavailable[0]?.error?.code || null,
-        errorDetail: deferredProviderError?.detail || failedProviderError?.detail
+        errorDetail: failedProviderError?.detail || deferredProviderError?.detail
           || unavailable[0]?.error?.detail || null,
         retryAt: deferred ? (deferredProviderError?.retryAt || new Date(Date.now() + 24 * 60 * 60 * 1000)) : null,
-        progress: { chains_finished: runnable.length + unsupportedRequested.length, gaps },
+        progress: { chains_finished: runnable.length + unavailable.length + unsupportedRequested.length, gaps },
       });
     } catch (error) {
       const deferred = [
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
         'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
-        'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
+        'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
         'ETHERSCAN_TRANSPORT_ERROR',
       ]

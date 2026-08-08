@@ -77,6 +77,16 @@ test('Moralis quota fallback remains visibly deferred and never marks discovery 
   assert.match(source, /let providerDeferred = Boolean\(moralisUnavailable \|\| cdpUnavailable \|\| unavailable\.length\)/);
 });
 
+test('a chain without consensus RPC is deferred without blocking other audit chains', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
+  const guard = source.indexOf("provider: 'consensus-rpc'");
+  const runnable = source.indexOf('runnable.push(chainId)', guard);
+  assert.ok(guard >= 0);
+  assert.ok(runnable > guard);
+  assert.match(source.slice(guard - 500, runnable + 80), /code: 'RPC_UNSUPPORTED'/);
+  assert.match(source.slice(guard - 500, runnable + 80), /continue;/);
+});
+
 test('unsupported audit chains become explicit amber scopes without a provider request', async () => {
   const originalUpsertScope = EvmAudit.upsertScope;
   const scopes = [];
