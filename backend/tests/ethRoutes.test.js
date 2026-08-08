@@ -370,6 +370,118 @@ test('POST /api/eth/wallets/:id/recapture cannot replay another user’s wallet'
   }
 });
 
+test('POST /api/eth/wallets/:id/audits queues a durable optional audit', async () => {
+  const EvmAuditService = require('../src/services/EvmAuditService');
+  const originalRequest = EvmAuditService.request;
+  const calls = [];
+  EvmAuditService.request = async (...args) => {
+    calls.push(args);
+    return { created: true, job: { id: '41', status: 'queued', stage: 'queued' } };
+  };
+  try {
+    const response = await request(app)
+      .post('/api/eth/wallets/7/audits')
+      .send({ mode: 'full', chain_ids: [100, 8453] });
+    assert.equal(response.status, 202);
+    assert.equal(response.body.created, true);
+    assert.equal(response.body.job.status, 'queued');
+    assert.deepEqual(calls, [[1, 7, { mode: 'full', requestedChains: [100, 8453] }]]);
+  } finally {
+    EvmAuditService.request = originalRequest;
+  }
+});
+
+test('POST /api/eth/wallets/:id/audits never widens an invalid chain list', async () => {
+  const EvmAuditService = require('../src/services/EvmAuditService');
+  const originalRequest = EvmAuditService.request;
+  let called = false;
+  EvmAuditService.request = async () => { called = true; };
+  try {
+    const response = await request(app)
+      .post('/api/eth/wallets/7/audits')
+      .send({ chain_ids: ['base'] });
+    assert.equal(response.status, 400);
+    assert.equal(called, false);
+  } finally {
+    EvmAuditService.request = originalRequest;
+  }
+});
+
+test('POST /api/eth/wallets/:id/audits rejects vacuous or ambiguous scope', async () => {
+  for (const body of [
+    { mode: 'everything' },
+    { chain_ids: [] },
+    { chain_ids: [0] },
+    { chain_ids: ['8453'] },
+    { chain_ids: [1] },
+  ]) {
+    const response = await request(app).post('/api/eth/wallets/7/audits').send(body);
+    assert.equal(response.status, 400, JSON.stringify(body));
+  }
+});
+
+test('GET /api/eth/audits is scoped to the signed-in user', async () => {
+  const EvmAudit = require('../src/models/EvmAudit');
+  const originalList = EvmAudit.listForUser;
+  const calls = [];
+  EvmAudit.listForUser = async (...args) => {
+    calls.push(args);
+    return [{ id: '41', user_id: 1, status: 'complete_with_gaps' }];
+  };
+  try {
+    const response = await request(app).get('/api/eth/audits?wallet_id=7');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.audits[0].status, 'complete_with_gaps');
+    assert.deepEqual(calls, [[1, { walletId: 7, limit: 100 }]]);
+  } finally {
+    EvmAudit.listForUser = originalList;
+  }
+});
+
+test('GET /api/eth/audits/:id returns exact enriched evidence without a recent-list cutoff', async () => {
+  const EvmAudit = require('../src/models/EvmAudit');
+  const originalFind = EvmAudit.findDetailedByIdForUser;
+  EvmAudit.findDetailedByIdForUser = async (id, userId) => ({
+    id, user_id: userId, scopes: [{ capability: 'wallet_history' }], nonce_audits: [], balance_audits: [],
+  });
+  try {
+    const response = await request(app).get('/api/eth/audits/141');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.audit.id, 141);
+    assert.equal(response.body.audit.scopes[0].capability, 'wallet_history');
+  } finally {
+    EvmAudit.findDetailedByIdForUser = originalFind;
+  }
+});
+
+test('POST /api/eth/audits/full queues every owned wallet without cross-user widening', async () => {
+  const EvmAuditService = require('../src/services/EvmAuditService');
+  const EthWallet = require('../src/models/EthWallet');
+  const originalWallets = EthWallet.findAllByUser;
+  const originalRequest = EvmAuditService.request;
+  EthWallet.findAllByUser = async (userId) => {
+    assert.equal(userId, 1);
+    return [{ id: 7 }, { id: 8 }];
+  };
+  const calls = [];
+  EvmAuditService.request = async (...args) => {
+    calls.push(args);
+    return { job: { id: String(args[1]), status: 'queued' } };
+  };
+  try {
+    const response = await request(app).post('/api/eth/audits/full');
+    assert.equal(response.status, 202);
+    assert.equal(response.body.queued, 2);
+    assert.deepEqual(calls, [
+      [1, 7, { mode: 'full' }],
+      [1, 8, { mode: 'full' }],
+    ]);
+  } finally {
+    EthWallet.findAllByUser = originalWallets;
+    EvmAuditService.request = originalRequest;
+  }
+});
+
 test('GET /api/eth/coverage returns a user-scoped gap summary', async () => {
   const EthFeedCoverage = require('../src/models/EthFeedCoverage');
   const originalFind = EthFeedCoverage.findForUser;

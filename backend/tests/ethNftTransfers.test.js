@@ -55,6 +55,7 @@ function nftTx(overrides = {}) {
     tokenName: 'POAP',
     tokenSymbol: 'POAP',
     tokenDecimal: '0',
+    logIndex: '3',
     gas: '500000',
     gasPrice: '10000000000',
     gasUsed: '245056',
@@ -93,6 +94,7 @@ test('ERC-721 rows map to transfer_type nft with a unit quantity of 1', () => {
   assert.equal(row.token_decimals, 0);
   assert.equal(row.token_contract, NFT_CONTRACT.toLowerCase());
   assert.equal(row.token_symbol, 'POAP');
+  assert.equal(row.source_log_index, 3, 'immutable receipt coordinate survives ingestion');
   // The feed has no isError field; an NFT log only exists on success.
   assert.equal(row.is_error, false);
 });
@@ -204,11 +206,13 @@ test('bulkInsert writes token_standard and token_id', async () => {
     token_decimals: 0, token_standard: 'erc721', token_id: '682', is_error: false,
   }]);
   const sql = sqlOf(queries[0]);
-  assert.match(sql, /INSERT INTO eth_transfers \([^)]*token_standard, token_id, is_error, tx_is_error, method_id, method_name\)/);
+  assert.match(sql, /INSERT INTO eth_transfers \([^)]*token_standard, token_id, source_log_index, source_trace_address, audit_effect_key, audit_observation_id, is_error, tx_is_error, method_id, method_name\)/);
   // Column order and value order must agree or every row is written skewed.
   // method_id/method_name are NULL here: NFT legs never carry calldata, and
   // tx_is_error is stamped on the gas leg only (038).
-  assert.deepEqual(queries[0].params.slice(-6), ['erc721', '682', false, null, null, null]);
+  assert.deepEqual(queries[0].params.slice(-10), [
+    'erc721', '682', null, null, null, null, false, null, null, null,
+  ]);
 });
 
 test('holdings derivation cannot see NFT rows', async () => {

@@ -266,35 +266,13 @@ const REGISTRY = [
     opStackDeposits: {
       creditSource: '0x4200000000000000000000000000000000000010',
     },
-    stateSyncDeposits: {
+    // Receipt-log decoder metadata for optional, transaction-scoped audits.
+    // This deliberately is not `stateSyncDeposits`: ordinary Sync must never
+    // run Base's anonymous chain-wide Blockscout log walk.
+    auditNativeCredits: {
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
-      // Base's public JSON-RPC is explicitly rate-limited and not intended for
-      // production history walks. Blockscout v2's cursor walk also proved
-      // unsuitable for a genesis scan: one late 120-second page timeout throws
-      // away hours of otherwise valid progress. The legacy logs facade handles
-      // bounded event-signature windows quickly. Its live response headers
-      // expose an anonymous bucket whose advertised size does not describe its
-      // sustained refill rate. Production scans #276 and #278 still reached
-      // that bucket at seven- and fifteen-second spacing respectively. Thirty
-      // seconds lowers the sustained rate while remaining inside the three-hour
-      // scan budget. Split every saturated 1,000-row window, and bisect a dense
-      // window that remains rate-limited after its bounded cooldown retries.
-      // Distribute validated receivers locally. Do not send a comma-separated
-      // receiver filter: Base currently ignores it.
-      rpcScan: {
-        provider: 'blockscout',
-        blockRange: 250000,
-        batchSize: 1,
-        concurrency: 1,
-        requestSpacingMs: 30000,
-        maxRequests: 2000,
-        maxElapsedMs: 3 * 60 * 60 * 1000,
-        maxResponseRows: 1000000,
-        scanAllReceivers: true,
-        allowExtraneousTopics: true,
-      },
     },
   },
 ];

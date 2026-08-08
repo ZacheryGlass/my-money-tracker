@@ -193,7 +193,8 @@ class EthTransfer {
     }
     await pool.query(
       `DELETE FROM eth_transfers
-       WHERE wallet_id = $1 AND chain_id = $2 AND transfer_type = ANY($3) AND block_number >= $4${addressClause}`,
+       WHERE wallet_id = $1 AND chain_id = $2 AND transfer_type = ANY($3)
+         AND block_number >= $4 AND audit_effect_key IS NULL${addressClause}`,
       params
     );
   }
@@ -204,7 +205,9 @@ class EthTransfer {
       'wallet_id', 'chain_id', 'tx_hash', 'ordinal', 'transfer_type', 'block_number',
       'block_time', 'from_address', 'to_address', 'value_wei',
       'token_contract', 'token_symbol', 'token_decimals', 'token_standard',
-      'token_id', 'is_error', 'tx_is_error', 'method_id', 'method_name',
+      'token_id', 'source_log_index', 'source_trace_address',
+      'audit_effect_key', 'audit_observation_id',
+      'is_error', 'tx_is_error', 'method_id', 'method_name',
     ];
     // Chunked to stay far under Postgres' 65535-parameter cap on first syncs
     // of busy wallets.
@@ -223,6 +226,9 @@ class EthTransfer {
           row.block_number, row.block_time, row.from_address, row.to_address,
           row.value_wei, row.token_contract, row.token_symbol,
           row.token_decimals, row.token_standard ?? null, row.token_id ?? null,
+          row.source_log_index ?? null,
+          row.source_trace_address == null ? null : JSON.stringify(row.source_trace_address),
+          row.audit_effect_key ?? null, row.audit_observation_id ?? null,
           row.is_error, row.tx_is_error ?? null,
           row.method_id ?? null, row.method_name ?? null
         );
