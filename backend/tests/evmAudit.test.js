@@ -382,6 +382,9 @@ test('NFT corroboration uses Moralis amount units instead of its non-unit value 
   assert.equal(matchesMoralisTransfer(effect, {
     ...observation, payload_json: { ...observation.payload_json, amount: null, value: '2' },
   }), false);
+  assert.equal(matchesMoralisTransfer(effect, {
+    ...observation, payload_json: { ...observation.payload_json, amount: [2] },
+  }), false);
 });
 
 test('audit migration is additive, fail-closed, user-owned, and retires only Base routine state sync', () => {

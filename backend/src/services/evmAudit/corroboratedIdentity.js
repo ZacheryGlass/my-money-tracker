@@ -13,7 +13,8 @@ function normalizedAddress(value) {
 
 function quantity(value) {
   if (typeof value === 'bigint') return value;
-  const text = String(value ?? '').trim();
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
   if (!/^\d+$/.test(text)) return null;
   try { return BigInt(text); } catch { return null; }
 }
