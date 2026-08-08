@@ -500,7 +500,11 @@ class EvmAuditService {
       chainId, provider: 'consensus-rpc', capability: 'receipt_verification', status: 'running',
       fromBlock: null, throughBlock: boundary.number, throughHash: boundary.hash,
     });
+    const verifiedReceiptHashes = await EvmAudit.verifiedConsensusReceiptHashes(
+      job.subject_id, chainId
+    );
     for (const hash of hashes) {
+      if (verifiedReceiptHashes.has(hash)) continue;
       const renewedBeforeLookup = await EvmAudit.heartbeat(job.id, OWNER, {
         stage: 'canonicalizing',
         progress: { current_tx_hash: hash },
