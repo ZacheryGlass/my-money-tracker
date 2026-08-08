@@ -274,8 +274,8 @@ class EvmAudit {
   } = {}) {
     const { rows } = await pool.query(
       `UPDATE evm_audit_jobs
-          SET status = $3,
-              stage = CASE WHEN $3 IN ('complete', 'complete_with_gaps') THEN 'complete' ELSE stage END,
+          SET status = $3::varchar,
+              stage = CASE WHEN $3::varchar IN ('complete', 'complete_with_gaps') THEN 'complete' ELSE stage END,
               progress = CASE WHEN $4::jsonb IS NULL THEN progress ELSE progress || $4::jsonb END,
               error_code = $5,
               error_detail = $6,
