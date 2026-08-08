@@ -530,13 +530,15 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
     }
   };
 
-  const handleHistoryAudit = async (wallet) => {
+  const handleHistoryAudit = async (wallet, mode = 'full') => {
     setAuditStartingId(wallet.id);
     onError(null);
     try {
-      const { job } = await ethAPI.startHistoryAudit(wallet.id, { mode: 'full' });
+      const { job } = await ethAPI.startHistoryAudit(wallet.id, { mode });
       setAuditByWallet((current) => ({ ...current, [wallet.id]: job }));
-      showNotice('History audit queued. You can leave this page; progress and evidence are saved.');
+      showNotice(mode === 'full'
+        ? 'Full history audit queued. You can leave this page; progress and evidence are saved.'
+        : 'Incremental audit queued. It will resume from the last proven boundary and preserve prior evidence.');
     } catch (err) {
       onError(err.response?.data?.error || 'Failed to start history audit');
     } finally {
@@ -613,6 +615,17 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
       >
         <FileCheck2 size={10} />
         Audit
+      </button>
+      <button
+        type="button"
+        onClick={() => handleHistoryAudit(wallet, 'incremental')}
+        disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
+        aria-label={`Incrementally verify ${walletName(wallet)}`}
+        className={ROW_ACTION_CLASS}
+        title="Verify new history from the last proven boundary without replaying genesis"
+      >
+        <FileCheck2 size={10} />
+        Verify
       </button>
       <button
         type="button"

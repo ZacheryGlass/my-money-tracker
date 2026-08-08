@@ -431,6 +431,18 @@ describe('Crypto -> Wallets tab', () => {
     expect(await screen.findByText(/History audit: queued/i)).toBeInTheDocument();
   });
 
+  it('offers an incremental verification run for idempotency checks', async () => {
+    apiMocks.eth.startHistoryAudit.mockResolvedValue({
+      created: true,
+      job: { id: '42', requested_wallet_id: 1, mode: 'incremental', status: 'queued', stage: 'queued', progress: {} },
+    });
+    await openEthereumTab([wallet(report())]);
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /incrementally verify main/i }))[0]);
+    await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1, { mode: 'incremental' }));
+    expect(apiMocks.eth.syncWallet).not.toHaveBeenCalled();
+  });
+
   it('renders known audit limitations amber instead of a generic red failure', async () => {
     await openEthereumTab([{
       ...wallet(report()),
