@@ -132,7 +132,48 @@ class EvmAudit {
           );
           activeJob = refreshed.rows[0];
         }
-        const activeChains = new Set((activeJob.requested_chains || []).map(Number));
+        let activeChains = new Set((activeJob.requested_chains || []).map(Number));
+        // A deferred or not-yet-running incremental request is safe to widen
+        // when the user explicitly asks for the genesis audit. Keep the same
+        // durable job and its provider retry deadline: widening must never
+        // bypass a Moralis quota/cooldown or create overlapping evidence
+        // writers. A running job remains a real scope conflict.
+        if (mode === 'full' && activeJob.mode !== 'full' && activeJob.status !== 'running') {
+          const expandedChains = [...new Set([
+            ...activeChains,
+            ...requestedChains.map(Number),
+          ])];
+          const expanded = await client.query(
+            `UPDATE evm_audit_jobs
+                SET mode = 'full',
+                    requested_chains = $2::jsonb,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE id = $1 AND status <> 'running'
+            RETURNING *`,
+            [activeJob.id, JSON.stringify(expandedChains)]
+          );
+          activeJob = expanded.rows[0] || activeJob;
+          activeChains = new Set((activeJob.requested_chains || []).map(Number));
+          // The job may already contain partial incremental pages. Those raw
+          // observations remain valuable evidence, but their cursors and
+          // finite bounds are not valid for a genesis run. Reset only the
+          // provider scopes; the existing-ledger projection is a separate
+          // reconciliation input and must not be replayed here.
+          await client.query(
+            `UPDATE evm_audit_scopes
+                SET status = 'queued',
+                    requested_from_block = CASE WHEN provider = 'consensus-rpc' THEN NULL ELSE 0 END,
+                    requested_through_block = NULL,
+                    requested_through_hash = NULL,
+                    provider_cursor = NULL,
+                    pagination_exhausted = FALSE,
+                    error_code = NULL,
+                    error_detail = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE job_id = $1 AND provider <> 'existing-ledger'`,
+            [activeJob.id]
+          );
+        }
         const modeCovered = activeJob.mode === 'full' || mode === 'incremental';
         const chainsCovered = requestedChains.every((chainId) => activeChains.has(Number(chainId)));
         if (!modeCovered || !chainsCovered) {
