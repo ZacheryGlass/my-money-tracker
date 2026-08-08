@@ -350,9 +350,7 @@ class EvmAudit {
         pageId = existing.rows[0].id;
       }
 
-      let observationChanges = 0;
-      const observationIds = [];
-      for (const observation of observations) {
+      const observationResults = await Promise.all(observations.map(async (observation) => {
         if (Number(observation.subjectId) !== Number(scope.subject_id)
             || Number(observation.chainId) !== Number(scope.chain_id)) {
           throw new Error('Provider observation ownership does not match its locked audit scope');
@@ -377,9 +375,12 @@ class EvmAudit {
             JSON.stringify(observation.payload), observation.payloadSha256,
           ]
         );
-        observationChanges += result.rowCount;
+        return { observation, result };
+      }));
+      const observationChanges = observationResults.reduce((sum, { result }) => sum + result.rowCount, 0);
+      const observationIds = observationResults.map(({ result }) => result.rows[0].id);
+      await Promise.all(observationResults.map(async ({ result }) => {
         const observationId = result.rows[0].id;
-        observationIds.push(observationId);
         await client.query(
           `INSERT INTO evm_job_observations (
              job_id, subject_id, chain_id, observation_id, page_id
@@ -389,7 +390,7 @@ class EvmAudit {
                          observed_at = CURRENT_TIMESTAMP`,
           [scope.job_id, scope.subject_id, scope.chain_id, observationId, pageId]
         );
-      }
+      }));
 
       await client.query(
         `UPDATE evm_audit_scopes
