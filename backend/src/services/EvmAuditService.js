@@ -663,8 +663,21 @@ class EvmAuditService {
       }
     }
 
-    const activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
-    const missingActivity = transactions.filter((row) => !activityHashes.has(row.tx_hash)).length;
+    let activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
+    let missingActivity = transactions.filter((row) => !activityHashes.has(row.tx_hash)).length;
+    // Canonical transactions can be discovered without any wallet leg (for
+    // example, an externally signed zero-value contract call). In that case no
+    // effect backfill runs, but the derived activity table still needs one
+    // serialized rebuild before the audit can claim every mined transaction is
+    // explained.
+    if (missingActivity > 0) {
+      await EthDerivedPipeline.serializedForUser(job.user_id, async () => {
+        await EthDerivedPipeline.rebuildWallet(job.requested_wallet_id, { rebuildMatches: false });
+        await EthDerivedPipeline.finishUser(job.user_id);
+      });
+      activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
+      missingActivity = transactions.filter((row) => !activityHashes.has(row.tx_hash)).length;
+    }
     await EvmAudit.heartbeat(job.id, OWNER, { stage: 'bridge_reconciliation' });
     const bridgeAudit = await EvmAudit.bridgeAudit(
       job.user_id, job.subject_id, chainId, boundary.number
