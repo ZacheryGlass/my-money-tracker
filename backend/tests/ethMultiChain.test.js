@@ -669,6 +669,26 @@ test('a Base wallet without a CDP key is isolated as a deferred chain row', asyn
   assert.match(calls.walletError.message, /deferred because the explorer is rate limited/);
 });
 
+test('a Base CDP quota error preserves its calendar-month retry boundary in wallet sync', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '8453',
+    cdpResponses: [{ code: 'QUOTA_EXCEEDED', message: 'monthly allowance exceeded' }],
+  });
+
+  const result = await EthWalletService.syncWallet(7);
+  const nextMonth = new Date();
+  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1, 1);
+  nextMonth.setUTCHours(0, 0, 0, 0);
+
+  assert.equal(result.status, 'deferred');
+  assert.equal(calls.chainErrors[0].code, 'SYNC_DEFERRED');
+  assert.ok(calls.coverage[0].entries.every((entry) => (
+    entry.status === 'deferred'
+      && entry.retryAfterAt instanceof Date
+      && entry.retryAfterAt.getTime() === nextMonth.getTime()
+  )));
+});
+
 test('a transient failure and an unsupported feed are told apart', async (t) => {
   const { calls } = harness(t, {
     chainSet: '1',

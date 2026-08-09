@@ -175,9 +175,10 @@ function isExplorerRateLimited(error) {
 }
 
 function retryAfterAt(error) {
-  const explicit = error?.retryAfterAt instanceof Date
-    ? error.retryAfterAt
-    : new Date(error?.retryAfterAt || NaN);
+  const explicitValue = error?.retryAfterAt ?? error?.retryAt;
+  const explicit = explicitValue instanceof Date
+    ? explicitValue
+    : new Date(explicitValue || NaN);
   if (!Number.isNaN(explicit.getTime())) return explicit;
   const delay = Math.min(
     MAX_PROVIDER_RETRY_WAIT_MS,
