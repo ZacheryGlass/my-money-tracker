@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 const JSONbig = require('json-bigint')({ useNativeBigInt: true });
-const { sha256 } = require('./normalizer');
+const { sha256, stableJson } = require('./normalizer');
 
 // CDP's address-history JSON-RPC endpoint is network-scoped. The client API
 // key is deliberately kept only in this instance; it is never part of a
@@ -110,6 +110,40 @@ function pageCursor(value, method) {
     );
   }
   return value;
+}
+
+function resultShape(value) {
+  if (value == null) return value === null ? 'null' : 'missing';
+  if (Array.isArray(value)) return `array(${value.length})`;
+  if (typeof value !== 'object') return typeof value;
+  const keys = Object.keys(value).sort();
+  return keys.length ? `object{${keys.slice(0, 20).join(',')}}` : 'object{}';
+}
+
+function collectionFromResult(response, preferred, aliases, method) {
+  const result = response.body;
+  const candidates = [preferred, ...aliases];
+  const present = candidates.filter((key) => Array.isArray(result?.[key]));
+  if (present.length > 1) {
+    const first = stableJson(result[present[0]]);
+    if (present.slice(1).some((key) => stableJson(result[key]) !== first)) {
+      throw providerError(
+        `Coinbase CDP ${method} returned conflicting result collections (${present.join(',')})`,
+        'CDP_CONFLICTING_RESULT'
+      );
+    }
+  }
+  if (present.length) return result[present[0]];
+  throw providerError(
+    `Coinbase CDP ${method} returned an invalid result shape (${resultShape(result)})`,
+    'CDP_INVALID_RESPONSE'
+  );
+}
+
+function addressTransactionItems(result) {
+  return collectionFromResult(
+    { body: result }, 'addressTransactions', ['transactions'], 'address history'
+  );
 }
 
 class CdpClient {
@@ -255,10 +289,11 @@ class CdpClient {
         pageToken: next || '',
       };
       const response = await this._request('cdp_listAddressTransactions', params, 'address-history');
-      const items = response.body?.addressTransactions;
-      if (!Array.isArray(items)) {
-        throw providerError('Coinbase CDP address history returned an invalid result shape', 'CDP_INVALID_RESPONSE');
-      }
+      // `transactions` is accepted as a compatibility alias because Coinbase
+      // documents cdp_listTransactions as an alias for this method, while the
+      // response examples use addressTransactions. Keep the shape diagnostic
+      // bounded to field names so a provider change never exposes raw history.
+      const items = addressTransactionItems(response.body);
       pages += 1;
       if (pages > MAX_PAGES) {
         throw providerError('Coinbase CDP address history exceeded the pagination safety bound', 'CDP_PAGINATION_STALLED');
@@ -290,10 +325,7 @@ class CdpClient {
         pageToken: next || '',
       };
       const response = await this._request('cdp_listBalances', params, 'balance-history');
-      const items = response.body?.balances;
-      if (!Array.isArray(items)) {
-        throw providerError('Coinbase CDP balance history returned an invalid result shape', 'CDP_INVALID_RESPONSE');
-      }
+      const items = collectionFromResult(response, 'balances', [], 'balance history');
       pages += 1;
       if (pages > MAX_PAGES) {
         throw providerError('Coinbase CDP balances exceeded the pagination safety bound', 'CDP_PAGINATION_STALLED');
@@ -309,6 +341,7 @@ class CdpClient {
 }
 
 module.exports = CdpClient;
+module.exports.addressTransactionItems = addressTransactionItems;
 module.exports.parseRetryAfter = parseRetryAfter;
 module.exports.normalizeJsonNumbers = normalizeJsonNumbers;
 module.exports.providerError = providerError;

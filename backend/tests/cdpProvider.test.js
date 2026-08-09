@@ -165,6 +165,60 @@ test('CDP pagination rejects non-string cursors, non-adjacent cycles, and mixed 
   }
 });
 
+test('CDP accepts the documented transaction alias and reports only bounded result shape metadata', async (t) => {
+  const originalFetch = global.fetch;
+  const responses = [
+    jsonRpcResult({ transactions: [], nextPageToken: null }),
+    jsonRpcResult({ unexpected: 'provider-drift' }),
+  ];
+  global.fetch = async () => responses.shift();
+  t.after(() => { global.fetch = originalFetch; });
+
+  const iterator = new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+    .addressTransactionPages(WALLET);
+  const page = await iterator.next();
+  assert.deepEqual(page.value.items, []);
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_INVALID_RESPONSE'
+      && error.message.includes('object{unexpected}')
+      && !error.message.includes('provider-drift')
+  );
+});
+
+test('CDP journal replay uses the same address-history alias contract as live pages', () => {
+  const items = CdpClient.addressTransactionItems({ transactions: [transaction()] });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].hash, HASH);
+  assert.throws(
+    () => CdpClient.addressTransactionItems({ unexpected: [] }),
+    (error) => error.code === 'CDP_INVALID_RESPONSE'
+      && error.message.includes('object{unexpected}')
+  );
+});
+
+test('CDP rejects conflicting address-history result collections before cursor advancement', () => {
+  const item = transaction();
+  assert.deepEqual(
+    CdpClient.addressTransactionItems({
+      addressTransactions: [item], transactions: [item],
+    }),
+    [item]
+  );
+  assert.throws(
+    () => CdpClient.addressTransactionItems({ addressTransactions: [], transactions: [item] }),
+    (error) => error.code === 'CDP_CONFLICTING_RESULT'
+      && error.message.includes('addressTransactions,transactions')
+  );
+  assert.throws(
+    () => CdpClient.addressTransactionItems({
+      addressTransactions: [item], transactions: [transaction({ value: '0x1' })],
+    }),
+    (error) => error.code === 'CDP_CONFLICTING_RESULT'
+  );
+});
+
 test('CDP errors classify quota and rate limits with retry boundaries', async (t) => {
   const originalFetch = global.fetch;
   const responses = [
