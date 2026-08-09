@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 const JSONbig = require('json-bigint')({ useNativeBigInt: true });
-const { sha256 } = require('./normalizer');
+const { sha256, stableJson } = require('./normalizer');
 
 // CDP's address-history JSON-RPC endpoint is network-scoped. The client API
 // key is deliberately kept only in this instance; it is never part of a
@@ -123,9 +123,17 @@ function resultShape(value) {
 function collectionFromResult(response, preferred, aliases, method) {
   const result = response.body;
   const candidates = [preferred, ...aliases];
-  for (const key of candidates) {
-    if (Array.isArray(result?.[key])) return result[key];
+  const present = candidates.filter((key) => Array.isArray(result?.[key]));
+  if (present.length > 1) {
+    const first = stableJson(result[present[0]]);
+    if (present.slice(1).some((key) => stableJson(result[key]) !== first)) {
+      throw providerError(
+        `Coinbase CDP ${method} returned conflicting result collections (${present.join(',')})`,
+        'CDP_CONFLICTING_RESULT'
+      );
+    }
   }
+  if (present.length) return result[present[0]];
   throw providerError(
     `Coinbase CDP ${method} returned an invalid result shape (${resultShape(result)})`,
     'CDP_INVALID_RESPONSE'

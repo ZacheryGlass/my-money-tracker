@@ -198,6 +198,27 @@ test('CDP journal replay uses the same address-history alias contract as live pa
   );
 });
 
+test('CDP rejects conflicting address-history result collections before cursor advancement', () => {
+  const item = transaction();
+  assert.deepEqual(
+    CdpClient.addressTransactionItems({
+      addressTransactions: [item], transactions: [item],
+    }),
+    [item]
+  );
+  assert.throws(
+    () => CdpClient.addressTransactionItems({ addressTransactions: [], transactions: [item] }),
+    (error) => error.code === 'CDP_CONFLICTING_RESULT'
+      && error.message.includes('addressTransactions,transactions')
+  );
+  assert.throws(
+    () => CdpClient.addressTransactionItems({
+      addressTransactions: [item], transactions: [transaction({ value: '0x1' })],
+    }),
+    (error) => error.code === 'CDP_CONFLICTING_RESULT'
+  );
+});
+
 test('CDP errors classify quota and rate limits with retry boundaries', async (t) => {
   const originalFetch = global.fetch;
   const responses = [
