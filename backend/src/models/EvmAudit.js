@@ -175,8 +175,62 @@ class EvmAudit {
           ORDER BY requested_at DESC, id DESC LIMIT 1 FOR UPDATE`,
         [subject.id, ACTIVE_JOB_STATUSES]
       );
-      if (active.rows[0]) {
-        let activeJob = active.rows[0];
+      const activeRow = active.rows[0] || null;
+      const activeChains = new Set((activeRow?.requested_chains || []).map(Number));
+      let supersededJobId = null;
+      const isDeferredBroaderScope = activeRow?.status === 'deferred'
+        && requestedChains.length > 0
+        && activeChains.size > requestedChains.length
+        && requestedChains.every((chainId) => activeChains.has(Number(chainId)));
+      let requestedScopeIsComplete = false;
+      if (isDeferredBroaderScope) {
+        // A broad job may be deferred by the requested chain itself (for
+        // example CDP quota or an incomplete Base recovery), so scope
+        // narrowing must not bypass that provider's retry deadline. Only
+        // supersede when every requested chain already has exclusively
+        // complete capability scopes in the broad job.
+        const requestedScope = await client.query(
+          `SELECT chain_id,
+                  COUNT(*) AS scope_count,
+                  BOOL_AND(status = 'complete') AS complete
+             FROM evm_audit_scopes
+            WHERE job_id = $1 AND chain_id = ANY($2::bigint[])
+            GROUP BY chain_id`,
+          [activeRow.id, requestedChains.map(Number)]
+        );
+        const requestedIds = new Set(requestedChains.map(Number));
+        requestedScopeIsComplete = requestedScope.rows.length === requestedIds.size
+          && requestedScope.rows.every((row) => Number(row.scope_count) > 0 && row.complete === true);
+      }
+      if (isDeferredBroaderScope && requestedScopeIsComplete) {
+        // A whole-EVM job can remain deferred forever because an unrelated
+        // chain has a standing provider limitation. An explicit narrower
+        // request (for example Base-only) is safe to run as a new job: the
+        // old job's pages and provider-attempt evidence remain immutable, and
+        // the new job starts its own bounded proof for the requested scope.
+        // Never supersede a running job or silently convert a broad request.
+        supersededJobId = activeRow.id;
+        await client.query(
+          `UPDATE evm_audit_jobs
+              SET status = 'cancelled',
+                  stage = 'complete',
+                  retry_after_at = NULL,
+                  finished_at = CURRENT_TIMESTAMP,
+                  lease_owner = NULL,
+                  lease_expires_at = NULL,
+                  heartbeat_at = CURRENT_TIMESTAMP,
+                  error_detail = CONCAT(
+                    COALESCE(error_detail, ''),
+                    CASE WHEN COALESCE(error_detail, '') = '' THEN '' ELSE ' ' END,
+                    'This broader audit was superseded by an explicit narrower audit scope; all retained provider evidence remains available.'
+                  ),
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1 AND status = 'deferred'
+            RETURNING *`,
+          [activeRow.id]
+        );
+      } else if (activeRow) {
+        let activeJob = activeRow;
         const errorCode = String(activeJob.error_code || '');
         const indexedProviderDeferred = errorCode.startsWith('MORALIS_')
           || errorCode.startsWith('CDP_');
@@ -211,7 +265,9 @@ class EvmAudit {
                 !== new Date(deferredProviderGeneration).getTime());
         const credentialChanged = etherscanCredentialReady || cdpCredentialReady
           || deferredProviderGenerationChanged || rpcConfigurationReadyNow;
-        if (activeJob.status === 'deferred' && credentialChanged) {
+        const retryDue = activeJob.status === 'deferred'
+          && (!activeJob.retry_after_at || new Date(activeJob.retry_after_at).getTime() <= Date.now());
+        if (activeJob.status === 'deferred' && (credentialChanged || retryDue)) {
           const refreshed = await client.query(
             `UPDATE evm_audit_jobs
                 SET status = 'queued',
@@ -300,6 +356,15 @@ class EvmAudit {
           providerGenerations.cdp, JSON.stringify(requestedChains),
         ]
       );
+      if (supersededJobId) {
+        await client.query(
+          `UPDATE evm_audit_jobs
+              SET superseded_by_job_id = $2,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1`,
+          [supersededJobId, inserted.rows[0].id]
+        );
+      }
       await client.query('COMMIT');
       return { job: inserted.rows[0], created: true };
     } catch (error) {

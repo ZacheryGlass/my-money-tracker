@@ -11,10 +11,10 @@ import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-// Deferred jobs are durable retry points, not active work. Keep their status
-// visible on the card while allowing an explicit Audit/Verify click to retry
-// after a provider cooldown or a newly entered credential.
-const auditIsPending = (audit) => ['queued', 'running'].includes(audit?.status);
+const BASE_CHAIN_ID = 8453;
+// Deferred jobs are durable retry points, not active work. Poll them too so a
+// scheduled retry can update the visible status without requiring a reload.
+const auditIsPending = (audit) => ['queued', 'running', 'deferred'].includes(audit?.status);
 
 const auditDeferredMessage = (job) => {
   const detail = String(job?.error_detail || '').trim();
@@ -569,11 +569,14 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
     }
   };
 
-  const handleHistoryAudit = async (wallet, mode = 'full') => {
+  const handleHistoryAudit = async (wallet, mode = 'full', chainIds = null) => {
     setAuditStartingId(wallet.id);
     onError(null);
     try {
-      const { job } = await ethAPI.startHistoryAudit(wallet.id, { mode });
+      const { job } = await ethAPI.startHistoryAudit(wallet.id, {
+        mode,
+        ...(chainIds ? { chainIds } : {}),
+      });
       setAuditByWallet((current) => ({ ...current, [wallet.id]: job }));
       if (job.status === 'deferred') {
         showNotice(auditDeferredMessage(job));
@@ -669,6 +672,28 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
       >
         <FileCheck2 size={10} />
         Verify
+      </button>
+      <button
+        type="button"
+        onClick={() => handleHistoryAudit(wallet, 'full', [BASE_CHAIN_ID])}
+        disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
+        aria-label={`Audit Base history for ${walletName(wallet)}`}
+        className={ROW_ACTION_CLASS}
+        title="Genesis audit Base with Coinbase CDP without unrelated chain limitations"
+      >
+        <FileCheck2 size={10} />
+        Base
+      </button>
+      <button
+        type="button"
+        onClick={() => handleHistoryAudit(wallet, 'incremental', [BASE_CHAIN_ID])}
+        disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
+        aria-label={`Verify Base history for ${walletName(wallet)}`}
+        className={ROW_ACTION_CLASS}
+        title="Incrementally verify Base from its last proven CDP boundary"
+      >
+        <FileCheck2 size={10} />
+        Base+
       </button>
       <button
         type="button"

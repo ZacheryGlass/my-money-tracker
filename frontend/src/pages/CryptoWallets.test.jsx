@@ -356,7 +356,7 @@ describe('Crypto -> Wallets tab', () => {
     expect(screen.getByText('no internal')).toBeInTheDocument();
     // A switched-off chain reads as off while keeping its row -- disabling
     // stops the sync, it does not delete history.
-    expect(screen.getByText('Base')).toBeInTheDocument();
+    expect(screen.getAllByText('Base', { selector: 'span' }).length).toBeGreaterThan(0);
     expect(screen.getByText('off')).toBeInTheDocument();
     // Chain-level coverage detail alone does not inflate the Wallets badge.
     expect(screen.getAllByText('Limited coverage').length).toBeGreaterThan(0);
@@ -453,6 +453,20 @@ describe('Crypto -> Wallets tab', () => {
     expect(apiMocks.eth.syncWallet).not.toHaveBeenCalled();
     await expandWallet();
     expect(await screen.findByText(/History audit: queued/i)).toBeInTheDocument();
+  });
+
+  it('offers an isolated Base genesis audit for CDP verification', async () => {
+    apiMocks.eth.startHistoryAudit.mockResolvedValue({
+      created: true,
+      job: { id: '44', requested_wallet_id: 1, status: 'queued', stage: 'queued', progress: {} },
+    });
+    await openEthereumTab([wallet(report())]);
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /audit base history for main/i }))[0]);
+
+    await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1, {
+      mode: 'full', chainIds: [8453],
+    }));
   });
 
   it('surfaces the persisted reason when an audit remains deferred', async () => {

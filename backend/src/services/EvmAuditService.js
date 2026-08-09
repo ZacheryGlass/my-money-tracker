@@ -756,6 +756,7 @@ class EvmAuditService {
         : errorCode.startsWith('CDP_') ? 'coinbase-cdp'
         : errorCode.startsWith('RPC_') ? 'consensus-rpc'
           : errorCode.startsWith('ETHERSCAN_') ? 'etherscan' : 'blockscout';
+      let failureEvidenceUnjournaled = false;
       if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('CDP_') || errorCode.startsWith('RPC_')
           || errorCode.startsWith('BLOCKSCOUT_') || errorCode.startsWith('ETHERSCAN_')) {
         try {
@@ -768,13 +769,18 @@ class EvmAuditService {
             owner: OWNER,
           });
         } catch (attemptError) {
+          failureEvidenceUnjournaled = true;
           logger.warn({ err: attemptError, auditJobId: jobId }, 'Failed to retain EVM provider attempt');
         }
       }
-      return EvmAudit.finish(jobId, OWNER, deferred ? 'deferred' : 'failed', {
-        errorCode: error.code || 'EVM_AUDIT_FAILED',
-        errorDetail: publicErrorDetail(error),
-        retryAt: deferred ? (error.retryAt || new Date(Date.now() + 60_000)) : null,
+      return EvmAudit.finish(jobId, OWNER, failureEvidenceUnjournaled || !deferred ? 'failed' : 'deferred', {
+        errorCode: failureEvidenceUnjournaled ? 'EVM_FAILURE_EVIDENCE_UNJOURNALED'
+          : error.code || 'EVM_AUDIT_FAILED',
+        errorDetail: failureEvidenceUnjournaled
+          ? 'The provider failure could not be durably retained; the audit is failed closed and must be rerun.'
+          : publicErrorDetail(error),
+        retryAt: failureEvidenceUnjournaled ? null
+          : deferred ? (error.retryAt || new Date(Date.now() + 60_000)) : null,
       });
     } finally {
       clearInterval(heartbeatTimer);
@@ -1048,9 +1054,27 @@ class EvmAuditService {
         addressHistoryCursor,
       };
       let afterKey = priorState?.afterKey || null;
+      // Candidate-local recovery failures advance the checkpoint so later
+      // candidates can still be attempted, but retryable failures must remain
+      // in a durable side list. Otherwise a restart would skip the failed
+      // candidate forever once the monotonic afterKey passed it.
+      const retryKeys = new Set(
+        (Array.isArray(priorState?.retryKeys) ? priorState.retryKeys : [])
+          .filter((key) => typeof key === 'string')
+      );
+      const nextAfterKey = (key) => !afterKey || key.localeCompare(afterKey) > 0 ? key : afterKey;
+      const recoveryStateJson = () => JSON.stringify({
+        version: 1,
+        phase: 'known-ledger',
+        afterKey,
+        retryKeys: [...retryKeys].sort(),
+        addressHistoryCursor: priorState.addressHistoryCursor,
+      });
       const ordered = allOrdered
-        .filter((candidate) => !afterKey
-          || CdpRecoveryProvider.candidateKey(candidate) > afterKey)
+        .filter((candidate) => {
+          const key = CdpRecoveryProvider.candidateKey(candidate);
+          return !afterKey || key > afterKey || retryKeys.has(key);
+        })
         .slice(0, CdpRecoveryProvider.MAX_RECOVERY_CANDIDATES);
       let recovered = 0;
       let skippedKnown = 0;
@@ -1062,20 +1086,27 @@ class EvmAuditService {
         const key = CdpRecoveryProvider.candidateKey(candidate);
         const cursorIn = JSON.stringify({
           version: 1, phase: 'known-ledger', afterKey,
+          retryKeys: [...retryKeys].sort(),
           addressHistoryCursor: priorState.addressHistoryCursor,
         });
-        const nextState = JSON.stringify({
-          version: 1, phase: 'known-ledger', afterKey: key,
-          addressHistoryCursor: priorState.addressHistoryCursor,
-        });
+        let nextState;
         if (knownTransactionHashes.has(candidate.hash)) {
           skippedKnown += 1;
+          afterKey = nextAfterKey(key);
+          retryKeys.delete(key);
+          nextState = recoveryStateJson();
           const marker = { recovery: 'coinbase-cdp-core', transaction_hash: candidate.hash, status: 'already_observed' };
           const markerRaw = JSON.stringify(marker);
+          const markerRequest = {
+            address: job.address.toLowerCase(), transaction_hash: candidate.hash,
+          };
           await commitPage(historyScope.id, {
             provider: 'coinbase-cdp', endpoint: 'transaction-recovery-skip',
-            requestParams: { address: job.address.toLowerCase(), transaction_hash: candidate.hash },
+            requestParams: markerRequest,
             cursorIn, cursorOut: nextState, responseSha256: normalizer.sha256(markerRaw),
+            evidenceIdentitySha256: normalizer.sha256(JSON.stringify({
+              request: markerRequest, cursorIn, cursorOut: nextState, response: markerRaw,
+            })),
             responseRaw: markerRaw, responseJson: marker, requestId: null, itemCount: 0,
           }, []);
         } else {
@@ -1126,6 +1157,10 @@ class EvmAuditService {
                 .includes(wrapped.code), error_code: wrapped.code,
               error_detail: publicErrorDetail(wrapped),
             };
+            afterKey = nextAfterKey(key);
+            if (failure.retryable) retryKeys.add(key);
+            else retryKeys.delete(key);
+            nextState = recoveryStateJson();
             const failureRaw = JSON.stringify(failure);
             const failureParams = {
               address: job.address.toLowerCase(), transaction_hash: candidate.hash,
@@ -1152,6 +1187,9 @@ class EvmAuditService {
             });
             continue;
           }
+          afterKey = nextAfterKey(key);
+          retryKeys.delete(key);
+          nextState = recoveryStateJson();
           CdpHistoryProvider.normalizePage(job.address, [recovery.item], {
             nativeCredit: chain?.auditNativeCredits || chain?.stateSyncDeposits || null,
           });
@@ -1162,15 +1200,19 @@ class EvmAuditService {
             { ...context, provider: 'coinbase-cdp-recovery' }, recovery.item
           );
           for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+          const recoveryRequest = {
+            address: job.address.toLowerCase(), transaction_hash: candidate.hash,
+            recovery: 'core-rpc-transaction-receipt-block-calltracer',
+          };
           await commitPage(historyScope.id, {
             provider: 'coinbase-cdp', endpoint: 'transaction-recovery',
-            requestParams: {
-              address: job.address.toLowerCase(), transaction_hash: candidate.hash,
-              recovery: 'core-rpc-transaction-receipt-block-calltracer',
-            },
+            requestParams: recoveryRequest,
             cursorIn, cursorOut: nextState,
             responseSha256: recovery.response.responseSha256,
-            evidenceIdentitySha256: recovery.response.evidenceIdentitySha256,
+            evidenceIdentitySha256: normalizer.sha256(JSON.stringify({
+              request: recoveryRequest, cursorIn, cursorOut: nextState,
+              evidence: recovery.response.evidenceIdentitySha256,
+            })),
             responseRaw: recovery.response.rawText,
             responseJson: recovery.response.body,
             requestId: recovery.response.requestId,
@@ -1178,7 +1220,10 @@ class EvmAuditService {
           }, observations);
           recovered += 1;
         }
-        afterKey = key;
+        // The success and already-observed branches advance afterKey above.
+        // Keep the checkpoint durable even when a future candidate sorts after
+        // a retry key that was discovered in an earlier run.
+        afterKey = nextAfterKey(key);
         await EvmAudit.heartbeat(job.id, OWNER, {
           progress: {
             current_cursor: nextState,

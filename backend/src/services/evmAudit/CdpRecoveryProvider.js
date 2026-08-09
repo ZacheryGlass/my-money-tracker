@@ -304,7 +304,10 @@ function recoveryCursor(value, fallback = null) {
   try {
     const parsed = JSON.parse(value);
     if (parsed?.version === 1 && parsed.phase === 'known-ledger'
-        && (parsed.afterKey == null || typeof parsed.afterKey === 'string')) return parsed;
+        && (parsed.afterKey == null || typeof parsed.afterKey === 'string')
+        && (parsed.retryKeys == null
+          || (Array.isArray(parsed.retryKeys)
+            && parsed.retryKeys.every((key) => typeof key === 'string')))) return parsed;
   } catch { /* an opaque address-history cursor is not a recovery cursor */ }
   return fallback;
 }

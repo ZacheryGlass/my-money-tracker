@@ -722,6 +722,134 @@ test('a deferred narrow audit can be widened to full without bypassing cooldown'
   assert.equal(calls.at(-1).sql, 'COMMIT');
 });
 
+test('an explicit narrower Base audit supersedes only a deferred broader scope', async (t) => {
+  const originalConnect = database.connect;
+  const originalEnsureSubject = EvmAudit.ensureSubject;
+  const calls = [];
+  const broad = {
+    id: 45,
+    status: 'deferred',
+    mode: 'full',
+    requested_chains: [1, 10, 100, 8453],
+    error_code: 'BLOCKSCOUT_FEED_UNSUPPORTED',
+  };
+  const baseJob = {
+    id: 46,
+    status: 'queued',
+    mode: 'full',
+    requested_chains: [8453],
+  };
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [broad] };
+      if (/FROM evm_audit_scopes/.test(sql)) {
+        return { rows: [{ chain_id: 8453, scope_count: '7', complete: true }] };
+      }
+      if (/INSERT INTO evm_audit_jobs/.test(sql)) return { rows: [baseJob] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  t.after(() => {
+    database.connect = originalConnect;
+    EvmAudit.ensureSubject = originalEnsureSubject;
+  });
+  database.connect = async () => client;
+  EvmAudit.ensureSubject = async () => ({ id: 9, address: WALLET });
+
+  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
+    mode: 'full', requestedChains: [8453], credentialGeneration: null,
+  });
+
+  assert.equal(result.created, true);
+  assert.deepEqual(result.job.requested_chains, [8453]);
+  assert.ok(calls.some(({ sql }) => /status = 'cancelled'/.test(sql)));
+  assert.ok(calls.some(({ sql }) => /superseded_by_job_id/.test(sql)));
+  assert.ok(calls.some(({ sql }) => /INSERT INTO evm_audit_jobs/.test(sql)));
+  assert.equal(calls.at(-1).sql, 'COMMIT');
+});
+
+test('a deferred broader audit is not narrowed while Base has an incomplete scope', async (t) => {
+  const originalConnect = database.connect;
+  const originalEnsureSubject = EvmAudit.ensureSubject;
+  const calls = [];
+  const broad = {
+    id: 47,
+    status: 'deferred',
+    mode: 'full',
+    requested_chains: [1, 10, 100, 8453],
+    error_code: 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
+    retry_after_at: new Date(Date.now() + 60_000),
+  };
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [broad] };
+      if (/FROM evm_audit_scopes/.test(sql)) {
+        return { rows: [{ chain_id: 8453, scope_count: '7', complete: false }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  t.after(() => {
+    database.connect = originalConnect;
+    EvmAudit.ensureSubject = originalEnsureSubject;
+  });
+  database.connect = async () => client;
+  EvmAudit.ensureSubject = async () => ({ id: 10, address: WALLET });
+
+  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
+    mode: 'full', requestedChains: [8453], credentialGeneration: null,
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.job.id, 47);
+  assert.equal(result.job.status, 'deferred');
+  assert.equal(calls.some(({ sql }) => /EVM_AUDIT_SCOPE_SUPERSEDED/.test(sql)), false);
+  assert.equal(calls.at(-1).sql, 'COMMIT');
+});
+
+test('an explicit retry reopens a due deferred Base audit without bypassing cooldown', async (t) => {
+  const originalConnect = database.connect;
+  const originalEnsureSubject = EvmAudit.ensureSubject;
+  const calls = [];
+  const due = {
+    id: 48,
+    status: 'deferred',
+    mode: 'full',
+    requested_chains: [8453],
+    error_code: 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
+    retry_after_at: new Date(Date.now() - 1_000),
+  };
+  const reopened = { ...due, status: 'queued', stage: 'queued', error_code: null };
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [due] };
+      if (/SET status = 'queued'/.test(sql)) return { rows: [reopened] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  t.after(() => {
+    database.connect = originalConnect;
+    EvmAudit.ensureSubject = originalEnsureSubject;
+  });
+  database.connect = async () => client;
+  EvmAudit.ensureSubject = async () => ({ id: 11, address: WALLET });
+
+  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
+    mode: 'full', requestedChains: [8453], credentialGeneration: null,
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.job.status, 'queued');
+  assert.ok(calls.some(({ sql }) => /SET status = 'queued'/.test(sql)));
+  assert.equal(calls.at(-1).sql, 'COMMIT');
+});
+
 test('same-credential deferred retries preserve provider cooldown', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
   assert.match(source, /if \(result\.job\.status !== 'deferred'\) this\.enqueue\(result\.job\.id\);/);

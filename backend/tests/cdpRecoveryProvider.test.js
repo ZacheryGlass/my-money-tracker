@@ -242,6 +242,7 @@ test('CDP Core recovery retains partial evidence and rejects a trace for another
 test('CDP recovery cursors accept only the versioned known-ledger shape', () => {
   const state = {
     version: 1, phase: 'known-ledger', afterKey: '001:hash',
+    retryKeys: ['000:retry-hash'],
     addressHistoryCursor: 'opaque-page-token',
   };
   assert.deepEqual(CdpRecoveryProvider.recoveryCursor(JSON.stringify(state)), state);
@@ -250,6 +251,12 @@ test('CDP recovery cursors accept only the versioned known-ledger shape', () => 
     state
   );
   assert.equal(CdpRecoveryProvider.recoveryCursor(JSON.stringify({ version: 2 }), null), null);
+  assert.equal(
+    CdpRecoveryProvider.recoveryCursor(JSON.stringify({
+      version: 1, phase: 'known-ledger', retryKeys: { invalid: true },
+    }), null),
+    null
+  );
   assert.equal(CdpRecoveryProvider.candidateKey({ blockNumber: 12, hash: HASH }), `00000000000000000012:${HASH}`);
 });
 
