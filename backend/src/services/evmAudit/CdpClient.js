@@ -329,12 +329,15 @@ class CdpClient {
 
         const error = responseError(response, body, method, this.apiKey);
         const retryable = error.code === 'CDP_RATE_LIMITED' && attempt < this.maxAttempts;
+        const oversized = oversizedResponse(error);
         const responseRaw = redactSecret(text, this.apiKey);
         await this.onFailedAttempt?.({
           provider: 'coinbase-cdp', endpoint, method: 'POST', attemptNo: attempt,
-          requestParams: params, outcome: retryable || error.code === 'CDP_QUOTA_EXHAUSTED' ? 'deferred' : 'failed',
+          requestParams: params,
+          outcome: retryable || oversized || error.code === 'CDP_QUOTA_EXHAUSTED' ? 'deferred' : 'failed',
           httpStatus: error.httpStatus || response.status,
-          errorCode: error.code, errorDetail: error.message,
+          errorCode: oversized ? 'CDP_RESPONSE_TOO_LARGE' : error.code,
+          errorDetail: error.message,
           requestId: response.headers.get('x-request-id') || null,
           responseSha256: sha256(responseRaw),
           responseRaw,
@@ -378,7 +381,17 @@ class CdpClient {
           // Keep the cursor unchanged while retrying the same page at a
           // smaller size. No raw page or durable checkpoint is written until
           // a complete response is received.
-          if (!oversizedResponse(error) || requestedPageSize <= 1) throw error;
+          if (!oversizedResponse(error)) throw error;
+          if (requestedPageSize <= 1) {
+            throw providerError(
+              `Coinbase CDP cannot return a single Base address-history transaction within its response limit: ${error.message}`,
+              'CDP_RESPONSE_TOO_LARGE',
+              {
+                httpStatus: error.httpStatus,
+                retryAt: new Date(Date.now() + 60 * 60 * 1000),
+              }
+            );
+          }
           requestedPageSize = Math.max(1, Math.floor(requestedPageSize / 2));
         }
       }
