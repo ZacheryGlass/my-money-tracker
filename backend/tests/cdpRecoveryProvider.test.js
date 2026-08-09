@@ -227,9 +227,9 @@ test('CDP Core recovery falls back to a parent-state transaction trace when the 
     async rpcWithEvidence(method, params) {
       calls.push({ method, params });
       if (method === 'debug_traceBlockByNumber') {
-        const error = new Error('Response is too big');
+        const error = new Error('Coinbase CDP debug_traceBlockByNumber returned an error: Response is too big');
         error.code = 'CDP_API_ERROR';
-        error.httpStatus = 413;
+        error.httpStatus = 200;
         throw error;
       }
       return responses.get(method);
