@@ -160,6 +160,17 @@ test('CDP pagination rejects non-string cursors, non-adjacent cycles, and mixed 
         .addressTransactionPages(WALLET).next(),
       (error) => error.code === 'CDP_API_ERROR'
     );
+
+    global.fetch = async () => jsonRpcResult({
+      code: 'METHOD_NOT_AVAILABLE', message: 'provider returned an empty page',
+      addressTransactions: [], nextPageToken: null,
+    });
+    await assert.rejects(
+      () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+        .addressTransactionPages(WALLET).next(),
+      (error) => error.code === 'CDP_API_ERROR'
+        && error.message.includes('provider returned an empty page')
+    );
   } finally {
     global.fetch = originalFetch;
   }
@@ -219,6 +230,72 @@ test('CDP rejects conflicting address-history result collections before cursor a
   );
 });
 
+test('CDP classifies a successful envelope containing a provider result error', async (t) => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => jsonRpcResult({
+    code: 'METHOD_NOT_AVAILABLE', details: 'address history is not enabled',
+    message: 'The requested method is unavailable',
+  });
+  t.after(() => { global.fetch = originalFetch; });
+
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_API_ERROR'
+      && error.message.includes('requested method is unavailable')
+      && error.message.includes('address history is not enabled')
+  );
+});
+
+test('CDP defers resource-exhausted result errors and keeps quota errors on the calendar boundary', async (t) => {
+  const originalFetch = global.fetch;
+  const responses = [
+    jsonRpcResult({ code: 'RESOURCE_EXHAUSTED', message: 'provider request capacity exhausted' }),
+    jsonRpcResult({ code: 'resource_exhausted', message: 'monthly billing quota exhausted' }),
+  ];
+  global.fetch = async () => responses.shift();
+  t.after(() => { global.fetch = originalFetch; });
+
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_RATE_LIMITED' && error.retryAfterMs === 5_000
+  );
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_QUOTA_EXHAUSTED' && error.retryAt instanceof Date
+  );
+});
+
+test('CDP recognizes quota and authentication result codes and redacts echoed keys from retained evidence', async (t) => {
+  const originalFetch = global.fetch;
+  const attempts = [];
+  const apiKey = 'key-that-must-not-persist';
+  const responses = [
+    jsonRpcResult({ code: 'QUOTA_EXCEEDED', message: 'monthly allowance exceeded' }),
+    jsonRpcResult({ code: 'UNAUTHENTICATED', message: `credential ${apiKey} is invalid` }),
+  ];
+  global.fetch = async () => responses.shift();
+  t.after(() => { global.fetch = originalFetch; });
+
+  for (const expectedCode of ['CDP_QUOTA_EXHAUSTED', 'CDP_AUTH_FAILED']) {
+    await assert.rejects(
+      () => new CdpClient(apiKey, {
+        spacingMs: 0, maxAttempts: 1, onFailedAttempt: async (attempt) => attempts.push(attempt),
+      }).addressTransactionPages(WALLET).next(),
+      (error) => error.code === expectedCode && !error.message.includes(apiKey)
+    );
+  }
+
+  assert.equal(attempts.length, 2);
+  for (const attempt of attempts) {
+    assert.ok(!JSON.stringify(attempt).includes(apiKey));
+  }
+  assert.ok(attempts[1].responseRaw.includes('[redacted]'));
+  assert.ok(attempts[1].responseJson.result.message.includes('[redacted]'));
+});
+
 test('CDP errors classify quota and rate limits with retry boundaries', async (t) => {
   const originalFetch = global.fetch;
   const responses = [
@@ -226,6 +303,14 @@ test('CDP errors classify quota and rate limits with retry boundaries', async (t
     new Response(JSON.stringify({ error: { message: 'slow down' } }), {
       status: 429, headers: { 'retry-after': '2' },
     }),
+    new Response(JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      error: { code: 'RESOURCE_EXHAUSTED', message: 'provider request capacity exhausted' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    new Response(JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      error: { code: 'RESOURCE_EXHAUSTED', message: 'provider request capacity exhausted' },
+    }), { status: 403, headers: { 'content-type': 'application/json' } }),
   ];
   global.fetch = async () => responses.shift();
   t.after(() => { global.fetch = originalFetch; });
@@ -239,6 +324,16 @@ test('CDP errors classify quota and rate limits with retry boundaries', async (t
     () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
       .addressTransactionPages(WALLET).next(),
     (error) => error.code === 'CDP_RATE_LIMITED' && error.retryAfterMs === 2000
+  );
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_RATE_LIMITED' && error.retryAfterMs === 5000
+  );
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_RATE_LIMITED' && error.retryAfterMs === 5000
   );
 });
 
