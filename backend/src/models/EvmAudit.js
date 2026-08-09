@@ -784,6 +784,9 @@ class EvmAudit {
   static async deferOpenScopes(jobId, chainId, {
     errorCode = 'AUDIT_PROVIDER_UNAVAILABLE',
     errorDetail = 'The provider did not complete this chain scope.',
+    provider = 'consensus-rpc',
+    scopeStatus = 'deferred',
+    capabilities = [],
   }, fence = {}) {
     const transactional = Boolean(fence.jobId && fence.owner);
     const client = transactional ? await pool.connect() : pool;
@@ -799,14 +802,26 @@ class EvmAudit {
       }
       const { rowCount } = await client.query(
         `UPDATE evm_audit_scopes
-            SET status = 'deferred',
+            SET status = $5,
                 pagination_exhausted = FALSE,
                 error_code = $3,
                 error_detail = $4,
                 updated_at = CURRENT_TIMESTAMP
           WHERE job_id = $1 AND chain_id = $2 AND status IN ('queued', 'running')`,
-        [jobId, chainId, errorCode, errorDetail]
+        [jobId, chainId, errorCode, errorDetail, scopeStatus]
       );
+      if (capabilities.length) {
+        await client.query(
+          `INSERT INTO evm_audit_scopes (
+             job_id, chain_id, provider, capability, status,
+             provider_order, error_code, error_detail
+           )
+           SELECT $1, $2, $3, capability, $4, 'unknown', $5, $6
+             FROM unnest($7::varchar[]) AS requested(capability)
+           ON CONFLICT (job_id, chain_id, provider, capability) DO NOTHING`,
+          [jobId, chainId, provider, scopeStatus, errorCode, errorDetail, capabilities]
+        );
+      }
       if (transactional) await client.query('COMMIT');
       return rowCount;
     } catch (error) {

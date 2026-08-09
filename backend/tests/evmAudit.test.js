@@ -263,6 +263,10 @@ test('standing explorer feed limitations defer only that chain', () => {
   );
   assert.match(source, /deferOpenScopes\(job\.id, chainId/);
   assert.match(source, /for \(const chainId of runnable\)[\s\S]*?try \{[\s\S]*?runChain/);
+  assert.match(source, /scopeStatus: standing \? 'unsupported' : deferred \? 'deferred' : 'failed'/);
+  assert.match(source, /capabilities: AUDIT_CAPABILITIES/);
+  assert.match(source, /isStandingExplorerLimitation\(error\) \? `\$\{prefix\}_CHAIN_UNAVAILABLE`/);
+  assert.match(source, /failed: !deferred && !standing/);
 });
 
 test('consensus canonicalization retains failed mined outgoing transactions and gas', () => {
