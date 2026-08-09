@@ -214,6 +214,19 @@ function parentBlockTag(blockNumber) {
   return `0x${(number > 0n ? number - 1n : 0n).toString(16)}`;
 }
 
+function traceBlockFallbackEligible(error) {
+  if (error?.code === 'CDP_RESPONSE_TOO_LARGE' || oversizedResponse(error)) return true;
+  return error?.code === 'CDP_API_ERROR'
+    && /(?:state at block .*pruned|failed to apply beacon root contract call)/i.test(error.message || '');
+}
+
+function traceFallbackUnavailable(error) {
+  return error?.code === 'CDP_RESPONSE_TOO_LARGE'
+    || oversizedResponse(error)
+    || (error?.code === 'CDP_API_ERROR'
+      && /(?:state at block .*pruned|failed to apply beacon root contract call)/i.test(error.message || ''));
+}
+
 async function recoverTransaction(client, candidate, {
   onEvidence = null, traceCache = null, loadTrace = null,
 } = {}) {
@@ -262,7 +275,7 @@ async function recoverTransaction(client, candidate, {
       );
       traceCache?.set(traceKey, traceResponse);
     } catch (error) {
-      if (error.code !== 'CDP_RESPONSE_TOO_LARGE' && !oversizedResponse(error)) throw error;
+      if (!traceBlockFallbackEligible(error)) throw error;
       // A whole-block callTracer response can exceed CDP's response limit even
       // when the wallet transaction itself is recoverable. CDP documents
       // debug_traceCall, so retry just this transaction against its parent
@@ -280,9 +293,9 @@ async function recoverTransaction(client, candidate, {
           }
         );
       } catch (fallbackError) {
-        if (fallbackError.code === 'CDP_RESPONSE_TOO_LARGE') {
+        if (traceFallbackUnavailable(fallbackError)) {
           throw recoveryError(
-            `Coinbase CDP transaction-scoped trace is also too large for ${hash}`,
+            `Coinbase CDP transaction-scoped trace is unavailable for ${hash}: ${fallbackError.message}`,
             'CDP_RECOVERY_TRACE_UNAVAILABLE',
           );
         }

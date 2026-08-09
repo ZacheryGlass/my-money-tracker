@@ -346,6 +346,7 @@ class CdpClient {
         const error = responseError(response, body, method, this.apiKey);
         const retryable = error.code === 'CDP_RATE_LIMITED' && attempt < this.maxAttempts;
         const oversized = oversizedResponse(error);
+        if (oversized) error.code = 'CDP_RESPONSE_TOO_LARGE';
         const responseRaw = redactSecret(text, this.apiKey);
         await this.onFailedAttempt?.({
           provider: 'coinbase-cdp', endpoint, method: 'POST', attemptNo: attempt,
