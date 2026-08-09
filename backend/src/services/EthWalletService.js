@@ -163,7 +163,7 @@ function providerName(chain) {
 function coverageFailureStatus(error) {
   if (isExplorerRateLimited(error) || String(error?.code || '').startsWith('CDP_')
       && ['CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
-        'CDP_SCAN_BUSY'].includes(error.code)) {
+        'CDP_SCAN_BUSY', 'CDP_RESPONSE_TOO_LARGE'].includes(error.code)) {
     return 'deferred';
   }
   if (['RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR'].includes(error?.code)) return 'deferred';

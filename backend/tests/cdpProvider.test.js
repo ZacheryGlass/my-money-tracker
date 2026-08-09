@@ -177,6 +177,37 @@ test('CDP address history treats HTTP 413 as an oversized page', async (t) => {
   assert.deepEqual(requests.map((request) => request.params[0].pageSize), [20, 10, 5]);
 });
 
+test('CDP classifies an unreturnable single transaction as a deferred provider limitation', async (t) => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  const attempts = [];
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    requests.push(request);
+    return jsonRpcResult({
+      code: 'INTERNAL',
+      details: 'grpc: received message larger than max (4319627 vs. 4194304)',
+      message: 'response too large',
+    });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  await assert.rejects(
+    () => new CdpClient('test-key', {
+      spacingMs: 0, maxAttempts: 1, onFailedAttempt: async (attempt) => attempts.push(attempt),
+    })
+      .addressTransactionPages(WALLET, { pageSize: 10 }).next(),
+    (error) => error.code === 'CDP_RESPONSE_TOO_LARGE'
+      && error.retryAt instanceof Date
+      && /single Base address-history transaction/.test(error.message)
+  );
+  assert.deepEqual(requests.map((request) => request.params[0].pageSize), [10, 5, 2, 1]);
+  assert.equal(attempts.length, 4);
+  assert.ok(attempts.every((attempt) => (
+    attempt.errorCode === 'CDP_RESPONSE_TOO_LARGE' && attempt.outcome === 'deferred'
+  )));
+});
+
 test('CDP pagination rejects a repeated opaque token', async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => jsonRpcResult({
