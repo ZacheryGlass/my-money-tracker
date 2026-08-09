@@ -147,6 +147,7 @@ class EvmAudit {
   static async createOrFindActiveJob(userId, wallet, {
     mode = 'incremental', requestedChains = [], credentialGeneration = null,
     credentialGenerations = null,
+    requestedProviders = null,
     etherscanConfigured = false, cdpConfigured = false, rpcConfigurationReady = false,
   } = {}) {
     const providerGenerations = credentialGenerations || {
@@ -192,7 +193,8 @@ class EvmAudit {
         const requestedScope = await client.query(
           `SELECT chain_id,
                   COUNT(*) AS scope_count,
-                  BOOL_AND(status = 'complete') AS complete
+                  BOOL_AND(status = 'complete') AS complete,
+                  ARRAY_AGG(DISTINCT provider) AS providers
              FROM evm_audit_scopes
             WHERE job_id = $1 AND chain_id = ANY($2::bigint[])
             GROUP BY chain_id`,
@@ -201,6 +203,23 @@ class EvmAudit {
         const requestedIds = new Set(requestedChains.map(Number));
         requestedScopeIsComplete = requestedScope.rows.length === requestedIds.size
           && requestedScope.rows.every((row) => Number(row.scope_count) > 0 && row.complete === true);
+        const requestedProviderIsIncomplete = requestedProviders
+          && requestedScope.rows.length === requestedIds.size
+          && requestedScope.rows.some((row) => {
+            const expectedProvider = requestedProviders[String(row.chain_id)];
+            return expectedProvider
+              && (row.providers || []).includes(expectedProvider)
+              && row.complete !== true;
+          });
+        // A deferred broad job can predate a provider migration. If it has no
+        // incomplete scope for the provider now required by the requested
+        // chain, a new narrow job is safe: old pages remain immutable and the
+        // new provider establishes its own bounded proof. An incomplete
+        // requested-provider scope still blocks narrowing so a CDP/Moralis
+        // retry deadline cannot be bypassed.
+        if (requestedProviders && !requestedProviderIsIncomplete) {
+          requestedScopeIsComplete = true;
+        }
       }
       if (isDeferredBroaderScope && requestedScopeIsComplete) {
         // A whole-EVM job can remain deferred forever because an unrelated

@@ -377,6 +377,11 @@ class EvmAuditService {
     const result = await EvmAudit.createOrFindActiveJob(userId, wallet, {
       mode,
       requestedChains: [...new Set(selected)],
+      requestedProviders: Object.fromEntries([...new Set(selected)].map((chainId) => {
+        const config = AUDIT_CHAINS.get(chainId);
+        return [chainId, config.cdp ? 'coinbase-cdp'
+          : config.moralis ? 'moralis' : config.auditProvider || 'consensus-rpc'];
+      })),
       credentialGeneration,
       credentialGenerations,
       etherscanConfigured,
