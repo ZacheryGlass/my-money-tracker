@@ -774,9 +774,14 @@ class EvmAuditService {
 
   static async runUnsupportedChain({ job, chainId, owner = null }) {
     const config = AUDIT_CHAINS.get(chainId);
+    // A standing unsupported scope is not evidence that Moralis was used. In
+    // particular, zkSync Lite is outside the EVM contract and has no provider
+    // at all; preserve that fact instead of attributing it to Gnosis's source.
+    const provider = config?.auditProvider
+      || (config?.cdp ? 'coinbase-cdp' : config?.moralis ? 'moralis' : 'unsupported');
     for (const capability of AUDIT_CAPABILITIES) {
       await EvmAudit.upsertScope(job.id, {
-        chainId, provider: 'moralis', capability, status: 'unsupported',
+        chainId, provider, capability, status: 'unsupported',
         errorCode: config.errorCode, errorDetail: config.errorDetail,
       }, owner ? { jobId: job.id, owner } : {});
     }

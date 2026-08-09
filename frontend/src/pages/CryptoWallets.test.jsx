@@ -363,6 +363,30 @@ describe('Crypto -> Wallets tab', () => {
     expect(screen.queryByText('Sync failed')).toBeNull();
   });
 
+  it('renders durable provider scan progress after the local action has ended', async () => {
+    await openEthereumTab([{
+      ...CHAIN_WALLET,
+      chains: [{
+        chain_id: 8453,
+        name: 'Base',
+        enabled: true,
+        provider_scan_status: 'running',
+        provider_scan_head: 12345678,
+        provider_cursor: 'opaque-cursor',
+        provider_scan_owner: 'worker-1',
+        provider_last_page_at: new Date().toISOString(),
+        unsupported_feeds: [],
+        error_code: null,
+      }],
+    }]);
+
+    expect(screen.getAllByText('Syncing').length).toBeGreaterThan(0);
+    await expandWallet();
+    expect(await screen.findByText(/through block 12345678/i)).toBeInTheDocument();
+    expect(screen.getByText(/checkpoint saved/i)).toBeInTheDocument();
+    expect(screen.getByText(/worker active/i)).toBeInTheDocument();
+  });
+
   it('shows provider cooldowns as deferred instead of failed', async () => {
     await openEthereumTab([{
       ...CHAIN_WALLET,

@@ -327,6 +327,9 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
 // to silence either, so every state has words rather than only a colour.
 const chainIssueTone = (chain) => {
   if (!chain.enabled) return 'neutral';
+  if (chain.provider_scan_status === 'running') return 'running';
+  if (chain.provider_scan_status === 'deferred') return 'deferred';
+  if (chain.provider_scan_status === 'failed') return 'failed';
   if (DEFERRED_SYNC_CODES.has(chain.error_code)) return 'deferred';
   if (chain.error_code && !LIMITED_SYNC_CODES.has(chain.error_code)) return 'failed';
   if (LIMITED_SYNC_CODES.has(chain.error_code) || chain.unsupported_feeds?.length > 0) {
@@ -343,6 +346,15 @@ const walletStatus = (wallet) => {
     return { label: 'Limited coverage', tone: 'text-amber-400' };
   }
   if (wallet.error_code) return { label: 'Sync failed', tone: 'text-loss' };
+  if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'failed')) {
+    return { label: 'Sync failed', tone: 'text-loss' };
+  }
+  if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'deferred')) {
+    return { label: 'Sync deferred', tone: 'text-amber-400' };
+  }
+  if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'running')) {
+    return { label: 'Syncing', tone: 'text-amber-400' };
+  }
   if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'limited')) {
     return { label: 'Limited coverage', tone: 'text-amber-400' };
   }
@@ -398,6 +410,22 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
   const [expandedId, setExpandedId] = useState(null);
   const [sorting, setSorting] = useState([{ id: 'eth', desc: true }]);
   const isMobile = useIsMobile();
+
+  // The server owns this state. Poll only while a provider scan is active so a
+  // reload or navigation cannot turn a durable running scan back into a local
+  // spinner with no progress. The opaque cursor is never exposed; the detail
+  // line below reports whether a checkpoint exists and when it was committed.
+  const providerScanRunning = wallets.some((wallet) =>
+    wallet.chains?.some((chain) => chain.enabled && chain.provider_scan_status === 'running')
+  );
+  useEffect(() => {
+    if (!providerScanRunning) return undefined;
+    const refresh = async () => {
+      try { await onChanged(); } catch { /* the next poll remains authoritative */ }
+    };
+    const timer = window.setInterval(refresh, 5000);
+    return () => window.clearInterval(timer);
+  }, [onChanged, providerScanRunning]);
 
   const visibleAudits = useMemo(() => ({
     ...Object.fromEntries(
@@ -812,6 +840,23 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
                 </span>
               )}
             </span>
+          ))}
+        </div>
+      )}
+
+      {wallet.chains?.some((chain) => chain.enabled && chain.provider_scan_status && chain.provider_scan_status !== 'idle') && (
+        <div className="space-y-1 rounded border border-border bg-surface-2 px-3 py-2 text-[10px] text-secondary">
+          {wallet.chains.filter((chain) => chain.enabled && chain.provider_scan_status && chain.provider_scan_status !== 'idle').map((chain) => (
+            <p key={`scan-${chain.chain_id}`}>
+              <span className="font-semibold text-primary">{chain.name}:</span>{' '}
+              {String(chain.provider_scan_status).replaceAll('_', ' ')}
+              {chain.provider_scan_head != null ? ` · through block ${chain.provider_scan_head}` : ''}
+              {chain.provider_scan_status === 'running'
+                ? ` · ${chain.provider_cursor ? 'checkpoint saved' : 'starting'}${chain.provider_scan_owner ? ' · worker active' : ''}`
+                : ''}
+              {chain.provider_last_page_at
+                ? ` · last page ${formatRelativeTime(chain.provider_last_page_at)}` : ''}
+            </p>
           ))}
         </div>
       )}
