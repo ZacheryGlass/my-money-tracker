@@ -4,12 +4,51 @@ const { address, sha256, stableJson, txHash } = require('./normalizer');
 const { oversizedResponse } = require('./CdpClient');
 
 const MAX_RECOVERY_CANDIDATES = 64;
+const DEFAULT_RECOVERY_MAX_REQUESTS = 24;
+const DEFAULT_RECOVERY_MAX_DURATION_MS = 90_000;
+
+function boundedPositiveEnv(name, fallback, maximum) {
+  const value = Number(process.env[name]);
+  if (!Number.isInteger(value) || value < 1) return fallback;
+  return Math.min(value, maximum);
+}
+
+const RECOVERY_MAX_REQUESTS = boundedPositiveEnv(
+  'CDP_RECOVERY_MAX_REQUESTS', DEFAULT_RECOVERY_MAX_REQUESTS, 100
+);
+const RECOVERY_MAX_DURATION_MS = boundedPositiveEnv(
+  'CDP_RECOVERY_MAX_DURATION_MS', DEFAULT_RECOVERY_MAX_DURATION_MS, 10 * 60 * 1000
+);
 
 function recoveryError(message, code = 'CDP_RECOVERY_FAILED', extra = {}) {
   const error = new Error(message);
   error.code = code;
   Object.assign(error, extra);
   return error;
+}
+
+function createBudget({ maxRequests = RECOVERY_MAX_REQUESTS, maxDurationMs = RECOVERY_MAX_DURATION_MS } = {}) {
+  const requests = Number.isInteger(maxRequests) && maxRequests > 0
+    ? Math.min(maxRequests, 100) : RECOVERY_MAX_REQUESTS;
+  const duration = Number.isInteger(maxDurationMs) && maxDurationMs > 0
+    ? Math.min(maxDurationMs, 10 * 60 * 1000) : RECOVERY_MAX_DURATION_MS;
+  return {
+    maxRequests: requests,
+    deadline: Date.now() + duration,
+    requestsUsed: 0,
+  };
+}
+
+function consumeBudget(budget) {
+  if (!budget) return;
+  if (budget.requestsUsed >= budget.maxRequests || Date.now() >= budget.deadline) {
+    throw recoveryError(
+      `Coinbase CDP recovery request budget exhausted after ${budget.requestsUsed} request(s)`,
+      'CDP_RECOVERY_BUDGET_EXHAUSTED',
+      { retryAt: new Date(Date.now() + 60 * 60 * 1000) }
+    );
+  }
+  budget.requestsUsed += 1;
 }
 
 function hexQuantity(value, field) {
@@ -97,6 +136,7 @@ function flattenCallTracer(node, path = [], context = {}) {
     blockNumber: context.blockNumber,
     blockHash: context.blockHash,
     transactionIndex: context.transactionIndex,
+    ...(context.traceProvenance ? { traceProvenance: context.traceProvenance } : {}),
   };
   const children = Array.isArray(node.calls) ? node.calls : [];
   return [trace, ...children.flatMap((child, index) => flattenCallTracer(
@@ -144,7 +184,7 @@ function validateCoordinates(transaction, receipt, block, hash, transactionIndex
   return { blockNumber, blockHash, transactionIndex: txIndex };
 }
 
-function syntheticHistoryItem(transaction, receipt, block, traces, coordinates) {
+function syntheticHistoryItem(transaction, receipt, block, traces, coordinates, traceProvenance) {
   const hash = normalizedHash(transaction.hash, 'transaction hash');
   const from = address(transaction.from);
   if (!from) throw recoveryError('Coinbase CDP recovery returned a transaction without a sender', 'CDP_INVALID_RESPONSE');
@@ -178,6 +218,8 @@ function syntheticHistoryItem(transaction, receipt, block, traces, coordinates) 
     // than an omitted/unknown field.
     tokenTransfers: [],
     flattenedTraces: traces,
+    traceProvenance,
+    traceComplete: traceProvenance === 'block-callTracer',
   };
   return {
     name: `core-recovery/${hash}`,
@@ -215,21 +257,19 @@ function parentBlockTag(blockNumber) {
 }
 
 function traceBlockFallbackEligible(error) {
-  if (error?.code === 'CDP_RESPONSE_TOO_LARGE' || oversizedResponse(error)) return true;
-  return error?.code === 'CDP_API_ERROR';
+  return error?.code === 'CDP_RESPONSE_TOO_LARGE' || oversizedResponse(error);
 }
 
 function traceFallbackUnavailable(error) {
-  return error?.code === 'CDP_RESPONSE_TOO_LARGE'
-    || oversizedResponse(error)
-    || error?.code === 'CDP_API_ERROR';
+  return error?.code === 'CDP_RESPONSE_TOO_LARGE' || oversizedResponse(error);
 }
 
 async function recoverTransaction(client, candidate, {
-  onEvidence = null, traceCache = null, loadTrace = null,
+  onEvidence = null, traceCache = null, loadTrace = null, budget = null,
 } = {}) {
   const hash = normalizedHash(candidate.hash, 'candidate transaction hash');
   const rpc = async (method, params, metadata = {}) => {
+    consumeBudget(budget);
     const response = await client.rpcWithEvidence(method, params, 'transaction-recovery');
     await onEvidence?.(response, metadata);
     return response;
@@ -257,6 +297,7 @@ async function recoverTransaction(client, candidate, {
   const coordinates = validateCoordinates(transaction, receipt, block, hash, transactionIndex);
   const traceKey = traceCacheKey(blockNumber, coordinates.blockHash);
   let traceResponse = traceCache?.get(traceKey);
+  let traceProvenance = traceResponse ? 'block-callTracer' : null;
   if (!traceResponse) {
     traceResponse = await loadTrace?.({
       blockNumber: coordinates.blockNumber,
@@ -271,6 +312,7 @@ async function recoverTransaction(client, candidate, {
         'debug_traceBlockByNumber', [blockNumber, { tracer: 'callTracer' }],
         { blockHash: coordinates.blockHash, tracer: 'callTracer' }
       );
+      traceProvenance = 'block-callTracer';
       traceCache?.set(traceKey, traceResponse);
     } catch (error) {
       if (!traceBlockFallbackEligible(error)) throw error;
@@ -290,6 +332,7 @@ async function recoverTransaction(client, candidate, {
             tracer: 'callTracer',
           }
         );
+        traceProvenance = 'parent-state-replay';
       } catch (fallbackError) {
         if (traceFallbackUnavailable(fallbackError)) {
           throw recoveryError(
@@ -324,8 +367,9 @@ async function recoverTransaction(client, candidate, {
     blockNumber: coordinates.blockNumber,
     blockHash: coordinates.blockHash,
     transactionIndex: coordinates.transactionIndex,
+    traceProvenance,
   });
-  const item = syntheticHistoryItem(transaction, receipt, block, traces, coordinates);
+  const item = syntheticHistoryItem(transaction, receipt, block, traces, coordinates, traceProvenance);
   const rawResponses = [transactionResponse, receiptResponse, blockResponse, traceResponse];
   const rawText = JSON.stringify({
     jsonrpc: '2.0',
@@ -352,6 +396,8 @@ async function recoverTransaction(client, candidate, {
         block,
         traces,
         trace_method: traceResponse.method,
+        trace_provenance: traceProvenance,
+        trace_complete: traceProvenance === 'block-callTracer',
       },
       rawText,
       responseSha256: sha256(rawText),
@@ -385,8 +431,11 @@ function candidateKey(candidate) {
 
 module.exports = {
   candidateKey,
+  createBudget,
   flattenCallTracer,
   MAX_RECOVERY_CANDIDATES,
+  RECOVERY_MAX_DURATION_MS,
+  RECOVERY_MAX_REQUESTS,
   recoveryCursor,
   recoverTransaction,
   recoveryError,

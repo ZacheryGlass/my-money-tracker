@@ -195,7 +195,15 @@ function transactionRows(item, walletAddress, { nativeCredit = null } = {}) {
   if (ethereum.flattenedTraces != null && !Array.isArray(ethereum.flattenedTraces)) {
     throw invalidResponse('Coinbase CDP returned a non-array flattened trace collection');
   }
-  for (const trace of (ethereum.flattenedTraces || [])) {
+  // A parent-state debug_traceCall is useful raw evidence, but it is not an
+  // exact reconstruction of a mined transaction when earlier transactions in
+  // the same block changed state. Keep it in the retained CDP item/audit
+  // evidence, but never project it into the ordinary internal-transfer feed.
+  const internalTraces = (ethereum.flattenedTraces || []).filter((trace) => (
+    ethereum.traceProvenance !== 'parent-state-replay'
+      && trace?.traceProvenance !== 'parent-state-replay'
+  ));
+  for (const trace of internalTraces) {
     const traceFrom = address(trace.from);
     const traceTo = address(trace.to);
     if (!traceFrom || !traceTo || (traceFrom !== wallet && traceTo !== wallet)) continue;

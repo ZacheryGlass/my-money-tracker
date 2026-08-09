@@ -244,8 +244,26 @@ test('CDP Core recovery falls back to a parent-state transaction trace when the 
   ]);
   assert.equal(calls[4].params[1], '0x7a');
   assert.equal(recovered.response.body.trace_method, 'debug_traceCall');
+  assert.equal(recovered.response.body.trace_provenance, 'parent-state-replay');
+  assert.equal(recovered.response.body.trace_complete, false);
+  assert.equal(recovered.item.content.ethereum.traceProvenance, 'parent-state-replay');
   assert.equal(recovered.traces.length, 1);
   assert.equal(recovered.traces[0].transactionHash, HASH);
+  assert.equal(recovered.traces[0].traceProvenance, 'parent-state-replay');
+});
+
+test('CDP Core recovery enforces a shared request budget', async () => {
+  const client = {
+    async rpcWithEvidence(method) {
+      return rpcResponse(method === 'eth_getTransactionByHash' ? null : null, method, []);
+    },
+  };
+  await assert.rejects(
+    () => CdpRecoveryProvider.recoverTransaction(client, { hash: HASH }, {
+      budget: CdpRecoveryProvider.createBudget({ maxRequests: 1, maxDurationMs: 60_000 }),
+    }),
+    (error) => error.code === 'CDP_RECOVERY_BUDGET_EXHAUSTED'
+  );
 });
 
 test('CDP Core recovery fails closed on conflicting canonical identity', async () => {

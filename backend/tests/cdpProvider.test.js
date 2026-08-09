@@ -111,6 +111,28 @@ test('CDP address history uses bounded cursor pagination and never exposes the k
   assert.ok(!JSON.stringify(pages).includes('do-not-log-this-key'));
 });
 
+test('parent-state recovery traces remain audit evidence but do not enter ordinary internal feeds', () => {
+  const item = transaction({
+    content: {
+      ethereum: {
+        ...transaction().content.ethereum,
+        traceProvenance: 'parent-state-replay',
+        flattenedTraces: [{
+          from: WALLET, to: CONTRACT, value: '0x1',
+          traceAddress: [0], traceProvenance: 'parent-state-replay', status: '1',
+        }],
+      },
+    },
+  });
+  const normalized = CdpHistoryProvider.normalizePage(WALLET, [item]);
+  assert.equal(normalized.feeds.internal.length, 0);
+  const observations = normalizer.cdpHistoryObservations({
+    provider: 'coinbase-cdp-recovery', chainId: 8453,
+    subjectId: 1, address: WALLET,
+  }, item);
+  assert.equal(observations.filter((row) => row.evidenceKind === 'internal_trace').length, 1);
+});
+
 test('CDP address history defaults to a response-safe page size', async (t) => {
   const originalFetch = global.fetch;
   const requests = [];

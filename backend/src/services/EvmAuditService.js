@@ -162,7 +162,8 @@ function cdpUnavailableError(error) {
   if (!error) return null;
   if (!['CDP_NOT_CONFIGURED', 'CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR',
     'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-    'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE']
+    'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
+    'CDP_RECOVERY_BUDGET_EXHAUSTED']
     .includes(error.code)) return null;
   return {
     code: error.code,
@@ -687,6 +688,7 @@ class EvmAuditService {
               'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
               'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_RESPONSE_TOO_LARGE',
               'CDP_ADDRESS_ENUMERATION_UNPROVEN', 'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
+              'CDP_RECOVERY_BUDGET_EXHAUSTED',
               'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED',
               'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
               'ETHERSCAN_RATE_LIMITED', 'ETHERSCAN_TRANSPORT_ERROR',
@@ -750,7 +752,7 @@ class EvmAuditService {
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
         'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
         'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-        'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
+        'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE', 'CDP_RECOVERY_BUDGET_EXHAUSTED',
         'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
         'ETHERSCAN_TRANSPORT_ERROR',
@@ -1085,6 +1087,7 @@ class EvmAuditService {
       let skippedKnown = 0;
       let recoveryFailure = null;
       const traceCache = new Map();
+      const recoveryBudget = CdpRecoveryProvider.createBudget();
       for (const candidate of ordered) hashes.add(candidate.hash);
       for (const candidate of ordered) {
         assertLease(leaseState);
@@ -1119,6 +1122,7 @@ class EvmAuditService {
           try {
             recovery = await CdpRecoveryProvider.recoverTransaction(cdp, candidate, {
               traceCache,
+              budget: recoveryBudget,
               onEvidence: async (response, metadata = {}) => {
                 // Persist each successful Core response before the next
                 // recovery request. If block tracing later fails or times out,
@@ -1148,18 +1152,22 @@ class EvmAuditService {
             });
           } catch (error) {
             if (['CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR'].includes(error.code)) throw error;
+            const retryableRecoveryCodes = [
+              'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
+              'CDP_RECOVERY_BUDGET_EXHAUSTED',
+            ];
             const wrapped = CdpRecoveryProvider.recoveryError(
               `CDP address history is oversized and transaction-scoped recovery failed for ${candidate.hash}: ${publicErrorDetail(error)}`,
               error.code === 'CDP_API_ERROR' ? 'CDP_RECOVERY_UNSUPPORTED'
-                : ['CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE'].includes(error.code)
+                : retryableRecoveryCodes.includes(error.code)
                   ? error.code : 'CDP_RECOVERY_FAILED',
               { retryAt: error.retryAt || new Date(Date.now() + 60 * 60 * 1000) }
             );
             recoveryFailure ||= wrapped;
             const failure = {
               recovery: 'coinbase-cdp-core', transaction_hash: candidate.hash,
-              status: 'failed', retryable: ['CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE']
-                .includes(wrapped.code), error_code: wrapped.code,
+              status: 'failed', retryable: retryableRecoveryCodes.includes(wrapped.code),
+              error_code: wrapped.code,
               error_detail: publicErrorDetail(wrapped),
             };
             afterKey = nextAfterKey(key);
@@ -1190,6 +1198,7 @@ class EvmAuditService {
                 oversized_failed: (recoveryFailure ? 1 : 0),
               },
             });
+            if (error.code === 'CDP_RECOVERY_BUDGET_EXHAUSTED') break;
             continue;
           }
           afterKey = nextAfterKey(key);
@@ -1240,7 +1249,8 @@ class EvmAuditService {
       }
       if (recoveryFailure) {
         await completeScope(historyScope.id, {
-          status: recoveryFailure.code === 'CDP_RECOVERY_UNSUPPORTED' ? 'unsupported' : 'failed',
+          status: recoveryFailure.code === 'CDP_RECOVERY_UNSUPPORTED' ? 'unsupported'
+            : recoveryFailure.code === 'CDP_RECOVERY_BUDGET_EXHAUSTED' ? 'deferred' : 'failed',
           paginationExhausted: false,
           errorCode: recoveryFailure.code, errorDetail: publicErrorDetail(recoveryFailure),
         });

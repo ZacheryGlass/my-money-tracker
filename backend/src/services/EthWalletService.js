@@ -166,7 +166,8 @@ function coverageFailureStatus(error) {
   if (isExplorerRateLimited(error) || String(error?.code || '').startsWith('CDP_')
       && ['CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
         'CDP_SCAN_BUSY', 'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-        'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE'].includes(error.code)) {
+        'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
+        'CDP_RECOVERY_BUDGET_EXHAUSTED'].includes(error.code)) {
     return 'deferred';
   }
   if (error?.code === 'CDP_RECOVERY_UNSUPPORTED') return 'unsupported';
@@ -225,6 +226,13 @@ class EthWalletService {
       })
       .map((page) => String(page.request_params?.transaction_hash || '').toLowerCase())
       .filter(Boolean));
+    const recoveredItems = new Map();
+    for (const page of journal.filter((entry) => entry.stream === 'transaction-recovery')) {
+      const body = typeof page.response_json === 'string'
+        ? JSON.parse(page.response_json) : page.response_json;
+      const hash = String(body?.item?.hash || '').toLowerCase();
+      if (hash && body?.item) recoveredItems.set(hash, body.item);
+    }
     const pendingCandidates = allCandidates.filter((candidate) => (
       !completedRecoveryHashes.has(String(candidate.tx_hash).toLowerCase())
       && !terminalFailureHashes.has(String(candidate.tx_hash).toLowerCase())
@@ -232,7 +240,9 @@ class EthWalletService {
     const candidates = pendingCandidates.slice(0, CdpRecoveryProvider.MAX_RECOVERY_CANDIDATES);
     let recovered = 0;
     let terminalFailure = null;
+    let budgetFailure = null;
     const traceCache = new Map();
+    const recoveryBudget = CdpRecoveryProvider.createBudget();
     for (const candidate of candidates) {
       const candidateHash = String(candidate.tx_hash).toLowerCase();
       let recovery;
@@ -242,6 +252,7 @@ class EthWalletService {
           hash: candidateHash,
         }, {
           traceCache,
+          budget: recoveryBudget,
           onEvidence: async (response, metadata = {}) => {
           await EthProviderPage.record({
             walletId: wallet.id,
@@ -267,6 +278,10 @@ class EthWalletService {
         });
       } catch (error) {
         if (['CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR'].includes(error.code)) throw error;
+        if (error.code === 'CDP_RECOVERY_BUDGET_EXHAUSTED') {
+          budgetFailure = error;
+          break;
+        }
         const terminal = !['CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE'].includes(error.code);
         const wrapped = CdpRecoveryProvider.recoveryError(
           `Base CDP transaction-scoped recovery failed for ${candidateHash}: ${error.message}`,
@@ -317,14 +332,21 @@ class EthWalletService {
         itemCount: 1,
         owner: PROVIDER_SCAN_OWNER,
       });
+      recoveredItems.set(candidateHash, recovery.item);
       recovered += 1;
     }
-    if (terminalFailure) return terminalFailure;
-    return CdpRecoveryProvider.recoveryError(
+    if (terminalFailure) {
+      terminalFailure.recoveredItems = [...recoveredItems.values()];
+      return terminalFailure;
+    }
+    const result = CdpRecoveryProvider.recoveryError(
       `Base CDP address history exceeded the provider response limit (${oversizedError.message}). Core RPC recovery preserved ${recovered} new transaction-scoped response(s) from a bounded ${candidates.length}/${pendingCandidates.length} pending queue (${completedRecoveryHashes.size} already journaled; ${allCandidates.length} known candidates total), but CDP exposes no documented address-history enumeration fallback to prove the failed page contained no additional transaction.`,
-      'CDP_ADDRESS_ENUMERATION_UNPROVEN',
+      budgetFailure ? 'CDP_RECOVERY_BUDGET_EXHAUSTED' : 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
       { retryAt: new Date(Date.now() + 60 * 60 * 1000) }
     );
+    result.recoveredItems = [...recoveredItems.values()];
+    if (budgetFailure) result.message = `${result.message}; ${budgetFailure.message}`;
+    return result;
   }
 
   static async _syncCdpWalletChain(wallet, chain) {
@@ -643,6 +665,25 @@ class EthWalletService {
             wallet, chain, cdp, scanId, boundary.number, error,
             historicalRecoveryTransactions
           );
+          const recoveredItems = Array.isArray(effectiveError?.recoveredItems)
+            ? effectiveError.recoveredItems : [];
+          if (recoveredItems.length) {
+            const normalized = CdpHistoryProvider.normalizePage(wallet.address, recoveredItems, {
+              nativeCredit: nativeCreditConfig,
+            });
+            const recoveredRows = this.normalizeFeeds(wallet.address, normalized.feeds, {
+              preserveZeroValue: true,
+              stateSyncContract: nativeCreditConfig?.contract || null,
+              opStackDeposits: chain.opStackDeposits || null,
+            })
+              .map((row) => ({ ...row, wallet_id: wallet.id, chain_id: chain.id }));
+            // Recovery is append-only: the failed address-history page has not
+            // proven a replacement window, so never delete existing ordinary
+            // rows here. The normal derived pipeline still runs after this
+            // deferred result and can explain every recovered effect.
+            await EthTransfer.bulkInsert(recoveredRows);
+            effectiveError.recoveredRows = recoveredRows.length;
+          }
         } catch (recoveryError) {
           effectiveError = recoveryError;
         }
