@@ -187,6 +187,17 @@ test('CDP accepts the documented transaction alias and reports only bounded resu
   );
 });
 
+test('CDP journal replay uses the same address-history alias contract as live pages', () => {
+  const items = CdpClient.addressTransactionItems({ transactions: [transaction()] });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].hash, HASH);
+  assert.throws(
+    () => CdpClient.addressTransactionItems({ unexpected: [] }),
+    (error) => error.code === 'CDP_INVALID_RESPONSE'
+      && error.message.includes('object{unexpected}')
+  );
+});
+
 test('CDP errors classify quota and rate limits with retry boundaries', async (t) => {
   const originalFetch = global.fetch;
   const responses = [

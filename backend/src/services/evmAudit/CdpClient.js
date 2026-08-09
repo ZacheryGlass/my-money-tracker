@@ -132,6 +132,12 @@ function collectionFromResult(response, preferred, aliases, method) {
   );
 }
 
+function addressTransactionItems(result) {
+  return collectionFromResult(
+    { body: result }, 'addressTransactions', ['transactions'], 'address history'
+  );
+}
+
 class CdpClient {
   constructor(apiKey, {
     spacingMs = DEFAULT_SPACING_MS,
@@ -279,9 +285,7 @@ class CdpClient {
       // documents cdp_listTransactions as an alias for this method, while the
       // response examples use addressTransactions. Keep the shape diagnostic
       // bounded to field names so a provider change never exposes raw history.
-      const items = collectionFromResult(
-        response, 'addressTransactions', ['transactions'], 'address history'
-      );
+      const items = addressTransactionItems(response.body);
       pages += 1;
       if (pages > MAX_PAGES) {
         throw providerError('Coinbase CDP address history exceeded the pagination safety bound', 'CDP_PAGINATION_STALLED');
@@ -329,6 +333,7 @@ class CdpClient {
 }
 
 module.exports = CdpClient;
+module.exports.addressTransactionItems = addressTransactionItems;
 module.exports.parseRetryAfter = parseRetryAfter;
 module.exports.normalizeJsonNumbers = normalizeJsonNumbers;
 module.exports.providerError = providerError;

@@ -21,6 +21,8 @@ const CdpClient = require('./evmAudit/CdpClient');
 const CdpHistoryProvider = require('./evmAudit/CdpHistoryProvider');
 const RpcClient = require('./evmAudit/RpcClient');
 
+const cdpAddressTransactionItems = CdpClient.addressTransactionItems;
+
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 
 // The Etherscan feeds, each with the cursor it resumes from and the
@@ -334,7 +336,7 @@ class EthWalletService {
         const body = typeof page.response_json === 'string'
           ? JSON.parse(page.response_json) : page.response_json;
         CdpHistoryProvider.assertNoConflicts(
-          body?.addressTransactions, historicalCdpTransactions
+          cdpAddressTransactionItems(body), historicalCdpTransactions
         );
       }
     } catch (error) {
@@ -390,12 +392,7 @@ class EthWalletService {
         for (const page of journal.slice(0, checkpoint + 1)) {
           const body = typeof page.response_json === 'string'
             ? JSON.parse(page.response_json) : page.response_json;
-          if (!Array.isArray(body?.addressTransactions)) {
-            const error = new Error('Coinbase CDP journal page has an invalid address-history shape.');
-            error.code = 'CDP_INVALID_RESPONSE';
-            throw error;
-          }
-          addPage(body.addressTransactions);
+          addPage(cdpAddressTransactionItems(body));
         }
       }
       for await (const page of cdp.addressTransactionPages(wallet.address, {
