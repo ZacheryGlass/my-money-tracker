@@ -321,14 +321,18 @@ function explorerDisplayName(provider) {
 }
 
 function isStandingExplorerLimitation(error) {
-  return ['ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE'].includes(error?.code);
+  const message = String(error?.message || '').toLowerCase();
+  return ['ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE'].includes(error?.code)
+    || (message.includes('does not serve') && message.includes('not yet been processed'));
 }
 
 function isStandingProviderLimitation(error) {
+  const message = String(error?.message || '').toLowerCase();
   return [
     'BLOCKSCOUT_FEED_UNSUPPORTED', 'BLOCKSCOUT_CHAIN_UNAVAILABLE',
     'ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE',
-  ].includes(error?.code);
+  ].includes(error?.code)
+    || (message.includes('does not serve') && message.includes('not yet been processed'));
 }
 
 function assertLease(leaseState) {
