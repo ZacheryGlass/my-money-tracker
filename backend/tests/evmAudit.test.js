@@ -827,7 +827,8 @@ test('an unrelated Blockscout deferral does not strand an incomplete CDP Base sc
     status: 'deferred',
     mode: 'full',
     requested_chains: [10, 8453],
-    error_code: 'BLOCKSCOUT_FEED_FAILED',
+    error_code: 'EVM_CHAIN_AUDIT_DEFERRED',
+    error_detail: 'Blockscout internal audit feed failed on OP Mainnet.',
   };
   const baseJob = {
     id: 52,
