@@ -14,7 +14,8 @@ const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const BASE_CHAIN_ID = 8453;
 // Deferred jobs are durable retry points, not active work. Poll them too so a
 // scheduled retry can update the visible status without requiring a reload.
-const auditIsPending = (audit) => ['queued', 'running', 'deferred'].includes(audit?.status);
+const auditIsPending = (audit) => ['queued', 'running'].includes(audit?.status);
+const auditShouldPoll = (audit) => ['queued', 'running', 'deferred'].includes(audit?.status);
 
 const auditDeferredMessage = (job) => {
   const detail = String(job?.error_detail || '').trim();
@@ -436,11 +437,11 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
   }), [auditByWallet, wallets]);
 
   useEffect(() => {
-    const active = Object.values(visibleAudits).some(auditIsPending);
+    const active = Object.values(visibleAudits).some(auditShouldPoll);
     if (!active) return undefined;
     const refresh = async () => {
       try {
-        const activeAudits = Object.values(visibleAudits).filter(auditIsPending);
+        const activeAudits = Object.values(visibleAudits).filter(auditShouldPoll);
         const { audits: refreshed } = await ethAPI.getHistoryAudits({
           jobIds: activeAudits.map((audit) => audit.id),
         });
