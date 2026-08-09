@@ -367,13 +367,13 @@ describe('Crypto -> Wallets tab', () => {
     await openEthereumTab([{
       ...CHAIN_WALLET,
       error_code: 'SYNC_DEFERRED',
-      error_message: 'Base explorer rate limited; automatic retry pending',
+      error_message: 'Base CDP rate limited; automatic retry pending',
       chains: [{
         chain_id: 8453,
         name: 'Base',
         enabled: true,
         error_code: 'SYNC_DEFERRED',
-        error_message: 'Base explorer rate limited; automatic retry pending',
+        error_message: 'Base CDP rate limited; automatic retry pending',
         unsupported_feeds: [],
         last_synced_at: '2026-07-26T09:00:00Z',
       }],
@@ -545,8 +545,8 @@ describe('Crypto -> Wallets tab', () => {
         {
           wallet_id: 1, wallet_label: 'Main', wallet_address: wallet().address,
           chain_id: 8453, chain_name: 'Base', feed: 'token',
-          status: 'deferred', enabled: true, provider: 'Blockscout',
-          error_message: 'Provider cooldown; retry after 10 seconds',
+          status: 'deferred', enabled: true, provider: 'Coinbase CDP address history (Base)',
+          error_message: 'CDP quota exhausted; retry after 10 seconds',
           retry_after_at: '2026-07-30T22:00:10.000Z',
           covered_through_block: 49999999,
         },
@@ -560,7 +560,7 @@ describe('Crypto -> Wallets tab', () => {
     expect(screen.getByText(/main · gnosis chain · internal/i)).toBeInTheDocument();
     expect(screen.getByText(/internal traces unavailable for blocks 0-123/i)).toBeInTheDocument();
     expect(screen.getByText(/main · base · token/i)).toBeInTheDocument();
-    expect(screen.getByText(/provider cooldown; retry after 10 seconds/i)).toBeInTheDocument();
+    expect(screen.getByText(/cdp quota exhausted; retry after 10 seconds/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download json/i })).toBeInTheDocument();
   });
 

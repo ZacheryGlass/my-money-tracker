@@ -446,7 +446,7 @@ test('Moralis pagination advances opaque cursors and exhausts exactly once', asy
   try {
     const pages = [];
     for await (const page of new MoralisClient('test-key', { spacingMs: 0 }).walletHistoryPages(
-      WALLET, { chain: 'base', fromBlock: 0, throughBlock: 10 }
+      WALLET, { chain: 'gnosis', fromBlock: 0, throughBlock: 10 }
     )) pages.push(page);
     assert.deepEqual(seen, [null, 'opaque-next']);
     assert.deepEqual(pages.map((page) => [page.cursorIn, page.cursorOut]), [
@@ -466,7 +466,7 @@ test('Moralis JSON parsing preserves large numeric token quantities', async () =
   );
   try {
     const response = await new MoralisClient('test-key', { spacingMs: 0 })
-      .activeChains(WALLET, ['base']);
+      .activeChains(WALLET, ['gnosis']);
     assert.equal(response.body.result[0].value, '650000000000000000');
     assert.deepEqual(response.body.result[0].__evm_json_numeric_fields, ['value']);
   } finally {
@@ -486,7 +486,7 @@ test('Moralis plan quota exhaustion is deferred instead of reported as bad crede
       new MoralisClient('test-key', {
         spacingMs: 0,
         onFailedAttempt: async (attempt) => attempts.push(attempt),
-      }).activeChains(WALLET, ['base']),
+      }).activeChains(WALLET, ['gnosis']),
       (error) => error.code === 'MORALIS_QUOTA_EXHAUSTED'
         && error.retryAt instanceof Date
     );
@@ -586,7 +586,7 @@ test('Moralis requests have an explicit deadline even when fetch never settles',
   try {
     await assert.rejects(
       new MoralisClient('test-key', { spacingMs: 0, requestTimeoutMs: 1, requestTimeoutGraceMs: 0 })
-        .activeChains(WALLET, ['base']),
+        .activeChains(WALLET, ['gnosis']),
       (error) => error.code === 'MORALIS_TRANSPORT_ERROR'
         && /deadline|request failed/.test(error.message)
     );
@@ -613,7 +613,7 @@ test('Moralis request deadlines cover body reads and abort before retrying', asy
   try {
     await assert.rejects(
       new MoralisClient('test-key', { spacingMs: 0, requestTimeoutMs: 1, requestTimeoutGraceMs: 0 })
-        .activeChains(WALLET, ['base']),
+        .activeChains(WALLET, ['gnosis']),
       (error) => error.code === 'MORALIS_TRANSPORT_ERROR'
     );
     assert.equal(signals.length, 1, 'a hard deadline must not overlap another attempt');

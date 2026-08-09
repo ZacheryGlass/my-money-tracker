@@ -1155,30 +1155,6 @@ class EthWalletService {
     let boundary;
     try {
       boundary = await EtherscanService.coverageBoundary(apiKey, chain.id);
-      // A temporarily regressed explorer head must never shrink a persisted
-      // cursor. The overlap delete below is intentionally open-ended, so
-      // accepting a head behind any active feed's prior cursor would erase
-      // already-ingested rows above that head and then persist the regression.
-      const persistedCursors = {
-        normal: Number(state?.last_block_normal ?? 0),
-        internal: Number(state?.last_block_internal ?? 0),
-        token: Number(state?.last_block_token ?? 0),
-        nft: Number(state?.last_block_nft ?? 0),
-        nft1155: Number(state?.last_block_1155 ?? 0),
-        statesync: Number(state?.last_block_statesync ?? 0),
-      };
-      const regressedFeeds = chain.accountApi?.apiStyle === 'blockscout-v2'
-        ? FEED_SPECS
-          .filter((spec) => feedActive(spec) && persistedCursors[spec.key] > boundary.throughBlock)
-          .map((spec) => spec.key)
-        : [];
-      if (regressedFeeds.length > 0) {
-        const error = new Error(
-          `${chain.name} indexed head ${boundary.throughBlock} is behind persisted cursor for ${regressedFeeds.join(', ')}; cursors frozen`
-        );
-        error.code = 'ETHERSCAN_API_ERROR';
-        throw error;
-      }
     } catch (error) {
       const failureStatus = coverageFailureStatus(error);
       const retryAt = failureStatus === 'deferred' ? retryAfterAt(error) : null;
@@ -1598,7 +1574,7 @@ class EthWalletService {
         await EthWallet.setError(
           walletId,
           'SYNC_DEFERRED',
-          `Partial sync: ${deferredFeeds.map((feed) => `${feed} feed`).join(', ')} deferred because the explorer is rate limited; automatic retry pending`
+          `Partial sync: ${deferredFeeds.map((feed) => `${feed} feed`).join(', ')} deferred by the provider; automatic retry pending`
         );
       } else {
         await EthWallet.clearError(walletId);

@@ -140,10 +140,10 @@ test('deferred coverage requires and stores a durable retry time', async () => {
   const retryAt = new Date('2026-08-07T01:00:00Z');
   await EthFeedCoverage.recordAttempts(7, 8453, [{
     feed: 'normal',
-    provider: 'Blockscout',
+    provider: 'Coinbase CDP address history (Base)',
     status: 'deferred',
-    errorCode: 'EXPLORER_RATE_LIMITED',
-    errorMessage: 'rate limited',
+    errorCode: 'CDP_RATE_LIMITED',
+    errorMessage: 'CDP rate limited',
     retryAfterAt: retryAt,
   }]);
   assert.ok(queries[0].params.includes(retryAt));
@@ -186,7 +186,7 @@ test('an explicit shared-scan head bounds every feed without taking a newer head
     EtherscanService._blockTimestamp = originalTimestamp;
   });
 
-  const boundary = await EtherscanService.coverageBoundary('key', 8453, 321);
+  const boundary = await EtherscanService.coverageBoundary('key', 100, 321);
   assert.equal(boundary.throughBlock, 321);
   assert.deepEqual(timestamps.map((row) => row.block), [0, 321]);
 });

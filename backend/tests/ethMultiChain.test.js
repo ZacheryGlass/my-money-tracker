@@ -295,7 +295,7 @@ function harness(t, {
 // The registry, as probed live
 // ---------------------------------------------------------------------------
 
-test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
+test('Gnosis, OP Mainnet, and zkSync Era use keyless explorer providers while Base uses CDP', () => {
   const ids = chains.allChains().map((chain) => chain.id);
   assert.deepEqual(
     ids.sort((a, b) => a - b),
@@ -306,7 +306,7 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
   assert.equal(gnosis.accountApi.provider, 'Blockscout');
   assert.equal(gnosis.accountApi.requiresApiKey, false);
   assert.equal(gnosis.enabledByDefault, true);
-  for (const id of [10, 324, 8453]) {
+  for (const id of [10, 324]) {
     const chain = chains.getChain(id);
     assert.equal(chain.accountApi.provider, 'Blockscout');
     assert.equal(chain.accountApi.requiresApiKey, false);
@@ -319,10 +319,11 @@ test('Gnosis, OP Mainnet, Base, and zkSync Era use keyless providers', () => {
     assert.equal(chain.opStackDeposits.creditSource, nativeCredits.contract);
   }
   const base = chains.getChain(8453);
-  assert.equal(base.accountApi.apiStyle, 'blockscout-v2');
-  assert.equal(base.accountApi.v2BaseUrl, 'https://base.blockscout.com/api/v2');
-  assert.equal(base.accountApi.requestSpacingMs, 15000);
-  assert.equal(EtherscanService._provider(8453).spacingMs, 15000);
+  assert.equal(base.historyProvider, 'coinbase-cdp');
+  assert.equal(base.requiresApiKey, false,
+    'Base CDP credentials are gated separately from Etherscan explorer credentials');
+  assert.equal(base.accountApi, undefined,
+    'Base must not expose an anonymous or generic explorer account-feed fallback');
   assert.equal(base.stateSyncDeposits, undefined,
     'ordinary Sync must not run Base anonymous chain-wide log discovery');
   assert.equal(base.auditNativeCredits.contract, base.opStackDeposits.creditSource);
@@ -337,19 +338,18 @@ test('anonymous Blockscout requests stay below a conservative minute bucket', ()
   assert.ok(60_000 / etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS <= 40);
 });
 
-test('a chain-specific Blockscout floor preserves stricter operator pacing', (t) => {
+test('the configured Blockscout floor preserves stricter operator pacing', (t) => {
   const original = etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS;
   etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS = 20000;
   t.after(() => { etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS = original; });
 
-  assert.equal(EtherscanService._provider(8453).spacingMs, 20000);
+  assert.equal(EtherscanService._provider(100).spacingMs, 20000);
 });
 
 test('all live-probed chains default on through their configured providers', () => {
   delete process.env.ETH_CHAINS;
   const byId = new Map(chains.allChains().map((chain) => [chain.id, chain]));
-  // OP and Base remain enabled by default; Base's ordinary history provider is
-  // CDP and its old Blockscout transport is retained only for surgical gaps.
+  // OP remains on Blockscout; Base's ordinary history provider is CDP.
   for (const id of [1, 10, 100, 137, 324, 8453, 32401, 42161, 59144]) {
     assert.equal(byId.get(id).enabled, true, `chain ${id} defaults on through its configured provider`);
   }
@@ -666,7 +666,7 @@ test('a Base wallet without a CDP key is isolated as a deferred chain row', asyn
   assert.ok(calls.cleared.includes(1), 'mainnet still syncs and reports clean');
   assert.deepEqual(result.deferredFeeds.filter((f) => f.startsWith('Base')).length, 6);
   assert.equal(calls.walletError.code, 'SYNC_DEFERRED', 'the wallet exposes missing CDP as deferred');
-  assert.match(calls.walletError.message, /deferred because the explorer is rate limited/);
+  assert.match(calls.walletError.message, /deferred by the provider/);
 });
 
 test('a Base CDP quota error preserves its calendar-month retry boundary in wallet sync', async (t) => {
@@ -738,7 +738,7 @@ test('a provider rate limit defers the remaining feeds without spending more req
     entry.status === 'not_applicable'
     || (entry.status === 'deferred' && entry.retryAfterAt instanceof Date)
   )));
-  assert.match(calls.walletError.message, /rate limited/);
+  assert.match(calls.walletError.message, /deferred by the provider/);
 });
 
 test('a mid-feed 429 preserves completed cursors and defers only the unfetched tail', async (t) => {
@@ -935,7 +935,7 @@ test('a rate-limited coverage boundary returns a deferred chain instead of faili
     entry.status === 'not_applicable'
     || (entry.status === 'deferred' && entry.retryAfterAt instanceof Date)
   )));
-  assert.match(calls.walletError.message, /rate limit/);
+  assert.match(calls.walletError.message, /deferred by the provider/);
 });
 
 // A row on the given chain, so a chain can be told apart by what it inserts.
@@ -1138,7 +1138,7 @@ test('a persistent explorer 429 pauses its provider queue and fails fast on the 
 test('provider pauses are isolated by host instead of using one global queue', async (t) => {
   etherscanConfig.resetRateLimits();
   t.after(() => { etherscanConfig.resetRateLimits(); });
-  etherscanConfig.pause('account:https://base.blockscout.com/api', 10000);
+  etherscanConfig.pause('account:https://gnosis.blockscout.com/api', 10000);
 
   let etherscanCalled = false;
   await etherscanConfig.throttled(() => {
@@ -1147,7 +1147,7 @@ test('provider pauses are isolated by host instead of using one global queue', a
   assert.equal(etherscanCalled, true);
   await assert.rejects(
     () => etherscanConfig.throttled(() => {}, {
-      key: 'account:https://base.blockscout.com/api', spacingMs: 0,
+      key: 'account:https://gnosis.blockscout.com/api', spacingMs: 0,
     }),
     (err) => err.code === 'EXPLORER_RATE_LIMITED'
   );
@@ -1220,264 +1220,9 @@ test('a chain-declared account API omits Etherscan key and chainid parameters', 
     'OP Mainnet is already above the old 99,999,999 sentinel');
 });
 
-test('an account feed is bounded at the shared indexed head and reports empty coverage', async (t) => {
-  const axios = require('axios');
-  const original = axios.get;
-  let seen;
-  axios.get = async (url, config) => {
-    seen = { url, params: config.params };
-    return { data: { items: [], next_page_params: null } };
-  };
-  t.after(() => { axios.get = original; });
-
-  const rows = await EtherscanService.fetchTokenTxs(WALLET, 100, null, 8453, 50000000);
-
-  assert.equal(
-    seen.url,
-    `https://base.blockscout.com/api/v2/addresses/${WALLET}/token-transfers`
-  );
-  assert.deepEqual(seen.params, { type: 'ERC-20' });
-  assert.equal(rows.length, 0);
-  assert.equal(rows.scannedThroughBlock, 50000000);
-  assert.deepEqual(Object.keys(rows), [], 'coverage metadata does not become a transfer row field');
-});
-
-test('Base Blockscout v2 maps all five account feeds into the ingest contract', async (t) => {
-  const axios = require('axios');
-  const originalGet = axios.get;
-  const originalThrottled = etherscanConfig.throttled;
-  const to = `0x${'1'.repeat(40)}`;
-  const contract = `0x${'2'.repeat(40)}`;
-  const calls = [];
-  const commonToken = (type, block, hash, total) => ({
-    block_number: block,
-    timestamp: '2024-01-01T00:00:00.000000Z',
-    transaction_hash: hash,
-    from: { hash: WALLET },
-    to: { hash: to },
-    log_index: block,
-    token_type: type,
-    token: {
-      address_hash: contract,
-      name: `${type} asset`,
-      symbol: 'TEST',
-      decimals: type === 'ERC-20' ? '6' : null,
-      type,
-    },
-    total,
-  });
-  axios.get = async (url, config) => {
-    calls.push({ url, params: config.params });
-    if (url.endsWith('/transactions')) {
-      return { data: { items: [{
-        block_number: 101,
-        timestamp: '2024-01-01T00:00:00.000000Z',
-        hash: `0x${'a'.repeat(64)}`,
-        status: 'ok',
-        from: { hash: WALLET },
-        to: { hash: to },
-        created_contract: null,
-        value: '42',
-        gas_limit: '21000',
-        gas_used: '20000',
-        gas_price: '7',
-        fee: { type: 'actual', value: '140123' },
-        nonce: 3,
-        position: 4,
-        confirmations: 5,
-        raw_input: '0xa9059cbb',
-        decoded_input: { method_id: 'a9059cbb', method_call: 'transfer(address,uint256)' },
-      }], next_page_params: null } };
-    }
-    if (url.endsWith('/internal-transactions')) {
-      return { data: { items: [{
-        block_number: 102,
-        timestamp: '2024-01-01T00:00:01.000000Z',
-        transaction_hash: `0x${'b'.repeat(64)}`,
-        from: { hash: WALLET },
-        to: { hash: to },
-        created_contract: null,
-        value: '43',
-        gas_limit: '10000',
-        transaction_index: 5,
-        index: 6,
-        success: false,
-        error: 'reverted',
-        type: 'call',
-      }], next_page_params: null } };
-    }
-    const type = config.params.type;
-    const rows = {
-      'ERC-20': commonToken('ERC-20', 103, `0x${'c'.repeat(64)}`, { value: '44' }),
-      'ERC-721': commonToken('ERC-721', 104, `0x${'d'.repeat(64)}`, { token_id: '45' }),
-      'ERC-1155': commonToken('ERC-1155', 105, `0x${'e'.repeat(64)}`, {
-        token_id: '46', value: '47',
-      }),
-    };
-    return { data: { items: [rows[type]], next_page_params: null } };
-  };
-  etherscanConfig.throttled = (fn) => fn();
-  t.after(() => {
-    axios.get = originalGet;
-    etherscanConfig.throttled = originalThrottled;
-  });
-
-  const normal = await EtherscanService.fetchNormalTxs(WALLET, 100, null, 8453, 200);
-  const internal = await EtherscanService.fetchInternalTxs(WALLET, 100, null, 8453, 200);
-  const token = await EtherscanService.fetchTokenTxs(WALLET, 100, null, 8453, 200);
-  const nft = await EtherscanService.fetchNftTxs(WALLET, 100, null, 8453, 200);
-  const nft1155 = await EtherscanService.fetch1155Txs(WALLET, 100, null, 8453, 200);
-
-  assert.equal(normal[0].methodId, '0xa9059cbb');
-  assert.equal(normal[0].functionName, 'transfer(address,uint256)');
-  assert.equal(normal[0].timeStamp, '1704067200');
-  assert.equal(normal[0].isError, '0');
-  assert.equal(normal[0].feeWei, '140123');
-  assert.equal(internal[0].traceId, '5_6');
-  assert.equal(internal[0].isError, '1');
-  assert.equal(token[0].value, '44');
-  assert.equal(token[0].tokenDecimal, '6');
-  assert.equal(nft[0].tokenID, '45');
-  assert.equal(nft[0].tokenDecimal, '0');
-  assert.equal(nft1155[0].tokenID, '46');
-  assert.equal(nft1155[0].tokenValue, '47');
-  assert.ok([normal, internal, token, nft, nft1155]
-    .every((rows) => rows.scannedThroughBlock === 200));
-  assert.deepEqual(calls.slice(2).map((call) => call.params.type), [
-    'ERC-20', 'ERC-721', 'ERC-1155',
-  ]);
-});
-
-test('Base Blockscout v2 follows opaque cursors, filters the fixed head, and returns ascending rows', async (t) => {
-  const original = EtherscanService._requestBlockscoutV2;
-  const queries = [];
-  const row = (block, suffix) => ({
-    block_number: block,
-    timestamp: '2024-01-01T00:00:00.000000Z',
-    transaction_hash: `0x${suffix.repeat(64)}`,
-    from: { hash: WALLET },
-    to: { hash: `0x${'1'.repeat(40)}` },
-    log_index: block,
-    token_type: 'ERC-721',
-    token: {
-      address_hash: `0x${'2'.repeat(40)}`,
-      name: 'NFT', symbol: 'NFT', decimals: null, type: 'ERC-721',
-    },
-    total: { token_id: String(block) },
-  });
-  EtherscanService._requestBlockscoutV2 = async (path, query) => {
-    queries.push({ path, query });
-    if (queries.length === 1) {
-      return {
-        items: [row(300, 'a'), row(200, 'b')],
-        nextPageParams: { block_number: 200, index: 1 },
-      };
-    }
-    return {
-      items: [row(150, 'c'), { block_number: 99 }],
-      nextPageParams: { block_number: 99, index: 2 },
-    };
-  };
-  t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
-
-  const rows = await EtherscanService.fetchNftTxs(WALLET, 100, null, 8453, 250);
-
-  assert.deepEqual(rows.map((item) => item.blockNumber), ['150', '200']);
-  assert.deepEqual(queries[0].query, { type: 'ERC-721' });
-  assert.deepEqual(queries[1].query, {
-    type: 'ERC-721', block_number: 200, index: 1,
-  });
-  assert.equal(rows.scannedThroughBlock, 250);
-});
-
-test('Base Blockscout v2 freezes on a repeated cursor or malformed in-range row', async (t) => {
-  const original = EtherscanService._requestBlockscoutV2;
-  const valid = {
-    block_number: 200,
-    timestamp: '2024-01-01T00:00:00.000000Z',
-    hash: `0x${'a'.repeat(64)}`,
-    status: 'ok',
-    from: { hash: WALLET },
-    to: { hash: `0x${'1'.repeat(40)}` },
-    created_contract: null,
-    value: '1', gas_limit: '2', gas_used: '2', gas_price: '3',
-    fee: { type: 'actual', value: '7' },
-    nonce: 1, position: 1, raw_input: '0x',
-  };
-  let calls = 0;
-  EtherscanService._requestBlockscoutV2 = async () => {
-    calls += 1;
-    return {
-      items: [{ ...valid, block_number: 200 }],
-      nextPageParams: { block_number: 200, index: 1 },
-    };
-  };
-  t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
-
-  await assert.rejects(
-    () => EtherscanService.fetchNormalTxs(WALLET, 100, null, 8453, 300),
-    (error) => error.code === 'ETHERSCAN_API_ERROR' && /repeated a page cursor/.test(error.message)
-  );
-  EtherscanService._requestBlockscoutV2 = async () => ({
-    items: [{ ...valid, status: 'pending' }], nextPageParams: null,
-  });
-  await assert.rejects(
-    () => EtherscanService.fetchNormalTxs(WALLET, 100, null, 8453, 300),
-    (error) => error.code === 'ETHERSCAN_API_ERROR' && /invalid status/.test(error.message)
-  );
-});
-
-test('Base Blockscout v2 rejects conflicting versions of one provider event', async (t) => {
-  const original = EtherscanService._requestBlockscoutV2;
-  const event = {
-    block_number: 200,
-    timestamp: '2024-01-01T00:00:00.000000Z',
-    transaction_hash: `0x${'a'.repeat(64)}`,
-    from: { hash: WALLET },
-    to: { hash: `0x${'1'.repeat(40)}` },
-    log_index: 7,
-    token_type: 'ERC-20',
-    token: {
-      address_hash: `0x${'2'.repeat(40)}`,
-      name: 'Token', symbol: 'TKN', decimals: '6', type: 'ERC-20',
-    },
-    total: { value: '10' },
-  };
-  EtherscanService._requestBlockscoutV2 = async () => ({
-    items: [event, { ...event, total: { value: '11' } }],
-    nextPageParams: null,
-  });
-  t.after(() => { EtherscanService._requestBlockscoutV2 = original; });
-
-  await assert.rejects(
-    () => EtherscanService.fetchTokenTxs(WALLET, 100, null, 8453, 300),
-    (error) => error.code === 'ETHERSCAN_API_ERROR'
-      && /conflicting duplicate rows/.test(error.message)
-  );
-});
-
-test('Base Blockscout v2 body throttles use the shared bounded retry path', async (t) => {
-  const axios = require('axios');
-  const originalGet = axios.get;
-  let requests = 0;
-  axios.get = async () => {
-    requests += 1;
-    if (requests === 1) {
-      return { headers: { 'retry-after': '0' }, data: { message: 'Too many requests' } };
-    }
-    return { data: { items: [], next_page_params: null } };
-  };
-  t.after(() => { axios.get = originalGet; });
-  t.after(() => { etherscanConfig.resetRateLimits(); });
-
-  const rows = await EtherscanService.fetchNormalTxs(WALLET, 0, null, 8453, 100);
-  assert.deepEqual(rows, []);
-  assert.equal(requests, 2);
-});
-
 test('an account feed freezes when the indexed head falls behind its resume block', async () => {
   await assert.rejects(
-    () => EtherscanService.fetchTokenTxs(WALLET, 101, null, 8453, 100),
+    () => EtherscanService.fetchTokenTxs(WALLET, 101, null, 100, 100),
     (err) => err.code === 'ETHERSCAN_API_ERROR' && /behind requested block/.test(err.message)
   );
 });
@@ -1641,41 +1386,6 @@ test('OP Mainnet and Base live balances use their public RPC endpoints', async (
   ]);
 });
 
-test('Blockscout log coverage uses the explorer indexed head, not the newer RPC head', async (t) => {
-  const axios = require('axios');
-  const originalGet = axios.get;
-  let seenUrl;
-  axios.get = async (url) => {
-    seenUrl = url;
-    return { data: { items: [{ height: 49295092 }] } };
-  };
-  t.after(() => { axios.get = originalGet; });
-
-  assert.equal(await EtherscanService._latestBlockNumber(null, 8453), 49295092);
-  assert.equal(seenUrl, 'https://base.blockscout.com/api/v2/blocks?type=block');
-});
-
-test('a body-level Blockscout throttle on the indexed-head boundary is retried', async (t) => {
-  const axios = require('axios');
-  const originalGet = axios.get;
-  let requests = 0;
-  axios.get = async () => {
-    requests += 1;
-    if (requests === 1) {
-      return {
-        headers: { 'retry-after': '0' },
-        data: { message: 'Too many requests' },
-      };
-    }
-    return { data: { items: [{ height: 49295092 }] } };
-  };
-  t.after(() => { axios.get = originalGet; });
-  t.after(() => { etherscanConfig.resetRateLimits(); });
-
-  assert.equal(await EtherscanService._latestBlockNumber(null, 8453), 49295092);
-  assert.equal(requests, 2);
-});
-
 test('HTTP and body-level throttles share one bounded retry budget', async (t) => {
   const axios = require('axios');
   const originalGet = axios.get;
@@ -1699,7 +1409,7 @@ test('HTTP and body-level throttles share one bounded retry budget', async (t) =
   await assert.rejects(
     () => EtherscanService._request(
       { module: 'account', action: 'txlist', address: WALLET },
-      { apiKey: null, chainId: 8453 }
+      { apiKey: null, chainId: 100 }
     ),
     (error) => {
       terminalError = error;
@@ -1734,10 +1444,10 @@ test('a stricter host spacing wins and survives a body-level throttle retry', as
   };
   EtherscanService._provider = () => ({
     name: 'Blockscout',
-    baseUrl: 'https://base.blockscout.com/api',
+    baseUrl: 'https://gnosis.blockscout.com/api',
     requiresApiKey: false,
     params: {},
-    key: 'account:https://base.blockscout.com/api',
+    key: 'account:https://gnosis.blockscout.com/api',
     spacingMs: 9000,
   });
   t.after(() => {
@@ -1750,7 +1460,7 @@ test('a stricter host spacing wins and survives a body-level throttle retry', as
   assert.deepEqual(
     await EtherscanService._request(
       { module: 'logs', action: 'getLogs' },
-      { apiKey: null, chainId: 8453, spacingMs: 7000 }
+      { apiKey: null, chainId: 100, spacingMs: 7000 }
     ),
     []
   );
@@ -1776,7 +1486,7 @@ test('anonymous Blockscout throttles defer for a full minute bucket', async (t) 
   await assert.rejects(
     () => EtherscanService._request(
       { module: 'account', action: 'txlist', address: WALLET },
-      { apiKey: null, chainId: 8453 }
+      { apiKey: null, chainId: 100 }
     ),
     (error) => {
       terminalError = error;

@@ -19,71 +19,12 @@ const PAGE_SIZE = 1000;
 // nightly job.
 const MAX_ACCOUNT_PAGES = 200;
 
-// Blockscout v2 address feeds use cursor pagination with 50 rows per page.
-// Preserve the legacy walk's 200,000-row safety envelope while also bounding
-// a hostile endpoint that returns one row and a fresh cursor forever.
-// Keep these as request/data bounds rather than a wall-clock limit: at a
-// provider-safe pace, a valid deep history can exceed hours, and the opaque
-// cursor cannot be persisted safely midway through an atomic overlap rebuild.
-const MAX_ACCOUNT_ROWS = PAGE_SIZE * MAX_ACCOUNT_PAGES;
-const MAX_BLOCKSCOUT_V2_PAGES = 5000;
-
-const BLOCKSCOUT_V2_FEEDS = Object.freeze({
-  txlist: { path: 'transactions' },
-  txlistinternal: { path: 'internal-transactions' },
-  tokentx: { path: 'token-transfers', type: 'ERC-20' },
-  tokennfttx: { path: 'token-transfers', type: 'ERC-721' },
-  token1155tx: { path: 'token-transfers', type: 'ERC-1155' },
-});
-
-const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
 
 function apiError(message) {
   const error = new Error(message);
   error.code = 'ETHERSCAN_API_ERROR';
   return error;
-}
-
-function decimalString(value, { optional = false } = {}) {
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
-    return String(value);
-  }
-  if (typeof value === 'string' && /^\d+$/.test(value)) return value;
-  if (optional && (value == null || value === '')) return '';
-  return null;
-}
-
-function addressHash(value, { optional = false } = {}) {
-  const hash = typeof value === 'string' ? value : value?.hash;
-  if (optional && (hash == null || hash === '')) return '';
-  return ADDRESS_RE.test(String(hash || '')) ? String(hash) : null;
-}
-
-function unixTimestamp(value) {
-  const text = String(value || '');
-  if (!/^\d{4}-\d{2}-\d{2}T.+Z$/i.test(text)) return null;
-  const milliseconds = Date.parse(text);
-  if (!Number.isFinite(milliseconds) || milliseconds < 0) return null;
-  const seconds = Math.floor(milliseconds / 1000);
-  return Number.isSafeInteger(seconds) ? String(seconds) : null;
-}
-
-function selector(value) {
-  const text = String(value || '');
-  if (/^0x[0-9a-f]{8}$/i.test(text)) return text;
-  if (/^[0-9a-f]{8}$/i.test(text)) return `0x${text}`;
-  return '';
-}
-
-function compareDecimalStrings(left, right) {
-  const a = String(left || '0').replace(/^0+(?=\d)/, '');
-  const b = String(right || '0').replace(/^0+(?=\d)/, '');
-  return a.length - b.length || a.localeCompare(b);
-}
-
-function stableCursor(cursor) {
-  return JSON.stringify(Object.entries(cursor).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 // The logs (getLogs) endpoint caps a single response at 1000 rows, so the
@@ -157,8 +98,8 @@ function addressTopic(address) {
 // A chain this key cannot read AT ALL, as opposed to a request that failed.
 // Both observed live: an id outside /v2/chainlist answers "Missing or
 // unsupported chainid parameter", and a chainlist chain outside the key's plan
-// (OP Mainnet, Base on the free tier) answers "Free API access is not supported
-// for this chain". Separated from ETHERSCAN_API_ERROR because the two demand
+// answers "Free API access is not supported for this chain". Separated from
+// ETHERSCAN_API_ERROR because the two demand
 // opposite handling: an API error is transient and must be retried next sync,
 // while this is a standing condition, so retrying it nightly forever would
 // burn throttle budget and log noise to learn the same answer. The caller
@@ -247,11 +188,11 @@ function explorerRetryDelay(error, attempt) {
 }
 
 function deferredRetryDelay(provider, error, attemptedDelayMs) {
-  // Base's public Blockscout instance returns a body-level throttle without a
+  // Public Blockscout instances can return a body-level throttle without a
   // Retry-After header after sustained anonymous traffic. The short inline
-  // exponential delay is enough for a per-second burst, but production proved
-  // it immediately re-enters the same IP-wide minute bucket. Give that bucket
-  // time to drain. An explicit provider header remains authoritative.
+  // exponential delay is enough for a per-second burst, but can immediately
+  // re-enter the same IP-wide minute bucket. Give that bucket time to drain.
+  // An explicit provider header remains authoritative.
   if (provider.name === 'Blockscout' && responseRetryAfterMs(error) == null) {
     return Math.max(attemptedDelayMs, BLOCKSCOUT_DEFERRED_RETRY_MIN_MS);
   }
@@ -593,370 +534,6 @@ class EtherscanService {
     throw error;
   }
 
-  // Blockscout's v2 REST API is not Etherscan-shaped, but it uses the same
-  // public instance and therefore the same provider-host throttle/cooldown.
-  // Return only a validated page envelope; callers must still validate every
-  // row before treating the page as evidence that a cursor may advance.
-  static async _requestBlockscoutV2(path, query, {
-    apiKey,
-    chainId,
-    rateLimitState = { attempt: 0 },
-    timeoutMs = 30000,
-  }) {
-    const chain = chains.getChain(chainId);
-    const config = chain?.accountApi;
-    if (config?.apiStyle !== 'blockscout-v2' || !config.v2BaseUrl) {
-      throw apiError(`Chain ${chainId} has no Blockscout v2 account API configured`);
-    }
-    const provider = this._provider(chainId, apiKey);
-    const url = `${config.v2BaseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
-    const endpoint = path.split('/').filter(Boolean).at(-1) || 'account';
-    const params = {
-      module: 'v2',
-      action: query?.type ? `${endpoint}:${query.type}` : endpoint,
-    };
-    const response = await runThrottledRequest({
-      provider,
-      chainId,
-      params,
-      rateLimitState,
-      fn: () => axios.get(url, { timeout: timeoutMs, params: query }),
-    });
-    const payload = response.data;
-    if (!Array.isArray(payload?.items) && isRateLimitedDetail(payload)) {
-      return retryAfterRateLimit({
-        provider,
-        chainId,
-        params,
-        rateLimitState,
-        error: responseDetailError(
-          String(payload?.message || payload?.error || 'Blockscout v2 rate limited'),
-          response
-        ),
-        retry: () => this._requestBlockscoutV2(path, query, {
-          apiKey, chainId, rateLimitState, timeoutMs,
-        }),
-      });
-    }
-    if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
-      throw apiError(`Blockscout v2 ${endpoint} returned an invalid page; cursor frozen`);
-    }
-    const next = payload.next_page_params;
-    if (next != null && (typeof next !== 'object' || Array.isArray(next))) {
-      throw apiError(`Blockscout v2 ${endpoint} returned an invalid page cursor; cursor frozen`);
-    }
-    if (next) {
-      for (const [key, value] of Object.entries(next)) {
-        if (!/^[a-z][a-z0-9_]*$/i.test(key)
-            || !['string', 'number', 'boolean'].includes(typeof value)
-            || (typeof value === 'number' && !Number.isFinite(value))) {
-          throw apiError(`Blockscout v2 ${endpoint} returned an unsafe page cursor; cursor frozen`);
-        }
-      }
-    }
-    return { items: payload.items, nextPageParams: next || null };
-  }
-
-  // Normalize one validated Blockscout v2 row into the raw Etherscan account
-  // shape consumed by EthWalletService. Missing economic fields fail the
-  // complete feed: silently defaulting an amount, status, address, token id or
-  // timestamp would authorize destructive overlap replacement with guessed
-  // history.
-  static _mapBlockscoutV2Row(action, raw) {
-    const fail = (field) => {
-      throw apiError(`Blockscout v2 ${action} row has invalid ${field}; cursor frozen`);
-    };
-    const blockNumber = decimalString(raw?.block_number);
-    const timeStamp = unixTimestamp(raw?.timestamp);
-    if (blockNumber == null) fail('block_number');
-    if (timeStamp == null) fail('timestamp');
-
-    if (action === 'txlist') {
-      const hash = TX_HASH_RE.test(String(raw?.hash || '')) ? String(raw.hash).toLowerCase() : null;
-      const from = addressHash(raw?.from);
-      const to = addressHash(raw?.to, { optional: true });
-      const contractAddress = addressHash(raw?.created_contract, { optional: true });
-      const value = decimalString(raw?.value);
-      const gas = decimalString(raw?.gas_limit);
-      const gasUsed = decimalString(raw?.gas_used);
-      const gasPrice = decimalString(raw?.gas_price);
-      const feeWei = decimalString(raw?.fee?.value);
-      const nonce = decimalString(raw?.nonce, { optional: true });
-      const transactionIndex = decimalString(raw?.position, { optional: true });
-      if (!hash) fail('hash');
-      if (!from) fail('from');
-      if (to == null) fail('to');
-      if (contractAddress == null) fail('created_contract');
-      if (value == null) fail('value');
-      if (gas == null) fail('gas_limit');
-      if (gasUsed == null) fail('gas_used');
-      if (gasPrice == null) fail('gas_price');
-      if (raw?.fee?.type !== 'actual' || feeWei == null) fail('fee');
-      if (nonce == null) fail('nonce');
-      if (transactionIndex == null) fail('position');
-      if (!['ok', 'error'].includes(raw?.status)) fail('status');
-      const input = String(raw?.raw_input || '0x');
-      if (!/^0x[0-9a-f]*$/i.test(input)) fail('raw_input');
-      const failed = raw.status === 'error';
-      return {
-        blockNumber,
-        timeStamp,
-        hash,
-        nonce,
-        blockHash: TX_HASH_RE.test(String(raw.block_hash || ''))
-          ? String(raw.block_hash).toLowerCase() : '',
-        transactionIndex,
-        from: from.toLowerCase(),
-        to: to.toLowerCase(),
-        value,
-        gas,
-        gasPrice,
-        feeWei,
-        isError: failed ? '1' : '0',
-        txreceipt_status: failed ? '0' : '1',
-        input,
-        contractAddress: contractAddress.toLowerCase(),
-        cumulativeGasUsed: '',
-        gasUsed,
-        confirmations: decimalString(raw?.confirmations, { optional: true }),
-        methodId: selector(raw?.decoded_input?.method_id),
-        functionName: typeof raw?.decoded_input?.method_call === 'string'
-          ? raw.decoded_input.method_call
-          : (typeof raw?.method === 'string' ? raw.method : ''),
-      };
-    }
-
-    if (action === 'txlistinternal') {
-      const hash = TX_HASH_RE.test(String(raw?.transaction_hash || ''))
-        ? String(raw.transaction_hash).toLowerCase() : null;
-      const from = addressHash(raw?.from);
-      const directTo = addressHash(raw?.to, { optional: true });
-      const created = addressHash(raw?.created_contract, { optional: true });
-      const to = directTo || created;
-      const value = decimalString(raw?.value);
-      const gas = decimalString(raw?.gas_limit);
-      const transactionIndex = decimalString(raw?.transaction_index, { optional: true });
-      const index = decimalString(raw?.index);
-      if (!hash) fail('transaction_hash');
-      if (!from) fail('from');
-      if (directTo == null || created == null || !to) fail('to');
-      if (value == null) fail('value');
-      if (gas == null) fail('gas_limit');
-      if (transactionIndex == null) fail('transaction_index');
-      if (index == null) fail('index');
-      if (typeof raw?.success !== 'boolean') fail('success');
-      return {
-        blockNumber,
-        timeStamp,
-        hash,
-        from: from.toLowerCase(),
-        to: to.toLowerCase(),
-        value,
-        contractAddress: created.toLowerCase(),
-        input: '',
-        type: typeof raw?.type === 'string' ? raw.type : '',
-        gas,
-        gasUsed: '',
-        traceId: `${transactionIndex || '0'}_${index}`,
-        transactionIndex,
-        isError: raw.success ? '0' : '1',
-        errCode: typeof raw?.error === 'string' ? raw.error : '',
-      };
-    }
-
-    const feed = BLOCKSCOUT_V2_FEEDS[action];
-    if (!feed?.type) fail('feed action');
-    const tokenType = raw?.token_type || raw?.token?.type;
-    const hash = TX_HASH_RE.test(String(raw?.transaction_hash || ''))
-      ? String(raw.transaction_hash).toLowerCase() : null;
-    const from = addressHash(raw?.from);
-    const to = addressHash(raw?.to);
-    const contractAddress = addressHash(raw?.token?.address_hash);
-    const logIndex = decimalString(raw?.log_index);
-    if (tokenType !== feed.type) fail('token_type');
-    if (!hash) fail('transaction_hash');
-    if (!from) fail('from');
-    if (!to) fail('to');
-    if (!contractAddress) fail('token.address_hash');
-    if (logIndex == null) fail('log_index');
-    const tokenDecimal = raw?.token?.decimals == null
-      ? null
-      : decimalString(raw.token.decimals);
-    if (raw?.token?.decimals != null && tokenDecimal == null) fail('token.decimals');
-    const result = {
-      blockNumber,
-      timeStamp,
-      hash,
-      blockHash: TX_HASH_RE.test(String(raw?.block_hash || ''))
-        ? String(raw.block_hash).toLowerCase() : '',
-      from: from.toLowerCase(),
-      contractAddress: contractAddress.toLowerCase(),
-      to: to.toLowerCase(),
-      tokenName: typeof raw?.token?.name === 'string' ? raw.token.name : '',
-      tokenSymbol: typeof raw?.token?.symbol === 'string' ? raw.token.symbol : '',
-      tokenDecimal: feed.type === 'ERC-20' ? tokenDecimal : '0',
-      transactionIndex: '',
-      logIndex,
-      gas: '',
-      gasPrice: '',
-      gasUsed: '',
-      cumulativeGasUsed: '',
-      input: '',
-      confirmations: '',
-      isError: '0',
-    };
-    if (feed.type === 'ERC-20') {
-      const value = decimalString(raw?.total?.value);
-      if (value == null) fail('total.value');
-      result.value = value;
-    } else {
-      const tokenID = decimalString(raw?.total?.token_id);
-      if (tokenID == null) fail('total.token_id');
-      result.tokenID = tokenID;
-      if (feed.type === 'ERC-1155') {
-        const tokenValue = decimalString(raw?.total?.value);
-        if (tokenValue == null) fail('total.value');
-        result.tokenValue = tokenValue;
-      }
-    }
-    return result;
-  }
-
-  static _blockscoutV2RowKey(action, row) {
-    if (action === 'txlist') return row.hash;
-    if (action === 'txlistinternal') {
-      return `${row.hash}:${row.traceId}`;
-    }
-    // Provider identity must contain only immutable event coordinates. Keeping
-    // economic fields such as addresses/value in this key would let two
-    // contradictory versions of one event evade the conflict check and both
-    // reach balance math. One EVM log index is unique within a transaction;
-    // token id disambiguates Blockscout's expanded ERC-1155 batch rows.
-    return [row.hash, row.logIndex, row.contractAddress, row.tokenID || ''].join(':');
-  }
-
-  // Blockscout v2 pages newest-first and exposes an opaque cursor instead of
-  // block-range pagination. Walk until the first page proven older than the
-  // requested overlap, validate monotonic block order, then sort to the legacy
-  // ascending contract before returning. The shared indexed head filters rows
-  // that arrived after this scan's boundary.
-  static async _fetchBlockscoutV2Paged(
-    action,
-    address,
-    startBlock,
-    apiKey,
-    chainId,
-    scannedThroughBlock = null
-  ) {
-    const feed = BLOCKSCOUT_V2_FEEDS[action];
-    if (!feed) throw apiError(`Unsupported Blockscout v2 account action ${action}`);
-    if (!ADDRESS_RE.test(String(address || ''))) {
-      throw apiError(`Invalid Blockscout v2 account address ${address}`);
-    }
-    const start = Number(startBlock);
-    const end = scannedThroughBlock ?? 999999999;
-    if (!Number.isSafeInteger(start) || start < 0) {
-      throw apiError(`Invalid Blockscout v2 resume block ${startBlock}; cursor frozen`);
-    }
-    if (!Number.isSafeInteger(end) || end < start) {
-      throw apiError(
-        `account provider head ${end} is behind requested block ${start}; cursor frozen`
-      );
-    }
-    const path = `addresses/${String(address).toLowerCase()}/${feed.path}`;
-    const fixedQuery = feed.type ? { type: feed.type } : {};
-    let cursor = {};
-    let previousBlock = null;
-    let walkedRows = 0;
-    let page = 0;
-    const seenCursors = new Set();
-    const rowsByKey = new Map();
-
-    for (;;) {
-      page += 1;
-      if (page > MAX_BLOCKSCOUT_V2_PAGES) {
-        throw apiError(
-          `${action} Blockscout v2 walk exceeded ${MAX_BLOCKSCOUT_V2_PAGES} pages; cursor frozen`
-        );
-      }
-      const { items, nextPageParams } = await this._requestBlockscoutV2(
-        path,
-        { ...fixedQuery, ...cursor },
-        { apiKey, chainId }
-      );
-      walkedRows += items.length;
-      if (walkedRows > MAX_ACCOUNT_ROWS) {
-        throw apiError(
-          `${action} Blockscout v2 walk exceeded ${MAX_ACCOUNT_ROWS} rows; cursor frozen`
-        );
-      }
-
-      let reachedStart = false;
-      for (const raw of items) {
-        const blockText = decimalString(raw?.block_number);
-        const block = blockText == null ? NaN : Number(blockText);
-        if (!Number.isSafeInteger(block)) {
-          throw apiError(
-            `${action} Blockscout v2 returned invalid block ${JSON.stringify(raw?.block_number)}; cursor frozen`
-          );
-        }
-        if (previousBlock != null && block > previousBlock) {
-          throw apiError(
-            `${action} Blockscout v2 pages are not newest-first at block ${block}; cursor frozen`
-          );
-        }
-        previousBlock = block;
-        if (block > end) continue;
-        if (block < start) {
-          reachedStart = true;
-          continue;
-        }
-        const mapped = this._mapBlockscoutV2Row(action, raw);
-        const key = this._blockscoutV2RowKey(action, mapped);
-        const prior = rowsByKey.get(key);
-        if (prior && JSON.stringify(prior) !== JSON.stringify(mapped)) {
-          throw apiError(`Blockscout v2 ${action} returned conflicting duplicate rows; cursor frozen`);
-        }
-        rowsByKey.set(key, mapped);
-      }
-
-      if (reachedStart || !nextPageParams || Object.keys(nextPageParams).length === 0) break;
-      if (items.length === 0) {
-        throw apiError(`Blockscout v2 ${action} returned an empty page with a cursor; cursor frozen`);
-      }
-      const cursorKey = stableCursor(nextPageParams);
-      if (seenCursors.has(cursorKey)) {
-        throw apiError(`Blockscout v2 ${action} repeated a page cursor; cursor frozen`);
-      }
-      seenCursors.add(cursorKey);
-      cursor = nextPageParams;
-    }
-
-    const result = [...rowsByKey.values()].sort((left, right) => {
-      const blockOrder = Number(left.blockNumber) - Number(right.blockNumber);
-      if (blockOrder) return blockOrder;
-      const positionOrder = compareDecimalStrings(
-        left.transactionIndex || left.traceId?.split('_')[0] || left.logIndex,
-        right.transactionIndex || right.traceId?.split('_')[0] || right.logIndex
-      );
-      if (positionOrder) return positionOrder;
-      const subOrder = compareDecimalStrings(
-        left.traceId?.split('_')[1] || left.logIndex || left.tokenID,
-        right.traceId?.split('_')[1] || right.logIndex || right.tokenID
-      );
-      if (subOrder) return subOrder;
-      return this._blockscoutV2RowKey(action, left)
-        .localeCompare(this._blockscoutV2RowKey(action, right));
-    });
-    if (scannedThroughBlock != null) {
-      Object.defineProperty(result, 'scannedThroughBlock', {
-        value: scannedThroughBlock,
-        enumerable: false,
-      });
-    }
-    return result;
-  }
-
   static async _rpcRequest(
     chainId,
     method,
@@ -1206,7 +783,7 @@ class EtherscanService {
           });
         }
         // `total_blocks` from /api/v2/stats is an aggregate count, not a block
-        // height (Base's value was ~200k behind its newest indexed height).
+        // height.
         // Blockscout orders this endpoint newest-first; the first item is the
         // indexed coverage boundary shared by account and log APIs.
         result = response.data?.items?.[0]?.height;
@@ -1215,10 +792,6 @@ class EtherscanService {
           throw new Error('Blockscout v2 blocks response has no valid indexed height');
         }
       } catch (err) {
-        // A v2-only declaration means the legacy facade is known unavailable,
-        // not a fallback. Preserve the failed boundary so no feed cursor can
-        // advance under a different provider with an unproven indexed head.
-        if (chain.accountApi.apiStyle === 'blockscout-v2') throw err;
         // Some public instances intermittently disable or fail the v2 blocks
         // route while their documented legacy block module and account/log
         // APIs remain healthy. Querying eth_block_number on the SAME explorer
@@ -1430,11 +1003,6 @@ class EtherscanService {
     chainId = etherscan.CHAIN_ID,
     scannedThroughBlock = null
   ) {
-    if (chains.getChain(chainId)?.accountApi?.apiStyle === 'blockscout-v2') {
-      return this._fetchBlockscoutV2Paged(
-        action, address, startBlock, apiKey, chainId, scannedThroughBlock
-      );
-    }
     const all = [];
     let cursor = startBlock;
     const endBlock = scannedThroughBlock ?? 999999999;
@@ -1561,7 +1129,7 @@ class EtherscanService {
 
   // The five ACCOUNT feeds take the chain and an optional indexed coverage
   // boundary as trailing arguments. Both preserve their old defaults, while
-  // OP/Base pass one shared Blockscout head so every feed—including an empty
+  // OP Mainnet passes one shared Blockscout head so every feed—including an empty
   // one—can report exactly how far it scanned. The sixth feed
   // (fetchStateSyncDeposits, below) is per-chain-declared and therefore takes
   // its feed config before that optional boundary.

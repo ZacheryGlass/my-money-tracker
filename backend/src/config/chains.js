@@ -27,8 +27,9 @@
 //     arriving from a contract is seen at all, so a chain without them silently
 //     drifts away from its own derived balance.
 //   * OP Mainnet (10) remains on its public Blockscout instance. Base (8453)
-//     is CDP-only for ordinary history and full audits; its Blockscout adapter
-//     remains available only for a future keyed, transaction-scoped repair.
+//     is CDP-only for ordinary history and full audits. Any future repair must
+//     be an explicitly keyed, transaction-scoped provider operation, not an
+//     account-feed fallback.
 //     A per-transaction receipt decoder records Base native bridge credits, so
 //     no chain-wide anonymous bridge-log walk is part of the critical path.
 //   * Polygon PoS (137) is served on the FREE key -- balance, txlist and
@@ -248,21 +249,12 @@ const REGISTRY = [
     coingeckoPlatform: 'base',
     enabledByDefault: true,
     // Base history is served by the user's separately encrypted Coinbase CDP
-    // Client API key. Blockscout remains configured below only as a keyed,
-    // transaction-scoped repair source; it is not an ordinary sync provider.
+    // Client API key. It is not an Etherscan/Blockscout account-feed chain.
     historyProvider: 'coinbase-cdp',
-    accountApi: {
-      provider: 'Blockscout',
-      baseUrl: 'https://base.blockscout.com/api',
-      apiStyle: 'blockscout-v2',
-      v2BaseUrl: 'https://base.blockscout.com/api/v2',
-      requiresApiKey: false,
-      // The legacy state-sync walk and v2 account feeds share one host/IP
-      // bucket. Production scan #277 proved that dropping back to the generic
-      // 1.5s Blockscout spacing at that handoff can 429 the first wallet even
-      // after the 15s state-sync walk itself succeeds.
-      requestSpacingMs: 15000,
-    },
+    // CDP is credentialed independently from Etherscan. This flag prevents
+    // the legacy Etherscan credential gate from treating Base as an explorer
+    // account-feed chain; the CDP-specific gate lives in the sync/audit paths.
+    requiresApiKey: false,
     rpcUrl: 'https://mainnet.base.org',
     ingestVersion: 2,
     opStackDeposits: {
