@@ -478,4 +478,5 @@ module.exports.addressTransactionItems = addressTransactionItems;
 module.exports.parseRetryAfter = parseRetryAfter;
 module.exports.normalizeJsonNumbers = normalizeJsonNumbers;
 module.exports.providerError = providerError;
+module.exports.oversizedResponse = oversizedResponse;
 module.exports.DEFAULT_HISTORY_PAGE_SIZE = DEFAULT_HISTORY_PAGE_SIZE;

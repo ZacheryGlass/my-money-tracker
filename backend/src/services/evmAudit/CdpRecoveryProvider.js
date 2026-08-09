@@ -1,6 +1,7 @@
 'use strict';
 
 const { address, sha256, stableJson, txHash } = require('./normalizer');
+const { oversizedResponse } = require('./CdpClient');
 
 const MAX_RECOVERY_CANDIDATES = 64;
 
@@ -261,7 +262,7 @@ async function recoverTransaction(client, candidate, {
       );
       traceCache?.set(traceKey, traceResponse);
     } catch (error) {
-      if (error.code !== 'CDP_RESPONSE_TOO_LARGE') throw error;
+      if (error.code !== 'CDP_RESPONSE_TOO_LARGE' && !oversizedResponse(error)) throw error;
       // A whole-block callTracer response can exceed CDP's response limit even
       // when the wallet transaction itself is recoverable. CDP documents
       // debug_traceCall, so retry just this transaction against its parent

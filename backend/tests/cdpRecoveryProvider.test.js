@@ -228,7 +228,8 @@ test('CDP Core recovery falls back to a parent-state transaction trace when the 
       calls.push({ method, params });
       if (method === 'debug_traceBlockByNumber') {
         const error = new Error('Response is too big');
-        error.code = 'CDP_RESPONSE_TOO_LARGE';
+        error.code = 'CDP_API_ERROR';
+        error.httpStatus = 413;
         throw error;
       }
       return responses.get(method);
