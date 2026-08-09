@@ -77,14 +77,14 @@ function event(overrides = {}) {
   };
 }
 
-test('OP Stack L1 endpoints route Base separately from Optimism and sourceHash proves identity', () => {
+test('OP Stack endpoints route Optimism and sourceHash proves identity', () => {
   const sourceTx = hash('1');
   const destinationTx = hash('2');
   const blockHash = hash('a');
   const portal = address('1');
   const source = envelope({
     chainId: 1, txHash: sourceTx, category: 'bridge_out', blockHash,
-    endpoints: [endpoint('base', 1, portal), endpoint('optimism', 1, address('2'))],
+    endpoints: [endpoint('optimism', 1, portal)],
   });
   source.receipt.logs = [log({
     txHash: sourceTx, blockHash, logAddress: portal, index: 7,
@@ -92,13 +92,13 @@ test('OP Stack L1 endpoints route Base separately from Optimism and sourceHash p
   })];
   const sourceHash = opSourceHash(blockHash, 7);
   const destination = envelope({
-    walletId: 2, chainId: 8453, txHash: destinationTx, category: 'bridge_in',
+    walletId: 2, chainId: 10, txHash: destinationTx, category: 'bridge_in',
     tx: { sourceHash, type: '0x7e' },
   });
 
   const decoded = [...decodeEnvelope(destination), ...decodeEnvelope(source)];
   assert.equal(decoded.length, 2);
-  assert.deepEqual(new Set(decoded.map((row) => row.protocol)), new Set(['base']));
+  assert.deepEqual(new Set(decoded.map((row) => row.protocol)), new Set(['optimism']));
   const movements = buildProtocolMovements(decoded);
   assert.equal(movements.length, 1);
   assert.equal(movements[0].status, 'protocol_verified');
@@ -417,15 +417,15 @@ test('Across V3 compares protocol key and common relay fields; V2 remains sugges
   });
   source.receipt.logs = [log({
     txHash: sourceTx, blockHash: source.receipt.blockHash, logAddress: sourcePool,
-    topics: [TOPICS.acrossV3Deposit, word(8453), word(77), addressWord(depositor)],
+    topics: [TOPICS.acrossV3Deposit, word(10), word(77), addressWord(depositor)],
     body: data(
       addressWord(token), addressWord(outputToken), word(1_000_000), word(995_000),
       word(100), word(200), word(0), addressWord(recipient), addressWord(address('5')), word(320)
     ),
   })];
   const destination = envelope({
-    walletId: 2, chainId: 8453, txHash: destinationTx, category: 'bridge_in',
-    endpoints: [endpoint('across', 8453, destinationPool)],
+    walletId: 2, chainId: 10, txHash: destinationTx, category: 'bridge_in',
+    endpoints: [endpoint('across', 10, destinationPool)],
   });
   destination.receipt.logs = [log({
     txHash: destinationTx, blockHash: destination.receipt.blockHash, logAddress: destinationPool,
@@ -469,9 +469,9 @@ test('Polygon PoS and Plasma stay suggestion-only without a shared proof identif
 
 test('matching is set-based across out-of-order, concurrent, and cross-protocol identities', () => {
   const events = [
-    event({ protocol: 'base', correlation_key: 'deposit:2', role: 'destination_execution', direction: 'in', chain_id: 8453, tx_hash: hash('4') }),
+    event({ protocol: 'arbitrum', correlation_key: 'deposit:2', role: 'destination_execution', direction: 'in', chain_id: 42161, tx_hash: hash('4') }),
     event({ protocol: 'optimism', correlation_key: 'deposit:1', tx_hash: hash('1') }),
-    event({ protocol: 'base', correlation_key: 'deposit:2', tx_hash: hash('3') }),
+    event({ protocol: 'arbitrum', correlation_key: 'deposit:2', tx_hash: hash('3') }),
     event({ protocol: 'optimism', correlation_key: 'deposit:1', role: 'destination_execution', direction: 'in', chain_id: 10, tx_hash: hash('2') }),
     // Same textual key in another protocol is intentionally independent.
     event({ protocol: 'linea', correlation_key: 'deposit:1', tx_hash: hash('5') }),
@@ -537,7 +537,7 @@ test('a durable user confirmation owns its transaction coordinates', () => {
   ]);
   const manual = [verdictMovement({
     id: 9, out_wallet_id: 1, out_chain_id: 1, out_tx_hash: hash('1'),
-    in_wallet_id: 3, in_chain_id: 8453, in_tx_hash: hash('3'),
+    in_wallet_id: 3, in_chain_id: 42161, in_tx_hash: hash('3'),
   })];
   const [resolved] = resolveProtocolCoordinateConflicts(automatic, manual);
   assert.equal(resolved.status, 'unsupported');
@@ -661,8 +661,8 @@ test('amount and time enumerate every alternative as a suggestion and create no 
     legs: [{ asset: 'ETH', amount: '1', token_standard: null, symbol_known: true }],
   };
   const rows = [
-    { ...base, chain_id: 1, tx_hash: hash('1'), category: 'bridge_out', endpoint_protocol: 'base', legs: [{ ...base.legs[0], direction: 'out' }] },
-    { ...base, wallet_id: 2, chain_id: 8453, tx_hash: hash('2'), category: 'bridge_in', endpoint_protocol: 'base', block_time: '2026-01-01T00:05:00.000Z', legs: [{ ...base.legs[0], direction: 'in' }] },
+    { ...base, chain_id: 1, tx_hash: hash('1'), category: 'bridge_out', endpoint_protocol: 'arbitrum', legs: [{ ...base.legs[0], direction: 'out' }] },
+    { ...base, wallet_id: 2, chain_id: 42161, tx_hash: hash('2'), category: 'bridge_in', endpoint_protocol: 'arbitrum', block_time: '2026-01-01T00:05:00.000Z', legs: [{ ...base.legs[0], direction: 'in' }] },
     { ...base, wallet_id: 3, chain_id: 10, tx_hash: hash('3'), category: 'bridge_in', block_time: '2026-01-01T00:06:00.000Z', legs: [{ ...base.legs[0], direction: 'in' }] },
   ];
   const suggestions = suggestBridgeLegs(rows);
@@ -784,4 +784,22 @@ test('the reviewed endpoint pack and generated migration seed cannot drift', () 
     path.join(__dirname, '../migrations/072_evidence_first_bridge_matching.sql'), 'utf8'
   );
   assert.ok(migration.includes(buildSeed(pack)));
+});
+
+test('OP Mainnet keeps its shared OP Stack predeploy metadata', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const pack = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '../data/builtin-bridge-labels.json'), 'utf8'
+  ));
+  const optimismL2 = pack.labels.filter((entry) => (
+    entry.protocol === 'optimism' && entry.chain_id === 10
+  ));
+  assert.deepEqual(
+    optimismL2.map((entry) => entry.address).sort(),
+    [
+      '0x4200000000000000000000000000000000000010',
+      '0x4200000000000000000000000000000000000016',
+    ]
+  );
 });

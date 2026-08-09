@@ -186,7 +186,7 @@ describe('CryptoLedger', () => {
         out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 10, in_tx_hash: TX2,
       }],
       receipt_failures: [{
-        id: 50, chain_id: 8453, tx_hash: TX, provider: 'json-rpc',
+        id: 50, chain_id: 10, tx_hash: TX, provider: 'json-rpc',
         status: 'failed', error_code: 'BRIDGE_RECEIPT_UNAVAILABLE',
       }],
     });
@@ -215,8 +215,8 @@ describe('CryptoLedger', () => {
       .mockResolvedValueOnce({
         summary: { suggestions: 2 }, movements: [], verdicts: [], receipt_failures: [],
         suggestions: [{
-          id: 1, protocol: 'base', out_wallet_id: 1, out_chain_id: 1,
-          out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 8453, in_tx_hash: TX2,
+          id: 1, protocol: 'optimism', out_wallet_id: 1, out_chain_id: 1,
+          out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 10, in_tx_hash: TX2,
           ambiguous: true, suggestion_reason: 'asset_amount',
         }],
         pagination: { suggestions: { limit: 1, offset: 0, total: 2, generation: '2:2', has_more: true } },
@@ -224,8 +224,8 @@ describe('CryptoLedger', () => {
       .mockResolvedValueOnce({
         summary: { suggestions: 2 }, movements: [], verdicts: [], receipt_failures: [],
         suggestions: [{
-          id: 2, protocol: 'optimism', out_wallet_id: 1, out_chain_id: 1,
-          out_tx_hash: TX, in_wallet_id: 3, in_chain_id: 10, in_tx_hash: secondTx,
+          id: 2, protocol: 'arbitrum', out_wallet_id: 1, out_chain_id: 1,
+          out_tx_hash: TX, in_wallet_id: 3, in_chain_id: 42161, in_tx_hash: secondTx,
           ambiguous: true, suggestion_reason: 'asset_amount',
         }],
         pagination: { suggestions: { limit: 1, offset: 1, total: 2, generation: '2:2', has_more: false } },
@@ -238,7 +238,7 @@ describe('CryptoLedger', () => {
     await waitFor(() => expect(apiMocks.crypto.getBridgeAudit).toHaveBeenLastCalledWith({
       suggestion_limit: 1, suggestion_offset: 1, suggestion_generation: '2:2', limit: 1,
     }));
-    expect(await screen.findByText(/optimism · chain 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/arbitrum · chain 1/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Show more alternatives' })).not.toBeInTheDocument());
   });
 
@@ -246,8 +246,8 @@ describe('CryptoLedger', () => {
     const firstPage = {
       summary: { suggestions: 2 }, movements: [], verdicts: [], receipt_failures: [],
       suggestions: [{
-        id: 1, protocol: 'base', out_wallet_id: 1, out_chain_id: 1,
-        out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 8453, in_tx_hash: TX2,
+        id: 1, protocol: 'optimism', out_wallet_id: 1, out_chain_id: 1,
+        out_tx_hash: TX, in_wallet_id: 2, in_chain_id: 10, in_tx_hash: TX2,
         ambiguous: true, suggestion_reason: 'asset_amount',
       }],
       pagination: { suggestions: { limit: 1, offset: 0, total: 2, generation: '2:2', has_more: true } },
@@ -1127,7 +1127,7 @@ describe('CryptoLedger', () => {
       chain_id: 100,
       legs: [{ asset: 'USDC.e', direction: 'out', amount: '1', units: '1000000', decimals: 6 }],
       bridge_match: {
-        protocol: 'hop', chain_id: 8453, chain_label: 'Base', tx_hash: TX2,
+        protocol: 'hop', chain_id: 10, chain_label: 'OP Mainnet', tx_hash: TX2,
         category: 'bridge_in', movement_status: 'protocol_verified',
         verification_method: 'protocol_identity',
         legs: [{ asset: 'USDC.e', direction: 'in', amount: '0.99', units: '990000', decimals: 6 }],
@@ -1135,7 +1135,7 @@ describe('CryptoLedger', () => {
         evidence: {
           hop_pair: {
             transfer_id: `0x${'c'.repeat(64)}`,
-            route: { route_key: 'USDC.e:100->8453' },
+            route: { route_key: 'USDC.e:100->10' },
             gross_amount: '1000000', bonder_fee: '10000', net_amount: '990000',
           },
         },
@@ -1146,7 +1146,7 @@ describe('CryptoLedger', () => {
     fireEvent.click((await screen.findAllByText('− 1 USDC.e'))[0]);
 
     expect(await screen.findByText(/Hop v1 0xcccc…cccc/)).toBeInTheDocument();
-    expect(screen.getByText(/USDC\.e:100->8453/)).toBeInTheDocument();
+    expect(screen.getByText(/USDC\.e:100->10/)).toBeInTheDocument();
     expect(screen.getByText(/gross 1000000 − bonder fee 10000 = net 990000 base units/)).toBeInTheDocument();
   });
 

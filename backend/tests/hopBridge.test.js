@@ -19,7 +19,7 @@ const data = (...words) => `0x${words.map((value) => value.slice(2)).join('')}`;
 const call = (selector, ...words) => `${selector}${words.map((value) => value.slice(2)).join('')}`;
 
 const SOURCE_CHAIN = 100;
-const DESTINATION_CHAIN = 8453;
+const DESTINATION_CHAIN = 10;
 const SOURCE_BRIDGE = '0x25d8039bb044dc227f741a9e381ca4ceae2e6ae8';
 const SOURCE_WRAPPER = '0x76b22b8c1079a44f1211d867d68b1eda76a635a7';
 const DESTINATION_BRIDGE = '0x46ae9bab8cea96610807a275ebd36f8e916b5c61';
@@ -36,7 +36,7 @@ const MIN = 980_000n;
 const DEADLINE = 1_900_000_000n;
 
 const ROUTE = {
-  deployment_key: 'hop-mainnet-v1', family_version: 'v1', route_key: 'USDC.e:100->8453',
+  deployment_key: 'hop-mainnet-v1', family_version: 'v1', route_key: 'USDC.e:100->10',
   asset_key: 'USDC.e', source_chain_id: SOURCE_CHAIN, destination_chain_id: DESTINATION_CHAIN,
   source_bridge_address: SOURCE_BRIDGE, source_wrapper_address: SOURCE_WRAPPER,
   destination_bridge_address: DESTINATION_BRIDGE, destination_wrapper_address: DESTINATION_WRAPPER,
@@ -224,7 +224,7 @@ test('Hop identity does not fold when gross, fee, asset, route, or recipient evi
   ]).some((movement) => movement.status === 'protocol_verified'), false);
 
   const wrongChain = decodePair({
-    destination: { chainId: 10 },
+    destination: { chainId: 42161 },
   });
   // The route registry rejects a destination observed on a chain outside the
   // exact source/destination pair; it must not fall back to amount/time.

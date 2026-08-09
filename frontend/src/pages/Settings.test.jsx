@@ -113,7 +113,6 @@ describe('Settings display names', () => {
         plaid_secret: { source: 'none', masked: null },
         etherscan: { source: 'none', masked: null },
         moralis: { source: 'none', masked: null },
-        cdp: { source: 'none', masked: null },
       },
       appSettings: {
         cg_api_key: { source: 'none', masked: null },
@@ -174,7 +173,6 @@ describe('Settings display names', () => {
         plaid_secret: { source: 'env', masked: null },
         etherscan: { source: 'db', masked: '••••1234' },
         moralis: { source: 'none', masked: null },
-        cdp: { source: 'none', masked: null },
       },
       appSettings: {
         cg_api_key: { source: 'none', masked: null },
@@ -187,8 +185,7 @@ describe('Settings display names', () => {
 
     await screen.findByText('Your Keys');
     expect(screen.getByText('Moralis API Key')).toBeInTheDocument();
-    expect(screen.getByText('Coinbase CDP Client API Key')).toBeInTheDocument();
-    expect(screen.getByText(/Moralis and Coinbase CDP require separate stored per-user keys/)).toBeInTheDocument();
+    expect(screen.queryByText(/Coinbase CDP/)).not.toBeInTheDocument();
     expect(screen.getByText('••••1234')).toBeInTheDocument();
     expect(screen.getByText('Using server default')).toBeInTheDocument();
     // Only the stored (db) key row offers Clear.
@@ -220,7 +217,6 @@ describe('Settings display names', () => {
         plaid_secret: { source: 'env', masked: null },
         etherscan: { source: 'none', masked: null },
         moralis: { source: 'none', masked: null },
-        cdp: { source: 'none', masked: null },
       },
       appSettings: {
         cg_api_key: { source: 'none', masked: null },
@@ -272,7 +268,6 @@ describe('Settings display names', () => {
         plaid_secret: { source: 'none', masked: null },
         etherscan: { source: 'none', masked: null },
         moralis: { source: 'none', masked: null },
-        cdp: { source: 'none', masked: null },
       },
       appSettings: {
         cg_api_key: { source: 'db', masked: '••••7777' },

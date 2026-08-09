@@ -138,12 +138,12 @@ test('deferred coverage requires and stores a durable retry time', async () => {
 
   queries.length = 0;
   const retryAt = new Date('2026-08-07T01:00:00Z');
-  await EthFeedCoverage.recordAttempts(7, 8453, [{
+  await EthFeedCoverage.recordAttempts(7, 100, [{
     feed: 'normal',
-    provider: 'Coinbase CDP address history (Base)',
+    provider: 'Blockscout',
     status: 'deferred',
-    errorCode: 'CDP_RATE_LIMITED',
-    errorMessage: 'CDP rate limited',
+    errorCode: 'BLOCKSCOUT_RATE_LIMITED',
+    errorMessage: 'Blockscout rate limited',
     retryAfterAt: retryAt,
   }]);
   assert.ok(queries[0].params.includes(retryAt));

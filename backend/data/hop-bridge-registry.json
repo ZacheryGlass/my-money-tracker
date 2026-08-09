@@ -54,15 +54,6 @@
           "bridge": "0x0e0e3d2c5c292161999474247956ef542cabf8dd",
           "wrapper": "0xe22d2bedb3eca35e6397e0c6d62857094aa26f52",
           "validFromBlock": 440027
-        },
-        {
-          "chainId": 8453,
-          "name": "Base",
-          "canonicalToken": "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca",
-          "hopToken": "0x74fa978eaffa312bc92e76df40fcc1bfe7637aeb",
-          "bridge": "0x46ae9bab8cea96610807a275ebd36f8e916b5c61",
-          "wrapper": "0x7d269d3e0d61a05a0ba976b7dbf8805bf844af3f",
-          "validFromBlock": 2077758
         }
       ]
     }

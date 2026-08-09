@@ -128,11 +128,10 @@ CREATE TABLE IF NOT EXISTS eth_activity_links (
 );
 
 -- BEGIN GENERATED SEED (backend/scripts/generate-bridge-seed.js)
--- 48 addresses, researched 2026-07-29. Sources, one per protocol:
+-- 44 addresses, researched 2026-07-29. Sources, one per protocol:
 --   arbitrum  https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses
 --   linea     https://docs.linea.build/network/build/contracts
 --   optimism  https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json
---   base      https://docs.base.org/base-chain/network-information/base-contracts
 --   across    https://docs.across.to/chains-and-contracts
 --   polygon   https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json
 --   gnosis    https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge
@@ -176,15 +175,11 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0x99c9fc46f92e8a1c0dec1b1747d010903e884be1', 'Optimism: L1 Standard Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json'),
   (NULL, '0xbeb5fc579115071764c7423a4f12edde41f106ed', 'Optimism: Portal', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json'),
   (NULL, '0x25ace71c97b33cc4729cf772ae268934f7ab5fa1', 'Optimism: L1 Cross Domain Messenger', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json'),
-  (NULL, '0x3154cf16ccdb4c6d922629664174b904d80f2c35', 'Base: L1 Standard Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.base.org/base-chain/network-information/base-contracts'),
-  (NULL, '0x49048044d57e1c92a77f79988d21fa8faf74e97e', 'Base: Portal', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.base.org/base-chain/network-information/base-contracts'),
-  (NULL, '0x866e82a600a1414e583f7f13623f1ac5d58b0afa', 'Base: L1 Cross Domain Messenger', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.base.org/base-chain/network-information/base-contracts'),
-  (NULL, '0x4200000000000000000000000000000000000010', 'OP Stack: L2 Standard Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 8453. Source: https://docs.base.org/base-chain/network-information/base-contracts'),
-  (NULL, '0x4200000000000000000000000000000000000016', 'OP Stack: L2 To L1 Message Passer', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 8453. Source: https://docs.base.org/base-chain/network-information/base-contracts'),
+  (NULL, '0x4200000000000000000000000000000000000010', 'Optimism: L2 Standard Bridge', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 10. Source: https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json'),
+  (NULL, '0x4200000000000000000000000000000000000016', 'Optimism: L2 To L1 Message Passer', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 10. Source: https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json'),
   (NULL, '0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5', 'Across: Ethereum Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://docs.across.to/chains-and-contracts'),
   (NULL, '0xe35e9842fceaca96570b734083f4a58e8f7c5f2a', 'Across: Arbitrum Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 42161. Source: https://docs.across.to/chains-and-contracts'),
   (NULL, '0x6f26bf09b1c792e3228e5467807a900a503c0281', 'Across: OP Mainnet Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 10. Source: https://docs.across.to/chains-and-contracts'),
-  (NULL, '0x09aea4b2242abc8bb4bb78d537a67a245a7bec64', 'Across: Base Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 8453. Source: https://docs.across.to/chains-and-contracts'),
   (NULL, '0x7e63a5f1a8f0b4d0934b2f2327daed3f6bb2ee75', 'Across: Linea Spoke Pool', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 59144. Source: https://docs.across.to/chains-and-contracts'),
   (NULL, '0xa0c68c638235ee32657e8f720a23cec1bfc77c77', 'Polygon: PoS Bridge (RootChainManager)', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),
   (NULL, '0x8484ef722627bf18ca5ae6bcf031c23e6e922b30', 'Polygon: PoS Ether Predicate', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),

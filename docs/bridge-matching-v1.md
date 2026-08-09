@@ -112,7 +112,7 @@ hash are stored with the receipt. If a provider does not expose the finalized
 tag, returns a malformed boundary, or has not finalized the receipt block yet,
 an otherwise exact protocol pair remains `pending`. The matcher deliberately
 has no confirmation-count approximation. Current public RPCs prove this
-boundary for OP Mainnet, Base, Gnosis, and zkSync Era; the configured Etherscan
+boundary for OP Mainnet, Gnosis, and zkSync Era; the configured Etherscan
 proxy does not expose the tag for Ethereum, Polygon, Arbitrum, or Linea, so
 paths requiring those receipts remain pending until a finality-capable provider
 or an explicit user verdict is available. zkSync Lite archive records marked
@@ -139,7 +139,7 @@ re-evaluate old output reproducibly.
 
 ## Protocol matrix
 
-### OP Stack: OP Mainnet and Base
+### OP Stack: OP Mainnet
 
 Versions: Bedrock and later canonical Portal/StandardBridge.
 
@@ -288,7 +288,7 @@ and [contract interfaces](https://github.com/across-protocol/contracts).
 
 Issue #86 adds a registry-scoped Hop v1 adapter for the reviewed mainnet
 USDC.e deployment. The initial registry covers Ethereum plus Gnosis, Polygon,
-Optimism, Arbitrum, and Base: 11 endpoint rows and 25 directed asset routes
+Optimism, and Arbitrum: 9 endpoint rows and 16 directed asset routes
 (each supported L2 to Ethereum route and each supported L2-to-L2 route). It
 does not imply that every Hop asset, chain, or newer deployment is supported.
 The registry is generated from the pinned [Hop mainnet address

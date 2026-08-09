@@ -113,7 +113,7 @@ SELECT c.wallet_id,
          ELSE c.last_synced_at AT TIME ZONE 'UTC'
        END
  FROM eth_wallet_chains c
- WHERE c.chain_id IN (10, 100, 137, 8453)
+ WHERE c.chain_id IN (10, 100, 137)
 ON CONFLICT (wallet_id, chain_id, feed) DO NOTHING;
 
 -- Reset only resume state, never source evidence or annotations. Each feed's

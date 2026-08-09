@@ -11,7 +11,6 @@
     "arbitrum": "https://docs.arbitrum.io/arbitrum-essentials/reference/contract-addresses",
     "linea": "https://docs.linea.build/network/build/contracts",
     "optimism": "https://raw.githubusercontent.com/ethereum-optimism/superchain-registry/main/superchain/extra/addresses/addresses.json",
-    "base": "https://docs.base.org/base-chain/network-information/base-contracts",
     "across": "https://docs.across.to/chains-and-contracts",
     "polygon": "https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json",
     "gnosis": "https://docs.gnosischain.com/bridges/About%20Token%20Bridges/xdai-bridge",
@@ -22,7 +21,6 @@
     "arbitrum": "Offchain Labs' own docs. The URL published in issue #59 (/build-decentralized-apps/reference/contract-addresses) 301s here.",
     "linea": "Consensys' own docs. The three URLs in issue #59 now 404; Linea restructured its docs and this is the live canonical page.",
     "optimism": "docs.optimism.io/superchain/addresses renders its L1 table CLIENT-SIDE from this file -- the URL is hardcoded in the page payload. It is Optimism's own first-party registry, and it is the only official source: no static docs.optimism.io page prints OP Mainnet's L1 addresses.",
-    "base": "Coinbase's own docs. Also the source for the OP Stack L2 predeploys, which are identical on OP Mainnet and Base (both explorers confirm the same two addresses).",
     "across": "Across' own docs. The per-chain subpage URLs in issue #59 do not exist; the site serves one consolidated table.",
     "polygon": "Polygon's own static network registry, the file its SDKs and docs resolve mainnet addresses from. Five seeded rows: the three PoS PROXY addresses under POSContracts (RootChainManagerProxy, EtherPredicateProxy, ERC20PredicateProxy), plus the Plasma DepositManagerProxy (Main.Contracts.DepositManagerProxy) and the MRC20 native-token precompile (Matic.Contracts.Tokens.MaticToken, 0x0000000000000000000000000000000000001010). POL bridges via PLASMA, not the PoS RootChainManager: the deposit's L1 counterparty is the DepositManager, and its Polygon counterparty is the MRC20, which credits the bridged-in POL through the Bor state sync (#76). The proxies -- and the precompile the state sync writes from -- are what a user (or the system transaction) transacts with; the implementations behind them are never called directly and are not seeded.",
     "gnosis": "Gnosis Chain's own xDai Bridge page. It identifies the legacy Ethereum/Gnosis bridge proxies, the current Ethereum BridgeRouter and Gnosis USDS deposit entry points, and the Block Reward contract whose AddedReceiver log records consensus-minted xDAI credits.",
@@ -30,13 +28,12 @@
     "zksync-lite": "Matter Labs' archived Lite environment documentation. It prints the mainnet rollup contract byte-for-byte; that same address is the L1 counterparty of the user's known 2021 deposit and 2022 withdrawal."
   },
   "excluded": {
-    "hop": "Hop publishes no addresses in its documentation -- docs.hop.exchange defers to a TypeScript file on the SDK's `develop` branch, which is a moving target rather than a deployment record. Its address table also reuses one address for different contracts on different chains (the Ethereum USDC.e L1 bridge and the Base ETH L2 bridge are both 0x3666f603...), and eth_address_labels is address-keyed with no chain column.",
+    "hop": "Hop publishes no addresses in its documentation -- docs.hop.exchange defers to a TypeScript file on the SDK's `develop` branch, which is a moving target rather than a deployment record. Its address table also reuses one address for different contracts on different chains, and eth_address_labels is address-keyed with no chain column.",
     "stargate": "Same address-collision problem, inside Stargate's own tables (StargatePoolUSDC on Arbitrum and StargatePoolNative on OP Mainnet are both 0xe8cdf27a...), plus an unresolved V1/V2 split with two live doc sets. Both protocols remain one click away in the label form; seeding a per-token pool address globally would be a verdict about bytes verified on only one chain."
   },
   "explorerAccess": {
     "etherscan.io": "readable -- all three Polygon rows carry a \"Polygon (Matic): ...\" name tag that agrees with the first-party registry",
     "optimistic.etherscan.io": "readable",
-    "basescan.org": "readable",
     "lineascan.build": "readable",
     "arbiscan.io": "blocked -- HTTP 403 Cloudflare interstitial on every address, so no Arbitrum-side name tag was readable and none was substituted from elsewhere"
   },
@@ -310,44 +307,20 @@
       "explorer_name_tag": "Optimism: Proxy OVM L1 Cross Domain Messenger"
     },
     {
-      "address": "0x3154cf16ccdb4c6d922629664174b904d80f2c35",
-      "name": "Base: L1 Standard Bridge",
-      "chain_id": 1,
-      "protocol": "base",
-      "docs_name": "L1StandardBridge",
-      "explorer_name_tag": "Base: Base Bridge"
-    },
-    {
-      "address": "0x49048044d57e1c92a77f79988d21fa8faf74e97e",
-      "name": "Base: Portal",
-      "chain_id": 1,
-      "protocol": "base",
-      "docs_name": "OptimismPortal",
-      "explorer_name_tag": "Base: Base Portal"
-    },
-    {
-      "address": "0x866e82a600a1414e583f7f13623f1ac5d58b0afa",
-      "name": "Base: L1 Cross Domain Messenger",
-      "chain_id": 1,
-      "protocol": "base",
-      "docs_name": "L1CrossDomainMessenger",
-      "explorer_name_tag": "Base: L1 Cross Domain Messenger"
-    },
-    {
       "address": "0x4200000000000000000000000000000000000010",
-      "name": "OP Stack: L2 Standard Bridge",
-      "chain_id": 8453,
-      "protocol": "base",
-      "docs_name": "L2StandardBridge (predeploy, identical on OP Mainnet and Base)",
-      "explorer_name_tag": "Base: L2 Standard Bridge Proxy; Optimism: L2 Standard Bridge on chain 10"
+      "name": "Optimism: L2 Standard Bridge",
+      "chain_id": 10,
+      "protocol": "optimism",
+      "docs_name": "L2StandardBridge",
+      "explorer_name_tag": "Optimism: L2 Standard Bridge"
     },
     {
       "address": "0x4200000000000000000000000000000000000016",
-      "name": "OP Stack: L2 To L1 Message Passer",
-      "chain_id": 8453,
-      "protocol": "base",
-      "docs_name": "L2ToL1MessagePasser (predeploy, identical on OP Mainnet and Base)",
-      "explorer_name_tag": "Base: L2 To L1 Message Passer; Optimism: L2 To L1 Message Passer on chain 10"
+      "name": "Optimism: L2 To L1 Message Passer",
+      "chain_id": 10,
+      "protocol": "optimism",
+      "docs_name": "L2ToL1MessagePasser",
+      "explorer_name_tag": "Optimism: L2ToL1MessagePasser"
     },
     {
       "address": "0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5",
@@ -372,14 +345,6 @@
       "protocol": "across",
       "docs_name": "SpokePool",
       "explorer_name_tag": "Across Protocol: Spoke Pool"
-    },
-    {
-      "address": "0x09aea4b2242abc8bb4bb78d537a67a245a7bec64",
-      "name": "Across: Base Spoke Pool",
-      "chain_id": 8453,
-      "protocol": "across",
-      "docs_name": "SpokePool",
-      "explorer_name_tag": "Across Protocol: Base Spoke Pool Proxy"
     },
     {
       "address": "0x7e63a5f1a8f0b4d0934b2f2327daed3f6bb2ee75",

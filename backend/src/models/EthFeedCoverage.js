@@ -10,7 +10,7 @@ const CURSOR_KINDS = new Set(['evm_block', 'archive_serial']);
 // makes the report change as one snapshot: readers cannot observe three feeds
 // from tonight and three from yesterday in the middle of a sync.
 class EthFeedCoverage {
-  static async recordAttempts(walletId, chainId, entries, { scanId = null, owner = null } = {}) {
+  static async recordAttempts(walletId, chainId, entries) {
     if (!Number.isInteger(walletId) || !Number.isInteger(chainId)) {
       throw new Error('EthFeedCoverage.recordAttempts requires integer wallet and chain ids');
     }
@@ -65,27 +65,7 @@ class EthFeedCoverage {
       )`);
     }
 
-    const transactional = Boolean(scanId);
-    const client = transactional ? await pool.connect() : pool;
-    try {
-      if (transactional) {
-        await client.query('BEGIN');
-        const owned = await client.query(
-          `SELECT 1 FROM eth_wallet_chains
-            WHERE wallet_id = $1 AND chain_id = $2
-              AND provider_scan_id = $3::uuid AND provider_scan_owner = $4
-              AND provider_scan_status = 'running'
-              AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP
-            FOR UPDATE`,
-          [walletId, chainId, scanId, owner]
-        );
-        if (!owned.rows[0]) {
-          const error = new Error('Base CDP scan is no longer the active writer');
-          error.code = 'CDP_SCAN_STALE';
-          throw error;
-        }
-      }
-      const result = await client.query(
+    const result = await pool.query(
         `INSERT INTO eth_feed_coverage (
          wallet_id, chain_id, feed, cursor_kind, provider, status,
          covered_from_block, covered_through_block,
@@ -144,14 +124,7 @@ class EthFeedCoverage {
        RETURNING *`,
         params
       );
-      if (transactional) await client.query('COMMIT');
-      return result.rows;
-    } catch (error) {
-      if (transactional) await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      if (transactional) client.release();
-    }
+    return result.rows;
   }
 
   static async findForUser(userId) {

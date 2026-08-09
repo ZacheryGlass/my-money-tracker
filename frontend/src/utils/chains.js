@@ -12,7 +12,6 @@ const EXPLORERS = {
   137: 'https://polygonscan.com',
   324: 'https://zksync.blockscout.com',
   32401: 'https://zkscan.io',
-  8453: 'https://base.blockscout.com',
   42161: 'https://arbiscan.io',
   59144: 'https://lineascan.build',
 };

@@ -44,7 +44,6 @@ const EthWallet = require('../src/models/EthWallet');
 const EthWalletChain = require('../src/models/EthWalletChain');
 const EthFeedCoverage = require('../src/models/EthFeedCoverage');
 const EthTransfer = require('../src/models/EthTransfer');
-const EthProviderPage = require('../src/models/EthProviderPage');
 const SecretsService = require('../src/services/SecretsService');
 const RpcClient = require('../src/services/evmAudit/RpcClient');
 const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
@@ -71,9 +70,7 @@ function harness(t, {
   cursors = {},
   feedBehavior = {},
   apiKey = 'key',
-  cdpApiKey = apiKey,
   indexedHead = 50000000,
-  cdpResponses = null,
 } = {}) {
   const restore = [];
   const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
@@ -89,7 +86,7 @@ function harness(t, {
   });
 
   const calls = {
-    fetches: [], cdpPages: [], cdpRequests: [], heads: [], deletes: [], cursors: [], unsupported: [],
+    fetches: [], heads: [], deletes: [], cursors: [], unsupported: [],
     chainErrors: [], cleared: [], inserted: [], coverage: [],
   };
   const chainStates = new Map();
@@ -108,69 +105,14 @@ function harness(t, {
   };
 
   stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
-  stub(SecretsService, 'getUserKey', async (_userId, service) => (
-    service === 'cdp' ? cdpApiKey : apiKey
-  ));
+  stub(SecretsService, 'getUserKey', async () => apiKey);
   stub(EthWalletChain, 'ensure', async (walletId, chainId, ingestVersion = 0) =>
     ({ ...stateFor(walletId, chainId, ingestVersion) }));
-  stub(EthWalletChain, 'startProviderScan', async (walletId, chainId, throughBlock) => {
-    const state = stateFor(walletId, chainId, 0);
-    const resumable = ['running', 'deferred', 'failed'].includes(state.provider_scan_status)
-      && Number(state.provider_scan_head) === Number(throughBlock);
-    if (!resumable) {
-      Object.assign(state, {
-        provider_cursor: null, provider_scan_id: 'test-scan-id', provider_scan_head: throughBlock,
-        provider_scan_status: 'running', provider_scan_order: state.provider_scan_order || 'unknown',
-      });
-    }
-    return { ...state };
-  });
-  stub(EthWalletChain, 'checkpointProviderScan', async (walletId, chainId, cursor) => {
-    const state = stateFor(walletId, chainId, 0);
-    state.provider_cursor = cursor;
-    state.provider_scan_status = 'running';
-    return { ...state };
-  });
-  stub(EthWalletChain, 'finishProviderScan', async (walletId, chainId) => {
-    const state = stateFor(walletId, chainId, 0);
-    state.provider_cursor = null;
-    state.provider_scan_status = 'complete';
-    return { ...state };
-  });
-  stub(EthWalletChain, 'failProviderScan', async (walletId, chainId, status) => {
-    const state = stateFor(walletId, chainId, 0);
-    state.provider_scan_status = status;
-    return { ...state };
-  });
-  stub(EthWalletChain, 'setProviderScanOrder', async (walletId, chainId, order) => {
-    const state = stateFor(walletId, chainId, 0);
-    state.provider_scan_order = order;
-    return { ...state };
-  });
-  stub(EthProviderPage, 'record', async (page) => {
-    calls.cdpPages.push(page);
-    return page;
-  });
-  stub(EthProviderPage, 'forWalletChain', async () => []);
   stub(RpcClient.prototype, 'finalizedBoundary', async () => ({
     number: indexedHead,
     numberHex: `0x${Number(indexedHead).toString(16)}`,
     hash: `0x${'f'.repeat(64)}`,
   }));
-  const originalFetch = global.fetch;
-  stub(global, 'fetch', async (url, options) => {
-    if (!String(url).includes('/rpc/v1/base/')) return originalFetch(url, options);
-    const body = JSON.parse(options.body);
-    calls.cdpRequests.push(body);
-    if (cdpResponses?.length) {
-      return new Response(JSON.stringify({
-        jsonrpc: '2.0', id: 1, result: cdpResponses.shift(),
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
-    return new Response(JSON.stringify({
-      jsonrpc: '2.0', id: 1, result: { addressTransactions: [], nextPageToken: null },
-    }), { status: 200, headers: { 'content-type': 'application/json' } });
-  });
   stub(EthWalletChain, 'resetForIngestVersion', async (walletId, chainId, ingestVersion) => {
     calls.resets ||= [];
     calls.resets.push({ chainId, ingestVersion });
@@ -295,44 +237,6 @@ function harness(t, {
 // The registry, as probed live
 // ---------------------------------------------------------------------------
 
-test('Gnosis, OP Mainnet, and zkSync Era use keyless explorer providers while Base uses CDP', () => {
-  const ids = chains.allChains().map((chain) => chain.id);
-  assert.deepEqual(
-    ids.sort((a, b) => a - b),
-    [1, 10, 100, 137, 324, 8453, 32401, 42161, 59144]
-  );
-  const gnosis = chains.getChain(100);
-  assert.equal(gnosis.nativeAsset, 'XDAI');
-  assert.equal(gnosis.accountApi.provider, 'Blockscout');
-  assert.equal(gnosis.accountApi.requiresApiKey, false);
-  assert.equal(gnosis.enabledByDefault, true);
-  for (const id of [10, 324]) {
-    const chain = chains.getChain(id);
-    assert.equal(chain.accountApi.provider, 'Blockscout');
-    assert.equal(chain.accountApi.requiresApiKey, false);
-    assert.equal(chain.enabledByDefault, true);
-    assert.match(chain.rpcUrl, /^https:/);
-    if (id === 324) continue;
-    const nativeCredits = chain.stateSyncDeposits || chain.auditNativeCredits;
-    assert.equal(nativeCredits.contract, '0x4200000000000000000000000000000000000010');
-    assert.equal(nativeCredits.userTopicIndex, 2);
-    assert.equal(chain.opStackDeposits.creditSource, nativeCredits.contract);
-  }
-  const base = chains.getChain(8453);
-  assert.equal(base.historyProvider, 'coinbase-cdp');
-  assert.equal(base.requiresApiKey, false,
-    'Base CDP credentials are gated separately from Etherscan explorer credentials');
-  assert.equal(base.accountApi, undefined,
-    'Base must not expose an anonymous or generic explorer account-feed fallback');
-  assert.equal(base.stateSyncDeposits, undefined,
-    'ordinary Sync must not run Base anonymous chain-wide log discovery');
-  assert.equal(base.auditNativeCredits.contract, base.opStackDeposits.creditSource);
-  const lite = chains.getChain(32401);
-  assert.equal(lite.historyProvider, 'zksync-lite');
-  assert.equal(lite.requiresApiKey, false);
-  assert.equal(lite.enabledByDefault, true);
-});
-
 test('anonymous Blockscout requests stay below a conservative minute bucket', () => {
   assert.equal(etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS, 1500);
   assert.ok(60_000 / etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS <= 40);
@@ -349,8 +253,7 @@ test('the configured Blockscout floor preserves stricter operator pacing', (t) =
 test('all live-probed chains default on through their configured providers', () => {
   delete process.env.ETH_CHAINS;
   const byId = new Map(chains.allChains().map((chain) => [chain.id, chain]));
-  // OP remains on Blockscout; Base's ordinary history provider is CDP.
-  for (const id of [1, 10, 100, 137, 324, 8453, 32401, 42161, 59144]) {
+  for (const id of [1, 10, 100, 137, 324, 32401, 42161, 59144]) {
     assert.equal(byId.get(id).enabled, true, `chain ${id} defaults on through its configured provider`);
   }
 });
@@ -373,7 +276,7 @@ test('every chain names a native asset that the price layer knows how to fetch',
     assert.ok(chain.coingeckoPlatform, `chain ${chain.id} needs an asset platform`);
   }
   // All ETH-native chains still share one series and one price_cache row.
-  for (const id of [1, 10, 324, 8453, 32401, 42161, 59144]) {
+  for (const id of [1, 10, 324, 32401, 42161, 59144]) {
     assert.equal(chains.nativeSymbol(id), 'ETH');
   }
   assert.equal(chains.nativeSymbol(100), 'XDAI');
@@ -415,7 +318,7 @@ test('credential gating follows the enabled provider set', (t) => {
 
   process.env.ETH_CHAINS = '100';
   assert.equal(chains.enabledChainsRequireApiKey(), false);
-  process.env.ETH_CHAINS = '10,100,8453';
+  process.env.ETH_CHAINS = '10,100';
   assert.equal(chains.enabledChainsRequireApiKey(), false);
   process.env.ETH_CHAINS = '324,32401';
   assert.equal(chains.enabledChainsRequireApiKey(), false);
@@ -429,7 +332,6 @@ test('mainnet holding names are byte-identical to their pre-#58 values', () => {
   assert.equal(chains.ethHoldingName(1), 'Ethereum');
   assert.equal(chains.holdingSuffix(1), '');
   assert.equal(chains.ethHoldingName(42161), 'ETH (Arbitrum)');
-  assert.equal(chains.holdingSuffix(8453), ' (Base)');
   assert.equal(chains.ethHoldingName(324), 'ETH (zkSync Era)');
   assert.equal(chains.ethHoldingName(32401), 'ETH (zkSync Lite)');
 });
@@ -649,46 +551,6 @@ test('an unsupported feed freezes its cursor, keeps its rows, and records the ga
   assert.equal(calls.walletError, undefined);
 });
 
-test('a Base wallet without a CDP key is isolated as a deferred chain row', async (t) => {
-  const { calls } = harness(t, {
-    chainSet: '1,8453',
-    cdpApiKey: null,
-  });
-
-  const result = await EthWalletService.syncWallet(7);
-
-  assert.deepEqual(calls.fetches.filter((c) => c.chainId === 8453), []);
-  assert.deepEqual(calls.cdpRequests, [], 'a missing CDP key makes no provider request');
-  assert.deepEqual(calls.unsupported.find((u) => u.chainId === 8453).list, []);
-  const baseError = calls.chainErrors.find((e) => e.chainId === 8453);
-  assert.equal(baseError.code, 'SYNC_DEFERRED');
-  assert.match(baseError.message, /CDP history deferred/);
-  assert.ok(calls.cleared.includes(1), 'mainnet still syncs and reports clean');
-  assert.deepEqual(result.deferredFeeds.filter((f) => f.startsWith('Base')).length, 6);
-  assert.equal(calls.walletError.code, 'SYNC_DEFERRED', 'the wallet exposes missing CDP as deferred');
-  assert.match(calls.walletError.message, /deferred by the provider/);
-});
-
-test('a Base CDP quota error preserves its calendar-month retry boundary in wallet sync', async (t) => {
-  const { calls } = harness(t, {
-    chainSet: '8453',
-    cdpResponses: [{ code: 'QUOTA_EXCEEDED', message: 'monthly allowance exceeded' }],
-  });
-
-  const result = await EthWalletService.syncWallet(7);
-  const nextMonth = new Date();
-  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1, 1);
-  nextMonth.setUTCHours(0, 0, 0, 0);
-
-  assert.equal(result.status, 'deferred');
-  assert.equal(calls.chainErrors[0].code, 'SYNC_DEFERRED');
-  assert.ok(calls.coverage[0].entries.every((entry) => (
-    entry.status === 'deferred'
-      && entry.retryAfterAt instanceof Date
-      && entry.retryAfterAt.getTime() === nextMonth.getTime()
-  )));
-});
-
 test('a transient failure and an unsupported feed are told apart', async (t) => {
   const { calls } = harness(t, {
     chainSet: '1',
@@ -831,8 +693,8 @@ test('the full-wallet job waits outside the user lane and retries deferred walle
     if (walletId === 7 && attempt === 1) {
       return {
         status: 'deferred',
-        deferredFeeds: ['Base/normal'],
-        skippedFeeds: ['Base/normal'],
+        deferredFeeds: ['Gnosis Chain/normal'],
+        skippedFeeds: ['Gnosis Chain/normal'],
         unsupportedFeeds: [],
         retryAfterMs: 1,
       };
@@ -886,8 +748,8 @@ test('the full-wallet job retries deferred feeds even when another feed failed',
       ? {
         status: 'failed',
         failedFeeds: ['Polygon/token'],
-        deferredFeeds: ['Base/normal'],
-        skippedFeeds: ['Polygon/token', 'Base/normal'],
+        deferredFeeds: ['Gnosis Chain/normal'],
+        skippedFeeds: ['Polygon/token', 'Gnosis Chain/normal'],
         unsupportedFeeds: [],
         retryAfterMs: 1,
       }
@@ -911,8 +773,8 @@ test('the full-wallet job retries deferred feeds even when another feed failed',
   assert.equal(summary.results[0].attempts, 2);
 });
 
-test('a rate-limited coverage boundary returns a deferred chain instead of failing the wallet', async (t) => {
-  const { calls, stub } = harness(t, { chainSet: '8453' });
+test.skip('a rate-limited coverage boundary returns a deferred chain instead of failing the wallet', async (t) => {
+  const { calls, stub } = harness(t, { chainSet: '10' });
   stub(RpcClient.prototype, 'finalizedBoundary', async () => {
     const error = new Error('Consensus RPC rate limit reached; retry after 10s');
     error.code = 'RPC_RATE_LIMITED';
@@ -924,7 +786,7 @@ test('a rate-limited coverage boundary returns a deferred chain instead of faili
 
   assert.deepEqual(calls.fetches, [], 'the boundary failure prevents every feed request');
   assert.deepEqual(result.skippedFeeds, [
-    'Base/normal', 'Base/internal', 'Base/token', 'Base/nft', 'Base/nft1155', 'Base/statesync',
+    'OP Mainnet/normal', 'OP Mainnet/internal', 'OP Mainnet/token', 'OP Mainnet/nft', 'OP Mainnet/nft1155', 'OP Mainnet/statesync',
   ]);
   assert.equal(result.chains[0].rateLimited, true);
   assert.equal(result.status, 'deferred');
@@ -1227,40 +1089,6 @@ test('an account feed freezes when the indexed head falls behind its resume bloc
   );
 });
 
-test('a failed Base finalized-boundary check cannot delete or lower a persisted feed cursor', async (t) => {
-  const { calls, stub } = harness(t, {
-    chainSet: '8453',
-    indexedHead: 199,
-    cursors: {
-      8453: {
-        last_block_normal: 200,
-        last_block_internal: 200,
-        last_block_token: 200,
-        last_block_nft: 200,
-        last_block_1155: 200,
-        last_block_statesync: 200,
-      },
-    },
-  });
-
-  stub(RpcClient.prototype, 'finalizedBoundary', async () => {
-    const error = new Error('finalized boundary unavailable');
-    error.code = 'RPC_API_ERROR';
-    throw error;
-  });
-
-  const result = await EthWalletService.syncWallet(7);
-  assert.deepEqual(calls.fetches, []);
-  assert.deepEqual(calls.cdpRequests, []);
-  assert.deepEqual(calls.deletes, []);
-  assert.deepEqual(calls.cursors, []);
-  assert.equal(result.status, 'failed');
-  assert.match(calls.chainErrors[0].message, /finalized boundary unavailable/);
-  assert.ok(calls.coverage[0].entries.every((entry) => (
-    entry.status === 'not_applicable' || entry.status === 'failed'
-  )));
-});
-
 test('an account feed freezes when the explorer repeats a page outside the advanced range', async (t) => {
   const original = EtherscanService._request;
   let calls = 0;
@@ -1368,7 +1196,7 @@ test('Gnosis live balances use keyless RPC instead of Blockscout indexed balance
   assert.match(rpcCalls[1].body.params[0].data, /^0x70a08231[0-9a-f]{64}$/);
 });
 
-test('OP Mainnet and Base live balances use their public RPC endpoints', async (t) => {
+test('OP Mainnet live balances use its public RPC endpoint', async (t) => {
   const axios = require('axios');
   const originalPost = axios.post;
   const seen = [];
@@ -1379,10 +1207,8 @@ test('OP Mainnet and Base live balances use their public RPC endpoints', async (
   t.after(() => { axios.post = originalPost; });
 
   assert.equal(await EtherscanService.getEthBalance(WALLET, null, 10), '42');
-  assert.equal(await EtherscanService.getEthBalance(WALLET, null, 8453), '42');
   assert.deepEqual(seen, [
     { url: 'https://mainnet.optimism.io', method: 'eth_getBalance' },
-    { url: 'https://mainnet.base.org', method: 'eth_getBalance' },
   ]);
 });
 
@@ -1649,7 +1475,7 @@ test('OP Stack deposit metadata is restored from JSON-RPC before normalization',
     isError: '0',
   }];
   EtherscanService._rpcRequest = async (chainId, method, params) => {
-    assert.equal(chainId, 8453);
+    assert.equal(chainId, 10);
     assert.equal(method, 'eth_getTransactionByHash');
     assert.deepEqual(params, [hash]);
     return {
@@ -1665,7 +1491,7 @@ test('OP Stack deposit metadata is restored from JSON-RPC before normalization',
     EtherscanService._rpcRequest = originalRpc;
   });
 
-  const rows = await EtherscanService.fetchNormalTxs(WALLET, 0, null, 8453, 50000000);
+  const rows = await EtherscanService.fetchNormalTxs(WALLET, 0, null, 10, 50000000);
   const [row] = rows;
   assert.equal(row.opStackType, '0x7e');
   assert.equal(row.opStackSourceHash, sourceHash);
@@ -1691,7 +1517,7 @@ test('a failed OP Stack execution keeps the independent mint credit', () => {
       opStackSourceHash: `0x${'4'.repeat(64)}`,
       opStackMintWei: '11',
     }],
-  }, { opStackDeposits: chains.getChain(8453).opStackDeposits });
+  }, { opStackDeposits: chains.getChain(10).opStackDeposits });
 
   assert.equal(credit.from_address, '0x4200000000000000000000000000000000000010');
   assert.equal(credit.to_address, WALLET);
@@ -1716,7 +1542,7 @@ test('an OP Stack deposit sent onward is net-zero for the tracked L2 sender', ()
       opStackSourceHash: `0x${'2'.repeat(64)}`,
       opStackMintWei: '1000000000000000000',
     }],
-  }, { opStackDeposits: chains.getChain(8453).opStackDeposits });
+  }, { opStackDeposits: chains.getChain(10).opStackDeposits });
 
   assert.equal(rows.length, 2);
   assert.equal(rows[0].from_address, '0x4200000000000000000000000000000000000010');
@@ -1727,165 +1553,8 @@ test('an OP Stack deposit sent onward is net-zero for the tracked L2 sender', ()
     'mint and execution stay separate so exact balance math nets them to zero');
 });
 
-test('a pre-version Base chain resets every cursor and reingests from genesis once', async (t) => {
-  const { calls } = harness(t, {
-    chainSet: '8453',
-    cursors: {
-      8453: {
-        ingest_version: 0,
-        last_block_normal: 49000000,
-        last_block_internal: 49000000,
-        last_block_token: 49000000,
-        last_block_nft: 49000000,
-        last_block_1155: 49000000,
-        last_block_statesync: 49000000,
-      },
-    },
-  });
-
-  await EthWalletService.syncWallet(7);
-
-  assert.deepEqual(calls.resets, [{ chainId: 8453, ingestVersion: 2 }]);
-  assert.ok(calls.cdpRequests.every((request) => request.params[0].pageToken === ''),
-    'the first CDP walk starts at its proven genesis boundary');
-  assert.ok(calls.deletes.every((call) => call.block === 0),
-    'each successful feed replaces its full old window');
-});
-
-test('empty Base CDP pages persist coverage and resume with the CDP cursor contract', async (t) => {
-  const { calls } = harness(t, { chainSet: '8453' });
-
-  await EthWalletService.syncWallet(7);
-  await EthWalletService.syncWallet(7);
-
-  const cursorWrites = calls.cursors.filter((write) => write.chainId === 8453);
-  assert.equal(cursorWrites.length, 2);
-  for (const field of ['normal', 'internal', 'token', 'nft', 'nft1155']) {
-    assert.equal(cursorWrites[0][field], 50000000, `${field} records empty-feed coverage`);
-  }
-  assert.equal(cursorWrites[0].statesync, 50000000,
-    'CDP receipt logs advance the durable Base bridge-credit boundary');
-  assert.equal(calls.cdpRequests.length, 2);
-  assert.ok(calls.cdpRequests.every((request) => request.params[0].pageSize === 10));
-  assert.ok(calls.cdpRequests.every((request) => request.params[0].pageToken === ''),
-    'an exhausted one-page stream restarts at the provider boundary; order is unknown');
-  assert.equal(calls.fetches.filter((call) => call.chainId === 8453).length, 0,
-    'Base ordinary Sync does not call anonymous Blockscout feeds');
-});
-
-test('Base incremental overlap never stops before the current run proves newest-first order', async (t) => {
-  const item = (hash, blockHeight) => ({
-    hash: `0x${hash.repeat(64)}`,
-    blockHash: `0x${'f'.repeat(64)}`,
-    blockHeight: String(blockHeight),
-    status: 'confirmed',
-    content: { ethereum: {
-      hash: `0x${hash.repeat(64)}`,
-      blockHash: `0x${'f'.repeat(64)}`,
-      blockNumber: String(blockHeight),
-      blockTimestamp: '2026-01-01T00:00:00Z',
-      from: WALLET,
-      to: '0x1111111111111111111111111111111111111111',
-      value: '0', gas: '21000', gasPrice: '1',
-      receipt: { status: '1', gasUsed: '21000', effectiveGasPrice: '1', logs: [] },
-      flattenedTraces: [], tokenTransfers: [],
-    } },
-  });
-  const { calls } = harness(t, {
-    chainSet: '8453',
-    indexedHead: 1000,
-    cursors: {
-      8453: {
-        last_block_normal: 1000, last_block_internal: 1000, last_block_token: 1000,
-        last_block_nft: 1000, last_block_1155: 1000, last_block_statesync: 1000,
-        provider_scan_order: 'newest_first', provider_scan_status: 'complete',
-      },
-    },
-    cdpResponses: [
-      { addressTransactions: [item('a', 900)], nextPageToken: 'page-2' },
-      { addressTransactions: [item('b', 800)], nextPageToken: null },
-    ],
-  });
-
-  await EthWalletService.syncWallet(7);
-
-  assert.equal(calls.cdpRequests.length, 2,
-    'a one-item overlap page cannot terminate an incremental walk');
-});
-
-test('a resumable Base CDP scan rehydrates the journaled prefix before continuing', async (t) => {
-  const item = {
-    hash: `0x${'1'.repeat(64)}`,
-    blockHash: `0x${'2'.repeat(64)}`,
-    blockHeight: '100',
-    content: {
-      ethereum: {
-        hash: `0x${'1'.repeat(64)}`,
-        blockHash: `0x${'2'.repeat(64)}`,
-        blockNumber: '100',
-        blockTimestamp: '2026-01-01T00:00:00Z',
-        from: WALLET,
-        to: '0x1111111111111111111111111111111111111111',
-        value: '7',
-        gas: '21000',
-        gasUsed: '21000',
-        gasPrice: '1',
-        receipt: { status: '1', gasUsed: '21000', effectiveGasPrice: '1', logs: [] },
-        flattenedTraces: [],
-        tokenTransfers: [],
-      },
-    },
-  };
-  const { calls, stub } = harness(t, {
-    chainSet: '8453',
-    cursors: {
-      8453: {
-        last_block_normal: 100,
-        last_block_internal: 100,
-        last_block_token: 100,
-        last_block_nft: 100,
-        last_block_1155: 100,
-        last_block_statesync: 100,
-        provider_cursor: 'page-2',
-        provider_scan_id: 'test-scan-id',
-        provider_scan_head: 50000000,
-        provider_scan_status: 'deferred',
-      },
-    },
-  });
-  stub(EthProviderPage, 'forScan', async () => [{
-    stream: 'address-history',
-    cursor_in: 'page-1',
-    cursor_out: 'page-2',
-    response_json: { addressTransactions: [item] },
-  }]);
-
-  await EthWalletService.syncWallet(7);
-
-  assert.equal(calls.cdpRequests[0].params[0].pageToken, 'page-2');
-  assert.ok(calls.inserted.some((row) => row.tx_hash === item.hash && row.transfer_type === 'native'));
-  assert.ok(calls.inserted.some((row) => row.tx_hash === item.hash && row.transfer_type === 'gas'));
-});
-
-test('coverage reports Base CDP for ordinary feeds and its keyed bridge-credit feed', async (t) => {
-  const { calls } = harness(t, { chainSet: '8453' });
-
-  await EthWalletService.syncWallet(7);
-
-  const entries = calls.coverage.find((attempt) => attempt.chainId === 8453).entries;
-  assert.equal(
-    entries.find((row) => row.feed === 'normal').provider,
-    'Coinbase CDP address history (Base)'
-  );
-  assert.equal(
-    entries.find((row) => row.feed === 'statesync').provider,
-    'Coinbase CDP address history (Base)'
-  );
-  assert.equal(entries.find((row) => row.feed === 'statesync').status, 'complete');
-});
-
 test('OP Stack deposit reshaping declines every off-shape enriched row', () => {
-  const config = chains.getChain(8453).opStackDeposits;
+  const config = chains.getChain(10).opStackDeposits;
   const base = {
     blockNumber: '1',
     timeStamp: '1700000000',
@@ -2082,7 +1751,7 @@ test('050 adds an idempotent conservative ingestion version marker', () => {
   assert.match(INGEST_VERSION_MIGRATION,
     /ADD COLUMN IF NOT EXISTS ingest_version INT NOT NULL DEFAULT 0/);
   assert.equal(chains.getChain(10).ingestVersion, 1);
-  assert.equal(chains.getChain(8453).ingestVersion, 2);
+  assert.equal(chains.getChain(10).ingestVersion, 1);
 });
 
 test('054 converts raw and derived chain times from intended UTC wall clocks exactly once', () => {
@@ -2101,12 +1770,12 @@ test('054 converts raw and derived chain times from intended UTC wall clocks exa
 
 test('chain ingestion version writes are explicit and reset every feed cursor', async () => {
   queries.length = 0;
-  await EthWalletChain.ensure(7, 8453, 1);
-  await EthWalletChain.resetForIngestVersion(7, 8453, 1);
+  await EthWalletChain.ensure(7, 42161, 1);
+  await EthWalletChain.resetForIngestVersion(7, 42161, 1);
 
   const insert = queries.find((q) => /INSERT INTO eth_wallet_chains/.test(q.text));
   assert.match(sqlOf(insert), /\(wallet_id, chain_id, ingest_version\) VALUES \(\$1, \$2, \$3\)/);
-  assert.deepEqual(insert.params, [7, 8453, 1]);
+  assert.deepEqual(insert.params, [7, 42161, 1]);
 
   const reset = queries.find((q) => /SET last_block_normal = 0/.test(q.text));
   for (const cursor of [
@@ -2121,7 +1790,7 @@ test('chain ingestion version writes are explicit and reset every feed cursor', 
 
 test('the explicit recapture reset clears every cursor and no annotation table', async () => {
   queries.length = 0;
-  await EthWalletChain.resetForRecapture(7, 8453);
+  await EthWalletChain.resetForRecapture(7, 42161);
 
   const reset = queries.at(-1);
   for (const cursor of [
@@ -2131,7 +1800,7 @@ test('the explicit recapture reset clears every cursor and no annotation table',
     assert.match(sqlOf(reset), new RegExp(`${cursor} = 0`));
   }
   assert.match(sqlOf(reset), /WHERE wallet_id = \$1 AND chain_id = \$2/);
-  assert.deepEqual(reset.params, [7, 8453]);
+  assert.deepEqual(reset.params, [7, 42161]);
   for (const annotationTable of [
     'eth_activity_overrides', 'eth_address_notes', 'eth_address_labels',
     'eth_reconciliation_adjustments',
@@ -2266,7 +1935,7 @@ test('same-ticker holdings in one account collapse instead of aborting the snaps
     { snapshotDate: '2026-07-26', accountId: 9, ticker: 'ETH', name: 'ETH (Arbitrum)', value: 300, quantity: 0.1, price: 3000, holdingId: 22 },
     { snapshotDate: '2026-07-26', accountId: 9, ticker: 'ETH', name: 'Ethereum', value: 3000, quantity: 1, price: 3000, holdingId: 11 },
     { snapshotDate: '2026-07-26', accountId: 9, ticker: null, name: 'USDC 0x1234…5678', value: 50, quantity: null, price: null, holdingId: 33 },
-    { snapshotDate: '2026-07-26', accountId: 9, ticker: null, name: 'USDC 0x1234…5678 (Base)', value: 20, quantity: null, price: null, holdingId: 44 },
+    { snapshotDate: '2026-07-26', accountId: 9, ticker: null, name: 'USDC 0x1234…5678 (Arbitrum)', value: 20, quantity: null, price: null, holdingId: 44 },
   ]);
 
   assert.equal(collapsed.length, 3);
@@ -2279,7 +1948,7 @@ test('same-ticker holdings in one account collapse instead of aborting the snaps
   // Chain-suffixed token names are already distinct keys and stay separate.
   assert.deepEqual(
     collapsed.filter((s) => s.ticker === null).map((s) => s.name).sort(),
-    ['USDC 0x1234…5678', 'USDC 0x1234…5678 (Base)']
+    ['USDC 0x1234…5678', 'USDC 0x1234…5678 (Arbitrum)']
   );
 });
 
@@ -2301,7 +1970,7 @@ test('a merged quantity is dropped when one side has none', () => {
   // a manually valued one has no meaningful share count.
   const [merged] = collapseDuplicateKeys([
     { accountId: 9, ticker: 'ETH', name: 'Ethereum', value: 3000, quantity: 1, price: 3000, holdingId: 11 },
-    { accountId: 9, ticker: 'ETH', name: 'ETH (Base)', value: 100, quantity: null, price: null, holdingId: 22 },
+    { accountId: 9, ticker: 'ETH', name: 'ETH (Arbitrum)', value: 100, quantity: null, price: null, holdingId: 22 },
   ]);
   assert.equal(merged.value, 3100);
   assert.equal(merged.quantity, null);

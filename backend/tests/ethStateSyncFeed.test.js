@@ -157,11 +157,6 @@ test('ordinary native-credit feeds exclude Base while audit metadata remains ava
       assert.equal(chain.stateSyncDeposits.contract, OP_STACK_BRIDGE);
       assert.equal(chain.stateSyncDeposits.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
-    } else if (chain.id === 8453) {
-      assert.equal(chain.stateSyncDeposits, undefined);
-      assert.equal(chain.auditNativeCredits.contract, OP_STACK_BRIDGE);
-      assert.equal(chain.auditNativeCredits.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);
-      assert.equal(chain.auditNativeCredits.userTopicIndex, 2);
     } else {
       assert.equal(chain.stateSyncDeposits, undefined,
         `chain ${chain.id} must NOT declare a state-sync feed`);
@@ -553,14 +548,6 @@ test('a Gnosis AddedReceiver credit ingests as a bridge-classifiable internal le
   assert.equal(credit.to_address, WALLET);
   assert.equal(credit.value_wei, DEPOSIT_WEI);
   assert.equal(credit.chain_id, 100);
-});
-
-test('Base bridge credits do not use the legacy anonymous state-sync feed', () => {
-  const base = chains.getChain(8453);
-  assert.equal(base.stateSyncDeposits, undefined);
-  assert.equal(base.historyProvider, 'coinbase-cdp');
-  assert.equal(base.auditNativeCredits.contract, OP_STACK_BRIDGE);
-  assert.equal(base.auditNativeCredits.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);
 });
 
 test('the two internal-typed feeds do not clear each other: delete windows split by from_address', async (t) => {

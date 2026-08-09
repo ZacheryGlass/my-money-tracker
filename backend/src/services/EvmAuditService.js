@@ -9,9 +9,6 @@ const EtherscanService = require('./EtherscanService');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const MoralisClient = require('./evmAudit/MoralisClient');
-const CdpClient = require('./evmAudit/CdpClient');
-const CdpHistoryProvider = require('./evmAudit/CdpHistoryProvider');
-const CdpRecoveryProvider = require('./evmAudit/CdpRecoveryProvider');
 const RpcClient = require('./evmAudit/RpcClient');
 const normalizer = require('./evmAudit/normalizer');
 const { effectsFromInternalObservations, effectsFromRpc } = require('./evmAudit/effectDecoder');
@@ -33,10 +30,6 @@ const AUDIT_CHAINS = new Map([
     auditProvider: 'blockscout',
     errorDetail: 'Moralis does not enumerate zkSync Era; the configured Blockscout account feeds provide finite indexed coverage, while consensus RPC verifies mined transactions and effects.',
   }],
-  [8453, {
-    cdp: 'base',
-    activeIds: new Set(['0x2105', '8453', 'base']),
-  }],
   [42161, { auditProvider: 'etherscan' }],
   [59144, { auditProvider: 'etherscan' }],
   [32401, {
@@ -46,7 +39,6 @@ const AUDIT_CHAINS = new Map([
   }],
 ]);
 const OVERLAP_BLOCKS = 64;
-const CDP_COVERAGE_BASIS = 'cdp_address_history_exhausted_to_finalized_boundary_v1';
 const EXPLORER_FEEDS = Object.freeze([
   { capability: 'normal', feed: 'normal', method: 'fetchNormalTxs' },
   { capability: 'internal', feed: 'internal', method: 'fetchInternalTxs' },
@@ -106,33 +98,6 @@ function rpcPageRecord(endpoint, requestParams, body, evidence = [], itemCount =
   }, null, null, itemCount);
 }
 
-function cdpItemBlockNumber(item) {
-  const value = item?.blockHeight
-    ?? item?.content?.ethereum?.blockNumber
-    ?? item?.ethereum?.blockNumber;
-  try {
-    const parsed = BigInt(value);
-    if (parsed < 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    return Number(parsed);
-  } catch {
-    return null;
-  }
-}
-
-function cdpItemsThroughBoundary(items, throughBlock) {
-  const bounded = [];
-  for (const item of items) {
-    const block = cdpItemBlockNumber(item);
-    if (block == null) {
-      const error = new Error('Coinbase CDP returned a transaction without a safe block height');
-      error.code = 'CDP_INVALID_RESPONSE';
-      throw error;
-    }
-    if (block <= throughBlock) bounded.push(item);
-  }
-  return bounded;
-}
-
 function activeRowMatches(row, config) {
   const candidates = [row.chain_id, row.chain, row.chain_name, row.name]
     .filter((value) => value != null)
@@ -156,26 +121,6 @@ function moralisQuotaFallbackError(error) {
     detail: error.message,
     retryAt: error.retryAt || new Date(Date.now() + 24 * 60 * 60 * 1000),
   };
-}
-
-function cdpUnavailableError(error) {
-  if (!error) return null;
-  if (!['CDP_NOT_CONFIGURED', 'CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR',
-    'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-    'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
-    'CDP_RECOVERY_BUDGET_EXHAUSTED']
-    .includes(error.code)) return null;
-  return {
-    code: error.code,
-    detail: error.message,
-    retryAt: error.retryAt || (error.code === 'CDP_QUOTA_EXHAUSTED'
-      ? nextCalendarMonth() : new Date(Date.now() + 60 * 60 * 1000)),
-  };
-}
-
-function nextCalendarMonth() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
 }
 
 function missingRanges(nonces, nextNonce) {
@@ -336,7 +281,6 @@ function isStandingProviderLimitation(error) {
   return [
     'BLOCKSCOUT_FEED_UNSUPPORTED', 'BLOCKSCOUT_CHAIN_UNAVAILABLE',
     'ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE',
-    'CDP_RECOVERY_UNSUPPORTED',
   ].includes(error?.code)
     || (message.includes('does not serve') && message.includes('not yet been processed'));
 }
@@ -364,14 +308,13 @@ class EvmAuditService {
     const selected = (requestedChains || this.configuredChainIds())
       .map(Number).filter((chainId) => AUDIT_CHAINS.has(chainId));
     const credentialGenerations = await EvmAudit.credentialGenerations(userId);
-    const credentialGeneration = [credentialGenerations.moralis, credentialGenerations.cdp]
+    const credentialGeneration = [credentialGenerations.moralis]
       .filter(Boolean)
       .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
     // Resolve without logging or returning credentials. This also detects a
     // newly entered indexed-provider key so a missing-key deferral can be
     // reopened without exposing either secret.
     const etherscanConfigured = Boolean(await SecretsService.getUserKey(userId, 'etherscan'));
-    const cdpConfigured = Boolean(await SecretsService.getUserKey(userId, 'cdp'));
     const rpcConfigurationReady = selected
       .filter((chainId) => !AUDIT_CHAINS.get(chainId).unsupported)
       .every((chainId) => Boolean(chains.getChain(chainId)?.rpcUrl));
@@ -380,13 +323,11 @@ class EvmAuditService {
       requestedChains: [...new Set(selected)],
       requestedProviders: Object.fromEntries([...new Set(selected)].map((chainId) => {
         const config = AUDIT_CHAINS.get(chainId);
-        return [chainId, config.cdp ? 'coinbase-cdp'
-          : config.moralis ? 'moralis' : config.auditProvider || 'consensus-rpc'];
+        return [chainId, config.moralis ? 'moralis' : config.auditProvider || 'consensus-rpc'];
       })),
       credentialGeneration,
       credentialGenerations,
       etherscanConfigured,
-      cdpConfigured,
       rpcConfigurationReady,
     });
     if (result.job.status !== 'deferred') this.enqueue(result.job.id);
@@ -460,7 +401,6 @@ class EvmAuditService {
     try {
       const requested = (job.requested_chains || []).map(Number).filter((id) => AUDIT_CHAINS.has(id));
       const moralisRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).moralis);
-      const cdpRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).cdp);
       const explorerRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).auditProvider);
       const unsupportedRequested = requested.filter((chainId) => AUDIT_CHAINS.get(chainId).unsupported);
       if (!requested.length) {
@@ -480,22 +420,14 @@ class EvmAuditService {
           });
         }
       }
-      const cdpKey = cdpRequested.length
-        ? await SecretsService.getUserKey(job.user_id, 'cdp') : null;
-      const cdpUnavailable = cdpRequested.length && !cdpKey
-        ? cdpUnavailableError({
-          code: 'CDP_NOT_CONFIGURED',
-          message: 'Configure a separate Coinbase CDP Client API key in Settings to audit Base.',
-        }) : null;
       const credentialGenerations = await EvmAudit.credentialGenerations(job.user_id);
       const providerCredentialChanged = [
         { name: 'moralis', requested: moralisRequested.length > 0 },
-        { name: 'cdp', requested: cdpRequested.length > 0 },
       ].some(({ name, requested }) => {
         if (!requested) return false;
         const current = credentialGenerations[name] || null;
         const stored = job[`${name}_credential_generation`]
-          || (moralisRequested.length + cdpRequested.length === 1
+          || (moralisRequested.length === 1
             ? job.credential_generation : null);
         return stored == null ? current != null
           : current == null || new Date(stored).getTime() !== new Date(current).getTime();
@@ -520,8 +452,6 @@ class EvmAuditService {
       };
       let moralis = key && moralisRequested.length
         ? new MoralisClient(key, { onFailedAttempt: retainAttempt }) : null;
-      let cdp = cdpKey && cdpRequested.length
-        ? new CdpClient(cdpKey, { onFailedAttempt: retainAttempt }) : null;
 
       let activeResponse = { body: { active_chains: [] } };
       let activeRows = [];
@@ -572,21 +502,6 @@ class EvmAuditService {
             fallback_source: config.fallbackProvider || null,
           };
         }
-        if (config.cdp && cdpUnavailable) {
-          return {
-            chain_id: chainId, active_hint: null, bounded: false,
-            status: 'deferred', source: 'coinbase-cdp',
-            error_code: cdpUnavailable.code,
-            error_detail: cdpUnavailable.detail,
-          };
-        }
-        if (config.cdp) {
-          return {
-            chain_id: chainId, active_hint: null, bounded: false,
-            status: 'configured', source: 'coinbase-cdp',
-            detail: 'CDP address history is configured for Base; active-chain discovery is not universal.',
-          };
-        }
         if (config.auditProvider) {
           return {
             chain_id: chainId, active_hint: null, bounded: false,
@@ -621,9 +536,7 @@ class EvmAuditService {
         if (!chains.getChain(chainId)?.rpcUrl) {
           // Every runnable history provider still needs consensus RPC for
           // finalized boundaries, mined receipt/nonce checks, and balance
-          // reconciliation. Defer only this chain when its RPC is absent so
-          // an unrelated configuration gap cannot prevent CDP Base history
-          // from being audited.
+          // reconciliation. Defer only this chain when its RPC is absent.
           unavailable.push({
             chainId,
             provider: 'consensus-rpc',
@@ -638,16 +551,12 @@ class EvmAuditService {
           runnable.push(chainId);
           continue;
         }
-        if (config.cdp && cdp) {
-          runnable.push(chainId);
-          continue;
-        }
         const fallback = config.moralis ? config.fallbackProvider : config.auditProvider;
         if (!fallback) {
           unavailable.push({
             chainId,
-            provider: config.cdp ? 'coinbase-cdp' : 'moralis',
-            error: config.cdp ? cdpUnavailable : moralisUnavailable,
+            provider: 'moralis',
+            error: moralisUnavailable,
           });
         } else if (explorerRequiresKey(chainId) && !explorerApiKey) {
           unavailable.push({
@@ -666,8 +575,8 @@ class EvmAuditService {
         gaps += await this.runUnavailableChain({ job, chainId: item.chainId,
           provider: item.provider, error: item.error, owner: OWNER });
       }
-      let providerDeferred = Boolean(moralisUnavailable || cdpUnavailable || unavailable.length);
-      let deferredProviderError = moralisUnavailable || cdpUnavailable;
+      let providerDeferred = Boolean(moralisUnavailable || unavailable.length);
+      let deferredProviderError = moralisUnavailable;
       let unsupportedProviderError = null;
       for (const chainId of runnable) {
         assertLease(leaseState);
@@ -675,7 +584,7 @@ class EvmAuditService {
         try {
           result = await this.runChain({
             job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
-            explorerApiKey, moralisUnavailable, cdp, cdpUnavailable,
+            explorerApiKey, moralisUnavailable,
           });
         } catch (error) {
           // A capability gap on one chain must not prevent the remaining
@@ -686,9 +595,6 @@ class EvmAuditService {
           const standing = isStandingProviderLimitation(error);
           const deferred = !standing && [
               'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
-              'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_RESPONSE_TOO_LARGE',
-              'CDP_ADDRESS_ENUMERATION_UNPROVEN', 'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
-              'CDP_RECOVERY_BUDGET_EXHAUSTED',
               'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED',
               'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
               'ETHERSCAN_RATE_LIMITED', 'ETHERSCAN_TRANSPORT_ERROR',
@@ -750,9 +656,6 @@ class EvmAuditService {
     } catch (error) {
       const deferred = [
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
-        'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
-        'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-        'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE', 'CDP_RECOVERY_BUDGET_EXHAUSTED',
         'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
         'ETHERSCAN_TRANSPORT_ERROR',
@@ -760,11 +663,10 @@ class EvmAuditService {
         .includes(error.code);
       const errorCode = String(error.code || '');
       const provider = errorCode.startsWith('MORALIS_') ? 'moralis'
-        : errorCode.startsWith('CDP_') ? 'coinbase-cdp'
         : errorCode.startsWith('RPC_') ? 'consensus-rpc'
           : errorCode.startsWith('ETHERSCAN_') ? 'etherscan' : 'blockscout';
       let failureEvidenceUnjournaled = false;
-      if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('CDP_') || errorCode.startsWith('RPC_')
+      if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('RPC_')
           || errorCode.startsWith('BLOCKSCOUT_') || errorCode.startsWith('ETHERSCAN_')) {
         try {
           await EvmAudit.recordProviderAttempt({
@@ -801,7 +703,7 @@ class EvmAuditService {
     // particular, zkSync Lite is outside the EVM contract and has no provider
     // at all; preserve that fact instead of attributing it to Gnosis's source.
     const provider = config?.auditProvider
-      || (config?.cdp ? 'coinbase-cdp' : config?.moralis ? 'moralis' : 'unsupported');
+      || (config?.moralis ? 'moralis' : 'unsupported');
     for (const capability of AUDIT_CAPABILITIES) {
       await EvmAudit.upsertScope(job.id, {
         chainId, provider, capability, status: 'unsupported',
@@ -823,16 +725,14 @@ class EvmAuditService {
   }
 
   static async runChain({
-    job, chainId, moralis, cdp, activeResponse, discovered, leaseState, retainAttempt,
-    explorerApiKey = null, moralisUnavailable = null, cdpUnavailable = null,
+    job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
+    explorerApiKey = null, moralisUnavailable = null,
   }) {
     const chain = chains.getChain(chainId);
     const providerConfig = AUDIT_CHAINS.get(chainId);
     const useMoralis = Boolean(providerConfig.moralis && moralis);
-    const useCdp = Boolean(providerConfig.cdp && cdp);
-    const auditProvider = useCdp ? 'coinbase-cdp'
-      : useMoralis ? 'moralis'
-        : (providerConfig.moralis ? providerConfig.fallbackProvider : providerConfig.auditProvider);
+    const auditProvider = useMoralis ? 'moralis'
+      : (providerConfig.moralis ? providerConfig.fallbackProvider : providerConfig.auditProvider);
     const rpc = new RpcClient(chainId, { onFailedAttempt: retainAttempt });
     const boundary = await rpc.finalizedBoundary();
     const context = {
@@ -841,7 +741,6 @@ class EvmAuditService {
     };
     const writeFence = { jobId: job.id, owner: OWNER };
     const upsertScope = (scope) => EvmAudit.upsertScope(job.id, scope, writeFence);
-    const recordRawPage = (scopeId, page) => EvmAudit.recordRawPage(scopeId, page, writeFence);
     const commitPage = (scopeId, page, observations) =>
       EvmAudit.commitPage(scopeId, page, observations, writeFence);
     const completeScope = (scopeId, options) =>
@@ -869,12 +768,6 @@ class EvmAuditService {
         errorCode: moralisUnavailable.code, errorDetail: moralisUnavailable.detail,
       });
     }
-    if (providerConfig.cdp && !useCdp && cdpUnavailable) {
-      await upsertScope({
-        chainId, provider: 'coinbase-cdp', capability: 'active_chain', status: 'deferred',
-        errorCode: cdpUnavailable.code, errorDetail: cdpUnavailable.detail,
-      });
-    }
     const activeScope = await upsertScope({
       chainId, provider: auditProvider, capability: 'active_chain', status: 'running',
       fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
@@ -900,13 +793,7 @@ class EvmAuditService {
         auditProvider, 'indexed-account-feed-boundary', {
           chain_id: chainId, boundary_block: boundary.number,
         },
-        auditProvider === 'coinbase-cdp'
-          ? {
-            body: activeBoundaryBody,
-            rawText: JSON.stringify(activeBoundaryBody),
-            responseSha256: normalizer.sha256(JSON.stringify(activeBoundaryBody)),
-          }
-          : { body: activeBoundaryBody },
+        { body: activeBoundaryBody },
         null, null, 0
       ), []);
       await completeScope(activeScope.id, {
@@ -919,7 +806,7 @@ class EvmAuditService {
     }
 
     let indexedBoundary = null;
-    if (!useMoralis && !useCdp) {
+    if (!useMoralis) {
       try {
         indexedBoundary = await EtherscanService.coverageBoundary(explorerApiKey, chainId);
       } catch (error) {
@@ -943,20 +830,16 @@ class EvmAuditService {
         throw wrapped;
       }
     }
-    const sourceThroughBlock = useMoralis || useCdp
+    const sourceThroughBlock = useMoralis
       ? boundary.number : Math.min(boundary.number, indexedBoundary.throughBlock);
     const prior = job.mode === 'incremental'
       ? await EvmAudit.latestCoverage(job.subject_id, chainId, auditProvider, 'wallet_history')
       : null;
     const fromBlock = prior ? Math.max(0, Number(prior.through_block) - OVERLAP_BLOCKS) : 0;
-    const priorProviderOrder = useCdp && job.mode === 'incremental'
-      ? prior?.provider_order || null : null;
     const historyScope = await upsertScope({
       chainId, provider: auditProvider, capability: 'wallet_history', status: 'running',
       fromBlock, throughBlock: sourceThroughBlock,
-      throughHash: useMoralis || useCdp ? boundary.hash : null,
-      providerOrder: priorProviderOrder,
-      coverageBasis: useCdp ? CDP_COVERAGE_BASIS : null,
+      throughHash: useMoralis ? boundary.hash : null,
     });
     const fallbackAfterMoralis = async (error, scopeId) => {
       const deferredError = moralisQuotaFallbackError(error);
@@ -979,294 +862,16 @@ class EvmAuditService {
     };
     const hashes = new Set();
     const moralisLookupHashes = new Set();
-    const seenCdpTransactions = new Map();
-    const historicalCdpTransactions = new Map();
-    const historicalRecoveryTransactions = new Map();
     // Rehydrate every durable observation before either provider path runs.
     // This is required when Moralis fails after committing pages and the
     // explorer fallback starts with a fresh in-memory hash set.
     const durableObservations = await EvmAudit.observationsForJob(job.id, { chainId });
     for (const observation of durableObservations) {
       if (observation.tx_hash) hashes.add(String(observation.tx_hash).toLowerCase());
-      if (observation.tx_hash && !['consensus-rpc', 'moralis', 'coinbase-cdp', 'coinbase-cdp-recovery'].includes(observation.provider)) {
+      if (observation.tx_hash && !['consensus-rpc', 'moralis'].includes(observation.provider)) {
         moralisLookupHashes.add(String(observation.tx_hash).toLowerCase());
       }
     }
-    if (useCdp) {
-      const priorCdpObservations = await EvmAudit.transactionObservationsForSubject(
-        job.subject_id, chainId, 'coinbase-cdp', fromBlock
-      );
-      for (const observation of priorCdpObservations) {
-        const identity = CdpHistoryProvider.itemIdentity(observation.payload_json);
-        if (!identity.hash) continue;
-        const previous = historicalCdpTransactions.get(identity.hash);
-        if (previous && (previous.identity !== identity.identity
-            || previous.fingerprint !== identity.fingerprint)) {
-          const error = new Error(`Coinbase CDP retained conflicting data for ${identity.hash}`);
-          error.code = 'CDP_CONFLICTING_TRANSACTION';
-          throw error;
-        }
-        historicalCdpTransactions.set(identity.hash, identity);
-      }
-      const priorRecoveryObservations = await EvmAudit.transactionObservationsForSubject(
-        job.subject_id, chainId, 'coinbase-cdp-recovery', fromBlock
-      );
-      for (const observation of priorRecoveryObservations) {
-        const identity = CdpHistoryProvider.itemIdentity(observation.payload_json);
-        if (identity.hash) historicalRecoveryTransactions.set(identity.hash, identity);
-      }
-    }
-
-    // A CDP address-history page can be larger than the gateway limit even
-    // when pageSize is one. Core RPC can recover a *known* transaction by
-    // hash, receipt, canonical block, and callTracer trace, but CDP documents
-    // no second wallet-address enumeration endpoint. This path therefore
-    // preserves every recoverable transaction-scoped response while remaining
-    // explicitly deferred when it cannot prove that the failed address-history
-    // page contained no additional transaction.
-    const recoverKnownOversizedCdpHistory = async (oversizedError) => {
-      const knownTransactionHashes = new Set(
-        await EvmAudit.completeCdpTransactionHashesForSubject(job.subject_id, chainId, 0)
-      );
-      const priorCdpTransactions = await EvmAudit.transactionObservationsForSubject(
-        job.subject_id, chainId, ['coinbase-cdp', 'coinbase-cdp-recovery'], 0
-      );
-      const candidates = new Map();
-      const addCandidate = (row) => {
-        const hash = String(row?.tx_hash || row?.txHash || row?.hash || '').toLowerCase();
-        if (!/^0x[0-9a-f]{64}$/.test(hash)) return;
-        const current = candidates.get(hash) || {
-          hash, blockNumber: row.block_number ?? row.blockNumber ?? null,
-          transactionIndex: row.transaction_index ?? row.transactionIndex ?? null,
-        };
-        if (current.blockNumber == null && row.block_number != null) current.blockNumber = row.block_number;
-        if (current.transactionIndex == null && row.transaction_index != null) current.transactionIndex = row.transaction_index;
-        candidates.set(hash, current);
-      };
-      for (const row of await EvmAudit.storedTransferRows(
-        job.user_id, job.subject_id, chainId, boundary.number
-      )) addCandidate(row);
-      for (const row of priorCdpTransactions) addCandidate(row);
-
-      const allOrdered = [...candidates.values()].sort((left, right) =>
-        CdpRecoveryProvider.candidateKey(left).localeCompare(CdpRecoveryProvider.candidateKey(right))
-      );
-      const storedRecoveryState = CdpRecoveryProvider.recoveryCursor(historyScope.provider_cursor);
-      const addressHistoryCursor = storedRecoveryState
-        ? storedRecoveryState.addressHistoryCursor : historyScope.provider_cursor || null;
-      const priorState = storedRecoveryState || {
-        version: 1,
-        phase: 'known-ledger',
-        afterKey: null,
-        addressHistoryCursor,
-      };
-      let afterKey = priorState?.afterKey || null;
-      // Candidate-local recovery failures advance the checkpoint so later
-      // candidates can still be attempted, but retryable failures must remain
-      // in a durable side list. Otherwise a restart would skip the failed
-      // candidate forever once the monotonic afterKey passed it.
-      const retryKeys = new Set(
-        (Array.isArray(priorState?.retryKeys) ? priorState.retryKeys : [])
-          .filter((key) => typeof key === 'string')
-      );
-      const nextAfterKey = (key) => !afterKey || key.localeCompare(afterKey) > 0 ? key : afterKey;
-      const recoveryStateJson = () => JSON.stringify({
-        version: 1,
-        phase: 'known-ledger',
-        afterKey,
-        retryKeys: [...retryKeys].sort(),
-        addressHistoryCursor: priorState.addressHistoryCursor,
-      });
-      const ordered = allOrdered
-        .filter((candidate) => {
-          const key = CdpRecoveryProvider.candidateKey(candidate);
-          return !afterKey || key > afterKey || retryKeys.has(key);
-        })
-        .slice(0, CdpRecoveryProvider.MAX_RECOVERY_CANDIDATES);
-      let recovered = 0;
-      let skippedKnown = 0;
-      let recoveryFailure = null;
-      const traceCache = new Map();
-      const recoveryBudget = CdpRecoveryProvider.createBudget();
-      for (const candidate of ordered) hashes.add(candidate.hash);
-      for (const candidate of ordered) {
-        assertLease(leaseState);
-        const key = CdpRecoveryProvider.candidateKey(candidate);
-        const cursorIn = JSON.stringify({
-          version: 1, phase: 'known-ledger', afterKey,
-          retryKeys: [...retryKeys].sort(),
-          addressHistoryCursor: priorState.addressHistoryCursor,
-        });
-        let nextState;
-        if (knownTransactionHashes.has(candidate.hash)) {
-          skippedKnown += 1;
-          afterKey = nextAfterKey(key);
-          retryKeys.delete(key);
-          nextState = recoveryStateJson();
-          const marker = { recovery: 'coinbase-cdp-core', transaction_hash: candidate.hash, status: 'already_observed' };
-          const markerRaw = JSON.stringify(marker);
-          const markerRequest = {
-            address: job.address.toLowerCase(), transaction_hash: candidate.hash,
-          };
-          await commitPage(historyScope.id, {
-            provider: 'coinbase-cdp', endpoint: 'transaction-recovery-skip',
-            requestParams: markerRequest,
-            cursorIn, cursorOut: nextState, responseSha256: normalizer.sha256(markerRaw),
-            evidenceIdentitySha256: normalizer.sha256(JSON.stringify({
-              request: markerRequest, cursorIn, cursorOut: nextState, response: markerRaw,
-            })),
-            responseRaw: markerRaw, responseJson: marker, requestId: null, itemCount: 0,
-          }, []);
-        } else {
-          let recovery;
-          try {
-            recovery = await CdpRecoveryProvider.recoverTransaction(cdp, candidate, {
-              traceCache,
-              budget: recoveryBudget,
-              onEvidence: async (response, metadata = {}) => {
-                // Persist each successful Core response before the next
-                // recovery request. If block tracing later fails or times out,
-                // transaction/receipt/block evidence is still append-only and
-                // inspectable rather than disappearing with the derived page.
-                await recordRawPage(historyScope.id, {
-                  provider: 'coinbase-cdp',
-                  endpoint: 'transaction-recovery-rpc',
-                  requestParams: {
-                    address: job.address.toLowerCase(),
-                    transaction_hash: candidate.hash,
-                    method: response.method,
-                    params: response.params,
-                    ...(metadata.blockHash ? { block_hash: metadata.blockHash } : {}),
-                  },
-                  responseSha256: response.responseSha256,
-                  evidenceIdentitySha256: response.evidenceIdentitySha256,
-                  responseRaw: response.rawText,
-                  responseJson: response.body,
-                  requestId: response.requestId,
-                  itemCount: 0,
-                });
-              },
-              loadTrace: ({ blockNumber, blockHash }) => EvmAudit.reusableCdpTrace(
-                historyScope.id, blockNumber, blockHash
-              ),
-            });
-          } catch (error) {
-            if (['CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR'].includes(error.code)) throw error;
-            const retryableRecoveryCodes = [
-              'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
-              'CDP_RECOVERY_BUDGET_EXHAUSTED',
-            ];
-            const wrapped = CdpRecoveryProvider.recoveryError(
-              `CDP address history is oversized and transaction-scoped recovery failed for ${candidate.hash}: ${publicErrorDetail(error)}`,
-              error.code === 'CDP_API_ERROR' ? 'CDP_RECOVERY_UNSUPPORTED'
-                : retryableRecoveryCodes.includes(error.code)
-                  ? error.code : 'CDP_RECOVERY_FAILED',
-              { retryAt: error.retryAt || new Date(Date.now() + 60 * 60 * 1000) }
-            );
-            recoveryFailure ||= wrapped;
-            const failure = {
-              recovery: 'coinbase-cdp-core', transaction_hash: candidate.hash,
-              status: 'failed', retryable: retryableRecoveryCodes.includes(wrapped.code),
-              error_code: wrapped.code,
-              error_detail: publicErrorDetail(wrapped),
-            };
-            afterKey = nextAfterKey(key);
-            if (failure.retryable) retryKeys.add(key);
-            else retryKeys.delete(key);
-            nextState = recoveryStateJson();
-            const failureRaw = JSON.stringify(failure);
-            const failureParams = {
-              address: job.address.toLowerCase(), transaction_hash: candidate.hash,
-              recovery: 'core-rpc-transaction-receipt-trace',
-            };
-            await commitPage(historyScope.id, {
-              provider: 'coinbase-cdp', endpoint: 'transaction-recovery-failure',
-              requestParams: failureParams, cursorIn, cursorOut: nextState,
-              responseSha256: normalizer.sha256(failureRaw),
-              evidenceIdentitySha256: normalizer.sha256(JSON.stringify({
-                request: failureParams, cursorIn, cursorOut: nextState, response: failureRaw,
-              })),
-              responseRaw: failureRaw, responseJson: failure, requestId: null, itemCount: 0,
-            }, []);
-            afterKey = key;
-            await EvmAudit.heartbeat(job.id, OWNER, {
-              progress: {
-                current_cursor: nextState,
-                oversized_recovery_candidates: ordered.length,
-                oversized_recovered: recovered,
-                oversized_already_observed: skippedKnown,
-                oversized_failed: (recoveryFailure ? 1 : 0),
-              },
-            });
-            if (error.code === 'CDP_RECOVERY_BUDGET_EXHAUSTED') break;
-            continue;
-          }
-          afterKey = nextAfterKey(key);
-          retryKeys.delete(key);
-          nextState = recoveryStateJson();
-          CdpHistoryProvider.normalizePage(job.address, [recovery.item], {
-            nativeCredit: chain?.auditNativeCredits || chain?.stateSyncDeposits || null,
-          });
-          CdpHistoryProvider.assertNoCoordinateConflicts(
-            [recovery.item], historicalRecoveryTransactions
-          );
-          const observations = normalizer.cdpHistoryObservations(
-            { ...context, provider: 'coinbase-cdp-recovery' }, recovery.item
-          );
-          for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-          const recoveryRequest = {
-            address: job.address.toLowerCase(), transaction_hash: candidate.hash,
-            recovery: 'core-rpc-transaction-receipt-trace',
-          };
-          await commitPage(historyScope.id, {
-            provider: 'coinbase-cdp', endpoint: 'transaction-recovery',
-            requestParams: recoveryRequest,
-            cursorIn, cursorOut: nextState,
-            responseSha256: recovery.response.responseSha256,
-            evidenceIdentitySha256: normalizer.sha256(JSON.stringify({
-              request: recoveryRequest, cursorIn, cursorOut: nextState,
-              evidence: recovery.response.evidenceIdentitySha256,
-            })),
-            responseRaw: recovery.response.rawText,
-            responseJson: recovery.response.body,
-            requestId: recovery.response.requestId,
-            itemCount: 1,
-          }, observations);
-          recovered += 1;
-        }
-        // The success and already-observed branches advance afterKey above.
-        // Keep the checkpoint durable even when a future candidate sorts after
-        // a retry key that was discovered in an earlier run.
-        afterKey = nextAfterKey(key);
-        await EvmAudit.heartbeat(job.id, OWNER, {
-          progress: {
-            current_cursor: nextState,
-            oversized_recovery_candidates: ordered.length,
-            oversized_recovered: recovered,
-            oversized_already_observed: skippedKnown,
-          },
-        });
-      }
-      if (recoveryFailure) {
-        await completeScope(historyScope.id, {
-          status: recoveryFailure.code === 'CDP_RECOVERY_UNSUPPORTED' ? 'unsupported'
-            : recoveryFailure.code === 'CDP_RECOVERY_BUDGET_EXHAUSTED' ? 'deferred' : 'failed',
-          paginationExhausted: false,
-          errorCode: recoveryFailure.code, errorDetail: publicErrorDetail(recoveryFailure),
-        });
-        throw recoveryFailure;
-      }
-      const detail = `CDP address history exceeded the provider response limit for at least one single transaction (${publicErrorDetail(oversizedError)}). Core RPC recovery preserved ${recovered} transaction-scoped response(s) and ${skippedKnown} already durable transaction(s) from a bounded ${ordered.length}/${allOrdered.length} known-candidate queue, but CDP exposes no documented address-history enumeration fallback to prove the failed page contained no additional transaction.`;
-      const blocker = CdpRecoveryProvider.recoveryError(
-        detail, 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-        { retryAt: new Date(Date.now() + 60 * 60 * 1000) }
-      );
-      await completeScope(historyScope.id, {
-        status: 'deferred', paginationExhausted: false,
-        errorCode: blocker.code, errorDetail: detail,
-      });
-      throw blocker;
-    };
     if (useMoralis) {
       let cursor = historyScope.provider_cursor || null;
       try {
@@ -1304,160 +909,6 @@ class EvmAuditService {
         await completeScope(capabilityScope.id, {
           status: 'complete', paginationExhausted: true,
         });
-      }
-    } else if (useCdp) {
-      // Oversized-page recovery stores a versioned local checkpoint in this
-      // durable cursor column while preserving the opaque CDP token that
-      // points at the failed address-history page. Never send local recovery
-      // JSON back to CDP as pageToken after a restart.
-      const recoveryState = CdpRecoveryProvider.recoveryCursor(historyScope.provider_cursor);
-      let cursor = recoveryState
-        ? recoveryState.addressHistoryCursor
-        : historyScope.provider_cursor || null;
-      let order = historyScope.provider_order && historyScope.provider_order !== 'unknown'
-        ? historyScope.provider_order : (priorProviderOrder || 'unknown');
-      let previousBlock = null;
-      let orderDirection = null;
-      const stopAtProvenOverlap = job.mode === 'incremental'
-        && prior && priorProviderOrder === 'newest_first' && fromBlock > 0;
-      try {
-        for await (const page of cdp.addressTransactionPages(job.address, {
-          cursor,
-        })) {
-          assertLease(leaseState);
-          const blocks = page.items
-            .map((item) => Number(item.blockHeight ?? item.content?.ethereum?.blockNumber
-              ?? item.ethereum?.blockNumber))
-            .filter(Number.isSafeInteger);
-          for (const currentBlock of blocks) {
-            if (previousBlock != null && currentBlock !== previousBlock) {
-              const direction = currentBlock < previousBlock ? 'newest_first' : 'oldest_first';
-              if (orderDirection && orderDirection !== direction) orderDirection = 'unknown';
-              else if (!orderDirection) orderDirection = direction;
-            }
-            previousBlock = currentBlock;
-          }
-          if (orderDirection === 'unknown') order = 'unknown';
-          else if (order === 'unknown' && orderDirection) order = orderDirection;
-          else if (orderDirection && order !== orderDirection) order = 'unknown';
-          const pageEvidence = pageRecord(
-            'coinbase-cdp', 'address-history', {
-              address: job.address.toLowerCase(), page_size: page.pageSize, page_token: page.cursorIn,
-            }, page, page.cursorIn, page.cursorOut, page.items.length, order
-          );
-          await recordRawPage(historyScope.id, pageEvidence);
-          // Validate the complete returned page after raw persistence, then
-          // only canonicalize transactions at or below the RPC-finalized
-          // boundary. Future-indexed rows remain evidence, but can never enter
-          // the audit projection before consensus has finalized them.
-          CdpHistoryProvider.normalizePage(job.address, page.items, {
-            nativeCredit: chain?.auditNativeCredits || chain?.stateSyncDeposits || null,
-          });
-          CdpHistoryProvider.assertNoCoordinateConflicts(
-            page.items, historicalRecoveryTransactions
-          );
-          CdpHistoryProvider.assertNoConflicts(page.items, historicalCdpTransactions);
-          const uniqueItems = CdpHistoryProvider.dedupeItems(page.items, seenCdpTransactions);
-          const boundedItems = cdpItemsThroughBoundary(uniqueItems, boundary.number);
-          const boundedBlocks = boundedItems.map(cdpItemBlockNumber);
-          const observations = boundedItems.flatMap((item) =>
-            normalizer.cdpHistoryObservations(context, item)
-          );
-          for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-          await commitPage(historyScope.id, pageEvidence, observations);
-          cursor = page.cursorOut;
-          await EvmAudit.heartbeat(job.id, OWNER, {
-            progress: { current_cursor: cursor, transactions_seen: hashes.size },
-          });
-          if (stopAtProvenOverlap && orderDirection === 'newest_first'
-              && boundedBlocks.some((block) => block <= fromBlock)) break;
-        }
-      } catch (error) {
-        let effectiveError = error;
-        if (error.code === 'CDP_RESPONSE_TOO_LARGE') {
-          try {
-            await recoverKnownOversizedCdpHistory(error);
-          } catch (recoveryError) {
-            effectiveError = recoveryError;
-          }
-        }
-        const deferredError = cdpUnavailableError(effectiveError);
-        const standingError = isStandingProviderLimitation(effectiveError)
-          ? { code: effectiveError.code, detail: publicErrorDetail(effectiveError) } : null;
-        const failedChain = discovered.find((row) => row.chain_id === chainId);
-        if (failedChain) {
-          failedChain.active_hint = null;
-          failedChain.bounded = false;
-          failedChain.status = standingError ? 'unsupported' : deferredError ? 'deferred' : 'failed';
-          failedChain.source = 'coinbase-cdp';
-          failedChain.error_code = effectiveError.code || 'CDP_HISTORY_FAILED';
-          failedChain.error_detail = publicErrorDetail(effectiveError);
-          await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
-        }
-        await completeScope(historyScope.id, {
-          status: standingError ? 'unsupported' : deferredError ? 'deferred' : 'failed',
-          paginationExhausted: false,
-          providerOrder: order,
-          errorCode: effectiveError.code || 'CDP_HISTORY_FAILED',
-          errorDetail: publicErrorDetail(effectiveError),
-        });
-        return {
-          gaps: 1,
-          deferred: Boolean(deferredError),
-          deferredProviderError: deferredError,
-          unsupported: Boolean(standingError),
-          unsupportedProviderError: standingError,
-          failed: !deferredError && !standingError,
-          failedProviderError: deferredError || standingError ? null : {
-            code: effectiveError.code || 'CDP_HISTORY_FAILED',
-            detail: publicErrorDetail(effectiveError),
-          },
-          boundary,
-          transactions: hashes.size,
-          discovered,
-        };
-      }
-      await completeScope(historyScope.id, {
-        status: 'complete', paginationExhausted: true, providerOrder: order,
-        coverageBasis: CDP_COVERAGE_BASIS,
-      });
-      await acceptCoverage({
-        subjectId: job.subject_id, chainId, provider: 'coinbase-cdp', capability: 'wallet_history',
-        fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
-        providerOrder: order, coverageBasis: CDP_COVERAGE_BASIS,
-        paginationExhausted: true, status: 'complete', jobId: job.id,
-      });
-      for (const capability of ['normal', 'internal', 'erc20', 'erc721', 'erc1155', 'native_credit']) {
-        const capabilityScope = await upsertScope({
-          chainId, provider: 'coinbase-cdp', capability, status: 'running',
-          fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
-          providerOrder: order,
-          coverageBasis: CDP_COVERAGE_BASIS,
-        });
-        await completeScope(capabilityScope.id, {
-          status: 'complete', paginationExhausted: true,
-          coverageBasis: CDP_COVERAGE_BASIS,
-        });
-      }
-      // CDP does not offer Moralis-style active-chain discovery. A completed
-      // address-history walk still proves a finite configured Base boundary,
-      // so expose that bounded fact without turning it into a universal
-      // absence claim across every EVM or every future provider.
-      const discoveredChain = discovered.find((row) => row.chain_id === chainId);
-      if (discoveredChain) {
-        const providerObservations = await EvmAudit.observationsForJob(job.id, { chainId });
-        const foundBlocks = providerObservations
-          .filter((row) => row.provider === 'coinbase-cdp' && row.block_number != null)
-          .map((row) => Number(row.block_number))
-          .filter(Number.isSafeInteger);
-        discoveredChain.active_hint = hashes.size > 0;
-        discoveredChain.active_hint_proven = false;
-        discoveredChain.bounded = true;
-        discoveredChain.status = 'bounded';
-        discoveredChain.source = 'coinbase-cdp';
-        discoveredChain.first_block = foundBlocks.length ? Math.min(...foundBlocks) : null;
-        discoveredChain.last_block = foundBlocks.length ? Math.max(...foundBlocks) : null;
-        await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
       }
     } else {
       for (const feedSpec of EXPLORER_FEEDS) {
@@ -1623,45 +1074,6 @@ class EvmAuditService {
         fromBlock, throughBlock: sourceThroughBlock, throughHash: null,
         paginationExhausted: true, status: 'complete', jobId: job.id,
       });
-    }
-    let cdpBalanceEvidenceFailed = false;
-    const cdpBalances = [];
-    if (useCdp) {
-      // CDP balances are retained as supplemental provider evidence. Consensus
-      // RPC remains authoritative for the native balance and the existing
-      // token-by-token RPC checks remain the completion gate.
-      const balanceScope = await upsertScope({
-        chainId, provider: 'coinbase-cdp', capability: 'token_balance', status: 'running',
-        fromBlock: null, throughBlock: boundary.number, throughHash: boundary.hash,
-        coverageBasis: 'cdp_list_balances_current_asset_index_v1',
-      });
-      try {
-        let cursor = balanceScope.provider_cursor || null;
-        for await (const page of cdp.balancePages(job.address, { cursor, pageSize: 100 })) {
-          assertLease(leaseState);
-          cdpBalances.push(...page.items);
-          const pageEvidence = pageRecord(
-            'coinbase-cdp', 'balance-history', {
-              address: job.address.toLowerCase(), page_size: 100, page_token: page.cursorIn,
-            }, page, page.cursorIn, page.cursorOut, page.items.length
-          );
-          await recordRawPage(balanceScope.id, pageEvidence);
-          const observations = normalizer.cdpBalanceObservations(context, page.items);
-          await commitPage(balanceScope.id, pageEvidence, observations);
-          cursor = page.cursorOut;
-        }
-        await completeScope(balanceScope.id, {
-          status: 'complete', paginationExhausted: true,
-          coverageBasis: 'cdp_list_balances_current_asset_index_v1',
-        });
-      } catch (error) {
-        cdpBalanceEvidenceFailed = true;
-        await completeScope(balanceScope.id, {
-          status: 'unverified', paginationExhausted: false,
-          errorCode: error.code || 'CDP_BALANCE_EVIDENCE_FAILED',
-          errorDetail: publicErrorDetail(error),
-        });
-      }
     }
     let legacyRows = await EvmAudit.storedTransferRows(job.user_id, job.subject_id, chainId, boundary.number);
     const coverageByFeed = new Map((await EvmAudit.storedFeedCoverage(
@@ -1954,18 +1366,6 @@ class EvmAuditService {
     const tokensByContract = new Map(tokenBalances.map((token) => [
       String(token.token_contract).toLowerCase(), token,
     ]));
-    // CDP's balance index is used to discover ERC-20 contracts that the
-    // derived ledger does not contain. Consensus RPC, not CDP's delayed
-    // balance value, is authoritative for the actual comparison.
-    for (const balance of cdpBalances) {
-      if (String(balance?.asset?.type || '').toLowerCase() !== 'erc20') continue;
-      const contract = String(balance.asset.groupId || '').toLowerCase();
-      if (!tokensByContract.has(contract)) {
-        tokensByContract.set(contract, {
-          token_contract: contract, token_decimals: balance.decimals, balance_units: '0',
-        });
-      }
-    }
     for (const token of tokensByContract.values()) {
       try {
         const liveEvidence = await rpc.erc20BalanceWithEvidence(
@@ -2036,7 +1436,7 @@ class EvmAuditService {
     const unmatchedEffects = effectReconciliation.gaps;
     const capabilityGaps = await EvmAudit.requiredScopeGapCount(job.id, chainId);
     const gaps = providerLookupGaps + nonceGapCount + transactionConflicts + capabilityGaps
-      + (cdpBalanceEvidenceFailed ? 1 : 0) + (delta === 0n ? 0 : 1)
+      + (delta === 0n ? 0 : 1)
       + tokenMismatches + missingActivity + unresolvedBridges + provisionalEffects
       + unmatchedEffects;
     await EvmAudit.heartbeat(job.id, OWNER, {
@@ -2050,7 +1450,6 @@ class EvmAuditService {
           nonce_gaps: nonceGapCount,
           native_balance_match: delta === 0n,
           token_balance_gaps: tokenMismatches,
-          balance_evidence_gap: cdpBalanceEvidenceFailed,
           corroborated_identity_repairs: identityRepair.repaired,
           missing_activity: missingActivity,
           unresolved_bridges: bridgeAudit.unresolved,

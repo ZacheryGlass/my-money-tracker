@@ -191,133 +191,6 @@ function historyObservations(context, item) {
   return out;
 }
 
-// Coinbase CDP returns one Ethereum transaction object with its receipt,
-// logs, token transfers and flattened traces nested under `content.ethereum`.
-// Keep every nested coordinate as its own observation so a later RPC check can
-// replace a single receipt field without losing the provider's raw evidence.
-function cdpHistoryObservations(context, item) {
-  const ethereum = item?.content?.ethereum || item?.ethereum || item?.content || {};
-  const hash = txHash(item?.hash || ethereum.hash);
-  if (!hash) throw new Error('Coinbase CDP address history returned an invalid transaction hash');
-  const blockNumber = item.blockHeight ?? ethereum.blockNumber;
-  const block = item.blockHash || ethereum.blockHash;
-  const transactionIndex = ethereum.index ?? ethereum.transactionIndex
-    ?? ethereum.receipt?.transactionIndex ?? ethereum.receipt?.transaction_index;
-  const common = { tx: hash, blockNumber, block, transactionIndex };
-  const out = [baseObservation(context, {
-    ...common,
-    evidenceKind: 'transaction',
-    providerObjectKey: `transaction:${hash}`,
-    payload: item,
-  })];
-  const receipt = ethereum.receipt || {};
-  out.push(baseObservation(context, {
-    ...common,
-    evidenceKind: 'receipt',
-    providerObjectKey: `receipt:${hash}`,
-    payload: { ...receipt, transactionHash: receipt.transactionHash || hash },
-  }));
-  for (const log of (receipt.logs || [])) {
-    const logIndex = safeInteger(log.logIndex ?? log.log_index);
-    out.push(baseObservation(context, {
-      ...common,
-      evidenceKind: 'log',
-      providerObjectKey: logIndex == null
-        ? `log:${hash}:provider:${sha256(log)}` : `log:${hash}:${logIndex}`,
-      payload: log,
-      logIndex,
-      blockNumber: log.blockNumber ?? log.blockHeight ?? blockNumber,
-      block: log.blockHash || block,
-      transactionIndex: log.transactionIndex ?? transactionIndex,
-    }));
-  }
-  for (const trace of (ethereum.flattenedTraces || [])) {
-    const traceAddress = trace.traceAddress ?? trace.trace_address ?? null;
-    out.push(baseObservation(context, {
-      ...common,
-      evidenceKind: 'internal_trace',
-      providerObjectKey: traceAddress == null
-        ? `internal:${hash}:provider:${sha256(trace)}`
-        : `internal:${hash}:${stableJson(traceAddress)}`,
-      payload: trace,
-      traceAddress,
-      blockNumber: trace.blockNumber ?? blockNumber,
-      block: trace.blockHash || block,
-      transactionIndex: trace.transactionIndex ?? transactionIndex,
-    }));
-  }
-  for (const transfer of (ethereum.tokenTransfers || [])) {
-    const nested = transfer.erc1155 ? 'erc1155' : transfer.erc721 || transfer.tokenId != null
-      ? 'erc721' : 'erc20';
-    const evidenceKind = `${nested}_transfer`;
-    const logIndex = safeInteger(transfer.logIndex ?? transfer.log_index);
-    const tokenIdentity = nested === 'erc1155'
-      ? `${transfer.tokenId ?? transfer.erc1155?.tokenId ?? ''}:${transfer.amount ?? transfer.value ?? ''}`
-      : '';
-    out.push(baseObservation(context, {
-      ...common,
-      evidenceKind,
-      providerObjectKey: logIndex == null
-        ? `${evidenceKind}:${hash}:provider:${sha256(transfer)}`
-        : `${evidenceKind}:${hash}:${logIndex}${tokenIdentity ? `:${tokenIdentity}` : ''}`,
-      payload: transfer,
-      logIndex,
-      blockNumber: transfer.blockNumber ?? blockNumber,
-      block: transfer.blockHash || block,
-      transactionIndex: transfer.transactionIndex ?? transactionIndex,
-    }));
-  }
-  return out;
-}
-
-function cdpBalanceObservations(context, balances) {
-  if (!Array.isArray(balances)) {
-    const error = new Error('Coinbase CDP balances response is not an array');
-    error.code = 'CDP_INVALID_RESPONSE';
-    throw error;
-  }
-  return balances.map((balance) => {
-    const asset = balance?.asset;
-    const invalid = (message) => {
-      const error = new Error(`Coinbase CDP returned an invalid balance: ${message}`);
-      error.code = 'CDP_INVALID_RESPONSE';
-      return error;
-    };
-    if (!asset || typeof asset !== 'object' || !String(asset.id || '').trim()
-        || !String(asset.type || '').trim()) {
-      throw invalid('asset identity');
-    }
-    const rawValue = balance.valueStr ?? balance.value;
-    let value;
-    try {
-      if (rawValue == null || rawValue === '') throw new Error('missing value');
-      value = BigInt(rawValue);
-      if (value < 0n) throw new Error('negative value');
-      if (balance.value != null && BigInt(balance.value) !== value) {
-        throw new Error('value and valueStr disagree');
-      }
-    } catch {
-      throw invalid('amount');
-    }
-    const decimals = Number(balance.decimals);
-    if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 255) {
-      throw invalid('decimals');
-    }
-    const assetType = String(asset.type).toLowerCase();
-    if (assetType === 'erc20' && !/^0x[0-9a-f]{40}$/i.test(String(asset.groupId || ''))) {
-      throw invalid('ERC-20 contract identity');
-    }
-    const assetId = String(asset.id);
-    const kind = assetType === 'native'
-      ? 'native_balance' : 'token_balance';
-    return baseObservation(context, {
-      evidenceKind: kind,
-      providerObjectKey: `balance:${assetId}`,
-      payload: balance,
-    });
-  });
-}
-
 function rpcTransactionObservations(context, transaction, receipt) {
   const hash = txHash(transaction?.hash || receipt?.transactionHash);
   if (!hash) throw new Error('Consensus RPC returned an invalid transaction hash');
@@ -419,7 +292,7 @@ function transactionFromRpc(context, transaction, receipt, selectedObservationId
   const sender = address(transaction.from);
   if (!sender) throw new Error('Consensus RPC returned a transaction without a valid sender');
   const type = transaction.type == null ? null : BigInt(transaction.type).toString();
-  const protocolSystem = (context.chainId === 10 || context.chainId === 8453) && type === '126';
+  const protocolSystem = context.chainId === 10 && type === '126';
   return {
     subjectId: context.subjectId,
     chainId: context.chainId,
@@ -453,8 +326,6 @@ module.exports = {
   address,
   blockHash,
   canonicalize,
-  cdpBalanceObservations,
-  cdpHistoryObservations,
   explorerFeedObservations,
   historyObservations,
   legacyTransferObservations,

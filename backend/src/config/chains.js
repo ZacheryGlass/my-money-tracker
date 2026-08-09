@@ -26,11 +26,8 @@
 //     included. That matters more than it looks: internal traces are how ETH
 //     arriving from a contract is seen at all, so a chain without them silently
 //     drifts away from its own derived balance.
-//   * OP Mainnet (10) remains on its public Blockscout instance. Base (8453)
-//     is CDP-only for ordinary history and full audits. Any future repair must
-//     be an explicitly keyed, transaction-scoped provider operation, not an
-//     account-feed fallback.
-//     A per-transaction receipt decoder records Base native bridge credits, so
+//   * OP Mainnet (10) remains on its public Blockscout instance.
+//     A per-transaction receipt decoder records native bridge credits, so
 //     no chain-wide anonymous bridge-log walk is part of the critical path.
 //   * Polygon PoS (137) is served on the FREE key -- balance, txlist and
 //     txlistinternal all answered on a live probe, so it ships enabled. It is
@@ -233,37 +230,9 @@ const REGISTRY = [
     },
     // Standard-bridge ETH deposits emit this event after crediting `to`
     // (topic2); amount is data word 0. The same predeploy is used by OP and
-    // Base. It also covers third-party frontends that settle through the
-    // canonical StandardBridge.
+    // OP Stack's standard bridge also covers third-party frontends that settle
+    // through the canonical StandardBridge.
     stateSyncDeposits: {
-      contract: '0x4200000000000000000000000000000000000010',
-      topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
-      userTopicIndex: 2,
-    },
-  },
-  {
-    id: 8453,
-    name: 'Base',
-    shortName: 'Base',
-    nativeAsset: 'ETH',
-    coingeckoPlatform: 'base',
-    enabledByDefault: true,
-    // Base history is served by the user's separately encrypted Coinbase CDP
-    // Client API key. It is not an Etherscan/Blockscout account-feed chain.
-    historyProvider: 'coinbase-cdp',
-    // CDP is credentialed independently from Etherscan. This flag prevents
-    // the legacy Etherscan credential gate from treating Base as an explorer
-    // account-feed chain; the CDP-specific gate lives in the sync/audit paths.
-    requiresApiKey: false,
-    rpcUrl: 'https://mainnet.base.org',
-    ingestVersion: 2,
-    opStackDeposits: {
-      creditSource: '0x4200000000000000000000000000000000000010',
-    },
-    // Receipt-log decoder metadata for optional, transaction-scoped audits.
-    // This deliberately is not `stateSyncDeposits`: ordinary Sync must never
-    // run Base's anonymous chain-wide Blockscout log walk.
-    auditNativeCredits: {
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
       userTopicIndex: 2,
@@ -323,7 +292,7 @@ const BY_ID = new Map(REGISTRY.map((chain) => [chain.id, chain]));
 // recognises.
 const NATIVE_SYMBOLS = new Set(REGISTRY.map((chain) => chain.nativeAsset));
 
-// `ETH_CHAINS=1` restores strict mainnet-only sync; `ETH_CHAINS=1,42161,8453`
+// `ETH_CHAINS=1` restores strict mainnet-only sync; `ETH_CHAINS=1,42161`
 // picks an explicit set. Parsed on every call rather than memoized: it is a
 // split of a short string, and a cached copy would go stale against a test or a
 // restart-free config change for no measurable gain.

@@ -73,7 +73,7 @@ function indexedTransferFields(effect, payload, provider) {
 
 function matchesIndexedTransfer(effect, observation) {
   if (!effect || !observation || !TRANSFER_TYPES[effect.effect_type]) return false;
-  if (!['moralis', 'coinbase-cdp', 'coinbase-cdp-recovery'].includes(observation.provider)) return false;
+  if (observation.provider !== 'moralis') return false;
   const expectedKind = `${effect.effect_type}_transfer`;
   if (observation.evidence_kind !== expectedKind
       || String(observation.tx_hash || '').toLowerCase() !== String(effect.tx_hash).toLowerCase()

@@ -158,23 +158,6 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
 `;
 
 class EthTransfer {
-  // Candidate hashes for CDP's transaction-scoped recovery. This is
-  // deliberately limited to rows already present for this wallet/chain: a
-  // legacy row can identify a response-too-large transaction, but it cannot
-  // prove that an unseen inbound transaction does not exist. The caller must
-  // therefore keep the CDP address-history scan deferred after recovery.
-  static async cdpRecoveryCandidates(walletId, chainId, throughBlock) {
-    const { rows } = await pool.query(
-      `SELECT tx_hash, MIN(block_number)::bigint AS block_number
-         FROM eth_transfers
-        WHERE wallet_id = $1 AND chain_id = $2 AND block_number <= $3
-        GROUP BY tx_hash
-        ORDER BY MIN(block_number), tx_hash`,
-      [walletId, chainId, throughBlock]
-    );
-    return rows;
-  }
-
   // Sync resumes from an overlap block and re-inserts everything from there,
   // so each feed's stale rows must be cleared first to keep ordinals unique.
   //
@@ -262,48 +245,6 @@ class EthTransfer {
       inserted += result.rowCount;
     }
     return inserted;
-  }
-
-  // Base CDP history is one provider stream projected into several ordinary
-  // feeds. Replace every successfully fetched overlap window in one database
-  // transaction so a deadlock/constraint error cannot leave old rows deleted
-  // while the durable cursors still claim the provider walk succeeded.
-  static async replaceFeeds(walletId, chainId, replacements, rows, { scanId = null, owner = null } = {}) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      if (scanId) {
-        const owned = await client.query(
-          `SELECT 1 FROM eth_wallet_chains
-            WHERE wallet_id = $1 AND chain_id = $2
-              AND provider_scan_id = $3::uuid
-              AND provider_scan_owner = $4
-              AND provider_scan_status = 'running'
-              AND (provider_scan_lease_expires_at IS NULL OR provider_scan_lease_expires_at > CURRENT_TIMESTAMP)
-            FOR UPDATE`,
-          [walletId, chainId, scanId, owner]
-        );
-        if (!owned.rows[0]) {
-          const error = new Error('Base CDP scan is no longer the active writer');
-          error.code = 'CDP_SCAN_STALE';
-          throw error;
-        }
-      }
-      for (const replacement of replacements) {
-        await this.deleteFromBlock(
-          walletId, chainId, replacement.types, replacement.block,
-          { ...(replacement.options || {}), client }
-        );
-      }
-      const inserted = await this.bulkInsert(rows, { client });
-      await client.query('COMMIT');
-      return inserted;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
   }
 
   // Selectors this wallet has stored but cannot yet name -- the decode pass's

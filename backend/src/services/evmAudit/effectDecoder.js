@@ -247,9 +247,8 @@ function internalObservationFields(observation, wallet) {
 // pretending it is consensus evidence. When an independent trace provider and
 // the existing ledger contain one unambiguous identical effect, retain both
 // evidence links and mark that effect verified; otherwise it remains provisional
-// and therefore blocks a gap-free audit. Coinbase CDP takes precedence for Base
-// and Moralis remains the indexed source for Gnosis; Blockscout is only a finite
-// fallback for chains without either source.
+// and therefore blocks a gap-free audit. Moralis is the indexed source for
+// Gnosis; Blockscout is only a finite fallback for chains without it.
 function effectsFromInternalObservations(context, observations) {
   const wallet = context.address.toLowerCase();
   const byTransaction = new Map();
@@ -263,11 +262,8 @@ function effectsFromInternalObservations(context, observations) {
   const effects = [];
   for (const [hash, rows] of byTransaction) {
     const internalRows = rows.filter((row) => row.evidence_kind !== 'native_credit'
-      && row.payload_json?.native_credit !== true
-      && !(context.chainId === 8453 && row.provider === 'moralis'));
-    const indexedProviders = context.chainId === 8453
-      ? ['coinbase-cdp', 'coinbase-cdp-recovery']
-      : ['moralis', 'coinbase-cdp', 'coinbase-cdp-recovery'];
+      && row.payload_json?.native_credit !== true);
+    const indexedProviders = ['moralis'];
     const explorer = internalRows.filter((row) => ['blockscout', 'etherscan'].includes(row.provider));
     const explorerProvider = ['blockscout', 'etherscan']
       .find((provider) => explorer.some((row) => row.provider === provider));
@@ -296,7 +292,7 @@ function effectsFromInternalObservations(context, observations) {
       const fields = internalObservationFields(row, wallet);
       if (!fields) continue;
       const signature = `${fields.from}:${fields.to}:${fields.value}`;
-      const legacyMatches = ['coinbase-cdp', 'coinbase-cdp-recovery', 'moralis', 'blockscout', 'etherscan'].includes(row.provider)
+      const legacyMatches = ['moralis', 'blockscout', 'etherscan'].includes(row.provider)
         ? (legacyBySignature.get(signature) || []) : [];
       const independentlyVerified = row.trace_address != null
         && legacyMatches.length === 1

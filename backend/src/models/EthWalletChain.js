@@ -1,6 +1,5 @@
 'use strict';
 
-const crypto = require('node:crypto');
 const pool = require('../config/database');
 
 // Per-(wallet, chain) sync state: resume cursors, the error/degraded slot, and
@@ -47,16 +46,6 @@ class EthWalletChain {
            last_block_nft = 0,
            last_block_1155 = 0,
            last_block_statesync = 0,
-           provider_cursor = NULL,
-           provider_scan_id = NULL,
-           provider_scan_head = NULL,
-           provider_scan_head_hash = NULL,
-           provider_scan_order = 'unknown',
-           provider_scan_started_at = NULL,
-           provider_scan_status = 'idle',
-           provider_scan_owner = NULL,
-           provider_scan_lease_expires_at = NULL,
-           provider_last_page_at = NULL,
            ingest_version = $3,
            error_code = NULL,
            error_message = NULL,
@@ -94,16 +83,6 @@ class EthWalletChain {
            last_block_nft = 0,
            last_block_1155 = 0,
            last_block_statesync = 0,
-           provider_cursor = NULL,
-           provider_scan_id = NULL,
-           provider_scan_head = NULL,
-           provider_scan_head_hash = NULL,
-           provider_scan_order = 'unknown',
-           provider_scan_started_at = NULL,
-           provider_scan_status = 'idle',
-           provider_scan_owner = NULL,
-           provider_scan_lease_expires_at = NULL,
-           provider_last_page_at = NULL,
            error_code = NULL,
            error_message = NULL,
            unsupported_feeds = '{}',
@@ -143,16 +122,8 @@ class EthWalletChain {
   // so a completed historical rebuild resumes incrementally next time. A chain
   // that does not declare statesync passes NULL for that feed.
   static async updateCursors(
-    walletId, chainId, { normal, internal, token, nft, nft1155, statesync },
-    { scanId = null, owner = null } = {}
+    walletId, chainId, { normal, internal, token, nft, nft1155, statesync }
   ) {
-    const params = [walletId, chainId, normal ?? null, internal ?? null, token ?? null,
-      nft ?? null, nft1155 ?? null, statesync ?? null];
-    const fence = scanId
-      ? ' AND provider_scan_id = $9::uuid AND provider_scan_owner = $10'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP'
-      : '';
-    if (scanId) params.push(scanId, owner);
     const result = await pool.query(
       `UPDATE eth_wallet_chains
        SET last_block_normal = COALESCE($3, last_block_normal),
@@ -162,251 +133,54 @@ class EthWalletChain {
            last_block_1155 = COALESCE($7, last_block_1155),
            last_block_statesync = COALESCE($8, last_block_statesync),
            updated_at = CURRENT_TIMESTAMP
-       WHERE wallet_id = $1 AND chain_id = $2${fence}
+       WHERE wallet_id = $1 AND chain_id = $2
        RETURNING *`,
-      params
+      [walletId, chainId, normal ?? null, internal ?? null, token ?? null,
+        nft ?? null, nft1155 ?? null, statesync ?? null]
     );
     return result.rows[0];
   }
 
-  static async updateSyncTime(
-    walletId, chainId, { scanId = null, owner = null, completed = false } = {}
-  ) {
-    const params = [walletId, chainId];
-    let fence = '';
-    if (scanId && completed) {
-      fence = ' AND provider_scan_id = $3::uuid AND provider_scan_status = \'complete\' AND provider_scan_owner IS NULL';
-      params.push(scanId);
-    } else if (scanId) {
-      fence = ' AND provider_scan_id = $3::uuid AND provider_scan_owner = $4'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP';
-      params.push(scanId, owner);
-    }
+  static async updateSyncTime(walletId, chainId) {
     const result = await pool.query(
       `UPDATE eth_wallet_chains
        SET last_synced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE wallet_id = $1 AND chain_id = $2${fence}
+       WHERE wallet_id = $1 AND chain_id = $2
        RETURNING *`,
-      params
+      [walletId, chainId]
     );
     return result.rows[0];
   }
 
-  // CDP's address-history stream is the single source cursor for Base. A
-  // completed scan starts a new run; a running/deferred/failed scan with the
-  // same finalized head resumes its last committed page token after a restart.
-  // The token is opaque and is never interpreted or exposed to the client.
-  static async startProviderScan(
-    walletId, chainId, throughBlock, throughHash = null, owner = null,
-    leaseMs = 2 * 60 * 1000
-  ) {
-    const current = await this.ensure(walletId, chainId);
-    const scanOwner = String(owner || `legacy:${process.pid}`);
-    const safeLeaseMs = Math.min(10 * 60 * 1000, Math.max(30 * 1000, Number(leaseMs) || 2 * 60 * 1000));
-    const leaseAt = new Date(Date.now() + safeLeaseMs);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const locked = await client.query(
-        `SELECT * FROM eth_wallet_chains
-          WHERE wallet_id = $1 AND chain_id = $2
-          FOR UPDATE`,
-        [walletId, chainId]
-      );
-      const row = locked.rows[0] || current;
-      if (!row) throw new Error('Wallet chain sync state no longer exists');
-      const sameHead = Number(row.provider_scan_head) === Number(throughBlock)
-        && String(row.provider_scan_head_hash || '') === String(throughHash || '');
-      const leaseActive = row.provider_scan_lease_expires_at
-        && new Date(row.provider_scan_lease_expires_at).getTime() > Date.now();
-      if (row.provider_scan_status === 'running' && leaseActive
-          && row.provider_scan_owner && row.provider_scan_owner !== scanOwner) {
-        await client.query('COMMIT');
-        return null;
-      }
-      const resumable = row.provider_scan_id
-        && ['running', 'deferred', 'failed'].includes(row.provider_scan_status)
-        && sameHead;
-      const scanId = resumable ? row.provider_scan_id : crypto.randomUUID();
-      const result = await client.query(
-        `UPDATE eth_wallet_chains
-            SET provider_cursor = CASE WHEN $3 THEN provider_cursor ELSE NULL END,
-                provider_scan_id = $4::uuid,
-                provider_scan_head = $5,
-                provider_scan_head_hash = $6,
-                provider_scan_started_at = CASE WHEN $3 THEN provider_scan_started_at ELSE CURRENT_TIMESTAMP END,
-                provider_scan_status = 'running',
-                provider_scan_owner = $7,
-                provider_scan_lease_expires_at = $8,
-                provider_last_page_at = NULL,
-                updated_at = CURRENT_TIMESTAMP
-          WHERE wallet_id = $1 AND chain_id = $2
-        RETURNING *`,
-        [walletId, chainId, Boolean(resumable), scanId, throughBlock, throughHash, scanOwner, leaseAt]
-      );
-      await client.query('COMMIT');
-      return result.rows[0];
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  static async checkpointProviderScan(walletId, chainId, scanId, cursor, owner = null) {
-    // The optional legacy shape is retained for callers/tests that predate
-    // provider fencing. Base CDP passes scanId + owner and therefore cannot
-    // checkpoint a scan that another worker has taken over.
-    if (arguments.length === 3) {
-      cursor = scanId;
-      scanId = null;
-    }
-    const params = [walletId, chainId, cursor || null];
-    const fence = scanId
-      ? ' AND provider_scan_id = $4::uuid AND provider_scan_owner = $5'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP'
-      : '';
-    if (scanId) params.push(scanId, owner);
-    const result = await pool.query(
-      `UPDATE eth_wallet_chains
-          SET provider_cursor = $3,
-              provider_scan_status = 'running',
-              provider_scan_lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '2 minutes',
-              provider_last_page_at = CURRENT_TIMESTAMP,
-              updated_at = CURRENT_TIMESTAMP
-        WHERE wallet_id = $1 AND chain_id = $2${fence}
-      RETURNING *`,
-      params
-    );
-    return result.rows[0];
-  }
-
-  static async finishProviderScan(walletId, chainId, scanId = null, owner = null) {
-    const params = [walletId, chainId];
-    const fence = scanId
-      ? ' AND provider_scan_id = $3::uuid AND provider_scan_owner = $4'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP'
-      : '';
-    if (scanId) params.push(scanId, owner);
-    const result = await pool.query(
-      `UPDATE eth_wallet_chains
-          SET provider_cursor = NULL,
-              provider_scan_status = 'complete',
-              provider_scan_owner = NULL,
-              provider_scan_lease_expires_at = NULL,
-              provider_last_page_at = CURRENT_TIMESTAMP,
-              updated_at = CURRENT_TIMESTAMP
-        WHERE wallet_id = $1 AND chain_id = $2${fence}
-      RETURNING *`,
-      params
-    );
-    return result.rows[0];
-  }
-
-  static async failProviderScan(walletId, chainId, status = 'failed', scanId = null, owner = null) {
-    const params = [walletId, chainId, status];
-    const fence = scanId
-      ? ' AND provider_scan_id = $4::uuid AND provider_scan_owner = $5'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP'
-      : '';
-    if (scanId) params.push(scanId, owner);
-    const result = await pool.query(
-      `UPDATE eth_wallet_chains
-          SET provider_scan_status = $3,
-              provider_scan_owner = NULL,
-              provider_scan_lease_expires_at = NULL,
-              updated_at = CURRENT_TIMESTAMP
-        WHERE wallet_id = $1 AND chain_id = $2${fence}
-      RETURNING *`,
-      params
-    );
-    return result.rows[0];
-  }
-
-  static async setProviderScanOrder(walletId, chainId, order, scanId = null, owner = null) {
-    const value = ['unknown', 'newest_first', 'oldest_first'].includes(order)
-      ? order : 'unknown';
-    const params = [walletId, chainId, value];
-    const fence = scanId
-      ? ' AND provider_scan_id = $4::uuid AND provider_scan_owner = $5'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP'
-      : '';
-    if (scanId) params.push(scanId, owner);
-    const result = await pool.query(
-      `UPDATE eth_wallet_chains
-          SET provider_scan_order = $3,
-              updated_at = CURRENT_TIMESTAMP
-        WHERE wallet_id = $1 AND chain_id = $2${fence}
-      RETURNING *`,
-      params
-    );
-    return result.rows[0];
-  }
-
-  // Written on every sync of the chain, including with an empty array, so a
-  // feed that starts working again (a plan upgrade, an Etherscan rollout)
-  // clears its gap instead of warning about drift forever.
-  static async setUnsupportedFeeds(walletId, chainId, feeds, { scanId = null, owner = null } = {}) {
-    const params = [walletId, chainId, feeds];
-    const fence = scanId
-      ? ' AND provider_scan_id = $4::uuid AND provider_scan_owner = $5'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP'
-      : '';
-    if (scanId) params.push(scanId, owner);
+  static async setUnsupportedFeeds(walletId, chainId, feeds) {
     const result = await pool.query(
       `UPDATE eth_wallet_chains
        SET unsupported_feeds = $3, updated_at = CURRENT_TIMESTAMP
-       WHERE wallet_id = $1 AND chain_id = $2${fence}
+       WHERE wallet_id = $1 AND chain_id = $2
        RETURNING *`,
-      params
+      [walletId, chainId, feeds]
     );
     return result.rows[0];
   }
 
-  static async setError(
-    walletId, chainId, errorCode, errorMessage,
-    { scanId = null, owner = null, completed = false } = {}
-  ) {
-    const params = [walletId, chainId, errorCode, errorMessage];
-    let fence = '';
-    if (scanId && completed) {
-      fence = ' AND provider_scan_id = $5::uuid AND provider_scan_status = \'complete\' AND provider_scan_owner IS NULL';
-      params.push(scanId);
-    } else if (scanId) {
-      fence = ' AND provider_scan_id = $5::uuid AND provider_scan_owner = $6'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP';
-      params.push(scanId, owner);
-    }
+  static async setError(walletId, chainId, errorCode, errorMessage) {
     const result = await pool.query(
       `UPDATE eth_wallet_chains
        SET error_code = $3, error_message = $4, updated_at = CURRENT_TIMESTAMP
-       WHERE wallet_id = $1 AND chain_id = $2${fence}
+       WHERE wallet_id = $1 AND chain_id = $2
        RETURNING *`,
-      params
+      [walletId, chainId, errorCode, errorMessage]
     );
     return result.rows[0];
   }
 
-  static async clearError(
-    walletId, chainId, { scanId = null, owner = null, completed = false } = {}
-  ) {
-    const params = [walletId, chainId];
-    let fence = '';
-    if (scanId && completed) {
-      fence = ' AND provider_scan_id = $3::uuid AND provider_scan_status = \'complete\' AND provider_scan_owner IS NULL';
-      params.push(scanId);
-    } else if (scanId) {
-      fence = ' AND provider_scan_id = $3::uuid AND provider_scan_owner = $4'
-        + ' AND provider_scan_status = \'running\' AND provider_scan_lease_expires_at > CURRENT_TIMESTAMP';
-      params.push(scanId, owner);
-    }
+  static async clearError(walletId, chainId) {
     const result = await pool.query(
       `UPDATE eth_wallet_chains
        SET error_code = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP
-       WHERE wallet_id = $1 AND chain_id = $2${fence}
+       WHERE wallet_id = $1 AND chain_id = $2
        RETURNING *`,
-      params
+      [walletId, chainId]
     );
     return result.rows[0];
   }

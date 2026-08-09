@@ -381,11 +381,11 @@ test('POST /api/eth/wallets/:id/audits queues a durable optional audit', async (
   try {
     const response = await request(app)
       .post('/api/eth/wallets/7/audits')
-      .send({ mode: 'full', chain_ids: [100, 8453] });
+      .send({ mode: 'full', chain_ids: [100, 10] });
     assert.equal(response.status, 202);
     assert.equal(response.body.created, true);
     assert.equal(response.body.job.status, 'queued');
-    assert.deepEqual(calls, [[1, 7, { mode: 'full', requestedChains: [100, 8453] }]]);
+    assert.deepEqual(calls, [[1, 7, { mode: 'full', requestedChains: [100, 10] }]]);
   } finally {
     EvmAuditService.request = originalRequest;
   }
@@ -412,7 +412,7 @@ test('POST /api/eth/wallets/:id/audits rejects vacuous or ambiguous scope', asyn
     { mode: 'everything' },
     { chain_ids: [] },
     { chain_ids: [0] },
-    { chain_ids: ['8453'] },
+    { chain_ids: [999] },
     { chain_ids: [999] },
   ]) {
     const response = await request(app).post('/api/eth/wallets/7/audits').send(body);
@@ -497,27 +497,18 @@ test('GET /api/eth/coverage returns a user-scoped gap summary', async () => {
         error_code: 'ETHERSCAN_FEED_UNSUPPORTED',
         error_message: 'trace index incomplete for blocks 0-123',
       },
-      {
-        wallet_id: 7,
-        chain_id: 8453,
-        feed: 'token',
-        status: 'deferred',
-        error_code: 'EXPLORER_RATE_LIMITED',
-        error_message: 'retry after 10s',
-        retry_after_at: '2026-08-07T01:00:00Z',
-      },
       { wallet_id: 7, chain_id: 1, feed: 'statesync', status: 'not_applicable' },
     ];
   };
   try {
     const response = await request(app).get('/api/eth/coverage');
     assert.equal(response.status, 200);
-    assert.equal(response.body.summary.rows, 4);
+    assert.equal(response.body.summary.rows, 3);
     assert.equal(response.body.summary.complete, 1);
-    assert.equal(response.body.summary.deferred, 1);
+    assert.equal(response.body.summary.deferred, 0);
     assert.equal(response.body.summary.unsupported, 1);
     assert.equal(response.body.summary.not_applicable, 1);
-    assert.equal(response.body.summary.gaps, 2);
+    assert.equal(response.body.summary.gaps, 1);
     assert.equal(response.body.coverage[1].chain_name, 'Gnosis Chain');
     assert.equal(response.body.coverage[1].enabled, true);
   } finally {

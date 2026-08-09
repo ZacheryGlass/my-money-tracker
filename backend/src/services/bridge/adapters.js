@@ -325,8 +325,7 @@ function opSourceHash(blockHash, index) {
 
 function decodeOpStack(envelope) {
   const events = [];
-  const destinationProtocol = Number(envelope.chain_id) === 8453 ? 'base'
-    : (Number(envelope.chain_id) === 10 ? 'optimism' : null);
+  const destinationProtocol = Number(envelope.chain_id) === 10 ? 'optimism' : null;
   const sourceHash = bytes32(envelope.transaction?.sourceHash);
   const txType = lower(envelope.transaction?.type);
   const outcome = receiptStatus(envelope.receipt);
@@ -345,7 +344,7 @@ function decodeOpStack(envelope) {
   for (const log of envelope.receipt?.logs || []) {
     const topic0 = lower(log.topics?.[0]);
     const routedProtocols = [...endpointProtocols(envelope, log)]
-      .filter((protocol) => protocol === 'optimism' || protocol === 'base');
+      .filter((protocol) => protocol === 'optimism');
     for (const protocol of routedProtocols) {
       if (topic0 === TOPICS.opTransactionDeposited) {
         if (envelope.category !== 'bridge_out') continue;

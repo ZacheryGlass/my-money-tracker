@@ -27,7 +27,7 @@ const BLOCK_HASH = `0x${'cd'.repeat(32)}`;
 const word = (value) => BigInt(value).toString(16).padStart(64, '0');
 const addressTopic = (value) => `0x${value.slice(2).padStart(64, '0')}`;
 
-const context = (chainId = 8453) => ({
+const context = (chainId = 10) => ({
   jobId: 9,
   subjectId: 3,
   chainId,
@@ -41,10 +41,10 @@ test('history audit enumerates every configured chain', () => {
   try {
     delete process.env.ETH_CHAINS;
     assert.deepEqual(EvmAuditService.supportedChainIds(), [
-      1, 10, 100, 137, 324, 8453, 42161, 59144, 32401,
+      1, 10, 100, 137, 324, 42161, 59144, 32401,
     ]);
     assert.deepEqual(EvmAuditService.configuredChainIds(), [
-      1, 10, 100, 137, 324, 8453, 42161, 59144, 32401,
+      1, 10, 100, 137, 324, 42161, 59144, 32401,
     ]);
   } finally {
     if (original == null) delete process.env.ETH_CHAINS;
@@ -52,29 +52,12 @@ test('history audit enumerates every configured chain', () => {
   }
 });
 
-test('Base audit scope uses CDP while Gnosis retains Moralis with an explorer fallback', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
-  assert.match(source, /\[100, \{\s*\n\s*moralis: 'gnosis', fallbackProvider: 'blockscout'/);
-  assert.match(source, /\[8453, \{\s*\n\s*cdp: 'base'/);
-  assert.doesNotMatch(source, /\[8453, \{[\s\S]{0,160}moralis:/);
-  assert.match(source, /\[1, \{ auditProvider: 'etherscan' \}\]/);
-  assert.match(source, /\[42161, \{ auditProvider: 'etherscan' \}\]/);
-  assert.match(source, /const useMoralis = Boolean\(providerConfig\.moralis && moralis\)/);
-  assert.match(source, /const useCdp = Boolean\(providerConfig\.cdp && cdp\)/);
-  assert.match(source, /const nativeCredit = chain\?\.auditNativeCredits \|\| chain\?\.stateSyncDeposits/);
-  assert.match(source, /fetchStateSyncDeposits\(/);
-  assert.match(source, /evidenceKind: 'native_credit'/);
-  assert.match(source, /discoveredChain\.bounded = true/);
-  assert.match(source, /discoveredChain\.status = 'bounded'/);
-  assert.match(source, /discoveredChain\.active_hint_proven = false/);
-});
-
 test('Moralis quota fallback remains visibly deferred and never marks discovery complete', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
   assert.match(source, /status: 'deferred', source: 'moralis'/);
   assert.match(source, /active_discovery = \{/);
   assert.match(source, /key && moralisRequested\.length/);
-  assert.match(source, /let providerDeferred = Boolean\(moralisUnavailable \|\| cdpUnavailable \|\| unavailable\.length\)/);
+  assert.match(source, /let providerDeferred = Boolean\(moralisUnavailable \|\| unavailable\.length\)/);
 });
 
 test('a chain without consensus RPC is deferred without blocking other audit chains', () => {
@@ -142,8 +125,8 @@ test('new audit scopes persist unknown provider order instead of SQL NULL', asyn
   };
   try {
     await EvmAudit.upsertScope(1, {
-      chainId: 8453,
-      provider: 'coinbase-cdp',
+      chainId: 10,
+      provider: 'consensus-rpc',
       capability: 'active_chain',
       providerOrder: null,
     });
@@ -167,8 +150,8 @@ test('source coverage persists unknown provider order without erasing known orde
   try {
     await EvmAudit.acceptCoverage({
       subjectId: 3,
-      chainId: 8453,
-      provider: 'coinbase-cdp',
+      chainId: 10,
+      provider: 'consensus-rpc',
       capability: 'wallet_history',
       fromBlock: 0,
       throughBlock: 1,
@@ -391,26 +374,6 @@ test('OP Stack deposit mint survives failed execution and is separate from call 
   ]);
 });
 
-test('Base native-credit logs are decoded only for this wallet and exact receipt coordinates', () => {
-  const nativeCredits = chains.getChain(8453).auditNativeCredits;
-  const transaction = {
-    hash: HASH, from: OTHER, to: nativeCredits.contract, value: '0x0', gasPrice: '0x1',
-  };
-  const receipt = {
-    gasUsed: '0x1', effectiveGasPrice: '0x1',
-    logs: [{
-      logIndex: '0x4', address: nativeCredits.contract,
-      topics: [nativeCredits.topic0, `0x${'00'.repeat(32)}`, addressTopic(WALLET)],
-      data: `0x${word(123)}`,
-    }],
-  };
-  const effects = effectsFromRpc(context(), transaction, receipt);
-  assert.equal(effects.length, 1);
-  assert.equal(effects[0].effectType, 'native_credit');
-  assert.equal(effects[0].effectKey, `native-credit:${HASH}:4`);
-  assert.equal(effects[0].valueUnits, '123');
-});
-
 test('ERC-20, ERC-721, and ERC-1155 receipt effects use log identity without merging ids', () => {
   const transaction = { hash: HASH, from: OTHER, to: CONTRACT, value: '0x0', gasPrice: '0x1' };
   const batchData = `0x${word(64)}${word(160)}${word(2)}${word(7)}${word(8)}${word(2)}${word(70)}${word(80)}`;
@@ -498,84 +461,6 @@ test('Moralis plan quota exhaustion is deferred instead of reported as bad crede
   }
 });
 
-test('Moralis discovery quota exhaustion defers Gnosis while Base still uses CDP', async () => {
-  const originalFetch = global.fetch;
-  const originals = {
-    acquireRunLock: EvmAudit.acquireRunLock,
-    releaseRunLock: EvmAudit.releaseRunLock,
-    claim: EvmAudit.claim,
-    findById: EvmAudit.findById,
-    heartbeat: EvmAudit.heartbeat,
-    credentialGenerations: EvmAudit.credentialGenerations,
-    credentialGeneration: EvmAudit.credentialGeneration,
-    setDiscoveredChains: EvmAudit.setDiscoveredChains,
-    recordProviderAttempt: EvmAudit.recordProviderAttempt,
-    finish: EvmAudit.finish,
-    getUserKey: SecretsService.getUserKey,
-    runChain: EvmAuditService.runChain,
-  };
-  const captured = [];
-  let finished;
-  global.fetch = async () => new Response(
-    JSON.stringify({ message: 'free-plan daily quota exhausted' }),
-    { status: 401, headers: { 'content-type': 'application/json' } }
-  );
-  EvmAudit.acquireRunLock = async () => ({ userId: 1 });
-  EvmAudit.releaseRunLock = async () => {};
-  EvmAudit.claim = async () => ({ id: 44 });
-  EvmAudit.findById = async () => ({
-    id: 44, user_id: 1, subject_id: 9, requested_wallet_id: 3,
-    address: WALLET, requested_chains: [100, 8453, 324], mode: 'full',
-    credential_generation: null,
-    moralis_credential_generation: null,
-    cdp_credential_generation: null,
-  });
-  EvmAudit.heartbeat = async () => ({ id: 44 });
-  EvmAudit.credentialGenerations = async () => ({ moralis: null, cdp: null });
-  EvmAudit.credentialGeneration = async () => null;
-  EvmAudit.setDiscoveredChains = async (_jobId, _owner, chainsFound) => chainsFound;
-  EvmAudit.recordProviderAttempt = async () => {};
-  EvmAudit.finish = async (_jobId, _owner, status, options) => {
-    finished = { status, options };
-    return finished;
-  };
-  SecretsService.getUserKey = async (_userId, service) => (
-    service === 'moralis' ? 'moralis-key' : service === 'cdp' ? 'cdp-key' : null
-  );
-  EvmAuditService.runChain = async (options) => {
-    captured.push({
-      chainId: options.chainId,
-      moralis: Boolean(options.moralis),
-      cdp: options.chainId === 8453 && Boolean(options.cdp),
-    });
-    return { gaps: 0 };
-  };
-  try {
-    await EvmAuditService.run(44);
-    assert.deepEqual(captured, [
-      { chainId: 100, moralis: false, cdp: false },
-      { chainId: 8453, moralis: false, cdp: true },
-      { chainId: 324, moralis: false, cdp: false },
-    ]);
-    assert.equal(finished.status, 'deferred');
-    assert.equal(finished.options.errorCode, 'MORALIS_QUOTA_EXHAUSTED');
-  } finally {
-    global.fetch = originalFetch;
-    EvmAudit.acquireRunLock = originals.acquireRunLock;
-    EvmAudit.releaseRunLock = originals.releaseRunLock;
-    EvmAudit.claim = originals.claim;
-    EvmAudit.findById = originals.findById;
-    EvmAudit.heartbeat = originals.heartbeat;
-    EvmAudit.credentialGenerations = originals.credentialGenerations;
-    EvmAudit.credentialGeneration = originals.credentialGeneration;
-    EvmAudit.setDiscoveredChains = originals.setDiscoveredChains;
-    EvmAudit.recordProviderAttempt = originals.recordProviderAttempt;
-    EvmAudit.finish = originals.finish;
-    SecretsService.getUserKey = originals.getUserKey;
-    EvmAuditService.runChain = originals.runChain;
-  }
-});
-
 test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
   const originalFetch = global.fetch;
   const signals = [];
@@ -648,7 +533,6 @@ test('deferred audits can be reopened after a credential generation change', () 
   assert.match(source, /SET status = 'queued'/);
   assert.match(source, /credential_generation = \$2/);
   assert.match(source, /moralis_credential_generation = \$3/);
-  assert.match(source, /cdp_credential_generation = \$4/);
   assert.match(source, /deferredProviderGenerationChanged/);
   assert.match(source, /credentialChanged/);
   assert.match(source, /retry_after_at = NULL/);
@@ -667,7 +551,7 @@ test('a deferred narrow audit can be widened to full without bypassing cooldown'
     error_code: 'MORALIS_QUOTA_EXHAUSTED',
     retry_after_at: new Date(Date.now() + 60_000),
   };
-  const widened = { ...narrow, mode: 'full', requested_chains: [1, 8453] };
+  const widened = { ...narrow, mode: 'full', requested_chains: [1, 42161] };
   const partialScope = {
     provider: 'moralis', provider_cursor: 'cursor-17',
     requested_from_block: 123, requested_through_block: 456,
@@ -700,12 +584,12 @@ test('a deferred narrow audit can be widened to full without bypassing cooldown'
   EvmAudit.ensureSubject = async () => ({ id: 8, address: WALLET });
 
   const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
-    mode: 'full', requestedChains: [1, 8453], credentialGeneration: null,
+    mode: 'full', requestedChains: [1, 42161], credentialGeneration: null,
   });
 
   assert.equal(result.created, false);
   assert.equal(result.job.mode, 'full');
-  assert.deepEqual(result.job.requested_chains, [1, 8453]);
+  assert.deepEqual(result.job.requested_chains, [1, 42161]);
   assert.equal(result.job.status, 'deferred');
   const update = calls.find(({ sql }) => /SET mode = 'full'/.test(sql));
   assert.ok(update);
@@ -722,230 +606,6 @@ test('a deferred narrow audit can be widened to full without bypassing cooldown'
   assert.equal(calls.at(-1).sql, 'COMMIT');
 });
 
-test('an explicit narrower Base audit supersedes only a deferred broader scope', async (t) => {
-  const originalConnect = database.connect;
-  const originalEnsureSubject = EvmAudit.ensureSubject;
-  const calls = [];
-  const broad = {
-    id: 45,
-    status: 'deferred',
-    mode: 'full',
-    requested_chains: [1, 10, 100, 8453],
-    error_code: 'BLOCKSCOUT_FEED_UNSUPPORTED',
-  };
-  const baseJob = {
-    id: 46,
-    status: 'queued',
-    mode: 'full',
-    requested_chains: [8453],
-  };
-  const client = {
-    query: async (sql, params) => {
-      calls.push({ sql, params });
-      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [broad] };
-      if (/FROM evm_audit_scopes/.test(sql)) {
-        return { rows: [{ chain_id: 8453, scope_count: '7', complete: true }] };
-      }
-      if (/INSERT INTO evm_audit_jobs/.test(sql)) return { rows: [baseJob] };
-      return { rows: [] };
-    },
-    release: () => {},
-  };
-  t.after(() => {
-    database.connect = originalConnect;
-    EvmAudit.ensureSubject = originalEnsureSubject;
-  });
-  database.connect = async () => client;
-  EvmAudit.ensureSubject = async () => ({ id: 9, address: WALLET });
-
-  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
-    mode: 'full', requestedChains: [8453], credentialGeneration: null,
-  });
-
-  assert.equal(result.created, true);
-  assert.deepEqual(result.job.requested_chains, [8453]);
-  assert.ok(calls.some(({ sql }) => /status = 'cancelled'/.test(sql)));
-  assert.ok(calls.some(({ sql }) => /superseded_by_job_id/.test(sql)));
-  assert.ok(calls.some(({ sql }) => /INSERT INTO evm_audit_jobs/.test(sql)));
-  assert.equal(calls.at(-1).sql, 'COMMIT');
-});
-
-test('a Base audit can supersede a deferred broad job from the pre-CDP provider', async (t) => {
-  const originalConnect = database.connect;
-  const originalEnsureSubject = EvmAudit.ensureSubject;
-  const calls = [];
-  const broad = {
-    id: 49,
-    status: 'deferred',
-    mode: 'full',
-    requested_chains: [1, 10, 100, 8453],
-    error_code: 'BLOCKSCOUT_FEED_UNSUPPORTED',
-  };
-  const baseJob = {
-    id: 50,
-    status: 'queued',
-    mode: 'full',
-    requested_chains: [8453],
-  };
-  const client = {
-    query: async (sql, params) => {
-      calls.push({ sql, params });
-      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [broad] };
-      if (/FROM evm_audit_scopes/.test(sql)) {
-        return { rows: [{ chain_id: 8453, scope_count: '7', complete: false, providers: ['blockscout'] }] };
-      }
-      if (/INSERT INTO evm_audit_jobs/.test(sql)) return { rows: [baseJob] };
-      return { rows: [] };
-    },
-    release: () => {},
-  };
-  t.after(() => {
-    database.connect = originalConnect;
-    EvmAudit.ensureSubject = originalEnsureSubject;
-  });
-  database.connect = async () => client;
-  EvmAudit.ensureSubject = async () => ({ id: 12, address: WALLET });
-
-  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
-    mode: 'full', requestedChains: [8453],
-    requestedProviders: { 8453: 'coinbase-cdp' }, credentialGeneration: null,
-  });
-
-  assert.equal(result.created, true);
-  assert.equal(result.job.id, 50);
-  assert.ok(calls.some(({ sql }) => /status = 'cancelled'/.test(sql)));
-  assert.ok(calls.some(({ sql }) => /superseded_by_job_id/.test(sql)));
-  assert.equal(calls.at(-1).sql, 'COMMIT');
-});
-
-test('an unrelated Blockscout deferral does not strand an incomplete CDP Base scope', async (t) => {
-  const originalConnect = database.connect;
-  const originalEnsureSubject = EvmAudit.ensureSubject;
-  const calls = [];
-  const broad = {
-    id: 51,
-    status: 'deferred',
-    mode: 'full',
-    requested_chains: [10, 8453],
-    error_code: 'EVM_CHAIN_AUDIT_DEFERRED',
-    error_detail: 'Blockscout internal audit feed failed on OP Mainnet.',
-  };
-  const baseJob = {
-    id: 52,
-    status: 'queued',
-    mode: 'full',
-    requested_chains: [8453],
-  };
-  const client = {
-    query: async (sql, params) => {
-      calls.push({ sql, params });
-      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [broad] };
-      if (/FROM evm_audit_scopes/.test(sql)) {
-        return { rows: [{ chain_id: 8453, scope_count: '7', complete: false, providers: ['coinbase-cdp'] }] };
-      }
-      if (/INSERT INTO evm_audit_jobs/.test(sql)) return { rows: [baseJob] };
-      return { rows: [] };
-    },
-    release: () => {},
-  };
-  t.after(() => {
-    database.connect = originalConnect;
-    EvmAudit.ensureSubject = originalEnsureSubject;
-  });
-  database.connect = async () => client;
-  EvmAudit.ensureSubject = async () => ({ id: 13, address: WALLET });
-
-  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
-    mode: 'full', requestedChains: [8453],
-    requestedProviders: { 8453: 'coinbase-cdp' }, credentialGeneration: null,
-  });
-
-  assert.equal(result.created, true);
-  assert.equal(result.job.id, 52);
-  assert.ok(calls.some(({ sql }) => /status = 'cancelled'/.test(sql)));
-  assert.ok(calls.some(({ sql }) => /superseded_by_job_id/.test(sql)));
-  assert.equal(calls.at(-1).sql, 'COMMIT');
-});
-
-test('a deferred broader audit is not narrowed while Base has an incomplete scope', async (t) => {
-  const originalConnect = database.connect;
-  const originalEnsureSubject = EvmAudit.ensureSubject;
-  const calls = [];
-  const broad = {
-    id: 47,
-    status: 'deferred',
-    mode: 'full',
-    requested_chains: [1, 10, 100, 8453],
-    error_code: 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-    retry_after_at: new Date(Date.now() + 60_000),
-  };
-  const client = {
-    query: async (sql, params) => {
-      calls.push({ sql, params });
-      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [broad] };
-      if (/FROM evm_audit_scopes/.test(sql)) {
-        return { rows: [{ chain_id: 8453, scope_count: '7', complete: false }] };
-      }
-      return { rows: [] };
-    },
-    release: () => {},
-  };
-  t.after(() => {
-    database.connect = originalConnect;
-    EvmAudit.ensureSubject = originalEnsureSubject;
-  });
-  database.connect = async () => client;
-  EvmAudit.ensureSubject = async () => ({ id: 10, address: WALLET });
-
-  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
-    mode: 'full', requestedChains: [8453], credentialGeneration: null,
-  });
-
-  assert.equal(result.created, false);
-  assert.equal(result.job.id, 47);
-  assert.equal(result.job.status, 'deferred');
-  assert.equal(calls.some(({ sql }) => /EVM_AUDIT_SCOPE_SUPERSEDED/.test(sql)), false);
-  assert.equal(calls.at(-1).sql, 'COMMIT');
-});
-
-test('an explicit retry reopens a due deferred Base audit without bypassing cooldown', async (t) => {
-  const originalConnect = database.connect;
-  const originalEnsureSubject = EvmAudit.ensureSubject;
-  const calls = [];
-  const due = {
-    id: 48,
-    status: 'deferred',
-    mode: 'full',
-    requested_chains: [8453],
-    error_code: 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-    retry_after_at: new Date(Date.now() - 1_000),
-  };
-  const reopened = { ...due, status: 'queued', stage: 'queued', error_code: null };
-  const client = {
-    query: async (sql, params) => {
-      calls.push({ sql, params });
-      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [due] };
-      if (/SET status = 'queued'/.test(sql)) return { rows: [reopened] };
-      return { rows: [] };
-    },
-    release: () => {},
-  };
-  t.after(() => {
-    database.connect = originalConnect;
-    EvmAudit.ensureSubject = originalEnsureSubject;
-  });
-  database.connect = async () => client;
-  EvmAudit.ensureSubject = async () => ({ id: 11, address: WALLET });
-
-  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
-    mode: 'full', requestedChains: [8453], credentialGeneration: null,
-  });
-
-  assert.equal(result.created, false);
-  assert.equal(result.job.status, 'queued');
-  assert.ok(calls.some(({ sql }) => /SET status = 'queued'/.test(sql)));
-  assert.equal(calls.at(-1).sql, 'COMMIT');
-});
 
 test('same-credential deferred retries preserve provider cooldown', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
@@ -959,7 +619,7 @@ test('audit claims cannot bypass a deferred retry deadline', () => {
 });
 
 test('consensus RPC requires matching receipt identity and canonical block membership', async () => {
-  const rpc = new RpcClient(8453, { spacingMs: 0 });
+  const rpc = new RpcClient(10, { spacingMs: 0 });
   rpc.requestWithEvidence = async (method, params) => {
     const result = {
       eth_getTransactionByHash: { hash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH },
@@ -1008,21 +668,21 @@ test('effect reconciliation counts missing or duplicate economic legs, not just 
     value_wei: '8', token_contract: CONTRACT, token_id: null, is_error: false,
   }];
   assert.equal(EvmAuditService._unmatchedEffectCount(
-    canonical, matchingLegacy, WALLET, chains.getChain(8453)
+    canonical, matchingLegacy, WALLET, chains.getChain(10)
   ), 0);
   assert.equal(EvmAuditService._unmatchedEffectCount(
-    canonical, [], WALLET, chains.getChain(8453)
+    canonical, [], WALLET, chains.getChain(10)
   ), 1);
   assert.equal(EvmAuditService._unmatchedEffectCount(
-    canonical, [...matchingLegacy, ...matchingLegacy], WALLET, chains.getChain(8453)
+    canonical, [...matchingLegacy, ...matchingLegacy], WALLET, chains.getChain(10)
   ), 0);
   const duplicate = { ...matchingLegacy[0], id: 21 };
   assert.equal(EvmAuditService._unmatchedEffectCount(
-    canonical, [matchingLegacy[0], duplicate], WALLET, chains.getChain(8453)
+    canonical, [matchingLegacy[0], duplicate], WALLET, chains.getChain(10)
   ), 1);
   const uncoordinated = { ...matchingLegacy[0], id: 22, source_log_index: null };
   assert.ok(EvmAuditService._unmatchedEffectCount(
-    canonical, [uncoordinated], WALLET, chains.getChain(8453)
+    canonical, [uncoordinated], WALLET, chains.getChain(10)
   ) > 0, 'economic equality without immutable log identity remains a gap');
 });
 
@@ -1093,18 +753,15 @@ test('NFT corroboration uses Moralis amount units instead of its non-unit value 
   }), false);
 });
 
-test('audit migration is additive, fail-closed, user-owned, and retires only Base routine state sync', () => {
+test('audit migration is additive, fail-closed, and user-owned', () => {
   const sql = fs.readFileSync(path.join(__dirname, '../migrations/077_evm_audit_evidence.sql'), 'utf8');
   assert.match(sql, /user_id INT NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
   assert.match(sql, /status <> 'complete'\s+OR \(requested_from_block IS NOT NULL AND requested_through_block IS NOT NULL AND pagination_exhausted\)/);
   assert.match(sql, /UNIQUE \(\s*subject_id, chain_id, provider, evidence_kind,/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS evm_provider_attempts/);
   assert.match(sql, /response_raw TEXT/);
-  assert.match(sql, /CREATE TABLE IF NOT EXISTS evm_retired_feed_coverage/);
   assert.match(sql, /FOREIGN KEY \(subject_id, user_id\) REFERENCES evm_subjects/);
-  assert.match(sql, /WHERE chain_id = 8453 AND feed = 'statesync'/);
   assert.doesNotMatch(sql, /DELETE FROM eth_transfers/i);
-  assert.equal(chains.getChain(8453).stateSyncDeposits, undefined);
   assert.ok(chains.getChain(100).stateSyncDeposits,
     'Gnosis wallet-filtered native-credit evidence remains until the audit proves a replacement');
 });

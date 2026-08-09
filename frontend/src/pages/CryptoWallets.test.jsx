@@ -343,7 +343,6 @@ describe('Crypto -> Wallets tab', () => {
       chains: [
         { chain_id: 1, name: 'Ethereum', enabled: true, error_code: null, unsupported_feeds: [], last_synced_at: '2026-07-26T09:00:00Z' },
         { chain_id: 42161, name: 'Arbitrum One', enabled: true, error_code: 'FEED_UNSUPPORTED', error_message: 'internal unavailable on Arbitrum One; derived balances there may drift', unsupported_feeds: ['internal'], last_synced_at: '2026-07-26T09:00:00Z' },
-        { chain_id: 8453, name: 'Base', enabled: false, error_code: null, unsupported_feeds: [], last_synced_at: null },
       ],
     }]);
 
@@ -354,59 +353,9 @@ describe('Crypto -> Wallets tab', () => {
     // The gap is named, not just flagged: "no internal" is what tells the user
     // (and #62) which derived numbers may drift.
     expect(screen.getByText('no internal')).toBeInTheDocument();
-    // A switched-off chain reads as off while keeping its row -- disabling
-    // stops the sync, it does not delete history.
-    expect(screen.getAllByText('Base', { selector: 'span' }).length).toBeGreaterThan(0);
-    expect(screen.getByText('off')).toBeInTheDocument();
     // Chain-level coverage detail alone does not inflate the Wallets badge.
     expect(screen.getAllByText('Limited coverage').length).toBeGreaterThan(0);
     expect(screen.queryByText('Sync failed')).toBeNull();
-  });
-
-  it('renders durable provider scan progress after the local action has ended', async () => {
-    await openEthereumTab([{
-      ...CHAIN_WALLET,
-      chains: [{
-        chain_id: 8453,
-        name: 'Base',
-        enabled: true,
-        provider_scan_status: 'running',
-        provider_scan_head: 12345678,
-        provider_cursor: 'opaque-cursor',
-        provider_scan_owner: 'worker-1',
-        provider_last_page_at: new Date().toISOString(),
-        unsupported_feeds: [],
-        error_code: null,
-      }],
-    }]);
-
-    expect(screen.getAllByText('Syncing').length).toBeGreaterThan(0);
-    await expandWallet();
-    expect(await screen.findByText(/through block 12345678/i)).toBeInTheDocument();
-    expect(screen.getByText(/checkpoint saved/i)).toBeInTheDocument();
-    expect(screen.getByText(/worker active/i)).toBeInTheDocument();
-  });
-
-  it('shows provider cooldowns as deferred instead of failed', async () => {
-    await openEthereumTab([{
-      ...CHAIN_WALLET,
-      error_code: 'SYNC_DEFERRED',
-      error_message: 'Base CDP rate limited; automatic retry pending',
-      chains: [{
-        chain_id: 8453,
-        name: 'Base',
-        enabled: true,
-        error_code: 'SYNC_DEFERRED',
-        error_message: 'Base CDP rate limited; automatic retry pending',
-        unsupported_feeds: [],
-        last_synced_at: '2026-07-26T09:00:00Z',
-      }],
-    }]);
-
-    expect(screen.getAllByText('Sync deferred').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Sync failed')).toBeNull();
-    await expandWallet();
-    expect(await screen.findByText(/automatic retry pending/i)).toBeInTheDocument();
   });
 
   it('keeps genuine feed failures red even when another chain has a standing limit', async () => {
@@ -453,20 +402,6 @@ describe('Crypto -> Wallets tab', () => {
     expect(apiMocks.eth.syncWallet).not.toHaveBeenCalled();
     await expandWallet();
     expect(await screen.findByText(/History audit: queued/i)).toBeInTheDocument();
-  });
-
-  it('offers an isolated Base genesis audit for CDP verification', async () => {
-    apiMocks.eth.startHistoryAudit.mockResolvedValue({
-      created: true,
-      job: { id: '44', requested_wallet_id: 1, status: 'queued', stage: 'queued', progress: {} },
-    });
-    await openEthereumTab([wallet(report())]);
-
-    fireEvent.click((await screen.findAllByRole('button', { name: /audit base history for main/i }))[0]);
-
-    await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1, {
-      mode: 'full', chainIds: [8453],
-    }));
   });
 
   it('surfaces the persisted reason when an audit remains deferred', async () => {
@@ -564,8 +499,8 @@ describe('Crypto -> Wallets tab', () => {
     apiMocks.eth.getCoverage.mockResolvedValue({
       generated_at: '2026-07-30T22:00:00.000Z',
       summary: {
-        rows: 3, enabled_rows: 3, complete: 1, failed: 0,
-        deferred: 1, unsupported: 1, not_applicable: 0, unverified: 0, gaps: 2,
+        rows: 2, enabled_rows: 2, complete: 1, failed: 0,
+        deferred: 0, unsupported: 1, not_applicable: 0, unverified: 0, gaps: 1,
       },
       coverage: [
         {
@@ -580,14 +515,6 @@ describe('Crypto -> Wallets tab', () => {
           error_message: 'Internal traces unavailable for blocks 0-123',
           covered_through_block: 99,
         },
-        {
-          wallet_id: 1, wallet_label: 'Main', wallet_address: wallet().address,
-          chain_id: 8453, chain_name: 'Base', feed: 'token',
-          status: 'deferred', enabled: true, provider: 'Coinbase CDP address history (Base)',
-          error_message: 'CDP quota exhausted; retry after 10 seconds',
-          retry_after_at: '2026-07-30T22:00:10.000Z',
-          covered_through_block: 49999999,
-        },
       ],
     });
     await openEthereumTab([wallet(report())]);
@@ -597,8 +524,6 @@ describe('Crypto -> Wallets tab', () => {
     expect(await screen.findByRole('dialog', { name: /evm source coverage/i })).toBeInTheDocument();
     expect(screen.getByText(/main · gnosis chain · internal/i)).toBeInTheDocument();
     expect(screen.getByText(/internal traces unavailable for blocks 0-123/i)).toBeInTheDocument();
-    expect(screen.getByText(/main · base · token/i)).toBeInTheDocument();
-    expect(screen.getByText(/cdp quota exhausted; retry after 10 seconds/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download json/i })).toBeInTheDocument();
   });
 

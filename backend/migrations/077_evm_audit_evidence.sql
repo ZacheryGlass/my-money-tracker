@@ -387,22 +387,6 @@ CREATE TABLE IF NOT EXISTS evm_balance_audits (
   FOREIGN KEY (job_id, subject_id) REFERENCES evm_audit_jobs(id, subject_id) ON DELETE CASCADE
 );
 
--- Preserve the exact pre-pivot Base coverage/error evidence before the compact
--- live status row is retired from ordinary Sync. This snapshot is append-only;
--- the audit replacement can supersede it but never erase what was known.
-CREATE TABLE IF NOT EXISTS evm_retired_feed_coverage (
-  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  subject_id BIGINT NOT NULL REFERENCES evm_subjects(id) ON DELETE CASCADE,
-  wallet_id INT REFERENCES eth_wallets(id) ON DELETE SET NULL,
-  chain_id BIGINT NOT NULL,
-  feed VARCHAR(40) NOT NULL,
-  retired_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  coverage_json JSONB NOT NULL,
-  PRIMARY KEY (subject_id, chain_id, feed),
-  UNIQUE (user_id, subject_id, chain_id, feed),
-  FOREIGN KEY (subject_id, user_id) REFERENCES evm_subjects(id, user_id) ON DELETE CASCADE
-);
-
 -- Seed durable subjects without changing wallet ownership or deleting any
 -- existing history. A later disconnect may remove eth_wallets while these
 -- user-owned evidence roots remain.
@@ -411,32 +395,3 @@ SELECT user_id, address
   FROM eth_wallets
  WHERE user_id IS NOT NULL
 ON CONFLICT (user_id, address) DO NOTHING;
-
-INSERT INTO evm_retired_feed_coverage (
-  user_id, subject_id, wallet_id, chain_id, feed, coverage_json
-)
-SELECT w.user_id, s.id, c.wallet_id, c.chain_id, c.feed, to_jsonb(c)
-  FROM eth_feed_coverage c
-  JOIN eth_wallets w ON w.id = c.wallet_id
-  JOIN evm_subjects s ON s.user_id = w.user_id AND s.address = w.address
- WHERE c.chain_id = 8453 AND c.feed = 'statesync'
-ON CONFLICT (subject_id, chain_id, feed) DO NOTHING;
-
--- Base native-credit discovery moved out of routine Sync. Keep every stored
--- row and cursor, but stop presenting the retired anonymous chain-wide feed as
--- a current red failure. Audit evidence above now owns any transaction-scoped
--- verification that proves such a gap.
-UPDATE eth_feed_coverage
-   SET status = 'not_applicable',
-       provider = 'audit-only',
-       covered_from_block = NULL,
-       covered_through_block = NULL,
-       covered_from_at = NULL,
-       covered_through_at = NULL,
-       indexed_head = NULL,
-       attempted_from_block = NULL,
-       error_code = NULL,
-       error_message = NULL,
-       retry_after_at = NULL,
-       updated_at = CURRENT_TIMESTAMP
- WHERE chain_id = 8453 AND feed = 'statesync';

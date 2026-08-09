@@ -71,7 +71,7 @@ test('API and CSV versions of one Coinbase event share a fingerprint', () => {
 test('conflicting provider identity details stay visible to conservative dedupe', () => {
   assert.deepEqual(conflictingDetails(
     { tx_hash: '0xabc', address: '0xdef', network: 'ethereum', chain_id: 1 },
-    { tx_hash: '0xABC', address: '0xdef', network: 'base', chain_id: 8453 },
+    { tx_hash: '0xABC', address: '0xdef', network: 'optimism', chain_id: 10 },
   ), ['network', 'chain_id']);
   assert.deepEqual(conflictingDetails(
     { occurred_at: '2026-07-30T12:00:00Z' },

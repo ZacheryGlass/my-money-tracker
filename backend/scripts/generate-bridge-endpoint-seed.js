@@ -17,7 +17,7 @@ const END = '-- END GENERATED ENDPOINT SEED';
 const quote = (value) => `'${String(value).replace(/'/g, "''")}'`;
 
 function familyVersion(entry) {
-  if (entry.protocol === 'optimism' || entry.protocol === 'base') return 'bedrock';
+  if (entry.protocol === 'optimism') return 'bedrock';
   if (entry.protocol === 'linea') return 'message-service-v1';
   if (entry.protocol === 'across') return 'v2-v3';
   if (entry.protocol === 'polygon') return 'pos-plasma';
@@ -70,18 +70,6 @@ function endpointRows(pack) {
     direction: direction(entry),
     source_url: entry.source_url || pack.sources[entry.protocol],
   }));
-
-  // OP and Base share these predeploys. The old global address-label schema
-  // could store them only once; the decoder registry must carry both chains.
-  for (const entry of rows.filter((item) => item.protocol === 'base' && item.chain_id === 8453)) {
-    rows.push({
-      ...entry,
-      protocol: 'optimism',
-      chain_id: 10,
-      name: entry.name.replace('OP Stack', 'Optimism'),
-      source_url: pack.sources.optimism,
-    });
-  }
 
   const seen = new Set();
   for (const entry of rows) {

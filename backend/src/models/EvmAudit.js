@@ -29,7 +29,7 @@ function chunks(items, size) {
 }
 
 function validateProviderPage(page) {
-  if (['coinbase-cdp', 'consensus-rpc'].includes(page.provider)
+  if (['consensus-rpc'].includes(page.provider)
       && typeof page.responseRaw !== 'string') {
     const error = new Error(`${page.provider} evidence must retain the raw response body`);
     error.code = 'EVM_INVALID_RAW_PAGE';
@@ -114,19 +114,19 @@ class EvmAudit {
     const { rows } = await pool.query(
       `SELECT service, MAX(updated_at) AS updated_at
          FROM user_api_keys
-        WHERE user_id = $1 AND service IN ('moralis', 'cdp')
+        WHERE user_id = $1 AND service IN ('moralis')
         GROUP BY service`,
       [userId]
     );
     return rows.reduce((result, row) => {
       result[row.service] = row.updated_at || null;
       return result;
-    }, { moralis: null, cdp: null });
+    }, { moralis: null });
   }
 
   static async credentialGeneration(userId) {
     const generations = await this.credentialGenerations(userId);
-    return [generations.moralis, generations.cdp]
+    return [generations.moralis]
       .filter(Boolean)
       .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
   }
@@ -148,14 +148,13 @@ class EvmAudit {
     mode = 'incremental', requestedChains = [], credentialGeneration = null,
     credentialGenerations = null,
     requestedProviders = null,
-    etherscanConfigured = false, cdpConfigured = false, rpcConfigurationReady = false,
+    etherscanConfigured = false, rpcConfigurationReady = false,
   } = {}) {
     const providerGenerations = credentialGenerations || {
       moralis: credentialGeneration,
-      cdp: credentialGeneration,
     };
     const latestCredentialGeneration = credentialGeneration
-      || [providerGenerations.moralis, providerGenerations.cdp]
+      || [providerGenerations.moralis]
         .filter(Boolean)
         .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0]
       || null;
@@ -186,7 +185,7 @@ class EvmAudit {
       let requestedScopeIsComplete = false;
       if (isDeferredBroaderScope) {
         // A broad job may be deferred by the requested chain itself (for
-        // example CDP quota or an incomplete Base recovery), so scope
+        // example Moralis quota), so scope
         // narrowing must not bypass that provider's retry deadline. Only
         // supersede when every requested chain already has exclusively
         // complete capability scopes in the broad job.
@@ -212,7 +211,6 @@ class EvmAudit {
               && row.complete !== true;
           });
         const providerPrefixes = {
-          'coinbase-cdp': 'CDP_',
           moralis: 'MORALIS_',
           etherscan: 'ETHERSCAN_',
           blockscout: 'BLOCKSCOUT_',
@@ -223,7 +221,6 @@ class EvmAudit {
         const deferredErrorProvider = Object.entries(providerPrefixes)
           .find(([, prefix]) => deferredErrorCode.startsWith(prefix))?.[0] || null;
         const deferredErrorProviderFromDetail = deferredErrorProvider || Object.entries({
-          'coinbase-cdp': /coinbase\s+cdp|cdp/i,
           moralis: /moralis/i,
           etherscan: /etherscan/i,
           blockscout: /blockscout/i,
@@ -237,7 +234,7 @@ class EvmAudit {
         // new provider establishes its own bounded proof. An incomplete
         // requested-provider scope still blocks narrowing when the broad job's
         // own deferred error belongs to that provider. An unrelated provider
-        // error (for example OP Blockscout while requesting Base CDP) must not
+        // error from another provider must not
         // strand the new provider's independent proof.
         if (requestedProviders && (!requestedProviderIsIncomplete
           || (deferredErrorProviderFromDetail && !requestedProviderOwnsDeferredError))) {
@@ -247,8 +244,8 @@ class EvmAudit {
       if (isDeferredBroaderScope && requestedScopeIsComplete) {
         // A whole-EVM job can remain deferred forever because an unrelated
         // chain has a standing provider limitation. An explicit narrower
-        // request (for example Base-only) is safe to run as a new job: the
-        // old job's pages and provider-attempt evidence remain immutable, and
+        // request is safe to run as a new job: the old job's pages and
+        // provider-attempt evidence remain immutable, and
         // the new job starts its own bounded proof for the requested scope.
         // Never supersede a running job or silently convert a broad request.
         supersededJobId = activeRow.id;
@@ -274,16 +271,13 @@ class EvmAudit {
       } else if (activeRow) {
         let activeJob = activeRow;
         const errorCode = String(activeJob.error_code || '');
-        const indexedProviderDeferred = errorCode.startsWith('MORALIS_')
-          || errorCode.startsWith('CDP_');
-        const deferredProvider = errorCode.startsWith('MORALIS_') ? 'moralis'
-          : errorCode.startsWith('CDP_') ? 'cdp' : null;
+        const indexedProviderDeferred = errorCode.startsWith('MORALIS_');
+        const deferredProvider = errorCode.startsWith('MORALIS_') ? 'moralis' : null;
         // Etherscan's credential is also user-scoped, but its deferred job may
         // have no Moralis generation change to record. Re-open as soon as the
         // Settings key exists so a missing-key deferral is not sticky for 24h.
         const etherscanCredentialReady = errorCode === 'ETHERSCAN_NOT_CONFIGURED'
           && etherscanConfigured;
-        const cdpCredentialReady = errorCode === 'CDP_NOT_CONFIGURED' && cdpConfigured;
         const rpcConfigurationReadyNow = errorCode === 'RPC_UNSUPPORTED'
           && rpcConfigurationReady;
         const deferredProviderGeneration = deferredProvider
@@ -295,7 +289,7 @@ class EvmAudit {
             // Jobs created before provider-specific generations were added can
             // fall back to the legacy value only when exactly one indexed
             // provider was requested. A combined timestamp is ambiguous when
-            // both Moralis and CDP were in scope.
+            // more than one indexed provider was in scope.
             (activeJob.requested_chains || []).length === 1
               ? activeJob.credential_generation : null
           ) : null;
@@ -305,7 +299,7 @@ class EvmAudit {
             : deferredProviderGeneration == null
               || new Date(priorProviderGeneration).getTime()
                 !== new Date(deferredProviderGeneration).getTime());
-        const credentialChanged = etherscanCredentialReady || cdpCredentialReady
+        const credentialChanged = etherscanCredentialReady
           || deferredProviderGenerationChanged || rpcConfigurationReadyNow;
         const retryDue = activeJob.status === 'deferred'
           && (!activeJob.retry_after_at || new Date(activeJob.retry_after_at).getTime() <= Date.now());
@@ -316,15 +310,13 @@ class EvmAudit {
                     stage = 'queued',
                     credential_generation = $2,
                     moralis_credential_generation = $3,
-                    cdp_credential_generation = $4,
                     retry_after_at = NULL,
                     error_code = NULL,
                     error_detail = NULL,
                     updated_at = CURRENT_TIMESTAMP
               WHERE id = $1
             RETURNING *`,
-            [activeJob.id, latestCredentialGeneration, providerGenerations.moralis,
-              providerGenerations.cdp]
+            [activeJob.id, latestCredentialGeneration, providerGenerations.moralis]
           );
           activeJob = refreshed.rows[0];
         }
@@ -388,14 +380,12 @@ class EvmAudit {
       const inserted = await client.query(
         `INSERT INTO evm_audit_jobs (
            user_id, subject_id, requested_wallet_id, mode, idempotency_key,
-           credential_generation, moralis_credential_generation,
-           cdp_credential_generation, requested_chains
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+           credential_generation, moralis_credential_generation, requested_chains
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
          RETURNING *`,
         [
           userId, subject.id, wallet.id, mode, idempotencyKey,
-          latestCredentialGeneration, providerGenerations.moralis,
-          providerGenerations.cdp, JSON.stringify(requestedChains),
+          latestCredentialGeneration, providerGenerations.moralis, JSON.stringify(requestedChains),
         ]
       );
       if (supersededJobId) {
@@ -1074,62 +1064,6 @@ class EvmAudit {
     return rows;
   }
 
-  static async reusableCdpTrace(scopeId, blockNumber, blockHash) {
-    const { rows } = await pool.query(
-      `SELECT response_json, response_raw, response_sha256,
-              evidence_identity_sha256, request_id,
-              request_params->'params' AS rpc_params
-         FROM evm_provider_pages
-        WHERE scope_id = $1
-          AND provider = 'coinbase-cdp'
-          AND endpoint = 'transaction-recovery-rpc'
-          AND request_params->>'method' = 'debug_traceBlockByNumber'
-          AND request_params->>'block_hash' = $2
-          AND request_params->'params'->>0 = $3
-        ORDER BY id DESC
-        LIMIT 1`,
-      [scopeId, String(blockHash).toLowerCase(), `0x${BigInt(blockNumber).toString(16)}`]
-    );
-    const row = rows[0];
-    if (!row || !Array.isArray(row.response_json) || typeof row.response_raw !== 'string') return null;
-    let params = row.rpc_params;
-    if (typeof params === 'string') {
-      try { params = JSON.parse(params); } catch { return null; }
-    }
-    if (!Array.isArray(params)) return null;
-    return {
-      body: row.response_json,
-      rawText: row.response_raw,
-      responseSha256: row.response_sha256,
-      evidenceIdentitySha256: row.evidence_identity_sha256,
-      requestId: row.request_id,
-      method: 'debug_traceBlockByNumber',
-      params,
-    };
-  }
-
-  // A transaction observation alone is not a completeness marker: a failed
-  // provider page can retain the transaction envelope while omitting its
-  // receipt, logs, token transfers, or traces. Only an observation linked to
-  // a complete CDP history/recovery page may suppress known-hash recovery.
-  static async completeCdpTransactionHashesForSubject(subjectId, chainId, fromBlock = 0) {
-    const { rows } = await pool.query(
-      `SELECT DISTINCT o.tx_hash
-         FROM evm_provider_observations o
-         JOIN evm_job_observations jo ON jo.observation_id = o.id
-         JOIN evm_provider_pages p ON p.id = jo.page_id AND p.job_id = jo.job_id
-        WHERE o.subject_id = $1 AND o.chain_id = $2
-          AND o.provider IN ('coinbase-cdp', 'coinbase-cdp-recovery')
-          AND o.evidence_kind = 'transaction'
-          AND o.tx_hash IS NOT NULL
-          AND (o.block_number IS NULL OR o.block_number >= $3)
-          AND p.provider = 'coinbase-cdp'
-          AND p.endpoint IN ('address-history', 'transaction-recovery')`,
-      [subjectId, chainId, fromBlock]
-    );
-    return rows.map((row) => String(row.tx_hash).toLowerCase());
-  }
-
   static async upsertMinedTransaction(transaction, fence = {}) {
     const transactional = Boolean(fence.jobId && fence.owner);
     const client = transactional ? await pool.connect() : pool;
@@ -1491,7 +1425,7 @@ class EvmAudit {
           SELECT 1 FROM evm_audit_scopes sc
            WHERE sc.job_id = $1 AND sc.chain_id = $2
              AND sc.capability = r.capability
-             AND sc.provider IN ('moralis', 'coinbase-cdp', 'blockscout', 'etherscan', 'existing-ledger')
+             AND sc.provider IN ('moralis', 'blockscout', 'etherscan', 'existing-ledger')
              AND sc.status = 'complete' AND sc.pagination_exhausted = TRUE
         )`,
       [jobId, chainId]
@@ -1665,7 +1599,7 @@ class EvmAudit {
   // Legacy explorer rows normally have economics but no immutable log
   // coordinate. Upgrade them only when the same receipt effect is proven by
   // consensus RPC and independently corroborated by the configured indexed
-  // provider (Moralis for Gnosis or CDP for Base) at the exact transaction/log
+  // provider at the exact transaction/log
   // coordinate. Economic equality alone remains a gap.
   static async repairCorroboratedTransferIdentities(
     jobId, userId, subjectId, chainId, throughBlock, fence = {}
@@ -1696,8 +1630,7 @@ class EvmAudit {
            FROM evm_canonical_effects e
            JOIN evm_provider_observations o
              ON o.subject_id = e.subject_id AND o.chain_id = e.chain_id
-            AND o.provider IN ('moralis', 'coinbase-cdp', 'coinbase-cdp-recovery')
-            AND NOT (o.provider = 'moralis' AND o.chain_id = 8453)
+            AND o.provider = 'moralis'
             AND o.evidence_kind = e.effect_type || '_transfer'
             AND o.tx_hash = e.tx_hash AND o.log_index = e.log_index
           JOIN evm_job_observations jo
@@ -1802,25 +1735,7 @@ class EvmAudit {
         ORDER BY c.feed`,
       [userId, subjectId, chainId]
     );
-    const retired = await pool.query(
-      `SELECT coverage_json
-         FROM evm_retired_feed_coverage
-        WHERE user_id = $1 AND subject_id = $2 AND chain_id = $3`,
-      [userId, subjectId, chainId]
-    );
-    const byFeed = new Map(rows.map((row) => [row.feed, row]));
-    for (const entry of retired.rows) {
-      const evidence = entry.coverage_json || {};
-      const current = byFeed.get(evidence.feed);
-      if (!current || current.status === 'not_applicable') {
-        byFeed.set(evidence.feed, {
-          ...evidence,
-          provider: evidence.provider || 'retired-evidence',
-          retired: true,
-        });
-      }
-    }
-    return [...byFeed.values()].sort((left, right) => String(left.feed).localeCompare(String(right.feed)));
+    return rows;
   }
 
   static async activityTxHashes(userId, subjectId, chainId, throughBlock) {

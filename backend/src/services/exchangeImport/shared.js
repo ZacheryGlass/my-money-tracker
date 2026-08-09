@@ -278,7 +278,6 @@ const EVM_NETWORK_CHAIN_IDS = new Map([
   ['matic', 137],
   ['zksync era', 324],
   ['zksync', 324],
-  ['base', 8453],
   ['arbitrum', 42161],
   ['arbitrum one', 42161],
   ['linea', 59144],

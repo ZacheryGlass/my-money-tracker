@@ -1,9 +1,9 @@
 -- 050: version per-chain ingestion so a normalization/provider change can
 -- trigger one safe historical reingest (#78).
 --
--- OP Mainnet and Base could be explicitly enabled before their keyless
--- Blockscout support shipped. Those rows may therefore contain legacy
--- address-to-self deposit transactions and cursors already far beyond them.
+-- OP Mainnet could be explicitly enabled before its keyless Blockscout
+-- support shipped. Those rows may therefore contain legacy address-to-self
+-- deposit transactions and cursors already far beyond them.
 -- `ingest_version = 0` marks that stored history as pre-#78. The service sees
 -- the registry's version 1, atomically resets all six cursors, and lets each
 -- successfully fetched feed delete/rebuild its own full window. A feed that

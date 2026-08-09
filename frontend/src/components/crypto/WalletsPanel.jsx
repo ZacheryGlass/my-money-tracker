@@ -11,7 +11,6 @@ import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-const BASE_CHAIN_ID = 8453;
 // Deferred jobs are durable retry points, not active work. Poll them too so a
 // scheduled retry can update the visible status without requiring a reload.
 const auditIsPending = (audit) => ['queued', 'running'].includes(audit?.status);
@@ -328,9 +327,6 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
 // to silence either, so every state has words rather than only a colour.
 const chainIssueTone = (chain) => {
   if (!chain.enabled) return 'neutral';
-  if (chain.provider_scan_status === 'running') return 'running';
-  if (chain.provider_scan_status === 'deferred') return 'deferred';
-  if (chain.provider_scan_status === 'failed') return 'failed';
   if (DEFERRED_SYNC_CODES.has(chain.error_code)) return 'deferred';
   if (chain.error_code && !LIMITED_SYNC_CODES.has(chain.error_code)) return 'failed';
   if (LIMITED_SYNC_CODES.has(chain.error_code) || chain.unsupported_feeds?.length > 0) {
@@ -411,22 +407,6 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
   const [expandedId, setExpandedId] = useState(null);
   const [sorting, setSorting] = useState([{ id: 'eth', desc: true }]);
   const isMobile = useIsMobile();
-
-  // The server owns this state. Poll only while a provider scan is active so a
-  // reload or navigation cannot turn a durable running scan back into a local
-  // spinner with no progress. The opaque cursor is never exposed; the detail
-  // line below reports whether a checkpoint exists and when it was committed.
-  const providerScanRunning = wallets.some((wallet) =>
-    wallet.chains?.some((chain) => chain.enabled && chain.provider_scan_status === 'running')
-  );
-  useEffect(() => {
-    if (!providerScanRunning) return undefined;
-    const refresh = async () => {
-      try { await onChanged(); } catch { /* the next poll remains authoritative */ }
-    };
-    const timer = window.setInterval(refresh, 5000);
-    return () => window.clearInterval(timer);
-  }, [onChanged, providerScanRunning]);
 
   const visibleAudits = useMemo(() => ({
     ...Object.fromEntries(
@@ -676,28 +656,6 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
       </button>
       <button
         type="button"
-        onClick={() => handleHistoryAudit(wallet, 'full', [BASE_CHAIN_ID])}
-        disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
-        aria-label={`Audit Base history for ${walletName(wallet)}`}
-        className={ROW_ACTION_CLASS}
-        title="Genesis audit Base with Coinbase CDP without unrelated chain limitations"
-      >
-        <FileCheck2 size={10} />
-        Base
-      </button>
-      <button
-        type="button"
-        onClick={() => handleHistoryAudit(wallet, 'incremental', [BASE_CHAIN_ID])}
-        disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
-        aria-label={`Verify Base history for ${walletName(wallet)}`}
-        className={ROW_ACTION_CLASS}
-        title="Incrementally verify Base from its last proven CDP boundary"
-      >
-        <FileCheck2 size={10} />
-        Base+
-      </button>
-      <button
-        type="button"
         onClick={() => handleSync(wallet.id)}
         disabled={syncingId === wallet.id}
         aria-label={`Sync ${walletName(wallet)}`}
@@ -866,23 +824,6 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
                 </span>
               )}
             </span>
-          ))}
-        </div>
-      )}
-
-      {wallet.chains?.some((chain) => chain.enabled && chain.provider_scan_status && chain.provider_scan_status !== 'idle') && (
-        <div className="space-y-1 rounded border border-border bg-surface-2 px-3 py-2 text-[10px] text-secondary">
-          {wallet.chains.filter((chain) => chain.enabled && chain.provider_scan_status && chain.provider_scan_status !== 'idle').map((chain) => (
-            <p key={`scan-${chain.chain_id}`}>
-              <span className="font-semibold text-primary">{chain.name}:</span>{' '}
-              {String(chain.provider_scan_status).replaceAll('_', ' ')}
-              {chain.provider_scan_head != null ? ` · through block ${chain.provider_scan_head}` : ''}
-              {chain.provider_scan_status === 'running'
-                ? ` · ${chain.provider_cursor ? 'checkpoint saved' : 'starting'}${chain.provider_scan_owner ? ' · worker active' : ''}`
-                : ''}
-              {chain.provider_last_page_at
-                ? ` · last page ${formatRelativeTime(chain.provider_last_page_at)}` : ''}
-            </p>
           ))}
         </div>
       )}

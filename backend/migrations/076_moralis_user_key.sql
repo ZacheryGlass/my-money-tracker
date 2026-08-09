@@ -4,7 +4,7 @@
 --
 -- Migrations re-run on every boot. Migration 027 creates the original narrower
 -- constraint on a fresh database, then this migration widens it exactly once.
--- Migration 079 adds the separate CDP source without reusing the exchange key.
+-- The wallet audit credentials remain separate from the Coinbase exchange key.
 DO $$
 BEGIN
   IF NOT EXISTS (
