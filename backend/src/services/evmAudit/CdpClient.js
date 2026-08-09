@@ -95,6 +95,10 @@ function safeDetail(value, apiKey) {
   return detail.slice(0, 500);
 }
 
+function evidenceIdentitySha256(method, params, rawText) {
+  return sha256(stableJson({ method, params, rawText }));
+}
+
 function responseError(response, body, method, apiKey = null) {
   const resultFailure = resultError(body);
   const detail = safeDetail(
@@ -257,6 +261,12 @@ class CdpClient {
   async _request(method, params, endpoint = method) {
     return this._scheduled(async () => {
       const url = `${this.baseUrl}/${encodeURIComponent(this.apiKey)}`;
+      const requestParams = Array.isArray(params)
+        ? params
+        : [{
+          ...params,
+          pageSize: Math.min(MAX_PAGE_SIZE, Number(params.pageSize || MAX_PAGE_SIZE)),
+        }];
       for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
         let response;
         let text;
@@ -269,8 +279,7 @@ class CdpClient {
               method: 'POST',
               headers: { 'content-type': 'application/json', accept: 'application/json' },
               body: JSON.stringify({
-                jsonrpc: '2.0', id: 1, method,
-                params: [{ ...params, pageSize: Math.min(MAX_PAGE_SIZE, Number(params.pageSize || MAX_PAGE_SIZE)) }],
+                jsonrpc: '2.0', id: 1, method, params: requestParams,
               }),
               signal: controller.signal,
             });
@@ -294,7 +303,7 @@ class CdpClient {
         } catch {
           await this.onFailedAttempt?.({
             provider: 'coinbase-cdp', endpoint, method: 'POST', attemptNo: attempt,
-            requestParams: params, outcome: attempt < this.maxAttempts && !timedOut ? 'deferred' : 'failed',
+            requestParams, outcome: attempt < this.maxAttempts && !timedOut ? 'deferred' : 'failed',
             errorCode: 'CDP_TRANSPORT_ERROR', errorDetail: 'Network request failed before a response.',
           });
           if (attempt < this.maxAttempts && !timedOut) {
@@ -312,8 +321,12 @@ class CdpClient {
         try { body = normalizeJsonNumbers(JSONbig.parse(text)); } catch {
           body = null;
         }
+        // Core JSON-RPC uses a present `result: null` for a valid lookup miss
+        // (for example an unknown transaction or receipt). Address-history
+        // callers still reject a null result while validating the collection,
+        // but the transport envelope itself is valid and must be preserved.
         const hasResult = body && typeof body === 'object' && !Array.isArray(body)
-          && body.result != null;
+          && Object.prototype.hasOwnProperty.call(body, 'result');
         const resultFailure = resultError(body);
         // Do not accept a malformed JSON-RPC envelope that contains both an
         // error and a result. A partial result paired with an error is not a
@@ -323,7 +336,10 @@ class CdpClient {
             body: body.result,
             rawText: text,
             responseSha256: sha256(text),
+            evidenceIdentitySha256: evidenceIdentitySha256(method, requestParams, text),
             requestId: response.headers.get('x-request-id') || null,
+            method,
+            params: requestParams,
           };
         }
 
@@ -333,13 +349,14 @@ class CdpClient {
         const responseRaw = redactSecret(text, this.apiKey);
         await this.onFailedAttempt?.({
           provider: 'coinbase-cdp', endpoint, method: 'POST', attemptNo: attempt,
-          requestParams: params,
+          requestParams,
           outcome: retryable || oversized || error.code === 'CDP_QUOTA_EXHAUSTED' ? 'deferred' : 'failed',
           httpStatus: error.httpStatus || response.status,
           errorCode: oversized ? 'CDP_RESPONSE_TOO_LARGE' : error.code,
           errorDetail: error.message,
           requestId: response.headers.get('x-request-id') || null,
           responseSha256: sha256(responseRaw),
+          evidenceIdentitySha256: evidenceIdentitySha256(method, requestParams, responseRaw),
           responseRaw,
           responseJson: redactSecret(body, this.apiKey),
         });
@@ -351,6 +368,14 @@ class CdpClient {
       }
       throw providerError(`Coinbase CDP ${endpoint} retry budget exhausted`, 'CDP_TRANSPORT_ERROR');
     });
+  }
+
+  // The address-history method is the indexed source. Base recovery uses the
+  // documented Core JSON-RPC namespace through the same authenticated CDP
+  // endpoint, so those calls retain the same throttling, raw response, request
+  // id, and failure-attempt guarantees without ever exposing the key.
+  async rpcWithEvidence(method, params, endpoint = method) {
+    return this._request(method, params, endpoint);
   }
 
   async *addressTransactionPages(address, { cursor = null, pageSize = DEFAULT_HISTORY_PAGE_SIZE } = {}) {

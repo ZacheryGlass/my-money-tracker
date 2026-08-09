@@ -158,6 +158,23 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
 `;
 
 class EthTransfer {
+  // Candidate hashes for CDP's transaction-scoped recovery. This is
+  // deliberately limited to rows already present for this wallet/chain: a
+  // legacy row can identify a response-too-large transaction, but it cannot
+  // prove that an unseen inbound transaction does not exist. The caller must
+  // therefore keep the CDP address-history scan deferred after recovery.
+  static async cdpRecoveryCandidates(walletId, chainId, throughBlock) {
+    const { rows } = await pool.query(
+      `SELECT tx_hash, MIN(block_number)::bigint AS block_number
+         FROM eth_transfers
+        WHERE wallet_id = $1 AND chain_id = $2 AND block_number <= $3
+        GROUP BY tx_hash
+        ORDER BY MIN(block_number), tx_hash`,
+      [walletId, chainId, throughBlock]
+    );
+    return rows;
+  }
+
   // Sync resumes from an overlap block and re-inserts everything from there,
   // so each feed's stale rows must be cleared first to keep ordinals unique.
   //

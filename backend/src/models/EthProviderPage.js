@@ -22,11 +22,18 @@ function sha256(value) {
 class EthProviderPage {
   static async record({
     walletId, chainId, provider, stream, scanId, cursorIn = null, cursorOut = null,
-    requestParams = {}, responseSha256, responseRaw = null, responseJson = {}, itemCount = 0,
+    requestParams = {}, responseSha256, evidenceIdentitySha256 = null, responseRaw = null,
+    responseJson = {}, itemCount = 0,
     owner = null,
   }) {
     if (!responseRaw || sha256(responseRaw) !== String(responseSha256 || '').toLowerCase()) {
       const error = new Error('Base CDP raw page is missing or its response hash does not match');
+      error.code = 'CDP_INVALID_RAW_PAGE';
+      throw error;
+    }
+    const evidenceIdentity = String(evidenceIdentitySha256 || responseSha256 || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(evidenceIdentity)) {
+      const error = new Error('Base CDP raw page has an invalid evidence identity hash');
       error.code = 'CDP_INVALID_RAW_PAGE';
       throw error;
     }
@@ -53,14 +60,14 @@ class EthProviderPage {
       const inserted = await client.query(
         `INSERT INTO eth_provider_pages (
          wallet_id, chain_id, provider, stream, scan_id, cursor_in, cursor_out,
-         request_params, response_sha256, response_raw, response_json, item_count
-       ) VALUES ($1,$2,$3,$4,$5::uuid,$6,$7,$8::jsonb,$9,$10,$11::jsonb,$12)
-       ON CONFLICT (wallet_id, chain_id, provider, stream, scan_id, response_sha256)
+         request_params, response_sha256, evidence_identity_sha256, response_raw, response_json, item_count
+       ) VALUES ($1,$2,$3,$4,$5::uuid,$6,$7,$8::jsonb,$9,$10,$11,$12::jsonb,$13)
+       ON CONFLICT (wallet_id, chain_id, provider, stream, scan_id, evidence_identity_sha256)
        DO NOTHING
        RETURNING *`,
       [
         walletId, chainId, provider, stream, scanId, cursorIn, cursorOut,
-        JSON.stringify(requestParams), responseSha256, responseRaw,
+        JSON.stringify(requestParams), responseSha256, evidenceIdentity, responseRaw,
         JSON.stringify(responseJson), itemCount,
       ]
       );
@@ -69,12 +76,13 @@ class EthProviderPage {
         const existing = await client.query(
           `SELECT * FROM eth_provider_pages
             WHERE wallet_id = $1 AND chain_id = $2 AND provider = $3
-              AND stream = $4 AND scan_id = $5::uuid AND response_sha256 = $6`,
-          [walletId, chainId, provider, stream, scanId, responseSha256]
+              AND stream = $4 AND scan_id = $5::uuid AND evidence_identity_sha256 = $6`,
+          [walletId, chainId, provider, stream, scanId, evidenceIdentity]
         );
         row = existing.rows[0];
         if (!row || String(row.cursor_in || '') !== String(cursorIn || '')
             || String(row.cursor_out || '') !== String(cursorOut || '')
+            || String(row.response_sha256 || '') !== String(responseSha256 || '')
             || JSON.stringify(stableJson(row.request_params))
               !== JSON.stringify(stableJson(requestParams))
             || String(row.response_raw || '') !== String(responseRaw)) {

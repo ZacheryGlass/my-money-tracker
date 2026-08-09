@@ -40,14 +40,23 @@ function validateProviderPage(page) {
     error.code = 'EVM_INVALID_RAW_PAGE';
     throw error;
   }
+  const evidenceIdentity = page.evidenceIdentitySha256 || page.responseSha256;
+  if (!/^[0-9a-f]{64}$/.test(String(evidenceIdentity || '').toLowerCase())) {
+    const error = new Error('EVM provider evidence identity hash is invalid');
+    error.code = 'EVM_INVALID_RAW_PAGE';
+    throw error;
+  }
 }
 
 function pageConflict(existing, page) {
+  const evidenceIdentity = page.evidenceIdentitySha256 || page.responseSha256;
   return existing.provider !== page.provider
     || existing.endpoint !== page.endpoint
     || sha256(existing.request_params || {}) !== sha256(page.requestParams || {})
     || existing.cursor_in !== (page.cursorIn || null)
     || existing.cursor_out !== (page.cursorOut || null)
+    || existing.response_sha256 !== page.responseSha256
+    || existing.evidence_identity_sha256 !== evidenceIdentity
     || existing.response_raw !== (page.responseRaw ?? null)
     || sha256(existing.response_json || {}) !== sha256(page.responseJson || {})
     || Number(existing.item_count) !== Number(page.itemCount);
@@ -543,6 +552,7 @@ class EvmAudit {
   // while the scope cursor stays at the last normalized checkpoint.
   static async recordRawPage(scopeId, page, fence = {}) {
     validateProviderPage(page);
+    const evidenceIdentity = page.evidenceIdentitySha256 || page.responseSha256;
     const transactional = Boolean(fence.jobId && fence.owner);
     const client = transactional ? await pool.connect() : pool;
     try {
@@ -553,26 +563,26 @@ class EvmAudit {
       const inserted = await client.query(
       `INSERT INTO evm_provider_pages (
          scope_id, job_id, provider, endpoint, request_params, cursor_in, cursor_out,
-         response_sha256, response_raw, response_json, request_id, item_count
+         response_sha256, evidence_identity_sha256, response_raw, response_json, request_id, item_count
        )
-       SELECT sc.id, sc.job_id, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb, $10, $11
+       SELECT sc.id, sc.job_id, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11, $12
          FROM evm_audit_scopes sc
         WHERE sc.id = $1
-       ON CONFLICT (scope_id, response_sha256)
+       ON CONFLICT (scope_id, evidence_identity_sha256)
        DO NOTHING
        RETURNING id`,
       [
         scopeId, page.provider, page.endpoint, JSON.stringify(page.requestParams),
-        page.cursorIn, page.cursorOut, page.responseSha256, page.responseRaw,
-        JSON.stringify(page.responseJson), page.requestId, page.itemCount,
+        page.cursorIn, page.cursorOut, page.responseSha256, evidenceIdentity,
+        page.responseRaw, JSON.stringify(page.responseJson), page.requestId, page.itemCount,
       ]
       );
       let row = inserted.rows[0];
       const pageWasNew = Boolean(row);
       if (!row) {
         const existing = await client.query(
-          `SELECT * FROM evm_provider_pages WHERE scope_id = $1 AND response_sha256 = $2`,
-          [scopeId, page.responseSha256]
+          `SELECT * FROM evm_provider_pages WHERE scope_id = $1 AND evidence_identity_sha256 = $2`,
+          [scopeId, evidenceIdentity]
         );
         row = existing.rows[0];
       }
@@ -594,6 +604,7 @@ class EvmAudit {
 
   static async commitPage(scopeId, page, observations, fence = {}) {
     validateProviderPage(page);
+    const evidenceIdentity = page.evidenceIdentitySha256 || page.responseSha256;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -617,13 +628,13 @@ class EvmAudit {
       const insertedPage = await client.query(
         `INSERT INTO evm_provider_pages (
            scope_id, job_id, provider, endpoint, request_params, cursor_in, cursor_out,
-           response_sha256, response_raw, response_json, request_id, item_count
-         ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10::jsonb,$11,$12)
-         ON CONFLICT (scope_id, response_sha256) DO NOTHING
+           response_sha256, evidence_identity_sha256, response_raw, response_json, request_id, item_count
+         ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
+         ON CONFLICT (scope_id, evidence_identity_sha256) DO NOTHING
          RETURNING id`,
         [
           scopeId, scope.job_id, page.provider, page.endpoint, JSON.stringify(page.requestParams),
-          page.cursorIn, page.cursorOut, page.responseSha256,
+          page.cursorIn, page.cursorOut, page.responseSha256, evidenceIdentity,
           page.responseRaw, JSON.stringify(page.responseJson), page.requestId, page.itemCount,
         ]
       );
@@ -631,8 +642,8 @@ class EvmAudit {
       const pageWasNew = Boolean(pageId);
       if (!pageId) {
         const existing = await client.query(
-          `SELECT * FROM evm_provider_pages WHERE scope_id = $1 AND response_sha256 = $2`,
-          [scopeId, page.responseSha256]
+          `SELECT * FROM evm_provider_pages WHERE scope_id = $1 AND evidence_identity_sha256 = $2`,
+          [scopeId, evidenceIdentity]
         );
         if (!existing.rows[0]) throw new Error('Audit provider page no longer exists');
         if (pageConflict(existing.rows[0], page)) {
@@ -944,15 +955,72 @@ class EvmAudit {
   static async transactionObservationsForSubject(
     subjectId, chainId, provider, fromBlock = 0
   ) {
+    const providers = Array.isArray(provider) ? provider : [provider];
     const { rows } = await pool.query(
       `SELECT * FROM evm_provider_observations
-        WHERE subject_id = $1 AND chain_id = $2 AND provider = $3
+        WHERE subject_id = $1 AND chain_id = $2 AND provider = ANY($3::text[])
           AND evidence_kind = 'transaction'
           AND (block_number IS NULL OR block_number >= $4)
         ORDER BY block_number, transaction_index, id`,
-      [subjectId, chainId, provider, fromBlock]
+      [subjectId, chainId, providers, fromBlock]
     );
     return rows;
+  }
+
+  static async reusableCdpTrace(scopeId, blockNumber, blockHash) {
+    const { rows } = await pool.query(
+      `SELECT response_json, response_raw, response_sha256,
+              evidence_identity_sha256, request_id,
+              request_params->'params' AS rpc_params
+         FROM evm_provider_pages
+        WHERE scope_id = $1
+          AND provider = 'coinbase-cdp'
+          AND endpoint = 'transaction-recovery-rpc'
+          AND request_params->>'method' = 'debug_traceBlockByNumber'
+          AND request_params->>'block_hash' = $2
+          AND request_params->'params'->>0 = $3
+        ORDER BY id DESC
+        LIMIT 1`,
+      [scopeId, String(blockHash).toLowerCase(), `0x${BigInt(blockNumber).toString(16)}`]
+    );
+    const row = rows[0];
+    if (!row || !Array.isArray(row.response_json) || typeof row.response_raw !== 'string') return null;
+    let params = row.rpc_params;
+    if (typeof params === 'string') {
+      try { params = JSON.parse(params); } catch { return null; }
+    }
+    if (!Array.isArray(params)) return null;
+    return {
+      body: row.response_json,
+      rawText: row.response_raw,
+      responseSha256: row.response_sha256,
+      evidenceIdentitySha256: row.evidence_identity_sha256,
+      requestId: row.request_id,
+      method: 'debug_traceBlockByNumber',
+      params,
+    };
+  }
+
+  // A transaction observation alone is not a completeness marker: a failed
+  // provider page can retain the transaction envelope while omitting its
+  // receipt, logs, token transfers, or traces. Only an observation linked to
+  // a complete CDP history/recovery page may suppress known-hash recovery.
+  static async completeCdpTransactionHashesForSubject(subjectId, chainId, fromBlock = 0) {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT o.tx_hash
+         FROM evm_provider_observations o
+         JOIN evm_job_observations jo ON jo.observation_id = o.id
+         JOIN evm_provider_pages p ON p.id = jo.page_id AND p.job_id = jo.job_id
+        WHERE o.subject_id = $1 AND o.chain_id = $2
+          AND o.provider IN ('coinbase-cdp', 'coinbase-cdp-recovery')
+          AND o.evidence_kind = 'transaction'
+          AND o.tx_hash IS NOT NULL
+          AND (o.block_number IS NULL OR o.block_number >= $3)
+          AND p.provider = 'coinbase-cdp'
+          AND p.endpoint IN ('address-history', 'transaction-recovery')`,
+      [subjectId, chainId, fromBlock]
+    );
+    return rows.map((row) => String(row.tx_hash).toLowerCase());
   }
 
   static async upsertMinedTransaction(transaction, fence = {}) {
@@ -1521,7 +1589,7 @@ class EvmAudit {
            FROM evm_canonical_effects e
            JOIN evm_provider_observations o
              ON o.subject_id = e.subject_id AND o.chain_id = e.chain_id
-            AND o.provider IN ('moralis', 'coinbase-cdp')
+            AND o.provider IN ('moralis', 'coinbase-cdp', 'coinbase-cdp-recovery')
             AND NOT (o.provider = 'moralis' AND o.chain_id = 8453)
             AND o.evidence_kind = e.effect_type || '_transfer'
             AND o.tx_hash = e.tx_hash AND o.log_index = e.log_index

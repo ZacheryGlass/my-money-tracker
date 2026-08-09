@@ -264,7 +264,7 @@ function effectsFromInternalObservations(context, observations) {
   for (const [hash, rows] of byTransaction) {
     const internalRows = rows.filter((row) => row.evidence_kind !== 'native_credit'
       && row.payload_json?.native_credit !== true);
-    const indexedProviders = ['coinbase-cdp', 'moralis'];
+    const indexedProviders = ['coinbase-cdp', 'moralis', 'coinbase-cdp-recovery'];
     const explorer = internalRows.filter((row) => ['blockscout', 'etherscan'].includes(row.provider));
     const explorerProvider = ['blockscout', 'etherscan']
       .find((provider) => explorer.some((row) => row.provider === provider));
@@ -293,7 +293,7 @@ function effectsFromInternalObservations(context, observations) {
       const fields = internalObservationFields(row, wallet);
       if (!fields) continue;
       const signature = `${fields.from}:${fields.to}:${fields.value}`;
-      const legacyMatches = ['coinbase-cdp', 'moralis', 'blockscout', 'etherscan'].includes(row.provider)
+      const legacyMatches = ['coinbase-cdp', 'coinbase-cdp-recovery', 'moralis', 'blockscout', 'etherscan'].includes(row.provider)
         ? (legacyBySignature.get(signature) || []) : [];
       const independentlyVerified = row.trace_address != null
         && legacyMatches.length === 1

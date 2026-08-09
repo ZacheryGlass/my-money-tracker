@@ -1854,6 +1854,7 @@ test('a resumable Base CDP scan rehydrates the journaled prefix before continuin
     },
   });
   stub(EthProviderPage, 'forScan', async () => [{
+    stream: 'address-history',
     cursor_in: 'page-1',
     cursor_out: 'page-2',
     response_json: { addressTransactions: [item] },

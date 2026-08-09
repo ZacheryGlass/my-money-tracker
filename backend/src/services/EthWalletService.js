@@ -19,6 +19,7 @@ const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
 const CdpClient = require('./evmAudit/CdpClient');
 const CdpHistoryProvider = require('./evmAudit/CdpHistoryProvider');
+const CdpRecoveryProvider = require('./evmAudit/CdpRecoveryProvider');
 const RpcClient = require('./evmAudit/RpcClient');
 
 const cdpAddressTransactionItems = CdpClient.addressTransactionItems;
@@ -163,7 +164,8 @@ function providerName(chain) {
 function coverageFailureStatus(error) {
   if (isExplorerRateLimited(error) || String(error?.code || '').startsWith('CDP_')
       && ['CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
-        'CDP_SCAN_BUSY', 'CDP_RESPONSE_TOO_LARGE'].includes(error.code)) {
+        'CDP_SCAN_BUSY', 'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
+        'CDP_RECOVERY_UNSUPPORTED', 'CDP_RECOVERY_FAILED'].includes(error.code)) {
     return 'deferred';
   }
   if (['RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR'].includes(error?.code)) return 'deferred';
@@ -200,6 +202,75 @@ function retryAfterMsForResult(result) {
 }
 
 class EthWalletService {
+  static async _recoverKnownCdpTransactions(wallet, chain, cdp, scanId, throughBlock, oversizedError) {
+    const allCandidates = await EthTransfer.cdpRecoveryCandidates(wallet.id, chain.id, throughBlock);
+    const journal = await EthProviderPage.forScan(wallet.id, chain.id, scanId);
+    const completedRecoveryHashes = new Set(journal
+      .filter((page) => page.stream === 'transaction-recovery')
+      .map((page) => String(page.request_params?.transaction_hash || '').toLowerCase())
+      .filter(Boolean));
+    const pendingCandidates = allCandidates.filter((candidate) => (
+      !completedRecoveryHashes.has(String(candidate.tx_hash).toLowerCase())
+    ));
+    const candidates = pendingCandidates.slice(0, CdpRecoveryProvider.MAX_RECOVERY_CANDIDATES);
+    let recovered = 0;
+    const traceCache = new Map();
+    for (const candidate of candidates) {
+      const candidateHash = String(candidate.tx_hash).toLowerCase();
+      const recovery = await CdpRecoveryProvider.recoverTransaction(cdp, {
+        ...candidate,
+        hash: candidateHash,
+      }, {
+        traceCache,
+        onEvidence: async (response) => {
+          await EthProviderPage.record({
+            walletId: wallet.id,
+            chainId: chain.id,
+            provider: 'coinbase-cdp',
+            stream: 'transaction-recovery-rpc',
+            scanId,
+            requestParams: {
+              address: wallet.address.toLowerCase(),
+              transaction_hash: candidateHash,
+              method: response.method,
+              params: response.params,
+            },
+            responseSha256: response.responseSha256,
+            evidenceIdentitySha256: response.evidenceIdentitySha256,
+            responseRaw: response.rawText,
+            responseJson: response.body,
+            itemCount: 0,
+            owner: PROVIDER_SCAN_OWNER,
+          });
+        },
+      });
+      await EthProviderPage.record({
+        walletId: wallet.id,
+        chainId: chain.id,
+        provider: 'coinbase-cdp',
+        stream: 'transaction-recovery',
+        scanId,
+        requestParams: {
+          address: wallet.address.toLowerCase(),
+          transaction_hash: candidateHash,
+          recovery: 'core-rpc-transaction-receipt-block-calltracer',
+        },
+        responseSha256: recovery.response.responseSha256,
+        evidenceIdentitySha256: recovery.response.evidenceIdentitySha256,
+        responseRaw: recovery.response.rawText,
+        responseJson: recovery.response.body,
+        itemCount: 1,
+        owner: PROVIDER_SCAN_OWNER,
+      });
+      recovered += 1;
+    }
+    return CdpRecoveryProvider.recoveryError(
+      `Base CDP address history exceeded the provider response limit (${oversizedError.message}). Core RPC recovery preserved ${recovered} new transaction-scoped response(s) from a bounded ${candidates.length}/${pendingCandidates.length} pending queue (${completedRecoveryHashes.size} already journaled; ${allCandidates.length} known candidates total), but CDP exposes no documented address-history enumeration fallback to prove the failed page contained no additional transaction.`,
+      'CDP_ADDRESS_ENUMERATION_UNPROVEN',
+      { retryAt: new Date(Date.now() + 60 * 60 * 1000) }
+    );
+  }
+
   static async _syncCdpWalletChain(wallet, chain) {
     const nativeCreditConfig = chain.auditNativeCredits || chain.stateSyncDeposits || null;
     const activeSpecs = [
@@ -328,13 +399,41 @@ class EthWalletService {
       ), { persist: false });
     }
     scanId = state.provider_scan_id;
-    const cdp = new CdpClient(cdpKey);
+    const cdp = new CdpClient(cdpKey, {
+      onFailedAttempt: async (attempt) => {
+        // Failed CDP responses are evidence too. Persist only the provider's
+        // already-redacted raw body; transport failures have no body to
+        // retain, but their durable feed status still records the failure.
+        if (typeof attempt.responseRaw !== 'string') return;
+        try {
+          await EthProviderPage.record({
+            walletId: wallet.id,
+            chainId: chain.id,
+            provider: 'coinbase-cdp',
+            stream: 'address-history-failure',
+            scanId,
+            cursorIn: state.provider_cursor || null,
+            requestParams: attempt.requestParams || {},
+            responseSha256: attempt.responseSha256,
+            evidenceIdentitySha256: attempt.evidenceIdentitySha256,
+            responseRaw: attempt.responseRaw,
+            responseJson: attempt.responseJson || {},
+            itemCount: 0,
+            owner: PROVIDER_SCAN_OWNER,
+          });
+        } catch {
+          const error = new Error('Base CDP provider failure evidence could not be durably retained');
+          error.code = 'CDP_FAILURE_EVIDENCE_UNJOURNALED';
+          throw error;
+        }
+      },
+    });
     const feeds = { normal: [], internal: [], token: [], nft: [], nft1155: [], statesync: [] };
     const seenCdpTransactions = new Map();
     const historicalCdpTransactions = new Map();
     try {
       const journal = await EthProviderPage.forWalletChain(wallet.id, chain.id);
-      for (const page of journal) {
+      for (const page of journal.filter((entry) => entry.stream === 'address-history')) {
         const body = typeof page.response_json === 'string'
           ? JSON.parse(page.response_json) : page.response_json;
         CdpHistoryProvider.assertNoConflicts(
@@ -383,7 +482,8 @@ class EthWalletService {
       // empty in-memory feed and delete the already-journaled prefix.
       if (state.provider_cursor && scanId) {
         const journal = await EthProviderPage.forScan(wallet.id, chain.id, scanId);
-        const checkpoint = journal.findIndex((page) => (
+        const addressHistoryJournal = journal.filter((page) => page.stream === 'address-history');
+        const checkpoint = addressHistoryJournal.findIndex((page) => (
           page.cursor_out != null && String(page.cursor_out) === String(state.provider_cursor)
         ));
         if (checkpoint < 0) {
@@ -391,7 +491,7 @@ class EthWalletService {
           error.code = 'CDP_CHECKPOINT_MISSING';
           throw error;
         }
-        for (const page of journal.slice(0, checkpoint + 1)) {
+        for (const page of addressHistoryJournal.slice(0, checkpoint + 1)) {
           const body = typeof page.response_json === 'string'
             ? JSON.parse(page.response_json) : page.response_json;
           addPage(cdpAddressTransactionItems(body));
@@ -410,7 +510,8 @@ class EthWalletService {
           requestParams: {
             address: wallet.address.toLowerCase(), page_size: page.pageSize, page_token: page.cursorIn,
           },
-          responseSha256: page.responseSha256, responseRaw: page.rawText,
+          responseSha256: page.responseSha256, evidenceIdentitySha256: page.evidenceIdentitySha256,
+          responseRaw: page.rawText,
           responseJson: page.body, itemCount: page.items.length, owner: PROVIDER_SCAN_OWNER,
         });
         addPage(page.items);
@@ -467,7 +568,17 @@ class EthWalletService {
       else if (order === 'unknown' && orderDirection) order = orderDirection;
       else if (orderDirection && order !== orderDirection) order = 'unknown';
     } catch (error) {
-      return retryError(error, { scanStarted: true });
+      let effectiveError = error;
+      if (error.code === 'CDP_RESPONSE_TOO_LARGE') {
+        try {
+          effectiveError = await this._recoverKnownCdpTransactions(
+            wallet, chain, cdp, scanId, boundary.number, error
+          );
+        } catch (recoveryError) {
+          effectiveError = recoveryError;
+        }
+      }
+      return retryError(effectiveError, { scanStarted: true });
     }
 
     // Re-derive the ordinary feeds only after the raw provider walk has

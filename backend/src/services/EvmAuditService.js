@@ -11,6 +11,7 @@ const logger = require('../config/logger');
 const MoralisClient = require('./evmAudit/MoralisClient');
 const CdpClient = require('./evmAudit/CdpClient');
 const CdpHistoryProvider = require('./evmAudit/CdpHistoryProvider');
+const CdpRecoveryProvider = require('./evmAudit/CdpRecoveryProvider');
 const RpcClient = require('./evmAudit/RpcClient');
 const normalizer = require('./evmAudit/normalizer');
 const { effectsFromInternalObservations, effectsFromRpc } = require('./evmAudit/effectDecoder');
@@ -66,6 +67,7 @@ function pageRecord(provider, endpoint, requestParams, response, cursorIn = null
     cursorIn,
     cursorOut,
     responseSha256: response.responseSha256 || normalizer.sha256(response.body),
+    evidenceIdentitySha256: response.evidenceIdentitySha256 || null,
     responseRaw: response.rawText || null,
     responseJson: response.body,
     requestId: response.requestId || null,
@@ -159,7 +161,8 @@ function moralisQuotaFallbackError(error) {
 function cdpUnavailableError(error) {
   if (!error) return null;
   if (!['CDP_NOT_CONFIGURED', 'CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR',
-    'CDP_RESPONSE_TOO_LARGE']
+    'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
+    'CDP_RECOVERY_UNSUPPORTED', 'CDP_RECOVERY_FAILED']
     .includes(error.code)) return null;
   return {
     code: error.code,
@@ -673,6 +676,7 @@ class EvmAuditService {
           const deferred = !standing && [
               'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
               'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_RESPONSE_TOO_LARGE',
+              'CDP_ADDRESS_ENUMERATION_UNPROVEN', 'CDP_RECOVERY_UNSUPPORTED', 'CDP_RECOVERY_FAILED',
               'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED',
               'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
               'ETHERSCAN_RATE_LIMITED', 'ETHERSCAN_TRANSPORT_ERROR',
@@ -735,7 +739,8 @@ class EvmAuditService {
       const deferred = [
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
         'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
-        'CDP_RESPONSE_TOO_LARGE',
+        'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
+        'CDP_RECOVERY_UNSUPPORTED', 'CDP_RECOVERY_FAILED',
         'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
         'ETHERSCAN_TRANSPORT_ERROR',
@@ -964,7 +969,7 @@ class EvmAuditService {
     const durableObservations = await EvmAudit.observationsForJob(job.id, { chainId });
     for (const observation of durableObservations) {
       if (observation.tx_hash) hashes.add(String(observation.tx_hash).toLowerCase());
-      if (observation.tx_hash && !['consensus-rpc', 'moralis', 'coinbase-cdp'].includes(observation.provider)) {
+      if (observation.tx_hash && !['consensus-rpc', 'moralis', 'coinbase-cdp', 'coinbase-cdp-recovery'].includes(observation.provider)) {
         moralisLookupHashes.add(String(observation.tx_hash).toLowerCase());
       }
     }
@@ -985,6 +990,176 @@ class EvmAuditService {
         historicalCdpTransactions.set(identity.hash, identity);
       }
     }
+
+    // A CDP address-history page can be larger than the gateway limit even
+    // when pageSize is one. Core RPC can recover a *known* transaction by
+    // hash, receipt, canonical block, and callTracer trace, but CDP documents
+    // no second wallet-address enumeration endpoint. This path therefore
+    // preserves every recoverable transaction-scoped response while remaining
+    // explicitly deferred when it cannot prove that the failed address-history
+    // page contained no additional transaction.
+    const recoverKnownOversizedCdpHistory = async (oversizedError) => {
+      const durable = await EvmAudit.observationsForJob(job.id, { chainId });
+      const knownTransactionHashes = new Set(
+        await EvmAudit.completeCdpTransactionHashesForSubject(job.subject_id, chainId, 0)
+      );
+      const priorConsensusTransactions = await EvmAudit.transactionObservationsForSubject(
+        job.subject_id, chainId, 'consensus-rpc', 0
+      );
+      for (const row of priorConsensusTransactions) {
+        if (row.tx_hash) knownTransactionHashes.add(String(row.tx_hash).toLowerCase());
+      }
+      for (const row of durable) {
+        if (row.provider === 'consensus-rpc' && row.tx_hash) {
+          knownTransactionHashes.add(String(row.tx_hash).toLowerCase());
+        }
+      }
+      const priorCdpTransactions = await EvmAudit.transactionObservationsForSubject(
+        job.subject_id, chainId, ['coinbase-cdp', 'coinbase-cdp-recovery'], 0
+      );
+      const candidates = new Map();
+      const addCandidate = (row) => {
+        const hash = String(row?.tx_hash || row?.txHash || row?.hash || '').toLowerCase();
+        if (!/^0x[0-9a-f]{64}$/.test(hash)) return;
+        const current = candidates.get(hash) || {
+          hash, blockNumber: row.block_number ?? row.blockNumber ?? null,
+          transactionIndex: row.transaction_index ?? row.transactionIndex ?? null,
+        };
+        if (current.blockNumber == null && row.block_number != null) current.blockNumber = row.block_number;
+        if (current.transactionIndex == null && row.transaction_index != null) current.transactionIndex = row.transaction_index;
+        candidates.set(hash, current);
+      };
+      for (const row of await EvmAudit.storedTransferRows(
+        job.user_id, job.subject_id, chainId, boundary.number
+      )) addCandidate(row);
+      for (const row of priorCdpTransactions) addCandidate(row);
+
+      const allOrdered = [...candidates.values()].sort((left, right) =>
+        CdpRecoveryProvider.candidateKey(left).localeCompare(CdpRecoveryProvider.candidateKey(right))
+      );
+      const storedRecoveryState = CdpRecoveryProvider.recoveryCursor(historyScope.provider_cursor);
+      const addressHistoryCursor = storedRecoveryState
+        ? storedRecoveryState.addressHistoryCursor : historyScope.provider_cursor || null;
+      const priorState = storedRecoveryState || {
+        version: 1,
+        phase: 'known-ledger',
+        afterKey: null,
+        addressHistoryCursor,
+      };
+      let afterKey = priorState?.afterKey || null;
+      const ordered = allOrdered
+        .filter((candidate) => !afterKey
+          || CdpRecoveryProvider.candidateKey(candidate) > afterKey)
+        .slice(0, CdpRecoveryProvider.MAX_RECOVERY_CANDIDATES);
+      let recovered = 0;
+      let skippedKnown = 0;
+      const traceCache = new Map();
+      for (const candidate of ordered) hashes.add(candidate.hash);
+      for (const candidate of ordered) {
+        assertLease(leaseState);
+        const key = CdpRecoveryProvider.candidateKey(candidate);
+        const cursorIn = JSON.stringify({
+          version: 1, phase: 'known-ledger', afterKey,
+          addressHistoryCursor: priorState.addressHistoryCursor,
+        });
+        const nextState = JSON.stringify({
+          version: 1, phase: 'known-ledger', afterKey: key,
+          addressHistoryCursor: priorState.addressHistoryCursor,
+        });
+        if (knownTransactionHashes.has(candidate.hash)) {
+          skippedKnown += 1;
+          const marker = { recovery: 'coinbase-cdp-core', transaction_hash: candidate.hash, status: 'already_observed' };
+          const markerRaw = JSON.stringify(marker);
+          await commitPage(historyScope.id, {
+            provider: 'coinbase-cdp', endpoint: 'transaction-recovery-skip',
+            requestParams: { address: job.address.toLowerCase(), transaction_hash: candidate.hash },
+            cursorIn, cursorOut: nextState, responseSha256: normalizer.sha256(markerRaw),
+            responseRaw: markerRaw, responseJson: marker, requestId: null, itemCount: 0,
+          }, []);
+        } else {
+          let recovery;
+          try {
+            recovery = await CdpRecoveryProvider.recoverTransaction(cdp, candidate, {
+              traceCache,
+              onEvidence: async (response, metadata = {}) => {
+                // Persist each successful Core response before the next
+                // recovery request. If block tracing later fails or times out,
+                // transaction/receipt/block evidence is still append-only and
+                // inspectable rather than disappearing with the derived page.
+                await recordRawPage(historyScope.id, {
+                  provider: 'coinbase-cdp',
+                  endpoint: 'transaction-recovery-rpc',
+                  requestParams: {
+                    address: job.address.toLowerCase(),
+                    transaction_hash: candidate.hash,
+                    method: response.method,
+                    params: response.params,
+                    ...(metadata.blockHash ? { block_hash: metadata.blockHash } : {}),
+                  },
+                  responseSha256: response.responseSha256,
+                  evidenceIdentitySha256: response.evidenceIdentitySha256,
+                  responseRaw: response.rawText,
+                  responseJson: response.body,
+                  requestId: response.requestId,
+                  itemCount: 0,
+                });
+              },
+              loadTrace: ({ blockNumber, blockHash }) => EvmAudit.reusableCdpTrace(
+                historyScope.id, blockNumber, blockHash
+              ),
+            });
+          } catch (error) {
+            if (['CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR'].includes(error.code)) throw error;
+            const wrapped = CdpRecoveryProvider.recoveryError(
+              `CDP address history is oversized and transaction-scoped recovery failed for ${candidate.hash}: ${publicErrorDetail(error)}`,
+              error.code === 'CDP_API_ERROR' ? 'CDP_RECOVERY_UNSUPPORTED' : 'CDP_RECOVERY_FAILED',
+              { retryAt: error.retryAt || new Date(Date.now() + 60 * 60 * 1000) }
+            );
+            throw wrapped;
+          }
+          CdpHistoryProvider.normalizePage(job.address, [recovery.item], {
+            nativeCredit: chain?.auditNativeCredits || chain?.stateSyncDeposits || null,
+          });
+          const observations = normalizer.cdpHistoryObservations(
+            { ...context, provider: 'coinbase-cdp-recovery' }, recovery.item
+          );
+          for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+          await commitPage(historyScope.id, {
+            provider: 'coinbase-cdp', endpoint: 'transaction-recovery',
+            requestParams: {
+              address: job.address.toLowerCase(), transaction_hash: candidate.hash,
+              recovery: 'core-rpc-transaction-receipt-block-calltracer',
+            },
+            cursorIn, cursorOut: nextState,
+            responseSha256: recovery.response.responseSha256,
+            responseRaw: recovery.response.rawText,
+            responseJson: recovery.response.body,
+            requestId: recovery.response.requestId,
+            itemCount: 1,
+          }, observations);
+          recovered += 1;
+        }
+        afterKey = key;
+        await EvmAudit.heartbeat(job.id, OWNER, {
+          progress: {
+            current_cursor: nextState,
+            oversized_recovery_candidates: ordered.length,
+            oversized_recovered: recovered,
+            oversized_already_observed: skippedKnown,
+          },
+        });
+      }
+      const detail = `CDP address history exceeded the provider response limit for at least one single transaction (${publicErrorDetail(oversizedError)}). Core RPC recovery preserved ${recovered} transaction-scoped response(s) and ${skippedKnown} already durable transaction(s) from a bounded ${ordered.length}/${allOrdered.length} known-candidate queue, but CDP exposes no documented address-history enumeration fallback to prove the failed page contained no additional transaction.`;
+      const blocker = CdpRecoveryProvider.recoveryError(
+        detail, 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
+        { retryAt: new Date(Date.now() + 60 * 60 * 1000) }
+      );
+      await completeScope(historyScope.id, {
+        status: 'deferred', paginationExhausted: false,
+        errorCode: blocker.code, errorDetail: detail,
+      });
+      throw blocker;
+    };
     if (useMoralis) {
       let cursor = historyScope.provider_cursor || null;
       try {
@@ -1024,7 +1199,14 @@ class EvmAuditService {
         });
       }
     } else if (useCdp) {
-      let cursor = historyScope.provider_cursor || null;
+      // Oversized-page recovery stores a versioned local checkpoint in this
+      // durable cursor column while preserving the opaque CDP token that
+      // points at the failed address-history page. Never send local recovery
+      // JSON back to CDP as pageToken after a restart.
+      const recoveryState = CdpRecoveryProvider.recoveryCursor(historyScope.provider_cursor);
+      let cursor = recoveryState
+        ? recoveryState.addressHistoryCursor
+        : historyScope.provider_cursor || null;
       let order = historyScope.provider_order && historyScope.provider_order !== 'unknown'
         ? historyScope.provider_order : (priorProviderOrder || 'unknown');
       let previousBlock = null;
@@ -1081,23 +1263,31 @@ class EvmAuditService {
               && boundedBlocks.some((block) => block <= fromBlock)) break;
         }
       } catch (error) {
-        const deferredError = cdpUnavailableError(error);
+        let effectiveError = error;
+        if (error.code === 'CDP_RESPONSE_TOO_LARGE') {
+          try {
+            await recoverKnownOversizedCdpHistory(error);
+          } catch (recoveryError) {
+            effectiveError = recoveryError;
+          }
+        }
+        const deferredError = cdpUnavailableError(effectiveError);
         const failedChain = discovered.find((row) => row.chain_id === chainId);
         if (failedChain) {
           failedChain.active_hint = null;
           failedChain.bounded = false;
           failedChain.status = deferredError ? 'deferred' : 'failed';
           failedChain.source = 'coinbase-cdp';
-          failedChain.error_code = error.code || 'CDP_HISTORY_FAILED';
-          failedChain.error_detail = publicErrorDetail(error);
+          failedChain.error_code = effectiveError.code || 'CDP_HISTORY_FAILED';
+          failedChain.error_detail = publicErrorDetail(effectiveError);
           await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
         }
         await completeScope(historyScope.id, {
           status: deferredError ? 'deferred' : 'failed',
           paginationExhausted: false,
           providerOrder: order,
-          errorCode: error.code || 'CDP_HISTORY_FAILED',
-          errorDetail: publicErrorDetail(error),
+          errorCode: effectiveError.code || 'CDP_HISTORY_FAILED',
+          errorDetail: publicErrorDetail(effectiveError),
         });
         return {
           gaps: 1,
@@ -1105,8 +1295,8 @@ class EvmAuditService {
           deferredProviderError: deferredError,
           failed: !deferredError,
           failedProviderError: deferredError ? null : {
-            code: error.code || 'CDP_HISTORY_FAILED',
-            detail: publicErrorDetail(error),
+            code: effectiveError.code || 'CDP_HISTORY_FAILED',
+            detail: publicErrorDetail(effectiveError),
           },
           boundary,
           transactions: hashes.size,
