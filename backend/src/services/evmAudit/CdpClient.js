@@ -94,10 +94,14 @@ function responseError(response, body, method, apiKey = null) {
     resultFailure?.detail || body?.error?.message || body?.message || '', apiKey
   );
   const resultCode = String(resultFailure?.code || '').toLowerCase();
+  const bodyErrorCode = String(body?.error?.code || '').toLowerCase();
   const authFailure = /unauthorized|unauthenticated|forbidden|invalid.{0,20}(?:key|credential)|permission/i.test(detail)
     || /unauthoriz|unauthenticated|forbidden|permission/.test(resultCode);
   const rateFailure = /rate.?limit|too many requests|slow down/i.test(detail)
     || /rate|throttl|resource[_ -]?exhausted|resource[_ -]?limit/.test(resultCode);
+  const bodyRateFailure = /rate|throttl|resource[_ -]?exhausted|resource[_ -]?limit/.test(bodyErrorCode);
+  const quotaFailure = isQuotaError(detail, resultCode)
+    || (body?.error && isQuotaError(detail, bodyErrorCode));
   if (response.status === 429) {
     const retryAfterMs = parseRetryAfter(response.headers.get('retry-after')) ?? 5_000;
     return providerError('Coinbase CDP rate limit reached; Base history deferred', 'CDP_RATE_LIMITED', {
@@ -106,32 +110,26 @@ function responseError(response, body, method, apiKey = null) {
       retryAt: new Date(Date.now() + retryAfterMs),
     });
   }
-  if ([401, 403].includes(response.status)) {
-    if (isQuotaError(detail, body?.error?.code)) {
-      return providerError('Coinbase CDP usage limit reached; Base history deferred', 'CDP_QUOTA_EXHAUSTED', {
-        httpStatus: response.status,
-        // CDP Node's free billing-unit allowance is documented as a calendar-
-        // month allowance. A portal/account-specific quota may differ, so the
-        // UI still displays this as a provider retry boundary, not a promise
-        // that all credits reset after 24 hours.
-        retryAt: nextCalendarMonth(),
-      });
-    }
-    return providerError('Coinbase CDP rejected the configured credential', 'CDP_AUTH_FAILED', {
-      httpStatus: response.status,
-    });
-  }
-  if (resultFailure && isQuotaError(detail, resultCode)) {
+  if (quotaFailure) {
     return providerError('Coinbase CDP usage limit reached; Base history deferred', 'CDP_QUOTA_EXHAUSTED', {
       httpStatus: response.status,
+      // CDP Node's free billing-unit allowance is documented as a calendar-
+      // month allowance. A portal/account-specific quota may differ, so the
+      // UI still displays this as a provider retry boundary, not a promise
+      // that all credits reset after 24 hours.
       retryAt: nextCalendarMonth(),
     });
   }
-  if (resultFailure && rateFailure) {
+  if ((resultFailure && rateFailure) || (body?.error && bodyRateFailure)) {
     return providerError('Coinbase CDP rate limit reached; Base history deferred', 'CDP_RATE_LIMITED', {
       httpStatus: response.status,
       retryAfterMs: 5_000,
       retryAt: new Date(Date.now() + 5_000),
+    });
+  }
+  if ([401, 403].includes(response.status)) {
+    return providerError('Coinbase CDP rejected the configured credential', 'CDP_AUTH_FAILED', {
+      httpStatus: response.status,
     });
   }
   if (resultFailure && authFailure) {
@@ -147,21 +145,7 @@ function responseError(response, body, method, apiKey = null) {
     );
   }
   if (body?.error) {
-    const code = String(body.error.code || '').toLowerCase();
-    if (isQuotaError(detail, code)) {
-      return providerError('Coinbase CDP usage limit reached; Base history deferred', 'CDP_QUOTA_EXHAUSTED', {
-        httpStatus: response.status,
-        retryAt: nextCalendarMonth(),
-      });
-    }
-    if (rateFailure || /rate|throttl|resource[_ -]?exhausted|resource[_ -]?limit/.test(code)) {
-      return providerError('Coinbase CDP rate limit reached; Base history deferred', 'CDP_RATE_LIMITED', {
-        httpStatus: response.status,
-        retryAfterMs: 5_000,
-        retryAt: new Date(Date.now() + 5_000),
-      });
-    }
-    if (authFailure || /unauthoriz|unauthenticated|forbidden|permission/.test(code)) {
+    if (authFailure || /unauthoriz|unauthenticated|forbidden|permission/.test(bodyErrorCode)) {
       return providerError('Coinbase CDP rejected the configured credential', 'CDP_AUTH_FAILED', {
         httpStatus: response.status,
       });
