@@ -248,6 +248,27 @@ test('Blockscout transient provider failures defer instead of becoming permanent
   assert.equal(EvmAuditService._isBlockscoutTransient({ response: { status: 400 } }), false);
 });
 
+test('standing explorer feed limitations defer only that chain', () => {
+  assert.equal(EvmAuditService._isStandingExplorerLimitation({
+    code: 'ETHERSCAN_FEED_UNSUPPORTED',
+  }), true);
+  assert.equal(EvmAuditService._isStandingExplorerLimitation({
+    code: 'ETHERSCAN_CHAIN_UNAVAILABLE',
+  }), true);
+  assert.equal(EvmAuditService._isStandingExplorerLimitation({
+    code: 'ETHERSCAN_FEED_FAILED',
+  }), false);
+  const source = fs.readFileSync(
+    path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8'
+  );
+  assert.match(source, /deferOpenScopes\(job\.id, chainId/);
+  assert.match(source, /for \(const chainId of runnable\)[\s\S]*?try \{[\s\S]*?runChain/);
+  assert.match(source, /scopeStatus: standing \? 'unsupported' : deferred \? 'deferred' : 'failed'/);
+  assert.match(source, /capabilities: AUDIT_CAPABILITIES/);
+  assert.match(source, /isStandingExplorerLimitation\(error\) \? `\$\{prefix\}_CHAIN_UNAVAILABLE`/);
+  assert.match(source, /failed: !deferred && !standing/);
+});
+
 test('consensus canonicalization retains failed mined outgoing transactions and gas', () => {
   const transaction = {
     hash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH, transactionIndex: '0x2',

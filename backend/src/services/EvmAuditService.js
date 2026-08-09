@@ -320,6 +320,17 @@ function explorerDisplayName(provider) {
   return provider === 'blockscout' ? 'Blockscout' : 'Etherscan';
 }
 
+function isStandingExplorerLimitation(error) {
+  return ['ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE'].includes(error?.code);
+}
+
+function isStandingProviderLimitation(error) {
+  return [
+    'BLOCKSCOUT_FEED_UNSUPPORTED', 'BLOCKSCOUT_CHAIN_UNAVAILABLE',
+    'ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE',
+  ].includes(error?.code);
+}
+
 function assertLease(leaseState) {
   if (!leaseState?.lost) return;
   const error = new Error('EVM audit lease ownership was lost; this worker stopped before further writes.');
@@ -638,17 +649,68 @@ class EvmAuditService {
       }
       let providerDeferred = Boolean(moralisUnavailable || cdpUnavailable || unavailable.length);
       let deferredProviderError = moralisUnavailable || cdpUnavailable;
+      let unsupportedProviderError = null;
       for (const chainId of runnable) {
         assertLease(leaseState);
-        const result = await this.runChain({
-          job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
-          explorerApiKey, moralisUnavailable, cdp, cdpUnavailable,
-        });
+        let result;
+        try {
+          result = await this.runChain({
+            job, chainId, moralis, activeResponse, discovered, leaseState, retainAttempt,
+            explorerApiKey, moralisUnavailable, cdp, cdpUnavailable,
+          });
+        } catch (error) {
+          // A capability gap on one chain must not prevent the remaining
+          // configured chains from running. Preserve the open scopes and
+          // continue; the final job remains deferred/failed with the exact
+          // chain-level reason so it cannot be mistaken for completion.
+          assertLease(leaseState);
+          const standing = isStandingProviderLimitation(error);
+          const deferred = !standing && [
+              'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
+              'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR',
+              'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED',
+              'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
+              'ETHERSCAN_RATE_LIMITED', 'ETHERSCAN_TRANSPORT_ERROR',
+            ].includes(error.code);
+          const chainDetail = publicErrorDetail(error);
+          await EvmAudit.deferOpenScopes(job.id, chainId, {
+            errorCode: error.code || 'EVM_CHAIN_AUDIT_FAILED',
+            errorDetail: chainDetail,
+            provider: AUDIT_CHAINS.get(chainId).auditProvider || 'consensus-rpc',
+            scopeStatus: standing ? 'unsupported' : deferred ? 'deferred' : 'failed',
+            capabilities: AUDIT_CAPABILITIES,
+          }, { jobId: job.id, owner: OWNER });
+          const discoveredChain = discovered.find((row) => row.chain_id === chainId);
+          if (discoveredChain) {
+            discoveredChain.bounded = false;
+            discoveredChain.status = standing ? 'unsupported' : deferred ? 'deferred' : 'failed';
+            discoveredChain.error_code = error.code || 'EVM_CHAIN_AUDIT_FAILED';
+            discoveredChain.error_detail = chainDetail;
+            await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
+          }
+          result = {
+            gaps: 1,
+            deferred,
+            unsupported: standing,
+            deferredProviderError: deferred ? {
+              code: error.code || 'EVM_CHAIN_AUDIT_DEFERRED', detail: chainDetail,
+              retryAt: error.retryAt || null,
+            } : null,
+            unsupportedProviderError: standing ? {
+              code: error.code || 'EVM_CHAIN_AUDIT_UNSUPPORTED', detail: chainDetail,
+            } : null,
+            failed: !deferred && !standing,
+            failedProviderError: deferred || standing ? null : {
+              code: error.code || 'EVM_CHAIN_AUDIT_FAILED', detail: chainDetail,
+            },
+          };
+        }
         gaps += result.gaps;
         if (result.deferred) {
           providerDeferred = true;
           deferredProviderError ||= result.deferredProviderError;
         }
+        if (result.unsupported) unsupportedProviderError ||= result.unsupportedProviderError;
         if (result.failed) {
           failed = true;
           failedProviderError ||= result.failedProviderError;
@@ -658,9 +720,9 @@ class EvmAuditService {
       return EvmAudit.finish(jobId, OWNER,
         failed ? 'failed' : deferred ? 'deferred' : (gaps ? 'complete_with_gaps' : 'complete'), {
         errorCode: failedProviderError?.code || deferredProviderError?.code
-          || unavailable[0]?.error?.code || null,
+          || unsupportedProviderError?.code || unavailable[0]?.error?.code || null,
         errorDetail: failedProviderError?.detail || deferredProviderError?.detail
-          || unavailable[0]?.error?.detail || null,
+          || unsupportedProviderError?.detail || unavailable[0]?.error?.detail || null,
         retryAt: deferred ? (deferredProviderError?.retryAt || new Date(Date.now() + 24 * 60 * 60 * 1000)) : null,
         progress: { chains_finished: runnable.length + unavailable.length + unsupportedRequested.length, gaps },
       });
@@ -833,13 +895,15 @@ class EvmAuditService {
         const name = explorerDisplayName(auditProvider);
         const wrapped = new Error(`${name} indexed boundary failed: ${publicErrorDetail(error)}`);
         wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
-          : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_BOUNDARY_FAILED`;
+          : transient ? `${prefix}_TRANSPORT_ERROR`
+            : isStandingExplorerLimitation(error) ? `${prefix}_CHAIN_UNAVAILABLE`
+              : `${prefix}_BOUNDARY_FAILED`;
         wrapped.httpStatus = error.response?.status || error.httpStatus || null;
         wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
         await recordProviderAttempt({
           jobId: job.id, scopeId: activeScope.id, provider: auditProvider,
           endpoint: 'indexed-boundary', requestParams: { chain_id: chainId },
-          outcome: transient ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
+          outcome: transient || isStandingExplorerLimitation(error) ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
           errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
         });
         throw wrapped;
@@ -1105,14 +1169,16 @@ class EvmAuditService {
           const name = explorerDisplayName(auditProvider);
           const wrapped = new Error(`${name} ${feedSpec.feed} audit feed failed: ${publicErrorDetail(error)}`);
           wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
-            : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_FEED_FAILED`;
+            : transient ? `${prefix}_TRANSPORT_ERROR`
+              : isStandingExplorerLimitation(error) ? `${prefix}_FEED_UNSUPPORTED`
+                : `${prefix}_FEED_FAILED`;
           wrapped.httpStatus = error.response?.status || error.httpStatus || null;
           wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
           await recordProviderAttempt({
             jobId: job.id, scopeId: feedScope.id, provider: auditProvider,
             endpoint: `account-${feedSpec.feed}`,
             requestParams: { address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock },
-            outcome: transient ? 'deferred' : 'failed',
+            outcome: transient || isStandingExplorerLimitation(error) ? 'deferred' : 'failed',
             httpStatus: wrapped.httpStatus, errorCode: wrapped.code,
             errorDetail: publicErrorDetail(wrapped),
           });
@@ -1171,14 +1237,16 @@ class EvmAuditService {
           const prefix = explorerFailurePrefix(auditProvider);
           const wrapped = new Error(`Explorer native-credit audit feed failed: ${publicErrorDetail(error)}`);
           wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
-            : transient ? `${prefix}_TRANSPORT_ERROR` : `${prefix}_FEED_FAILED`;
+            : transient ? `${prefix}_TRANSPORT_ERROR`
+              : isStandingExplorerLimitation(error) ? `${prefix}_FEED_UNSUPPORTED`
+                : `${prefix}_FEED_FAILED`;
           wrapped.httpStatus = error.response?.status || error.httpStatus || null;
           wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
           await recordProviderAttempt({
             jobId: job.id, scopeId: nativeCreditScope.id, provider: auditProvider,
             endpoint: 'native-credit', requestParams: {
               address: job.address, from_block: 0, to_block: sourceThroughBlock,
-            }, outcome: transient ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
+            }, outcome: transient || isStandingExplorerLimitation(error) ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
             errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
           });
           throw wrapped;
@@ -1686,3 +1754,4 @@ module.exports = EvmAuditService;
 module.exports._missingRanges = missingRanges;
 module.exports._unmatchedEffectCount = unmatchedEffectCount;
 module.exports._isBlockscoutTransient = isBlockscoutTransient;
+module.exports._isStandingExplorerLimitation = isStandingExplorerLimitation;
