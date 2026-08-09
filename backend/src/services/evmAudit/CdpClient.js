@@ -186,7 +186,7 @@ function pageCursor(value, method) {
 }
 
 function oversizedResponse(error) {
-  return error?.code === 'CDP_API_ERROR'
+  return ['CDP_API_ERROR', 'CDP_RESPONSE_TOO_LARGE'].includes(error?.code)
     && (error.httpStatus === 413
       || /message larger than max|response size|response too large|entity too large/i.test(error.message || ''));
 }
