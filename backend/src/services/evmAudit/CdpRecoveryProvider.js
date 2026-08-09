@@ -63,10 +63,11 @@ function traceAddressFor(path) {
   return path.map((value) => Number(value));
 }
 
-// CDP documents callTracer for debug_traceBlockByNumber. Convert its nested
-// call tree to the flattened trace shape already accepted by the CDP history
-// normalizer. The root call is retained: it proves the signed transaction's
-// top-level execution even when it has zero value or no internal movement.
+// CDP documents callTracer for debug_traceBlockByNumber and debug_traceCall.
+// Convert either nested call-tree shape to the flattened trace shape already
+// accepted by the CDP history normalizer. The root call is retained: it proves
+// the signed transaction's top-level execution even when it has zero value or
+// no internal movement.
 function flattenCallTracer(node, path = [], context = {}) {
   if (!node || typeof node !== 'object') {
     throw recoveryError('Coinbase CDP recovery returned a malformed call trace', 'CDP_INVALID_RESPONSE');
@@ -191,6 +192,27 @@ function traceCacheKey(blockNumber, blockHash, tracer = 'callTracer') {
   return `${hexQuantity(blockNumber, 'trace block number').toString()}:${normalizedBlockHash(blockHash, 'trace block hash')}:${tracer}`;
 }
 
+function historicalCall(transaction) {
+  const from = address(transaction?.from);
+  if (!from) throw recoveryError('Coinbase CDP recovery returned a transaction without a sender', 'CDP_INVALID_RESPONSE');
+  const call = {
+    from,
+    gas: transaction.gas ?? '0x0',
+    gasPrice: transaction.gasPrice ?? transaction.maxFeePerGas ?? '0x0',
+    value: transaction.value ?? '0x0',
+    data: transaction.input ?? '0x',
+  };
+  const to = address(transaction.to);
+  if (to) call.to = to;
+  if (transaction.accessList != null) call.accessList = transaction.accessList;
+  return call;
+}
+
+function parentBlockTag(blockNumber) {
+  const number = hexQuantity(blockNumber, 'transaction block number');
+  return `0x${(number > 0n ? number - 1n : 0n).toString(16)}`;
+}
+
 async function recoverTransaction(client, candidate, {
   onEvidence = null, traceCache = null, loadTrace = null,
 } = {}) {
@@ -232,28 +254,60 @@ async function recoverTransaction(client, candidate, {
     if (traceResponse) traceCache?.set(traceKey, traceResponse);
   }
   if (!traceResponse) {
-    traceResponse = await rpc(
-      'debug_traceBlockByNumber', [blockNumber, { tracer: 'callTracer' }],
-      { blockHash: coordinates.blockHash, tracer: 'callTracer' }
-    );
-    traceCache?.set(traceKey, traceResponse);
+    try {
+      traceResponse = await rpc(
+        'debug_traceBlockByNumber', [blockNumber, { tracer: 'callTracer' }],
+        { blockHash: coordinates.blockHash, tracer: 'callTracer' }
+      );
+      traceCache?.set(traceKey, traceResponse);
+    } catch (error) {
+      if (error.code !== 'CDP_RESPONSE_TOO_LARGE') throw error;
+      // A whole-block callTracer response can exceed CDP's response limit even
+      // when the wallet transaction itself is recoverable. CDP documents
+      // debug_traceCall, so retry just this transaction against its parent
+      // state. This is deliberately not a universal substitute: the exact
+      // block trace remains preferred, and the method is retained as evidence
+      // so callers can distinguish the fallback's bounded proof.
+      try {
+        traceResponse = await rpc(
+          'debug_traceCall', [historicalCall(transaction), parentBlockTag(blockNumber), { tracer: 'callTracer' }],
+          {
+            blockHash: coordinates.blockHash,
+            traceBlock: blockNumber,
+            traceParentBlock: parentBlockTag(blockNumber),
+            tracer: 'callTracer',
+          }
+        );
+      } catch (fallbackError) {
+        if (fallbackError.code === 'CDP_RESPONSE_TOO_LARGE') {
+          throw recoveryError(
+            `Coinbase CDP transaction-scoped trace is also too large for ${hash}`,
+            'CDP_RECOVERY_TRACE_UNAVAILABLE',
+          );
+        }
+        throw fallbackError;
+      }
+    }
   }
-  if (!Array.isArray(traceResponse.body)) {
+  const traceEntry = Array.isArray(traceResponse.body)
+    ? traceResponse.body.find((entry) => (
+      normalizedHash(entry?.txHash, 'trace transaction hash') === hash
+    ))
+    : traceResponse.body;
+  if (!traceEntry || typeof traceEntry !== 'object') {
     throw recoveryError(
       `Coinbase CDP recovery returned no call trace for ${hash}`,
       'CDP_RECOVERY_TRACE_UNAVAILABLE'
     );
   }
-  const traceEntry = traceResponse.body.find((entry) => (
-    normalizedHash(entry?.txHash, 'trace transaction hash') === hash
-  ));
-  if (!traceEntry || !traceEntry.result) {
+  const traceRoot = traceEntry.result || traceEntry;
+  if (!traceRoot || typeof traceRoot !== 'object') {
     throw recoveryError(
       `Coinbase CDP recovery returned no exact call trace for ${hash}`,
       'CDP_RECOVERY_TRACE_UNAVAILABLE'
     );
   }
-  const traces = flattenCallTracer(traceEntry.result, [], {
+  const traces = flattenCallTracer(traceRoot, [], {
     transactionHash: hash,
     blockNumber: coordinates.blockNumber,
     blockHash: coordinates.blockHash,
@@ -285,6 +339,7 @@ async function recoverTransaction(client, candidate, {
         receipt,
         block,
         traces,
+        trace_method: traceResponse.method,
       },
       rawText,
       responseSha256: sha256(rawText),

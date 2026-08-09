@@ -1169,7 +1169,7 @@ class EvmAuditService {
             const failureRaw = JSON.stringify(failure);
             const failureParams = {
               address: job.address.toLowerCase(), transaction_hash: candidate.hash,
-              recovery: 'core-rpc-transaction-receipt-block-calltracer',
+              recovery: 'core-rpc-transaction-receipt-trace',
             };
             await commitPage(historyScope.id, {
               provider: 'coinbase-cdp', endpoint: 'transaction-recovery-failure',
@@ -1207,7 +1207,7 @@ class EvmAuditService {
           for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
           const recoveryRequest = {
             address: job.address.toLowerCase(), transaction_hash: candidate.hash,
-            recovery: 'core-rpc-transaction-receipt-block-calltracer',
+            recovery: 'core-rpc-transaction-receipt-trace',
           };
           await commitPage(historyScope.id, {
             provider: 'coinbase-cdp', endpoint: 'transaction-recovery',

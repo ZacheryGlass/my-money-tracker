@@ -174,6 +174,79 @@ test('CDP Core recovery preserves failed zero-value and nested trace evidence', 
   ]);
 });
 
+test('CDP Core recovery falls back to a parent-state transaction trace when the block trace is oversized', async () => {
+  const transaction = {
+    hash: HASH,
+    from: WALLET,
+    to: CONTRACT,
+    value: '0x1',
+    gas: '0x5208',
+    gasPrice: '0x64',
+    input: '0xdeadbeef',
+    blockNumber: '0x7b',
+    blockHash: BLOCK_HASH,
+    transactionIndex: '0x0',
+  };
+  const receipt = {
+    transactionHash: HASH,
+    blockNumber: '0x7b',
+    blockHash: BLOCK_HASH,
+    transactionIndex: '0x0',
+    status: '0x1',
+    gasUsed: '0x5208',
+    effectiveGasPrice: '0x64',
+    logs: [],
+  };
+  const block = {
+    number: '0x7b',
+    hash: BLOCK_HASH,
+    timestamp: '0x65920080',
+    transactions: [HASH],
+  };
+  const traceRoot = {
+    from: WALLET,
+    to: CONTRACT,
+    value: '0x1',
+    gas: '0x5208',
+    gasUsed: '0x5208',
+    input: '0xdeadbeef',
+    calls: [],
+  };
+  const responses = new Map([
+    ['eth_getTransactionByHash', rpcResponse(transaction, 'eth_getTransactionByHash', [HASH])],
+    ['eth_getTransactionReceipt', rpcResponse(receipt, 'eth_getTransactionReceipt', [HASH])],
+    ['eth_getBlockByNumber', rpcResponse(block, 'eth_getBlockByNumber', ['0x7b', false])],
+    ['debug_traceCall', rpcResponse(traceRoot, 'debug_traceCall', [
+      {
+        from: WALLET, to: CONTRACT, gas: '0x5208', gasPrice: '0x64', value: '0x1', data: '0xdeadbeef',
+      }, '0x7a', { tracer: 'callTracer' },
+    ])],
+  ]);
+  const calls = [];
+  const client = {
+    async rpcWithEvidence(method, params) {
+      calls.push({ method, params });
+      if (method === 'debug_traceBlockByNumber') {
+        const error = new Error('Response is too big');
+        error.code = 'CDP_RESPONSE_TOO_LARGE';
+        throw error;
+      }
+      return responses.get(method);
+    },
+  };
+
+  const recovered = await CdpRecoveryProvider.recoverTransaction(client, { hash: HASH });
+
+  assert.deepEqual(calls.map((call) => call.method), [
+    'eth_getTransactionByHash', 'eth_getTransactionReceipt',
+    'eth_getBlockByNumber', 'debug_traceBlockByNumber', 'debug_traceCall',
+  ]);
+  assert.equal(calls[4].params[1], '0x7a');
+  assert.equal(recovered.response.body.trace_method, 'debug_traceCall');
+  assert.equal(recovered.traces.length, 1);
+  assert.equal(recovered.traces[0].transactionHash, HASH);
+});
+
 test('CDP Core recovery fails closed on conflicting canonical identity', async () => {
   const response = (body, method) => rpcResponse(body, method, []);
   const client = {
