@@ -216,15 +216,13 @@ function parentBlockTag(blockNumber) {
 
 function traceBlockFallbackEligible(error) {
   if (error?.code === 'CDP_RESPONSE_TOO_LARGE' || oversizedResponse(error)) return true;
-  return error?.code === 'CDP_API_ERROR'
-    && /(?:state at block .*pruned|failed to apply beacon root contract call)/i.test(error.message || '');
+  return error?.code === 'CDP_API_ERROR';
 }
 
 function traceFallbackUnavailable(error) {
   return error?.code === 'CDP_RESPONSE_TOO_LARGE'
     || oversizedResponse(error)
-    || (error?.code === 'CDP_API_ERROR'
-      && /(?:state at block .*pruned|failed to apply beacon root contract call)/i.test(error.message || ''));
+    || error?.code === 'CDP_API_ERROR';
 }
 
 async function recoverTransaction(client, candidate, {
