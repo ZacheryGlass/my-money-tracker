@@ -165,6 +165,28 @@ test('CDP pagination rejects non-string cursors, non-adjacent cycles, and mixed 
   }
 });
 
+test('CDP accepts the documented transaction alias and reports only bounded result shape metadata', async (t) => {
+  const originalFetch = global.fetch;
+  const responses = [
+    jsonRpcResult({ transactions: [], nextPageToken: null }),
+    jsonRpcResult({ unexpected: 'provider-drift' }),
+  ];
+  global.fetch = async () => responses.shift();
+  t.after(() => { global.fetch = originalFetch; });
+
+  const iterator = new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+    .addressTransactionPages(WALLET);
+  const page = await iterator.next();
+  assert.deepEqual(page.value.items, []);
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_INVALID_RESPONSE'
+      && error.message.includes('object{unexpected}')
+      && !error.message.includes('provider-drift')
+  );
+});
+
 test('CDP errors classify quota and rate limits with retry boundaries', async (t) => {
   const originalFetch = global.fetch;
   const responses = [
