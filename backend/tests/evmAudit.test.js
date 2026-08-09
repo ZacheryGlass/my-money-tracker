@@ -818,6 +818,54 @@ test('a Base audit can supersede a deferred broad job from the pre-CDP provider'
   assert.equal(calls.at(-1).sql, 'COMMIT');
 });
 
+test('an unrelated Blockscout deferral does not strand an incomplete CDP Base scope', async (t) => {
+  const originalConnect = database.connect;
+  const originalEnsureSubject = EvmAudit.ensureSubject;
+  const calls = [];
+  const broad = {
+    id: 51,
+    status: 'deferred',
+    mode: 'full',
+    requested_chains: [10, 8453],
+    error_code: 'BLOCKSCOUT_FEED_FAILED',
+  };
+  const baseJob = {
+    id: 52,
+    status: 'queued',
+    mode: 'full',
+    requested_chains: [8453],
+  };
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) return { rows: [broad] };
+      if (/FROM evm_audit_scopes/.test(sql)) {
+        return { rows: [{ chain_id: 8453, scope_count: '7', complete: false, providers: ['coinbase-cdp'] }] };
+      }
+      if (/INSERT INTO evm_audit_jobs/.test(sql)) return { rows: [baseJob] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  t.after(() => {
+    database.connect = originalConnect;
+    EvmAudit.ensureSubject = originalEnsureSubject;
+  });
+  database.connect = async () => client;
+  EvmAudit.ensureSubject = async () => ({ id: 13, address: WALLET });
+
+  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
+    mode: 'full', requestedChains: [8453],
+    requestedProviders: { 8453: 'coinbase-cdp' }, credentialGeneration: null,
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.job.id, 52);
+  assert.ok(calls.some(({ sql }) => /status = 'cancelled'/.test(sql)));
+  assert.ok(calls.some(({ sql }) => /superseded_by_job_id/.test(sql)));
+  assert.equal(calls.at(-1).sql, 'COMMIT');
+});
+
 test('a deferred broader audit is not narrowed while Base has an incomplete scope', async (t) => {
   const originalConnect = database.connect;
   const originalEnsureSubject = EvmAudit.ensureSubject;

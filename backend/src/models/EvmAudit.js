@@ -211,13 +211,28 @@ class EvmAudit {
               && (row.providers || []).includes(expectedProvider)
               && row.complete !== true;
           });
+        const providerPrefixes = {
+          'coinbase-cdp': 'CDP_',
+          moralis: 'MORALIS_',
+          etherscan: 'ETHERSCAN_',
+          blockscout: 'BLOCKSCOUT_',
+          'consensus-rpc': 'RPC_',
+        };
+        const deferredErrorCode = String(activeRow.error_code || '');
+        const deferredErrorProvider = Object.entries(providerPrefixes)
+          .find(([, prefix]) => deferredErrorCode.startsWith(prefix))?.[0] || null;
+        const requestedProviderOwnsDeferredError = deferredErrorProvider
+          && Object.values(requestedProviders || {}).includes(deferredErrorProvider);
         // A deferred broad job can predate a provider migration. If it has no
         // incomplete scope for the provider now required by the requested
         // chain, a new narrow job is safe: old pages remain immutable and the
         // new provider establishes its own bounded proof. An incomplete
-        // requested-provider scope still blocks narrowing so a CDP/Moralis
-        // retry deadline cannot be bypassed.
-        if (requestedProviders && !requestedProviderIsIncomplete) {
+        // requested-provider scope still blocks narrowing when the broad job's
+        // own deferred error belongs to that provider. An unrelated provider
+        // error (for example OP Blockscout while requesting Base CDP) must not
+        // strand the new provider's independent proof.
+        if (requestedProviders && (!requestedProviderIsIncomplete
+          || (deferredErrorProvider && !requestedProviderOwnsDeferredError))) {
           requestedScopeIsComplete = true;
         }
       }
