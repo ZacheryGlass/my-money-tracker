@@ -154,6 +154,13 @@ function responseError(response, body, method, apiKey = null) {
         retryAt: nextCalendarMonth(),
       });
     }
+    if (rateFailure || /rate|throttl|resource[_ -]?exhausted|resource[_ -]?limit/.test(code)) {
+      return providerError('Coinbase CDP rate limit reached; Base history deferred', 'CDP_RATE_LIMITED', {
+        httpStatus: response.status,
+        retryAfterMs: 5_000,
+        retryAt: new Date(Date.now() + 5_000),
+      });
+    }
     if (authFailure || /unauthoriz|unauthenticated|forbidden|permission/.test(code)) {
       return providerError('Coinbase CDP rejected the configured credential', 'CDP_AUTH_FAILED', {
         httpStatus: response.status,

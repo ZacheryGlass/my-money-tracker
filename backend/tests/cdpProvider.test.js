@@ -303,6 +303,10 @@ test('CDP errors classify quota and rate limits with retry boundaries', async (t
     new Response(JSON.stringify({ error: { message: 'slow down' } }), {
       status: 429, headers: { 'retry-after': '2' },
     }),
+    new Response(JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      error: { code: 'RESOURCE_EXHAUSTED', message: 'provider request capacity exhausted' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }),
   ];
   global.fetch = async () => responses.shift();
   t.after(() => { global.fetch = originalFetch; });
@@ -316,6 +320,11 @@ test('CDP errors classify quota and rate limits with retry boundaries', async (t
     () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
       .addressTransactionPages(WALLET).next(),
     (error) => error.code === 'CDP_RATE_LIMITED' && error.retryAfterMs === 2000
+  );
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_RATE_LIMITED' && error.retryAfterMs === 5000
   );
 });
 
