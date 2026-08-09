@@ -52,8 +52,9 @@ function normalizeJsonNumbers(value) {
   return normalized;
 }
 
-function isQuotaError(detail) {
-  return /(?:quota|credit|billing|usage).*(?:exhaust|limit|exceed)|(?:exhaust|limit|exceed).*(?:quota|credit|billing|usage)/i.test(detail);
+function isQuotaError(detail, code = '') {
+  return /(?:quota|credit|billing|usage).*(?:exhaust|limit|exceed)|(?:exhaust|limit|exceed).*(?:quota|credit|billing|usage)/i.test(detail)
+    || /quota|credit|billing|usage[_ -]?(?:limit|exhausted|exceeded)/i.test(String(code || ''));
 }
 
 function nextCalendarMonth() {
@@ -63,18 +64,27 @@ function nextCalendarMonth() {
 
 function resultError(body) {
   const result = body?.result;
-  if (!result || typeof result !== 'object' || Array.isArray(result)
-      || Array.isArray(result.addressTransactions) || Array.isArray(result.transactions)
-      || Array.isArray(result.balances)) return null;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const code = typeof result.code === 'string' ? result.code.trim() : '';
   const detail = [result.message, result.details]
     .filter((value) => typeof value === 'string' && value.trim())
     .join(': ');
-  return detail ? { code: result.code, detail } : null;
+  if (!code && !detail) return null;
+  return { code: code || null, detail: detail || code };
+}
+
+function redactSecret(value, apiKey) {
+  if (!apiKey) return value;
+  if (typeof value === 'string') return value.split(String(apiKey)).join('[redacted]');
+  if (Array.isArray(value)) return value.map((child) => redactSecret(child, apiKey));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [
+    redactSecret(key, apiKey), redactSecret(child, apiKey),
+  ]));
 }
 
 function safeDetail(value, apiKey) {
-  let detail = String(value || '').replace(/\s+/g, ' ').trim();
-  if (apiKey) detail = detail.split(String(apiKey)).join('[redacted]');
+  const detail = String(redactSecret(value, apiKey) || '').replace(/\s+/g, ' ').trim();
   return detail.slice(0, 500);
 }
 
@@ -84,10 +94,10 @@ function responseError(response, body, method, apiKey = null) {
     resultFailure?.detail || body?.error?.message || body?.message || '', apiKey
   );
   const resultCode = String(resultFailure?.code || '').toLowerCase();
-  const authFailure = /unauthorized|forbidden|invalid.{0,20}(?:key|credential)|permission/i.test(detail)
-    || /unauthoriz|forbidden|permission/.test(resultCode);
+  const authFailure = /unauthorized|unauthenticated|forbidden|invalid.{0,20}(?:key|credential)|permission/i.test(detail)
+    || /unauthoriz|unauthenticated|forbidden|permission/.test(resultCode);
   const rateFailure = /rate.?limit|too many requests|slow down/i.test(detail)
-    || /rate|throttl/.test(resultCode);
+    || /rate|throttl|resource[_ -]?exhausted|resource[_ -]?limit/.test(resultCode);
   if (response.status === 429) {
     const retryAfterMs = parseRetryAfter(response.headers.get('retry-after')) ?? 5_000;
     return providerError('Coinbase CDP rate limit reached; Base history deferred', 'CDP_RATE_LIMITED', {
@@ -97,7 +107,7 @@ function responseError(response, body, method, apiKey = null) {
     });
   }
   if ([401, 403].includes(response.status)) {
-    if (isQuotaError(detail)) {
+    if (isQuotaError(detail, body?.error?.code)) {
       return providerError('Coinbase CDP usage limit reached; Base history deferred', 'CDP_QUOTA_EXHAUSTED', {
         httpStatus: response.status,
         // CDP Node's free billing-unit allowance is documented as a calendar-
@@ -111,7 +121,7 @@ function responseError(response, body, method, apiKey = null) {
       httpStatus: response.status,
     });
   }
-  if (resultFailure && isQuotaError(detail)) {
+  if (resultFailure && isQuotaError(detail, resultCode)) {
     return providerError('Coinbase CDP usage limit reached; Base history deferred', 'CDP_QUOTA_EXHAUSTED', {
       httpStatus: response.status,
       retryAt: nextCalendarMonth(),
@@ -138,9 +148,20 @@ function responseError(response, body, method, apiKey = null) {
   }
   if (body?.error) {
     const code = String(body.error.code || '').toLowerCase();
+    if (isQuotaError(detail, code)) {
+      return providerError('Coinbase CDP usage limit reached; Base history deferred', 'CDP_QUOTA_EXHAUSTED', {
+        httpStatus: response.status,
+        retryAt: nextCalendarMonth(),
+      });
+    }
+    if (authFailure || /unauthoriz|unauthenticated|forbidden|permission/.test(code)) {
+      return providerError('Coinbase CDP rejected the configured credential', 'CDP_AUTH_FAILED', {
+        httpStatus: response.status,
+      });
+    }
     return providerError(
       `Coinbase CDP ${method} returned an error${detail ? `: ${detail}` : ''}`,
-      isQuotaError(detail) || /quota|credit|billing/.test(code) ? 'CDP_QUOTA_EXHAUSTED' : 'CDP_API_ERROR',
+      'CDP_API_ERROR',
       { httpStatus: response.status }
     );
   }
@@ -304,13 +325,16 @@ class CdpClient {
 
         const error = responseError(response, body, method, this.apiKey);
         const retryable = error.code === 'CDP_RATE_LIMITED' && attempt < this.maxAttempts;
+        const responseRaw = redactSecret(text, this.apiKey);
         await this.onFailedAttempt?.({
           provider: 'coinbase-cdp', endpoint, method: 'POST', attemptNo: attempt,
           requestParams: params, outcome: retryable || error.code === 'CDP_QUOTA_EXHAUSTED' ? 'deferred' : 'failed',
           httpStatus: error.httpStatus || response.status,
           errorCode: error.code, errorDetail: error.message,
           requestId: response.headers.get('x-request-id') || null,
-          responseSha256: sha256(text), responseRaw: text, responseJson: body,
+          responseSha256: sha256(responseRaw),
+          responseRaw,
+          responseJson: redactSecret(body, this.apiKey),
         });
         if (retryable && error.retryAfterMs <= MAX_INLINE_RETRY_MS) {
           await wait(error.retryAfterMs);
