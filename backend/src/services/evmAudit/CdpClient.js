@@ -14,6 +14,13 @@ const MAX_INLINE_RETRY_MS = 30_000;
 const MAX_ATTEMPTS = 3;
 const MAX_PAGES = 100_000;
 const MAX_PAGE_SIZE = 100;
+// Address-history responses include receipts, traces, and token effects. A
+// provider page of 100 transactions can exceed CDP's gateway message limit
+// even though 100 is the documented API maximum. Keep the normal request
+// small enough for the largest observed effect-rich transactions; callers may
+// still request a larger page and the iterator will reduce it safely if CDP
+// rejects the response size.
+const DEFAULT_HISTORY_PAGE_SIZE = 10;
 const queues = new Map();
 
 function providerError(message, code, extra = {}) {
@@ -172,6 +179,12 @@ function pageCursor(value, method) {
     );
   }
   return value;
+}
+
+function oversizedResponse(error) {
+  return error?.code === 'CDP_API_ERROR'
+    && (error.httpStatus === 413
+      || /message larger than max|response size|response too large|entity too large/i.test(error.message || ''));
 }
 
 function resultShape(value) {
@@ -337,9 +350,12 @@ class CdpClient {
     });
   }
 
-  async *addressTransactionPages(address, { cursor = null, pageSize = MAX_PAGE_SIZE } = {}) {
+  async *addressTransactionPages(address, { cursor = null, pageSize = DEFAULT_HISTORY_PAGE_SIZE } = {}) {
     const normalizedAddress = String(address || '').toLowerCase();
     let next = pageCursor(cursor, 'address history');
+    let requestedPageSize = Math.min(
+      MAX_PAGE_SIZE, Math.max(1, Number(pageSize) || DEFAULT_HISTORY_PAGE_SIZE)
+    );
     const seenCursors = new Set();
     let pages = 0;
     do {
@@ -349,12 +365,23 @@ class CdpClient {
         }
         seenCursors.add(next);
       }
-      const params = {
-        address: normalizedAddress,
-        pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Number(pageSize) || MAX_PAGE_SIZE)),
-        pageToken: next || '',
-      };
-      const response = await this._request('cdp_listAddressTransactions', params, 'address-history');
+      let response;
+      while (!response) {
+        const params = {
+          address: normalizedAddress,
+          pageSize: requestedPageSize,
+          pageToken: next || '',
+        };
+        try {
+          response = await this._request('cdp_listAddressTransactions', params, 'address-history');
+        } catch (error) {
+          // Keep the cursor unchanged while retrying the same page at a
+          // smaller size. No raw page or durable checkpoint is written until
+          // a complete response is received.
+          if (!oversizedResponse(error) || requestedPageSize <= 1) throw error;
+          requestedPageSize = Math.max(1, Math.floor(requestedPageSize / 2));
+        }
+      }
       // `transactions` is accepted as a compatibility alias because Coinbase
       // documents cdp_listTransactions as an alias for this method, while the
       // response examples use addressTransactions. Keep the shape diagnostic
@@ -368,7 +395,9 @@ class CdpClient {
       if (cursorOut && seenCursors.has(cursorOut)) {
         throw providerError('Coinbase CDP address history returned a repeated page token', 'CDP_PAGINATION_STALLED');
       }
-      yield { ...response, items, cursorIn: next, cursorOut };
+      yield {
+        ...response, items, cursorIn: next, cursorOut, pageSize: requestedPageSize,
+      };
       next = cursorOut;
     } while (next);
   }
@@ -411,3 +440,4 @@ module.exports.addressTransactionItems = addressTransactionItems;
 module.exports.parseRetryAfter = parseRetryAfter;
 module.exports.normalizeJsonNumbers = normalizeJsonNumbers;
 module.exports.providerError = providerError;
+module.exports.DEFAULT_HISTORY_PAGE_SIZE = DEFAULT_HISTORY_PAGE_SIZE;

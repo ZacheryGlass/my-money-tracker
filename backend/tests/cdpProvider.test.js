@@ -111,6 +111,72 @@ test('CDP address history uses bounded cursor pagination and never exposes the k
   assert.ok(!JSON.stringify(pages).includes('do-not-log-this-key'));
 });
 
+test('CDP address history defaults to a response-safe page size', async (t) => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return jsonRpcResult({ addressTransactions: [], nextPageToken: null });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  for await (const _page of new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+    .addressTransactionPages(WALLET)) { /* one empty page */ }
+
+  assert.equal(requests[0].params[0].pageSize, 10);
+});
+
+test('CDP address history halves oversized pages without advancing the cursor', async (t) => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    requests.push(request);
+    if (request.params[0].pageSize > 10) {
+      return jsonRpcResult({
+        code: 'INTERNAL',
+        details: 'grpc: received message larger than max (18605042 vs. 4194304)',
+        message: 'response too large',
+      });
+    }
+    return jsonRpcResult({ addressTransactions: [transaction()], nextPageToken: null });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const pages = [];
+  for await (const page of new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+    .addressTransactionPages(WALLET, { pageSize: 100, cursor: 'proven-cursor' })) pages.push(page);
+
+  assert.deepEqual(requests.map((request) => request.params[0].pageSize), [100, 50, 25, 12, 6]);
+  assert.deepEqual(requests.map((request) => request.params[0].pageToken), [
+    'proven-cursor', 'proven-cursor', 'proven-cursor', 'proven-cursor', 'proven-cursor',
+  ]);
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].pageSize, 6);
+  assert.equal(pages[0].cursorIn, 'proven-cursor');
+});
+
+test('CDP address history treats HTTP 413 as an oversized page', async (t) => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    requests.push(request);
+    if (request.params[0].pageSize > 5) {
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: 413 } }), {
+        status: 413, headers: { 'content-type': 'application/json' },
+      });
+    }
+    return jsonRpcResult({ addressTransactions: [], nextPageToken: null });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  for await (const _page of new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+    .addressTransactionPages(WALLET, { pageSize: 20 })) { /* one empty page */ }
+
+  assert.deepEqual(requests.map((request) => request.params[0].pageSize), [20, 10, 5]);
+});
+
 test('CDP pagination rejects a repeated opaque token', async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => jsonRpcResult({

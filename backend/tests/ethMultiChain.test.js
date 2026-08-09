@@ -2056,7 +2056,7 @@ test('empty Base CDP pages persist coverage and resume with the CDP cursor contr
   assert.equal(cursorWrites[0].statesync, 50000000,
     'CDP receipt logs advance the durable Base bridge-credit boundary');
   assert.equal(calls.cdpRequests.length, 2);
-  assert.ok(calls.cdpRequests.every((request) => request.params[0].pageSize === 100));
+  assert.ok(calls.cdpRequests.every((request) => request.params[0].pageSize === 10));
   assert.ok(calls.cdpRequests.every((request) => request.params[0].pageToken === ''),
     'an exhausted one-page stream restarts at the provider boundary; order is unknown');
   assert.equal(calls.fetches.filter((call) => call.chainId === 8453).length, 0,
