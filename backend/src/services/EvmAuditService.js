@@ -162,7 +162,7 @@ function cdpUnavailableError(error) {
   if (!error) return null;
   if (!['CDP_NOT_CONFIGURED', 'CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR',
     'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-    'CDP_RECOVERY_UNSUPPORTED', 'CDP_RECOVERY_FAILED']
+    'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE']
     .includes(error.code)) return null;
   return {
     code: error.code,
@@ -335,6 +335,7 @@ function isStandingProviderLimitation(error) {
   return [
     'BLOCKSCOUT_FEED_UNSUPPORTED', 'BLOCKSCOUT_CHAIN_UNAVAILABLE',
     'ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE',
+    'CDP_RECOVERY_UNSUPPORTED',
   ].includes(error?.code)
     || (message.includes('does not serve') && message.includes('not yet been processed'));
 }
@@ -505,6 +506,10 @@ class EvmAuditService {
           await EvmAudit.recordProviderAttempt({ jobId, ...attempt, owner: OWNER });
         } catch (error) {
           logger.warn({ err: error, auditJobId: jobId }, 'Failed to retain provider attempt evidence');
+          const evidenceError = new Error('EVM provider failure evidence could not be durably retained');
+          evidenceError.code = 'EVM_FAILURE_EVIDENCE_UNJOURNALED';
+          evidenceError.cause = error;
+          throw evidenceError;
         }
       };
       let moralis = key && moralisRequested.length
@@ -676,7 +681,7 @@ class EvmAuditService {
           const deferred = !standing && [
               'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
               'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_RESPONSE_TOO_LARGE',
-              'CDP_ADDRESS_ENUMERATION_UNPROVEN', 'CDP_RECOVERY_UNSUPPORTED', 'CDP_RECOVERY_FAILED',
+              'CDP_ADDRESS_ENUMERATION_UNPROVEN', 'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
               'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED',
               'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
               'ETHERSCAN_RATE_LIMITED', 'ETHERSCAN_TRANSPORT_ERROR',
@@ -740,7 +745,7 @@ class EvmAuditService {
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
         'CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
         'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-        'CDP_RECOVERY_UNSUPPORTED', 'CDP_RECOVERY_FAILED',
+        'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE',
         'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
         'ETHERSCAN_TRANSPORT_ERROR',
@@ -963,6 +968,7 @@ class EvmAuditService {
     const moralisLookupHashes = new Set();
     const seenCdpTransactions = new Map();
     const historicalCdpTransactions = new Map();
+    const historicalRecoveryTransactions = new Map();
     // Rehydrate every durable observation before either provider path runs.
     // This is required when Moralis fails after committing pages and the
     // explorer fallback starts with a fresh in-memory hash set.
@@ -989,6 +995,13 @@ class EvmAuditService {
         }
         historicalCdpTransactions.set(identity.hash, identity);
       }
+      const priorRecoveryObservations = await EvmAudit.transactionObservationsForSubject(
+        job.subject_id, chainId, 'coinbase-cdp-recovery', fromBlock
+      );
+      for (const observation of priorRecoveryObservations) {
+        const identity = CdpHistoryProvider.itemIdentity(observation.payload_json);
+        if (identity.hash) historicalRecoveryTransactions.set(identity.hash, identity);
+      }
     }
 
     // A CDP address-history page can be larger than the gateway limit even
@@ -999,21 +1012,9 @@ class EvmAuditService {
     // explicitly deferred when it cannot prove that the failed address-history
     // page contained no additional transaction.
     const recoverKnownOversizedCdpHistory = async (oversizedError) => {
-      const durable = await EvmAudit.observationsForJob(job.id, { chainId });
       const knownTransactionHashes = new Set(
         await EvmAudit.completeCdpTransactionHashesForSubject(job.subject_id, chainId, 0)
       );
-      const priorConsensusTransactions = await EvmAudit.transactionObservationsForSubject(
-        job.subject_id, chainId, 'consensus-rpc', 0
-      );
-      for (const row of priorConsensusTransactions) {
-        if (row.tx_hash) knownTransactionHashes.add(String(row.tx_hash).toLowerCase());
-      }
-      for (const row of durable) {
-        if (row.provider === 'consensus-rpc' && row.tx_hash) {
-          knownTransactionHashes.add(String(row.tx_hash).toLowerCase());
-        }
-      }
       const priorCdpTransactions = await EvmAudit.transactionObservationsForSubject(
         job.subject_id, chainId, ['coinbase-cdp', 'coinbase-cdp-recovery'], 0
       );
@@ -1053,6 +1054,7 @@ class EvmAuditService {
         .slice(0, CdpRecoveryProvider.MAX_RECOVERY_CANDIDATES);
       let recovered = 0;
       let skippedKnown = 0;
+      let recoveryFailure = null;
       const traceCache = new Map();
       for (const candidate of ordered) hashes.add(candidate.hash);
       for (const candidate of ordered) {
@@ -1112,14 +1114,50 @@ class EvmAuditService {
             if (['CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR'].includes(error.code)) throw error;
             const wrapped = CdpRecoveryProvider.recoveryError(
               `CDP address history is oversized and transaction-scoped recovery failed for ${candidate.hash}: ${publicErrorDetail(error)}`,
-              error.code === 'CDP_API_ERROR' ? 'CDP_RECOVERY_UNSUPPORTED' : 'CDP_RECOVERY_FAILED',
+              error.code === 'CDP_API_ERROR' ? 'CDP_RECOVERY_UNSUPPORTED'
+                : ['CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE'].includes(error.code)
+                  ? error.code : 'CDP_RECOVERY_FAILED',
               { retryAt: error.retryAt || new Date(Date.now() + 60 * 60 * 1000) }
             );
-            throw wrapped;
+            recoveryFailure ||= wrapped;
+            const failure = {
+              recovery: 'coinbase-cdp-core', transaction_hash: candidate.hash,
+              status: 'failed', retryable: ['CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE']
+                .includes(wrapped.code), error_code: wrapped.code,
+              error_detail: publicErrorDetail(wrapped),
+            };
+            const failureRaw = JSON.stringify(failure);
+            const failureParams = {
+              address: job.address.toLowerCase(), transaction_hash: candidate.hash,
+              recovery: 'core-rpc-transaction-receipt-block-calltracer',
+            };
+            await commitPage(historyScope.id, {
+              provider: 'coinbase-cdp', endpoint: 'transaction-recovery-failure',
+              requestParams: failureParams, cursorIn, cursorOut: nextState,
+              responseSha256: normalizer.sha256(failureRaw),
+              evidenceIdentitySha256: normalizer.sha256(JSON.stringify({
+                request: failureParams, cursorIn, cursorOut: nextState, response: failureRaw,
+              })),
+              responseRaw: failureRaw, responseJson: failure, requestId: null, itemCount: 0,
+            }, []);
+            afterKey = key;
+            await EvmAudit.heartbeat(job.id, OWNER, {
+              progress: {
+                current_cursor: nextState,
+                oversized_recovery_candidates: ordered.length,
+                oversized_recovered: recovered,
+                oversized_already_observed: skippedKnown,
+                oversized_failed: (recoveryFailure ? 1 : 0),
+              },
+            });
+            continue;
           }
           CdpHistoryProvider.normalizePage(job.address, [recovery.item], {
             nativeCredit: chain?.auditNativeCredits || chain?.stateSyncDeposits || null,
           });
+          CdpHistoryProvider.assertNoCoordinateConflicts(
+            [recovery.item], historicalRecoveryTransactions
+          );
           const observations = normalizer.cdpHistoryObservations(
             { ...context, provider: 'coinbase-cdp-recovery' }, recovery.item
           );
@@ -1132,6 +1170,7 @@ class EvmAuditService {
             },
             cursorIn, cursorOut: nextState,
             responseSha256: recovery.response.responseSha256,
+            evidenceIdentitySha256: recovery.response.evidenceIdentitySha256,
             responseRaw: recovery.response.rawText,
             responseJson: recovery.response.body,
             requestId: recovery.response.requestId,
@@ -1148,6 +1187,14 @@ class EvmAuditService {
             oversized_already_observed: skippedKnown,
           },
         });
+      }
+      if (recoveryFailure) {
+        await completeScope(historyScope.id, {
+          status: recoveryFailure.code === 'CDP_RECOVERY_UNSUPPORTED' ? 'unsupported' : 'failed',
+          paginationExhausted: false,
+          errorCode: recoveryFailure.code, errorDetail: publicErrorDetail(recoveryFailure),
+        });
+        throw recoveryFailure;
       }
       const detail = `CDP address history exceeded the provider response limit for at least one single transaction (${publicErrorDetail(oversizedError)}). Core RPC recovery preserved ${recovered} transaction-scoped response(s) and ${skippedKnown} already durable transaction(s) from a bounded ${ordered.length}/${allOrdered.length} known-candidate queue, but CDP exposes no documented address-history enumeration fallback to prove the failed page contained no additional transaction.`;
       const blocker = CdpRecoveryProvider.recoveryError(
@@ -1246,6 +1293,9 @@ class EvmAuditService {
           CdpHistoryProvider.normalizePage(job.address, page.items, {
             nativeCredit: chain?.auditNativeCredits || chain?.stateSyncDeposits || null,
           });
+          CdpHistoryProvider.assertNoCoordinateConflicts(
+            page.items, historicalRecoveryTransactions
+          );
           CdpHistoryProvider.assertNoConflicts(page.items, historicalCdpTransactions);
           const uniqueItems = CdpHistoryProvider.dedupeItems(page.items, seenCdpTransactions);
           const boundedItems = cdpItemsThroughBoundary(uniqueItems, boundary.number);
@@ -1272,18 +1322,20 @@ class EvmAuditService {
           }
         }
         const deferredError = cdpUnavailableError(effectiveError);
+        const standingError = isStandingProviderLimitation(effectiveError)
+          ? { code: effectiveError.code, detail: publicErrorDetail(effectiveError) } : null;
         const failedChain = discovered.find((row) => row.chain_id === chainId);
         if (failedChain) {
           failedChain.active_hint = null;
           failedChain.bounded = false;
-          failedChain.status = deferredError ? 'deferred' : 'failed';
+          failedChain.status = standingError ? 'unsupported' : deferredError ? 'deferred' : 'failed';
           failedChain.source = 'coinbase-cdp';
           failedChain.error_code = effectiveError.code || 'CDP_HISTORY_FAILED';
           failedChain.error_detail = publicErrorDetail(effectiveError);
           await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
         }
         await completeScope(historyScope.id, {
-          status: deferredError ? 'deferred' : 'failed',
+          status: standingError ? 'unsupported' : deferredError ? 'deferred' : 'failed',
           paginationExhausted: false,
           providerOrder: order,
           errorCode: effectiveError.code || 'CDP_HISTORY_FAILED',
@@ -1293,8 +1345,10 @@ class EvmAuditService {
           gaps: 1,
           deferred: Boolean(deferredError),
           deferredProviderError: deferredError,
-          failed: !deferredError,
-          failedProviderError: deferredError ? null : {
+          unsupported: Boolean(standingError),
+          unsupportedProviderError: standingError,
+          failed: !deferredError && !standingError,
+          failedProviderError: deferredError || standingError ? null : {
             code: effectiveError.code || 'CDP_HISTORY_FAILED',
             detail: publicErrorDetail(effectiveError),
           },

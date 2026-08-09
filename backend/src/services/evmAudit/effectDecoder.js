@@ -263,8 +263,11 @@ function effectsFromInternalObservations(context, observations) {
   const effects = [];
   for (const [hash, rows] of byTransaction) {
     const internalRows = rows.filter((row) => row.evidence_kind !== 'native_credit'
-      && row.payload_json?.native_credit !== true);
-    const indexedProviders = ['coinbase-cdp', 'moralis', 'coinbase-cdp-recovery'];
+      && row.payload_json?.native_credit !== true
+      && !(context.chainId === 8453 && row.provider === 'moralis'));
+    const indexedProviders = context.chainId === 8453
+      ? ['coinbase-cdp', 'coinbase-cdp-recovery']
+      : ['moralis', 'coinbase-cdp', 'coinbase-cdp-recovery'];
     const explorer = internalRows.filter((row) => ['blockscout', 'etherscan'].includes(row.provider));
     const explorerProvider = ['blockscout', 'etherscan']
       .find((provider) => explorer.some((row) => row.provider === provider));

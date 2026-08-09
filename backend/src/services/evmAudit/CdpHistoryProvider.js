@@ -333,6 +333,25 @@ function assertNoConflicts(items, seen = new Map()) {
   }
 }
 
+// Recovery pages intentionally omit CDP's decoded tokenTransfers collection,
+// so a later full address-history item may enrich the same transaction. The
+// mined coordinate is still authoritative: a changed block hash or height is
+// an integrity conflict even when economics are partial.
+function assertNoCoordinateConflicts(items, seen = new Map()) {
+  if (!Array.isArray(items)) throw invalidResponse('Coinbase CDP transaction page is not an array');
+  for (const item of items) {
+    const current = itemIdentity(item);
+    if (!current.hash) throw invalidResponse('Coinbase CDP page contained a transaction without a valid hash');
+    const previous = seen.get(current.hash);
+    if (previous && previous.identity !== current.identity) {
+      const error = new Error(`Coinbase CDP returned conflicting coordinates for ${current.hash}`);
+      error.code = 'CDP_CONFLICTING_TRANSACTION';
+      throw error;
+    }
+    if (!previous) seen.set(current.hash, current);
+  }
+}
+
 function dedupeItems(items, seen = new Map()) {
   if (!Array.isArray(items)) throw invalidResponse('Coinbase CDP transaction page is not an array');
   const unique = [];
@@ -364,6 +383,7 @@ module.exports = {
   nativeCreditRows,
   dedupeItems,
   assertNoConflicts,
+  assertNoCoordinateConflicts,
   itemIdentity,
   sha256,
 };

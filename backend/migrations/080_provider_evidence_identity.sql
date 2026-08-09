@@ -14,6 +14,20 @@ ALTER TABLE evm_provider_pages
 
 DO $$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'evm_provider_pages'::regclass
+       AND conname = 'evm_provider_pages_evidence_identity_sha256_check'
+  ) THEN
+    ALTER TABLE evm_provider_pages
+      ADD CONSTRAINT evm_provider_pages_evidence_identity_sha256_check
+      CHECK (evidence_identity_sha256 ~ '^[0-9a-f]{64}$');
+  END IF;
+END
+$$;
+
+DO $$
+BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'evm_provider_pages'::regclass
@@ -43,6 +57,20 @@ UPDATE eth_provider_pages
 
 ALTER TABLE eth_provider_pages
   ALTER COLUMN evidence_identity_sha256 SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'eth_provider_pages'::regclass
+       AND conname = 'eth_provider_pages_evidence_identity_sha256_check'
+  ) THEN
+    ALTER TABLE eth_provider_pages
+      ADD CONSTRAINT eth_provider_pages_evidence_identity_sha256_check
+      CHECK (evidence_identity_sha256 ~ '^[0-9a-f]{64}$');
+  END IF;
+END
+$$;
 
 DO $$
 BEGIN

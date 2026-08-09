@@ -20,6 +20,7 @@ const { shortAddress } = require('../utils/ethAddress');
 const CdpClient = require('./evmAudit/CdpClient');
 const CdpHistoryProvider = require('./evmAudit/CdpHistoryProvider');
 const CdpRecoveryProvider = require('./evmAudit/CdpRecoveryProvider');
+const normalizer = require('./evmAudit/normalizer');
 const RpcClient = require('./evmAudit/RpcClient');
 
 const cdpAddressTransactionItems = CdpClient.addressTransactionItems;
@@ -165,9 +166,10 @@ function coverageFailureStatus(error) {
   if (isExplorerRateLimited(error) || String(error?.code || '').startsWith('CDP_')
       && ['CDP_RATE_LIMITED', 'CDP_QUOTA_EXHAUSTED', 'CDP_TRANSPORT_ERROR', 'CDP_NOT_CONFIGURED',
         'CDP_SCAN_BUSY', 'CDP_RESPONSE_TOO_LARGE', 'CDP_ADDRESS_ENUMERATION_UNPROVEN',
-        'CDP_RECOVERY_UNSUPPORTED', 'CDP_RECOVERY_FAILED'].includes(error.code)) {
+        'CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE'].includes(error.code)) {
     return 'deferred';
   }
+  if (error?.code === 'CDP_RECOVERY_UNSUPPORTED') return 'unsupported';
   if (['RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR'].includes(error?.code)) return 'deferred';
   return ['ETHERSCAN_CHAIN_UNAVAILABLE', 'ETHERSCAN_FEED_UNSUPPORTED'].includes(error?.code)
     ? 'unsupported' : 'failed';
@@ -202,27 +204,45 @@ function retryAfterMsForResult(result) {
 }
 
 class EthWalletService {
-  static async _recoverKnownCdpTransactions(wallet, chain, cdp, scanId, throughBlock, oversizedError) {
+  static async _recoverKnownCdpTransactions(
+    wallet, chain, cdp, scanId, throughBlock, oversizedError, historicalRecoveryTransactions = new Map()
+  ) {
     const allCandidates = await EthTransfer.cdpRecoveryCandidates(wallet.id, chain.id, throughBlock);
-    const journal = await EthProviderPage.forScan(wallet.id, chain.id, scanId);
+    // Keep the bounded recovery queue resumable across provider scan IDs. A
+    // new finalized head starts a new ordinary scan, but already journaled
+    // transaction-scoped evidence must not spend Core quota again.
+    const journal = await EthProviderPage.forWalletChain(wallet.id, chain.id);
     const completedRecoveryHashes = new Set(journal
       .filter((page) => page.stream === 'transaction-recovery')
       .map((page) => String(page.request_params?.transaction_hash || '').toLowerCase())
       .filter(Boolean));
+    const terminalFailureHashes = new Set(journal
+      .filter((page) => page.stream === 'transaction-recovery-failure')
+      .filter((page) => {
+        const body = typeof page.response_json === 'string'
+          ? JSON.parse(page.response_json) : page.response_json;
+        return body?.retryable === false;
+      })
+      .map((page) => String(page.request_params?.transaction_hash || '').toLowerCase())
+      .filter(Boolean));
     const pendingCandidates = allCandidates.filter((candidate) => (
       !completedRecoveryHashes.has(String(candidate.tx_hash).toLowerCase())
+      && !terminalFailureHashes.has(String(candidate.tx_hash).toLowerCase())
     ));
     const candidates = pendingCandidates.slice(0, CdpRecoveryProvider.MAX_RECOVERY_CANDIDATES);
     let recovered = 0;
+    let terminalFailure = null;
     const traceCache = new Map();
     for (const candidate of candidates) {
       const candidateHash = String(candidate.tx_hash).toLowerCase();
-      const recovery = await CdpRecoveryProvider.recoverTransaction(cdp, {
-        ...candidate,
-        hash: candidateHash,
-      }, {
-        traceCache,
-        onEvidence: async (response) => {
+      let recovery;
+      try {
+        recovery = await CdpRecoveryProvider.recoverTransaction(cdp, {
+          ...candidate,
+          hash: candidateHash,
+        }, {
+          traceCache,
+          onEvidence: async (response, metadata = {}) => {
           await EthProviderPage.record({
             walletId: wallet.id,
             chainId: chain.id,
@@ -234,6 +254,7 @@ class EthWalletService {
               transaction_hash: candidateHash,
               method: response.method,
               params: response.params,
+              ...(metadata.blockHash ? { block_hash: metadata.blockHash } : {}),
             },
             responseSha256: response.responseSha256,
             evidenceIdentitySha256: response.evidenceIdentitySha256,
@@ -242,8 +263,42 @@ class EthWalletService {
             itemCount: 0,
             owner: PROVIDER_SCAN_OWNER,
           });
-        },
-      });
+          },
+        });
+      } catch (error) {
+        if (['CDP_QUOTA_EXHAUSTED', 'CDP_RATE_LIMITED', 'CDP_TRANSPORT_ERROR'].includes(error.code)) throw error;
+        const terminal = !['CDP_RECOVERY_NOT_FOUND', 'CDP_RECOVERY_TRACE_UNAVAILABLE'].includes(error.code);
+        const wrapped = CdpRecoveryProvider.recoveryError(
+          `Base CDP transaction-scoped recovery failed for ${candidateHash}: ${error.message}`,
+          error.code === 'CDP_API_ERROR' ? 'CDP_RECOVERY_UNSUPPORTED'
+            : terminal ? 'CDP_RECOVERY_FAILED' : error.code,
+          { retryAt: error.retryAt || new Date(Date.now() + 60 * 60 * 1000) }
+        );
+        if (terminal) terminalFailure ||= wrapped;
+        const failure = {
+          recovery: 'coinbase-cdp-core', transaction_hash: candidateHash,
+          status: 'failed', retryable: !terminal, error_code: wrapped.code,
+          error_detail: wrapped.message,
+        };
+        const failureRaw = JSON.stringify(failure);
+        const failureParams = {
+          address: wallet.address.toLowerCase(), transaction_hash: candidateHash,
+          recovery: 'core-rpc-transaction-receipt-block-calltracer',
+        };
+        await EthProviderPage.record({
+          walletId: wallet.id, chainId: chain.id, provider: 'coinbase-cdp',
+          stream: 'transaction-recovery-failure', scanId,
+          requestParams: failureParams, cursorIn: null, cursorOut: null,
+          responseSha256: normalizer.sha256(failureRaw),
+          evidenceIdentitySha256: normalizer.sha256(JSON.stringify({ request: failureParams, response: failureRaw })),
+          responseRaw: failureRaw, responseJson: failure, itemCount: 0,
+          owner: PROVIDER_SCAN_OWNER,
+        });
+        continue;
+      }
+      CdpHistoryProvider.assertNoCoordinateConflicts(
+        [recovery.item], historicalRecoveryTransactions
+      );
       await EthProviderPage.record({
         walletId: wallet.id,
         chainId: chain.id,
@@ -264,6 +319,7 @@ class EthWalletService {
       });
       recovered += 1;
     }
+    if (terminalFailure) return terminalFailure;
     return CdpRecoveryProvider.recoveryError(
       `Base CDP address history exceeded the provider response limit (${oversizedError.message}). Core RPC recovery preserved ${recovered} new transaction-scoped response(s) from a bounded ${candidates.length}/${pendingCandidates.length} pending queue (${completedRecoveryHashes.size} already journaled; ${allCandidates.length} known candidates total), but CDP exposes no documented address-history enumeration fallback to prove the failed page contained no additional transaction.`,
       'CDP_ADDRESS_ENUMERATION_UNPROVEN',
@@ -410,7 +466,8 @@ class EthWalletService {
             walletId: wallet.id,
             chainId: chain.id,
             provider: 'coinbase-cdp',
-            stream: 'address-history-failure',
+            stream: attempt.endpoint === 'transaction-recovery'
+              ? 'transaction-recovery-failure' : 'address-history-failure',
             scanId,
             cursorIn: state.provider_cursor || null,
             requestParams: attempt.requestParams || {},
@@ -431,11 +488,22 @@ class EthWalletService {
     const feeds = { normal: [], internal: [], token: [], nft: [], nft1155: [], statesync: [] };
     const seenCdpTransactions = new Map();
     const historicalCdpTransactions = new Map();
+    const historicalRecoveryTransactions = new Map();
     try {
       const journal = await EthProviderPage.forWalletChain(wallet.id, chain.id);
+      for (const page of journal.filter((entry) => entry.stream === 'transaction-recovery')) {
+        const body = typeof page.response_json === 'string'
+          ? JSON.parse(page.response_json) : page.response_json;
+        if (body?.item) CdpHistoryProvider.assertNoCoordinateConflicts(
+          [body.item], historicalRecoveryTransactions
+        );
+      }
       for (const page of journal.filter((entry) => entry.stream === 'address-history')) {
         const body = typeof page.response_json === 'string'
           ? JSON.parse(page.response_json) : page.response_json;
+        CdpHistoryProvider.assertNoCoordinateConflicts(
+          cdpAddressTransactionItems(body), historicalRecoveryTransactions
+        );
         CdpHistoryProvider.assertNoConflicts(
           cdpAddressTransactionItems(body), historicalCdpTransactions
         );
@@ -572,7 +640,8 @@ class EthWalletService {
       if (error.code === 'CDP_RESPONSE_TOO_LARGE') {
         try {
           effectiveError = await this._recoverKnownCdpTransactions(
-            wallet, chain, cdp, scanId, boundary.number, error
+            wallet, chain, cdp, scanId, boundary.number, error,
+            historicalRecoveryTransactions
           );
         } catch (recoveryError) {
           effectiveError = recoveryError;

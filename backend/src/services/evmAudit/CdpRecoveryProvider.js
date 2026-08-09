@@ -168,7 +168,7 @@ function syntheticHistoryItem(transaction, receipt, block, traces, coordinates) 
       blockNumber: `0x${coordinates.blockNumber.toString(16)}`,
       blockHash: coordinates.blockHash,
       transactionIndex: `0x${coordinates.transactionIndex.toString(16)}`,
-      logs: Array.isArray(receipt.logs) ? receipt.logs : [],
+      logs: receipt.logs,
     },
     // Core RPC does not provide CDP's decoded tokenTransfers collection. The
     // receipt logs remain canonical evidence and are decoded later by the
@@ -206,6 +206,12 @@ async function recoverTransaction(client, candidate, {
   const receipt = receiptResponse.body;
   if (!transaction || !receipt) {
     throw recoveryError(`Coinbase CDP recovery could not find mined transaction ${hash}`, 'CDP_RECOVERY_NOT_FOUND');
+  }
+  if (!Array.isArray(receipt.logs)) {
+    throw recoveryError(
+      `Coinbase CDP recovery returned a receipt without a complete logs collection for ${hash}`,
+      'CDP_INVALID_RESPONSE'
+    );
   }
   const blockNumber = transaction.blockNumber;
   const blockResponse = await rpc('eth_getBlockByNumber', [blockNumber, false]);
@@ -274,6 +280,7 @@ async function recoverTransaction(client, candidate, {
     response: {
       body: {
         recovery: 'coinbase-cdp-core',
+        item,
         transaction,
         receipt,
         block,
@@ -281,6 +288,11 @@ async function recoverTransaction(client, candidate, {
       },
       rawText,
       responseSha256: sha256(rawText),
+      evidenceIdentitySha256: sha256(stableJson({
+        recovery: 'coinbase-cdp-core', hash,
+        blockHash: coordinates.blockHash, blockNumber: coordinates.blockNumber,
+        responseSha256: sha256(rawText),
+      })),
       requestId: rawResponses.map((response) => response.requestId).filter(Boolean).join(',') || null,
     },
     identity: stableJson({ hash, blockHash: coordinates.blockHash, blockNumber: coordinates.blockNumber }),
