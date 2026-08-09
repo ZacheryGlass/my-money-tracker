@@ -219,6 +219,23 @@ test('CDP rejects conflicting address-history result collections before cursor a
   );
 });
 
+test('CDP classifies a successful envelope containing a provider result error', async (t) => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => jsonRpcResult({
+    code: 'METHOD_NOT_AVAILABLE', details: 'address history is not enabled',
+    message: 'The requested method is unavailable',
+  });
+  t.after(() => { global.fetch = originalFetch; });
+
+  await assert.rejects(
+    () => new CdpClient('test-key', { spacingMs: 0, maxAttempts: 1 })
+      .addressTransactionPages(WALLET).next(),
+    (error) => error.code === 'CDP_API_ERROR'
+      && error.message.includes('requested method is unavailable')
+      && error.message.includes('address history is not enabled')
+  );
+});
+
 test('CDP errors classify quota and rate limits with retry boundaries', async (t) => {
   const originalFetch = global.fetch;
   const responses = [

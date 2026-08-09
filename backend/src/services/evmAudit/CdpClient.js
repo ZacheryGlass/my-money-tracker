@@ -61,8 +61,33 @@ function nextCalendarMonth() {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
 }
 
-function responseError(response, body, method) {
-  const detail = String(body?.error?.message || body?.message || '').slice(0, 500);
+function resultError(body) {
+  const result = body?.result;
+  if (!result || typeof result !== 'object' || Array.isArray(result)
+      || Array.isArray(result.addressTransactions) || Array.isArray(result.transactions)
+      || Array.isArray(result.balances)) return null;
+  const detail = [result.message, result.details]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .join(': ');
+  return detail ? { code: result.code, detail } : null;
+}
+
+function safeDetail(value, apiKey) {
+  let detail = String(value || '').replace(/\s+/g, ' ').trim();
+  if (apiKey) detail = detail.split(String(apiKey)).join('[redacted]');
+  return detail.slice(0, 500);
+}
+
+function responseError(response, body, method, apiKey = null) {
+  const resultFailure = resultError(body);
+  const detail = safeDetail(
+    resultFailure?.detail || body?.error?.message || body?.message || '', apiKey
+  );
+  const resultCode = String(resultFailure?.code || '').toLowerCase();
+  const authFailure = /unauthorized|forbidden|invalid.{0,20}(?:key|credential)|permission/i.test(detail)
+    || /unauthoriz|forbidden|permission/.test(resultCode);
+  const rateFailure = /rate.?limit|too many requests|slow down/i.test(detail)
+    || /rate|throttl/.test(resultCode);
   if (response.status === 429) {
     const retryAfterMs = parseRetryAfter(response.headers.get('retry-after')) ?? 5_000;
     return providerError('Coinbase CDP rate limit reached; Base history deferred', 'CDP_RATE_LIMITED', {
@@ -85,6 +110,31 @@ function responseError(response, body, method) {
     return providerError('Coinbase CDP rejected the configured credential', 'CDP_AUTH_FAILED', {
       httpStatus: response.status,
     });
+  }
+  if (resultFailure && isQuotaError(detail)) {
+    return providerError('Coinbase CDP usage limit reached; Base history deferred', 'CDP_QUOTA_EXHAUSTED', {
+      httpStatus: response.status,
+      retryAt: nextCalendarMonth(),
+    });
+  }
+  if (resultFailure && rateFailure) {
+    return providerError('Coinbase CDP rate limit reached; Base history deferred', 'CDP_RATE_LIMITED', {
+      httpStatus: response.status,
+      retryAfterMs: 5_000,
+      retryAt: new Date(Date.now() + 5_000),
+    });
+  }
+  if (resultFailure && authFailure) {
+    return providerError('Coinbase CDP rejected the configured credential', 'CDP_AUTH_FAILED', {
+      httpStatus: response.status,
+    });
+  }
+  if (resultFailure) {
+    return providerError(
+      `Coinbase CDP ${method} returned an error${detail ? `: ${detail}` : ''}`,
+      'CDP_API_ERROR',
+      { httpStatus: response.status }
+    );
   }
   if (body?.error) {
     const code = String(body.error.code || '').toLowerCase();
@@ -239,10 +289,11 @@ class CdpClient {
         }
         const hasResult = body && typeof body === 'object' && !Array.isArray(body)
           && body.result != null;
+        const resultFailure = resultError(body);
         // Do not accept a malformed JSON-RPC envelope that contains both an
         // error and a result. A partial result paired with an error is not a
         // proven page and must not advance a durable cursor.
-        if (response.ok && hasResult && !body.error) {
+        if (response.ok && hasResult && !body.error && !resultFailure) {
           return {
             body: body.result,
             rawText: text,
@@ -251,7 +302,7 @@ class CdpClient {
           };
         }
 
-        const error = responseError(response, body, method);
+        const error = responseError(response, body, method, this.apiKey);
         const retryable = error.code === 'CDP_RATE_LIMITED' && attempt < this.maxAttempts;
         await this.onFailedAttempt?.({
           provider: 'coinbase-cdp', endpoint, method: 'POST', attemptNo: attempt,
