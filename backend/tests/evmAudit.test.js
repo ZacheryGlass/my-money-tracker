@@ -258,6 +258,10 @@ test('standing explorer feed limitations defer only that chain', () => {
   assert.equal(EvmAuditService._isStandingExplorerLimitation({
     code: 'ETHERSCAN_FEED_FAILED',
   }), false);
+  assert.equal(EvmAuditService._isStandingExplorerLimitation({
+    code: 'BLOCKSCOUT_FEED_FAILED',
+    message: 'Blockscout does not serve txlistinternal: Some internal transactions within this block range have not yet been processed',
+  }), true);
   const source = fs.readFileSync(
     path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8'
   );
