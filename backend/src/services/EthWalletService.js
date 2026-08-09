@@ -22,6 +22,7 @@ const CdpHistoryProvider = require('./evmAudit/CdpHistoryProvider');
 const RpcClient = require('./evmAudit/RpcClient');
 
 const cdpAddressTransactionItems = CdpClient.addressTransactionItems;
+const CDP_HISTORY_PAGE_SIZE = CdpClient.DEFAULT_HISTORY_PAGE_SIZE;
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 
@@ -398,7 +399,7 @@ class EthWalletService {
       }
       for await (const page of cdp.addressTransactionPages(wallet.address, {
         cursor: state.provider_cursor || null,
-        pageSize: 100,
+        pageSize: CDP_HISTORY_PAGE_SIZE,
       })) {
         const blocks = page.items.map(cdpItemBlockNumber)
           .filter((block) => block != null && block <= boundary.number);
@@ -406,7 +407,9 @@ class EthWalletService {
         await EthProviderPage.record({
           walletId: wallet.id, chainId: chain.id, provider: 'coinbase-cdp',
           stream: 'address-history', scanId, cursorIn: page.cursorIn, cursorOut: page.cursorOut,
-          requestParams: { address: wallet.address.toLowerCase(), page_size: 100, page_token: page.cursorIn },
+          requestParams: {
+            address: wallet.address.toLowerCase(), page_size: page.pageSize, page_token: page.cursorIn,
+          },
           responseSha256: page.responseSha256, responseRaw: page.rawText,
           responseJson: page.body, itemCount: page.items.length, owner: PROVIDER_SCAN_OWNER,
         });

@@ -1027,7 +1027,6 @@ class EvmAuditService {
       try {
         for await (const page of cdp.addressTransactionPages(job.address, {
           cursor,
-          pageSize: 100,
         })) {
           assertLease(leaseState);
           const blocks = page.items
@@ -1047,7 +1046,7 @@ class EvmAuditService {
           else if (orderDirection && order !== orderDirection) order = 'unknown';
           const pageEvidence = pageRecord(
             'coinbase-cdp', 'address-history', {
-              address: job.address.toLowerCase(), page_size: 100, page_token: page.cursorIn,
+              address: job.address.toLowerCase(), page_size: page.pageSize, page_token: page.cursorIn,
             }, page, page.cursorIn, page.cursorOut, page.items.length, order
           );
           await recordRawPage(historyScope.id, pageEvidence);
