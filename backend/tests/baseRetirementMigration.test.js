@@ -8,9 +8,36 @@ const path = require('node:path');
 const migrationPath = path.join(__dirname, '..', 'migrations', '082_retire_base_chain.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const sql = migration.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
+const indexMigrationPath = path.join(
+  __dirname, '..', 'migrations', '081a_evm_observation_fk_indexes.sql'
+);
+const indexMigration = fs.readFileSync(indexMigrationPath, 'utf8');
+const indexSql = indexMigration.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
 const providerIdentityMigration = fs.readFileSync(
   path.join(__dirname, '..', 'migrations', '080_provider_evidence_identity.sql'), 'utf8'
 );
+
+test('provider observation foreign keys are indexed before Base retirement', () => {
+  assert.ok(path.basename(indexMigrationPath) < path.basename(migrationPath));
+  assert.match(indexSql, /^BEGIN; .* COMMIT;$/);
+
+  for (const [table, columns] of [
+    ['evm_job_observations', 'observation_id, subject_id, chain_id'],
+    ['evm_effect_evidence', 'observation_id, subject_id, chain_id'],
+    ['evm_transaction_evidence', 'observation_id, subject_id, chain_id'],
+    ['eth_transfers', 'audit_observation_id'],
+    ['evm_canonical_effects', 'selected_observation_id, subject_id, chain_id'],
+    ['evm_mined_transactions', 'selected_observation_id, subject_id, chain_id'],
+  ]) {
+    assert.match(
+      indexSql,
+      new RegExp(`CREATE INDEX IF NOT EXISTS \\w+ ON ${table}\\(${columns}\\)`),
+      `${table} foreign key index`
+    );
+  }
+
+  assert.doesNotMatch(indexSql, /DROP (?:CONSTRAINT|INDEX)|DISABLE/);
+});
 
 test('Base retirement migration is transactional and repeat-safe', () => {
   assert.match(migration, /^-- 082: retire Base Mainnet/m);
