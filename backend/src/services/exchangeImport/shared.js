@@ -281,6 +281,9 @@ const EVM_NETWORK_CHAIN_IDS = new Map([
   ['arbitrum', 42161],
   ['arbitrum one', 42161],
   ['linea', 59144],
+  ['base', 8453],
+  ['base mainnet', 8453],
+  ['base network', 8453],
 ]);
 
 function normalizeNetwork(value) {

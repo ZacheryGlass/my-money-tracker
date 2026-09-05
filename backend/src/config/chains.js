@@ -49,6 +49,11 @@
 //
 // Explorer links live on the client (frontend/src/utils/chains.js): they are
 // presentation derived from a chain id the API already sends.
+function configuredRpcUrl(name, fallback) {
+  const value = process.env[name];
+  return value && value.trim() ? value.trim() : fallback;
+}
+
 const REGISTRY = [
   {
     id: 1,
@@ -63,6 +68,9 @@ const REGISTRY = [
     // than as an error -- so these are verified, not guessed.
     coingeckoPlatform: 'ethereum',
     enabledByDefault: true,
+    consensusRpcUrl: configuredRpcUrl(
+      'ETHEREUM_RPC_URL', 'https://ethereum-rpc.publicnode.com'
+    ),
   },
   {
     id: 42161,
@@ -71,6 +79,7 @@ const REGISTRY = [
     nativeAsset: 'ETH',
     coingeckoPlatform: 'arbitrum-one',
     enabledByDefault: true,
+    consensusRpcUrl: configuredRpcUrl('ARBITRUM_RPC_URL', 'https://arb1.arbitrum.io/rpc'),
     // Classic-era (pre-Nitro) L1->L2 ETH deposits, which Etherscan's txlist
     // serves BACKWARDS. The chain's pre-Nitro history was migrated into Nitro,
     // and the migrated retryable-ticket deposit comes back as an OUTBOUND row:
@@ -108,6 +117,7 @@ const REGISTRY = [
     nativeAsset: 'ETH',
     coingeckoPlatform: 'linea',
     enabledByDefault: true,
+    consensusRpcUrl: configuredRpcUrl('LINEA_RPC_URL', 'https://rpc.linea.build'),
   },
   {
     id: 324,
@@ -145,6 +155,7 @@ const REGISTRY = [
     nativeAsset: 'POL',
     coingeckoPlatform: 'polygon-pos',
     enabledByDefault: true,
+    consensusRpcUrl: configuredRpcUrl('POLYGON_RPC_URL', 'https://polygon.drpc.org'),
     // A SIXTH per-(wallet, chain) feed, declared here and NOWHERE ELSE (#76).
     // Polygon credits bridged-in native POL through the Bor STATE SYNC, which
     // is a system transaction present in NONE of the five Etherscan account
@@ -189,6 +200,20 @@ const REGISTRY = [
       baseUrl: 'https://gnosis.blockscout.com/api',
       requiresApiKey: false,
     },
+    // Gnosis Blockscout explicitly reports partially indexed internal ranges.
+    // Etherscan V2 currently lists Gnosis on its supported free-tier chains,
+    // so route only txlistinternal there while the other feeds retain the
+    // independently bounded Blockscout head. This remains fail-closed: a
+    // missing/ineligible key leaves the internal cursor frozen and records the
+    // feed gap instead of accepting Blockscout's partial response.
+    accountApiOverrides: {
+      txlistinternal: {
+        provider: 'Etherscan',
+        baseUrl: 'https://api.etherscan.io/v2/api',
+        requiresApiKey: true,
+        params: { chainid: 100 },
+      },
+    },
     // Blockscout's indexed account balance may be stale while it refreshes in
     // the background. Reconciliation needs the chain head, so native and token
     // balance reads use Gnosis' public JSON-RPC endpoint instead.
@@ -232,6 +257,37 @@ const REGISTRY = [
     // (topic2); amount is data word 0. The same predeploy is used by OP and
     // OP Stack's standard bridge also covers third-party frontends that settle
     // through the canonical StandardBridge.
+    stateSyncDeposits: {
+      contract: '0x4200000000000000000000000000000000000010',
+      topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
+      userTopicIndex: 2,
+    },
+  },
+  {
+    id: 8453,
+    name: 'Base',
+    shortName: 'Base',
+    nativeAsset: 'ETH',
+    coingeckoPlatform: 'base',
+    enabledByDefault: true,
+    // Base Blockscout exposes the same bounded account-feed contract used by
+    // OP, Gnosis, and Era. Its internal index can report a range as incomplete;
+    // EtherscanService turns that response into a durable feed gap and never
+    // advances the cursor through unproven history.
+    accountApi: {
+      provider: 'Blockscout',
+      baseUrl: 'https://base.blockscout.com/api',
+      v2BaseUrl: 'https://base.blockscout.com/api/v2',
+      requiresApiKey: false,
+    },
+    rpcUrl: configuredRpcUrl('BASE_RPC_URL', 'https://mainnet.base.org'),
+    consensusRpcUrl: configuredRpcUrl('BASE_RPC_URL', 'https://mainnet.base.org'),
+    // Version 3 is the first generic-provider ingestion. Any Base chain rows
+    // restored from the retired CDP era must restart their feed cursors at 0.
+    ingestVersion: 3,
+    opStackDeposits: {
+      creditSource: '0x4200000000000000000000000000000000000010',
+    },
     stateSyncDeposits: {
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
@@ -292,7 +348,7 @@ const BY_ID = new Map(REGISTRY.map((chain) => [chain.id, chain]));
 // recognises.
 const NATIVE_SYMBOLS = new Set(REGISTRY.map((chain) => chain.nativeAsset));
 
-// `ETH_CHAINS=1` restores strict mainnet-only sync; `ETH_CHAINS=1,42161`
+// `ETH_CHAINS=1` restores strict mainnet-only sync; `ETH_CHAINS=1,42161,8453`
 // picks an explicit set. Parsed on every call rather than memoized: it is a
 // split of a short string, and a cached copy would go stale against a test or a
 // restart-free config change for no measurable gain.
@@ -325,14 +381,32 @@ function enabledChains() {
 // The default Etherscan transport needs the user's key; a chain-declared
 // account API can explicitly be keyless. Orchestration gates use this rather
 // than assuming every enabled chain needs Etherscan credentials.
-function accountApiRequiresKey(chainId) {
+function accountApiConfig(chainId, action = null) {
+  const chain = getChain(chainId);
+  if (!chain) return null;
+  return (action && chain.accountApiOverrides?.[action]) || chain.accountApi || null;
+}
+
+function accountApiRequiresKey(chainId, action = null) {
   const chain = getChain(chainId);
   if (chain?.requiresApiKey === false) return false;
-  const accountApi = chain?.accountApi;
+  const accountApi = accountApiConfig(chainId, action);
   return accountApi ? accountApi.requiresApiKey !== false : true;
 }
 
+function chainAccountApisRequireKey(chainId) {
+  const chain = getChain(chainId);
+  if (!chain || chain.requiresApiKey === false) return false;
+  if (accountApiRequiresKey(chainId)) return true;
+  return Object.values(chain.accountApiOverrides || {})
+    .some((accountApi) => accountApi.requiresApiKey !== false);
+}
+
 function enabledChainsRequireApiKey() {
+  // Used by add/bulk-add preflight. A keyed override must not block a chain
+  // whose primary feed is keyless: the sync records that one feed's missing-key
+  // gap while its neighbours continue. Full audits use
+  // chainAccountApisRequireKey because complete evidence needs every feed.
   return enabledChains().some((chain) => accountApiRequiresKey(chain.id));
 }
 
@@ -401,6 +475,8 @@ module.exports = {
   enabledChains,
   enabledChainIds,
   enabledChainsRequireApiKey,
+  chainAccountApisRequireKey,
+  accountApiConfig,
   accountApiRequiresKey,
   allChains,
   getChain,

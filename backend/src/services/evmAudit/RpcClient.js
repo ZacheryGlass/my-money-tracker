@@ -26,10 +26,11 @@ function quantity(value, label) {
 class RpcClient {
   constructor(chainId, { spacingMs = 200, onFailedAttempt = null } = {}) {
     const chain = chains.getChain(chainId);
-    if (!chain?.rpcUrl) throw rpcError(`Chain ${chainId} has no configured consensus RPC`, 'RPC_UNSUPPORTED');
+    const rpcUrl = chain?.consensusRpcUrl || chain?.rpcUrl;
+    if (!rpcUrl) throw rpcError(`Chain ${chainId} has no configured consensus RPC`, 'RPC_UNSUPPORTED');
     this.chainId = Number(chainId);
-    this.url = chain.rpcUrl;
-    this.host = new URL(chain.rpcUrl).host;
+    this.url = rpcUrl;
+    this.host = new URL(rpcUrl).host;
     this.spacingMs = spacingMs;
     this.onFailedAttempt = onFailedAttempt;
   }

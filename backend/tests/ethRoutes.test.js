@@ -252,7 +252,7 @@ test('POST /api/eth/wallets/bulk allows a keyless-only chain set', async () => {
   const originalAddWallet = EthWalletService.addWallet;
   const originalSyncWallet = EthWalletService.syncWallet;
   const priorChains = process.env.ETH_CHAINS;
-  process.env.ETH_CHAINS = '100';
+  process.env.ETH_CHAINS = '324';
   EthWalletService.addWallet = async (userId, address) => ({
     wallet: { id: 77, user_id: userId, address },
     account: { id: 88 },

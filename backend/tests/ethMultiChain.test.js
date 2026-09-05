@@ -250,6 +250,21 @@ test('the configured Blockscout floor preserves stricter operator pacing', (t) =
   assert.equal(EtherscanService._provider(100).spacingMs, 20000);
 });
 
+test('Gnosis routes only internal traces through keyed Etherscan V2', () => {
+  const normal = EtherscanService._provider(100, 'key', 'txlist');
+  const internal = EtherscanService._provider(100, 'key', 'txlistinternal');
+
+  assert.equal(normal.name, 'Blockscout');
+  assert.equal(normal.baseUrl, 'https://gnosis.blockscout.com/api');
+  assert.equal(normal.requiresApiKey, false);
+  assert.equal(internal.name, 'Etherscan');
+  assert.equal(internal.baseUrl, 'https://api.etherscan.io/v2/api');
+  assert.equal(internal.requiresApiKey, true);
+  assert.deepEqual(internal.params, { chainid: 100 });
+  assert.equal(internal.key, EtherscanService._provider(1, 'key').key,
+    'the same user key shares one Etherscan throttle queue across chains');
+});
+
 test('all live-probed chains default on through their configured providers', () => {
   delete process.env.ETH_CHAINS;
   const byId = new Map(chains.allChains().map((chain) => [chain.id, chain]));
@@ -902,10 +917,9 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
     (err) => err.code === 'ETHERSCAN_FEED_UNSUPPORTED'
   );
 
-  // Blockscout returns status=2 with partial internal rows while a requested
-  // range is not completely indexed. Treating those rows as complete would
-  // advance the cursor beyond transfers that have not appeared yet. Reporting
-  // the feed gap preserves stored history and makes the limitation visible.
+  // Any Etherscan-shaped provider status=2 response that admits a partial
+  // internal range must remain fail-closed. Gnosis now routes this feed to
+  // Etherscan, but the response guard remains provider-independent.
   axios.get = async () => ({
     data: {
       status: '2',
@@ -914,7 +928,7 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
     },
   });
   await assert.rejects(
-    () => EtherscanService.fetchInternalTxs(WALLET, 0, null, 100),
+    () => EtherscanService.fetchInternalTxs(WALLET, 0, 'key', 100),
     (err) => err.code === 'ETHERSCAN_FEED_UNSUPPORTED' && err.chainId === 100
   );
   axios.get = async () => ({
@@ -925,7 +939,7 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
     },
   });
   await assert.rejects(
-    () => EtherscanService.fetchInternalTxs(WALLET, 0, null, 100),
+    () => EtherscanService.fetchInternalTxs(WALLET, 0, 'key', 100),
     (err) => err.code === 'ETHERSCAN_FEED_UNSUPPORTED' && err.chainId === 100
   );
 
@@ -1147,10 +1161,10 @@ test('a block at the provider 10000-row ceiling freezes instead of dropping an u
 
 test('a keyless-only chain set syncs without an Etherscan credential', async (t) => {
   const { calls } = harness(t, {
-    chainSet: '100',
+    chainSet: '324',
     apiKey: null,
     feedBehavior: {
-      '100:normal': [{
+      '324:normal': [{
         blockNumber: '42',
         timeStamp: '1700000000',
         hash: '0xkeyless',
@@ -1166,10 +1180,36 @@ test('a keyless-only chain set syncs without an Etherscan credential', async (t)
 
   const result = await EthWalletService.syncWallet(7);
 
-  assert.deepEqual(result.chains.map((row) => row.chainId), [100]);
-  assert.ok(calls.fetches.every((call) => call.chainId === 100));
+  assert.deepEqual(result.chains.map((row) => row.chainId), [324]);
+  assert.ok(calls.fetches.every((call) => call.chainId === 324));
   assert.ok(calls.fetches.every((call) => call.apiKey == null));
-  assert.equal(calls.inserted[0].chain_id, 100);
+  assert.equal(calls.inserted[0].chain_id, 324);
+});
+
+test('a missing Gnosis override key freezes only the internal feed', async (t) => {
+  const missingKey = new Error(
+    'Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.'
+  );
+  missingKey.code = 'ETHERSCAN_NOT_CONFIGURED';
+  const { calls } = harness(t, {
+    chainSet: '100',
+    apiKey: null,
+    feedBehavior: {
+      '100:internal': () => { throw missingKey; },
+    },
+  });
+
+  const result = await EthWalletService.syncWallet(7);
+
+  assert.deepEqual(result.failedFeeds, ['Gnosis Chain/internal']);
+  assert.deepEqual(calls.deletes.map((row) => row.types), [
+    'native,gas', 'token', 'nft', 'nft1155', 'internal',
+  ]);
+  const coverage = calls.coverage[0].entries;
+  assert.equal(coverage.find((row) => row.feed === 'internal').status, 'failed');
+  assert.match(coverage.find((row) => row.feed === 'internal').provider, /^Etherscan /);
+  assert.ok(coverage.filter((row) => ['normal', 'token', 'nft', 'nft1155', 'statesync'].includes(row.feed))
+    .every((row) => row.status === 'complete'));
 });
 
 test('Gnosis live balances use keyless RPC instead of Blockscout indexed balances', async (t) => {
@@ -1581,7 +1621,7 @@ test('OP Stack deposit reshaping declines every off-shape enriched row', () => {
   }
 });
 
-test('Blockscout internal transactionHash is normalized to the ingestion hash field', async (t) => {
+test('internal transactionHash aliases are normalized to the ingestion hash field', async (t) => {
   const axios = require('axios');
   const original = axios.get;
   axios.get = async () => ({
@@ -1600,7 +1640,7 @@ test('Blockscout internal transactionHash is normalized to the ingestion hash fi
   });
   t.after(() => { axios.get = original; });
 
-  const rows = await EtherscanService.fetchInternalTxs(WALLET, 0, null, 100);
+  const rows = await EtherscanService.fetchInternalTxs(WALLET, 0, 'key', 100);
   assert.equal(rows[0].hash, '0xblockscout');
   assert.equal(rows[0].transactionHash, '0xblockscout');
 });

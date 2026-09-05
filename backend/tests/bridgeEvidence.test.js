@@ -110,6 +110,34 @@ test('OP Stack endpoints route Optimism and sourceHash proves identity', () => {
   ])[0].status, 'failed');
 });
 
+test('OP Stack endpoints route Base separately from Optimism', () => {
+  const sourceTx = hash('b');
+  const destinationTx = hash('c');
+  const blockHash = hash('d');
+  const portal = address('1');
+  const source = envelope({
+    chainId: 1, txHash: sourceTx, category: 'bridge_out', blockHash,
+    endpoints: [endpoint('base', 1, portal), endpoint('optimism', 1, address('2'))],
+  });
+  source.receipt.logs = [log({
+    txHash: sourceTx, blockHash, logAddress: portal, index: 7,
+    topics: [TOPICS.opTransactionDeposited],
+  })];
+  const sourceHash = opSourceHash(blockHash, 7);
+  const destination = envelope({
+    walletId: 2, chainId: 8453, txHash: destinationTx, category: 'bridge_in',
+    tx: { sourceHash, type: '0x7e' },
+  });
+
+  const decoded = [...decodeEnvelope(destination), ...decodeEnvelope(source)];
+  assert.equal(decoded.length, 2);
+  assert.deepEqual(new Set(decoded.map((row) => row.protocol)), new Set(['base']));
+  const movements = buildProtocolMovements(decoded);
+  assert.equal(movements.length, 1);
+  assert.equal(movements[0].status, 'protocol_verified');
+  assert.equal(movements[0].correlation_key, `op-deposit:${sourceHash}`);
+});
+
 test('Arbitrum Nitro uses non-indexed Outbox transactionIndex, not indexed compatibility zero', () => {
   const position = 43n;
   const sourceTx = hash('3');
@@ -786,20 +814,24 @@ test('the reviewed endpoint pack and generated migration seed cannot drift', () 
   assert.ok(migration.includes(buildSeed(pack)));
 });
 
-test('OP Mainnet keeps its shared OP Stack predeploy metadata', () => {
+test('Base and OP keep chain-scoped copies of their shared OP Stack predeploy metadata', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const pack = JSON.parse(fs.readFileSync(
     path.join(__dirname, '../data/builtin-bridge-labels.json'), 'utf8'
   ));
-  const optimismL2 = pack.labels.filter((entry) => (
-    entry.protocol === 'optimism' && entry.chain_id === 10
+  const baseL2 = pack.labels.filter((entry) => (
+    entry.protocol === 'base' && entry.chain_id === 8453
   ));
   assert.deepEqual(
-    optimismL2.map((entry) => entry.address).sort(),
+    baseL2.map((entry) => entry.address).sort(),
     [
       '0x4200000000000000000000000000000000000010',
       '0x4200000000000000000000000000000000000016',
     ]
   );
+  const { buildSeed } = require('../scripts/generate-bridge-endpoint-seed');
+  const seed = buildSeed(pack);
+  assert.match(seed, /\('base', 'bedrock', 8453, '0x4200000000000000000000000000000000000010'/);
+  assert.match(seed, /\('optimism', 'bedrock', 10, '0x4200000000000000000000000000000000000010'/);
 });

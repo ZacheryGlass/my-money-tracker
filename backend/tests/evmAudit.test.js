@@ -41,10 +41,10 @@ test('history audit enumerates every configured chain', () => {
   try {
     delete process.env.ETH_CHAINS;
     assert.deepEqual(EvmAuditService.supportedChainIds(), [
-      1, 10, 100, 137, 324, 42161, 59144, 32401,
+      1, 10, 100, 137, 324, 8453, 42161, 59144, 32401,
     ]);
     assert.deepEqual(EvmAuditService.configuredChainIds(), [
-      1, 10, 100, 137, 324, 42161, 59144, 32401,
+      1, 10, 100, 137, 324, 8453, 42161, 59144, 32401,
     ]);
   } finally {
     if (original == null) delete process.env.ETH_CHAINS;

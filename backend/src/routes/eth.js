@@ -250,7 +250,7 @@ router.post('/wallets/bulk', async (req, res) => {
 
     // The key is a property of the USER, not of any one address, so it is a
     // verdict on the whole request when the enabled provider set requires it.
-    // A keyless-only set (for example ETH_CHAINS=100) may proceed without one.
+    // A keyless-only set (for example ETH_CHAINS=324) may proceed without one.
     const apiKey = await SecretsService.getUserKey(req.user.id, 'etherscan');
     if (!apiKey && chains.enabledChainsRequireApiKey()) {
       return res.status(503).json({

@@ -33,11 +33,11 @@ const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 // Order matters only for throttle fairness -- the feeds are independent, and
 // each one's failure is isolated from the others (see _syncWalletChain).
 const FEED_SPECS = [
-  { key: 'normal', fetch: 'fetchNormalTxs', types: ['native', 'gas'] },
-  { key: 'internal', fetch: 'fetchInternalTxs', types: ['internal'] },
-  { key: 'token', fetch: 'fetchTokenTxs', types: ['token'] },
-  { key: 'nft', fetch: 'fetchNftTxs', types: ['nft'] },
-  { key: 'nft1155', fetch: 'fetch1155Txs', types: ['nft1155'] },
+  { key: 'normal', action: 'txlist', fetch: 'fetchNormalTxs', types: ['native', 'gas'] },
+  { key: 'internal', action: 'txlistinternal', fetch: 'fetchInternalTxs', types: ['internal'] },
+  { key: 'token', action: 'tokentx', fetch: 'fetchTokenTxs', types: ['token'] },
+  { key: 'nft', action: 'tokennfttx', fetch: 'fetchNftTxs', types: ['nft'] },
+  { key: 'nft1155', action: 'token1155tx', fetch: 'fetch1155Txs', types: ['nft1155'] },
   { key: 'statesync', fetch: 'fetchStateSyncDeposits', types: ['internal'], chainFeed: 'stateSyncDeposits' },
 ];
 
@@ -124,13 +124,14 @@ function scannedThroughBlock(rows) {
   return rows.scannedThroughBlock ?? maxBlock(rows);
 }
 
-function providerName(chain) {
+function providerName(chain, spec = null) {
   if (chain.historyProvider === 'zksync-lite') {
     return 'Matter Labs zkSync Lite archive';
   }
-  if (chain.accountApi) {
-    const accountUrl = chain.accountApi.v2BaseUrl || chain.accountApi.baseUrl;
-    return `${chain.accountApi.provider || 'chain explorer'} (${accountUrl})`;
+  const accountApi = chains.accountApiConfig(chain.id, spec?.action);
+  if (accountApi) {
+    const accountUrl = accountApi.v2BaseUrl || accountApi.baseUrl;
+    return `${accountApi.provider || 'chain explorer'} (${accountUrl})`;
   }
   return 'Etherscan V2';
 }
@@ -1011,16 +1012,11 @@ class EthWalletService {
   } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
-    // Credentials belong to the wallet's owner (the nightly job has no
-    // request context). A key is required only when at least one enabled chain
-    // uses the default keyed provider; a keyless-only set such as
-    // ETH_CHAINS=100 must remain fully usable.
+    // Credentials belong to the wallet's owner (the nightly job has no request
+    // context). Missing credentials are handled by the same per-chain/per-feed
+    // failure isolation as provider limitations: healthy keyless feeds still
+    // land and the keyed feed keeps its cursor frozen with a visible gap.
     const apiKey = await SecretsService.getUserKey(wallet.user_id, 'etherscan');
-    if (!apiKey && chains.enabledChainsRequireApiKey()) {
-      const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
-      error.code = 'ETHERSCAN_NOT_CONFIGURED';
-      throw error;
-    }
 
     try {
       // Only enabled chains are touched. A chain switched off keeps its
@@ -1509,11 +1505,6 @@ class EthWalletService {
     if (!account) return { skipped: true };
 
     const apiKey = await SecretsService.getUserKey(wallet.user_id, 'etherscan');
-    if (!apiKey && chains.enabledChainsRequireApiKey()) {
-      const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
-      error.code = 'ETHERSCAN_NOT_CONFIGURED';
-      throw error;
-    }
 
     const existingResult = await pool.query(
       'SELECT id, name FROM holdings WHERE account_id = $1',

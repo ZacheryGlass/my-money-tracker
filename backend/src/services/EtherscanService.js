@@ -350,8 +350,8 @@ class EtherscanService {
   // Etherscan-shaped account feeds through a different explorer. The caller
   // still passes one chain id and receives the same normalized raw rows; only
   // transport selection lives here.
-  static _provider(chainId, apiKey = null) {
-    const custom = chains.getChain(chainId)?.accountApi;
+  static _provider(chainId, apiKey = null, action = null) {
+    const custom = chains.accountApiConfig(chainId, action);
     if (custom) {
       const providerDefaultSpacing = custom.provider === 'Blockscout'
         ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
@@ -360,8 +360,10 @@ class EtherscanService {
         name: custom.provider || 'chain explorer',
         baseUrl: custom.baseUrl,
         requiresApiKey: custom.requiresApiKey !== false,
-        params: {},
-        key: `account:${custom.baseUrl}`,
+        params: custom.params || {},
+        key: custom.provider === 'Etherscan'
+          ? `etherscan:${keyFingerprint(apiKey)}`
+          : `account:${custom.baseUrl}`,
         // A chain may raise the shared provider floor, but it must never
         // weaken a stricter operator override.
         spacingMs: Math.max(
@@ -397,7 +399,7 @@ class EtherscanService {
           || Number(spacingMs) > 60000)) {
       throw apiError('Explorer request spacingMs must be an integer between 0 and 60000');
     }
-    const baseProvider = this._provider(chainId, apiKey);
+    const baseProvider = this._provider(chainId, apiKey, params?.action);
     const provider = spacingMs == null
       ? baseProvider
       : {
