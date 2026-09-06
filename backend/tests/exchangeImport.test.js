@@ -237,6 +237,19 @@ test('coinbase pro: two match legs and a fee row collapse into one trade', () =>
   assert.equal(records.length, 8);
 });
 
+test('coinbase pro: product orients a crypto-to-crypto fill', () => {
+  const { records } = parseExchangeCsv(fixture('coinbase-pro-crypto-pair.csv'));
+  assert.equal(records.length, 1);
+  const [trade] = records;
+  assert.equal(trade.base_asset, 'ETH');
+  assert.equal(trade.base_amount, '0.2500000000000000');
+  assert.equal(trade.quote_asset, 'BTC');
+  assert.equal(trade.quote_amount, '-0.0100000000000000');
+  assert.equal(trade.fee_asset, 'BTC');
+  assert.equal(trade.fee_amount, '0.0000500000000000');
+  assert.equal(trade.needs_review, false);
+});
+
 test('coinbase pro: a fee-free fill still pairs, and non-fill rows map directly', () => {
   const records = byId(parseExchangeCsv(fixture('coinbase-pro.csv')).records);
 

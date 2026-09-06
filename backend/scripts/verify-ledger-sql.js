@@ -1038,6 +1038,81 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('migration second pass makes no further changes',
     JSON.stringify(afterFirstAlias) === JSON.stringify(afterSecondAlias));
 
+  // --- Coinbase Pro crypto-pair orientation (#87) --------------------------
+  // Product is the provider's authoritative base/quote order. Seed one
+  // reversed Coinbase row, one row with conflicting raw products, and one
+  // identically shaped Kraken row so the migration proves all three guards.
+  const orientationRecords = await pool.query(
+    `INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at,
+       base_asset, base_amount, quote_asset, quote_amount, fee_asset, fee_amount,
+       external_id, needs_review, raw, source, fingerprint, fingerprint_version)
+     VALUES
+       ($1, 'trade', '2026-06-02 10:00', 'BTC', -0.01, 'ETH', 0.25, 'BTC', 0.00005,
+        'CBP-REVERSED', false,
+        '{"_format":"coinbase_pro","rows":[{"type":"match","product":"ETH-BTC"},{"type":"match","product":"ETH-BTC"}]}'::jsonb,
+        'csv', repeat('a', 64), 1),
+       ($1, 'trade', '2026-06-02 11:00', 'BTC', -0.02, 'ETH', 0.50, 'BTC', 0.00010,
+        'CBP-CONFLICTING-PRODUCT', false,
+        '{"_format":"coinbase_pro","rows":[{"type":"match","product":"ETH-BTC"},{"type":"match","product":"BTC-ETH"}]}'::jsonb,
+        'csv', repeat('b', 64), 1),
+       ($2, 'trade', '2026-06-02 12:00', 'BTC', -0.03, 'ETH', 0.75, 'BTC', 0.00015,
+        'KRAKEN-PRODUCT-SHAPED', false,
+        '{"_format":"coinbase_pro","rows":[{"type":"match","product":"ETH-BTC"}]}'::jsonb,
+        'csv', repeat('c', 64), 1)
+     RETURNING id, external_id`,
+    [account2.rows[0].id, accountId]
+  );
+  const orientationMigration = fs.readFileSync(
+    path.join(REPO_BACKEND, 'migrations', '087_coinbase_pro_product_orientation.sql'), 'utf8'
+  );
+  await pool.query(orientationMigration);
+  const orientationAfterFirst = (await pool.query(
+    `SELECT id, external_id, base_asset, base_amount, quote_asset, quote_amount,
+            fee_asset, fee_amount, raw, fingerprint, fingerprint_version
+       FROM exchange_records
+      WHERE id = ANY($1::bigint[])
+      ORDER BY id`,
+    [orientationRecords.rows.map((row) => row.id)]
+  )).rows;
+  await pool.query(orientationMigration);
+  const orientationAfterSecond = (await pool.query(
+    `SELECT id, external_id, base_asset, base_amount, quote_asset, quote_amount,
+            fee_asset, fee_amount, raw, fingerprint, fingerprint_version
+       FROM exchange_records
+      WHERE id = ANY($1::bigint[])
+      ORDER BY id`,
+    [orientationRecords.rows.map((row) => row.id)]
+  )).rows;
+  const correctedOrientation = orientationAfterSecond.find((row) => row.external_id === 'CBP-REVERSED');
+  const conflictingOrientation = orientationAfterSecond.find(
+    (row) => row.external_id === 'CBP-CONFLICTING-PRODUCT'
+  );
+  const krakenOrientation = orientationAfterSecond.find(
+    (row) => row.external_id === 'KRAKEN-PRODUCT-SHAPED'
+  );
+  ok('Coinbase product migration restores crypto-pair base and quote legs',
+    correctedOrientation?.base_asset === 'ETH'
+      && correctedOrientation.base_amount === '0.250000000000000000'
+      && correctedOrientation.quote_asset === 'BTC'
+      && correctedOrientation.quote_amount === '-0.010000000000000000');
+  ok('Coinbase product migration preserves fees, raw evidence and fingerprint',
+    correctedOrientation?.fee_asset === 'BTC'
+      && correctedOrientation.fee_amount === '0.000050000000000000'
+      && correctedOrientation.raw?.rows?.length === 2
+      && correctedOrientation.fingerprint === 'a'.repeat(64)
+      && correctedOrientation.fingerprint_version === 1);
+  ok('Coinbase product migration rejects conflicting raw products',
+    conflictingOrientation?.base_asset === 'BTC'
+      && conflictingOrientation.quote_asset === 'ETH');
+  ok('Coinbase product migration does not rewrite another exchange',
+    krakenOrientation?.base_asset === 'BTC'
+      && krakenOrientation.quote_asset === 'ETH');
+  ok('Coinbase product migration is idempotent and preserves stable IDs',
+    JSON.stringify(orientationAfterFirst) === JSON.stringify(orientationAfterSecond)
+      && orientationAfterSecond.every((row) => orientationRecords.rows.some(
+        (seeded) => String(seeded.id) === String(row.id) && seeded.external_id === row.external_id
+      )));
+
   const { buildReport } = require('./audit-history');
   const historyReport = await buildReport(1);
   const reportText = JSON.stringify(historyReport);

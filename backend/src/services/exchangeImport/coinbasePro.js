@@ -93,6 +93,24 @@ function tradeKeyFor(row) {
   return `cbp:trade:${scope}:${row.tradeId}`;
 }
 
+// Coinbase's `product` is the authoritative pair orientation. This matters
+// for crypto/crypto markets: sign-based fallback calls the outgoing asset the
+// base, which reverses a buy such as ETH-BTC. Older statement variants omit
+// product, so preserve the established conservative fallback for those rows.
+function pickTradeLegs(legs, product) {
+  const match = /^([A-Z0-9.]+)-([A-Z0-9.]+)$/i.exec(String(product || '').trim());
+  if (match && match[1].toUpperCase() !== match[2].toUpperCase()) {
+    const baseAsset = match[1].toUpperCase();
+    const quoteAsset = match[2].toUpperCase();
+    const baseLegs = legs.filter((leg) => String(leg.asset || '').toUpperCase() === baseAsset);
+    const quoteLegs = legs.filter((leg) => String(leg.asset || '').toUpperCase() === quoteAsset);
+    if (baseLegs.length === 1 && quoteLegs.length === 1 && baseLegs[0] !== quoteLegs[0]) {
+      return { base: baseLegs[0], quote: quoteLegs[0], ambiguous: false };
+    }
+  }
+  return pickBaseQuote(legs);
+}
+
 function parse(rows) {
   const found = findHeader(rows);
   if (!found) {
@@ -199,7 +217,8 @@ function parse(rows) {
     // reshaped into a trade the exchange never made.
     let needsReview = legs.length !== 2;
     if (legs.length === 2) {
-      const picked = pickBaseQuote(legs);
+      const product = group.rows.find((row) => row.product)?.product;
+      const picked = pickTradeLegs(legs, product);
       baseLeg = picked.base;
       quoteLeg = picked.quote;
       needsReview = picked.ambiguous;
