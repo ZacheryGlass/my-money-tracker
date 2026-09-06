@@ -16,9 +16,8 @@ const indexSql = indexMigration.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').tr
 const providerIdentityMigration = fs.readFileSync(
   path.join(__dirname, '..', 'migrations', '080_provider_evidence_identity.sql'), 'utf8'
 );
-const chains = require('../src/config/chains');
 
-test('provider observation foreign keys are indexed before provider cleanup', () => {
+test('provider observation foreign keys are indexed before Base retirement', () => {
   assert.ok(path.basename(indexMigrationPath) < path.basename(migrationPath));
   assert.match(indexSql, /^BEGIN; .* COMMIT;$/);
 
@@ -40,8 +39,8 @@ test('provider observation foreign keys are indexed before provider cleanup', ()
   assert.doesNotMatch(indexSql, /DROP (?:CONSTRAINT|INDEX)|DISABLE/);
 });
 
-test('retired CDP migration is transactional and repeat-safe', () => {
-  assert.match(migration, /^-- 082: retire the obsolete Coinbase CDP provider implementation/m);
+test('Base retirement migration is transactional and repeat-safe', () => {
+  assert.match(migration, /^-- 082: retire Base Mainnet/m);
   assert.match(sql, /^BEGIN; .* COMMIT;$/);
   assert.match(sql, /DROP TABLE IF EXISTS eth_provider_pages/);
   assert.match(sql, /DROP TABLE IF EXISTS evm_retired_feed_coverage/);
@@ -51,7 +50,7 @@ test('retired CDP migration is transactional and repeat-safe', () => {
   assert.match(sql, /ADD CONSTRAINT user_api_keys_service_check/);
 });
 
-test('retired CDP migration preserves every Base chain data surface', () => {
+test('Base retirement removes chain-owned data but preserves exchange provenance', () => {
   for (const table of [
     'eth_bridge_verdicts', 'eth_bridge_suggestions', 'eth_bridge_movement_members',
     'eth_bridge_receipt_attempts', 'eth_bridge_receipts', 'eth_hop_bridge_routes',
@@ -64,25 +63,19 @@ test('retired CDP migration preserves every Base chain data surface', () => {
     'evm_job_observations', 'evm_provider_observations', 'evm_source_coverage',
     'evm_audit_scopes',
   ]) {
-    assert.doesNotMatch(sql, new RegExp(`(?:DELETE FROM|UPDATE) ${table}\\b`), table);
+    assert.match(sql, new RegExp(`DELETE FROM ${table}\\b`), table);
   }
-  assert.doesNotMatch(sql, /8453/);
-  assert.doesNotMatch(sql, /requested_chains|discovered_chains/);
-});
-
-test('Base uses generic bounded feeds and consensus RPC without CDP', () => {
-  const base = chains.getChain(8453);
-  assert.equal(base.name, 'Base');
-  assert.equal(base.enabledByDefault, true);
-  assert.equal(base.historyProvider, undefined);
-  assert.equal(base.accountApi.provider, 'Blockscout');
-  assert.equal(base.accountApi.baseUrl, 'https://base.blockscout.com/api');
-  assert.equal(base.accountApi.requiresApiKey, false);
-  assert.equal(base.rpcUrl, 'https://mainnet.base.org');
-  assert.equal(base.consensusRpcUrl, 'https://mainnet.base.org');
-  assert.equal(base.ingestVersion, 3);
-  assert.ok(base.opStackDeposits);
-  assert.ok(base.stateSyncDeposits);
+  assert.match(sql, /DELETE FROM eth_bridge_movements WHERE protocol = 'base'/);
+  assert.match(sql, /FROM eth_bridge_movement_members WHERE chain_id = 8453/);
+  assert.match(sql, /UPDATE exchange_records SET chain_id = NULL WHERE chain_id = 8453/);
+  assert.match(migration, /network\/source text while clearing/);
+  assert.match(sql, /Optimism: L2 Standard Bridge/);
+  assert.match(sql, /OP Stack: L2 Standard Bridge/,
+    'stale shared predeploy labels are repaired only by their old builtin names');
+  assert.match(sql, /requested_chains/);
+  assert.match(sql, /discovered_chains/);
+  assert.match(sql, /trim\(both '\"' from value::text\)/,
+    'mixed numeric and JSON-string chain ids are recognized before deletion');
 });
 
 test('retired provider-page identity migration is safe on fresh installs', () => {

@@ -9,7 +9,9 @@ const {
   HOP_SELECTORS, TOPICS, decodeEnvelope, decodeHopCall, hopTransferId,
 } = require('../src/services/bridge/adapters');
 const { buildProtocolMovements } = require('../src/services/bridge/matcher');
-const { buildSeed } = require('../scripts/generate-hop-bridge-seed');
+const {
+  buildSeed, endpointRows, routeRows,
+} = require('../scripts/generate-hop-bridge-seed');
 
 const hash = (digit) => `0x${digit.repeat(64)}`;
 const address = (digit) => `0x${digit.repeat(40)}`;
@@ -44,6 +46,26 @@ const ROUTE = {
   destination_asset_addresses: [DESTINATION_TOKEN, '0x74fa978eaffa312bc92e76df40fcc1bfe7637aeb'],
   source_token_indices: [0, 1], destination_token_indices: [0, 1],
   source_valid_from_block: 16_617_211, destination_valid_from_block: 2_077_758,
+  abi_variant: 'hop-v1-transfer-sent-withdrawal-v1',
+  finality_policy: { mode: 'rpc_finalized', required_on: 'both_sides' },
+};
+
+const NATIVE_SOURCE_CHAIN = 42161;
+const NATIVE_DESTINATION_CHAIN = 1;
+const NATIVE_SOURCE_BRIDGE = '0x3749c4f034022c39ecaffaba182555d4508caccc';
+const NATIVE_SOURCE_WRAPPER = '0x33ceb27b39d2bb7d2e61f7564d3df29344020417';
+const NATIVE_DESTINATION_BRIDGE = '0xb8901acb165ed027e32754e0ffe830802919727f';
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const NATIVE_ROUTE = {
+  deployment_key: 'hop-mainnet-v1', family_version: 'v1', route_key: 'ETH:42161->1',
+  asset_key: 'ETH', source_chain_id: NATIVE_SOURCE_CHAIN,
+  destination_chain_id: NATIVE_DESTINATION_CHAIN,
+  source_bridge_address: NATIVE_SOURCE_BRIDGE, source_wrapper_address: NATIVE_SOURCE_WRAPPER,
+  destination_bridge_address: NATIVE_DESTINATION_BRIDGE, destination_wrapper_address: null,
+  source_asset_addresses: [address('a'), address('b'), ZERO_ADDRESS],
+  destination_asset_addresses: [ZERO_ADDRESS],
+  source_token_indices: [0, 1], destination_token_indices: [0, 1],
+  source_valid_from_block: 2_135_598, destination_valid_from_block: 13_331_564,
   abi_variant: 'hop-v1-transfer-sent-withdrawal-v1',
   finality_policy: { mode: 'rpc_finalized', required_on: 'both_sides' },
 };
@@ -158,6 +180,66 @@ function decodePair(options = {}) {
   };
 }
 
+function nativeBondedPair({
+  destinationRecipient = WALLET, destinationAmount = 900_000n, distribute = false,
+} = {}) {
+  const gross = 900_000n;
+  const fee = 10_000n;
+  const transferId = hopTransferId(
+    NATIVE_DESTINATION_CHAIN, WALLET, gross, NONCE, fee, 0n, 0n
+  );
+  const source = sourceEnvelope({
+    amount: gross,
+    fee,
+    amountOutMin: 0n,
+    deadline: 0n,
+    input: call(
+      HOP_SELECTORS.swapAndSendLegacy,
+      word(NATIVE_DESTINATION_CHAIN), addressWord(WALLET), word(1_000_000), word(fee),
+      word(880_000), word(DEADLINE), word(0), word(0),
+    ),
+    legs: [{ direction: 'out', contract: null }],
+  });
+  source.chain_id = NATIVE_SOURCE_CHAIN;
+  source.transaction.to = NATIVE_SOURCE_WRAPPER;
+  source.receipt.blockNumber = '0x3a00f9';
+  source.receipt.logs[0].address = NATIVE_SOURCE_BRIDGE;
+  source.receipt.logs[0].topics[1] = transferId;
+  source.receipt.logs[0].topics[2] = word(NATIVE_DESTINATION_CHAIN);
+  source.endpoints = hopEndpoints(
+    NATIVE_SOURCE_CHAIN, NATIVE_SOURCE_BRIDGE, NATIVE_SOURCE_WRAPPER
+  );
+  source.hop_routes = [NATIVE_ROUTE];
+
+  const destination = destinationEnvelope({
+    transferId, amount: gross, recipient: WALLET,
+    chainId: NATIVE_DESTINATION_CHAIN,
+    legs: [{ direction: 'in', contract: null }],
+    feedCoverage: [{ feed: 'internal', status: 'complete', covered_through_block: 13_794_100 }],
+  });
+  destination.transaction.to = NATIVE_DESTINATION_BRIDGE;
+  destination.transaction.input = distribute
+    ? call(
+      HOP_SELECTORS.bondWithdrawalAndDistribute,
+      addressWord(destinationRecipient), word(destinationAmount), NONCE, word(fee), word(0), word(0),
+    )
+    : call(
+      HOP_SELECTORS.bondWithdrawal, addressWord(destinationRecipient), word(destinationAmount),
+      NONCE, word(fee),
+    );
+  destination.receipt.blockNumber = '0xd27b33';
+  destination.receipt.logs = [{
+    address: NATIVE_DESTINATION_BRIDGE, logIndex: '0x2f',
+    transactionHash: destination.tx_hash, blockHash: destination.receipt.blockHash,
+    topics: [TOPICS.hopWithdrawalBondedLegacy, transferId], data: data(word(gross)),
+  }];
+  destination.endpoints = hopEndpoints(
+    NATIVE_DESTINATION_CHAIN, NATIVE_DESTINATION_BRIDGE, null
+  );
+  destination.hop_routes = [NATIVE_ROUTE];
+  return { source, destination, transferId, gross, fee };
+}
+
 test('Hop v1 derives the canonical transfer ID and folds a finalized route exactly once', () => {
   const { sourceEvents, destinationEvents, transferId } = decodePair();
   assert.equal(sourceEvents.length, 1);
@@ -199,6 +281,51 @@ test('Hop pinned swapAndSend validates destination swap bounds while allowing AM
   assert.equal(sourceEvents.length, 1);
   assert.equal(sourceEvents[0].evidence.hop.source_calldata.kind, 'swap_and_send_legacy');
   assert.equal(sourceEvents[0].evidence.hop.source_calldata.destination_amount_out_min, '880000');
+});
+
+test('Hop native ETH swap and bonded withdrawal pair from exact calldata and protocol identity', () => {
+  const { source, destination, transferId, gross, fee } = nativeBondedPair();
+  const sourceEvents = decodeEnvelope(source);
+  const destinationEvents = decodeEnvelope(destination);
+  assert.equal(sourceEvents.length, 1);
+  assert.equal(sourceEvents[0].correlation_key, `hop:v1:${transferId}`);
+  assert.deepEqual(sourceEvents[0].evidence.hop.source_asset_observation.addresses,
+    [ZERO_ADDRESS]);
+  assert.equal(destinationEvents.length, 1);
+  assert.equal(destinationEvents[0].status, 'pending');
+  assert.equal(destinationEvents[0].evidence.hop.destination_calldata.kind, 'bond_withdrawal');
+  assert.equal(destinationEvents[0].evidence.hop.destination_bonder_fee, fee.toString());
+  assert.equal(destinationEvents[0].evidence.hop.destination_coverage.feed, 'internal');
+
+  const [movement] = buildProtocolMovements([...sourceEvents, ...destinationEvents]);
+  assert.equal(movement.status, 'protocol_verified');
+  assert.equal(movement.evidence.hop_pair.gross_amount, gross.toString());
+  assert.equal(movement.evidence.hop_pair.net_amount, (gross - fee).toString());
+  assert.equal(movement.evidence.hop_pair.route.route_key, NATIVE_ROUTE.route_key);
+});
+
+test('Hop bonded withdrawal rejects calldata that does not prove the wallet recipient or amount', () => {
+  const wrongRecipient = nativeBondedPair({ destinationRecipient: address('7') });
+  const recipientEvent = decodeEnvelope(wrongRecipient.destination)[0];
+  assert.equal(recipientEvent.status, 'unsupported');
+  assert.equal(recipientEvent.evidence.hop.reason, 'destination_recipient_not_owned');
+
+  const wrongAmount = nativeBondedPair({ destinationAmount: 899_999n });
+  const amountEvent = decodeEnvelope(wrongAmount.destination)[0];
+  assert.equal(amountEvent.status, 'unsupported');
+  assert.equal(amountEvent.evidence.hop.reason, 'destination_calldata_amount_mismatch');
+});
+
+test('Hop bonded withdrawal-and-distribute retains its destination swap bounds', () => {
+  const { source, destination } = nativeBondedPair({ distribute: true });
+  const sourceEvents = decodeEnvelope(source);
+  const destinationEvents = decodeEnvelope(destination);
+  assert.equal(destinationEvents[0].evidence.hop.destination_calldata.kind,
+    'bond_withdrawal_and_distribute');
+  assert.equal(destinationEvents[0].evidence.hop.destination_amount_out_min, '0');
+  assert.equal(destinationEvents[0].evidence.hop.destination_deadline, '0');
+  assert.equal(buildProtocolMovements([...sourceEvents, ...destinationEvents])[0].status,
+    'protocol_verified');
 });
 
 test('Hop identity does not fold when gross, fee, asset, route, or recipient evidence disagrees', () => {
@@ -259,7 +386,7 @@ test('Hop failures, non-finalized receipts, incomplete token coverage, and settl
   const settlement = decodeEnvelope(destination);
   assert.equal(settlement.length, 1);
   assert.equal(settlement[0].status, 'unsupported');
-  assert.equal(settlement[0].evidence.hop.reason, 'withdrawal_bonded_is_not_user_arrival');
+  assert.equal(settlement[0].evidence.hop.reason, 'malformed_destination_calldata');
 });
 
 test('Hop malformed and L1-to-L2 events are explicit unsupported diagnostics', () => {
@@ -288,7 +415,16 @@ test('the Hop registry seed is reproducible and remains separate from personal a
   const migration = fs.readFileSync(
     path.join(__dirname, '../migrations/074_hop_bridge_matching.sql'), 'utf8'
   );
+  const incrementalMigration = fs.readFileSync(
+    path.join(__dirname, '../migrations/084_hop_native_eth_routes.sql'), 'utf8'
+  );
   assert.ok(migration.includes(buildSeed(pack)));
+  assert.ok(incrementalMigration.includes(buildSeed(pack)));
+  const eth = pack.assets.find((asset) => asset.assetKey === 'ETH');
+  assert.equal(eth.native, true);
+  assert.equal(eth.chains.some((chain) => chain.chainId === 42170), true);
+  assert.equal(endpointRows(pack).length, 20);
+  assert.equal(routeRows(pack).length, 41);
   assert.equal(fs.existsSync(path.join(__dirname, '../data/builtin-bridge-labels.json')), true);
   const labels = JSON.parse(fs.readFileSync(
     path.join(__dirname, '../data/builtin-bridge-labels.json'), 'utf8'

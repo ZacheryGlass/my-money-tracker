@@ -19,7 +19,9 @@ const EthBridgeEndpoint = require('../src/models/EthBridgeEndpoint');
 const EthBridgeMovement = require('../src/models/EthBridgeMovement');
 const EthActivityLink = require('../src/models/EthActivityLink');
 const pool = require('../src/config/database');
-const { endpointApplies, unsupportedMovement } = BridgeMatchingService;
+const {
+  endpointApplies, unsupportedMovement, excludedBaseMovement,
+} = BridgeMatchingService;
 const { buildFinalityBoundary } = require('../src/services/EtherscanService');
 
 const hash = (digit) => `0x${digit.repeat(64)}`;
@@ -28,7 +30,7 @@ const word = (value) => `0x${BigInt(value).toString(16).padStart(64, '0')}`;
 const addressWord = (value) => `0x${value.slice(2).padStart(64, '0')}`;
 const data = (...words) => `0x${words.map((value) => value.slice(2)).join('')}`;
 
-function log({ txHash, blockHash, logAddress, index = 0, topics, body = '0x' }) {
+function log({ txHash, blockHash, logAddress, index = 0, topics, body = '0x', blockNumber = null }) {
   return {
     address: logAddress,
     logIndex: `0x${index.toString(16)}`,
@@ -36,6 +38,7 @@ function log({ txHash, blockHash, logAddress, index = 0, topics, body = '0x' }) 
     blockHash,
     topics,
     data: body,
+    ...(blockNumber == null ? {} : { blockNumber }),
   };
 }
 
@@ -108,34 +111,6 @@ test('OP Stack endpoints route Optimism and sourceHash proves identity', () => {
   assert.equal(buildProtocolMovements([
     ...decodeEnvelope(destination), ...decodeEnvelope(source),
   ])[0].status, 'failed');
-});
-
-test('OP Stack endpoints route Base separately from Optimism', () => {
-  const sourceTx = hash('b');
-  const destinationTx = hash('c');
-  const blockHash = hash('d');
-  const portal = address('1');
-  const source = envelope({
-    chainId: 1, txHash: sourceTx, category: 'bridge_out', blockHash,
-    endpoints: [endpoint('base', 1, portal), endpoint('optimism', 1, address('2'))],
-  });
-  source.receipt.logs = [log({
-    txHash: sourceTx, blockHash, logAddress: portal, index: 7,
-    topics: [TOPICS.opTransactionDeposited],
-  })];
-  const sourceHash = opSourceHash(blockHash, 7);
-  const destination = envelope({
-    walletId: 2, chainId: 8453, txHash: destinationTx, category: 'bridge_in',
-    tx: { sourceHash, type: '0x7e' },
-  });
-
-  const decoded = [...decodeEnvelope(destination), ...decodeEnvelope(source)];
-  assert.equal(decoded.length, 2);
-  assert.deepEqual(new Set(decoded.map((row) => row.protocol)), new Set(['base']));
-  const movements = buildProtocolMovements(decoded);
-  assert.equal(movements.length, 1);
-  assert.equal(movements[0].status, 'protocol_verified');
-  assert.equal(movements[0].correlation_key, `op-deposit:${sourceHash}`);
 });
 
 test('Arbitrum Nitro uses non-indexed Outbox transactionIndex, not indexed compatibility zero', () => {
@@ -396,6 +371,95 @@ test('Gnosis ERC-20 bridge evidence fails closed for wrong token, recipient, rec
   assert.equal(unsupportedMovement(unknownVariant, new Set()).status, 'unsupported');
 });
 
+test('Gnosis legacy L1 DAI transfer pairs to the exact destination source hash and slices bridge credit', () => {
+  const sourceTx = hash('d');
+  const destinationTx = hash('e');
+  const wallet = address('1');
+  const dai = '0x6b175474e89094c44da98b954eedeac495271d0f';
+  const sourceBridge = '0x4aa42145aa6ebf72e164c9bbc74fbd3788045016';
+  const destinationBridge = '0x7301cfa0e1756b71869e93d4e4dca5c7d0eb0aa6';
+  const amount = 1_000_000_000_000_000_000n;
+  const required = [
+    'protocol_asset', 'source_chain_id', 'destination_chain_id',
+    'deployment_key', 'reference_type',
+  ];
+  const sourceEndpoint = endpoint('gnosis', 1, sourceBridge, 'legacy-xdai', {
+    role: 'bridge', direction: 'both',
+    metadata: {
+      deployment_key: 'gnosis-xdai-legacy-pre-usds',
+      abi_variants: {
+        erc20_transfer_source: {
+          supported: true, direction: 'out', source_chain_id: 1,
+          destination_chain_id: 100, canonical_asset: 'XDAI', canonical_decimals: 18,
+          source_asset_contracts: [dai], reference_type: 'source_transaction_hash',
+          required_identity_fields: required,
+        },
+      },
+    },
+  });
+  const destinationEndpoint = endpoint(
+    'gnosis', 100, destinationBridge, 'legacy-xdai', {
+      role: 'bridge', direction: 'both',
+      metadata: {
+        deployment_key: 'gnosis-xdai-legacy-pre-usds',
+        abi_variants: {
+          affirmation_completed_destination: {
+            supported: true, direction: 'in', source_chain_id: 1,
+            destination_chain_id: 100, canonical_asset: 'XDAI', canonical_decimals: 18,
+            reference_type: 'source_transaction_hash', required_identity_fields: required,
+          },
+        },
+      },
+    }
+  );
+  const source = envelope({
+    chainId: 1, txHash: sourceTx, category: 'bridge_out', walletAddress: wallet,
+    tx: { from: wallet, to: dai }, endpoints: [sourceEndpoint],
+  });
+  source.legs = [{
+    direction: 'out', asset: 'DAI', contract: dai,
+    amount: '1', amount_raw: amount.toString(), token_standard: 'erc20',
+  }];
+  source.receipt.logs = [log({
+    txHash: sourceTx, blockHash: source.receipt.blockHash, logAddress: dai,
+    topics: [TOPICS.erc20Transfer, addressWord(wallet), addressWord(sourceBridge)],
+    body: word(amount),
+  })];
+  const destination = envelope({
+    chainId: 100, txHash: destinationTx, category: 'bridge_in', walletAddress: wallet,
+    endpoints: [destinationEndpoint],
+  });
+  destination.legs = [{
+    direction: 'in', asset: 'XDAI', contract: null,
+    amount: '2', amount_raw: (amount * 2n).toString(), token_standard: null,
+  }];
+  destination.receipt.logs = [log({
+    txHash: destinationTx, blockHash: destination.receipt.blockHash,
+    logAddress: destinationBridge, topics: [TOPICS.gnosisAffirmationCompleted],
+    body: data(addressWord(wallet), word(amount), sourceTx),
+  })];
+
+  const sourceEvent = decodeEnvelope(source)[0];
+  const destinationEvent = decodeEnvelope(destination)[0];
+  assert.equal(sourceEvent.correlation_key, `gnosis-legacy:${sourceTx}`);
+  assert.equal(destinationEvent.correlation_key, `gnosis-legacy:${sourceTx}`);
+  assert.deepEqual(destinationEvent.evidence.projection_slice, {
+    direction: 'in', native: true, amount_raw: amount.toString(),
+    amount: '1', exact_protocol_amount: true,
+  });
+  const movement = buildProtocolMovements([sourceEvent, destinationEvent])[0];
+  assert.equal(movement.status, 'protocol_verified');
+  assert.deepEqual(EthBridgeMovement.projectionAmounts(
+    source, destination, movement.members[0], movement.members[1]
+  ), {
+    asset: 'BRIDGE', out_amount: '0', in_amount: '0', fee_amount: '0',
+    asset_details: [
+      { asset: 'DAI', asset_id: `erc20:1:${dai}`, out_amount: '1', in_amount: '0', fee_amount: '0' },
+      { asset: 'XDAI', asset_id: 'xdai', out_amount: '0', in_amount: '1', fee_amount: '0' },
+    ],
+  });
+});
+
 test('zkSync Era Bridgehub destination hash and Lite archive hash are exact identities', () => {
   const eraL2Hash = hash('a');
   const eraSourceTx = hash('b');
@@ -415,18 +479,23 @@ test('zkSync Era Bridgehub destination hash and Lite archive hash are exact iden
     ...decodeEnvelope(eraSource), ...decodeEnvelope(eraDestination),
   ])[0].status, 'protocol_verified');
 
-  const liteHash = hash('d');
+  const liteSourceHash = hash('d');
+  const liteHash = hash('9');
   const liteMain = address('d');
   const liteSource = envelope({
-    chainId: 1, txHash: liteHash, category: 'bridge_out', tx: { to: liteMain },
+    chainId: 1, txHash: liteSourceHash, category: 'bridge_out', tx: { to: liteMain },
     endpoints: [endpoint('zksync-lite', 1, liteMain)],
   });
   const liteDestination = envelope({
     walletId: 2, chainId: 32401, txHash: liteHash, category: 'bridge_in',
-    methodName: 'zkSync Lite Deposit',
+    methodName: null,
   });
+  liteDestination.archive_source_tx_hash = liteSourceHash;
+  const liteDestinationEvent = decodeEnvelope(liteDestination)[0];
+  assert.equal(liteDestinationEvent.evidence.ethereum_tx_hash, liteSourceHash);
+  assert.equal(liteDestinationEvent.evidence.lite_tx_hash, liteHash);
   assert.equal(buildProtocolMovements([
-    ...decodeEnvelope(liteDestination), ...decodeEnvelope(liteSource),
+    liteDestinationEvent, ...decodeEnvelope(liteSource),
   ])[0].status, 'protocol_verified');
 });
 
@@ -541,7 +610,7 @@ test('duplicate members, incompatible fields, failures, and refunds never become
   ])[0].status, 'refunded');
 });
 
-test('multiple protocol messages in one transaction remain unsupported instead of colliding', () => {
+test('multiple source messages in one transaction remain unsupported instead of colliding', () => {
   const sharedSource = hash('1');
   const movements = buildProtocolMovements([
     event({ correlation_key: 'id:1', tx_hash: sharedSource, log_index: 0 }),
@@ -556,6 +625,38 @@ test('multiple protocol messages in one transaction remain unsupported instead o
   assert.ok(resolved.every((movement) => (
     movement.evidence.ambiguity === 'shared_transaction_multiple_protocol_identities'
   )));
+});
+
+test('distinct protocol slices may share one destination transaction', () => {
+  const destination = hash('3');
+  const movements = buildProtocolMovements([
+    event({ correlation_key: 'id:1', tx_hash: hash('1') }),
+    event({
+      correlation_key: 'id:1', role: 'destination_execution', direction: 'in',
+      chain_id: 10, tx_hash: destination,
+      evidence: {
+        finality: { status: 'finalized' },
+        projection_slice: { key: '0xaaa:1', direction: 'in' },
+      },
+    }),
+    event({ correlation_key: 'id:2', tx_hash: hash('2') }),
+    event({
+      correlation_key: 'id:2', role: 'destination_execution', direction: 'in',
+      chain_id: 10, tx_hash: destination,
+      evidence: {
+        finality: { status: 'finalized' },
+        projection_slice: { key: '0xaaa:2', direction: 'in' },
+      },
+    }),
+  ]);
+  assert.ok(resolveProtocolCoordinateConflicts(movements).every(
+    (movement) => movement.status === 'protocol_verified'
+  ));
+
+  movements[1].members[1].evidence.projection_slice.key = '0xaaa:1';
+  assert.ok(resolveProtocolCoordinateConflicts(movements).every(
+    (movement) => movement.status === 'unsupported'
+  ));
 });
 
 test('a durable user confirmation owns its transaction coordinates', () => {
@@ -713,18 +814,30 @@ test('protocol identity remains pending until both receipt chains are finalized'
 
 test('finality boundaries use the standard finalized block and fail closed when unavailable', () => {
   assert.deepEqual(buildFinalityBoundary(
-    { blockNumber: '0x64' }, { number: '0x65', hash: hash('a') }
+    { blockNumber: '0x64', blockHash: hash('b') },
+    { number: '0x65', hash: hash('a') }, null,
+    { number: '0x64', hash: hash('b') }
   ), {
     status: 'finalized', method: 'eth_getBlockByNumber(finalized)',
     receipt_block_number: '100', finalized_block_number: '101',
     finalized_block_hash: hash('a'),
+    canonical_block_number: '100', canonical_block_hash: hash('b'),
   });
   assert.equal(buildFinalityBoundary(
-    { blockNumber: '0x66' }, { number: '0x65', hash: hash('a') }
+    { blockNumber: '0x66', blockHash: hash('c') },
+    { number: '0x65', hash: hash('a') }, null,
+    { number: '0x66', hash: hash('c') }
   ).status, 'pending');
   assert.equal(buildFinalityBoundary(
-    { blockNumber: '0x64' }, null, { code: 'ETHERSCAN_API_ERROR' }
+    { blockNumber: '0x64', blockHash: hash('b') }, null, { code: 'ETHERSCAN_API_ERROR' }
   ).status, 'unknown');
+  const orphan = buildFinalityBoundary(
+    { blockNumber: '0x64', blockHash: hash('b') },
+    { number: '0x65', hash: hash('a') }, null,
+    { number: '0x64', hash: hash('c') }
+  );
+  assert.equal(orphan.status, 'unknown');
+  assert.equal(orphan.error_code, 'RECEIPT_NOT_CANONICAL');
 });
 
 test('a durable confirmation is the only non-protocol path to a fold', () => {
@@ -756,6 +869,55 @@ test('malformed or inconsistent provider receipts fail closed before decoding', 
   assert.throws(() => validateEvidence(txHash, transaction, {
     ...receipt, status: null,
   }), /execution status/);
+  assert.throws(() => validateEvidence(txHash, {
+    ...transaction, blockNumber: '0x11',
+  }, receipt), /block number/);
+  assert.throws(() => validateEvidence(txHash, transaction, {
+    ...receipt,
+    logs: [log({
+      txHash, blockHash, logAddress: address('1'), topics: [hash('3')],
+      blockNumber: '0x11',
+    })],
+  }), /malformed/);
+  assert.throws(() => validateEvidence(txHash, transaction, {
+    ...receipt,
+    logs: [{ ...log({ txHash, blockHash, logAddress: address('1'), topics: [hash('3')] }), removed: true }],
+  }), /malformed/);
+});
+
+test('Base exclusion evidence is explicit and does not match shared OP predeploys', () => {
+  const source = envelope({
+    chainId: 1, txHash: hash('8'), category: 'bridge_out',
+    tx: { to: '0x3154cf16ccdb4c6d922629664174b904d80f2c35' },
+  });
+  const excluded = excludedBaseMovement(source, []);
+  assert.equal(excluded.status, 'unsupported');
+  assert.equal(excluded.evidence.reason, 'excluded_counterparty_chain');
+  assert.equal(excluded.evidence.excluded_chain_id, 8453);
+  assert.equal(excluded.members.length, 1);
+
+  const across = excludedBaseMovement(envelope({
+    chainId: 1, txHash: hash('9'), category: 'bridge_out',
+  }), [event({
+    protocol: 'across', family_version: 'v3', correlation_key: 'across-v3:1:9',
+    evidence: { identity_fields: { destination_chain_id: '8453' } },
+  })]);
+  assert.equal(across.protocol, 'across');
+  assert.equal(across.evidence.reason, 'excluded_counterparty_chain');
+  const acrossHex = excludedBaseMovement(envelope({
+    chainId: 1, txHash: hash('9b'), category: 'bridge_out',
+  }), [event({
+    protocol: 'across', family_version: 'v3', correlation_key: 'across-v3:1:9b',
+    evidence: { identity_fields: { destination_chain_id: '0x2105' } },
+  })]);
+  assert.equal(acrossHex.evidence.excluded_chain_id, 8453);
+  assert.equal(excludedBaseMovement(envelope({
+    chainId: 10, txHash: hash('a'), category: 'bridge_out',
+    tx: { to: '0x4200000000000000000000000000000000000010' },
+  }), []), null);
+  assert.equal(excludedBaseMovement(envelope({
+    chainId: 1, txHash: hash('c'), category: 'bridge_out',
+  }), [event({ evidence: { identity_fields: { destination_chain_id: '10' } } })]), null);
 });
 
 test('migration enforces evidence-only folds and cross-owner isolation', () => {
@@ -787,6 +949,14 @@ test('Gnosis endpoint migration records deployment bounds, ABI variants, and fin
   assert.match(migration, /"required_identity_fields"/);
   assert.match(migration, /"finality_policy"/);
   assert.match(migration, /"router_message_identity_not_decoded"/);
+  const l1SourceMigration = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../migrations/085_gnosis_l1_dai_source.sql'),
+    'utf8'
+  );
+  assert.match(l1SourceMigration, /erc20_transfer_source/);
+  assert.match(l1SourceMigration, /0x6b175474e89094c44da98b954eedeac495271d0f/);
+  assert.match(l1SourceMigration, /"source_chain_id": 1/);
+  assert.match(l1SourceMigration, /"destination_chain_id": 100/);
 });
 
 test('endpoint deployment bounds route only receipts from the reviewed version window', () => {
@@ -814,24 +984,20 @@ test('the reviewed endpoint pack and generated migration seed cannot drift', () 
   assert.ok(migration.includes(buildSeed(pack)));
 });
 
-test('Base and OP keep chain-scoped copies of their shared OP Stack predeploy metadata', () => {
+test('OP Mainnet keeps its shared OP Stack predeploy metadata', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const pack = JSON.parse(fs.readFileSync(
     path.join(__dirname, '../data/builtin-bridge-labels.json'), 'utf8'
   ));
-  const baseL2 = pack.labels.filter((entry) => (
-    entry.protocol === 'base' && entry.chain_id === 8453
+  const optimismL2 = pack.labels.filter((entry) => (
+    entry.protocol === 'optimism' && entry.chain_id === 10
   ));
   assert.deepEqual(
-    baseL2.map((entry) => entry.address).sort(),
+    optimismL2.map((entry) => entry.address).sort(),
     [
       '0x4200000000000000000000000000000000000010',
       '0x4200000000000000000000000000000000000016',
     ]
   );
-  const { buildSeed } = require('../scripts/generate-bridge-endpoint-seed');
-  const seed = buildSeed(pack);
-  assert.match(seed, /\('base', 'bedrock', 8453, '0x4200000000000000000000000000000000000010'/);
-  assert.match(seed, /\('optimism', 'bedrock', 10, '0x4200000000000000000000000000000000000010'/);
 });

@@ -24,3 +24,13 @@ describe('zkSync explorer routing', () => {
     expect(nativeSymbol(32401)).toBe('ETH');
   });
 });
+
+describe('Arbitrum Nova explorer routing', () => {
+  it('links Nova rows to the keyless Blockscout explorer', () => {
+    expect(explorerTxUrl('0xabc', 42170))
+      .toBe('https://arbitrum-nova.blockscout.com/tx/0xabc');
+    expect(explorerAddressUrl('0xdef', 42170))
+      .toBe('https://arbitrum-nova.blockscout.com/address/0xdef');
+    expect(nativeSymbol(42170)).toBe('ETH');
+  });
+});

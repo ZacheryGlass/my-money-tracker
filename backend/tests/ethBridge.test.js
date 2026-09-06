@@ -484,6 +484,46 @@ test('bridge projection uses member asset identity when display symbols differ',
   });
 });
 
+test('bridge projection selects an exact member slice from a batched destination', () => {
+  const outToken = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const inToken = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const projection = projectionAmounts(
+    { legs: [{ asset: 'USDC', contract: outToken, direction: 'out', amount: '2', amount_raw: '2000000' }] },
+    { legs: [
+      { asset: 'POL', contract: null, direction: 'in', amount: '3', amount_raw: '3000000000000000000' },
+      { asset: 'USDC.e', contract: inToken, direction: 'in', amount: '2', amount_raw: '2000000' },
+    ] },
+    { asset_id: `erc20:1:${outToken}`, evidence: {
+      projection_slice: { direction: 'out', contract: outToken, amount_raw: '2000000' },
+    } },
+    { asset_id: `erc20:137:${inToken}`, evidence: {
+      projection_slice: { direction: 'in', contract: inToken, amount_raw: '2000000' },
+    } },
+  );
+  assert.equal(projection.asset, 'BRIDGE');
+  assert.deepEqual(projection.asset_details.map((asset) => asset.asset), ['USDC', 'USDC.e']);
+
+  assert.equal(projectionAmounts(
+    { legs: [{ asset: 'USDC', contract: outToken, direction: 'out', amount: '2', amount_raw: '2000000' }] },
+    { legs: [
+      { asset: 'USDC.e', contract: inToken, direction: 'in', amount: '2', amount_raw: '2000000' },
+      { asset: 'USDC.e', contract: inToken, direction: 'in', amount: '2', amount_raw: '2000000' },
+    ] },
+    null,
+    { evidence: { projection_slice: { direction: 'in', contract: inToken, amount_raw: '2000000' } } },
+  ), null);
+});
+
+test('bridge projection preserves the legacy safe fallback without claimed slices', () => {
+  assert.deepEqual(projectionAmounts(
+    { legs: [
+      { asset: 'ETH', direction: 'out', amount: '1' },
+      { asset: 'USDC', direction: 'out', amount: '2' },
+    ] },
+    { legs: [{ asset: 'ETH', direction: 'in', amount: '1' }] },
+  ), { asset: 'BRIDGE', out_amount: '0', in_amount: '0', fee_amount: '0' });
+});
+
 // --- the seeded bridge pack ------------------------------------------------
 
 const MIGRATION_PATH = path.join(__dirname, '../migrations/044_bridge_labels.sql');

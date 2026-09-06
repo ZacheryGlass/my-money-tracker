@@ -71,6 +71,11 @@ const REGISTRY = [
     consensusRpcUrl: configuredRpcUrl(
       'ETHEREUM_RPC_URL', 'https://ethereum-rpc.publicnode.com'
     ),
+    // Optional parity-style trace endpoint. Keep this separate from the
+    // consensus endpoint: many public RPCs expose balances and receipts but
+    // reject trace_filter, and silently treating that as an exhaustive source
+    // would hide internal-value gaps.
+    traceRpcUrl: configuredRpcUrl('ETHEREUM_TRACE_RPC_URL', null),
   },
   {
     id: 42161,
@@ -80,6 +85,7 @@ const REGISTRY = [
     coingeckoPlatform: 'arbitrum-one',
     enabledByDefault: true,
     consensusRpcUrl: configuredRpcUrl('ARBITRUM_RPC_URL', 'https://arb1.arbitrum.io/rpc'),
+    traceRpcUrl: configuredRpcUrl('ARBITRUM_TRACE_RPC_URL', null),
     // Classic-era (pre-Nitro) L1->L2 ETH deposits, which Etherscan's txlist
     // serves BACKWARDS. The chain's pre-Nitro history was migrated into Nitro,
     // and the migrated retryable-ticket deposit comes back as an OUTBOUND row:
@@ -111,6 +117,27 @@ const REGISTRY = [
     },
   },
   {
+    id: 42170,
+    name: 'Arbitrum Nova',
+    shortName: 'Arbitrum Nova',
+    nativeAsset: 'ETH',
+    coingeckoPlatform: 'arbitrum-nova',
+    enabledByDefault: true,
+    // Live-probed 2026-09-05 with non-user positive controls: balance,
+    // txlist, txlistinternal, tokentx, tokennfttx and token1155tx all returned
+    // the documented Etherscan-compatible shapes. This keyless index is what
+    // turns the exact Hop destination into a complete account-history walk.
+    accountApi: {
+      provider: 'Blockscout',
+      baseUrl: 'https://arbitrum-nova.blockscout.com/api',
+      requiresApiKey: false,
+    },
+    consensusRpcUrl: configuredRpcUrl(
+      'ARBITRUM_NOVA_RPC_URL', 'https://arbitrum-nova-rpc.publicnode.com'
+    ),
+    traceRpcUrl: configuredRpcUrl('ARBITRUM_NOVA_TRACE_RPC_URL', null),
+  },
+  {
     id: 59144,
     name: 'Linea',
     shortName: 'Linea',
@@ -118,6 +145,7 @@ const REGISTRY = [
     coingeckoPlatform: 'linea',
     enabledByDefault: true,
     consensusRpcUrl: configuredRpcUrl('LINEA_RPC_URL', 'https://rpc.linea.build'),
+    traceRpcUrl: configuredRpcUrl('LINEA_TRACE_RPC_URL', null),
   },
   {
     id: 324,
@@ -131,7 +159,8 @@ const REGISTRY = [
       baseUrl: 'https://zksync.blockscout.com/api',
       requiresApiKey: false,
     },
-    rpcUrl: 'https://mainnet.era.zksync.io',
+    rpcUrl: configuredRpcUrl('ZKSYNC_ERA_RPC_URL', 'https://mainnet.era.zksync.io'),
+    traceRpcUrl: configuredRpcUrl('ZKSYNC_ERA_TRACE_RPC_URL', null),
   },
   {
     // App-internal identity. zkSync Lite was not EVM and had no EIP-155 id;
@@ -156,6 +185,7 @@ const REGISTRY = [
     coingeckoPlatform: 'polygon-pos',
     enabledByDefault: true,
     consensusRpcUrl: configuredRpcUrl('POLYGON_RPC_URL', 'https://polygon.drpc.org'),
+    traceRpcUrl: configuredRpcUrl('POLYGON_TRACE_RPC_URL', null),
     // A SIXTH per-(wallet, chain) feed, declared here and NOWHERE ELSE (#76).
     // Polygon credits bridged-in native POL through the Bor STATE SYNC, which
     // is a system transaction present in NONE of the five Etherscan account
@@ -200,24 +230,16 @@ const REGISTRY = [
       baseUrl: 'https://gnosis.blockscout.com/api',
       requiresApiKey: false,
     },
-    // Gnosis Blockscout explicitly reports partially indexed internal ranges.
-    // Etherscan V2 currently lists Gnosis on its supported free-tier chains,
-    // so route only txlistinternal there while the other feeds retain the
-    // independently bounded Blockscout head. This remains fail-closed: a
-    // missing/ineligible key leaves the internal cursor frozen and records the
-    // feed gap instead of accepting Blockscout's partial response.
-    accountApiOverrides: {
-      txlistinternal: {
-        provider: 'Etherscan',
-        baseUrl: 'https://api.etherscan.io/v2/api',
-        requiresApiKey: true,
-        params: { chainid: 100 },
-      },
-    },
+    // Keep the explicit Blockscout gap until an alternative passes historical
+    // canaries. Consensus bridge credits cannot be positive controls for
+    // ordinary internal traces: they are minted without a wallet transaction.
+    // A successful HTTP response or an empty result alone cannot validate a
+    // replacement account-history source.
     // Blockscout's indexed account balance may be stale while it refreshes in
     // the background. Reconciliation needs the chain head, so native and token
     // balance reads use Gnosis' public JSON-RPC endpoint instead.
-    rpcUrl: 'https://rpc.gnosischain.com',
+    rpcUrl: configuredRpcUrl('GNOSIS_RPC_URL', 'https://rpc.gnosischain.com'),
+    traceRpcUrl: configuredRpcUrl('GNOSIS_TRACE_RPC_URL', null),
     // Gnosis mints bridged xDAI through consensus. No account feed contains the
     // credit; the Block Reward contract's AddedReceiver log is the on-chain
     // record. This reuses the sixth native-credit feed/cursor introduced for
@@ -241,7 +263,8 @@ const REGISTRY = [
       baseUrl: 'https://explorer.optimism.io/api',
       requiresApiKey: false,
     },
-    rpcUrl: 'https://mainnet.optimism.io',
+    rpcUrl: configuredRpcUrl('OPTIMISM_RPC_URL', 'https://mainnet.optimism.io'),
+    traceRpcUrl: configuredRpcUrl('OPTIMISM_TRACE_RPC_URL', null),
     // Bump when stored feed rows must be rebuilt under new normalization.
     // Existing chain rows below this version reset all feed cursors once;
     // newly-created rows start current and do not pay a redundant backfill.
@@ -257,37 +280,6 @@ const REGISTRY = [
     // (topic2); amount is data word 0. The same predeploy is used by OP and
     // OP Stack's standard bridge also covers third-party frontends that settle
     // through the canonical StandardBridge.
-    stateSyncDeposits: {
-      contract: '0x4200000000000000000000000000000000000010',
-      topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
-      userTopicIndex: 2,
-    },
-  },
-  {
-    id: 8453,
-    name: 'Base',
-    shortName: 'Base',
-    nativeAsset: 'ETH',
-    coingeckoPlatform: 'base',
-    enabledByDefault: true,
-    // Base Blockscout exposes the same bounded account-feed contract used by
-    // OP, Gnosis, and Era. Its internal index can report a range as incomplete;
-    // EtherscanService turns that response into a durable feed gap and never
-    // advances the cursor through unproven history.
-    accountApi: {
-      provider: 'Blockscout',
-      baseUrl: 'https://base.blockscout.com/api',
-      v2BaseUrl: 'https://base.blockscout.com/api/v2',
-      requiresApiKey: false,
-    },
-    rpcUrl: configuredRpcUrl('BASE_RPC_URL', 'https://mainnet.base.org'),
-    consensusRpcUrl: configuredRpcUrl('BASE_RPC_URL', 'https://mainnet.base.org'),
-    // Version 3 is the first generic-provider ingestion. Any Base chain rows
-    // restored from the retired CDP era must restart their feed cursors at 0.
-    ingestVersion: 3,
-    opStackDeposits: {
-      creditSource: '0x4200000000000000000000000000000000000010',
-    },
     stateSyncDeposits: {
       contract: '0x4200000000000000000000000000000000000010',
       topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
@@ -348,7 +340,7 @@ const BY_ID = new Map(REGISTRY.map((chain) => [chain.id, chain]));
 // recognises.
 const NATIVE_SYMBOLS = new Set(REGISTRY.map((chain) => chain.nativeAsset));
 
-// `ETH_CHAINS=1` restores strict mainnet-only sync; `ETH_CHAINS=1,42161,8453`
+// `ETH_CHAINS=1` restores strict mainnet-only sync; `ETH_CHAINS=1,42161,10`
 // picks an explicit set. Parsed on every call rather than memoized: it is a
 // split of a short string, and a cached copy would go stale against a test or a
 // restart-free config change for no measurable gain.

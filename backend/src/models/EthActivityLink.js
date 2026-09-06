@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
+const { REVIEW_REASONS } = require('../utils/ethActivityVocabulary');
 
 // The cross-chain half of the activity layer: which bridge_out on chain A is
 // which bridge_in on chain B.
@@ -80,6 +81,17 @@ class EthActivityLink {
 
     const matched = `EXISTS (SELECT 1 FROM eth_activity_links l
                              WHERE l.out_activity_id = a.id OR l.in_activity_id = a.id)`;
+    const excludedBase = `EXISTS (
+      SELECT 1
+       FROM eth_bridge_movement_members mm
+        JOIN eth_bridge_movements m ON m.id = mm.movement_id
+       WHERE mm.wallet_id = a.wallet_id
+         AND mm.chain_id = a.chain_id
+         AND mm.tx_hash = a.tx_hash
+         AND m.user_id = $1
+         AND m.status = 'unsupported'
+         AND m.evidence->>'reason' = 'excluded_counterparty_chain'
+    )`;
 
     // The RESOLVED category, matching every other reader (EthActivity's
     // RESOLVED_COLUMNS) and the matcher that produced the links. A row the user
@@ -104,12 +116,14 @@ class EthActivityLink {
     );
     const result = await client.query(
       `UPDATE eth_activity a
-       SET needs_review = TRUE, review_reason = $2, confidence = 'medium'
+       SET needs_review = TRUE,
+           review_reason = CASE WHEN ${excludedBase} THEN $3 ELSE $2 END,
+           confidence = 'medium'
        FROM eth_wallets w
        WHERE a.wallet_id = w.id AND w.user_id = $1
          AND ${resolvedCategory} IN ('bridge_out', 'bridge_in')
          AND NOT ${matched}`,
-      [userId, reviewReason]
+      [userId, reviewReason, REVIEW_REASONS.excluded_bridge]
     );
     return result.rowCount;
   }

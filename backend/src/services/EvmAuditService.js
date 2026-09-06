@@ -16,7 +16,7 @@ const { effectsFromInternalObservations, effectsFromRpc } = require('./evmAudit/
 const AUDIT_CAPABILITIES = [
   'active_chain', 'wallet_history', 'normal', 'internal', 'erc20',
   'erc721', 'erc1155', 'native_credit', 'nonce', 'native_balance',
-  'token_balance', 'bridge', 'receipt_verification',
+  'token_balance', 'bridge', 'indexed_token_logs', 'receipt_verification',
 ];
 const AUDIT_CHAINS = new Map([
   [1, { auditProvider: 'etherscan' }],
@@ -30,11 +30,8 @@ const AUDIT_CHAINS = new Map([
     auditProvider: 'blockscout',
     errorDetail: 'Moralis does not enumerate zkSync Era; the configured Blockscout account feeds provide finite indexed coverage, while consensus RPC verifies mined transactions and effects.',
   }],
-  [8453, {
-    auditProvider: 'blockscout',
-    errorDetail: 'Base Blockscout provides finite indexed account-feed coverage; incomplete internal ranges remain explicit gaps while consensus RPC verifies known mined transactions and effects.',
-  }],
   [42161, { auditProvider: 'etherscan' }],
+  [42170, { auditProvider: 'blockscout' }],
   [59144, { auditProvider: 'etherscan' }],
   [32401, {
     unsupported: true,
@@ -43,6 +40,11 @@ const AUDIT_CHAINS = new Map([
   }],
 ]);
 const OVERLAP_BLOCKS = 64;
+// Historical ERC-20 state reads are a bounded supplement to the native
+// archive probe. A provider or a wallet with a very large token universe must
+// never turn one audit job into an unbounded sequence of eth_call requests.
+const MAX_HISTORICAL_TOKEN_CHECKS = 64;
+const MAX_RPC_LOG_REQUESTS_PER_RUN = 512;
 const EXPLORER_FEEDS = Object.freeze([
   { capability: 'normal', feed: 'normal', action: 'txlist', method: 'fetchNormalTxs' },
   { capability: 'internal', feed: 'internal', action: 'txlistinternal', method: 'fetchInternalTxs' },
@@ -77,7 +79,8 @@ function pageRecord(provider, endpoint, requestParams, response, cursorIn = null
 // response text for every call inside one deterministic envelope so a later
 // audit can inspect the receipt, transaction, block, nonce, code, and balance
 // checks without relying on a provider replay.
-function rpcPageRecord(endpoint, requestParams, body, evidence = [], itemCount = 0) {
+function rpcPageRecord(endpoint, requestParams, body, evidence = [], itemCount = 0,
+  cursorIn = null, cursorOut = null, providerOrder = null, provider = 'consensus-rpc') {
   const rawText = JSON.stringify({
     jsonrpc: '2.0',
     requests: evidence.map((entry) => ({
@@ -94,12 +97,12 @@ function rpcPageRecord(endpoint, requestParams, body, evidence = [], itemCount =
       response: entry.responseJson,
     })),
   };
-  return pageRecord('consensus-rpc', endpoint, requestParams, {
+  return pageRecord(provider, endpoint, requestParams, {
     body: responseJson,
     rawText,
     responseSha256: normalizer.sha256(rawText),
     requestId: evidence.map((entry) => entry.requestId).filter(Boolean).join(',') || null,
-  }, null, null, itemCount);
+  }, cursorIn, cursorOut, itemCount, providerOrder);
 }
 
 function activeRowMatches(row, config) {
@@ -113,14 +116,59 @@ function configuredExplorerProvider(chainId, action = null) {
   return String(chains.accountApiConfig(chainId, action)?.provider || 'Etherscan').toLowerCase();
 }
 
+// A chain can expose a keyless primary account API and a keyed override for a
+// single feed after that alternative has passed historical provider canaries.
+// Orchestration must gate on the primary feed, otherwise one missing override
+// credential prevents every independent source and point check from running.
+function primaryAccountApiRequiresKey(chainId) {
+  return chains.accountApiRequiresKey(chainId);
+}
+
+function blockTag(blockNumber) {
+  return `0x${BigInt(blockNumber).toString(16)}`;
+}
+
+function buildHistoricalTokenPlan(tokens, maxChecks = MAX_HISTORICAL_TOKEN_CHECKS) {
+  const contracts = [...new Set(tokens.map((token) => String(
+    typeof token === 'string' ? token : token?.token_contract || ''
+  ).toLowerCase()).filter(Boolean))].sort();
+  const limit = Number.isSafeInteger(maxChecks) && maxChecks >= 0 ? maxChecks : 0;
+  return {
+    contracts,
+    checked: contracts.slice(0, limit),
+    deferred: Math.max(0, contracts.length - limit),
+  };
+}
+
+function mergeObservedTokenUniverse(derivedTokens, observedTokens) {
+  const tokensByContract = new Map(derivedTokens.map((token) => [
+    String(token.token_contract).toLowerCase(), token,
+  ]));
+  let observedOnly = 0;
+  for (const observed of observedTokens) {
+    const contract = String(
+      typeof observed === 'string' ? observed : observed?.token_contract || ''
+    ).toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(contract) || tokensByContract.has(contract)) continue;
+    tokensByContract.set(contract, {
+      token_contract: contract,
+      token_decimals: 18,
+      balance_units: '0',
+      observed_only: true,
+    });
+    observedOnly += 1;
+  }
+  return { tokensByContract, observedOnly };
+}
+
 function consensusRpcConfigured(chainId) {
   const chain = chains.getChain(chainId);
   return Boolean(chain?.consensusRpcUrl || chain?.rpcUrl);
 }
 
-function moralisQuotaFallbackError(error) {
+function moralisFallbackError(error) {
   if (!error) return null;
-  if (!['MORALIS_NOT_CONFIGURED', 'MORALIS_QUOTA_EXHAUSTED'].includes(error.code)) return null;
+  if (!['MORALIS_NOT_CONFIGURED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_AUTH_FAILED'].includes(error.code)) return null;
   return {
     code: error.code,
     detail: error.message,
@@ -286,6 +334,8 @@ function isStandingProviderLimitation(error) {
   return [
     'BLOCKSCOUT_FEED_UNSUPPORTED', 'BLOCKSCOUT_CHAIN_UNAVAILABLE',
     'ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE',
+    'RPC_LOG_ENUMERATION_UNSUPPORTED', 'RPC_TRACE_ENUMERATION_UNSUPPORTED',
+    'RPC_TRACE_REWARD_UNSUPPORTED',
   ].includes(error?.code)
     || (message.includes('does not serve') && message.includes('not yet been processed'));
 }
@@ -422,7 +472,7 @@ class EvmAuditService {
       if (moralisRequested.length) {
         key = await SecretsService.getUserKey(job.user_id, 'moralis');
         if (!key) {
-        moralisUnavailable = moralisQuotaFallbackError({
+        moralisUnavailable = moralisFallbackError({
           code: 'MORALIS_NOT_CONFIGURED',
           message: 'Configure a Moralis API key in Settings to audit Gnosis Chain.',
           });
@@ -477,7 +527,7 @@ class EvmAuditService {
           activeRows = Array.isArray(activeResponse.body.active_chains)
             ? activeResponse.body.active_chains : [];
         } catch (error) {
-          moralisUnavailable = moralisQuotaFallbackError(error);
+          moralisUnavailable = moralisFallbackError(error);
           if (!moralisUnavailable) throw error;
           // A quota exhaustion is a provider limitation, not evidence that the
           // wallet has no history. Preserve the failed discovery attempt and
@@ -567,7 +617,7 @@ class EvmAuditService {
             provider: 'moralis',
             error: moralisUnavailable,
           });
-        } else if (chains.chainAccountApisRequireKey(chainId) && !explorerApiKey) {
+        } else if (primaryAccountApiRequiresKey(chainId) && !explorerApiKey) {
           unavailable.push({
             chainId, provider: configuredExplorerProvider(chainId),
             error: {
@@ -605,7 +655,9 @@ class EvmAuditService {
           const deferred = !standing && [
               'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
               'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED',
-              'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
+              'RPC_TRANSPORT_ERROR', 'RPC_LOG_SCAN_BUDGET_EXHAUSTED',
+              'RPC_TRACE_SCAN_BUDGET_EXHAUSTED',
+              'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
               'ETHERSCAN_RATE_LIMITED', 'ETHERSCAN_TRANSPORT_ERROR',
             ].includes(error.code);
           const chainDetail = publicErrorDetail(error);
@@ -665,14 +717,17 @@ class EvmAuditService {
     } catch (error) {
       const deferred = [
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
-        'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR', 'BLOCKSCOUT_RATE_LIMITED',
+        'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR',
+        'RPC_LOG_SCAN_BUDGET_EXHAUSTED', 'BLOCKSCOUT_RATE_LIMITED',
+        'RPC_TRACE_SCAN_BUDGET_EXHAUSTED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
         'ETHERSCAN_TRANSPORT_ERROR',
       ]
         .includes(error.code);
       const errorCode = String(error.code || '');
       const provider = errorCode.startsWith('MORALIS_') ? 'moralis'
-        : errorCode.startsWith('RPC_') ? 'consensus-rpc'
+        : errorCode.startsWith('RPC_TRACE_') ? 'trace-rpc'
+          : errorCode.startsWith('RPC_') ? 'consensus-rpc'
           : errorCode.startsWith('ETHERSCAN_') ? 'etherscan' : 'blockscout';
       let failureEvidenceUnjournaled = false;
       if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('RPC_')
@@ -743,6 +798,13 @@ class EvmAuditService {
     const auditProvider = useMoralis ? 'moralis'
       : (providerConfig.moralis ? providerConfig.fallbackProvider : providerConfig.auditProvider);
     const rpc = new RpcClient(chainId, { onFailedAttempt: retainAttempt });
+    // A parity-style trace endpoint is optional and must be configured
+    // separately from consensus RPC. Most public consensus endpoints reject
+    // trace_filter; silently substituting one would leave incoming internal
+    // value gaps looking like a complete feed.
+    const traceRpc = chain?.traceRpcUrl
+      ? new RpcClient(chainId, { endpoint: 'trace', onFailedAttempt: retainAttempt })
+      : null;
     const boundary = await rpc.finalizedBoundary();
     const context = {
       jobId: job.id, subjectId: job.subject_id, chainId,
@@ -782,6 +844,7 @@ class EvmAuditService {
       chainId, provider: auditProvider, capability: 'active_chain', status: 'running',
       fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
     });
+    let missingCredentialFeed = null;
     if (useMoralis) {
       const activeBody = {
         active_chains: (activeResponse.body.active_chains || [])
@@ -816,14 +879,15 @@ class EvmAuditService {
     }
 
     let indexedBoundary = null;
-    if (!useMoralis) {
+    if (!useMoralis || chain?.stateSyncDeposits) {
       try {
         indexedBoundary = await EtherscanService.coverageBoundary(explorerApiKey, chainId);
       } catch (error) {
         const transient = isBlockscoutTransient(error);
         const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
-        const prefix = explorerFailurePrefix(auditProvider);
-        const name = explorerDisplayName(auditProvider);
+        const boundaryProvider = configuredExplorerProvider(chainId, 'getLogs');
+        const prefix = explorerFailurePrefix(boundaryProvider);
+        const name = explorerDisplayName(boundaryProvider);
         const wrapped = new Error(`${name} indexed boundary failed: ${publicErrorDetail(error)}`);
         wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
           : transient ? `${prefix}_TRANSPORT_ERROR`
@@ -832,7 +896,7 @@ class EvmAuditService {
         wrapped.httpStatus = error.response?.status || error.httpStatus || null;
         wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
         await recordProviderAttempt({
-          jobId: job.id, scopeId: activeScope.id, provider: auditProvider,
+          jobId: job.id, scopeId: activeScope.id, provider: boundaryProvider,
           endpoint: 'indexed-boundary', requestParams: { chain_id: chainId },
           outcome: transient || isStandingExplorerLimitation(error) ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
           errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
@@ -842,6 +906,8 @@ class EvmAuditService {
     }
     const sourceThroughBlock = useMoralis
       ? boundary.number : Math.min(boundary.number, indexedBoundary.throughBlock);
+    const nativeCreditThroughBlock = chain?.stateSyncDeposits && indexedBoundary
+      ? Math.min(boundary.number, indexedBoundary.throughBlock) : null;
     const prior = job.mode === 'incremental'
       ? await EvmAudit.latestCoverage(job.subject_id, chainId, auditProvider, 'wallet_history')
       : null;
@@ -852,7 +918,7 @@ class EvmAuditService {
       throughHash: useMoralis ? boundary.hash : null,
     });
     const fallbackAfterMoralis = async (error, scopeId) => {
-      const deferredError = moralisQuotaFallbackError(error);
+      const deferredError = moralisFallbackError(error);
       if (!useMoralis || !deferredError || !providerConfig.fallbackProvider) throw error;
       assertLease(leaseState);
       await completeScope(scopeId, {
@@ -878,10 +944,104 @@ class EvmAuditService {
     const durableObservations = await EvmAudit.observationsForJob(job.id, { chainId });
     for (const observation of durableObservations) {
       if (observation.tx_hash) hashes.add(String(observation.tx_hash).toLowerCase());
-      if (observation.tx_hash && !['consensus-rpc', 'moralis'].includes(observation.provider)) {
+      if (observation.tx_hash
+          && !['consensus-rpc', 'moralis', configuredExplorerProvider(chainId, 'getLogs')]
+            .includes(String(observation.provider).toLowerCase())) {
         moralisLookupHashes.add(String(observation.tx_hash).toLowerCase());
       }
     }
+    const scanNativeCredits = async () => {
+      const nativeCreditConfig = chain?.stateSyncDeposits;
+      const nativeCreditProvider = configuredExplorerProvider(chainId, 'getLogs');
+      explorerProviders.add(nativeCreditProvider);
+      const throughBlock = nativeCreditThroughBlock ?? sourceThroughBlock;
+      const nativeCreditScope = await upsertScope({
+        chainId, provider: nativeCreditProvider, capability: 'native_credit', status: 'running',
+        fromBlock: 0, throughBlock, throughHash: null,
+      });
+      if (!nativeCreditConfig) {
+        await commitPage(nativeCreditScope.id, pageRecord(
+          nativeCreditProvider, 'native-credit-not-applicable', { chain_id: chainId },
+          { body: { chain_id: chainId, status: 'not_applicable' } }, null, null, 0
+        ), []);
+        await completeScope(nativeCreditScope.id, {
+          status: 'complete', paginationExhausted: true,
+          errorCode: 'NOT_APPLICABLE',
+          errorDetail: 'This chain has no configured account-independent native-credit feed; receipt logs remain canonical evidence.',
+        });
+        return;
+      }
+      let nativeCreditRows;
+      try {
+        nativeCreditRows = await EtherscanService.fetchStateSyncDeposits(
+          job.address, 0, explorerApiKey, chainId, nativeCreditConfig, throughBlock
+        );
+      } catch (error) {
+        const transient = isBlockscoutTransient(error);
+        const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
+        const prefix = explorerFailurePrefix(nativeCreditProvider);
+        const wrapped = new Error(`Explorer native-credit audit feed failed: ${publicErrorDetail(error)}`);
+        wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
+          : transient ? `${prefix}_TRANSPORT_ERROR`
+            : isStandingExplorerLimitation(error) ? `${prefix}_FEED_UNSUPPORTED`
+              : `${prefix}_FEED_FAILED`;
+        wrapped.httpStatus = error.response?.status || error.httpStatus || null;
+        wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
+        await recordProviderAttempt({
+          jobId: job.id, scopeId: nativeCreditScope.id, provider: nativeCreditProvider,
+          endpoint: 'native-credit', requestParams: {
+            address: job.address, from_block: 0, to_block: throughBlock,
+          }, outcome: transient || isStandingExplorerLimitation(error) ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
+          errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
+        });
+        throw wrapped;
+      }
+      if (!Array.isArray(nativeCreditRows)) {
+        const error = new Error('Explorer native-credit audit feed returned a non-array response');
+        error.code = `${explorerFailurePrefix(nativeCreditProvider)}_FEED_FAILED`;
+        await recordProviderAttempt({
+          jobId: job.id, scopeId: nativeCreditScope.id, provider: nativeCreditProvider,
+          endpoint: 'native-credit', requestParams: {
+            address: job.address, from_block: 0, to_block: throughBlock,
+          }, outcome: 'failed', errorCode: error.code, errorDetail: publicErrorDetail(error),
+        });
+        throw error;
+      }
+      const capturedPages = Array.isArray(nativeCreditRows.evidencePages)
+        ? nativeCreditRows.evidencePages : [];
+      const pages = capturedPages.length ? capturedPages : [{
+        rows: nativeCreditRows,
+        requestParams: { address: job.address, from_block: 0, to_block: throughBlock },
+        cursorIn: null, cursorOut: null, itemCount: nativeCreditRows.length,
+        responseJson: { rows: nativeCreditRows },
+      }];
+      for (const page of pages) {
+        assertLease(leaseState);
+        const pageRows = Array.isArray(page.rows) ? page.rows : [];
+        const observations = normalizer.explorerFeedObservations(
+          { ...context, provider: nativeCreditProvider }, 'internal', pageRows
+        );
+        for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+        await commitPage(nativeCreditScope.id, pageRecord(
+          nativeCreditProvider, 'native-credit',
+          page.requestParams || { address: job.address, from_block: 0, to_block: throughBlock },
+          {
+            body: page.responseJson || { rows: pageRows },
+            rawText: page.rawText,
+            responseSha256: page.responseSha256,
+            requestId: page.requestId,
+          }, page.cursorIn, page.cursorOut, page.itemCount ?? pageRows.length
+        ), observations);
+      }
+      await completeScope(nativeCreditScope.id, {
+        status: 'complete', paginationExhausted: true,
+      });
+      await acceptCoverage({
+        subjectId: job.subject_id, chainId, provider: nativeCreditProvider,
+        capability: 'native_credit', fromBlock: 0, throughBlock,
+        throughHash: null, paginationExhausted: true, status: 'complete', jobId: job.id,
+      });
+    };
     if (useMoralis) {
       let cursor = historyScope.provider_cursor || null;
       try {
@@ -911,7 +1071,7 @@ class EvmAuditService {
       // One exhausted Moralis history stream carries these six ordinary
       // capabilities. Keep their finite bounds explicit; RPC receipt lookups
       // remain a separate non-enumerating scope.
-      for (const capability of ['normal', 'internal', 'erc20', 'erc721', 'erc1155', 'native_credit']) {
+      for (const capability of ['normal', 'internal', 'erc20', 'erc721', 'erc1155']) {
         const capabilityScope = await upsertScope({
           chainId, provider: 'moralis', capability, status: 'running',
           fromBlock, throughBlock: boundary.number, throughHash: boundary.hash,
@@ -942,23 +1102,43 @@ class EvmAuditService {
         } catch (error) {
           const transient = isBlockscoutTransient(error);
           const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
+          const missingCredential = error.code === 'ETHERSCAN_NOT_CONFIGURED'
+            && feedProvider === 'etherscan';
           const prefix = explorerFailurePrefix(feedProvider);
           const name = explorerDisplayName(feedProvider);
           const wrapped = new Error(`${name} ${feedSpec.feed} audit feed failed: ${publicErrorDetail(error)}`);
-          wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
+          wrapped.code = missingCredential ? 'ETHERSCAN_NOT_CONFIGURED'
+            : rateLimited ? `${prefix}_RATE_LIMITED`
             : transient ? `${prefix}_TRANSPORT_ERROR`
               : isStandingExplorerLimitation(error) ? `${prefix}_FEED_UNSUPPORTED`
                 : `${prefix}_FEED_FAILED`;
           wrapped.httpStatus = error.response?.status || error.httpStatus || null;
-          wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
+          wrapped.retryAt = missingCredential || transient
+            ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
           await recordProviderAttempt({
             jobId: job.id, scopeId: feedScope.id, provider: feedProvider,
             endpoint: `account-${feedSpec.feed}`,
             requestParams: { address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock },
-            outcome: transient || isStandingExplorerLimitation(error) ? 'deferred' : 'failed',
+            outcome: missingCredential || transient || isStandingExplorerLimitation(error)
+              ? 'deferred' : 'failed',
             httpStatus: wrapped.httpStatus, errorCode: wrapped.code,
             errorDetail: publicErrorDetail(wrapped),
           });
+          if (missingCredential) {
+            // Preserve the exact keyed-feed gap, but continue the keyless
+            // neighbours and all consensus/RPC evidence for this chain.
+            await completeScope(feedScope.id, {
+              status: 'deferred', paginationExhausted: false,
+              errorCode: wrapped.code,
+              errorDetail: 'This feed requires the Etherscan credential; other configured feeds continue independently.',
+            });
+            missingCredentialFeed = {
+              code: wrapped.code,
+              detail: publicErrorDetail(wrapped),
+              retryAt: wrapped.retryAt,
+            };
+            continue;
+          }
           throw wrapped;
         }
         if (!Array.isArray(rows)) {
@@ -968,20 +1148,43 @@ class EvmAuditService {
           error.code = `${prefix}_FEED_FAILED`;
           throw error;
         }
-        const pageSize = 500;
-        for (let offset = 0; offset < Math.max(rows.length, 1); offset += pageSize) {
+        const capturedPages = Array.isArray(rows.evidencePages) ? rows.evidencePages : [];
+        const pages = capturedPages.length ? capturedPages : (() => {
+          const pageSize = 500;
+          const fallback = [];
+          for (let offset = 0; offset < Math.max(rows.length, 1); offset += pageSize) {
+            const pageRows = rows.slice(offset, offset + pageSize);
+            fallback.push({
+              rows: pageRows,
+              requestParams: {
+                address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock,
+              },
+              cursorIn: String(offset),
+              cursorOut: offset + pageRows.length >= rows.length ? null : String(offset + pageRows.length),
+              itemCount: pageRows.length,
+              responseJson: { feed: feedSpec.feed, rows: pageRows },
+            });
+          }
+          return fallback;
+        })();
+        for (const page of pages) {
           assertLease(leaseState);
-          const pageRows = rows.slice(offset, offset + pageSize);
+          const pageRows = Array.isArray(page.rows) ? page.rows : [];
           const observations = normalizer.explorerFeedObservations(
             { ...context, provider: feedProvider }, feedSpec.feed, pageRows
           );
           for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
           await commitPage(feedScope.id, pageRecord(
             feedProvider, `account-${feedSpec.feed}`,
-            { address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock },
-            { body: { feed: feedSpec.feed, rows: pageRows } },
-            String(offset), offset + pageRows.length >= rows.length ? null : String(offset + pageRows.length),
-            pageRows.length
+            page.requestParams || {
+              address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock,
+            },
+            {
+              body: page.responseJson || { feed: feedSpec.feed, rows: pageRows },
+              rawText: page.rawText,
+              responseSha256: page.responseSha256,
+              requestId: page.requestId,
+            }, page.cursorIn, page.cursorOut, page.itemCount ?? pageRows.length
           ), observations);
           await EvmAudit.heartbeat(job.id, OWNER, {
             progress: { current_feed: feedSpec.feed, transactions_seen: hashes.size },
@@ -995,65 +1198,6 @@ class EvmAuditService {
           capability: feedSpec.capability, fromBlock: feedFromBlock,
           throughBlock: sourceThroughBlock, throughHash: null,
           paginationExhausted: true, status: 'complete', jobId: job.id,
-        });
-      }
-      const nativeCreditScope = await upsertScope({
-        chainId, provider: auditProvider, capability: 'native_credit', status: 'running',
-        fromBlock: 0, throughBlock: sourceThroughBlock, throughHash: null,
-      });
-      const nativeCreditConfig = chain?.stateSyncDeposits;
-      if (nativeCreditConfig) {
-        let nativeCreditRows;
-        try {
-          nativeCreditRows = await EtherscanService.fetchStateSyncDeposits(
-            job.address, 0, explorerApiKey, chainId, nativeCreditConfig, sourceThroughBlock
-          );
-        } catch (error) {
-          const transient = isBlockscoutTransient(error);
-          const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
-          const prefix = explorerFailurePrefix(auditProvider);
-          const wrapped = new Error(`Explorer native-credit audit feed failed: ${publicErrorDetail(error)}`);
-          wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
-            : transient ? `${prefix}_TRANSPORT_ERROR`
-              : isStandingExplorerLimitation(error) ? `${prefix}_FEED_UNSUPPORTED`
-                : `${prefix}_FEED_FAILED`;
-          wrapped.httpStatus = error.response?.status || error.httpStatus || null;
-          wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
-          await recordProviderAttempt({
-            jobId: job.id, scopeId: nativeCreditScope.id, provider: auditProvider,
-            endpoint: 'native-credit', requestParams: {
-              address: job.address, from_block: 0, to_block: sourceThroughBlock,
-            }, outcome: transient || isStandingExplorerLimitation(error) ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
-            errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
-          });
-          throw wrapped;
-        }
-        const observations = normalizer.explorerFeedObservations(
-          { ...context, provider: auditProvider }, 'internal', nativeCreditRows
-        );
-        for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-        await commitPage(nativeCreditScope.id, pageRecord(
-          auditProvider, 'native-credit', {
-            address: job.address, from_block: 0, to_block: sourceThroughBlock,
-          }, { body: { rows: nativeCreditRows } }, null, null, nativeCreditRows.length
-        ), observations);
-        await completeScope(nativeCreditScope.id, {
-          status: 'complete', paginationExhausted: true,
-        });
-        await acceptCoverage({
-          subjectId: job.subject_id, chainId, provider: auditProvider,
-          capability: 'native_credit', fromBlock: 0, throughBlock: sourceThroughBlock,
-          throughHash: null, paginationExhausted: true, status: 'complete', jobId: job.id,
-        });
-      } else {
-        await commitPage(nativeCreditScope.id, pageRecord(
-          auditProvider, 'native-credit-not-applicable', { chain_id: chainId },
-          { body: { chain_id: chainId, status: 'not_applicable' } }, null, null, 0
-        ), []);
-        await completeScope(nativeCreditScope.id, {
-          status: 'complete', paginationExhausted: true,
-          errorCode: 'NOT_APPLICABLE',
-          errorDetail: 'This chain has no configured account-independent native-credit feed; receipt logs remain canonical evidence.',
         });
       }
       const foundBlocks = [...hashes].length
@@ -1087,7 +1231,40 @@ class EvmAuditService {
         paginationExhausted: true, status: 'complete', jobId: job.id,
       });
     }
+    await scanNativeCredits();
+    // Native-credit logs are a separate account-independent feed and can be
+    // the first or last observed movement on a chain. Refresh the discovered
+    // range after that scan so the manifest's activity hint covers every
+    // committed feed, not only the five account endpoints.
+    const foundBlocksAfterNativeCredits = [...(await EvmAudit.observationsForJob(
+      job.id, { chainId }
+    ))]
+      .filter((row) => explorerProviders.has(row.provider) && row.block_number != null)
+      .map((row) => Number(row.block_number)).filter(Number.isSafeInteger);
+    const discoveredChain = discovered.find((row) => row.chain_id === chainId);
+    if (discoveredChain) {
+      // Moralis history and the fallback explorer can both omit a declared
+      // account-independent native-credit feed. Keep the active range honest
+      // for either provider path by including every committed observation.
+      discoveredChain.active_hint = hashes.size > 0;
+      discoveredChain.first_block = foundBlocksAfterNativeCredits.length
+        ? Math.min(...foundBlocksAfterNativeCredits) : null;
+      discoveredChain.last_block = foundBlocksAfterNativeCredits.length
+        ? Math.max(...foundBlocksAfterNativeCredits) : null;
+      await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
+    }
     let legacyRows = await EvmAudit.storedTransferRows(job.user_id, job.subject_id, chainId, boundary.number);
+    const archiveProbeRows = [
+      ...legacyRows.map((row) => row.block_number),
+      ...(await EvmAudit.observationsForJob(job.id, { chainId }))
+        .map((row) => row.block_number),
+    ]
+      .filter((value) => value != null)
+      .map((value) => Number(value))
+      .filter((value) => Number.isSafeInteger(value) && value >= 0);
+    const firstObservedBlock = archiveProbeRows.length ? Math.min(...archiveProbeRows) : 0;
+    const archiveProbeBlock = Math.max(0, firstObservedBlock - 1);
+    const archiveProbeTag = blockTag(archiveProbeBlock);
     const coverageByFeed = new Map((await EvmAudit.storedFeedCoverage(
       job.user_id, job.subject_id, chainId
     )).map((row) => [row.feed, row]));
@@ -1142,8 +1319,7 @@ class EvmAuditService {
     const providerTransactionHashes = new Set((await EvmAudit.observationsForJob(
       job.id, { chainId }
     ))
-      .filter((row) => (useMoralis ? row.provider === auditProvider
-        : explorerProviders.has(row.provider)) && row.tx_hash)
+      .filter((row) => explorerProviders.has(row.provider) && row.tx_hash)
       .map((row) => row.tx_hash));
     // A restart may resume at a later provider cursor or overlap boundary.
     // Rehydrate every hash already linked to this durable job so previously
@@ -1187,6 +1363,264 @@ class EvmAuditService {
     // history can be reported as still running even though all pages committed.
     await completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
 
+    // Account-history APIs are indexed-provider views. Independently walk the
+    // finalized consensus log index for every token event where the wallet is
+    // an indexed sender or receiver. This can discover omitted ERC-20,
+    // ERC-721, and ERC-1155 transaction hashes, but it intentionally does not
+    // claim native-value or internal-call enumeration.
+    const priorIndexedLogCoverage = job.mode === 'incremental'
+      ? await EvmAudit.latestCoverage(
+        job.subject_id, chainId, 'consensus-rpc', 'indexed_token_logs'
+      )
+      : null;
+    const priorIndexedThrough = Number(priorIndexedLogCoverage?.from_block) === 0
+      ? Number(priorIndexedLogCoverage.through_block) : null;
+    const priorBoundaryStillCanonical = priorIndexedThrough === boundary.number
+      && String(priorIndexedLogCoverage?.through_block_hash || '').toLowerCase() === boundary.hash;
+    const indexedLogFromBlock = Number.isSafeInteger(priorIndexedThrough)
+      && (priorIndexedThrough < boundary.number || priorBoundaryStillCanonical)
+      ? priorIndexedThrough + 1 : 0;
+    const indexedLogScope = await upsertScope({
+      chainId, provider: 'consensus-rpc', capability: 'indexed_token_logs', status: 'running',
+      fromBlock: Math.min(indexedLogFromBlock, boundary.number),
+      throughBlock: boundary.number, throughHash: boundary.hash,
+      coverageBasis: 'consensus_rpc_address_indexed_token_logs_v1',
+    });
+    let indexedTokenLogs = 0;
+    let indexedLogEnumerationComplete = true;
+    if (indexedLogFromBlock <= boundary.number) {
+      try {
+        for await (const page of rpc.addressIndexedTokenLogPages(job.address, {
+          fromBlock: indexedLogFromBlock,
+          throughBlock: boundary.number,
+          cursor: indexedLogScope.provider_cursor || null,
+          maxRequests: MAX_RPC_LOG_REQUESTS_PER_RUN,
+        })) {
+          assertLease(leaseState);
+          const observations = normalizer.rpcLogObservations(
+            { ...context, provider: 'consensus-rpc' }, page.logs
+          );
+          for (const observation of observations) {
+            if (observation.txHash) hashes.add(observation.txHash);
+          }
+          await commitPage(indexedLogScope.id, rpcPageRecord(
+            'address-indexed-token-logs', {
+              address: job.address,
+              from_block: page.fromBlock,
+              through_block: page.throughBlock,
+              finalized_boundary: boundary.number,
+            }, { logs: page.logs }, page.evidence, page.logs.length,
+            page.cursorIn, page.cursorOut, 'ascending'
+          ), observations);
+          indexedTokenLogs += page.logs.length;
+          const renewed = await EvmAudit.heartbeat(job.id, OWNER, {
+            stage: 'canonicalizing',
+            progress: {
+              indexed_token_log_cursor: page.cursorOut,
+              indexed_token_logs_seen: indexedTokenLogs,
+            },
+          });
+          if (!renewed) leaseState.lost = true;
+          assertLease(leaseState);
+        }
+      } catch (error) {
+        if (error.code === 'RPC_LOG_SCAN_BUDGET_EXHAUSTED') {
+          await completeScope(indexedLogScope.id, {
+            status: 'deferred', paginationExhausted: false,
+            coverageBasis: 'consensus_rpc_address_indexed_token_logs_v1',
+            errorCode: error.code,
+            errorDetail: `Consensus RPC token-log enumeration paused at block ${error.cursor}; the durable cursor will resume on retry.`,
+          });
+          throw error;
+        }
+        if (error.code === 'RPC_LOG_ENUMERATION_UNSUPPORTED') {
+          indexedLogEnumerationComplete = false;
+          await completeScope(indexedLogScope.id, {
+            status: 'unsupported', paginationExhausted: false,
+            coverageBasis: 'consensus_rpc_address_indexed_token_logs_v1',
+            errorCode: error.code,
+            errorDetail: 'This consensus RPC cannot exhaustively enumerate address-indexed token logs; indexed account feeds remain the bounded source.',
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+    if (indexedLogEnumerationComplete) {
+      await completeScope(indexedLogScope.id, {
+        status: 'complete', paginationExhausted: true,
+        providerOrder: 'ascending',
+        coverageBasis: 'consensus_rpc_address_indexed_token_logs_v1',
+      });
+      await acceptCoverage({
+        subjectId: job.subject_id, chainId, provider: 'consensus-rpc',
+        capability: 'indexed_token_logs', fromBlock: 0, throughBlock: boundary.number,
+        throughHash: boundary.hash, providerOrder: 'ascending',
+        coverageBasis: 'consensus_rpc_address_indexed_token_logs_v1',
+        paginationExhausted: true, status: 'complete', jobId: job.id,
+      });
+    }
+    const indexedLogBlocks = (await EvmAudit.observationsForJob(
+      job.id, { chainId, evidenceKind: 'log' }
+    ))
+      .filter((row) => row.provider === 'consensus-rpc' && row.block_number != null)
+      .map((row) => Number(row.block_number)).filter(Number.isSafeInteger);
+    if (indexedLogBlocks.length) {
+      const discoveredChain = discovered.find((row) => row.chain_id === chainId);
+      if (discoveredChain) {
+        const priorFirst = discoveredChain.first_block == null
+          ? null : Number(discoveredChain.first_block);
+        const priorLast = discoveredChain.last_block == null
+          ? null : Number(discoveredChain.last_block);
+        discoveredChain.active_hint = true;
+        discoveredChain.first_block = Math.min(
+          ...indexedLogBlocks,
+          ...(Number.isSafeInteger(priorFirst) ? [priorFirst] : [])
+        );
+        discoveredChain.last_block = Math.max(
+          ...indexedLogBlocks,
+          ...(Number.isSafeInteger(priorLast) ? [priorLast] : [])
+        );
+        await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
+      }
+    }
+
+    const traceCoverageBasis = 'trace_rpc_address_trace_filter_v1';
+    const priorTraceCoverage = job.mode === 'incremental' && traceRpc
+      ? await EvmAudit.latestCoverage(job.subject_id, chainId, 'trace-rpc', 'internal')
+      : null;
+    const priorTraceThrough = Number(priorTraceCoverage?.from_block) === 0
+      ? Number(priorTraceCoverage.through_block) : null;
+    const priorTraceBoundaryStillCanonical = priorTraceThrough === boundary.number
+      && String(priorTraceCoverage?.through_block_hash || '').toLowerCase() === boundary.hash;
+    const traceFromBlock = Number.isSafeInteger(priorTraceThrough)
+      && (priorTraceThrough < boundary.number || priorTraceBoundaryStillCanonical)
+      ? priorTraceThrough + 1 : 0;
+    const traceScope = await upsertScope({
+      chainId, provider: 'trace-rpc', capability: 'internal',
+      status: traceRpc ? 'running' : 'unsupported',
+      fromBlock: Math.min(traceFromBlock, boundary.number),
+      throughBlock: boundary.number, throughHash: boundary.hash,
+      coverageBasis: traceCoverageBasis,
+      errorCode: traceRpc ? null : 'RPC_TRACE_NOT_CONFIGURED',
+      errorDetail: traceRpc
+        ? null
+        : 'Configure a dedicated parity-style trace RPC to enumerate internal value movements independently.',
+    });
+    let traceEnumerationComplete = false;
+    if (traceRpc) {
+      try {
+        const traceHead = await traceRpc.blockByNumberWithEvidence(boundary.numberHex);
+        if (String(traceHead.value.hash).toLowerCase() !== boundary.hash) {
+          const error = new Error('Trace RPC finalized boundary does not match consensus RPC');
+          error.code = 'RPC_CANONICALITY_MISMATCH';
+          throw error;
+        }
+        await commitPage(traceScope.id, rpcPageRecord(
+          'trace-boundary', { block_tag: boundary.numberHex },
+          { block: traceHead.value }, [traceHead.evidence], 1,
+          null, null, null, 'trace-rpc'
+        ), []);
+        if (traceFromBlock <= boundary.number) {
+          for await (const page of traceRpc.addressInternalTracePages(job.address, {
+            fromBlock: traceFromBlock,
+            throughBlock: boundary.number,
+            cursor: traceScope.provider_cursor || null,
+          })) {
+            assertLease(leaseState);
+            const observations = normalizer.rpcTraceObservations(
+              { ...context, provider: 'trace-rpc' }, page.traces
+            );
+            for (const observation of observations) {
+              if (observation.txHash) hashes.add(observation.txHash);
+            }
+            await commitPage(traceScope.id, rpcPageRecord(
+              'address-internal-traces', {
+                address: job.address,
+                from_block: page.fromBlock,
+                through_block: page.throughBlock,
+                direction: page.direction,
+                after: page.afterIn,
+                finalized_boundary: boundary.number,
+              }, { traces: page.traces }, page.evidence, page.traces.length,
+              page.cursorIn, page.cursorOut, 'ascending', 'trace-rpc'
+            ), observations);
+            const renewed = await EvmAudit.heartbeat(job.id, OWNER, {
+              stage: 'canonicalizing',
+              progress: {
+                internal_trace_cursor: page.cursorOut,
+                internal_traces_seen: page.traces.length,
+              },
+            });
+            if (!renewed) leaseState.lost = true;
+            assertLease(leaseState);
+          }
+        }
+        await completeScope(traceScope.id, {
+          status: 'complete', paginationExhausted: true,
+          providerOrder: 'ascending', coverageBasis: traceCoverageBasis,
+        });
+        await acceptCoverage({
+          subjectId: job.subject_id, chainId, provider: 'trace-rpc', capability: 'internal',
+          fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
+          providerOrder: 'ascending', coverageBasis: traceCoverageBasis,
+          paginationExhausted: true, status: 'complete', jobId: job.id,
+        });
+        traceEnumerationComplete = true;
+      } catch (error) {
+        if (error.code === 'RPC_TRACE_SCAN_BUDGET_EXHAUSTED') {
+          await completeScope(traceScope.id, {
+            status: 'deferred', paginationExhausted: false,
+            coverageBasis: traceCoverageBasis, errorCode: error.code,
+            errorDetail: `Trace RPC enumeration paused at block ${error.cursor}; the durable cursor will resume on retry.`,
+          });
+          throw error;
+        }
+        if (['RPC_TRACE_ENUMERATION_UNSUPPORTED', 'RPC_TRACE_REWARD_UNSUPPORTED']
+          .includes(error.code)) {
+          await completeScope(traceScope.id, {
+            status: 'unsupported', paginationExhausted: false,
+            coverageBasis: traceCoverageBasis, errorCode: error.code,
+            errorDetail: error.code === 'RPC_TRACE_REWARD_UNSUPPORTED'
+              ? 'The trace endpoint returned a consensus reward; reward accounting requires a separate consensus-reward ledger.'
+              : 'The configured trace RPC cannot prove exhaustive internal-value enumeration.',
+          });
+        } else {
+          throw error;
+        }
+      }
+    } else {
+      await completeScope(traceScope.id, {
+        status: 'unsupported', paginationExhausted: false,
+        coverageBasis: traceCoverageBasis, errorCode: 'RPC_TRACE_NOT_CONFIGURED',
+        errorDetail: 'No dedicated trace RPC endpoint is configured for this chain.',
+      });
+    }
+    const traceBlocks = (await EvmAudit.observationsForJob(
+      job.id, { chainId, evidenceKind: 'internal_trace' }
+    ))
+      .filter((row) => row.provider === 'trace-rpc' && row.block_number != null)
+      .map((row) => Number(row.block_number)).filter(Number.isSafeInteger);
+    if (traceBlocks.length) {
+      const discoveredChain = discovered.find((row) => row.chain_id === chainId);
+      if (discoveredChain) {
+        const priorFirst = discoveredChain.first_block == null
+          ? null : Number(discoveredChain.first_block);
+        const priorLast = discoveredChain.last_block == null
+          ? null : Number(discoveredChain.last_block);
+        discoveredChain.active_hint = true;
+        discoveredChain.first_block = Math.min(
+          ...traceBlocks,
+          ...(Number.isSafeInteger(priorFirst) ? [priorFirst] : [])
+        );
+        discoveredChain.last_block = Math.max(
+          ...traceBlocks,
+          ...(Number.isSafeInteger(priorLast) ? [priorLast] : [])
+        );
+        await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
+      }
+    }
+
     await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });
     const rpcScope = await upsertScope({
       chainId, provider: 'consensus-rpc', capability: 'receipt_verification', status: 'running',
@@ -1219,6 +1653,10 @@ class EvmAuditService {
       const tx = normalizer.transactionFromRpc(
         context, transaction, receipt, observationIds.get(`transaction:${hash}`)
       );
+      // A successful transactionAndReceipt call is the consensus proof that
+      // permits a configured trace endpoint's effect to be promoted later.
+      // The trace itself remains separately retained and scoped.
+      verifiedReceiptHashes.add(hash);
       const canonical = await upsertMinedTransaction(tx);
       await linkTransactionEvidence(canonical.id, [
         { observationId: observationIds.get(`transaction:${hash}`), role: 'transaction' },
@@ -1262,6 +1700,62 @@ class EvmAuditService {
       coverageBasis: pointCheckBasis,
     });
 
+    // A finalized-head balance proves only the current state.  Probe one
+    // deterministic historical height so the audit can distinguish an
+    // archive-capable endpoint from a provider that silently serves latest
+    // state only.  This is deliberately bounded to one native read; it is a
+    // capability check, not a claim that finite checkpoints prove history.
+    let archiveCheck = {
+      status: 'unavailable', block: archiveProbeBlock, block_tag: archiveProbeTag,
+      derived_units: null, live_units: null, delta_units: null,
+    };
+    try {
+      const archiveBlockEvidence = await rpc.blockByNumberWithEvidence(archiveProbeTag);
+      await commitPage(nativeBalanceScope.id, rpcPageRecord(
+        'archive-block', { block_tag: archiveProbeTag },
+        { block: archiveBlockEvidence.value }, [archiveBlockEvidence.evidence], 1
+      ), []);
+      const archiveBalanceEvidence = await rpc.balanceWithEvidence(job.address, archiveProbeTag);
+      await commitPage(nativeBalanceScope.id, rpcPageRecord(
+        'archive-native-balance', { address: job.address, block_tag: archiveProbeTag },
+        { address: job.address, block_tag: archiveProbeTag,
+          balance_wei: archiveBalanceEvidence.value.toString() },
+        [archiveBalanceEvidence.evidence], 1
+      ), []);
+      const archiveDerived = BigInt(await EvmAudit.nativeDerivedAt(
+        job.user_id, job.subject_id, chainId, archiveProbeBlock
+      ));
+      const archiveDelta = archiveBalanceEvidence.value - archiveDerived;
+      archiveCheck = {
+        status: archiveDelta === 0n ? 'available' : 'mismatch',
+        block: archiveProbeBlock, block_tag: archiveProbeTag,
+        derived_units: archiveDerived.toString(),
+        live_units: archiveBalanceEvidence.value.toString(),
+        delta_units: archiveDelta.toString(),
+      };
+    } catch (error) {
+      // Database failures are audit failures, not evidence that the endpoint
+      // lacks archive state. Let those escape to the chain-level error path;
+      // only an RPC-shaped failure may be recorded as an archive gap here.
+      if (!String(error.code || '').startsWith('RPC_')) throw error;
+      archiveCheck = {
+        ...archiveCheck,
+        status: 'unavailable',
+        error_code: error.code || 'RPC_ARCHIVE_UNAVAILABLE',
+        error_detail: String(error.message || 'Historical archive probe failed').slice(0, 500),
+      };
+      await recordProviderAttempt({
+        jobId: job.id, scopeId: nativeBalanceScope.id, provider: 'consensus-rpc',
+        endpoint: 'archive-state-probe',
+        requestParams: { address: job.address, block_tag: archiveProbeTag },
+        outcome: ['RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR'].includes(error.code)
+          ? 'deferred' : 'failed',
+        httpStatus: error.httpStatus || null,
+        errorCode: archiveCheck.error_code,
+        errorDetail: archiveCheck.error_detail,
+      });
+    }
+
     const internalObservations = [
       ...(await EvmAudit.observationsForJob(job.id, {
         chainId, evidenceKind: 'internal_trace',
@@ -1270,7 +1764,9 @@ class EvmAuditService {
         chainId, evidenceKind: 'native_credit',
       })),
     ];
-    for (const effect of effectsFromInternalObservations(context, internalObservations)) {
+    for (const effect of effectsFromInternalObservations(context, internalObservations, {
+      verifiedTraceHashes: verifiedReceiptHashes,
+    })) {
       const stored = await upsertCanonicalEffect(effect);
       await linkEffectEvidence(stored.id, effect.evidenceObservationIds);
     }
@@ -1365,7 +1861,7 @@ class EvmAuditService {
       assetKey: 'native', assetType: 'native', boundaryBlock: boundary.number,
       derivedUnits: derivedBalance, liveUnits: liveBalance.toString(), deltaUnits: delta.toString(),
       status: delta === 0n ? 'match' : 'mismatch',
-      detail: { boundary_hash: boundary.hash },
+      detail: { boundary_hash: boundary.hash, archive_check: archiveCheck },
     });
     await completeScope(nativeBalanceScope.id, {
       status: 'complete', paginationExhausted: true, coverageBasis: pointCheckBasis,
@@ -1376,53 +1872,160 @@ class EvmAuditService {
     const tokenBalances = await EvmAudit.tokenDerivedAt(
       job.user_id, job.subject_id, chainId, boundary.number
     );
-    const tokensByContract = new Map(tokenBalances.map((token) => [
-      String(token.token_contract).toLowerCase(), token,
-    ]));
+    const observedTokenContracts = await EvmAudit.observedErc20Contracts(
+      job.user_id, job.id, job.subject_id, chainId, boundary.number
+    );
+    const tokenUniverse = mergeObservedTokenUniverse(tokenBalances, observedTokenContracts);
+    const tokensByContract = tokenUniverse.tokensByContract;
+    const tokenAuditRows = [];
     for (const token of tokensByContract.values()) {
+      let liveEvidence;
       try {
-        const liveEvidence = await rpc.erc20BalanceWithEvidence(
+        assertLease(leaseState);
+        liveEvidence = await rpc.erc20BalanceWithEvidence(
           token.token_contract, job.address, boundary.numberHex
         );
+      } catch (error) {
+        tokenEvidenceFailures += 1;
+        tokenMismatches += 1;
+        tokenAuditRows.push({
+          token,
+          liveUnits: null,
+          deltaUnits: null,
+          status: error.code === 'RPC_UNSUPPORTED' ? 'unsupported' : 'failed',
+          detail: {
+            boundary_hash: boundary.hash,
+            token_decimals: Number(token.token_decimals),
+            error_code: error.code || 'TOKEN_BALANCE_FAILED',
+          },
+        });
+        continue;
+      }
+      await commitPage(tokenBalanceScope.id, rpcPageRecord(
+        'erc20-balance', {
+          contract: token.token_contract, address: job.address, block_tag: boundary.numberHex,
+        },
+        {
+          contract: token.token_contract, address: job.address,
+          block_tag: boundary.numberHex, balance_units: liveEvidence.value.toString(),
+        },
+        [liveEvidence.evidence]
+      ), []);
+      const live = liveEvidence.value;
+      const tokenDelta = live - BigInt(token.balance_units);
+      if (tokenDelta !== 0n) tokenMismatches += 1;
+      tokenAuditRows.push({
+        token,
+        liveUnits: live.toString(),
+        deltaUnits: tokenDelta.toString(),
+        status: tokenDelta === 0n ? 'match' : 'mismatch',
+        detail: { boundary_hash: boundary.hash, token_decimals: Number(token.token_decimals) },
+      });
+    }
+
+    // A token balance at the finalized head can still hide an omitted
+    // incoming/outgoing pair. Reuse the canonical archive height selected for
+    // the native probe and check each known ERC-20 there in a bounded pass.
+    // The derived query is evaluated at the same height, so a non-zero delta
+    // is an explicit historical-state discrepancy rather than a latest-state
+    // comparison disguised as one.
+    const historicalTokenChecks = new Map();
+    const tokenPlan = buildHistoricalTokenPlan([...tokensByContract.keys()]);
+    let historicalTokenDeferred = 0;
+    let historicalTokenFailures = 0;
+    let historicalTokenMismatches = 0;
+    if (archiveCheck.status === 'unavailable') {
+      historicalTokenDeferred = tokenPlan.contracts.length;
+    } else {
+      const historicalBalances = await EvmAudit.tokenDerivedAt(
+        job.user_id, job.subject_id, chainId, archiveProbeBlock
+      );
+      const historicalByContract = new Map(historicalBalances.map((token) => [
+        String(token.token_contract).toLowerCase(), token,
+      ]));
+      historicalTokenDeferred = tokenPlan.deferred;
+      for (const contract of tokenPlan.checked) {
+        const token = tokensByContract.get(contract);
+        const historicalDerived = historicalByContract.get(contract)?.balance_units || '0';
+        let liveEvidence;
+        try {
+          assertLease(leaseState);
+          liveEvidence = await rpc.erc20BalanceWithEvidence(
+            token.token_contract, job.address, archiveProbeTag
+          );
+        } catch (error) {
+          historicalTokenFailures += 1;
+          historicalTokenChecks.set(contract, {
+            status: error.code === 'RPC_UNSUPPORTED' ? 'unsupported' : 'failed',
+            block: archiveProbeBlock,
+            block_tag: archiveProbeTag,
+            error_code: error.code || 'HISTORICAL_TOKEN_BALANCE_FAILED',
+          });
+          continue;
+        }
         await commitPage(tokenBalanceScope.id, rpcPageRecord(
-          'erc20-balance', {
-            contract: token.token_contract, address: job.address, block_tag: boundary.numberHex,
+          'archive-erc20-balance', {
+            contract: token.token_contract, address: job.address, block_tag: archiveProbeTag,
           },
           {
             contract: token.token_contract, address: job.address,
-            block_tag: boundary.numberHex, balance_units: liveEvidence.value.toString(),
+            block_tag: archiveProbeTag, balance_units: liveEvidence.value.toString(),
           },
           [liveEvidence.evidence]
         ), []);
-        const live = liveEvidence.value;
-        const tokenDelta = live - BigInt(token.balance_units);
-        if (tokenDelta !== 0n) tokenMismatches += 1;
-        await storeBalanceAudit({
-          jobId: job.id, subjectId: job.subject_id, chainId,
-          assetKey: token.token_contract, assetType: 'erc20', boundaryBlock: boundary.number,
-          derivedUnits: token.balance_units, liveUnits: live.toString(), deltaUnits: tokenDelta.toString(),
-          status: tokenDelta === 0n ? 'match' : 'mismatch',
-          detail: { boundary_hash: boundary.hash, token_decimals: Number(token.token_decimals) },
-        });
-      } catch (error) {
-        tokenEvidenceFailures += 1;
-        await storeBalanceAudit({
-          jobId: job.id, subjectId: job.subject_id, chainId,
-          assetKey: token.token_contract, assetType: 'erc20', boundaryBlock: boundary.number,
-          derivedUnits: token.balance_units, liveUnits: null, deltaUnits: null,
-          status: error.code === 'RPC_UNSUPPORTED' ? 'unsupported' : 'failed',
-          detail: { error_code: error.code || 'TOKEN_BALANCE_FAILED' },
-        });
-        tokenMismatches += 1;
+        const historicalDelta = liveEvidence.value - BigInt(historicalDerived);
+        const check = {
+          status: historicalDelta === 0n ? 'match' : 'mismatch',
+          block: archiveProbeBlock,
+          block_tag: archiveProbeTag,
+          derived_units: String(historicalDerived),
+          live_units: liveEvidence.value.toString(),
+          delta_units: historicalDelta.toString(),
+        };
+        historicalTokenChecks.set(contract, check);
+        if (historicalDelta !== 0n) historicalTokenMismatches += 1;
       }
     }
+    for (const row of tokenAuditRows) {
+      const contract = String(row.token.token_contract).toLowerCase();
+      const historicalCheck = historicalTokenChecks.get(contract) || {
+        status: 'deferred',
+        block: archiveProbeBlock,
+        block_tag: archiveProbeTag,
+        reason: archiveCheck.status === 'unavailable' ? 'archive_unavailable' : 'lookup_budget',
+      };
+      await storeBalanceAudit({
+        jobId: job.id, subjectId: job.subject_id, chainId,
+        assetKey: row.token.token_contract, assetType: 'erc20', boundaryBlock: boundary.number,
+        derivedUnits: row.token.balance_units, liveUnits: row.liveUnits, deltaUnits: row.deltaUnits,
+        status: row.status,
+        detail: {
+          ...row.detail,
+          historical_check: historicalCheck,
+          observed_only: row.token.observed_only === true,
+        },
+      });
+    }
+    const historicalTokenGap = historicalTokenDeferred > 0
+      || historicalTokenFailures > 0 || historicalTokenMismatches > 0 ? 1 : 0;
     await completeScope(tokenBalanceScope.id, {
-      status: tokenEvidenceFailures ? 'failed' : 'complete',
-      paginationExhausted: !tokenEvidenceFailures,
+      status: tokenEvidenceFailures || historicalTokenFailures ? 'failed'
+        : historicalTokenDeferred ? 'unverified' : 'complete',
+      paginationExhausted: !tokenEvidenceFailures
+        && !historicalTokenFailures && historicalTokenDeferred === 0,
       coverageBasis: pointCheckBasis,
-      errorCode: tokenEvidenceFailures ? 'TOKEN_BALANCE_EVIDENCE_FAILED' : null,
+      errorCode: tokenEvidenceFailures ? 'TOKEN_BALANCE_EVIDENCE_FAILED'
+        : historicalTokenFailures ? 'HISTORICAL_TOKEN_BALANCE_EVIDENCE_FAILED'
+          : historicalTokenDeferred ? 'HISTORICAL_TOKEN_LOOKUP_DEFERRED' : null,
       errorDetail: tokenEvidenceFailures
-        ? `${tokenEvidenceFailures} consensus token balance point check(s) failed.` : null,
+        ? `${tokenEvidenceFailures} consensus token balance point check(s) failed.`
+        : historicalTokenFailures
+          ? `${historicalTokenFailures} historical consensus token balance point check(s) failed.`
+          : historicalTokenDeferred
+            ? archiveCheck.status === 'unavailable'
+              ? `${historicalTokenDeferred} historical consensus token balance point check(s) deferred because archive state is unavailable.`
+              : `${historicalTokenDeferred} historical consensus token balance point check(s) deferred by the bounded lookup plan.`
+            : null,
     });
 
     let activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
@@ -1448,9 +2051,24 @@ class EvmAuditService {
     const provisionalEffects = await EvmAudit.provisionalEffectCount(job.subject_id, chainId);
     const unmatchedEffects = effectReconciliation.gaps;
     const capabilityGaps = await EvmAudit.requiredScopeGapCount(job.id, chainId);
+    // These scopes are deliberately non-complete proofs today: receipts verify
+    // only hashes discovered by the account feeds, and balances are checked at
+    // one finalized head plus a bounded historical checkpoint rather than at
+    // every historical state. Count each limitation in the durable job result
+    // so a provider-complete walk cannot be mistaken for lifetime completeness.
+    const receiptEnumerationGap = 1;
+    const indexedTokenLogEnumerationGap = indexedLogEnumerationComplete ? 0 : 1;
+    const historicalStateGap = 1;
+    const archiveDepthGap = archiveCheck.status === 'unavailable' ? 1 : 0;
+    const archiveBalanceGap = archiveCheck.status === 'mismatch' ? 1 : 0;
+    const credentialFeedGap = missingCredentialFeed ? 1 : 0;
     const gaps = providerLookupGaps + nonceGapCount + transactionConflicts + capabilityGaps
+      + receiptEnumerationGap + indexedTokenLogEnumerationGap + historicalStateGap
+      + archiveDepthGap + archiveBalanceGap
+      + credentialFeedGap
       + (delta === 0n ? 0 : 1)
-      + tokenMismatches + missingActivity + unresolvedBridges + provisionalEffects
+      + tokenMismatches + historicalTokenGap
+      + missingActivity + unresolvedBridges + provisionalEffects
       + unmatchedEffects;
     await EvmAudit.heartbeat(job.id, OWNER, {
       progress: {
@@ -1463,6 +2081,27 @@ class EvmAuditService {
           nonce_gaps: nonceGapCount,
           native_balance_match: delta === 0n,
           token_balance_gaps: tokenMismatches,
+          historical_token_balance_gap: historicalTokenGap,
+          historical_token_checks: historicalTokenChecks.size,
+          historical_token_deferred: historicalTokenDeferred,
+          historical_token_failures: historicalTokenFailures,
+          historical_token_mismatches: historicalTokenMismatches,
+          asset_universe_contracts: tokensByContract.size,
+          asset_universe_observed_only: tokenUniverse.observedOnly,
+          asset_universe_basis: 'derived_ledger_plus_durable_erc20_observations',
+          indexed_token_log_enumeration_gap: indexedTokenLogEnumerationGap,
+          indexed_token_log_coverage_basis: 'consensus_rpc_address_indexed_token_logs_v1',
+          internal_trace_enumeration_complete: traceEnumerationComplete,
+          internal_trace_coverage_basis: traceCoverageBasis,
+          receipt_enumeration_gap: receiptEnumerationGap,
+          historical_state_gap: historicalStateGap,
+          archive_depth_gap: archiveDepthGap,
+          archive_balance_gap: archiveBalanceGap,
+          archive_probe_block: archiveProbeBlock,
+          archive_probe_status: archiveCheck.status,
+          balance_coverage_basis: pointCheckBasis,
+          credential_feed_gap: credentialFeedGap,
+          credential_feed_error: missingCredentialFeed,
           corroborated_identity_repairs: identityRepair.repaired,
           missing_activity: missingActivity,
           unresolved_bridges: bridgeAudit.unresolved,
@@ -1472,12 +2111,21 @@ class EvmAuditService {
         },
       },
     });
-    return { gaps, boundary, transactions: transactions.length, discovered };
+    return {
+      gaps,
+      boundary,
+      transactions: transactions.length,
+      discovered,
+      deferred: Boolean(missingCredentialFeed),
+      deferredProviderError: missingCredentialFeed,
+    };
   }
 }
 
 module.exports = EvmAuditService;
 module.exports._missingRanges = missingRanges;
 module.exports._unmatchedEffectCount = unmatchedEffectCount;
+module.exports._historicalTokenPlan = buildHistoricalTokenPlan;
+module.exports._mergeObservedTokenUniverse = mergeObservedTokenUniverse;
 module.exports._isBlockscoutTransient = isBlockscoutTransient;
 module.exports._isStandingExplorerLimitation = isStandingExplorerLimitation;

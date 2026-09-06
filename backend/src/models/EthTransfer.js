@@ -209,7 +209,7 @@ class EthTransfer {
       'token_contract', 'token_symbol', 'token_decimals', 'token_standard',
       'token_id', 'source_log_index', 'source_trace_address',
       'audit_effect_key', 'audit_observation_id',
-      'is_error', 'tx_is_error', 'method_id', 'method_name',
+      'is_error', 'tx_is_error', 'method_id', 'method_name', 'bridge_source_tx_hash',
     ];
     // Chunked to stay far under Postgres' 65535-parameter cap on first syncs
     // of busy wallets.
@@ -232,7 +232,7 @@ class EthTransfer {
           row.source_trace_address == null ? null : JSON.stringify(row.source_trace_address),
           row.audit_effect_key ?? null, row.audit_observation_id ?? null,
           row.is_error, row.tx_is_error ?? null,
-          row.method_id ?? null, row.method_name ?? null
+          row.method_id ?? null, row.method_name ?? null, row.bridge_source_tx_hash ?? null
         );
         return `(${cols.map((_, j) => `$${base + j + 1}`).join(', ')})`;
       });

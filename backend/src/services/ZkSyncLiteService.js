@@ -25,6 +25,11 @@ function address(value) {
   return /^0x[0-9a-f]{40}$/.test(normalized) ? normalized : null;
 }
 
+function transactionHash(value) {
+  const normalized = String(value || '').toLowerCase();
+  return /^0x[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+}
+
 function uint(value, field) {
   const text = String(value ?? '');
   if (!/^\d+$/.test(text)) {
@@ -267,6 +272,7 @@ class ZkSyncLiteService {
       tx_is_error: null,
       method_id: null,
       method_name: null,
+      bridge_source_tx_hash: null,
     });
 
     const addAsset = (tx, id, fromValue, toValue, amountValue, methodName) => {
@@ -336,6 +342,7 @@ class ZkSyncLiteService {
         case 'Deposit': {
           const id = tokenIdFrom(op, 'tokenId', 'token');
           addAsset(tx, id, BRIDGE_ADDRESS, op.to, op.amount, method);
+          rows.at(-1).bridge_source_tx_hash = transactionHash(op.ethHash);
           break;
         }
         case 'Transfer': {

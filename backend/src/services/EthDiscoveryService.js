@@ -68,7 +68,7 @@ class EthDiscoveryService {
         continue;
       }
       try {
-        if (chains.getChain(chainId)?.rpcUrl) {
+        if (chains.getChain(chainId)?.consensusRpcUrl || chains.getChain(chainId)?.rpcUrl) {
           calls += 1;
           const code = await EtherscanService._rpcRequest(chainId, 'eth_getCode', [candidate.address, 'latest']);
           if (code && code !== '0x' && code !== '0x0') {

@@ -10,9 +10,13 @@ const path = require('path');
 
 const PACK_PATH = path.join(__dirname, '../data/hop-bridge-registry.json');
 const MIGRATION_PATH = path.join(__dirname, '../migrations/074_hop_bridge_matching.sql');
+const INCREMENTAL_MIGRATION_PATH = path.join(
+  __dirname, '../migrations/084_hop_native_eth_routes.sql'
+);
 const START = '-- BEGIN GENERATED HOP SEED (backend/scripts/generate-hop-bridge-seed.js)';
 const END = '-- END GENERATED HOP SEED';
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 const quote = (value) => `'${String(value).replace(/'/g, "''")}'`;
 const json = (value) => `${quote(JSON.stringify(value))}::jsonb`;
@@ -140,10 +144,15 @@ function routeRows(pack) {
           source_wrapper_address: lower(source.wrapper),
           destination_bridge_address: lower(destination.bridge),
           destination_wrapper_address: destination.wrapper,
-          source_asset_addresses: [lower(source.canonicalToken), lower(source.hopToken)],
-          destination_asset_addresses: destination.is_l1
-            ? [lower(destination.canonical_token)]
-            : [lower(destination.canonical_token), lower(destination.hop_token)],
+          source_asset_addresses: [...new Set([
+            lower(source.canonicalToken), lower(source.hopToken),
+            ...(asset.native ? [ZERO_ADDRESS] : []),
+          ])],
+          destination_asset_addresses: [...new Set([
+            lower(destination.canonical_token),
+            ...(!destination.is_l1 ? [lower(destination.hop_token)] : []),
+            ...(asset.native ? [ZERO_ADDRESS] : []),
+          ])],
           source_token_indices: [0, 1],
           destination_token_indices: [0, 1],
           source_valid_from_block: Number(source.validFromBlock),
@@ -227,13 +236,19 @@ function buildSeed(pack) {
 
 function main() {
   const pack = JSON.parse(fs.readFileSync(PACK_PATH, 'utf8'));
-  const migration = fs.readFileSync(MIGRATION_PATH, 'utf8');
-  const start = migration.indexOf(START);
-  const end = migration.indexOf(END, start);
-  if (start < 0 || end < 0) throw new Error('Hop migration seed markers are missing');
-  const output = `${migration.slice(0, start)}${buildSeed(pack)}${migration.slice(end + END.length)}`;
-  fs.writeFileSync(MIGRATION_PATH, output);
-  process.stdout.write(`Wrote ${endpointRows(pack).length} Hop endpoints and ${routeRows(pack).length} routes\n`);
+  for (const migrationPath of [MIGRATION_PATH, INCREMENTAL_MIGRATION_PATH]) {
+    const migration = fs.readFileSync(migrationPath, 'utf8');
+    const start = migration.indexOf(START);
+    const end = migration.indexOf(END, start);
+    if (start < 0 || end < 0) {
+      throw new Error(`Hop migration seed markers are missing: ${migrationPath}`);
+    }
+    const output = `${migration.slice(0, start)}${buildSeed(pack)}${migration.slice(end + END.length)}`;
+    fs.writeFileSync(migrationPath, output);
+  }
+  process.stdout.write(
+    `Wrote ${endpointRows(pack).length} Hop endpoints and ${routeRows(pack).length} routes\n`
+  );
 }
 
 if (require.main === module) main();

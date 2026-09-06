@@ -31,12 +31,18 @@ function validateEvidence(txHash, transaction, receipt) {
   }
   const blockNumber = parseHexInteger(receipt.blockNumber);
   const blockHash = lower(receipt.blockHash);
+  const transactionBlockNumber = transaction.blockNumber == null
+    ? null : parseHexInteger(transaction.blockNumber);
   const status = parseHexInteger(receipt.status);
   if (blockNumber == null || !HASH_RE.test(blockHash)) {
     throw new Error('Bridge receipt is missing a valid block boundary');
   }
   if (status !== 0 && status !== 1) {
     throw new Error('Bridge receipt is missing a valid execution status');
+  }
+  if (transaction.blockNumber != null
+      && (transactionBlockNumber == null || transactionBlockNumber !== blockNumber)) {
+    throw new Error('Bridge transaction and receipt disagree on block number');
   }
   if (transaction.blockHash != null && lower(transaction.blockHash) !== blockHash) {
     throw new Error('Bridge transaction and receipt disagree on block hash');
@@ -45,10 +51,14 @@ function validateEvidence(txHash, transaction, receipt) {
   const seen = new Set();
   for (const log of receipt.logs) {
     const index = parseHexInteger(log?.logIndex);
+    const logBlockNumber = log?.blockNumber == null ? null : parseHexInteger(log.blockNumber);
     if (!log || !ADDRESS_RE.test(lower(log.address)) || index == null
         || !Array.isArray(log.topics) || log.topics.some((topic) => !HASH_RE.test(lower(topic)))
         || !HEX_RE.test(lower(log.data)) || lower(log.transactionHash) !== hash
-        || lower(log.blockHash) !== blockHash || seen.has(index)) {
+        || lower(log.blockHash) !== blockHash
+        || (log.blockNumber != null
+          && (logBlockNumber == null || logBlockNumber !== blockNumber))
+        || log.removed === true || seen.has(index)) {
       throw new Error('Bridge receipt contains a malformed or duplicate log');
     }
     seen.add(index);

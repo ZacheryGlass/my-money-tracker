@@ -143,7 +143,7 @@ function ethBridgeFinalizedLog({
 // The registry declaration
 // ---------------------------------------------------------------------------
 
-test('declared native-credit feeds include both OP Stack chains', () => {
+test('declared native-credit feeds remain chain-scoped', () => {
   for (const chain of chains.allChains()) {
     if (chain.id === 137) {
       assert.ok(chain.stateSyncDeposits, 'Polygon must declare the state-sync feed');
@@ -153,7 +153,7 @@ test('declared native-credit feeds include both OP Stack chains', () => {
       assert.equal(chain.stateSyncDeposits.contract, GNOSIS_REWARD);
       assert.equal(chain.stateSyncDeposits.topic0, ADDED_RECEIVER_TOPIC0);
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 1);
-    } else if (chain.id === 10 || chain.id === 8453) {
+    } else if (chain.id === 10) {
       assert.equal(chain.stateSyncDeposits.contract, OP_STACK_BRIDGE);
       assert.equal(chain.stateSyncDeposits.topic0, ETH_BRIDGE_FINALIZED_TOPIC0);
       assert.equal(chain.stateSyncDeposits.userTopicIndex, 2);
@@ -162,35 +162,6 @@ test('declared native-credit feeds include both OP Stack chains', () => {
         `chain ${chain.id} must NOT declare a state-sync feed`);
     }
   }
-});
-
-test('the Base OP Stack log feed uses the generic Blockscout account API', async (t) => {
-  stubScanHead(t, 50000000);
-  const axios = require('axios');
-  const original = axios.get;
-  const seen = [];
-  axios.get = async (url, config) => {
-    seen.push({ url, params: config.params });
-    return { data: { status: '1', result: [ethBridgeFinalizedLog()] } };
-  };
-  t.after(() => { axios.get = original; });
-
-  const rows = await EtherscanService.fetchStateSyncDeposits(
-    WALLET, 0, null, 8453, chains.getChain(8453).stateSyncDeposits
-  );
-
-  assert.equal(seen[0].url, 'https://base.blockscout.com/api');
-  assert.equal(seen[0].params.chainid, undefined);
-  assert.equal(seen[0].params.apikey, undefined);
-  assert.equal(seen[0].params.topic2, `0x${'0'.repeat(24)}${WALLET.slice(2)}`);
-  assert.deepEqual(rows, [{
-    hash: DEPOSIT_TX,
-    blockNumber: '49293680',
-    timeStamp: '1785370265',
-    from: OP_STACK_BRIDGE,
-    to: WALLET,
-    value: DEPOSIT_WEI,
-  }]);
 });
 
 test('the legacy OP Stack log feed filters topic2 and becomes a native inbound row', async (t) => {

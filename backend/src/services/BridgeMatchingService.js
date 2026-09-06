@@ -22,7 +22,132 @@ const {
 
 const MAX_RECEIPTS_PER_REBUILD = 250;
 const BRIDGE_LOCK_NAMESPACE = 1112688964; // ASCII-ish "BRID", signed int32-safe.
+const EXCLUDED_BASE_CHAIN_ID = 8453;
+
+// Base is intentionally outside this history.  These identities are kept in
+// a separate exclusion-only registry so an included-chain transaction can be
+// explained without re-enabling Base ingestion or treating a shared OP Stack
+// predeploy as proof of which OP Stack chain was involved.  The URLs are the
+// same first-party sources used by the retired registry and are evidence
+// metadata only; they never enter endpoint lookup or decoding.
+const BASE_EXCLUSION_ENDPOINTS = Object.freeze([
+  {
+    address: '0x3154cf16ccdb4c6d922629664174b904d80f2c35',
+    name: 'Base: L1 Standard Bridge', role: 'standard_bridge',
+    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
+  },
+  {
+    address: '0x49048044d57e1c92a77f79988d21fa8faf74e97e',
+    name: 'Base: Portal', role: 'portal',
+    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
+  },
+  {
+    address: '0x866e82a600a1414e583f7f13623f1ac5d58b0afa',
+    name: 'Base: L1 Cross Domain Messenger', role: 'cross_domain_messenger',
+    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
+  },
+]);
+const BASE_EXCLUSION_BY_ADDRESS = new Map(
+  BASE_EXCLUSION_ENDPOINTS.map((endpoint) => [endpoint.address, endpoint])
+);
 const lower = (value) => String(value || '').toLowerCase();
+
+function activityCoordinate(row) {
+  return `${Number(row?.wallet_id)}:${Number(row?.chain_id)}:${lower(row?.tx_hash)}`;
+}
+
+function baseEndpointMentioned(envelope) {
+  if (Number(envelope?.chain_id) === EXCLUDED_BASE_CHAIN_ID) return null;
+  const addresses = new Set([
+    lower(envelope?.counterparty_address),
+    lower(envelope?.transaction?.to),
+    lower(envelope?.receipt?.to),
+    ...(envelope?.receipt?.logs || []).map((log) => lower(log?.address)),
+    ...(envelope?.receipt?.logs || [])
+      .filter((log) => lower(log?.topics?.[0]) === TOPICS.erc20Transfer)
+      .map((log) => addressWord(log?.topics?.[2]))
+      .filter(Boolean),
+  ]);
+  for (const address of addresses) {
+    const endpoint = BASE_EXCLUSION_BY_ADDRESS.get(address);
+    if (endpoint) return endpoint;
+  }
+  return null;
+}
+
+function chainIdEquals(value, expected) {
+  if (value == null) return false;
+  try {
+    return BigInt(String(value)) === BigInt(expected);
+  } catch {
+    return String(value).toLowerCase() === String(expected).toLowerCase();
+  }
+}
+
+function excludedChainMention(event) {
+  const identity = event?.evidence?.identity_fields || {};
+  const hop = event?.evidence?.hop || {};
+  const fields = [
+    identity.destination_chain_id,
+    identity.origin_chain_id,
+    identity.source_chain_id,
+    hop.destination_chain_id,
+    hop.origin_chain_id,
+    hop.source_chain_id,
+  ];
+  return fields.some((value) => chainIdEquals(value, EXCLUDED_BASE_CHAIN_ID));
+}
+
+function excludedBaseMovement(envelope, decoderEvents = []) {
+  if (Number(envelope?.chain_id) === EXCLUDED_BASE_CHAIN_ID) return null;
+  const endpoint = baseEndpointMentioned(envelope);
+  const event = decoderEvents.find(excludedChainMention);
+  if (!endpoint && !event) return null;
+
+  const source = endpoint
+    ? {
+      type: 'source_backed_endpoint', chain_id: 1,
+      address: endpoint.address, name: endpoint.name, role: endpoint.role,
+      source_url: endpoint.source_url,
+    }
+    : {
+      type: 'decoded_protocol_identity', protocol: event.protocol,
+      family_version: event.family_version, correlation_key: event.correlation_key,
+      identity_fields: event.evidence?.identity_fields || event.evidence?.hop || {},
+    };
+  const key = activityCoordinate(envelope);
+  const role = envelope.category === 'bridge_out' ? 'initiation' : 'destination_execution';
+  return {
+    protocol: event?.protocol || (endpoint?.role === 'spoke_pool' ? 'across' : 'optimism'),
+    family_version: event?.family_version || (endpoint ? 'bedrock' : 'unknown'),
+    correlation_key: `excluded-base:${key}`,
+    verification_method: 'protocol_identity',
+    status: 'unsupported',
+    rule_version: RULE_VERSION,
+    evidence: {
+      reason: 'excluded_counterparty_chain',
+      excluded_chain_id: EXCLUDED_BASE_CHAIN_ID,
+      source,
+      decoder_event: event ? {
+        protocol: event.protocol, family_version: event.family_version,
+        role: event.role, correlation_key: event.correlation_key,
+        evidence: event.evidence,
+      } : null,
+    },
+    members: [{
+      wallet_id: Number(envelope.wallet_id),
+      chain_id: Number(envelope.chain_id),
+      tx_hash: lower(envelope.tx_hash),
+      role,
+      receipt_id: envelope.receipt_id || null,
+      evidence: {
+        reason: 'excluded_counterparty_chain',
+        excluded_chain_id: EXCLUDED_BASE_CHAIN_ID,
+        source,
+      },
+    }],
+  };
+}
 
 function endpointApplies(endpoint, activity) {
   if (Number(endpoint.chain_id) !== Number(activity.chain_id)) return false;
@@ -92,6 +217,12 @@ class BridgeMatchingService {
     const { rows } = await client.query(
       `SELECT a.id, a.wallet_id, w.address AS wallet_address, a.chain_id, a.tx_hash, a.block_number,
               a.block_time, a.counterparty_address, a.method_name, a.legs,
+              (SELECT CASE WHEN COUNT(DISTINCT t.bridge_source_tx_hash) = 1
+                           THEN MIN(t.bridge_source_tx_hash) END
+                 FROM eth_transfers t
+                WHERE t.wallet_id = a.wallet_id AND t.chain_id = a.chain_id
+                  AND t.tx_hash = a.tx_hash
+                  AND t.bridge_source_tx_hash IS NOT NULL) AS archive_source_tx_hash,
               COALESCE(o.category, a.category) AS category
          FROM eth_activity a
          JOIN eth_wallets w ON w.id = a.wallet_id
@@ -148,6 +279,10 @@ class BridgeMatchingService {
 
     for (const activity of activities) {
       const key = `${activity.wallet_id}:${activity.chain_id}:${lower(activity.tx_hash)}`;
+      // Base is an explicit scope exclusion.  Even if a pre-retirement row is
+      // still present on an upgraded database, bridge rebuilds must not make a
+      // provider call or treat that row as the far side of a movement.
+      if (Number(activity.chain_id) === EXCLUDED_BASE_CHAIN_ID) continue;
       const chainEndpoints = endpoints.filter(
         (endpoint) => endpointApplies(endpoint, activity)
       );
@@ -187,7 +322,8 @@ class BridgeMatchingService {
           record = result.receipt;
         } catch (error) {
           const chain = chains.getChain(Number(activity.chain_id));
-          const provider = chain?.rpcUrl ? 'json-rpc' : 'chain-explorer';
+          const provider = (chain?.consensusRpcUrl || chain?.rpcUrl)
+            ? 'json-rpc' : 'chain-explorer';
           await EthBridgeReceipt.upsertFailure({
             walletId: activity.wallet_id,
             chainId: Number(activity.chain_id),
@@ -289,13 +425,31 @@ class BridgeMatchingService {
     const envelopes = await this._acquire(
       userId, annotatedActivities, endpoints, { ...options, client: queryClient, hopRoutes }
     );
-    const decoderEvents = envelopes.flatMap((envelope) => decodeEnvelope(envelope));
-    const decodedCoordinates = new Set(decoderEvents.map((event) => (
-      `${Number(event.wallet_id)}:${Number(event.chain_id)}:${lower(event.tx_hash)}`
-    )));
+    const decodedByEnvelope = envelopes.map((envelope) => ({
+      envelope,
+      events: decodeEnvelope(envelope),
+    }));
+    const exclusionMovements = decodedByEnvelope
+      .map(({ envelope, events }) => excludedBaseMovement(envelope, events))
+      .filter(Boolean);
+    const excludedCoordinates = new Set(exclusionMovements.map((movement) => (
+      movement.members?.[0]
+        ? activityCoordinate(movement.members[0]) : null
+    )).filter(Boolean));
+    // A transaction proven to target the excluded chain must never enter the
+    // normal decoder or amount/time suggestion path.  Keep its raw receipt
+    // and a one-sided unsupported movement so the history says why the other
+    // leg cannot be present, without inventing a Base transaction or link.
+    const decoderEvents = decodedByEnvelope
+      .filter(({ envelope }) => !excludedCoordinates.has(activityCoordinate(envelope)))
+      .flatMap(({ events }) => events);
+    const decodedCoordinates = new Set(decoderEvents.map((event) => activityCoordinate(event)));
     let protocolMovements = [
       ...buildProtocolMovements(decoderEvents),
-      ...envelopes.map((envelope) => unsupportedMovement(envelope, decodedCoordinates)).filter(Boolean),
+      ...envelopes
+        .filter((envelope) => !excludedCoordinates.has(activityCoordinate(envelope)))
+        .map((envelope) => unsupportedMovement(envelope, decodedCoordinates)).filter(Boolean),
+      ...exclusionMovements,
     ];
     const verdicts = await EthBridgeMovement.findVerdictsForUser(userId, queryClient);
     const verdictPairs = new Map(verdicts.map((verdict) => [pairKeyFromVerdict(verdict), verdict]));
@@ -332,7 +486,10 @@ class BridgeMatchingService {
     const rejectedPairs = new Set(
       verdicts.filter((verdict) => verdict.verdict === 'rejected').map(pairKeyFromVerdict)
     );
-    const suggestions = suggestBridgeLegs(annotatedActivities, rejectedPairs)
+    const suggestions = suggestBridgeLegs(
+      annotatedActivities.filter((activity) => !excludedCoordinates.has(activityCoordinate(activity))),
+      rejectedPairs
+    )
       .filter((suggestion) => !occupiedPairs.has(suggestionPairKey(
         {
           wallet_id: suggestion.out_wallet_id, chain_id: suggestion.out_chain_id,
@@ -369,3 +526,5 @@ module.exports.pairKeyFromMovement = pairKeyFromMovement;
 module.exports.pairKeyFromVerdict = pairKeyFromVerdict;
 module.exports.endpointApplies = endpointApplies;
 module.exports.unsupportedMovement = unsupportedMovement;
+module.exports.excludedBaseMovement = excludedBaseMovement;
+module.exports.BASE_EXCLUSION_ENDPOINTS = BASE_EXCLUSION_ENDPOINTS;

@@ -50,7 +50,7 @@ $$;
 
 DO $$
 BEGIN
-  -- 079 used to create this table for the retired CDP paging provider. Fresh
+  -- 079 used to create this table for the retired Base/CDP provider. Fresh
   -- installs no longer have it, while upgraded databases may still need the
   -- identity backfill before migration 082 removes it.
   IF to_regclass('eth_provider_pages') IS NOT NULL THEN

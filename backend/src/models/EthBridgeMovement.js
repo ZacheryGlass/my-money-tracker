@@ -32,6 +32,27 @@ function sameProjectionAsset(outLeg, inLeg, outMember, inMember) {
   return legAssetIdentity(outLeg) === legAssetIdentity(inLeg);
 }
 
+function projectionLeg(activity, direction, member) {
+  const legs = (activity.legs || []).filter((leg) => leg.direction === direction);
+  const slice = member?.evidence?.projection_slice;
+  if (!slice) return legs.length === 1 ? legs[0] : null;
+  if (slice.direction !== direction || !/^\d+$/.test(String(slice.amount_raw))) return null;
+  const contract = lower(slice.contract);
+  const candidates = legs.filter((leg) => (
+    String(leg.amount_raw) === String(slice.amount_raw)
+      && (slice.native === true ? !lower(leg.contract) : contract && lower(leg.contract) === contract)
+  ));
+  if (candidates.length === 1) return candidates[0];
+  if (slice.exact_protocol_amount !== true || !validProjectionAmount(slice.amount)) return null;
+  const partial = legs.filter((leg) => (
+    /^\d+$/.test(String(leg.amount_raw))
+      && BigInt(leg.amount_raw) >= BigInt(slice.amount_raw)
+      && (slice.native === true ? !lower(leg.contract)
+        : contract && lower(leg.contract) === contract)
+  ));
+  return partial.length === 1 ? { ...partial[0], amount: String(slice.amount) } : null;
+}
+
 function projectionAssetDetail(leg, direction, member) {
   return {
     asset: leg.asset,
@@ -43,16 +64,19 @@ function projectionAssetDetail(leg, direction, member) {
 }
 
 function projectionAmounts(outActivity, inActivity, outMember = null, inMember = null) {
-  const outLegs = (outActivity.legs || []).filter((leg) => leg.direction === 'out');
-  const inLegs = (inActivity.legs || []).filter((leg) => leg.direction === 'in');
-  if (outLegs.length !== 1 || inLegs.length !== 1
-      || !validProjectionAmount(outLegs[0].amount)
-      || !validProjectionAmount(inLegs[0].amount)) {
-    return { asset: 'BRIDGE', out_amount: '0', in_amount: '0', fee_amount: '0' };
+  const outLeg = projectionLeg(outActivity, 'out', outMember);
+  const inLeg = projectionLeg(inActivity, 'in', inMember);
+  if (!outLeg || !inLeg || !validProjectionAmount(outLeg.amount)
+      || !validProjectionAmount(inLeg.amount)) {
+    // Preserve the legacy safe projection for decoders that identify a whole
+    // multi-asset movement but do not yet provide message slices. Once either
+    // member claims a slice, an ambiguous/missing leg is a hard no-projection:
+    // silently falling back would mark an unproven asset component reviewed.
+    if (!outMember?.evidence?.projection_slice && !inMember?.evidence?.projection_slice) {
+      return { asset: 'BRIDGE', out_amount: '0', in_amount: '0', fee_amount: '0' };
+    }
+    return null;
   }
-
-  const [outLeg] = outLegs;
-  const [inLeg] = inLegs;
   if (sameProjectionAsset(outLeg, inLeg, outMember, inMember)) {
     const outAmount = String(outLeg.amount);
     const inAmount = String(inLeg.amount);
@@ -203,7 +227,8 @@ class EthBridgeMovement {
                 COALESCE(jsonb_agg(jsonb_build_object(
                   'wallet_id', mm.wallet_id, 'chain_id', mm.chain_id,
                   'tx_hash', mm.tx_hash, 'role', mm.role,
-                  'asset_id', mm.asset_id
+                  'asset_id', mm.asset_id, 'amount', mm.amount::text,
+                  'evidence', mm.evidence
                 ) ORDER BY mm.id) FILTER (WHERE mm.id IS NOT NULL), '[]'::jsonb) AS members
            FROM eth_bridge_movements m
            LEFT JOIN eth_bridge_movement_members mm ON mm.movement_id = m.id
@@ -230,12 +255,14 @@ class EthBridgeMovement {
         destinationMembers[0].wallet_id, destinationMembers[0].chain_id, destinationMembers[0].tx_hash
       ));
       if (!out || !incoming || out.category !== 'bridge_out' || incoming.category !== 'bridge_in') continue;
+      const amounts = projectionAmounts(out, incoming, sourceMembers[0], destinationMembers[0]);
+      if (!amounts) continue;
       links.push({
         out_activity_id: out.id,
         in_activity_id: incoming.id,
         movement_id: Number(movement.id),
         evidence_method: movement.verification_method,
-        ...projectionAmounts(out, incoming, sourceMembers[0], destinationMembers[0]),
+        ...amounts,
       });
     }
     return EthActivityLink.replaceForUser(userId, links, client);

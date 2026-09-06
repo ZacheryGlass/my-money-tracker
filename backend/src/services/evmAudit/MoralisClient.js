@@ -49,7 +49,12 @@ function providerError(message, code, extra = {}) {
 }
 
 function isQuotaExceeded(detail) {
-  return /(?:plan|quota|usage).*(?:consum|exhaust|limit)|(?:consum|exhaust|limit).*(?:plan|quota|usage)/i.test(detail);
+  return /(?:plan|quota|usage).*(?:consum|exhaust|limit)|(?:consum|exhaust|limit).*(?:plan|quota|usage)/i.test(detail)
+    || isUsagePaused(detail);
+}
+
+function isUsagePaused(detail) {
+  return /\busage\s+is\s+paused\b/i.test(detail);
 }
 
 class MoralisClient {
@@ -182,7 +187,9 @@ class MoralisClient {
         if (response.status === 401 || response.status === 403) {
           if (quotaExceeded) {
             throw providerError(
-              'Moralis daily plan quota is exhausted; audit deferred',
+              isUsagePaused(detail)
+                ? 'Moralis plan usage is paused; restore provider access before retrying the audit'
+                : 'Moralis daily plan quota is exhausted; audit deferred',
               'MORALIS_QUOTA_EXHAUSTED',
               { httpStatus: response.status, retryAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }
             );

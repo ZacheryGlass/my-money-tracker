@@ -33,6 +33,7 @@ const WALLET = '0x2222222222222222222222222222222222222222';
 const OTHER = '0x1111111111111111111111111111111111111111';
 const HASH_A = `0x${'a'.repeat(64)}`;
 const HASH_B = `0x${'b'.repeat(64)}`;
+const HASH_C = `0x${'c'.repeat(64)}`;
 const TOKENS = new Map([
   [0, {
     id: 0,
@@ -81,6 +82,7 @@ test('Lite deposits and withdrawals become bridge-classifiable unified legs', ()
       to: WALLET,
       tokenId: 0,
       amount: '500000000000000000',
+      ethHash: HASH_C,
     }),
     tx(HASH_B, 200, {
       type: 'Withdraw',
@@ -94,6 +96,8 @@ test('Lite deposits and withdrawals become bridge-classifiable unified legs', ()
 
   assert.deepEqual(result.limitations, []);
   assert.equal(result.rows.length, 3);
+  assert.equal(result.rows[0].bridge_source_tx_hash, HASH_C);
+  assert.equal(result.rows[1].bridge_source_tx_hash, null);
   assert.deepEqual(
     result.rows.map((row) => ({
       hash: row.tx_hash,

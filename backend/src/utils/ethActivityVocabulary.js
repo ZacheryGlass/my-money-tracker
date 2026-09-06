@@ -45,6 +45,7 @@ const REVIEW_REASONS = {
   unmatched: 'Inbound and outbound legs did not match a known shape',
   no_legs: 'No transfer legs found for this transaction',
   unmatched_bridge: 'Bridge transfer with no matching leg on the other chain yet',
+  excluded_bridge: 'Bridge counterparty is Base (8453), which is excluded from this history',
 };
 
 // The spam quarantine's reason codes (#74). spam_reason is VARCHAR(32) and 045's

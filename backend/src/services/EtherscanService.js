@@ -27,6 +27,21 @@ function apiError(message) {
   return error;
 }
 
+function responseRequestId(response) {
+  const headers = response?.headers;
+  if (!headers) return null;
+  if (typeof headers.get === 'function') {
+    return headers.get('x-request-id') || headers.get('cf-ray') || null;
+  }
+  return headers['x-request-id'] || headers['X-Request-Id']
+    || headers['cf-ray'] || headers['CF-Ray'] || null;
+}
+
+function responseRawText(response) {
+  if (typeof response?.data === 'string') return response.data;
+  return JSON.stringify(response?.data ?? null);
+}
+
 // The logs (getLogs) endpoint caps a single response at 1000 rows, so the
 // state-sync fetch walks a block cursor the same way _fetchPaged does. A wallet
 // has a handful of bridge deposits over its whole life, so this almost never
@@ -64,7 +79,9 @@ function safeHexInteger(value) {
   }
 }
 
-function buildFinalityBoundary(receipt, finalizedBlock, error = null) {
+function buildFinalityBoundary(
+  receipt, finalizedBlock, error = null, canonicalBlock = null, canonicalError = null
+) {
   const method = 'eth_getBlockByNumber(finalized)';
   if (error) {
     return {
@@ -79,12 +96,32 @@ function buildFinalityBoundary(receipt, finalizedBlock, error = null) {
       || !/^0x[0-9a-f]{64}$/.test(finalizedHash)) {
     return { status: 'unknown', method, error_code: 'INVALID_FINALIZED_BLOCK' };
   }
+  const receiptHash = String(receipt?.blockHash || '').toLowerCase();
+  const canonicalNumber = rpcQuantity(canonicalBlock?.number);
+  const canonicalHash = String(canonicalBlock?.hash || '').toLowerCase();
+  if (canonicalError || canonicalNumber == null
+      || canonicalNumber !== receiptNumber
+      || !/^0x[0-9a-f]{64}$/.test(canonicalHash)
+      || !/^0x[0-9a-f]{64}$/.test(receiptHash)
+      || canonicalHash !== receiptHash) {
+    return {
+      status: 'unknown', method,
+      error_code: canonicalError?.code || 'RECEIPT_NOT_CANONICAL',
+      receipt_block_number: receiptNumber.toString(),
+      finalized_block_number: finalizedNumber.toString(),
+      finalized_block_hash: finalizedHash,
+      canonical_block_number: canonicalNumber == null ? null : canonicalNumber.toString(),
+      canonical_block_hash: /^0x[0-9a-f]{64}$/.test(canonicalHash) ? canonicalHash : null,
+    };
+  }
   return {
     status: receiptNumber <= finalizedNumber ? 'finalized' : 'pending',
     method,
     receipt_block_number: receiptNumber.toString(),
     finalized_block_number: finalizedNumber.toString(),
     finalized_block_hash: finalizedHash,
+    canonical_block_number: canonicalNumber.toString(),
+    canonical_block_hash: canonicalHash,
   };
 }
 
@@ -243,6 +280,15 @@ function rpcProvider(chainId, rpcUrl) {
   };
 }
 
+// Consensus-sensitive reads must use the operator's declared consensus
+// endpoint when one exists.  `rpcUrl` remains the compatibility fallback for
+// chains that have not split their public endpoint yet (and for the legacy
+// Lite importer, which never reaches this helper).
+function consensusRpcUrl(chainId) {
+  const chain = chains.getChain(chainId);
+  return chain?.consensusRpcUrl || chain?.rpcUrl || null;
+}
+
 function rateLimitError(provider, chainId, params, retryAfterMs, cause = null) {
   const error = new Error(
     `${provider.name} rate limit reached; retry after ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s`
@@ -392,6 +438,7 @@ class EtherscanService {
     spacingMs = null,
     beforeAttempt = null,
     malformedResponseAttempt = 0,
+    captureEvidence = false,
   }) {
     if (spacingMs != null
         && (!Number.isSafeInteger(Number(spacingMs))
@@ -420,6 +467,14 @@ class EtherscanService {
         if (beforeAttempt) beforeAttempt();
         return axios.get(provider.baseUrl, {
           timeout: 15000,
+          ...(captureEvidence ? {
+            // Axios normally parses JSON and discards the bytes that arrived
+            // over the wire.  Audit pages must retain those bytes, so request
+            // text and parse it below while keeping ordinary callers on the
+            // existing JSON path.
+            responseType: 'text',
+            transformResponse: [(data) => data],
+          } : {}),
           params: {
             ...provider.params,
             ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
@@ -429,7 +484,34 @@ class EtherscanService {
       },
     });
 
-    const payload = response.data || {};
+    let payload = response.data || {};
+    const rawText = captureEvidence ? responseRawText(response) : null;
+    if (captureEvidence && typeof response.data === 'string') {
+      try {
+        payload = JSON.parse(response.data);
+      } catch {
+        throw apiError(`${provider.name} returned invalid JSON response`);
+      }
+    }
+    const returnResult = (result) => {
+      if (!captureEvidence) return result;
+      return {
+        result,
+        evidence: {
+          provider: provider.name,
+          endpoint: provider.baseUrl,
+          // Keep the complete non-secret request contract, including a
+          // chain-specific provider parameter such as Etherscan's `chainid`.
+          // The API key is injected separately above and is never part of
+          // this retained evidence object.
+          requestParams: { ...provider.params, ...params },
+          rawText,
+          responseJson: payload,
+          responseSha256: crypto.createHash('sha256').update(rawText).digest('hex'),
+          requestId: responseRequestId(response),
+        },
+      };
+    };
     const { status, message, result } = payload;
 
     // The proxy-style endpoints intentionally return an Ethereum JSON-RPC
@@ -439,7 +521,7 @@ class EtherscanService {
     // nulls, but accept a well-formed result before applying the account/log
     // response rules below.
     if (payload.jsonrpc === '2.0') {
-      if (!payload.error && payload.result != null) return payload.result;
+      if (!payload.error && payload.result != null) return returnResult(payload.result);
       const detail = payload.error?.message || 'invalid JSON-RPC response';
       if (isRateLimitedDetail(payload.error) || isRateLimitedDetail(detail)) {
         return retryAfterRateLimit({
@@ -450,7 +532,7 @@ class EtherscanService {
           error: responseDetailError(detail, response),
           retry: () => this._request(params, {
             apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
-            malformedResponseAttempt,
+            malformedResponseAttempt, captureEvidence,
           }),
         });
       }
@@ -479,6 +561,7 @@ class EtherscanService {
           spacingMs,
           beforeAttempt,
           malformedResponseAttempt: malformedResponseAttempt + 1,
+          captureEvidence,
         });
       }
       const error = new Error(`${provider.name} JSON-RPC error: ${detail}`);
@@ -499,11 +582,11 @@ class EtherscanService {
         ),
         retry: () => this._request(params, {
           apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
-          malformedResponseAttempt,
+          malformedResponseAttempt, captureEvidence,
         }),
       });
     }
-    if (status === '1') return result;
+    if (status === '1') return returnResult(result);
 
     // Standing provider limitations must be classified BEFORE the empty-array
     // shortcut below. Blockscout can return status=2 + result=[] while an
@@ -528,7 +611,7 @@ class EtherscanService {
     if (message === 'No transactions found' || message === 'No records found'
         || message === 'No logs found'
         || (Array.isArray(result) && result.length === 0)) {
-      return [];
+      return returnResult([]);
     }
 
     const error = new Error(`${provider.name} error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());
@@ -543,7 +626,7 @@ class EtherscanService {
     rateLimitState = { attempt: 0 },
     malformedResponseAttempt = 0
   ) {
-    const rpcUrl = chains.getChain(chainId)?.rpcUrl;
+    const rpcUrl = consensusRpcUrl(chainId);
     if (!rpcUrl) return null;
     const provider = rpcProvider(chainId, rpcUrl);
     const rpcParams = { module: 'rpc', action: method };
@@ -619,11 +702,10 @@ class EtherscanService {
     if (!/^0x[0-9a-f]{64}$/.test(hash)) {
       throw new Error('Invalid transaction hash for bridge receipt lookup');
     }
-    const chain = chains.getChain(chainId);
     let transaction;
     let receipt;
     let provider;
-    if (chain?.rpcUrl) {
+    if (consensusRpcUrl(chainId)) {
       provider = 'json-rpc';
       transaction = await this._rpcRequest(chainId, 'eth_getTransactionByHash', [hash]);
       receipt = await this._rpcRequest(chainId, 'eth_getTransactionReceipt', [hash]);
@@ -651,7 +733,7 @@ class EtherscanService {
       finalityError = cachedFinality.error;
     } else {
       try {
-        finalizedBlock = chain?.rpcUrl
+      finalizedBlock = consensusRpcUrl(chainId)
           ? await this._rpcRequest(chainId, 'eth_getBlockByNumber', ['finalized', false])
           : await this._request(
             { module: 'proxy', action: 'eth_getBlockByNumber', tag: 'finalized', boolean: 'false' },
@@ -664,7 +746,26 @@ class EtherscanService {
         block: finalizedBlock || null, error: finalityError, checkedAt: Date.now(),
       });
     }
-    const finality = buildFinalityBoundary(receipt, finalizedBlock, finalityError);
+    // Height alone does not prove the receipt survived a reorg.  Re-read the
+    // canonical block at the receipt height and bind its hash to the receipt
+    // before reporting a finalized bridge boundary.
+    let canonicalBlock;
+    let canonicalError = null;
+    try {
+      const receiptBlock = receipt?.blockNumber;
+      if (receiptBlock == null) throw new Error('receipt has no block number');
+      canonicalBlock = consensusRpcUrl(chainId)
+        ? await this._rpcRequest(chainId, 'eth_getBlockByNumber', [receiptBlock, false])
+        : await this._request(
+          { module: 'proxy', action: 'eth_getBlockByNumber', tag: receiptBlock, boolean: 'false' },
+          { apiKey, chainId }
+        );
+    } catch (error) {
+      canonicalError = { code: error.code || 'CANONICAL_BLOCK_UNAVAILABLE' };
+    }
+    const finality = buildFinalityBoundary(
+      receipt, finalizedBlock, finalityError, canonicalBlock, canonicalError
+    );
     return {
       transaction,
       receipt,
@@ -673,7 +774,7 @@ class EtherscanService {
         chain_id: chainId,
         methods: [
           'eth_getTransactionByHash', 'eth_getTransactionReceipt',
-          'eth_getBlockByNumber(finalized)',
+          'eth_getBlockByNumber(finalized)', 'eth_getBlockByNumber(receipt)',
         ],
         complete: true,
         finality,
@@ -688,7 +789,7 @@ class EtherscanService {
   // concurrency per provider instead of putting a multi-minute historical
   // walk behind the Etherscan account-feed throttle.
   static async _rpcBatchRequest(chainId, calls, rateLimitState = { attempt: 0 }) {
-    const rpcUrl = chains.getChain(chainId)?.rpcUrl;
+    const rpcUrl = consensusRpcUrl(chainId);
     if (!rpcUrl) {
       const error = new Error(`Chain ${chainId} has no JSON-RPC endpoint configured`);
       error.code = 'ETHERSCAN_API_ERROR';
@@ -1006,6 +1107,7 @@ class EtherscanService {
     scannedThroughBlock = null
   ) {
     const all = [];
+    const evidencePages = [];
     let cursor = startBlock;
     const endBlock = scannedThroughBlock ?? 999999999;
     if (scannedThroughBlock != null && scannedThroughBlock < cursor) {
@@ -1027,7 +1129,7 @@ class EtherscanService {
         error.code = 'ETHERSCAN_API_ERROR';
         throw error;
       }
-      const rows = await this._request({
+      const response = await this._request({
         module: 'account',
         action,
         address,
@@ -1040,8 +1142,27 @@ class EtherscanService {
         page: 1,
         offset: PAGE_SIZE,
         sort: 'asc',
-      }, { apiKey, chainId });
-      if (!Array.isArray(rows) || rows.length === 0) break;
+      }, { apiKey, chainId, captureEvidence: true });
+      // Keep compatibility with tests and callers that stub _request with the
+      // historical bare result. Production requests return the wrapper so the
+      // exact HTTP page can be persisted by the audit service.
+      const captured = response && response.evidence && Object.prototype.hasOwnProperty.call(response, 'result');
+      const rows = captured ? response.result : response;
+      if (!Array.isArray(rows)) {
+        const error = new Error(`${action} returned a non-array page; cursor frozen`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      if (rows.length === 0) {
+        if (captured) {
+          evidencePages.push({
+            ...response.evidence,
+            rows: [],
+            cursorIn: String(cursor), cursorOut: null, itemCount: 0,
+          });
+        }
+        break;
+      }
 
       // Pagination is safe only when the explorer honours the requested
       // range. A repeated first page used to move the cursor one block at a
@@ -1070,7 +1191,7 @@ class EtherscanService {
         // A single block with more rows than one page. Refetch just that
         // block at Etherscan's maximum window so its rows are not lost, then
         // step past it.
-        const blockRows = await this._request({
+        const blockResponse = await this._request({
           module: 'account',
           action,
           address,
@@ -1079,8 +1200,16 @@ class EtherscanService {
           page: 1,
           offset: 10000,
           sort: 'asc',
-        }, { apiKey, chainId });
-        const normalizedBlockRows = Array.isArray(blockRows) ? blockRows : [];
+        }, { apiKey, chainId, captureEvidence: true });
+        const blockCaptured = blockResponse && blockResponse.evidence
+          && Object.prototype.hasOwnProperty.call(blockResponse, 'result');
+        const blockRows = blockCaptured ? blockResponse.result : blockResponse;
+        if (!Array.isArray(blockRows)) {
+          const error = new Error(`${action} single-block fallback returned a non-array response; cursor frozen`);
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        const normalizedBlockRows = blockRows;
         for (const row of normalizedBlockRows) {
           const block = Number(row?.blockNumber);
           if (!Number.isSafeInteger(block) || block !== cursor) {
@@ -1101,31 +1230,66 @@ class EtherscanService {
           error.code = 'ETHERSCAN_API_ERROR';
           throw error;
         }
+        if (captured) {
+          evidencePages.push({
+            ...response.evidence,
+            rows: rows.slice(),
+            cursorIn: String(cursor), cursorOut: String(cursor),
+            itemCount: rows.length,
+          });
+        }
+        if (blockCaptured) {
+          evidencePages.push({
+            ...blockResponse.evidence,
+            rows: normalizedBlockRows.slice(),
+            cursorIn: String(cursor), cursorOut: String(cursor + 1),
+            itemCount: blockRows.length,
+          });
+        }
         all.push(...normalizedBlockRows);
         cursor += 1;
         continue;
       }
 
+      const nextCursor = rows.length < PAGE_SIZE ? null : lastBlock;
+      if (captured) {
+        evidencePages.push({
+          ...response.evidence,
+          rows: rows.slice(),
+          cursorIn: String(cursor),
+          cursorOut: nextCursor == null ? null : String(nextCursor),
+          itemCount: rows.length,
+        });
+      }
       all.push(...rows);
-      if (rows.length < PAGE_SIZE) break;
-      cursor = lastBlock;
+      if (nextCursor == null) break;
+      cursor = nextCursor;
     }
 
     // Blockscout's Etherscan-compatible txlistinternal response calls this
     // field `transactionHash`; Etherscan and the rest of our ingestion path
     // call it `hash`. Normalize only that documented alias and preserve every
     // original field so pagination and ordinal construction stay unchanged.
-    const result = all.map((row) => (
+    const normalizeRow = (row) => (
       action === 'txlistinternal' && !row.hash && row.transactionHash
         ? { ...row, hash: row.transactionHash }
         : row
-    ));
+    );
+    const result = all.map(normalizeRow);
     if (scannedThroughBlock != null) {
       Object.defineProperty(result, 'scannedThroughBlock', {
         value: scannedThroughBlock,
         enumerable: false,
       });
     }
+    Object.defineProperty(result, 'evidencePages', {
+      value: evidencePages.map((page) => ({
+        ...page,
+        rows: (page.rows || []).map(normalizeRow),
+      })),
+      enumerable: false,
+      configurable: true,
+    });
     return result;
   }
 
@@ -1146,6 +1310,20 @@ class EtherscanService {
       'txlist', address, startBlock, apiKey, chainId, scannedThroughBlock
     );
     const result = await this._hydrateOpStackDeposits(rows, chainId);
+    const evidencePages = Array.isArray(rows.evidencePages) ? rows.evidencePages : [];
+    if (evidencePages.length) {
+      const hydratedByHash = new Map(result.map((row) => [String(row.hash || '').toLowerCase(), row]));
+      Object.defineProperty(result, 'evidencePages', {
+        value: evidencePages.map((page) => ({
+          ...page,
+          rows: (page.rows || []).map((row) => hydratedByHash.get(
+            String(row.hash || row.transactionHash || '').toLowerCase()
+          ) || row),
+        })),
+        enumerable: false,
+        configurable: true,
+      });
+    }
     if (scannedThroughBlock != null) {
       Object.defineProperty(result, 'scannedThroughBlock', {
         value: scannedThroughBlock,
@@ -1247,6 +1425,7 @@ class EtherscanService {
     const topicOperatorParam = `topic0_${userTopicIndex}_opr`;
     const seen = new Set();
     const out = [];
+    const evidencePages = [];
     let cursor = Math.max(0, Number(startBlock) || 0);
     if (scannedThroughBlock < cursor) {
       const error = new Error(
@@ -1261,7 +1440,7 @@ class EtherscanService {
       if (page > MAX_LOG_PAGES) {
         throw new Error(`statesync getLogs walk exceeded ${MAX_LOG_PAGES} pages without completing; skipping the feed this sync`);
       }
-      const rows = await this._request({
+      const response = await this._request({
         module: 'logs',
         action: 'getLogs',
         address: feedConfig.contract,
@@ -1274,7 +1453,10 @@ class EtherscanService {
         toBlock: scannedThroughBlock,
         page: 1,
         offset: LOG_PAGE_SIZE,
-      }, { apiKey, chainId });
+      }, { apiKey, chainId, captureEvidence: true });
+      const captured = response && response.evidence
+        && Object.prototype.hasOwnProperty.call(response, 'result');
+      const rows = captured ? response.result : response;
       // An off-shape 200 is a transport failure, never an empty feed. This is
       // the one feed whose rows exist nowhere else, and a successful return is
       // what authorizes the destructive delete of the resume window -- reading
@@ -1282,7 +1464,15 @@ class EtherscanService {
       if (!Array.isArray(rows)) {
         throw new Error('statesync getLogs returned a non-array result; treated as a transport failure');
       }
-      if (rows.length === 0) break;
+      if (rows.length === 0) {
+        if (captured) {
+          evidencePages.push({
+            ...response.evidence,
+            rows: [], cursorIn: String(cursor), cursorOut: null, itemCount: 0,
+          });
+        }
+        break;
+      }
 
       // _parseStateSyncLog THROWS on a malformed log rather than dropping it:
       // the cursor advances past everything this walk returns, so a silently
@@ -1294,11 +1484,46 @@ class EtherscanService {
         .sort((a, b) => (a._block - b._block) || (a._logIndex - b._logIndex));
 
       let maxSeen = cursor;
+      const accepted = [];
       for (const row of parsed) {
         if (seen.has(row._key)) continue;
         seen.add(row._key);
         out.push(row);
+        accepted.push(row);
         if (row._block > maxSeen) maxSeen = row._block;
+      }
+
+      const pageRows = accepted.map((row) => {
+        const mapped = {
+          hash: row.hash,
+          blockNumber: row.blockNumber,
+          timeStamp: row.timeStamp,
+          from: row.from,
+          to: row.to,
+          value: row.value,
+        };
+        if (row.nativeCredit) {
+          Object.defineProperties(mapped, {
+            nativeCredit: { value: true },
+            logIndex: { value: row.logIndex },
+            blockHash: { value: row.blockHash },
+            transactionIndex: { value: row.transactionIndex },
+            address: { value: row.address },
+            topics: { value: row.topics },
+            data: { value: row.data },
+          });
+        }
+        return mapped;
+      });
+      if (captured) {
+        const nextCursor = rows.length < LOG_PAGE_SIZE ? null : maxSeen;
+        evidencePages.push({
+          ...response.evidence,
+          rows: pageRows,
+          cursorIn: String(cursor),
+          cursorOut: nextCursor == null ? null : String(nextCursor),
+          itemCount: rows.length,
+        });
       }
 
       if (rows.length < LOG_PAGE_SIZE) break;
@@ -1346,6 +1571,11 @@ class EtherscanService {
     Object.defineProperty(result, 'scannedThroughBlock', {
       value: scannedThroughBlock,
       enumerable: false,
+    });
+    Object.defineProperty(result, 'evidencePages', {
+      value: evidencePages,
+      enumerable: false,
+      configurable: true,
     });
     return result;
   }

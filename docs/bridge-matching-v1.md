@@ -243,8 +243,10 @@ First-party source: Matter Labs'
 ### zkSync Lite
 
 - A Lite `Deposit` priority operation is identified by the Ethereum transaction
-  hash. The official archive returns that hash as the Lite transaction hash. An
-  Ethereum initiation with the same exact hash is protocol identity.
+  hash. The official archive returns that source hash separately as `ethHash`;
+  ingestion validates and preserves it as `bridge_source_tx_hash` beside the
+  distinct Lite transaction hash. An Ethereum initiation with the same exact
+  source hash is protocol identity.
 - Lite withdrawals may be completed in batches on Ethereum. Amount/time cannot
   identify the completion, so withdrawals remain suggestions unless a user
   confirms them.
@@ -286,11 +288,12 @@ and [contract interfaces](https://github.com/across-protocol/contracts).
 
 ### Hop v1
 
-Issue #86 adds a registry-scoped Hop v1 adapter for the reviewed mainnet
-USDC.e deployment. The initial registry covers Ethereum plus Gnosis, Polygon,
-Optimism, and Arbitrum: 9 endpoint rows and 16 directed asset routes
-(each supported L2 to Ethereum route and each supported L2-to-L2 route). It
-does not imply that every Hop asset, chain, or newer deployment is supported.
+The registry-scoped Hop v1 adapter covers the reviewed mainnet USDC.e and native
+ETH deployments. USDC.e spans Ethereum, Gnosis, Polygon, Optimism, and Arbitrum
+One. ETH adds Arbitrum Nova to that set. The generated registry contains 20
+chain-scoped endpoint rows and 41 directed asset routes: each supported L2 to
+Ethereum route and each ordered L2-to-L2 route for that asset. It does not imply
+that every Hop asset, chain, or newer deployment is supported.
 The registry is generated from the pinned [Hop mainnet address
 matrix](https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb004a4d0c587/packages/sdk/src/addresses/mainnet.ts),
 with deployment bounds, canonical/Hop token variants, bridge and wrapper
@@ -313,25 +316,30 @@ The exact field order follows the [pinned Hop transfer-ID
 helper](https://github.com/hop-protocol/hop/blob/3ae90badbed5708d72cec46d0efeb004a4d0c587/packages/hop-node/src/utils/getTransferId.ts).
 The pinned deployed ABI uses static `send`/`swapAndSend` calls, so it does not
 expose a token index in this event or hash. Newer tuple-shaped Hop source
-revisions are kept as a separate ABI variant: if registered, their adapter
-path hashes the tuple's token index as well. Calldata is decoded only to
+revisions are kept as a separate ABI variant: if registered, their adapter path
+hashes the tuple's token index as well. Wrapper calls may swap before emitting
+the bridge event, so their source minimum is checked as a bound while the
+emitted amount remains the protocol amount. Calldata is decoded only to
 corroborate the event and endpoint target; unknown or malformed calldata does
 not become a match.
 
-The destination identity-bearing event is `Withdrew(transferId, recipient,
-amount, transferNonce)`. The recipient must equal the destination wallet and
-the observed destination asset must be one of the route's registered canonical
-or Hop token addresses. The event amount is gross (including the bonder fee),
-so it must equal the source gross amount exactly; the recipient's net amount is
-gross minus fee because the contract distributes the fee separately. A
-`WithdrawalBonded` log is a bonder accounting step, not proof that the user's
-wallet received funds, and `TransferSentToL2`/
-`TransferFromL1Completed` are left unsupported because the current v1 evidence
-does not provide one shared source/destination transfer id for those L1-to-L2
-paths. They remain visible for review rather than being amount-matched.
+The destination identity is carried either by
+`Withdrew(transferId,recipient,amount,transferNonce)` or by a reviewed
+`WithdrawalBonded` event whose transaction calldata is exactly
+`bondWithdrawal`/`bondWithdrawalAndDistribute`. The latter path recovers and
+checks the recipient, transfer nonce, bonder fee, amount-out minimum, and
+deadline from calldata; a standalone settlement log is insufficient. The
+recipient must equal the destination wallet and the observed destination asset
+must be one of the route's registered canonical, Hop-token, or native-zero
+addresses. The destination event amount is gross and must equal the source
+gross amount exactly; the projected recipient amount is gross minus the bonder
+fee. `TransferSentToL2`/`TransferFromL1Completed` remain unsupported because the
+current v1 evidence does not provide one shared source/destination transfer id
+for those L1-to-L2 paths.
 
 Both receipts require the normal finalized RPC boundary. Destination token-feed
-coverage must also be complete through the receipt block; a missing, failed, or
+coverage must be complete for ERC-20 routes; native routes require a complete
+normal or internal-value feed through the receipt block. A missing, failed, or
 behind feed leaves the Hop movement pending. Route intersection, exact
 recipient ownership, asset observation, amount arithmetic, receipt status,
 finality, and coverage are all checked before the existing evidence-first

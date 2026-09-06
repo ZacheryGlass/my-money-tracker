@@ -196,7 +196,7 @@ test('ERC-20 rows are tagged erc20 and ETH rows carry no standard at all', () =>
   assert.ok(rows.every((r) => r.token_id === null));
 });
 
-test('bulkInsert writes token_standard and token_id', async () => {
+test('bulkInsert writes NFT identity and bridge source identity columns in order', async () => {
   queries.length = 0;
   await EthTransfer.bulkInsert([{
     wallet_id: 1, tx_hash: '0xnft1', ordinal: 0, transfer_type: 'nft',
@@ -206,12 +206,12 @@ test('bulkInsert writes token_standard and token_id', async () => {
     token_decimals: 0, token_standard: 'erc721', token_id: '682', is_error: false,
   }]);
   const sql = sqlOf(queries[0]);
-  assert.match(sql, /INSERT INTO eth_transfers \([^)]*token_standard, token_id, source_log_index, source_trace_address, audit_effect_key, audit_observation_id, is_error, tx_is_error, method_id, method_name\)/);
+  assert.match(sql, /INSERT INTO eth_transfers \([^)]*token_standard, token_id, source_log_index, source_trace_address, audit_effect_key, audit_observation_id, is_error, tx_is_error, method_id, method_name, bridge_source_tx_hash\)/);
   // Column order and value order must agree or every row is written skewed.
   // method_id/method_name are NULL here: NFT legs never carry calldata, and
   // tx_is_error is stamped on the gas leg only (038).
-  assert.deepEqual(queries[0].params.slice(-10), [
-    'erc721', '682', null, null, null, null, false, null, null, null,
+  assert.deepEqual(queries[0].params.slice(-11), [
+    'erc721', '682', null, null, null, null, false, null, null, null, null,
   ]);
 });
 

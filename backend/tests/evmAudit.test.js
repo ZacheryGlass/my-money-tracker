@@ -41,10 +41,10 @@ test('history audit enumerates every configured chain', () => {
   try {
     delete process.env.ETH_CHAINS;
     assert.deepEqual(EvmAuditService.supportedChainIds(), [
-      1, 10, 100, 137, 324, 8453, 42161, 59144, 32401,
+      1, 10, 100, 137, 324, 42161, 42170, 59144, 32401,
     ]);
     assert.deepEqual(EvmAuditService.configuredChainIds(), [
-      1, 10, 100, 137, 324, 8453, 42161, 59144, 32401,
+      1, 10, 100, 137, 324, 42161, 42170, 59144, 32401,
     ]);
   } finally {
     if (original == null) delete process.env.ETH_CHAINS;
@@ -70,6 +70,16 @@ test('a chain without consensus RPC is deferred without blocking other audit cha
   assert.match(source.slice(guard - 500, runnable + 80), /continue;/);
 });
 
+test('a keyless primary explorer keeps a keyed feed gap scoped to that feed', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
+  assert.match(source, /function primaryAccountApiRequiresKey\(chainId\)/);
+  assert.match(source, /primaryAccountApiRequiresKey\(chainId\) && !explorerApiKey/);
+  assert.match(source, /const missingCredential = error\.code === 'ETHERSCAN_NOT_CONFIGURED'/);
+  assert.match(source, /other configured feeds continue independently/);
+  assert.match(source, /deferredProviderError: missingCredentialFeed/);
+  assert.match(source, /credential_feed_gap: credentialFeedGap/);
+});
+
 test('unsupported audit chains become explicit amber scopes without a provider request', async () => {
   const originalUpsertScope = EvmAudit.upsertScope;
   const scopes = [];
@@ -79,7 +89,7 @@ test('unsupported audit chains become explicit amber scopes without a provider r
   };
   try {
     assert.equal(await EvmAuditService.runUnsupportedChain({ job: { id: 7 }, chainId: 32401 }), 1);
-    assert.equal(scopes.length, 13);
+    assert.equal(scopes.length, 14);
     assert.ok(scopes.every((scope) => scope.status === 'unsupported'));
     assert.ok(scopes.every((scope) => scope.errorCode === 'NON_EVM_CHAIN'));
   } finally {
@@ -254,6 +264,16 @@ test('standing explorer feed limitations defer only that chain', () => {
   assert.match(source, /capabilities: AUDIT_CAPABILITIES/);
   assert.match(source, /isStandingExplorerLimitation\(error\) \? `\$\{prefix\}_CHAIN_UNAVAILABLE`/);
   assert.match(source, /failed: !deferred && !standing/);
+});
+
+test('required capability proof excludes the existing-ledger projection', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/models/EvmAudit.js'), 'utf8');
+  const start = source.indexOf('static async requiredScopeGapCount');
+  const end = source.indexOf('static async provisionalEffectCount', start);
+  assert.ok(start >= 0 && end > start);
+  const section = source.slice(start, end);
+  assert.match(section, /sc\.provider IN \('moralis', 'blockscout', 'etherscan', 'trace-rpc'\)/);
+  assert.doesNotMatch(section, /sc\.provider IN \([^)]*existing-ledger/);
 });
 
 test('consensus canonicalization retains failed mined outgoing transactions and gas', () => {
@@ -461,6 +481,42 @@ test('Moralis plan quota exhaustion is deferred instead of reported as bad crede
   }
 });
 
+test('Moralis paused usage preserves the plan limitation while invalid keys remain authentication failures', async () => {
+  const originalFetch = global.fetch;
+  try {
+    for (const scenario of [
+      { message: 'Your Moralis Free usage is paused. Upgrade to resume usage.', code: 'MORALIS_QUOTA_EXHAUSTED', outcome: 'deferred' },
+      { message: 'API key is invalid', code: 'MORALIS_AUTH_FAILED', outcome: 'failed' },
+    ]) {
+      const attempts = [];
+      let requests = 0;
+      global.fetch = async () => {
+        requests += 1;
+        return new Response(JSON.stringify({ message: scenario.message }), {
+          status: 401, headers: { 'content-type': 'application/json' },
+        });
+      };
+      await assert.rejects(new MoralisClient('test-key', {
+        spacingMs: 0, onFailedAttempt: async (attempt) => attempts.push(attempt),
+      }).activeChains(WALLET, ['gnosis']), (error) => {
+        assert.equal(error.code, scenario.code);
+        if (scenario.outcome === 'deferred') {
+          assert.match(error.message, /plan usage is paused/);
+          assert.doesNotMatch(error.message, /daily|credential/);
+        }
+        return true;
+      });
+      assert.equal(requests, 1);
+      assert.equal(attempts.length, 1);
+      assert.equal(attempts[0].outcome, scenario.outcome);
+      assert.equal(attempts[0].errorCode, scenario.code);
+      assert.equal(attempts[0].responseJson.message, scenario.message);
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('Moralis requests have an explicit deadline even when fetch never settles', async () => {
   const originalFetch = global.fetch;
   const signals = [];
@@ -649,11 +705,445 @@ test('consensus RPC requires matching receipt identity and canonical block membe
   await assert.rejects(rpc.transactionAndReceipt(HASH), (error) => error.code === 'RPC_IDENTITY_MISMATCH');
 });
 
+test('consensus RPC rejects malformed or unsafe canonical coordinates', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  rpc.request = async () => ({
+    number: '0x20000000000000', hash: BLOCK_HASH, timestamp: '0x1',
+  });
+  await assert.rejects(rpc.finalizedBoundary(), (error) => error.code === 'RPC_INVALID_RESPONSE');
+
+  const responses = {
+    eth_getTransactionByHash: {
+      hash: HASH, blockNumber: '12', blockHash: BLOCK_HASH,
+    },
+    eth_getTransactionReceipt: {
+      transactionHash: HASH, blockNumber: '0xa', blockHash: BLOCK_HASH,
+    },
+  };
+  rpc.requestWithEvidence = async (method, params) => ({
+    result: responses[method], rawText: JSON.stringify(responses[method]),
+    responseJson: responses[method], responseSha256: normalizer.sha256(responses[method]),
+    requestId: null, method, params,
+  });
+  await assert.rejects(rpc.transactionAndReceipt(HASH), (error) => error.code === 'RPC_IDENTITY_MISMATCH');
+});
+
+test('consensus RPC archive probes require a canonical block at the requested height', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  rpc.requestWithEvidence = async () => ({
+    result: { number: '0x2a', hash: BLOCK_HASH },
+    rawText: JSON.stringify({ number: '0x2a', hash: BLOCK_HASH }),
+    responseJson: { number: '0x2a', hash: BLOCK_HASH },
+    responseSha256: normalizer.sha256({ number: '0x2a', hash: BLOCK_HASH }),
+    requestId: null, method: 'eth_getBlockByNumber', params: ['0x2a', false],
+  });
+  const checked = await rpc.blockByNumberWithEvidence('0x2a');
+  assert.equal(checked.value.number, '0x2a');
+  await assert.rejects(rpc.blockByNumberWithEvidence('42'),
+    (error) => error.code === 'RPC_INVALID_RESPONSE');
+
+  rpc.requestWithEvidence = async () => ({
+    result: { number: '0x2b', hash: BLOCK_HASH },
+    rawText: '{}', responseJson: {}, responseSha256: normalizer.sha256('{}'),
+    requestId: null, method: 'eth_getBlockByNumber', params: ['0x2a', false],
+  });
+  await assert.rejects(rpc.blockByNumberWithEvidence('0x2a'),
+    (error) => error.code === 'RPC_ARCHIVE_UNAVAILABLE');
+});
+
+test('consensus RPC token-log enumeration adapts ranges, deduplicates self transfers, and resumes', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  const log = {
+    address: CONTRACT,
+    blockNumber: '0x1',
+    blockHash: BLOCK_HASH,
+    transactionHash: HASH,
+    transactionIndex: '0x2',
+    logIndex: '0x3',
+    removed: false,
+    topics: [TOPICS.transfer, addressTopic(WALLET), addressTopic(WALLET)],
+    data: `0x${word(7)}`,
+  };
+  const calls = [];
+  rpc.requestWithEvidence = async (method, params) => {
+    assert.equal(method, 'eth_getLogs');
+    const filter = params[0];
+    calls.push(filter);
+    const from = Number(BigInt(filter.fromBlock));
+    const through = Number(BigInt(filter.toBlock));
+    if (through - from + 1 > 2) {
+      const error = new Error('query returned more than the result limit');
+      error.code = 'RPC_API_ERROR';
+      error.rpcCode = -32005;
+      throw error;
+    }
+    const result = from === 0 && filter.topics[0] === TOPICS.transfer ? [log] : [];
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result });
+    return {
+      result, rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
+
+  const pages = [];
+  for await (const page of rpc.addressIndexedTokenLogPages(WALLET, {
+    fromBlock: 0, throughBlock: 3, initialRange: 4, maxRequests: 20,
+  })) pages.push(page);
+  assert.deepEqual(pages.map((page) => [page.fromBlock, page.throughBlock, page.cursorOut]), [
+    [0, 1, '2'], [2, 3, '4'],
+  ]);
+  assert.equal(pages[0].logs.length, 1, 'the from/to filters must not duplicate a self transfer');
+  assert.equal(pages[0].evidence.length, 4);
+  assert.equal(calls.length, 9, 'the failed wide request remains inside the request budget');
+
+  const resumed = [];
+  for await (const page of rpc.addressIndexedTokenLogPages(WALLET, {
+    fromBlock: 0, throughBlock: 3, cursor: '2', initialRange: 2, maxRequests: 4,
+  })) resumed.push(page);
+  assert.deepEqual(resumed.map((page) => [page.fromBlock, page.throughBlock]), [[2, 3]]);
+});
+
+test('consensus RPC token-log enumeration stops at a durable request checkpoint', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  rpc.requestWithEvidence = async (method, params) => {
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result: [] });
+    return {
+      result: [], rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
+  const iterator = rpc.addressIndexedTokenLogPages(WALLET, {
+    fromBlock: 0, throughBlock: 3, initialRange: 2, maxRequests: 4,
+  });
+  const first = await iterator.next();
+  assert.deepEqual([first.value.fromBlock, first.value.throughBlock, first.value.cursorOut], [0, 1, '2']);
+  await assert.rejects(iterator.next(), (error) =>
+    error.code === 'RPC_LOG_SCAN_BUDGET_EXHAUSTED' && error.cursor === '2'
+  );
+});
+
+test('trace RPC enumeration walks sender and receiver filters without double-counting root calls', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  const nested = {
+    type: 'call',
+    action: { from: OTHER, to: WALLET, value: '0x7' },
+    blockNumber: 1, blockHash: BLOCK_HASH, transactionHash: HASH,
+    transactionPosition: 2, traceAddress: [0, 1],
+  };
+  const root = {
+    type: 'call',
+    action: { from: WALLET, to: OTHER, value: '0x9' },
+    blockNumber: 1, blockHash: BLOCK_HASH, transactionHash: HASH,
+    transactionPosition: 2, traceAddress: [],
+  };
+  const calls = [];
+  rpc.requestWithEvidence = async (method, params) => {
+    assert.equal(method, 'trace_filter');
+    const filter = params[0];
+    calls.push(filter);
+    const result = filter.after != null ? [] : (filter.fromAddress ? [root] : [nested]);
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result });
+    return {
+      result, rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
+  const pages = [];
+  for await (const page of rpc.addressInternalTracePages(WALLET, {
+    fromBlock: 0, throughBlock: 1, initialRange: 2, maxRequests: 4,
+  })) pages.push(page);
+  assert.equal(calls.length, 4);
+  assert.equal(calls[1].after, 1);
+  assert.equal(calls[0].count, 10000);
+  assert.deepEqual(pages.map((page) => page.direction), [
+    'fromAddress', 'fromAddress', 'toAddress', 'toAddress',
+  ]);
+  assert.equal(pages[3].cursorOut, '2');
+  assert.equal(pages[2].traces.length, 1);
+  assert.deepEqual(pages[2].traces[0].traceAddress, [0, 1]);
+  const observations = normalizer.rpcTraceObservations(
+    { ...context(), provider: 'trace-rpc' }, pages[2].traces
+  );
+  assert.equal(observations[0].evidenceKind, 'internal_trace');
+  assert.equal(observations[0].payload.from_address, OTHER);
+  assert.equal(observations[0].payload.to_address, WALLET);
+  assert.equal(observations[0].payload.value_wei, '0x7');
+});
+
+test('trace RPC enumeration adapts ranges and preserves a resumable cursor', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  const trace = {
+    type: 'call', action: { from: OTHER, to: WALLET, value: '0x7' },
+    blockNumber: '0x0', blockHash: BLOCK_HASH, transactionHash: HASH,
+    transactionPosition: '0x0', traceAddress: [0],
+  };
+  const calls = [];
+  rpc.requestWithEvidence = async (method, params) => {
+    const filter = params[0];
+    calls.push(filter);
+    const from = Number(BigInt(filter.fromBlock));
+    const through = Number(BigInt(filter.toBlock));
+    if (through - from + 1 > 1) {
+      const error = new Error('trace response exceeds result limit');
+      error.code = 'RPC_API_ERROR';
+      error.rpcCode = -32005;
+      throw error;
+    }
+    const result = filter.after == null && from === 0 && filter.toAddress ? [trace] : [];
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result });
+    return {
+      result, rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
+  const pages = [];
+  for await (const page of rpc.addressInternalTracePages(WALLET, {
+    fromBlock: 0, throughBlock: 2, initialRange: 3, maxRequests: 20,
+  })) pages.push(page);
+  assert.deepEqual(pages.map((page) => [page.fromBlock, page.throughBlock]), [
+    [0, 0], [0, 0], [0, 0], [1, 1], [1, 1], [2, 2], [2, 2],
+  ]);
+  assert.equal(pages[1].traces.length, 1);
+  assert.ok(calls.length > 6, 'the failed wide ranges remain observable in the bounded walk');
+  const resumed = [];
+  for await (const page of rpc.addressInternalTracePages(WALLET, {
+    fromBlock: 0, throughBlock: 2, cursor: '1', initialRange: 2, maxRequests: 8,
+  })) resumed.push(page);
+  assert.deepEqual(resumed.map((page) => [page.fromBlock, page.throughBlock]), [
+    [1, 1], [1, 1], [2, 2], [2, 2],
+  ]);
+});
+
+test('trace RPC resumes inside a provider-capped page after a budget checkpoint', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  const traces = [0, 1].map((index) => ({
+    type: 'call', action: { from: OTHER, to: WALLET, value: `0x${index + 1}` },
+    blockNumber: '0x0', blockHash: BLOCK_HASH, transactionHash: HASH,
+    transactionPosition: '0x0', traceAddress: [index],
+  }));
+  const calls = [];
+  rpc.requestWithEvidence = async (method, params) => {
+    const filter = params[0];
+    calls.push(filter);
+    const after = filter.after == null ? 0 : Number(BigInt(filter.after));
+    const result = filter.fromAddress ? [] : (after === 0 ? traces : []);
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result });
+    return {
+      result, rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
+  const iterator = rpc.addressInternalTracePages(WALLET, {
+    fromBlock: 0, throughBlock: 0, initialRange: 1, maxRequests: 2,
+  });
+  await iterator.next();
+  const page = await iterator.next();
+  assert.equal(page.value.traces.length, 2);
+  await assert.rejects(iterator.next(), (error) => (
+    error.code === 'RPC_TRACE_SCAN_BUDGET_EXHAUSTED' && error.after === '2'
+  ));
+  const resumed = [];
+  for await (const next of rpc.addressInternalTracePages(WALLET, {
+    fromBlock: 0, throughBlock: 0, cursor: page.value.cursorOut, initialRange: 1, maxRequests: 4,
+  })) resumed.push(next);
+  assert.equal(calls.some((filter) => filter.after === 2), true);
+  assert.deepEqual(resumed.map((next) => next.cursorOut), ['1']);
+});
+
+test('trace RPC keeps consensus rewards as an explicit unsupported gap', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  rpc.requestWithEvidence = async (method, params) => {
+    const reward = {
+      type: 'reward',
+      action: { author: WALLET, value: '0x7', rewardType: 'block' },
+      blockNumber: 1, blockHash: BLOCK_HASH,
+    };
+    const result = params[0].fromAddress ? [reward] : [];
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result });
+    return {
+      result, rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
+  const iterator = rpc.addressInternalTracePages(WALLET, {
+    fromBlock: 1, throughBlock: 1, initialRange: 1, maxRequests: 2,
+  });
+  await assert.rejects(iterator.next(), (error) => error.code === 'RPC_TRACE_REWARD_UNSUPPORTED');
+});
+
+test('trace RPC effects can be promoted only with a canonical receipt proof', () => {
+  const observation = {
+    id: 21, provider: 'trace-rpc', provider_object_key: `trace:${HASH}:[0]`,
+    tx_hash: HASH, trace_address: [0],
+    payload_json: { from_address: OTHER, to_address: WALLET, value_wei: '7', is_error: false },
+  };
+  const provisional = effectsFromInternalObservations(context(10), [observation]);
+  assert.equal(provisional[0].resolutionStatus, 'provisional');
+  const verified = effectsFromInternalObservations(context(10), [observation], {
+    verifiedTraceHashes: new Set([HASH]),
+  });
+  assert.equal(verified[0].resolutionStatus, 'verified');
+  assert.deepEqual(verified[0].evidenceObservationIds, [21]);
+});
+
+test('consensus RPC token-log enumeration rejects unrelated logs', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  const unrelated = {
+    address: CONTRACT,
+    blockNumber: '0x0', blockHash: BLOCK_HASH,
+    transactionHash: HASH, transactionIndex: '0x0', logIndex: '0x0',
+    removed: false,
+    topics: [TOPICS.transfer, addressTopic(OTHER), addressTopic(CONTRACT)],
+    data: `0x${word(1)}`,
+  };
+  rpc.requestWithEvidence = async (method, params) => {
+    const result = params[0].topics[0] === TOPICS.transfer ? [unrelated] : [];
+    return {
+      result, rawText: '{}', responseJson: {}, responseSha256: normalizer.sha256('{}'),
+      requestId: null, method, params,
+    };
+  };
+  const iterator = rpc.addressIndexedTokenLogPages(WALLET, {
+    fromBlock: 0, throughBlock: 0, initialRange: 1, maxRequests: 4,
+  });
+  await assert.rejects(iterator.next(), (error) => error.code === 'RPC_INVALID_RESPONSE');
+});
+
+test('consensus RPC token-log enumeration records unsupported methods without range retries', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  let calls = 0;
+  rpc.requestWithEvidence = async () => {
+    calls += 1;
+    const error = new Error('method not found');
+    error.code = 'RPC_API_ERROR';
+    error.rpcCode = -32601;
+    throw error;
+  };
+  const iterator = rpc.addressIndexedTokenLogPages(WALLET, {
+    fromBlock: 0, throughBlock: 99, initialRange: 100, maxRequests: 4,
+  });
+  await assert.rejects(iterator.next(), (error) =>
+    error.code === 'RPC_LOG_ENUMERATION_UNSUPPORTED' && error.cursor === '0'
+  );
+  assert.equal(calls, 1);
+});
+
+test('consensus RPC token-log enumeration rejects conflicting duplicate coordinates', async () => {
+  const rpc = new RpcClient(10, { spacingMs: 0 });
+  let calls = 0;
+  rpc.requestWithEvidence = async (method, params) => {
+    calls += 1;
+    const result = calls <= 2 ? [{
+      address: CONTRACT,
+      blockNumber: '0x0', blockHash: calls === 1 ? BLOCK_HASH : `0x${'ef'.repeat(32)}`,
+      transactionHash: HASH, transactionIndex: '0x0', logIndex: '0x0',
+      removed: false,
+      topics: [TOPICS.transfer, addressTopic(WALLET), addressTopic(WALLET)],
+      data: `0x${word(1)}`,
+    }] : [];
+    const rawText = JSON.stringify({ jsonrpc: '2.0', id: 1, result });
+    return {
+      result, rawText, responseJson: JSON.parse(rawText), responseSha256: normalizer.sha256(rawText),
+      requestId: null, method, params,
+    };
+  };
+  const iterator = rpc.addressIndexedTokenLogPages(WALLET, {
+    fromBlock: 0, throughBlock: 0, initialRange: 1, maxRequests: 4,
+  });
+  await assert.rejects(iterator.next(), (error) => error.code === 'RPC_CONFLICTING_LOG');
+});
+
+test('independently enumerated RPC logs retain stable observation coordinates', () => {
+  const log = {
+    address: CONTRACT,
+    blockNumber: '0xa', blockHash: BLOCK_HASH,
+    transactionHash: HASH, transactionIndex: '0x2', logIndex: '0x3',
+    removed: false,
+    topics: [TOPICS.transfer, addressTopic(OTHER), addressTopic(WALLET)],
+    data: `0x${word(9)}`,
+  };
+  const observations = normalizer.rpcLogObservations(context(), [log]);
+  assert.equal(observations.length, 1);
+  assert.equal(observations[0].evidenceKind, 'log');
+  assert.equal(observations[0].providerObjectKey, `log:${HASH}:3`);
+  assert.equal(observations[0].blockNumber, 10);
+  assert.equal(observations[0].logIndex, 3);
+});
+
+test('independent token-log scope stays separate from point receipt verification', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
+  const logScope = source.indexOf("capability: 'indexed_token_logs'");
+  const receiptScope = source.indexOf("capability: 'receipt_verification'");
+  assert.ok(logScope >= 0 && receiptScope > logScope);
+  assert.match(source, /capability: 'indexed_token_logs', fromBlock: 0, throughBlock: boundary\.number/);
+  assert.match(source, /const receiptEnumerationGap = 1;/,
+    'token logs must not erase the unresolved native/internal receipt-enumeration gap');
+  assert.match(source, /indexed_token_log_enumeration_gap: indexedTokenLogEnumerationGap/);
+});
+
 test('nonce gaps are compact ranges and do not iterate across absent history', () => {
   assert.deepEqual(EvmAuditService._missingRanges(['0', '2', '2', '999999999'], 1000000000n), [
     { from: '1', to: '1' },
     { from: '3', to: '999999998' },
   ]);
+});
+
+test('historical token checkpoints use a deterministic bounded contract plan', () => {
+  assert.deepEqual(EvmAuditService._historicalTokenPlan([
+    { token_contract: CONTRACT.toUpperCase() },
+    { token_contract: WALLET },
+    { token_contract: CONTRACT },
+  ], 1), {
+    contracts: [WALLET.toLowerCase(), CONTRACT.toLowerCase()],
+    checked: [WALLET.toLowerCase()],
+    deferred: 1,
+  });
+  const many = Array.from({ length: 65 }, (_, index) =>
+    `0x${index.toString(16).padStart(40, '0')}`
+  );
+  const bounded = EvmAuditService._historicalTokenPlan(many);
+  assert.equal(bounded.checked.length, 64);
+  assert.equal(bounded.deferred, 1);
+});
+
+test('provider-observed ERC-20 contracts join the balance audit universe', () => {
+  const result = EvmAuditService._mergeObservedTokenUniverse([
+    { token_contract: CONTRACT, token_decimals: 6, balance_units: '12' },
+  ], [
+    { token_contract: CONTRACT.toUpperCase() },
+    { token_contract: WALLET },
+    { token_contract: OTHER },
+  ]);
+  assert.equal(result.observedOnly, 2);
+  assert.equal(result.tokensByContract.size, 3);
+  assert.equal(result.tokensByContract.get(CONTRACT).balance_units, '12');
+  assert.equal(result.tokensByContract.get(OTHER).observed_only, true);
+  assert.equal(result.tokensByContract.get(OTHER).token_decimals, 18);
+});
+
+test('asset-universe query includes durable ERC-20 observations and canonical effects', async () => {
+  const originalQuery = database.query;
+  let sql;
+  let params;
+  database.query = async (query, queryParams) => {
+    sql = query;
+    params = queryParams;
+    return { rows: [{ token_contract: CONTRACT }] };
+  };
+  try {
+    const rows = await EvmAudit.observedErc20Contracts(7, 9, 3, 10, 99);
+    assert.deepEqual(rows, [{ token_contract: CONTRACT }]);
+    assert.deepEqual(params, [7, 9, 3, 10, 99]);
+    assert.match(sql, /j\.user_id = \$1 AND j\.subject_id = \$3/);
+    assert.match(sql, /s\.id = e\.subject_id AND s\.user_id = \$1/);
+    assert.match(sql, /o\.evidence_kind = 'erc20_transfer'/);
+    assert.match(sql, /o\.payload_json->>'token_contract'/);
+    assert.match(sql, /p\.endpoint IN \('account-token', 'account-erc20'\)/);
+    assert.match(sql, /e\.effect_type = 'erc20'/);
+    assert.match(sql, /e\.resolution_status <> 'invalidated'/);
+  } finally {
+    database.query = originalQuery;
+  }
 });
 
 test('effect reconciliation counts missing or duplicate economic legs, not just transaction hashes', () => {
@@ -764,4 +1254,14 @@ test('audit migration is additive, fail-closed, and user-owned', () => {
   assert.doesNotMatch(sql, /DELETE FROM eth_transfers/i);
   assert.ok(chains.getChain(100).stateSyncDeposits,
     'Gnosis wallet-filtered native-credit evidence remains until the audit proves a replacement');
+});
+
+test('indexed token-log coverage has a separate durable audit capability', () => {
+  const sql = fs.readFileSync(
+    path.join(__dirname, '../migrations/083_evm_indexed_token_logs.sql'), 'utf8'
+  );
+  assert.match(sql, /evm_audit_scopes_capability_check/);
+  assert.match(sql, /'indexed_token_logs'/);
+  assert.match(sql, /'receipt_verification'/);
+  assert.match(sql, /DROP CONSTRAINT/);
 });

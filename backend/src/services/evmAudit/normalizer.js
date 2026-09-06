@@ -230,6 +230,71 @@ function rpcTransactionObservations(context, transaction, receipt) {
   return out;
 }
 
+function rpcLogObservations(context, logs) {
+  return logs.map((log) => {
+    const hash = txHash(log?.transactionHash);
+    const coordinate = safeInteger(log?.logIndex);
+    if (!hash || coordinate == null) {
+      throw new Error('Consensus RPC returned an indexed log without a stable transaction coordinate');
+    }
+    return baseObservation(context, {
+      evidenceKind: 'log',
+      providerObjectKey: `log:${hash}:${coordinate}`,
+      payload: log,
+      tx: hash,
+      blockNumber: log.blockNumber,
+      block: log.blockHash,
+      transactionIndex: log.transactionIndex,
+      logIndex: coordinate,
+    });
+  });
+}
+
+function rpcTraceObservations(context, traces) {
+  return traces.map((trace) => {
+    const hash = txHash(trace?.transactionHash);
+    const blockNumber = safeInteger(trace?.blockNumber);
+    const transactionIndex = safeInteger(
+      trace?.transactionPosition ?? trace?.transactionIndex
+    );
+    const traceAddress = Array.isArray(trace?.traceAddress)
+      ? trace.traceAddress.map((part) => safeInteger(part)) : null;
+    if (!hash || blockNumber == null || transactionIndex == null
+        || !traceAddress || traceAddress.some((part) => part == null || part < 0)) {
+      throw new Error('Consensus trace RPC returned an invalid trace observation');
+    }
+    const action = trace.action || {};
+    const traceType = String(trace.type || 'call').toLowerCase();
+    const from = traceType === 'suicide' ? action.address : (action.from ?? trace.from);
+    const to = traceType === 'suicide'
+      ? action.refundAddress : (action.to ?? trace.to);
+    const value = traceType === 'suicide'
+      ? (action.balance ?? '0x0') : (action.value ?? trace.value ?? '0x0');
+    const payload = {
+      ...trace,
+      from_address: from,
+      to_address: to,
+      value_wei: value,
+      is_error: trace.error != null,
+      trace_address: traceAddress,
+      transaction_hash: hash,
+      block_number: trace.blockNumber,
+      block_hash: trace.blockHash,
+      transaction_index: trace.transactionPosition ?? trace.transactionIndex,
+    };
+    return baseObservation(context, {
+      evidenceKind: 'internal_trace',
+      providerObjectKey: `trace:${hash}:${stableJson(traceAddress)}`,
+      payload,
+      tx: hash,
+      blockNumber: trace.blockNumber,
+      block: trace.blockHash,
+      transactionIndex: trace.transactionPosition ?? trace.transactionIndex,
+      traceAddress,
+    });
+  });
+}
+
 function legacyTransferObservations(context, rows) {
   const kinds = {
     native: 'native_transfer', internal: 'internal_trace', token: 'erc20_transfer',
@@ -329,6 +394,8 @@ module.exports = {
   explorerFeedObservations,
   historyObservations,
   legacyTransferObservations,
+  rpcLogObservations,
+  rpcTraceObservations,
   rpcTransactionObservations,
   sha256,
   stableJson,

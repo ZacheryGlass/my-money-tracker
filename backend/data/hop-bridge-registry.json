@@ -11,6 +11,63 @@
   },
   "assets": [
     {
+      "assetKey": "ETH",
+      "native": true,
+      "l1": {
+        "chainId": 1,
+        "canonicalToken": "0x0000000000000000000000000000000000000000",
+        "bridge": "0xb8901acb165ed027e32754e0ffe830802919727f",
+        "validFromBlock": 13331564
+      },
+      "chains": [
+        {
+          "chainId": 100,
+          "name": "Gnosis",
+          "canonicalToken": "0x6a023ccd1ff6f2045c3309768ead9e68f978f6e1",
+          "hopToken": "0xc46f2004006d4c770346f60a7baa3f1cc67dfd1c",
+          "bridge": "0xd8926c12c0b2e5cd40cfda49ecaff40252af491b",
+          "wrapper": "0x03d7f750777ec48d39d080b020d83eb2cb4e3547",
+          "validFromBlock": 18359713
+        },
+        {
+          "chainId": 137,
+          "name": "Polygon",
+          "canonicalToken": "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
+          "hopToken": "0x1fdeaf938267ca43388ed1fdb879eaf91e920c7a",
+          "bridge": "0xb98454270065a31d71bf635f6f7ee6a518dfb849",
+          "wrapper": "0xc315239cfb05f1e130e7e28e603cea4c014c57f0",
+          "validFromBlock": 19706859
+        },
+        {
+          "chainId": 10,
+          "name": "Optimism",
+          "canonicalToken": "0x4200000000000000000000000000000000000006",
+          "hopToken": "0xe38faf9040c7f09958c638bbdb977083722c5156",
+          "bridge": "0x83f6244bd87662118d96d9a6d44f09dfff14b30e",
+          "wrapper": "0x86ca30bef97fb651b8d866d45503684b90cb3312",
+          "validFromBlock": 1
+        },
+        {
+          "chainId": 42161,
+          "name": "Arbitrum",
+          "canonicalToken": "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
+          "hopToken": "0xda7c0de432a9346bb6e96ac74e3b61a36d8a77eb",
+          "bridge": "0x3749c4f034022c39ecaffaba182555d4508caccc",
+          "wrapper": "0x33ceb27b39d2bb7d2e61f7564d3df29344020417",
+          "validFromBlock": 2135598
+        },
+        {
+          "chainId": 42170,
+          "name": "Arbitrum Nova",
+          "canonicalToken": "0x722e8bdd2ce80a4422e880164f2079488e115365",
+          "hopToken": "0xba9d3040e79ec1e27c67fe8b184f552fe9398f07",
+          "bridge": "0x8796860ca1677bf5d54ce5a348fe4b779a8212f3",
+          "wrapper": "0xd6bfb71b5ad5fd378cac15c72d8652e3b8d542c4",
+          "validFromBlock": 1724464
+        }
+      ]
+    },
+    {
       "assetKey": "USDC.e",
       "l1": {
         "chainId": 1,
@@ -54,15 +111,6 @@
           "bridge": "0x0e0e3d2c5c292161999474247956ef542cabf8dd",
           "wrapper": "0xe22d2bedb3eca35e6397e0c6d62857094aa26f52",
           "validFromBlock": 440027
-        },
-        {
-          "chainId": 8453,
-          "name": "Base",
-          "canonicalToken": "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca",
-          "hopToken": "0x74fa978eaffa312bc92e76df40fcc1bfe7637aeb",
-          "bridge": "0x46ae9bab8cea96610807a275ebd36f8e916b5c61",
-          "wrapper": "0x7d269d3e0d61a05a0ba976b7dbf8805bf844af3f",
-          "validFromBlock": 2077758
         }
       ]
     }

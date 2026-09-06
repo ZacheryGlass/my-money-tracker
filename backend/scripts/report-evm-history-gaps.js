@@ -160,6 +160,33 @@ async function buildReport(userId) {
        ORDER BY latest.attempted_at, latest.id`, [userId])).rows;
   }
 
+  // Keep the latest evidence-walk scopes beside the detailed gap rows. This
+  // is the durable answer to "which feed is still open?" after a partial
+  // provider run: a keyless primary explorer can be complete while one keyed
+  // override remains deferred. Scope rows contain no wallet address, raw
+  // response, or credential; those remain in the protected provider-page
+  // tables and are intentionally not copied into this report.
+  const auditScopesAvailable = await tableExists('evm_audit_scopes');
+  const auditScopes = auditScopesAvailable
+    ? (await pool.query(`
+      WITH latest_jobs AS (
+        SELECT DISTINCT ON (j.subject_id)
+               j.id, j.subject_id, j.status AS job_status, j.mode, j.requested_at
+          FROM evm_audit_jobs j
+          JOIN evm_subjects s ON s.id = j.subject_id
+         WHERE s.user_id = $1
+         ORDER BY j.subject_id, j.requested_at DESC, j.id DESC
+      )
+      SELECT sc.job_id, sc.chain_id, sc.provider, sc.capability, sc.status,
+             sc.pagination_exhausted, sc.requested_from_block,
+             sc.requested_through_block, sc.provider_cursor,
+             sc.provider_order, sc.coverage_basis, sc.error_code,
+             sc.error_detail, j.job_status, j.mode, j.requested_at
+        FROM latest_jobs j
+        JOIN evm_audit_scopes sc ON sc.job_id = j.id
+       ORDER BY sc.chain_id, sc.capability, sc.provider, sc.status`, [userId])).rows
+    : [];
+
   const reconciliation = (await pool.query(`
     SELECT r.wallet_id, r.chain_id, r.asset_key, r.status, r.derived_units,
            r.live_units, r.delta_units, r.skip_reason, r.checked_at,
@@ -177,7 +204,7 @@ async function buildReport(userId) {
            t.transfer_type, t.token_contract, t.token_symbol, t.token_standard,
            t.token_id, t.value_wei, t.usd_basis,
            (i.contract_address IS NOT NULL) AS ignored,
-           COALESCE(a.spam, FALSE) AS quarantined,
+           COALESCE(ao.spam, a.spam, FALSE) AS quarantined,
            p.status AS price_coverage_status, p.detail AS price_coverage_detail
       FROM eth_transfers t
       JOIN eth_wallets w ON w.id = t.wallet_id
@@ -185,6 +212,8 @@ async function buildReport(userId) {
         ON i.user_id = w.user_id AND i.contract_address = t.token_contract
       LEFT JOIN eth_activity a
         ON a.wallet_id = t.wallet_id AND a.chain_id = t.chain_id AND a.tx_hash = t.tx_hash
+      LEFT JOIN eth_activity_overrides ao
+        ON ao.wallet_id = t.wallet_id AND ao.chain_id = t.chain_id AND ao.tx_hash = t.tx_hash
       LEFT JOIN asset_price_coverage p
         ON p.asset_key = CASE
           WHEN t.token_contract IS NULL THEN UPPER(COALESCE(t.token_symbol, 'ETH'))
@@ -195,7 +224,8 @@ async function buildReport(userId) {
   for (const row of unpriced) row.durable_reason = unpricedReason(row);
 
   const exchangeExceptions = (await pool.query(`
-    SELECT e.id, e.exchange_account_id, ea.exchange, e.canonical_asset, e.status,
+    SELECT e.id, e.exchange_account_id, ea.name AS exchange_account_name,
+           ea.exchange, e.canonical_asset, e.status,
            e.category, e.evidence, e.adjustment, e.adjusted_delta,
            e.created_at, e.updated_at,
            s.provider_asset_codes, s.derived_balance, s.live_balance,
@@ -205,6 +235,27 @@ async function buildReport(userId) {
       LEFT JOIN exchange_balance_audit_snapshots s ON s.id = e.current_snapshot_id
      WHERE ea.user_id = $1 AND e.status <> 'cleared'
      ORDER BY ea.exchange, e.canonical_asset, e.id`, [userId])).rows;
+
+  // Keep exchange review rows in the same private evidence index as on-chain
+  // gaps.  The provider type, grouping id, preserved network/chain and raw
+  // source are what distinguish a real unresolved event from a replay or a
+  // provider representation; none is safe to infer from the ticker alone.
+  const exchangeReviewRows = (await pool.query(`
+    SELECT er.id, er.exchange_account_id, ea.name AS exchange_account_name,
+           ea.exchange, er.external_id, er.occurred_at, er.record_type,
+           er.base_asset, er.base_amount, er.quote_asset, er.quote_amount,
+           er.fee_asset, er.fee_amount, er.tx_hash, er.address,
+           er.network, er.chain_id, er.source, er.fingerprint,
+           er.needs_review, er.duplicate_candidate,
+           er.raw->>'type' AS provider_type,
+           COALESCE(er.raw->>'_trade_id', er.raw->'trade'->>'id',
+                    er.raw->'advanced_trade_fill'->>'order_id',
+                    er.raw->'buy'->>'id', er.raw->'sell'->>'id') AS provider_group_id,
+           er.raw, er.dedupe_provenance
+      FROM exchange_records er
+      JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+     WHERE ea.user_id = $1 AND er.needs_review
+     ORDER BY ea.exchange, er.occurred_at, er.id`, [userId])).rows;
 
   const duplicateCandidates = (await pool.query(`
     SELECT er.id, er.exchange_account_id, ea.exchange, er.external_id,
@@ -216,6 +267,45 @@ async function buildReport(userId) {
       JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
      WHERE ea.user_id = $1 AND er.duplicate_candidate
      ORDER BY ea.exchange, er.fingerprint, er.occurred_at, er.id`, [userId])).rows;
+
+  const dedupeEventsAvailable = await tableExists('exchange_record_dedupe_events');
+  const exchangeDedupeEvents = dedupeEventsAvailable
+    ? (await pool.query(`
+      SELECT d.id, d.exchange_account_id, ea.name AS exchange_account_name,
+             ea.exchange, d.survivor_record_id, survivor.external_id AS survivor_external_id,
+             d.incoming_external_id, d.incoming_source, d.fingerprint,
+             d.fingerprint_version, d.incoming_snapshot, d.created_at
+        FROM exchange_record_dedupe_events d
+        JOIN exchange_accounts ea ON ea.id = d.exchange_account_id
+        LEFT JOIN exchange_records survivor ON survivor.id = d.survivor_record_id
+       WHERE ea.user_id = $1
+       ORDER BY d.created_at, d.id`, [userId])).rows
+    : [];
+
+  const crossAccountExternalIdOverlaps = (await pool.query(`
+    SELECT left_record.id AS left_record_id,
+           left_record.exchange_account_id AS left_account_id,
+           left_account.name AS left_account_name,
+           right_record.id AS right_record_id,
+           right_record.exchange_account_id AS right_account_id,
+           right_account.name AS right_account_name,
+           left_account.exchange, left_record.external_id,
+           left_record.occurred_at AS left_occurred_at,
+           right_record.occurred_at AS right_occurred_at,
+           left_record.source AS left_source, right_record.source AS right_source,
+           left_record.needs_review AS left_needs_review,
+           right_record.needs_review AS right_needs_review
+      FROM exchange_records left_record
+      JOIN exchange_accounts left_account ON left_account.id = left_record.exchange_account_id
+      JOIN exchange_records right_record
+        ON right_record.external_id = left_record.external_id
+       AND right_record.id > left_record.id
+       AND right_record.exchange_account_id <> left_record.exchange_account_id
+      JOIN exchange_accounts right_account ON right_account.id = right_record.exchange_account_id
+     WHERE left_account.user_id = $1
+       AND right_account.user_id = $1
+       AND right_account.exchange = left_account.exchange
+     ORDER BY left_account.exchange, left_record.external_id`, [userId])).rows;
 
   const by = (items, key) => items.reduce((out, row) => {
     const value = row[key] == null ? 'unknown' : String(row[key]);
@@ -239,12 +329,19 @@ async function buildReport(userId) {
       bridge_ambiguous_suggestions: bridgeSuggestions.filter((row) => row.ambiguous).length,
       bridge_verdicts: bridgeVerdicts.length,
       bridge_receipt_failures: bridgeReceiptFailures.length,
+      audit_scope_rows: auditScopes.length,
+      audit_scope_by_status: by(auditScopes, 'status'),
       reconciliation_rows: reconciliation.length,
       reconciliation_by_status: by(reconciliation, 'status'),
       unpriced_rows: unpriced.length,
       unpriced_by_reason: by(unpriced, 'durable_reason'),
       open_exchange_exceptions: exchangeExceptions.length,
+      exchange_review_rows: exchangeReviewRows.length,
+      exchange_review_by_venue: by(exchangeReviewRows, 'exchange'),
+      exchange_review_by_provider_type: by(exchangeReviewRows, 'provider_type'),
       duplicate_candidate_rows: duplicateCandidates.length,
+      exchange_dedupe_events: exchangeDedupeEvents.length,
+      cross_account_external_id_overlaps: crossAccountExternalIdOverlaps.length,
     },
     review_rows: reviewRows,
     unmatched_bridge_rows: bridgeRows,
@@ -252,10 +349,14 @@ async function buildReport(userId) {
     bridge_suggestions: bridgeSuggestions,
     bridge_verdicts: bridgeVerdicts,
     bridge_receipt_failures: bridgeReceiptFailures,
+    audit_scopes: auditScopes,
     reconciliation,
     unpriced,
     exchange_exceptions: exchangeExceptions,
+    exchange_review_rows: exchangeReviewRows,
     duplicate_candidates: duplicateCandidates,
+    exchange_dedupe_events: exchangeDedupeEvents,
+    cross_account_external_id_overlaps: crossAccountExternalIdOverlaps,
   };
 }
 

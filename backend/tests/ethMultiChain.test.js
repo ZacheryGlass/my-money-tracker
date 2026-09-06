@@ -233,6 +233,24 @@ function harness(t, {
   return { calls, stub };
 }
 
+// Explorer-feed tests must opt out of the chain's live consensus endpoint so
+// they exercise the Etherscan-shaped transport and its error mapping.  The
+// production registry intentionally prefers consensus RPC for point reads;
+// mutating only the in-memory test registry keeps these fixtures deterministic
+// without making a network call.
+function withoutConsensusRpc(t, chainIds) {
+  const restore = [];
+  for (const chainId of chainIds) {
+    const chain = chains.getChain(chainId);
+    if (!chain) continue;
+    restore.push([chain, chain.consensusRpcUrl]);
+    chain.consensusRpcUrl = null;
+  }
+  t.after(() => {
+    for (const [chain, value] of restore) chain.consensusRpcUrl = value;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // The registry, as probed live
 // ---------------------------------------------------------------------------
@@ -250,25 +268,34 @@ test('the configured Blockscout floor preserves stricter operator pacing', (t) =
   assert.equal(EtherscanService._provider(100).spacingMs, 20000);
 });
 
-test('Gnosis routes only internal traces through keyed Etherscan V2', () => {
+test('Gnosis retains explicit Blockscout gaps until a replacement passes history canaries', () => {
   const normal = EtherscanService._provider(100, 'key', 'txlist');
   const internal = EtherscanService._provider(100, 'key', 'txlistinternal');
 
   assert.equal(normal.name, 'Blockscout');
   assert.equal(normal.baseUrl, 'https://gnosis.blockscout.com/api');
   assert.equal(normal.requiresApiKey, false);
-  assert.equal(internal.name, 'Etherscan');
-  assert.equal(internal.baseUrl, 'https://api.etherscan.io/v2/api');
-  assert.equal(internal.requiresApiKey, true);
-  assert.deepEqual(internal.params, { chainid: 100 });
-  assert.equal(internal.key, EtherscanService._provider(1, 'key').key,
-    'the same user key shares one Etherscan throttle queue across chains');
+  assert.equal(internal.name, 'Blockscout');
+  assert.equal(internal.baseUrl, 'https://gnosis.blockscout.com/api');
+  assert.equal(internal.requiresApiKey, false);
+});
+
+test('Arbitrum Nova uses its live-probed keyless Blockscout account feeds', () => {
+  const normal = EtherscanService._provider(42170, null, 'txlist');
+  const nft1155 = EtherscanService._provider(42170, null, 'token1155tx');
+
+  assert.equal(normal.name, 'Blockscout');
+  assert.equal(normal.baseUrl, 'https://arbitrum-nova.blockscout.com/api');
+  assert.equal(normal.requiresApiKey, false);
+  assert.equal(nft1155.baseUrl, normal.baseUrl);
+  assert.equal(chains.getChain(42170).consensusRpcUrl,
+    'https://arbitrum-nova-rpc.publicnode.com');
 });
 
 test('all live-probed chains default on through their configured providers', () => {
   delete process.env.ETH_CHAINS;
   const byId = new Map(chains.allChains().map((chain) => [chain.id, chain]));
-  for (const id of [1, 10, 100, 137, 324, 32401, 42161, 59144]) {
+  for (const id of [1, 10, 100, 137, 324, 32401, 42161, 42170, 59144]) {
     assert.equal(byId.get(id).enabled, true, `chain ${id} defaults on through its configured provider`);
   }
 });
@@ -291,7 +318,7 @@ test('every chain names a native asset that the price layer knows how to fetch',
     assert.ok(chain.coingeckoPlatform, `chain ${chain.id} needs an asset platform`);
   }
   // All ETH-native chains still share one series and one price_cache row.
-  for (const id of [1, 10, 324, 32401, 42161, 59144]) {
+  for (const id of [1, 10, 324, 32401, 42161, 42170, 59144]) {
     assert.equal(chains.nativeSymbol(id), 'ETH');
   }
   assert.equal(chains.nativeSymbol(100), 'XDAI');
@@ -335,6 +362,8 @@ test('credential gating follows the enabled provider set', (t) => {
   assert.equal(chains.enabledChainsRequireApiKey(), false);
   process.env.ETH_CHAINS = '10,100';
   assert.equal(chains.enabledChainsRequireApiKey(), false);
+  process.env.ETH_CHAINS = '42170';
+  assert.equal(chains.enabledChainsRequireApiKey(), false);
   process.env.ETH_CHAINS = '324,32401';
   assert.equal(chains.enabledChainsRequireApiKey(), false);
   process.env.ETH_CHAINS = '1,100';
@@ -347,6 +376,7 @@ test('mainnet holding names are byte-identical to their pre-#58 values', () => {
   assert.equal(chains.ethHoldingName(1), 'Ethereum');
   assert.equal(chains.holdingSuffix(1), '');
   assert.equal(chains.ethHoldingName(42161), 'ETH (Arbitrum)');
+  assert.equal(chains.ethHoldingName(42170), 'ETH (Arbitrum Nova)');
   assert.equal(chains.ethHoldingName(324), 'ETH (zkSync Era)');
   assert.equal(chains.ethHoldingName(32401), 'ETH (zkSync Lite)');
 });
@@ -889,6 +919,7 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
   const axios = require('axios');
   const original = axios.get;
   t.after(() => { axios.get = original; });
+  withoutConsensusRpc(t, [42161, 100, 1]);
 
   // Both strings observed live during the feed-parity probe: the first from
   // an Etherscan plan-gated chain, the second from zkSync Era's absent id.
@@ -918,8 +949,7 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
   );
 
   // Any Etherscan-shaped provider status=2 response that admits a partial
-  // internal range must remain fail-closed. Gnosis now routes this feed to
-  // Etherscan, but the response guard remains provider-independent.
+  // internal range must remain fail-closed, including Gnosis Blockscout.
   axios.get = async () => ({
     data: {
       status: '2',
@@ -954,6 +984,7 @@ test('the live "unavailable" responses map to ETHERSCAN_CHAIN_UNAVAILABLE', asyn
 test('an HTTP 429 from a chain explorer backs off and retries without accepting an empty feed', async (t) => {
   const axios = require('axios');
   const original = axios.get;
+  withoutConsensusRpc(t, [1]);
   let requests = 0;
   axios.get = async () => {
     requests += 1;
@@ -974,6 +1005,7 @@ test('an HTTP 429 from a chain explorer backs off and retries without accepting 
 test('a one-off explorer timeout is retried before the feed is marked failed', async (t) => {
   const axios = require('axios');
   const original = axios.get;
+  withoutConsensusRpc(t, [137]);
   let requests = 0;
   axios.get = async () => {
     requests += 1;
@@ -994,6 +1026,7 @@ test('a one-off explorer timeout is retried before the feed is marked failed', a
 test('a persistent explorer 429 pauses its provider queue and fails fast on the next request', async (t) => {
   const axios = require('axios');
   const original = axios.get;
+  withoutConsensusRpc(t, [1]);
   let requests = 0;
   axios.get = async () => {
     requests += 1;
@@ -1062,6 +1095,7 @@ test('the chain id reaches Etherscan as the chainid param', async (t) => {
   const axios = require('axios');
   const original = axios.get;
   const seen = [];
+  withoutConsensusRpc(t, [42161, 1]);
   axios.get = async (url, config) => {
     seen.push(config.params);
     return { data: { status: '1', result: '42' } };
@@ -1074,6 +1108,28 @@ test('the chain id reaches Etherscan as the chainid param', async (t) => {
   assert.equal(seen[0].chainid, 42161);
   // Default is mainnet, so every pre-#58 call site behaves exactly as it did.
   assert.equal(seen[1].chainid, 1);
+});
+
+test('consensus RPC is preferred for point reads when a chain declares it', async (t) => {
+  const axios = require('axios');
+  const originalPost = axios.post;
+  const originalGet = axios.get;
+  const calls = [];
+  axios.post = async (url, body) => {
+    calls.push({ transport: 'rpc', url, method: body.method, params: body.params });
+    return { data: { jsonrpc: '2.0', id: 1, result: '0x2a' } };
+  };
+  axios.get = async () => {
+    calls.push({ transport: 'explorer' });
+    throw new Error('explorer transport should not be used for this point read');
+  };
+  t.after(() => { axios.post = originalPost; axios.get = originalGet; });
+
+  assert.equal(await EtherscanService.getEthBalance(WALLET, null, 137), '42');
+  assert.deepEqual(calls, [{
+    transport: 'rpc', url: chains.getChain(137).consensusRpcUrl,
+    method: 'eth_getBalance', params: [WALLET, 'latest'],
+  }]);
 });
 
 test('a chain-declared account API omits Etherscan key and chainid parameters', async (t) => {
@@ -1094,6 +1150,43 @@ test('a chain-declared account API omits Etherscan key and chainid parameters', 
   assert.equal(seen[0].params.action, 'txlist');
   assert.equal(seen[0].params.endblock, 999999999,
     'OP Mainnet is already above the old 99,999,999 sentinel');
+});
+
+test('paged explorer responses retain raw page evidence and the terminal empty marker', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  const firstRows = Array.from({ length: 1000 }, (_, index) => ({
+    blockNumber: String(index + 1), hash: `0x${index.toString(16).padStart(64, '0')}`,
+  }));
+  const raw = JSON.stringify({
+    status: '1', message: 'OK', result: firstRows,
+  });
+  const requests = [];
+  withoutConsensusRpc(t, [1]);
+  axios.get = async (_url, config) => {
+    requests.push(config);
+    return requests.length === 1 ? {
+      data: raw,
+      headers: { 'x-request-id': 'fixture-page-1' },
+    } : {
+      data: JSON.stringify({ status: '0', message: 'No transactions found', result: [] }),
+      headers: { 'x-request-id': 'fixture-page-empty' },
+    };
+  };
+  t.after(() => { axios.get = originalGet; });
+
+  const rows = await EtherscanService.fetchTokenTxs(WALLET, 0, 'key', 1, 2000);
+  assert.equal(rows.length, 1000);
+  assert.equal(requests[0].responseType, 'text');
+  assert.equal(requests[0].transformResponse.length, 1);
+  assert.equal(rows.evidencePages.length, 2);
+  assert.equal(rows.evidencePages[0].rawText, raw);
+  assert.equal(rows.evidencePages[0].requestId, 'fixture-page-1');
+  assert.equal(rows.evidencePages[0].cursorIn, '0');
+  assert.equal(rows.evidencePages[0].cursorOut, '1000');
+  assert.equal(rows.evidencePages[0].rows.length, 1000);
+  assert.equal(rows.evidencePages[1].itemCount, 0);
+  assert.equal(rows.evidencePages[1].cursorOut, null);
 });
 
 test('an account feed freezes when the indexed head falls behind its resume block', async () => {
@@ -1186,7 +1279,19 @@ test('a keyless-only chain set syncs without an Etherscan credential', async (t)
   assert.equal(calls.inserted[0].chain_id, 324);
 });
 
-test('a missing Gnosis override key freezes only the internal feed', async (t) => {
+test('a missing explicitly configured override key freezes only the internal feed', async (t) => {
+  const chain = chains.getChain(100);
+  const originalOverrides = chain.accountApiOverrides;
+  chain.accountApiOverrides = {
+    txlistinternal: {
+      provider: 'Etherscan', baseUrl: 'https://api.etherscan.io/v2/api',
+      requiresApiKey: true, params: { chainid: 100 },
+    },
+  };
+  t.after(() => {
+    if (originalOverrides === undefined) delete chain.accountApiOverrides;
+    else chain.accountApiOverrides = originalOverrides;
+  });
   const missingKey = new Error(
     'Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.'
   );

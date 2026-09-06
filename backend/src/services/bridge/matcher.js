@@ -152,14 +152,13 @@ function projectionCoordinates(movement) {
     .map(coordinateKey))];
 }
 
-// One activity row cannot host two compatibility projections. Protocols may
-// emit several independently identified messages from a batch/multicall, but
-// the activity table is transaction-granular rather than message-granular.
-// Until message slices are modeled, every protocol movement claiming the same
-// transaction stays visible and unsupported instead of letting a UNIQUE
-// violation roll back the user's entire bridge rebuild. A durable user verdict
-// owns its coordinates and therefore also demotes a coincident automatic
-// derivation.
+// A source activity cannot project twice because eth_activity_links keeps its
+// source endpoint unique. A destination transaction may settle several source
+// messages, but only when each decoder supplies a distinct receipt-log slice;
+// rebuildProjectionForUser then selects the exact asset leg for that slice.
+// Without those slices, every movement claiming the transaction stays visible
+// and unsupported. A durable user verdict owns its coordinates and therefore
+// also demotes a coincident automatic derivation.
 function resolveProtocolCoordinateConflicts(protocolMovements, manualMovements = []) {
   const manualCoordinates = new Set(
     manualMovements
@@ -173,7 +172,9 @@ function resolveProtocolCoordinateConflicts(protocolMovements, manualMovements =
     if (movement.status !== 'protocol_verified') continue;
     for (const key of projectionCoordinates(movement)) {
       if (!claims.has(key)) claims.set(key, []);
-      claims.get(key).push(index);
+      claims.get(key).push({ index, member: movement.members.find(
+        (candidate) => coordinateKey(candidate) === key
+      ) });
       if (manualCoordinates.has(key)) {
         conflicts.set(index, {
           reason: 'user_verdict_claims_transaction',
@@ -183,9 +184,16 @@ function resolveProtocolCoordinateConflicts(protocolMovements, manualMovements =
     }
   }
 
-  for (const [key, indexes] of claims) {
-    if (indexes.length < 2) continue;
-    for (const index of indexes) {
+  for (const [key, entries] of claims) {
+    if (entries.length < 2) continue;
+    const slices = entries.map(({ member }) => member?.evidence?.projection_slice);
+    const sharedDestinationIsSliced = entries.every(({ member }) => (
+      DESTINATION_ROLES.has(member?.role)
+    )) && slices.every((slice) => (
+      slice && slice.direction === 'in' && typeof slice.key === 'string' && slice.key
+    )) && new Set(slices.map((slice) => slice.key)).size === slices.length;
+    if (sharedDestinationIsSliced) continue;
+    for (const { index } of entries) {
       if (!conflicts.has(index)) {
         conflicts.set(index, {
           reason: 'shared_transaction_multiple_protocol_identities',

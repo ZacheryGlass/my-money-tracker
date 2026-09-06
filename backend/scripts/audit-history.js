@@ -55,7 +55,8 @@ async function tableExists(tableName) {
 
 async function buildReport(userId, archiveReportPath = null) {
   const wallets = (await rows(
-    `SELECT COUNT(*)::int AS wallet_count,
+    `SELECT COUNT(DISTINCT w.id)::int AS wallet_count,
+            COUNT(wc.wallet_id)::int AS wallet_chain_count,
             COUNT(DISTINCT wc.chain_id)::int AS chain_count,
             MIN(w.created_at) AS first_wallet_added,
             MAX(w.last_synced_at) AS last_wallet_sync
@@ -85,7 +86,7 @@ async function buildReport(userId, archiveReportPath = null) {
     `SELECT COALESCE(o.category, a.category) AS category,
             COUNT(*)::int AS rows,
             COUNT(*) FILTER (WHERE a.needs_review)::int AS derived_review_rows,
-            COUNT(*) FILTER (WHERE COALESCE(a.spam, FALSE))::int AS spam_rows,
+            COUNT(*) FILTER (WHERE COALESCE(o.spam, a.spam, FALSE))::int AS spam_rows,
             COUNT(*) FILTER (WHERE o.category IS NOT NULL)::int AS overridden_rows
        FROM eth_activity a
        JOIN eth_wallets w ON w.id = a.wallet_id
@@ -296,6 +297,39 @@ async function buildReport(userId, archiveReportPath = null) {
     [userId]
   );
 
+  // The legacy feed-coverage table describes the application ledger. The
+  // audit scopes describe the newer evidence walk (including independent RPC
+  // logs, trace sources, and per-feed credential deferrals). Keep this
+  // aggregate-only so the public report never exposes addresses, hashes, or
+  // provider request payloads, while still showing the exact capability that
+  // blocks a completion claim.
+  const auditScopesAvailable = await tableExists('evm_audit_scopes');
+  const auditScopes = auditScopesAvailable
+    ? await rows(
+      `WITH latest_jobs AS (
+         SELECT DISTINCT ON (j.subject_id)
+                j.id, j.subject_id, j.status AS job_status, j.mode, j.requested_at
+           FROM evm_audit_jobs j
+           JOIN evm_subjects s ON s.id = j.subject_id
+          WHERE s.user_id = $1
+          ORDER BY j.subject_id, j.requested_at DESC, j.id DESC
+       )
+       SELECT sc.chain_id, sc.provider, sc.capability, sc.status,
+              sc.pagination_exhausted, j.job_status, j.mode,
+              COUNT(*)::int AS rows,
+              MIN(sc.requested_from_block) AS min_requested_from_block,
+              MAX(sc.requested_through_block) AS max_requested_through_block,
+              COUNT(*) FILTER (WHERE sc.status IN ('failed', 'deferred', 'unsupported'))::int AS gap_rows,
+              COUNT(*) FILTER (WHERE sc.status = 'unverified')::int AS unverified_rows
+         FROM latest_jobs j
+         JOIN evm_audit_scopes sc ON sc.job_id = j.id
+        GROUP BY sc.chain_id, sc.provider, sc.capability, sc.status,
+                 sc.pagination_exhausted, j.job_status, j.mode
+        ORDER BY sc.chain_id, sc.capability, sc.provider, sc.status`,
+      [userId]
+    )
+    : [];
+
   let archiveAudit = null;
   if (archiveReportPath) {
     const report = JSON.parse(fs.readFileSync(archiveReportPath, 'utf8'));
@@ -315,12 +349,25 @@ async function buildReport(userId, archiveReportPath = null) {
     code_revision: gitRevision(),
     code_dirty: gitDirty(),
     read_only: true,
-    scope: { wallet_count: number(wallets.wallet_count), chain_count: number(wallets.chain_count) },
+    scope: {
+      wallet_count: number(wallets.wallet_count),
+      chain_count: number(wallets.chain_count),
+      wallet_chain_count: number(wallets.wallet_chain_count),
+    },
     wallet_sync: {
       first_wallet_added: wallets.first_wallet_added || null,
       last_wallet_sync: wallets.last_wallet_sync || null,
     },
     provider_coverage: feedCoverage,
+    evm_audit: {
+      evidence_model_available: auditScopesAvailable,
+      scopes: auditScopes,
+      totals: {
+        rows: auditScopes.reduce((sum, row) => sum + number(row.rows), 0),
+        gap_rows: auditScopes.reduce((sum, row) => sum + number(row.gap_rows), 0),
+        unverified_rows: auditScopes.reduce((sum, row) => sum + number(row.unverified_rows), 0),
+      },
+    },
     activity: {
       by_category: activityByCategory,
       totals: {

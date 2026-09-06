@@ -476,15 +476,7 @@ const ExchangeSyncService = require('../src/services/ExchangeSyncService');
 const ExchangeRecord = require('../src/models/ExchangeRecord');
 const { buildRecords } = require('../src/services/exchangeImport/krakenLedger');
 const { parseExchangeCsv } = require('../src/services/exchangeImport');
-const {
-  addAmounts, negateAmount, chainIdForNetwork,
-} = require('../src/services/exchangeImport/shared');
-
-test('Base exchange network spellings normalize to chain 8453', () => {
-  for (const network of ['Base', 'Base Mainnet', 'base-network']) {
-    assert.equal(chainIdForNetwork(network), 8453, network);
-  }
-});
+const { addAmounts, negateAmount } = require('../src/services/exchangeImport/shared');
 
 // A throwaway P-256 key in the shape Coinbase hands out. Generated here rather
 // than committed: a PEM in a public repo reads like a leaked credential even

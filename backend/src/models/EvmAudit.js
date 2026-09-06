@@ -29,7 +29,7 @@ function chunks(items, size) {
 }
 
 function validateProviderPage(page) {
-  if (['consensus-rpc'].includes(page.provider)
+  if (['consensus-rpc', 'trace-rpc'].includes(page.provider)
       && typeof page.responseRaw !== 'string') {
     const error = new Error(`${page.provider} evidence must retain the raw response body`);
     error.code = 'EVM_INVALID_RAW_PAGE';
@@ -1425,7 +1425,12 @@ class EvmAudit {
           SELECT 1 FROM evm_audit_scopes sc
            WHERE sc.job_id = $1 AND sc.chain_id = $2
              AND sc.capability = r.capability
-             AND sc.provider IN ('moralis', 'blockscout', 'etherscan', 'existing-ledger')
+             -- The existing-ledger scope is a reconciliation projection, not
+             -- an independent history source.  It is populated from the
+             -- same stored rows a provider walk is meant to verify, so
+             -- allowing it to satisfy this predicate would let stale prior
+             -- coverage hide a newly deferred or partial provider feed.
+             AND sc.provider IN ('moralis', 'blockscout', 'etherscan', 'trace-rpc')
              AND sc.status = 'complete' AND sc.pagination_exhausted = TRUE
         )`,
       [jobId, chainId]
@@ -1578,6 +1583,58 @@ class EvmAudit {
         GROUP BY t.token_contract
         ORDER BY t.token_contract`,
       [userId, subjectId, chainId, throughBlock]
+    );
+    return rows;
+  }
+
+  // The derived ledger is intentionally not the only source for the asset
+  // universe. A provider can retain an ERC-20 observation even when its
+  // corresponding effect could not yet be mirrored into eth_transfers. Keep
+  // those contracts in the balance audit so an omitted or malformed ledger
+  // row becomes an explicit discrepancy instead of an invisible asset.
+  static async observedErc20Contracts(userId, jobId, subjectId, chainId, throughBlock) {
+    const { rows } = await pool.query(
+      `WITH candidates AS (
+         SELECT LOWER(COALESCE(
+                  NULLIF(o.payload_json->>'token_address', ''),
+                  NULLIF(o.payload_json->>'tokenAddress', ''),
+                  NULLIF(o.payload_json->>'token_contract', ''),
+                  NULLIF(o.payload_json->>'contract_address', ''),
+                  NULLIF(o.payload_json->>'contractAddress', '')
+                )) AS token_contract
+           FROM evm_job_observations jo
+           JOIN evm_audit_jobs j
+             ON j.id = jo.job_id AND j.user_id = $1 AND j.subject_id = $3
+           JOIN evm_provider_observations o
+             ON o.id = jo.observation_id
+           LEFT JOIN evm_provider_pages p
+             ON p.id = jo.page_id AND p.job_id = jo.job_id
+          WHERE jo.job_id = $2 AND jo.subject_id = $3 AND jo.chain_id = $4
+            AND (o.block_number IS NULL OR o.block_number <= $5)
+            AND (
+              o.evidence_kind = 'erc20_transfer'
+              OR (o.evidence_kind = 'account_feed' AND p.endpoint IN ('account-token', 'account-erc20'))
+            )
+         UNION
+         SELECT LOWER(e.token_contract)
+           FROM evm_canonical_effects e
+           JOIN evm_subjects s
+             ON s.id = e.subject_id AND s.user_id = $1
+           JOIN evm_mined_transactions tx
+             ON tx.subject_id = e.subject_id AND tx.chain_id = e.chain_id
+            AND tx.tx_hash = e.tx_hash
+          WHERE e.subject_id = $3 AND e.chain_id = $4
+            AND tx.block_number <= $5 AND e.effect_type = 'erc20'
+            AND e.token_contract IS NOT NULL
+            AND e.resolution_status <> 'invalidated'
+            AND tx.resolution_status <> 'invalidated'
+       )
+       SELECT token_contract
+         FROM candidates
+        WHERE token_contract ~ '^0x[0-9a-f]{40}$'
+        GROUP BY token_contract
+        ORDER BY token_contract`,
+      [userId, jobId, subjectId, chainId, throughBlock]
     );
     return rows;
   }

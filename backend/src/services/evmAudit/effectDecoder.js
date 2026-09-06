@@ -244,12 +244,15 @@ function internalObservationFields(observation, wallet) {
 }
 
 // Receipts cannot prove internal calls. Promote trace-provider evidence without
-// pretending it is consensus evidence. When an independent trace provider and
-// the existing ledger contain one unambiguous identical effect, retain both
-// evidence links and mark that effect verified; otherwise it remains provisional
-// and therefore blocks a gap-free audit. Moralis is the indexed source for
-// Gnosis; Blockscout is only a finite fallback for chains without it.
-function effectsFromInternalObservations(context, observations) {
+// pretending it is a receipt. When a configured trace endpoint has completed a
+// bounded trace_filter walk and the transaction itself has a canonical
+// consensus receipt, one unambiguous trace effect is verified. Existing
+// provider traces still require an identical ledger trace before promotion.
+// Moralis remains the indexed source for Gnosis; Blockscout is only a finite
+// fallback for chains without it.
+function effectsFromInternalObservations(context, observations, {
+  verifiedTraceHashes = new Set(),
+} = {}) {
   const wallet = context.address.toLowerCase();
   const byTransaction = new Map();
   for (const observation of observations) {
@@ -263,7 +266,7 @@ function effectsFromInternalObservations(context, observations) {
   for (const [hash, rows] of byTransaction) {
     const internalRows = rows.filter((row) => row.evidence_kind !== 'native_credit'
       && row.payload_json?.native_credit !== true);
-    const indexedProviders = ['moralis'];
+    const indexedProviders = ['trace-rpc', 'moralis'];
     const explorer = internalRows.filter((row) => ['blockscout', 'etherscan'].includes(row.provider));
     const explorerProvider = ['blockscout', 'etherscan']
       .find((provider) => explorer.some((row) => row.provider === provider));
@@ -294,11 +297,14 @@ function effectsFromInternalObservations(context, observations) {
       const signature = `${fields.from}:${fields.to}:${fields.value}`;
       const legacyMatches = ['moralis', 'blockscout', 'etherscan'].includes(row.provider)
         ? (legacyBySignature.get(signature) || []) : [];
-      const independentlyVerified = row.trace_address != null
+      const traceRpcProof = row.provider === 'trace-rpc'
+        && verifiedTraceHashes.has(hash)
+        && row.trace_address != null;
+      const independentlyVerified = traceRpcProof || (row.trace_address != null
         && legacyMatches.length === 1
         && legacyMatches[0].trace_address != null
         && JSON.stringify(legacyMatches[0].trace_address) === JSON.stringify(row.trace_address)
-        && selectedCounts.get(signature) === 1;
+        && selectedCounts.get(signature) === 1);
       const traceIdentity = row.trace_address == null
         ? `${row.provider}:${row.provider_object_key}`
         : `trace:${JSON.stringify(row.trace_address)}`;

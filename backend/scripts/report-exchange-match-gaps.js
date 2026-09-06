@@ -23,7 +23,102 @@ function requiredPositiveInteger(name) {
   return parsed;
 }
 
+function valueKey(value) {
+  return value === null || value === undefined || value === '' ? 'unknown' : String(value);
+}
+
+function countBy(rows, selector) {
+  return rows.reduce((out, row) => {
+    const key = valueKey(selector(row));
+    out[key] = (out[key] || 0) + 1;
+    return out;
+  }, {});
+}
+
+function countByExchangeAndAsset(rows) {
+  return rows.reduce((out, row) => {
+    const exchange = valueKey(row.exchange);
+    const asset = valueKey(row.base_asset).toUpperCase();
+    if (!out[exchange]) out[exchange] = {};
+    out[exchange][asset] = (out[exchange][asset] || 0) + 1;
+    return out;
+  }, {});
+}
+
+function summarizeUnmatched(rows) {
+  return {
+    unmatched_deposit_withdrawal_records: rows.length,
+    unmatched_by_exchange: countBy(rows, (row) => row.exchange),
+    unmatched_by_record_type: countBy(rows, (row) => row.record_type),
+    unmatched_by_asset: countBy(rows, (row) => String(row.base_asset || 'unknown').toUpperCase()),
+    unmatched_by_exchange_and_asset: countByExchangeAndAsset(rows),
+    unmatched_by_source: countBy(rows, (row) => row.source),
+    unmatched_by_provider_type: countBy(rows, (row) => row.provider_type),
+    unmatched_by_network: countBy(rows, (row) => row.network),
+    unmatched_by_chain: countBy(rows, (row) => row.chain_id),
+    unmatched_by_year: countBy(rows, (row) => {
+      const timestamp = new Date(row.occurred_at);
+      return Number.isFinite(timestamp.getTime()) ? timestamp.getUTCFullYear() : 'unknown';
+    }),
+    evidence_availability: {
+      with_tx_hash: rows.filter((row) => Boolean(row.tx_hash)).length,
+      without_tx_hash: rows.filter((row) => !row.tx_hash).length,
+      with_address: rows.filter((row) => Boolean(row.address)).length,
+      without_address: rows.filter((row) => !row.address).length,
+      with_proven_chain: rows.filter((row) => row.chain_id !== null && row.chain_id !== undefined).length,
+      without_proven_chain: rows.filter((row) => row.chain_id === null || row.chain_id === undefined).length,
+      needs_review: rows.filter((row) => Boolean(row.needs_review)).length,
+      duplicate_candidates: rows.filter((row) => Boolean(row.duplicate_candidate)).length,
+      with_suggestion: rows.filter((row) => Boolean(row.has_suggestion)).length,
+    },
+  };
+}
+
 async function buildReport(userId) {
+  // These are ledger evidence windows, not provider-completeness claims. They
+  // make API/CSV overlap and historical-account continuity visible without
+  // assuming that either source enumerated everything the venue ever held.
+  const accounts = (await pool.query(`
+    SELECT ea.id AS exchange_account_id, ea.name AS exchange_account_name,
+           ea.exchange, ea.records_unavailable, ea.reconciliation_status,
+           ea.last_sync_status, ea.last_sync_at, ea.last_import_at,
+           COUNT(er.id)::int AS record_count,
+           MIN(er.occurred_at) AS earliest_record_at,
+           MAX(er.occurred_at) AS latest_record_at,
+           COUNT(er.id) FILTER (WHERE er.source = 'api')::int AS api_records,
+           COUNT(er.id) FILTER (WHERE er.source = 'csv')::int AS csv_records,
+           COUNT(er.id) FILTER (WHERE er.source IS NULL)::int AS records_without_source,
+           COUNT(er.id) FILTER (WHERE er.fingerprint IS NULL)::int AS records_without_fingerprint,
+           COUNT(er.id) FILTER (WHERE er.needs_review)::int AS review_records,
+           COUNT(er.id) FILTER (WHERE er.duplicate_candidate)::int AS duplicate_candidates,
+           COUNT(er.id) FILTER (WHERE er.record_type IN ('deposit', 'withdrawal'))::int
+             AS transfer_records,
+           COUNT(er.id) FILTER (WHERE er.record_type IN ('deposit', 'withdrawal')
+                                  AND er.tx_hash IS NOT NULL)::int AS transfer_records_with_hash,
+           COUNT(er.id) FILTER (WHERE er.record_type IN ('deposit', 'withdrawal')
+                                  AND er.chain_id IS NOT NULL)::int AS transfer_records_with_chain
+      FROM exchange_accounts ea
+      LEFT JOIN exchange_records er ON er.exchange_account_id = ea.id
+     WHERE ea.user_id = $1
+     GROUP BY ea.id
+     ORDER BY ea.exchange, ea.created_at, ea.id`, [userId])).rows;
+
+  const sourceWindows = (await pool.query(`
+    SELECT ea.id AS exchange_account_id, ea.name AS exchange_account_name,
+           ea.exchange, COALESCE(er.source, 'unknown') AS source,
+           COALESCE(er.raw->>'_format', 'unknown') AS provider_format,
+           COUNT(*)::int AS record_count,
+           MIN(er.occurred_at) AS earliest_record_at,
+           MAX(er.occurred_at) AS latest_record_at,
+           COUNT(*) FILTER (WHERE er.needs_review)::int AS review_records,
+           COUNT(*) FILTER (WHERE er.duplicate_candidate)::int AS duplicate_candidates
+      FROM exchange_records er
+      JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+     WHERE ea.user_id = $1
+     GROUP BY ea.id, ea.name, ea.exchange, COALESCE(er.source, 'unknown'),
+              COALESCE(er.raw->>'_format', 'unknown')
+     ORDER BY ea.exchange, ea.id, source, provider_format`, [userId])).rows;
+
   const suggestions = (await pool.query(`
     SELECT s.id AS suggestion_id,
            s.exchange_record_id, s.counter_record_id, s.activity_id,
@@ -84,8 +179,10 @@ async function buildReport(userId) {
            er.external_id, er.occurred_at, er.record_type,
            er.base_asset, er.base_amount, er.quote_asset, er.quote_amount,
            er.fee_asset, er.fee_amount, er.tx_hash, er.address,
+           er.network, er.chain_id, er.source,
            er.needs_review, er.duplicate_candidate,
-           er.raw->>'source' AS raw_source,
+           COALESCE(er.raw->>'_source', er.raw->>'source') AS raw_source,
+           er.raw->>'type' AS provider_type,
            EXISTS (
              SELECT 1 FROM exchange_match_suggestions s
               WHERE s.exchange_record_id = er.id OR s.counter_record_id = er.id
@@ -101,27 +198,30 @@ async function buildReport(userId) {
     out[row.suggestion_reason] = (out[row.suggestion_reason] || 0) + 1;
     return out;
   }, {});
-  const unmatchedByVenue = unmatched.reduce((out, row) => {
-    const key = row.exchange || 'unknown';
-    out[key] = (out[key] || 0) + 1;
-    return out;
-  }, {});
-  const unmatchedByType = unmatched.reduce((out, row) => {
-    out[row.record_type] = (out[row.record_type] || 0) + 1;
-    return out;
-  }, {});
+  const unmatchedSummary = summarizeUnmatched(unmatched);
 
   return {
     generated_at: new Date().toISOString(),
     user_id: userId,
     rule: 'v3: only tx-hash identity or confirmed verdict is automatic; fallback evidence is a suggestion',
     summary: {
+      exchange_accounts: accounts.length,
+      exchange_accounts_by_venue: countBy(accounts, (row) => row.exchange),
+      exchange_accounts_with_review: accounts.filter((row) => Number(row.review_records) > 0).length,
+      exchange_accounts_with_duplicate_candidates: accounts
+        .filter((row) => Number(row.duplicate_candidates) > 0).length,
+      exchange_accounts_with_unknown_reconciliation: accounts
+        .filter((row) => row.reconciliation_status === 'unknown').length,
+      exchange_accounts_declared_records_unavailable: accounts
+        .filter((row) => Boolean(row.records_unavailable)).length,
       suggestions: suggestions.length,
       suggestions_by_reason: byReason,
-      unmatched_deposit_withdrawal_records: unmatched.length,
-      unmatched_by_exchange: unmatchedByVenue,
-      unmatched_by_record_type: unmatchedByType,
+      ...unmatchedSummary,
     },
+    // No date window below is a claim that a source is lifetime-complete. The
+    // manifest/export audit must independently establish that boundary.
+    accounts,
+    source_windows: sourceWindows,
     suggestions,
     unmatched,
   };
@@ -143,4 +243,4 @@ if (require.main === module) {
   }).finally(() => pool.end().catch(() => {}));
 }
 
-module.exports = { buildReport };
+module.exports = { buildReport, summarizeUnmatched };

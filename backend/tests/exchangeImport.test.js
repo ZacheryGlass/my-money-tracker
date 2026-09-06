@@ -11,7 +11,9 @@ const path = require('path');
 // legs, the legacy asset codes -- with invented ids, amounts and addresses.
 // Real exports are personal financial history and never enter this repository.
 const { parseExchangeCsv, ImportFormatError } = require('../src/services/exchangeImport');
-const { cleanAmount, parseTimestamp } = require('../src/services/exchangeImport/shared');
+const {
+  cleanAmount, parseTimestamp, chainIdForNetwork,
+} = require('../src/services/exchangeImport/shared');
 const {
   normalizeAssetParts, normalizeAsset, buildRecords,
 } = require('../src/services/exchangeImport/krakenLedger');
@@ -27,6 +29,14 @@ const withoutLines = (text, predicate) => text
   .split('\n')
   .filter((line, index) => index === 0 || !predicate(line))
   .join('\n');
+
+test('EVM network normalization distinguishes Arbitrum Nova from Arbitrum One', () => {
+  assert.equal(chainIdForNetwork('Arbitrum'), 42161);
+  assert.equal(chainIdForNetwork('Arbitrum One'), 42161);
+  assert.equal(chainIdForNetwork('Arbitrum Nova'), 42170);
+  assert.equal(chainIdForNetwork('arbitrum_nova'), 42170);
+  assert.equal(chainIdForNetwork('Nova'), null);
+});
 
 // --- Coinbase retail -------------------------------------------------------
 
