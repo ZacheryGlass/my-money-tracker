@@ -6,6 +6,7 @@ const etherscan = require('../config/etherscan');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const ZkSyncLiteService = require('./ZkSyncLiteService');
+const jsonRpc = require('../utils/jsonRpc');
 
 // Etherscan caps any single query window at 10k results, so paged fetches
 // walk a block cursor instead of page numbers (see _fetchPaged).
@@ -64,10 +65,7 @@ const blockTimestampCache = new Map();
 const FINALIZED_BLOCK_CACHE_MS = 60 * 1000;
 const finalizedBlockCache = new Map();
 
-function rpcQuantity(value) {
-  if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) return null;
-  try { return BigInt(value); } catch { return null; }
-}
+const rpcQuantity = jsonRpc.quantity;
 
 function safeHexInteger(value) {
   if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) return null;
@@ -96,14 +94,9 @@ function buildFinalityBoundary(
       || !/^0x[0-9a-f]{64}$/.test(finalizedHash)) {
     return { status: 'unknown', method, error_code: 'INVALID_FINALIZED_BLOCK' };
   }
-  const receiptHash = String(receipt?.blockHash || '').toLowerCase();
   const canonicalNumber = rpcQuantity(canonicalBlock?.number);
   const canonicalHash = String(canonicalBlock?.hash || '').toLowerCase();
-  if (canonicalError || canonicalNumber == null
-      || canonicalNumber !== receiptNumber
-      || !/^0x[0-9a-f]{64}$/.test(canonicalHash)
-      || !/^0x[0-9a-f]{64}$/.test(receiptHash)
-      || canonicalHash !== receiptHash) {
+  if (canonicalError || !jsonRpc.canonicalBlockMatches(receipt, canonicalBlock)) {
     return {
       status: 'unknown', method,
       error_code: canonicalError?.code || 'RECEIPT_NOT_CANONICAL',
@@ -396,8 +389,8 @@ class EtherscanService {
   // Etherscan-shaped account feeds through a different explorer. The caller
   // still passes one chain id and receives the same normalized raw rows; only
   // transport selection lives here.
-  static _provider(chainId, apiKey = null, action = null) {
-    const custom = chains.accountApiConfig(chainId, action);
+  static _provider(chainId, apiKey = null) {
+    const custom = chains.getChain(chainId)?.accountApi;
     if (custom) {
       const providerDefaultSpacing = custom.provider === 'Blockscout'
         ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
@@ -446,7 +439,7 @@ class EtherscanService {
           || Number(spacingMs) > 60000)) {
       throw apiError('Explorer request spacingMs must be an integer between 0 and 60000');
     }
-    const baseProvider = this._provider(chainId, apiKey, params?.action);
+    const baseProvider = this._provider(chainId, apiKey);
     const provider = spacingMs == null
       ? baseProvider
       : {
@@ -635,14 +628,9 @@ class EtherscanService {
       chainId,
       params: rpcParams,
       rateLimitState,
-      fn: () => axios.post(rpcUrl, {
-        jsonrpc: '2.0',
-        id: 1,
-        method,
-        params,
-      }, { timeout: 15000 }),
+      fn: () => jsonRpc.request(rpcUrl, method, params),
     });
-    const payload = response.data || {};
+    const payload = response.responseJson || {};
     if (payload.error || payload.result == null) {
       const detail = payload.error?.message || 'invalid response';
       if (isRateLimitedDetail(payload.error) || isRateLimitedDetail(detail)) {
@@ -651,7 +639,7 @@ class EtherscanService {
           chainId,
           params: rpcParams,
           rateLimitState,
-          error: responseDetailError(detail, response),
+          error: responseDetailError(detail, { status: response.httpStatus, headers: response.headers }),
           retry: () => this._rpcRequest(
             chainId,
             method,
@@ -1098,199 +1086,84 @@ class EtherscanService {
   // Walks blocks in ascending order. The cursor advances to the last block of
   // each full page WITHOUT +1: a block can be split across the page boundary,
   // so that block is refetched whole and its partial rows are dropped first.
-  static async _fetchPaged(
-    action,
-    address,
-    startBlock,
-    apiKey,
-    chainId = etherscan.CHAIN_ID,
-    scannedThroughBlock = null
+  // Yield exact provider pages. Audits persist each page before requesting the
+  // next; sync collects the same stream and replaces the overlapping last block.
+  static async *accountFeedPages(
+    action, address, startBlock, apiKey,
+    chainId = etherscan.CHAIN_ID, scannedThroughBlock = null
   ) {
-    const all = [];
-    const evidencePages = [];
     let cursor = startBlock;
     const endBlock = scannedThroughBlock ?? 999999999;
-    if (scannedThroughBlock != null && scannedThroughBlock < cursor) {
-      const error = new Error(
-        `account provider head ${scannedThroughBlock} is behind requested block ${cursor}; cursor frozen`
-      );
-      error.code = 'ETHERSCAN_API_ERROR';
-      throw error;
+    if (endBlock < cursor) {
+      throw apiError(`account provider head ${endBlock} is behind requested block ${cursor}; cursor frozen`);
     }
-
-    let page = 0;
-    for (;;) {
-      if (cursor > endBlock) break;
-      page += 1;
-      if (page > MAX_ACCOUNT_PAGES) {
-        const error = new Error(
-          `${action} account walk exceeded ${MAX_ACCOUNT_PAGES} pages without completing; cursor frozen`
-        );
-        error.code = 'ETHERSCAN_API_ERROR';
-        throw error;
-      }
-      const response = await this._request({
-        module: 'account',
-        action,
-        address,
-        startblock: cursor,
-        // OP Mainnet passed block 100,000,000 long ago. The old eight-digit
-        // sentinel silently truncated every backfill there. Keep this numeric
-        // for Etherscan-compatible providers that reject `latest`, but leave
-        // ample headroom for all currently configured chains.
-        endblock: endBlock,
-        page: 1,
-        offset: PAGE_SIZE,
-        sort: 'asc',
+    const readPage = async (throughBlock, offset) => {
+      const { result, evidence } = await this._request({
+        module: 'account', action, address, startblock: cursor,
+        endblock: throughBlock, page: 1, offset, sort: 'asc',
       }, { apiKey, chainId, captureEvidence: true });
-      // Keep compatibility with tests and callers that stub _request with the
-      // historical bare result. Production requests return the wrapper so the
-      // exact HTTP page can be persisted by the audit service.
-      const captured = response && response.evidence && Object.prototype.hasOwnProperty.call(response, 'result');
-      const rows = captured ? response.result : response;
-      if (!Array.isArray(rows)) {
-        const error = new Error(`${action} returned a non-array page; cursor frozen`);
-        error.code = 'ETHERSCAN_API_ERROR';
-        throw error;
+      if (!Array.isArray(result) || !evidence) {
+        throw apiError(`${action} returned a non-array page or missing evidence; cursor frozen`);
       }
-      if (rows.length === 0) {
-        if (captured) {
-          evidencePages.push({
-            ...response.evidence,
-            rows: [],
-            cursorIn: String(cursor), cursorOut: null, itemCount: 0,
-          });
-        }
-        break;
-      }
-
-      // Pagination is safe only when the explorer honours the requested
-      // range. A repeated first page used to move the cursor one block at a
-      // time (or loop forever), while accepting an out-of-range short page
-      // could authorize destructive overlap deletion despite incomplete
-      // coverage. Validate before mutating the accumulated result.
-      for (const row of rows) {
+      for (const row of result) {
         const block = Number(row?.blockNumber);
-        if (!Number.isSafeInteger(block) || block < cursor || block > endBlock) {
-          const error = new Error(
-            `${action} returned block ${JSON.stringify(row?.blockNumber)} outside requested range ${cursor}-${endBlock}; cursor frozen`
-          );
-          error.code = 'ETHERSCAN_API_ERROR';
-          throw error;
+        if (!Number.isSafeInteger(block) || block < cursor || block > throughBlock) {
+          throw apiError(`${action} returned block ${JSON.stringify(row?.blockNumber)} outside requested range ${cursor}-${throughBlock}; cursor frozen`);
         }
       }
-      // The dedupe logic depends on ascending order; do not trust the API.
-      rows.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber));
-
-      while (all.length && Number(all[all.length - 1].blockNumber) >= cursor) {
-        all.pop();
-      }
-
-      const lastBlock = Number(rows[rows.length - 1].blockNumber);
-      if (rows.length >= PAGE_SIZE && lastBlock === cursor) {
-        // A single block with more rows than one page. Refetch just that
-        // block at Etherscan's maximum window so its rows are not lost, then
-        // step past it.
-        const blockResponse = await this._request({
-          module: 'account',
-          action,
-          address,
-          startblock: cursor,
-          endblock: cursor,
-          page: 1,
-          offset: 10000,
-          sort: 'asc',
-        }, { apiKey, chainId, captureEvidence: true });
-        const blockCaptured = blockResponse && blockResponse.evidence
-          && Object.prototype.hasOwnProperty.call(blockResponse, 'result');
-        const blockRows = blockCaptured ? blockResponse.result : blockResponse;
-        if (!Array.isArray(blockRows)) {
-          const error = new Error(`${action} single-block fallback returned a non-array response; cursor frozen`);
-          error.code = 'ETHERSCAN_API_ERROR';
-          throw error;
-        }
-        const normalizedBlockRows = blockRows;
-        for (const row of normalizedBlockRows) {
-          const block = Number(row?.blockNumber);
-          if (!Number.isSafeInteger(block) || block !== cursor) {
-            const error = new Error(
-              `${action} single-block fallback returned block ${JSON.stringify(row?.blockNumber)} for requested block ${cursor}; cursor frozen`
-            );
-            error.code = 'ETHERSCAN_API_ERROR';
-            throw error;
-          }
-        }
-        // At the provider's hard maximum there is no proof that the block is
-        // complete. Dropping the unknown tail would make reconciliation
-        // impossible, so retain the old rows/cursor and expose the feed gap.
-        if (normalizedBlockRows.length >= 10000) {
-          const error = new Error(
-            `${action} block ${cursor} reached the 10000-row provider limit; cursor frozen`
-          );
-          error.code = 'ETHERSCAN_API_ERROR';
-          throw error;
-        }
-        if (captured) {
-          evidencePages.push({
-            ...response.evidence,
-            rows: rows.slice(),
-            cursorIn: String(cursor), cursorOut: String(cursor),
-            itemCount: rows.length,
-          });
-        }
-        if (blockCaptured) {
-          evidencePages.push({
-            ...blockResponse.evidence,
-            rows: normalizedBlockRows.slice(),
-            cursorIn: String(cursor), cursorOut: String(cursor + 1),
-            itemCount: blockRows.length,
-          });
-        }
-        all.push(...normalizedBlockRows);
-        cursor += 1;
-        continue;
-      }
-
-      const nextCursor = rows.length < PAGE_SIZE ? null : lastBlock;
-      if (captured) {
-        evidencePages.push({
-          ...response.evidence,
-          rows: rows.slice(),
-          cursorIn: String(cursor),
-          cursorOut: nextCursor == null ? null : String(nextCursor),
-          itemCount: rows.length,
-        });
-      }
-      all.push(...rows);
-      if (nextCursor == null) break;
-      cursor = nextCursor;
-    }
-
-    // Blockscout's Etherscan-compatible txlistinternal response calls this
-    // field `transactionHash`; Etherscan and the rest of our ingestion path
-    // call it `hash`. Normalize only that documented alias and preserve every
-    // original field so pagination and ordinal construction stay unchanged.
-    const normalizeRow = (row) => (
-      action === 'txlistinternal' && !row.hash && row.transactionHash
-        ? { ...row, hash: row.transactionHash }
-        : row
-    );
-    const result = all.map(normalizeRow);
-    if (scannedThroughBlock != null) {
-      Object.defineProperty(result, 'scannedThroughBlock', {
-        value: scannedThroughBlock,
-        enumerable: false,
-      });
-    }
-    Object.defineProperty(result, 'evidencePages', {
-      value: evidencePages.map((page) => ({
-        ...page,
-        rows: (page.rows || []).map(normalizeRow),
-      })),
-      enumerable: false,
-      configurable: true,
+      // Sort a copy so retained responseJson remains the provider's exact page.
+      const rows = result.slice().sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber))
+        .map((row) => action === 'txlistinternal' && !row.hash && row.transactionHash
+          ? { ...row, hash: row.transactionHash } : row);
+      return { ...evidence, rows, cursorIn: String(cursor), itemCount: rows.length };
+    };
+    const hydrate = async (page) => ({
+      ...page,
+      rows: action === 'txlist' ? await this._hydrateOpStackDeposits(page.rows, chainId) : page.rows,
     });
-    return result;
+    for (let count = 0; cursor <= endBlock; count += 1) {
+      if (count >= MAX_ACCOUNT_PAGES) {
+        throw apiError(`${action} account walk exceeded ${MAX_ACCOUNT_PAGES} pages without completing; cursor frozen`);
+      }
+      const page = await readPage(endBlock, PAGE_SIZE);
+      const lastBlock = Number(page.rows.at(-1)?.blockNumber);
+      const full = page.rows.length >= PAGE_SIZE;
+      page.cursorOut = full ? String(lastBlock) : null;
+      yield await hydrate(page);
+      if (!full) break;
+      if (lastBlock === cursor) {
+        // Re-read a crowded block at the provider maximum. A full maximum
+        // window cannot prove exhaustion, so never step past that unknown tail.
+        const blockPage = await readPage(cursor, 10000);
+        if (blockPage.rows.length >= 10000) {
+          throw apiError(`${action} block ${cursor} reached the 10000-row provider limit; cursor frozen`);
+        }
+        blockPage.cursorOut = String(cursor + 1);
+        yield await hydrate(blockPage);
+        cursor += 1;
+      } else {
+        cursor = lastBlock;
+      }
+    }
+  }
+
+  static async _fetchPaged(
+    action, address, startBlock, apiKey,
+    chainId = etherscan.CHAIN_ID, scannedThroughBlock = null
+  ) {
+    const rows = [];
+    for await (const page of this.accountFeedPages(
+      action, address, startBlock, apiKey, chainId, scannedThroughBlock
+    )) {
+      if (page.rows.length) {
+        while (rows.length && Number(rows.at(-1).blockNumber) >= Number(page.cursorIn)) rows.pop();
+        rows.push(...page.rows);
+      }
+    }
+    if (scannedThroughBlock != null) {
+      Object.defineProperty(rows, 'scannedThroughBlock', { value: scannedThroughBlock });
+    }
+    return rows;
   }
 
   // The five ACCOUNT feeds take the chain and an optional indexed coverage
@@ -1306,31 +1179,9 @@ class EtherscanService {
     chainId = etherscan.CHAIN_ID,
     scannedThroughBlock = null
   ) {
-    const rows = await this._fetchPaged(
+    return this._fetchPaged(
       'txlist', address, startBlock, apiKey, chainId, scannedThroughBlock
     );
-    const result = await this._hydrateOpStackDeposits(rows, chainId);
-    const evidencePages = Array.isArray(rows.evidencePages) ? rows.evidencePages : [];
-    if (evidencePages.length) {
-      const hydratedByHash = new Map(result.map((row) => [String(row.hash || '').toLowerCase(), row]));
-      Object.defineProperty(result, 'evidencePages', {
-        value: evidencePages.map((page) => ({
-          ...page,
-          rows: (page.rows || []).map((row) => hydratedByHash.get(
-            String(row.hash || row.transactionHash || '').toLowerCase()
-          ) || row),
-        })),
-        enumerable: false,
-        configurable: true,
-      });
-    }
-    if (scannedThroughBlock != null) {
-      Object.defineProperty(result, 'scannedThroughBlock', {
-        value: scannedThroughBlock,
-        enumerable: false,
-      });
-    }
-    return result;
   }
 
   static fetchInternalTxs(
@@ -1402,7 +1253,7 @@ class EtherscanService {
   //
   // Runs under the provider-host queue like every other explorer call: five
   // chains and a sixth feed still share the same host's rate limit.
-  static async fetchStateSyncDeposits(
+  static async *stateSyncDepositPages(
     address,
     startBlock = 0,
     apiKey,
@@ -1410,7 +1261,7 @@ class EtherscanService {
     feedConfig = null,
     indexedHead = null
   ) {
-    if (!feedConfig || !feedConfig.contract || !feedConfig.topic0) return [];
+    if (!feedConfig || !feedConfig.contract || !feedConfig.topic0) return;
     // Snapshot the head before the log walk and query only through that block.
     // The returned coverage cursor can then advance even when this wallet has
     // no matching logs; using "latest" with an empty result provides no block
@@ -1424,8 +1275,6 @@ class EtherscanService {
     const userTopicParam = `topic${userTopicIndex}`;
     const topicOperatorParam = `topic0_${userTopicIndex}_opr`;
     const seen = new Set();
-    const out = [];
-    const evidencePages = [];
     let cursor = Math.max(0, Number(startBlock) || 0);
     if (scannedThroughBlock < cursor) {
       const error = new Error(
@@ -1454,23 +1303,17 @@ class EtherscanService {
         page: 1,
         offset: LOG_PAGE_SIZE,
       }, { apiKey, chainId, captureEvidence: true });
-      const captured = response && response.evidence
-        && Object.prototype.hasOwnProperty.call(response, 'result');
-      const rows = captured ? response.result : response;
+      const { result: rows, evidence } = response;
       // An off-shape 200 is a transport failure, never an empty feed. This is
       // the one feed whose rows exist nowhere else, and a successful return is
       // what authorizes the destructive delete of the resume window -- reading
       // garbage as "no deposits" would wipe stored credits and insert nothing.
-      if (!Array.isArray(rows)) {
+      if (!Array.isArray(rows) || !evidence) {
         throw new Error('statesync getLogs returned a non-array result; treated as a transport failure');
       }
       if (rows.length === 0) {
-        if (captured) {
-          evidencePages.push({
-            ...response.evidence,
-            rows: [], cursorIn: String(cursor), cursorOut: null, itemCount: 0,
-          });
-        }
+        yield { ...evidence, rows: [], cursorIn: String(cursor), cursorOut: null,
+          itemCount: 0, scannedThroughBlock };
         break;
       }
 
@@ -1488,7 +1331,6 @@ class EtherscanService {
       for (const row of parsed) {
         if (seen.has(row._key)) continue;
         seen.add(row._key);
-        out.push(row);
         accepted.push(row);
         if (row._block > maxSeen) maxSeen = row._block;
       }
@@ -1515,16 +1357,11 @@ class EtherscanService {
         }
         return mapped;
       });
-      if (captured) {
-        const nextCursor = rows.length < LOG_PAGE_SIZE ? null : maxSeen;
-        evidencePages.push({
-          ...response.evidence,
-          rows: pageRows,
-          cursorIn: String(cursor),
-          cursorOut: nextCursor == null ? null : String(nextCursor),
-          itemCount: rows.length,
-        });
-      }
+      yield {
+        ...evidence, rows: pageRows, cursorIn: String(cursor),
+        cursorOut: rows.length < LOG_PAGE_SIZE ? null : String(maxSeen),
+        itemCount: rows.length, scannedThroughBlock,
+      };
 
       if (rows.length < LOG_PAGE_SIZE) break;
       if (maxSeen > cursor) {
@@ -1544,43 +1381,25 @@ class EtherscanService {
       }
     }
 
-    // The internal cursor fields (_block/_logIndex/_key) stay here; only the
-    // account-feed-shaped columns leave, so normalizeFeeds sees an internal row.
-    const result = out.map((row) => {
-      const mapped = {
-        hash: row.hash,
-        blockNumber: row.blockNumber,
-        timeStamp: row.timeStamp,
-        from: row.from,
-        to: row.to,
-        value: row.value,
-      };
-      if (row.nativeCredit) {
-        Object.defineProperties(mapped, {
-          nativeCredit: { value: true },
-          logIndex: { value: row.logIndex },
-          blockHash: { value: row.blockHash },
-          transactionIndex: { value: row.transactionIndex },
-          address: { value: row.address },
-          topics: { value: row.topics },
-          data: { value: row.data },
-        });
-      }
-      return mapped;
-    });
-    Object.defineProperty(result, 'scannedThroughBlock', {
-      value: scannedThroughBlock,
-      enumerable: false,
-    });
-    Object.defineProperty(result, 'evidencePages', {
-      value: evidencePages,
-      enumerable: false,
-      configurable: true,
-    });
-    return result;
   }
 
-
+  static async fetchStateSyncDeposits(
+    address, startBlock = 0, apiKey, chainId = etherscan.CHAIN_ID,
+    feedConfig = null, indexedHead = null
+  ) {
+    const rows = [];
+    let scannedThroughBlock;
+    for await (const page of this.stateSyncDepositPages(
+      address, startBlock, apiKey, chainId, feedConfig, indexedHead
+    )) {
+      rows.push(...page.rows);
+      scannedThroughBlock = page.scannedThroughBlock;
+    }
+    if (scannedThroughBlock != null) {
+      Object.defineProperty(rows, 'scannedThroughBlock', { value: scannedThroughBlock });
+    }
+    return rows;
+  }
 
   // One getLogs Deposit log -> an internal-trace-shaped row. A log this cannot
   // read is a TRANSPORT FAILURE for the whole feed, never a row to drop: the

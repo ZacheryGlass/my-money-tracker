@@ -56,9 +56,8 @@ function activityCoordinate(row) {
   return `${Number(row?.wallet_id)}:${Number(row?.chain_id)}:${lower(row?.tx_hash)}`;
 }
 
-function baseEndpointMentioned(envelope) {
-  if (Number(envelope?.chain_id) === EXCLUDED_BASE_CHAIN_ID) return null;
-  const addresses = new Set([
+function mentionedAddresses(envelope) {
+  return new Set([
     lower(envelope?.counterparty_address),
     lower(envelope?.transaction?.to),
     lower(envelope?.receipt?.to),
@@ -68,7 +67,12 @@ function baseEndpointMentioned(envelope) {
       .map((log) => addressWord(log?.topics?.[2]))
       .filter(Boolean),
   ]);
-  for (const address of addresses) {
+}
+
+function baseEndpointMentioned(envelope) {
+  // These are L1 deployments. The same address on another chain proves nothing.
+  if (Number(envelope?.chain_id) !== 1) return null;
+  for (const address of mentionedAddresses(envelope)) {
     const endpoint = BASE_EXCLUSION_BY_ADDRESS.get(address);
     if (endpoint) return endpoint;
   }
@@ -116,35 +120,31 @@ function excludedBaseMovement(envelope, decoderEvents = []) {
       identity_fields: event.evidence?.identity_fields || event.evidence?.hop || {},
     };
   const key = activityCoordinate(envelope);
-  const role = envelope.category === 'bridge_out' ? 'initiation' : 'destination_execution';
-  return {
-    protocol: event?.protocol || (endpoint?.role === 'spoke_pool' ? 'across' : 'optimism'),
+  return unsupportedEnvelopeMovement(envelope, {
+    protocol: event?.protocol || 'optimism',
     family_version: event?.family_version || (endpoint ? 'bedrock' : 'unknown'),
     correlation_key: `excluded-base:${key}`,
-    verification_method: 'protocol_identity',
-    status: 'unsupported',
-    rule_version: RULE_VERSION,
-    evidence: {
-      reason: 'excluded_counterparty_chain',
-      excluded_chain_id: EXCLUDED_BASE_CHAIN_ID,
-      source,
-      decoder_event: event ? {
-        protocol: event.protocol, family_version: event.family_version,
-        role: event.role, correlation_key: event.correlation_key,
-        evidence: event.evidence,
-      } : null,
-    },
+  }, {
+    reason: 'excluded_counterparty_chain', excluded_chain_id: EXCLUDED_BASE_CHAIN_ID, source,
+    decoder_event: event ? {
+      protocol: event.protocol, family_version: event.family_version,
+      role: event.role, correlation_key: event.correlation_key, evidence: event.evidence,
+    } : null,
+  }, {
+    reason: 'excluded_counterparty_chain', excluded_chain_id: EXCLUDED_BASE_CHAIN_ID, source,
+  });
+}
+
+function unsupportedEnvelopeMovement(envelope, identity, evidence, memberEvidence) {
+  return {
+    ...identity,
+    verification_method: 'protocol_identity', status: 'unsupported', rule_version: RULE_VERSION,
+    evidence,
     members: [{
-      wallet_id: Number(envelope.wallet_id),
-      chain_id: Number(envelope.chain_id),
+      wallet_id: Number(envelope.wallet_id), chain_id: Number(envelope.chain_id),
       tx_hash: lower(envelope.tx_hash),
-      role,
-      receipt_id: envelope.receipt_id || null,
-      evidence: {
-        reason: 'excluded_counterparty_chain',
-        excluded_chain_id: EXCLUDED_BASE_CHAIN_ID,
-        source,
-      },
+      role: envelope.category === 'bridge_out' ? 'initiation' : 'destination_execution',
+      receipt_id: envelope.receipt_id || null, evidence: memberEvidence,
     }],
   };
 }
@@ -160,16 +160,9 @@ function endpointApplies(endpoint, activity) {
 }
 
 function unsupportedMovement(envelope, decodedCoordinates) {
-  const key = `${Number(envelope.wallet_id)}:${Number(envelope.chain_id)}:${lower(envelope.tx_hash)}`;
+  const key = activityCoordinate(envelope);
   if (decodedCoordinates.has(key)) return null;
-  const addresses = new Set([
-    lower(envelope.counterparty_address), lower(envelope.transaction?.to), lower(envelope.receipt?.to),
-    ...(envelope.receipt?.logs || []).map((log) => lower(log.address)),
-    ...(envelope.receipt?.logs || [])
-      .filter((log) => lower(log.topics?.[0]) === TOPICS.erc20Transfer)
-      .map((log) => addressWord(log.topics?.[2]))
-      .filter(Boolean),
-  ]);
+  const addresses = mentionedAddresses(envelope);
   const families = new Map((envelope.known_endpoints || envelope.endpoints || [])
     .filter((endpoint) => addresses.has(lower(endpoint.address)))
     .map((endpoint) => [
@@ -178,25 +171,12 @@ function unsupportedMovement(envelope, decodedCoordinates) {
     ]));
   if (families.size !== 1) return null;
   const family = [...families.values()][0];
-  return {
-    ...family,
-    correlation_key: `unsupported:${key}`,
-    verification_method: 'protocol_identity',
-    status: 'unsupported',
-    rule_version: RULE_VERSION,
-    evidence: {
-      reason: 'known_endpoint_without_decodable_protocol_identity',
-      receipt_id: envelope.receipt_id || null,
-    },
-    members: [{
-      wallet_id: Number(envelope.wallet_id),
-      chain_id: Number(envelope.chain_id),
-      tx_hash: lower(envelope.tx_hash),
-      role: envelope.category === 'bridge_out' ? 'initiation' : 'destination_execution',
-      receipt_id: envelope.receipt_id || null,
-      evidence: { reason: 'protocol_identity_not_decodable' },
-    }],
-  };
+  return unsupportedEnvelopeMovement(envelope, {
+    ...family, correlation_key: `unsupported:${key}`,
+  }, {
+    reason: 'known_endpoint_without_decodable_protocol_identity',
+    receipt_id: envelope.receipt_id || null,
+  }, { reason: 'protocol_identity_not_decodable' });
 }
 
 function pairKeyFromMovement(movement) {

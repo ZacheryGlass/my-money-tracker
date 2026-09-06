@@ -373,32 +373,13 @@ function enabledChains() {
 // The default Etherscan transport needs the user's key; a chain-declared
 // account API can explicitly be keyless. Orchestration gates use this rather
 // than assuming every enabled chain needs Etherscan credentials.
-function accountApiConfig(chainId, action = null) {
-  const chain = getChain(chainId);
-  if (!chain) return null;
-  return (action && chain.accountApiOverrides?.[action]) || chain.accountApi || null;
-}
-
-function accountApiRequiresKey(chainId, action = null) {
+function accountApiRequiresKey(chainId) {
   const chain = getChain(chainId);
   if (chain?.requiresApiKey === false) return false;
-  const accountApi = accountApiConfig(chainId, action);
-  return accountApi ? accountApi.requiresApiKey !== false : true;
-}
-
-function chainAccountApisRequireKey(chainId) {
-  const chain = getChain(chainId);
-  if (!chain || chain.requiresApiKey === false) return false;
-  if (accountApiRequiresKey(chainId)) return true;
-  return Object.values(chain.accountApiOverrides || {})
-    .some((accountApi) => accountApi.requiresApiKey !== false);
+  return chain?.accountApi ? chain.accountApi.requiresApiKey !== false : true;
 }
 
 function enabledChainsRequireApiKey() {
-  // Used by add/bulk-add preflight. A keyed override must not block a chain
-  // whose primary feed is keyless: the sync records that one feed's missing-key
-  // gap while its neighbours continue. Full audits use
-  // chainAccountApisRequireKey because complete evidence needs every feed.
   return enabledChains().some((chain) => accountApiRequiresKey(chain.id));
 }
 
@@ -467,8 +448,6 @@ module.exports = {
   enabledChains,
   enabledChainIds,
   enabledChainsRequireApiKey,
-  chainAccountApisRequireKey,
-  accountApiConfig,
   accountApiRequiresKey,
   allChains,
   getChain,

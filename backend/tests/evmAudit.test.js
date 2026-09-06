@@ -70,16 +70,6 @@ test('a chain without consensus RPC is deferred without blocking other audit cha
   assert.match(source.slice(guard - 500, runnable + 80), /continue;/);
 });
 
-test('a keyless primary explorer keeps a keyed feed gap scoped to that feed', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
-  assert.match(source, /function primaryAccountApiRequiresKey\(chainId\)/);
-  assert.match(source, /primaryAccountApiRequiresKey\(chainId\) && !explorerApiKey/);
-  assert.match(source, /const missingCredential = error\.code === 'ETHERSCAN_NOT_CONFIGURED'/);
-  assert.match(source, /other configured feeds continue independently/);
-  assert.match(source, /deferredProviderError: missingCredentialFeed/);
-  assert.match(source, /credential_feed_gap: credentialFeedGap/);
-});
-
 test('unsupported audit chains become explicit amber scopes without a provider request', async () => {
   const originalUpsertScope = EvmAudit.upsertScope;
   const scopes = [];
@@ -562,21 +552,6 @@ test('Moralis request deadlines cover body reads and abort before retrying', asy
   } finally {
     global.fetch = originalFetch;
   }
-});
-
-test('Moralis history scope is finalized after transaction lookup pages', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
-  assert.ok(source.includes("job.id, { chainId }"),
-    'restart rehydration must inspect all provider evidence kinds, including explorer feeds');
-  const lookupPass = source.indexOf('for (const hash of moralisLookupHashes)');
-  const canonicalization = source.indexOf("await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });", lookupPass);
-  const finalization = source.indexOf(
-    "await completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });",
-    lookupPass
-  );
-  assert.ok(lookupPass >= 0);
-  assert.ok(finalization > lookupPass && finalization < canonicalization,
-    'lookup evidence must be followed by a final complete status before canonicalization');
 });
 
 test('deferred audits can be reopened after a credential generation change', () => {

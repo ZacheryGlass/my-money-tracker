@@ -33,11 +33,11 @@ const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 // Order matters only for throttle fairness -- the feeds are independent, and
 // each one's failure is isolated from the others (see _syncWalletChain).
 const FEED_SPECS = [
-  { key: 'normal', action: 'txlist', fetch: 'fetchNormalTxs', types: ['native', 'gas'] },
-  { key: 'internal', action: 'txlistinternal', fetch: 'fetchInternalTxs', types: ['internal'] },
-  { key: 'token', action: 'tokentx', fetch: 'fetchTokenTxs', types: ['token'] },
-  { key: 'nft', action: 'tokennfttx', fetch: 'fetchNftTxs', types: ['nft'] },
-  { key: 'nft1155', action: 'token1155tx', fetch: 'fetch1155Txs', types: ['nft1155'] },
+  { key: 'normal', fetch: 'fetchNormalTxs', types: ['native', 'gas'] },
+  { key: 'internal', fetch: 'fetchInternalTxs', types: ['internal'] },
+  { key: 'token', fetch: 'fetchTokenTxs', types: ['token'] },
+  { key: 'nft', fetch: 'fetchNftTxs', types: ['nft'] },
+  { key: 'nft1155', fetch: 'fetch1155Txs', types: ['nft1155'] },
   { key: 'statesync', fetch: 'fetchStateSyncDeposits', types: ['internal'], chainFeed: 'stateSyncDeposits' },
 ];
 
@@ -124,11 +124,11 @@ function scannedThroughBlock(rows) {
   return rows.scannedThroughBlock ?? maxBlock(rows);
 }
 
-function providerName(chain, spec = null) {
+function providerName(chain) {
   if (chain.historyProvider === 'zksync-lite') {
     return 'Matter Labs zkSync Lite archive';
   }
-  const accountApi = chains.accountApiConfig(chain.id, spec?.action);
+  const accountApi = chain.accountApi;
   if (accountApi) {
     const accountUrl = accountApi.v2BaseUrl || accountApi.baseUrl;
     return `${accountApi.provider || 'chain explorer'} (${accountUrl})`;
@@ -760,7 +760,7 @@ class EthWalletService {
         feedActive(spec)
           ? {
             feed: spec.key,
-            provider: providerName(chain, spec),
+            provider: providerName(chain),
             status: failureStatus,
             attemptedFromBlock: resume[spec.key],
             errorCode: error.code || 'ETHERSCAN_API_ERROR',
@@ -769,7 +769,7 @@ class EthWalletService {
           }
           : {
             feed: spec.key,
-            provider: providerName(chain, spec),
+            provider: providerName(chain),
             status: 'not_applicable',
           }
       )));
@@ -869,7 +869,7 @@ class EthWalletService {
             walletId: wallet.id,
             chainId: chain.id,
             feed: spec.key,
-            provider: providerName(chain, spec),
+            provider: providerName(chain),
             retryAfterMs: err.retryAfterMs,
           }, 'Explorer rate limited; remaining feeds deferred for this chain');
         } else if (err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE' || err.code === 'ETHERSCAN_FEED_UNSUPPORTED') {
@@ -917,14 +917,14 @@ class EthWalletService {
       if (!feedActive(spec)) {
         return {
           feed: spec.key,
-          provider: providerName(chain, spec),
+          provider: providerName(chain),
           status: 'not_applicable',
         };
       }
       if (fetchedOk[spec.key]) {
         return {
           feed: spec.key,
-          provider: providerName(chain, spec),
+          provider: providerName(chain),
           status: 'complete',
           coveredFromBlock: boundary.fromBlock,
           coveredThroughBlock: scannedThroughBlock(feeds[spec.key]),
@@ -938,7 +938,7 @@ class EthWalletService {
       const status = coverageFailureStatus(error);
       return {
         feed: spec.key,
-        provider: providerName(chain, spec),
+        provider: providerName(chain),
         status,
         indexedHead,
         attemptedFromBlock: resume[spec.key],

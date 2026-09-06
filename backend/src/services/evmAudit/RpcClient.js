@@ -1,6 +1,7 @@
 'use strict';
 
 const chains = require('../../config/chains');
+const jsonRpc = require('../../utils/jsonRpc');
 const { sha256, stableJson } = require('./normalizer');
 const { TOPICS } = require('./effectDecoder');
 
@@ -18,10 +19,11 @@ function wait(ms) {
 }
 
 function quantity(value, label) {
-  if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) {
+  const parsed = jsonRpc.quantity(value);
+  if (parsed == null) {
     throw rpcError(`Consensus RPC returned an invalid ${label}`, 'RPC_INVALID_RESPONSE');
   }
-  return BigInt(value);
+  return parsed;
 }
 
 function safeNumber(value, label) {
@@ -283,7 +285,7 @@ class RpcClient {
       await wait(this.spacingMs);
       return task();
     });
-    const queued = run.finally(() => {
+    const queued = run.catch(() => {}).finally(() => {
       if (hostQueues.get(this.host) === queued) hostQueues.delete(this.host);
     });
     hostQueues.set(this.host, queued);
@@ -294,11 +296,8 @@ class RpcClient {
     return this._scheduled(async () => {
       let response;
       try {
-        response = await fetch(this.url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-          signal: AbortSignal.timeout(30_000),
+        response = await jsonRpc.request(this.url, method, params, {
+          timeoutMs: 30_000, validateStatus: () => true,
         });
       } catch (cause) {
         await this.onFailedAttempt?.({
@@ -308,39 +307,28 @@ class RpcClient {
         });
         throw rpcError(`${this.label} ${method} request failed`, 'RPC_TRANSPORT_ERROR', { cause });
       }
-      const text = await response.text();
-      let body;
-      try { body = JSON.parse(text); } catch { body = null; }
-      if (!response.ok || body?.error || body?.result == null) {
+      const { rawText: text, responseJson: body, httpStatus: status } = response;
+      if ((status < 200 || status >= 300) || body?.error || body?.result == null) {
         await this.onFailedAttempt?.({
           provider: this.provider, endpoint: method, method: 'POST', attemptNo: 1,
-          requestParams: { method, params }, outcome: response.status === 429 ? 'deferred' : 'failed',
-          httpStatus: response.status,
-          errorCode: response.status === 429 ? 'RPC_RATE_LIMITED' : 'RPC_API_ERROR',
-          errorDetail: String(body?.error?.message || `HTTP ${response.status}`).slice(0, 500),
-          requestId: response.headers.get('x-request-id') || null,
+          requestParams: { method, params }, outcome: status === 429 ? 'deferred' : 'failed',
+          httpStatus: status,
+          errorCode: status === 429 ? 'RPC_RATE_LIMITED' : 'RPC_API_ERROR',
+          errorDetail: String(body?.error?.message || `HTTP ${status}`).slice(0, 500),
+          requestId: response.requestId,
           responseSha256: sha256(text), responseRaw: text, responseJson: body,
         });
         throw rpcError(
           `${this.label} ${method} failed${body?.error?.message ? `: ${String(body.error.message).slice(0, 300)}` : ''}`,
-          response.status === 429 ? 'RPC_RATE_LIMITED' : 'RPC_API_ERROR',
+          status === 429 ? 'RPC_RATE_LIMITED' : 'RPC_API_ERROR',
           {
-            httpStatus: response.status,
+            httpStatus: status,
             rpcCode: body?.error?.code ?? null,
             rpcMessage: body?.error?.message == null ? null : String(body.error.message).slice(0, 500),
           }
         );
       }
-      return {
-        result: body.result,
-        rawText: text,
-        responseJson: body,
-        responseSha256: sha256(text),
-        requestId: response.headers.get('x-request-id') || null,
-        httpStatus: response.status,
-        method,
-        params,
-      };
+      return response;
     });
   }
 
@@ -394,10 +382,7 @@ class RpcClient {
   }
 
   async transactionCount(address, blockTag) {
-    return quantity(
-      await this.request('eth_getTransactionCount', [address, blockTag]),
-      'transaction count'
-    );
+    return (await this.transactionCountWithEvidence(address, blockTag)).value;
   }
 
   async transactionCountWithEvidence(address, blockTag) {
@@ -411,7 +396,7 @@ class RpcClient {
   }
 
   async balance(address, blockTag) {
-    return quantity(await this.request('eth_getBalance', [address, blockTag]), 'native balance');
+    return (await this.balanceWithEvidence(address, blockTag)).value;
   }
 
   async balanceWithEvidence(address, blockTag) {
@@ -423,11 +408,7 @@ class RpcClient {
   }
 
   async code(address, blockTag) {
-    const value = await this.request('eth_getCode', [address, blockTag]);
-    if (typeof value !== 'string' || !/^0x[0-9a-f]*$/i.test(value)) {
-      throw rpcError('Consensus RPC returned invalid account code', 'RPC_INVALID_RESPONSE');
-    }
-    return value.toLowerCase();
+    return (await this.codeWithEvidence(address, blockTag)).value;
   }
 
   async codeWithEvidence(address, blockTag) {
@@ -442,11 +423,7 @@ class RpcClient {
   }
 
   async erc20Balance(contract, address, blockTag) {
-    const data = `0x70a08231${address.toLowerCase().slice(2).padStart(64, '0')}`;
-    return quantity(
-      await this.request('eth_call', [{ to: contract, data }, blockTag]),
-      'ERC-20 balance'
-    );
+    return (await this.erc20BalanceWithEvidence(contract, address, blockTag)).value;
   }
 
   async erc20BalanceWithEvidence(contract, address, blockTag) {
@@ -843,17 +820,7 @@ class RpcClient {
       'eth_getBlockByNumber', [transaction.blockNumber, false]
     );
     const block = blockResponse.result;
-    let canonicalBlock;
-    try {
-      canonicalBlock = quantity(block?.number, 'canonical block number');
-    } catch (error) {
-      throw rpcError('Consensus RPC returned an invalid canonical block number', 'RPC_CANONICALITY_MISMATCH', {
-        cause: error,
-      });
-    }
-    if (!HASH_RE.test(String(block?.hash || ''))
-        || String(block.hash).toLowerCase() !== transactionBlockHash
-        || canonicalBlock !== transactionBlock) {
+    if (!jsonRpc.canonicalBlockMatches(receipt, block)) {
       throw rpcError('Consensus RPC transaction is not in the canonical block at its height', 'RPC_CANONICALITY_MISMATCH');
     }
     return {

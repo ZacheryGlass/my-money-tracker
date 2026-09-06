@@ -46,11 +46,11 @@ const OVERLAP_BLOCKS = 64;
 const MAX_HISTORICAL_TOKEN_CHECKS = 64;
 const MAX_RPC_LOG_REQUESTS_PER_RUN = 512;
 const EXPLORER_FEEDS = Object.freeze([
-  { capability: 'normal', feed: 'normal', action: 'txlist', method: 'fetchNormalTxs' },
-  { capability: 'internal', feed: 'internal', action: 'txlistinternal', method: 'fetchInternalTxs' },
-  { capability: 'erc20', feed: 'erc20', action: 'tokentx', method: 'fetchTokenTxs' },
-  { capability: 'erc721', feed: 'erc721', action: 'tokennfttx', method: 'fetchNftTxs' },
-  { capability: 'erc1155', feed: 'erc1155', action: 'token1155tx', method: 'fetch1155Txs' },
+  { capability: 'normal', feed: 'normal', action: 'txlist' },
+  { capability: 'internal', feed: 'internal', action: 'txlistinternal' },
+  { capability: 'erc20', feed: 'erc20', action: 'tokentx' },
+  { capability: 'erc721', feed: 'erc721', action: 'tokennfttx' },
+  { capability: 'erc1155', feed: 'erc1155', action: 'token1155tx' },
 ]);
 const OWNER = `${process.pid}:${crypto.randomUUID()}`;
 const queuedLocally = new Set();
@@ -112,16 +112,8 @@ function activeRowMatches(row, config) {
   return candidates.some((value) => config.activeIds.has(value));
 }
 
-function configuredExplorerProvider(chainId, action = null) {
-  return String(chains.accountApiConfig(chainId, action)?.provider || 'Etherscan').toLowerCase();
-}
-
-// A chain can expose a keyless primary account API and a keyed override for a
-// single feed after that alternative has passed historical provider canaries.
-// Orchestration must gate on the primary feed, otherwise one missing override
-// credential prevents every independent source and point check from running.
-function primaryAccountApiRequiresKey(chainId) {
-  return chains.accountApiRequiresKey(chainId);
+function configuredExplorerProvider(chainId) {
+  return String(chains.getChain(chainId)?.accountApi?.provider || 'Etherscan').toLowerCase();
 }
 
 function blockTag(blockNumber) {
@@ -586,7 +578,7 @@ class EvmAuditService {
         gaps += await this.runUnsupportedChain({ job, chainId, owner: OWNER });
       }
       const explorerApiKey = explorerRequested.some((chainId) =>
-        chains.chainAccountApisRequireKey(chainId))
+        chains.accountApiRequiresKey(chainId))
         ? await SecretsService.getUserKey(job.user_id, 'etherscan') : null;
       const runnable = [];
       const unavailable = [];
@@ -617,7 +609,7 @@ class EvmAuditService {
             provider: 'moralis',
             error: moralisUnavailable,
           });
-        } else if (primaryAccountApiRequiresKey(chainId) && !explorerApiKey) {
+        } else if (chains.accountApiRequiresKey(chainId) && !explorerApiKey) {
           unavailable.push({
             chainId, provider: configuredExplorerProvider(chainId),
             error: {
@@ -830,9 +822,14 @@ class EvmAuditService {
     const recordProviderAttempt = (row) => EvmAudit.recordProviderAttempt({
       ...row, jobId: job.id, owner: OWNER,
     });
-    await EvmAudit.heartbeat(job.id, OWNER, {
-      stage: 'fetching', progress: { current_chain: chainId, boundary_block: boundary.number },
-    });
+    const heartbeat = async (progress, stage = null) => {
+      const renewed = await EvmAudit.heartbeat(job.id, OWNER, {
+        ...(stage ? { stage } : {}), progress,
+      });
+      if (!renewed) leaseState.lost = true;
+      assertLease(leaseState);
+    };
+    await heartbeat({ current_chain: chainId, boundary_block: boundary.number }, 'fetching');
 
     if (providerConfig.moralis && !useMoralis && moralisUnavailable) {
       await upsertScope({
@@ -844,7 +841,6 @@ class EvmAuditService {
       chainId, provider: auditProvider, capability: 'active_chain', status: 'running',
       fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
     });
-    let missingCredentialFeed = null;
     if (useMoralis) {
       const activeBody = {
         active_chains: (activeResponse.body.active_chains || [])
@@ -885,7 +881,7 @@ class EvmAuditService {
       } catch (error) {
         const transient = isBlockscoutTransient(error);
         const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
-        const boundaryProvider = configuredExplorerProvider(chainId, 'getLogs');
+        const boundaryProvider = configuredExplorerProvider(chainId);
         const prefix = explorerFailurePrefix(boundaryProvider);
         const name = explorerDisplayName(boundaryProvider);
         const wrapped = new Error(`${name} indexed boundary failed: ${publicErrorDetail(error)}`);
@@ -945,14 +941,70 @@ class EvmAuditService {
     for (const observation of durableObservations) {
       if (observation.tx_hash) hashes.add(String(observation.tx_hash).toLowerCase());
       if (observation.tx_hash
-          && !['consensus-rpc', 'moralis', configuredExplorerProvider(chainId, 'getLogs')]
+          && !['consensus-rpc', 'moralis', configuredExplorerProvider(chainId)]
             .includes(String(observation.provider).toLowerCase())) {
         moralisLookupHashes.add(String(observation.tx_hash).toLowerCase());
       }
     }
+    // The iterator owns provider I/O; only its errors become provider failures.
+    // Persistence errors and a lost lease must propagate without being relabeled.
+    const persistExplorerPages = async (scope, provider, feed, endpoint, pages) => {
+      const iterator = pages[Symbol.asyncIterator]();
+      for (;;) {
+        assertLease(leaseState);
+        let next;
+        try {
+          next = await iterator.next();
+        } catch (error) {
+          const transient = isBlockscoutTransient(error);
+          const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
+          const unsupported = isStandingExplorerLimitation(error);
+          const prefix = explorerFailurePrefix(provider);
+          const wrapped = new Error(`${explorerDisplayName(provider)} ${feed} audit feed failed: ${publicErrorDetail(error)}`);
+          wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
+            : transient ? `${prefix}_TRANSPORT_ERROR`
+              : unsupported ? `${prefix}_FEED_UNSUPPORTED` : `${prefix}_FEED_FAILED`;
+          wrapped.httpStatus = error.response?.status || error.httpStatus || null;
+          wrapped.retryAt = transient
+            ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
+          await recordProviderAttempt({
+            scopeId: scope.id, provider, endpoint,
+            requestParams: {
+              address: job.address,
+              from_block: scope.requested_from_block,
+              to_block: scope.requested_through_block,
+            },
+            outcome: transient || unsupported ? 'deferred' : 'failed',
+            httpStatus: wrapped.httpStatus, errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
+          });
+          throw wrapped;
+        }
+        if (next.done) break;
+        const page = next.value;
+        assertLease(leaseState);
+        const observations = normalizer.explorerFeedObservations(
+          { ...context, provider }, feed, page.rows
+        );
+        for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
+        await commitPage(scope.id, pageRecord(provider, endpoint, page.requestParams, {
+          ...page, body: page.responseJson,
+        }, page.cursorIn, page.cursorOut, page.itemCount), observations);
+        await heartbeat({ current_cursor: page.cursorOut, transactions_seen: hashes.size });
+      }
+    };
+    const extendDiscoveredRange = async (blocks) => {
+      const row = discovered.find((entry) => entry.chain_id === chainId);
+      if (!row || !blocks.length) return;
+      for (const block of blocks) {
+        if (row.first_block == null || block < Number(row.first_block)) row.first_block = block;
+        if (row.last_block == null || block > Number(row.last_block)) row.last_block = block;
+      }
+      row.active_hint = true;
+      await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
+    };
     const scanNativeCredits = async () => {
       const nativeCreditConfig = chain?.stateSyncDeposits;
-      const nativeCreditProvider = configuredExplorerProvider(chainId, 'getLogs');
+      const nativeCreditProvider = configuredExplorerProvider(chainId);
       explorerProviders.add(nativeCreditProvider);
       const throughBlock = nativeCreditThroughBlock ?? sourceThroughBlock;
       const nativeCreditScope = await upsertScope({
@@ -971,68 +1023,10 @@ class EvmAuditService {
         });
         return;
       }
-      let nativeCreditRows;
-      try {
-        nativeCreditRows = await EtherscanService.fetchStateSyncDeposits(
+      await persistExplorerPages(nativeCreditScope, nativeCreditProvider, 'internal', 'native-credit',
+        EtherscanService.stateSyncDepositPages(
           job.address, 0, explorerApiKey, chainId, nativeCreditConfig, throughBlock
-        );
-      } catch (error) {
-        const transient = isBlockscoutTransient(error);
-        const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
-        const prefix = explorerFailurePrefix(nativeCreditProvider);
-        const wrapped = new Error(`Explorer native-credit audit feed failed: ${publicErrorDetail(error)}`);
-        wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
-          : transient ? `${prefix}_TRANSPORT_ERROR`
-            : isStandingExplorerLimitation(error) ? `${prefix}_FEED_UNSUPPORTED`
-              : `${prefix}_FEED_FAILED`;
-        wrapped.httpStatus = error.response?.status || error.httpStatus || null;
-        wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
-        await recordProviderAttempt({
-          jobId: job.id, scopeId: nativeCreditScope.id, provider: nativeCreditProvider,
-          endpoint: 'native-credit', requestParams: {
-            address: job.address, from_block: 0, to_block: throughBlock,
-          }, outcome: transient || isStandingExplorerLimitation(error) ? 'deferred' : 'failed', httpStatus: wrapped.httpStatus,
-          errorCode: wrapped.code, errorDetail: publicErrorDetail(wrapped),
-        });
-        throw wrapped;
-      }
-      if (!Array.isArray(nativeCreditRows)) {
-        const error = new Error('Explorer native-credit audit feed returned a non-array response');
-        error.code = `${explorerFailurePrefix(nativeCreditProvider)}_FEED_FAILED`;
-        await recordProviderAttempt({
-          jobId: job.id, scopeId: nativeCreditScope.id, provider: nativeCreditProvider,
-          endpoint: 'native-credit', requestParams: {
-            address: job.address, from_block: 0, to_block: throughBlock,
-          }, outcome: 'failed', errorCode: error.code, errorDetail: publicErrorDetail(error),
-        });
-        throw error;
-      }
-      const capturedPages = Array.isArray(nativeCreditRows.evidencePages)
-        ? nativeCreditRows.evidencePages : [];
-      const pages = capturedPages.length ? capturedPages : [{
-        rows: nativeCreditRows,
-        requestParams: { address: job.address, from_block: 0, to_block: throughBlock },
-        cursorIn: null, cursorOut: null, itemCount: nativeCreditRows.length,
-        responseJson: { rows: nativeCreditRows },
-      }];
-      for (const page of pages) {
-        assertLease(leaseState);
-        const pageRows = Array.isArray(page.rows) ? page.rows : [];
-        const observations = normalizer.explorerFeedObservations(
-          { ...context, provider: nativeCreditProvider }, 'internal', pageRows
-        );
-        for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-        await commitPage(nativeCreditScope.id, pageRecord(
-          nativeCreditProvider, 'native-credit',
-          page.requestParams || { address: job.address, from_block: 0, to_block: throughBlock },
-          {
-            body: page.responseJson || { rows: pageRows },
-            rawText: page.rawText,
-            responseSha256: page.responseSha256,
-            requestId: page.requestId,
-          }, page.cursorIn, page.cursorOut, page.itemCount ?? pageRows.length
-        ), observations);
-      }
+        ));
       await completeScope(nativeCreditScope.id, {
         status: 'complete', paginationExhausted: true,
       });
@@ -1057,7 +1051,7 @@ class EvmAuditService {
             }, page, page.cursorIn, page.cursorOut, page.items.length
           ), observations);
           cursor = page.cursorOut;
-          await EvmAudit.heartbeat(job.id, OWNER, { progress: { current_cursor: cursor, transactions_seen: hashes.size } });
+          await heartbeat({ current_cursor: cursor, transactions_seen: hashes.size });
         }
       } catch (error) {
         return fallbackAfterMoralis(error, historyScope.id);
@@ -1083,7 +1077,7 @@ class EvmAuditService {
     } else {
       for (const feedSpec of EXPLORER_FEEDS) {
         assertLease(leaseState);
-        const feedProvider = configuredExplorerProvider(chainId, feedSpec.action);
+        const feedProvider = configuredExplorerProvider(chainId);
         explorerProviders.add(feedProvider);
         const feedPrior = job.mode === 'incremental'
           ? await EvmAudit.latestCoverage(job.subject_id, chainId, feedProvider, feedSpec.capability)
@@ -1094,106 +1088,14 @@ class EvmAuditService {
           chainId, provider: feedProvider, capability: feedSpec.capability, status: 'running',
           fromBlock: feedFromBlock, throughBlock: sourceThroughBlock, throughHash: null,
         });
-        let rows;
-        try {
-          rows = await EtherscanService[feedSpec.method](
-            job.address, feedFromBlock, explorerApiKey, chainId, sourceThroughBlock
-          );
-        } catch (error) {
-          const transient = isBlockscoutTransient(error);
-          const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
-          const missingCredential = error.code === 'ETHERSCAN_NOT_CONFIGURED'
-            && feedProvider === 'etherscan';
-          const prefix = explorerFailurePrefix(feedProvider);
-          const name = explorerDisplayName(feedProvider);
-          const wrapped = new Error(`${name} ${feedSpec.feed} audit feed failed: ${publicErrorDetail(error)}`);
-          wrapped.code = missingCredential ? 'ETHERSCAN_NOT_CONFIGURED'
-            : rateLimited ? `${prefix}_RATE_LIMITED`
-            : transient ? `${prefix}_TRANSPORT_ERROR`
-              : isStandingExplorerLimitation(error) ? `${prefix}_FEED_UNSUPPORTED`
-                : `${prefix}_FEED_FAILED`;
-          wrapped.httpStatus = error.response?.status || error.httpStatus || null;
-          wrapped.retryAt = missingCredential || transient
-            ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
-          await recordProviderAttempt({
-            jobId: job.id, scopeId: feedScope.id, provider: feedProvider,
-            endpoint: `account-${feedSpec.feed}`,
-            requestParams: { address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock },
-            outcome: missingCredential || transient || isStandingExplorerLimitation(error)
-              ? 'deferred' : 'failed',
-            httpStatus: wrapped.httpStatus, errorCode: wrapped.code,
-            errorDetail: publicErrorDetail(wrapped),
-          });
-          if (missingCredential) {
-            // Preserve the exact keyed-feed gap, but continue the keyless
-            // neighbours and all consensus/RPC evidence for this chain.
-            await completeScope(feedScope.id, {
-              status: 'deferred', paginationExhausted: false,
-              errorCode: wrapped.code,
-              errorDetail: 'This feed requires the Etherscan credential; other configured feeds continue independently.',
-            });
-            missingCredentialFeed = {
-              code: wrapped.code,
-              detail: publicErrorDetail(wrapped),
-              retryAt: wrapped.retryAt,
-            };
-            continue;
-          }
-          throw wrapped;
-        }
-        if (!Array.isArray(rows)) {
-          const prefix = explorerFailurePrefix(feedProvider);
-          const name = explorerDisplayName(feedProvider);
-          const error = new Error(`${name} ${feedSpec.feed} audit feed returned a non-array response`);
-          error.code = `${prefix}_FEED_FAILED`;
-          throw error;
-        }
-        const capturedPages = Array.isArray(rows.evidencePages) ? rows.evidencePages : [];
-        const pages = capturedPages.length ? capturedPages : (() => {
-          const pageSize = 500;
-          const fallback = [];
-          for (let offset = 0; offset < Math.max(rows.length, 1); offset += pageSize) {
-            const pageRows = rows.slice(offset, offset + pageSize);
-            fallback.push({
-              rows: pageRows,
-              requestParams: {
-                address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock,
-              },
-              cursorIn: String(offset),
-              cursorOut: offset + pageRows.length >= rows.length ? null : String(offset + pageRows.length),
-              itemCount: pageRows.length,
-              responseJson: { feed: feedSpec.feed, rows: pageRows },
-            });
-          }
-          return fallback;
-        })();
-        for (const page of pages) {
-          assertLease(leaseState);
-          const pageRows = Array.isArray(page.rows) ? page.rows : [];
-          const observations = normalizer.explorerFeedObservations(
-            { ...context, provider: feedProvider }, feedSpec.feed, pageRows
-          );
-          for (const observation of observations) if (observation.txHash) hashes.add(observation.txHash);
-          await commitPage(feedScope.id, pageRecord(
-            feedProvider, `account-${feedSpec.feed}`,
-            page.requestParams || {
-              address: job.address, from_block: feedFromBlock, to_block: sourceThroughBlock,
-            },
-            {
-              body: page.responseJson || { feed: feedSpec.feed, rows: pageRows },
-              rawText: page.rawText,
-              responseSha256: page.responseSha256,
-              requestId: page.requestId,
-            }, page.cursorIn, page.cursorOut, page.itemCount ?? pageRows.length
-          ), observations);
-          await EvmAudit.heartbeat(job.id, OWNER, {
-            progress: { current_feed: feedSpec.feed, transactions_seen: hashes.size },
-          });
-        }
-          await completeScope(feedScope.id, {
+        await persistExplorerPages(feedScope, feedProvider, feedSpec.feed, `account-${feedSpec.feed}`,
+          EtherscanService.accountFeedPages(
+            feedSpec.action, job.address, feedFromBlock, explorerApiKey, chainId, sourceThroughBlock
+          ));
+        await completeScope(feedScope.id, {
           status: 'complete', paginationExhausted: true,
         });
-          await acceptCoverage({
+        await acceptCoverage({
           subjectId: job.subject_id, chainId, provider: feedProvider,
           capability: feedSpec.capability, fromBlock: feedFromBlock,
           throughBlock: sourceThroughBlock, throughHash: null,
@@ -1413,15 +1315,10 @@ class EvmAuditService {
             page.cursorIn, page.cursorOut, 'ascending'
           ), observations);
           indexedTokenLogs += page.logs.length;
-          const renewed = await EvmAudit.heartbeat(job.id, OWNER, {
-            stage: 'canonicalizing',
-            progress: {
-              indexed_token_log_cursor: page.cursorOut,
-              indexed_token_logs_seen: indexedTokenLogs,
-            },
-          });
-          if (!renewed) leaseState.lost = true;
-          assertLease(leaseState);
+          await heartbeat({
+            indexed_token_log_cursor: page.cursorOut,
+            indexed_token_logs_seen: indexedTokenLogs,
+          }, 'canonicalizing');
         }
       } catch (error) {
         if (error.code === 'RPC_LOG_SCAN_BUDGET_EXHAUSTED') {
@@ -1465,25 +1362,7 @@ class EvmAuditService {
     ))
       .filter((row) => row.provider === 'consensus-rpc' && row.block_number != null)
       .map((row) => Number(row.block_number)).filter(Number.isSafeInteger);
-    if (indexedLogBlocks.length) {
-      const discoveredChain = discovered.find((row) => row.chain_id === chainId);
-      if (discoveredChain) {
-        const priorFirst = discoveredChain.first_block == null
-          ? null : Number(discoveredChain.first_block);
-        const priorLast = discoveredChain.last_block == null
-          ? null : Number(discoveredChain.last_block);
-        discoveredChain.active_hint = true;
-        discoveredChain.first_block = Math.min(
-          ...indexedLogBlocks,
-          ...(Number.isSafeInteger(priorFirst) ? [priorFirst] : [])
-        );
-        discoveredChain.last_block = Math.max(
-          ...indexedLogBlocks,
-          ...(Number.isSafeInteger(priorLast) ? [priorLast] : [])
-        );
-        await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
-      }
-    }
+    await extendDiscoveredRange(indexedLogBlocks);
 
     const traceCoverageBasis = 'trace_rpc_address_trace_filter_v1';
     const priorTraceCoverage = job.mode === 'incremental' && traceRpc
@@ -1545,15 +1424,10 @@ class EvmAuditService {
               }, { traces: page.traces }, page.evidence, page.traces.length,
               page.cursorIn, page.cursorOut, 'ascending', 'trace-rpc'
             ), observations);
-            const renewed = await EvmAudit.heartbeat(job.id, OWNER, {
-              stage: 'canonicalizing',
-              progress: {
-                internal_trace_cursor: page.cursorOut,
-                internal_traces_seen: page.traces.length,
-              },
-            });
-            if (!renewed) leaseState.lost = true;
-            assertLease(leaseState);
+            await heartbeat({
+              internal_trace_cursor: page.cursorOut,
+              internal_traces_seen: page.traces.length,
+            }, 'canonicalizing');
           }
         }
         await completeScope(traceScope.id, {
@@ -1601,27 +1475,9 @@ class EvmAuditService {
     ))
       .filter((row) => row.provider === 'trace-rpc' && row.block_number != null)
       .map((row) => Number(row.block_number)).filter(Number.isSafeInteger);
-    if (traceBlocks.length) {
-      const discoveredChain = discovered.find((row) => row.chain_id === chainId);
-      if (discoveredChain) {
-        const priorFirst = discoveredChain.first_block == null
-          ? null : Number(discoveredChain.first_block);
-        const priorLast = discoveredChain.last_block == null
-          ? null : Number(discoveredChain.last_block);
-        discoveredChain.active_hint = true;
-        discoveredChain.first_block = Math.min(
-          ...traceBlocks,
-          ...(Number.isSafeInteger(priorFirst) ? [priorFirst] : [])
-        );
-        discoveredChain.last_block = Math.max(
-          ...traceBlocks,
-          ...(Number.isSafeInteger(priorLast) ? [priorLast] : [])
-        );
-        await EvmAudit.setDiscoveredChains(job.id, OWNER, discovered);
-      }
-    }
+    await extendDiscoveredRange(traceBlocks);
 
-    await EvmAudit.heartbeat(job.id, OWNER, { stage: 'canonicalizing' });
+    await heartbeat(undefined, 'canonicalizing');
     const rpcScope = await upsertScope({
       chainId, provider: 'consensus-rpc', capability: 'receipt_verification', status: 'running',
       fromBlock: null, throughBlock: boundary.number, throughHash: boundary.hash,
@@ -1631,12 +1487,7 @@ class EvmAuditService {
     );
     for (const hash of hashes) {
       if (verifiedReceiptHashes.has(hash)) continue;
-      const renewedBeforeLookup = await EvmAudit.heartbeat(job.id, OWNER, {
-        stage: 'canonicalizing',
-        progress: { current_tx_hash: hash },
-      });
-      if (!renewedBeforeLookup) leaseState.lost = true;
-      assertLease(leaseState);
+      await heartbeat({ current_tx_hash: hash }, 'canonicalizing');
       const { transaction, receipt, block, evidence } = await rpc.transactionAndReceipt(hash);
       assertLease(leaseState);
       if (Number(BigInt(transaction.blockNumber)) > boundary.number) continue;
@@ -1671,11 +1522,7 @@ class EvmAuditService {
         job.subject_id, chainId, hash, rpcEffects.map((effect) => effect.effectKey),
         observationIds.get(`receipt:${hash}`) || null, writeFence
       );
-      const renewedAfterCommit = await EvmAudit.heartbeat(job.id, OWNER, {
-        stage: 'canonicalizing',
-      });
-      if (!renewedAfterCommit) leaseState.lost = true;
-      assertLease(leaseState);
+      await heartbeat(undefined, 'canonicalizing');
     }
     await completeScope(rpcScope.id, {
       status: 'unverified', paginationExhausted: false,
@@ -1802,7 +1649,7 @@ class EvmAuditService {
 
     const transactions = await EvmAudit.canonicalTransactions(job.subject_id, chainId);
     const transactionConflicts = await EvmAudit.transactionConflictCount(job.subject_id, chainId);
-    await EvmAudit.heartbeat(job.id, OWNER, { stage: 'nonce_verification' });
+    await heartbeat(undefined, 'nonce_verification');
     const codeEvidence = await rpc.codeWithEvidence(job.address, boundary.numberHex);
     await commitPage(nonceScope.id, rpcPageRecord(
       'account-code', { address: job.address, block_tag: boundary.numberHex },
@@ -1843,7 +1690,7 @@ class EvmAuditService {
       status: 'complete', paginationExhausted: true, coverageBasis: pointCheckBasis,
     });
 
-    await EvmAudit.heartbeat(job.id, OWNER, { stage: 'balance_reconciliation' });
+    await heartbeat(undefined, 'balance_reconciliation');
     const [liveBalanceEvidence, derivedBalance] = await Promise.all([
       rpc.balanceWithEvidence(job.address, boundary.numberHex),
       EvmAudit.nativeDerivedAt(job.user_id, job.subject_id, chainId, boundary.number),
@@ -1878,13 +1725,21 @@ class EvmAuditService {
     const tokenUniverse = mergeObservedTokenUniverse(tokenBalances, observedTokenContracts);
     const tokensByContract = tokenUniverse.tokensByContract;
     const tokenAuditRows = [];
+    const readTokenBalance = async (contract, tag) => {
+      assertLease(leaseState);
+      return rpc.erc20BalanceWithEvidence(contract, job.address, tag);
+    };
+    const saveTokenBalance = async (contract, tag, endpoint, result) => {
+      const request = { contract, address: job.address, block_tag: tag };
+      await commitPage(tokenBalanceScope.id, rpcPageRecord(
+        endpoint, request, { ...request, balance_units: result.value.toString() }, [result.evidence]
+      ), []);
+      return result.value;
+    };
     for (const token of tokensByContract.values()) {
       let liveEvidence;
       try {
-        assertLease(leaseState);
-        liveEvidence = await rpc.erc20BalanceWithEvidence(
-          token.token_contract, job.address, boundary.numberHex
-        );
+        liveEvidence = await readTokenBalance(token.token_contract, boundary.numberHex);
       } catch (error) {
         tokenEvidenceFailures += 1;
         tokenMismatches += 1;
@@ -1901,17 +1756,9 @@ class EvmAuditService {
         });
         continue;
       }
-      await commitPage(tokenBalanceScope.id, rpcPageRecord(
-        'erc20-balance', {
-          contract: token.token_contract, address: job.address, block_tag: boundary.numberHex,
-        },
-        {
-          contract: token.token_contract, address: job.address,
-          block_tag: boundary.numberHex, balance_units: liveEvidence.value.toString(),
-        },
-        [liveEvidence.evidence]
-      ), []);
-      const live = liveEvidence.value;
+      const live = await saveTokenBalance(
+        token.token_contract, boundary.numberHex, 'erc20-balance', liveEvidence
+      );
       const tokenDelta = live - BigInt(token.balance_units);
       if (tokenDelta !== 0n) tokenMismatches += 1;
       tokenAuditRows.push({
@@ -1949,10 +1796,7 @@ class EvmAuditService {
         const historicalDerived = historicalByContract.get(contract)?.balance_units || '0';
         let liveEvidence;
         try {
-          assertLease(leaseState);
-          liveEvidence = await rpc.erc20BalanceWithEvidence(
-            token.token_contract, job.address, archiveProbeTag
-          );
+          liveEvidence = await readTokenBalance(token.token_contract, archiveProbeTag);
         } catch (error) {
           historicalTokenFailures += 1;
           historicalTokenChecks.set(contract, {
@@ -1963,16 +1807,7 @@ class EvmAuditService {
           });
           continue;
         }
-        await commitPage(tokenBalanceScope.id, rpcPageRecord(
-          'archive-erc20-balance', {
-            contract: token.token_contract, address: job.address, block_tag: archiveProbeTag,
-          },
-          {
-            contract: token.token_contract, address: job.address,
-            block_tag: archiveProbeTag, balance_units: liveEvidence.value.toString(),
-          },
-          [liveEvidence.evidence]
-        ), []);
+        await saveTokenBalance(token.token_contract, archiveProbeTag, 'archive-erc20-balance', liveEvidence);
         const historicalDelta = liveEvidence.value - BigInt(historicalDerived);
         const check = {
           status: historicalDelta === 0n ? 'match' : 'mismatch',
@@ -2043,7 +1878,7 @@ class EvmAuditService {
       activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
       missingActivity = transactions.filter((row) => !activityHashes.has(row.tx_hash)).length;
     }
-    await EvmAudit.heartbeat(job.id, OWNER, { stage: 'bridge_reconciliation' });
+    await heartbeat(undefined, 'bridge_reconciliation');
     const bridgeAudit = await EvmAudit.bridgeAudit(
       job.user_id, job.subject_id, chainId, boundary.number
     );
@@ -2061,11 +1896,9 @@ class EvmAuditService {
     const historicalStateGap = 1;
     const archiveDepthGap = archiveCheck.status === 'unavailable' ? 1 : 0;
     const archiveBalanceGap = archiveCheck.status === 'mismatch' ? 1 : 0;
-    const credentialFeedGap = missingCredentialFeed ? 1 : 0;
     const gaps = providerLookupGaps + nonceGapCount + transactionConflicts + capabilityGaps
       + receiptEnumerationGap + indexedTokenLogEnumerationGap + historicalStateGap
       + archiveDepthGap + archiveBalanceGap
-      + credentialFeedGap
       + (delta === 0n ? 0 : 1)
       + tokenMismatches + historicalTokenGap
       + missingActivity + unresolvedBridges + provisionalEffects
@@ -2100,8 +1933,8 @@ class EvmAuditService {
           archive_probe_block: archiveProbeBlock,
           archive_probe_status: archiveCheck.status,
           balance_coverage_basis: pointCheckBasis,
-          credential_feed_gap: credentialFeedGap,
-          credential_feed_error: missingCredentialFeed,
+          credential_feed_gap: 0,
+          credential_feed_error: null,
           corroborated_identity_repairs: identityRepair.repaired,
           missing_activity: missingActivity,
           unresolved_bridges: bridgeAudit.unresolved,
@@ -2116,8 +1949,8 @@ class EvmAuditService {
       boundary,
       transactions: transactions.length,
       discovered,
-      deferred: Boolean(missingCredentialFeed),
-      deferredProviderError: missingCredentialFeed,
+      deferred: false,
+      deferredProviderError: null,
     };
   }
 }

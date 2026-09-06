@@ -1175,18 +1175,21 @@ test('paged explorer responses retain raw page evidence and the terminal empty m
   };
   t.after(() => { axios.get = originalGet; });
 
-  const rows = await EtherscanService.fetchTokenTxs(WALLET, 0, 'key', 1, 2000);
-  assert.equal(rows.length, 1000);
+  const pages = [];
+  for await (const page of EtherscanService.accountFeedPages('tokentx', WALLET, 0, 'key', 1, 2000)) {
+    pages.push(page);
+    assert.equal(requests.length, pages.length, 'the next page waits for the consumer');
+  }
   assert.equal(requests[0].responseType, 'text');
   assert.equal(requests[0].transformResponse.length, 1);
-  assert.equal(rows.evidencePages.length, 2);
-  assert.equal(rows.evidencePages[0].rawText, raw);
-  assert.equal(rows.evidencePages[0].requestId, 'fixture-page-1');
-  assert.equal(rows.evidencePages[0].cursorIn, '0');
-  assert.equal(rows.evidencePages[0].cursorOut, '1000');
-  assert.equal(rows.evidencePages[0].rows.length, 1000);
-  assert.equal(rows.evidencePages[1].itemCount, 0);
-  assert.equal(rows.evidencePages[1].cursorOut, null);
+  assert.equal(pages.length, 2);
+  assert.equal(pages[0].rawText, raw);
+  assert.equal(pages[0].requestId, 'fixture-page-1');
+  assert.equal(pages[0].cursorIn, '0');
+  assert.equal(pages[0].cursorOut, '1000');
+  assert.equal(pages[0].rows.length, 1000);
+  assert.equal(pages[1].itemCount, 0);
+  assert.equal(pages[1].cursorOut, null);
 });
 
 test('an account feed freezes when the indexed head falls behind its resume block', async () => {
@@ -1205,7 +1208,7 @@ test('an account feed freezes when the explorer repeats a page outside the advan
   }));
   EtherscanService._request = async () => {
     calls += 1;
-    return firstPage.map((row) => ({ ...row }));
+    return { result: firstPage.map((row) => ({ ...row })), evidence: {} };
   };
   t.after(() => { EtherscanService._request = original; });
 
@@ -1220,7 +1223,7 @@ test('an account feed freezes when the explorer repeats a page outside the advan
 
 test('an account feed freezes on malformed or out-of-range block numbers', async (t) => {
   const original = EtherscanService._request;
-  EtherscanService._request = async () => [{ blockNumber: 'not-a-block', hash: '0xbad' }];
+  EtherscanService._request = async () => ({ result: [{ blockNumber: 'not-a-block', hash: '0xbad' }], evidence: {} });
   t.after(() => { EtherscanService._request = original; });
 
   await assert.rejects(
@@ -1236,10 +1239,9 @@ test('a block at the provider 10000-row ceiling freezes instead of dropping an u
   EtherscanService._request = async () => {
     calls += 1;
     const size = calls === 1 ? 1000 : 10000;
-    return Array.from({ length: size }, (_, i) => ({
-      blockNumber: '42',
-      hash: `0x${i}`,
-    }));
+    return { result: Array.from({ length: size }, (_, i) => ({
+      blockNumber: '42', hash: `0x${i}`,
+    })), evidence: {} };
   };
   t.after(() => { EtherscanService._request = original; });
 
@@ -1277,44 +1279,6 @@ test('a keyless-only chain set syncs without an Etherscan credential', async (t)
   assert.ok(calls.fetches.every((call) => call.chainId === 324));
   assert.ok(calls.fetches.every((call) => call.apiKey == null));
   assert.equal(calls.inserted[0].chain_id, 324);
-});
-
-test('a missing explicitly configured override key freezes only the internal feed', async (t) => {
-  const chain = chains.getChain(100);
-  const originalOverrides = chain.accountApiOverrides;
-  chain.accountApiOverrides = {
-    txlistinternal: {
-      provider: 'Etherscan', baseUrl: 'https://api.etherscan.io/v2/api',
-      requiresApiKey: true, params: { chainid: 100 },
-    },
-  };
-  t.after(() => {
-    if (originalOverrides === undefined) delete chain.accountApiOverrides;
-    else chain.accountApiOverrides = originalOverrides;
-  });
-  const missingKey = new Error(
-    'Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.'
-  );
-  missingKey.code = 'ETHERSCAN_NOT_CONFIGURED';
-  const { calls } = harness(t, {
-    chainSet: '100',
-    apiKey: null,
-    feedBehavior: {
-      '100:internal': () => { throw missingKey; },
-    },
-  });
-
-  const result = await EthWalletService.syncWallet(7);
-
-  assert.deepEqual(result.failedFeeds, ['Gnosis Chain/internal']);
-  assert.deepEqual(calls.deletes.map((row) => row.types), [
-    'native,gas', 'token', 'nft', 'nft1155', 'internal',
-  ]);
-  const coverage = calls.coverage[0].entries;
-  assert.equal(coverage.find((row) => row.feed === 'internal').status, 'failed');
-  assert.match(coverage.find((row) => row.feed === 'internal').provider, /^Etherscan /);
-  assert.ok(coverage.filter((row) => ['normal', 'token', 'nft', 'nft1155', 'statesync'].includes(row.feed))
-    .every((row) => row.status === 'complete'));
 });
 
 test('Gnosis live balances use keyless RPC instead of Blockscout indexed balances', async (t) => {
@@ -1609,16 +1573,17 @@ test('a direct OP Stack self-deposit becomes one bridge-classifiable inbound cre
 test('OP Stack deposit metadata is restored from JSON-RPC before normalization', async (t) => {
   const hash = `0x${'a'.repeat(64)}`;
   const sourceHash = `0x${'b'.repeat(64)}`;
-  const originalPaged = EtherscanService._fetchPaged;
+  const originalRequest = EtherscanService._request;
   const originalRpc = EtherscanService._rpcRequest;
-  EtherscanService._fetchPaged = async () => [{
+  EtherscanService._request = async () => ({ result: [{
+    blockNumber: '42',
     hash,
     from: WALLET,
     to: WALLET,
     value: '7',
     gasPrice: '0',
     isError: '0',
-  }];
+  }], evidence: {} });
   EtherscanService._rpcRequest = async (chainId, method, params) => {
     assert.equal(chainId, 10);
     assert.equal(method, 'eth_getTransactionByHash');
@@ -1632,7 +1597,7 @@ test('OP Stack deposit metadata is restored from JSON-RPC before normalization',
     };
   };
   t.after(() => {
-    EtherscanService._fetchPaged = originalPaged;
+    EtherscanService._request = originalRequest;
     EtherscanService._rpcRequest = originalRpc;
   });
 

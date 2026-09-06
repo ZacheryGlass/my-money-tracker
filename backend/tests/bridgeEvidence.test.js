@@ -896,6 +896,15 @@ test('Base exclusion evidence is explicit and does not match shared OP predeploy
   assert.equal(excluded.evidence.excluded_chain_id, 8453);
   assert.equal(excluded.members.length, 1);
 
+  for (const chainId of [10, 100, 137, 8453]) {
+    assert.equal(excludedBaseMovement({ ...source, chain_id: chainId }, []), null,
+      'an L1 deployment address is not a chain identity on another network');
+  }
+  const crossChainIdentity = excludedBaseMovement({ ...source, chain_id: 10 }, [event({
+    protocol: 'across', evidence: { identity_fields: { destination_chain_id: '8453' } },
+  })]);
+  assert.equal(crossChainIdentity.evidence.source.type, 'decoded_protocol_identity');
+
   const across = excludedBaseMovement(envelope({
     chainId: 1, txHash: hash('9'), category: 'bridge_out',
   }), [event({
