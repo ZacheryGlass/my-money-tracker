@@ -109,6 +109,8 @@ test('finishing an audit casts the status parameter consistently for PostgreSQL'
     await EvmAudit.finish(1, 'test-owner', 'complete');
     assert.match(sql, /SET status = \$3::varchar/);
     assert.match(sql, /CASE WHEN \$3::varchar IN/);
+    assert.match(sql, /UPDATE evm_audit_scopes sc/);
+    assert.match(sql, /sc\.status IN \('queued', 'running'\)/);
   } finally {
     database.query = originalQuery;
   }

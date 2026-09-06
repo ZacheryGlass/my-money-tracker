@@ -553,7 +553,8 @@ class EvmAudit {
     errorCode = null, errorDetail = null, progress = null, retryAt = null,
   } = {}) {
     const { rows } = await pool.query(
-      `UPDATE evm_audit_jobs
+      `WITH finished AS (
+       UPDATE evm_audit_jobs
           SET status = $3::varchar,
               stage = CASE WHEN $3::varchar IN ('complete', 'complete_with_gaps') THEN 'complete' ELSE stage END,
               progress = CASE WHEN $4::jsonb IS NULL THEN progress ELSE progress || $4::jsonb END,
@@ -570,7 +571,26 @@ class EvmAudit {
           $2::text IS NULL
           OR (lease_owner = $2 AND status = 'running' AND lease_expires_at > CURRENT_TIMESTAMP)
         )
-      RETURNING *`,
+      RETURNING *
+      ), closed_scopes AS (
+        UPDATE evm_audit_scopes sc
+           SET status = CASE
+                 WHEN $3::varchar = 'deferred' THEN 'deferred'
+                 WHEN $3::varchar = 'unsupported' THEN 'unsupported'
+                 ELSE 'failed'
+               END,
+               pagination_exhausted = FALSE,
+               error_code = COALESCE($5, sc.error_code,
+                 CASE WHEN $3::varchar = 'cancelled' THEN 'AUDIT_JOB_CANCELLED'
+                      ELSE 'EVM_AUDIT_INCOMPLETE' END),
+               error_detail = COALESCE($6, sc.error_detail,
+                 'The audit job ended before this scope completed.'),
+               updated_at = CURRENT_TIMESTAMP
+          FROM finished f
+         WHERE sc.job_id = f.id AND sc.status IN ('queued', 'running')
+        RETURNING sc.id
+      )
+      SELECT * FROM finished`,
       [jobId, owner, status, progress == null ? null : JSON.stringify(progress), errorCode, errorDetail, retryAt]
     );
     return rows[0] || null;
