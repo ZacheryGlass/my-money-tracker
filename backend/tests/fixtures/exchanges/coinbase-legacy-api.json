@@ -52,6 +52,26 @@
         "created_at": "2024-03-07T12:00:00Z",
         "resource": "transaction",
         "resource_path": "/v2/accounts/synthetic/transactions/44444444-0000-0000-0000-000000000004"
+      },
+      {
+        "id": "55555555-0000-0000-0000-000000000005",
+        "type": "exchange_deposit",
+        "status": "completed",
+        "amount": { "amount": "-0.50", "currency": "ETH" },
+        "native_amount": { "amount": "-1250.00", "currency": "USD" },
+        "created_at": "2022-05-10T03:33:54Z",
+        "resource": "transaction",
+        "resource_path": "/v2/accounts/synthetic/transactions/55555555-0000-0000-0000-000000000005"
+      },
+      {
+        "id": "66666666-0000-0000-0000-000000000006",
+        "type": "exchange_withdrawal",
+        "status": "completed",
+        "amount": { "amount": "0.50", "currency": "ETH" },
+        "native_amount": { "amount": "1250.00", "currency": "USD" },
+        "created_at": "2022-05-10T03:34:00Z",
+        "resource": "transaction",
+        "resource_path": "/v2/accounts/synthetic/transactions/66666666-0000-0000-0000-000000000006"
       }
     ]
   }

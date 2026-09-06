@@ -1030,6 +1030,8 @@ test('coinbase: historical staking and ETH2 aliases normalize without losing pro
     ['inflation_reward', 'reward'],
     ['interest', 'reward'],
     ['retail_eth2_deprecation', 'transfer'],
+    ['exchange_deposit', 'transfer'],
+    ['exchange_withdrawal', 'transfer'],
   ]);
   const records = legacyCoinbaseRecords();
 

@@ -115,6 +115,8 @@ const TYPE_MAP = {
   // direction-free move. They must never become a deposit or withdrawal and
   // therefore must not enter exchange-to-wallet matching.
   retail_eth2_deprecation: 'transfer',
+  exchange_deposit: 'transfer',
+  exchange_withdrawal: 'transfer',
 
   subscription: 'fee',
 
