@@ -1,8 +1,14 @@
--- Correct Coinbase Pro crypto-to-crypto trade orientation from the source
--- statement's `product` column. The older importer used the outgoing leg as
--- base when neither asset was fiat/stable, so an ETH-BTC buy was stored as a
--- negative BTC base leg and positive ETH quote leg. Both values were retained,
--- but the economic labels and direction were reversed.
+-- Correct Coinbase Pro crypto-to-crypto trade orientation when the retained
+-- source rows contain the statement's `product` column. The older importer
+-- used the outgoing leg as base when neither asset was fiat/stable, so an
+-- ETH-BTC buy was stored as a negative BTC base leg and positive ETH quote
+-- leg. Both values were retained, but the economic labels and direction were
+-- reversed.
+--
+-- Some historical imports retained the amount/order/trade fields but omitted
+-- `product`. Their correct pair cannot be inferred safely from the database;
+-- they require a separately reviewed source-evidence repair plan. This
+-- migration deliberately leaves those rows unchanged.
 --
 -- The raw payload is authoritative and remains unchanged. Update only rows
 -- with one unambiguous product across every retained source leg and whose
