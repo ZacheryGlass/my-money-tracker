@@ -928,7 +928,17 @@ class EtherscanService {
     const cacheKey = `${chainId}:${blockNumber}`;
     if (blockTimestampCache.has(cacheKey)) return blockTimestampCache.get(cacheKey);
     const tag = `0x${blockNumber.toString(16)}`;
-    const rpcResult = await this._rpcRequest(chainId, 'eth_getBlockByNumber', [tag, false]);
+    let rpcResult = null;
+    try {
+      rpcResult = await this._rpcRequest(chainId, 'eth_getBlockByNumber', [tag, false]);
+    } catch (error) {
+      // Public consensus RPCs commonly prune genesis and other old block
+      // bodies even when the account explorer retains the full indexed feed.
+      // A coverage timestamp is an explorer boundary fact, so fall back to
+      // that same explorer's proxy before failing the whole feed walk.
+      logger.warn({ chainId, blockNumber, err: error.message },
+        'Chain RPC block timestamp unavailable; using account explorer proxy');
+    }
     const block = rpcResult === null
       ? await this._request({
         module: 'proxy',

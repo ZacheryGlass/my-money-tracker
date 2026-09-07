@@ -202,6 +202,71 @@ test('Gnosis legacy decodes the third non-indexed word as source transaction has
   assert.deepEqual(decodeEnvelope(source), []);
 });
 
+test('Gnosis native xDAI exits pair to Ethereum RelayedMessage by source transaction hash', () => {
+  const sourceTx = hash('1');
+  const destinationTx = hash('2');
+  const wallet = address('3');
+  const sourceBridge = address('4');
+  const destinationBridge = address('5');
+  const amount = 29_000_000_000_000_000_000n;
+  const requiredIdentityFields = [
+    'protocol_asset', 'source_chain_id', 'destination_chain_id',
+    'deployment_key', 'reference_type',
+  ];
+  const sourceEndpoint = endpoint('gnosis', 100, sourceBridge, 'legacy-xdai', {
+    role: 'bridge', direction: 'both',
+    metadata: {
+      deployment_key: 'gnosis-xdai-legacy-pre-usds',
+      abi_variants: {
+        legacy_source: {
+          supported: true, direction: 'out', source_chain_id: 100,
+          destination_chain_id: 1, canonical_asset: 'XDAI', canonical_decimals: 18,
+          reference_type: 'source_transaction_hash',
+          required_identity_fields: requiredIdentityFields,
+        },
+      },
+    },
+  });
+  const destinationEndpoint = endpoint('gnosis', 1, destinationBridge, 'legacy-xdai', {
+    role: 'bridge', direction: 'both',
+    metadata: {
+      deployment_key: 'gnosis-xdai-legacy-pre-usds',
+      abi_variants: {
+        relayed_message_destination: {
+          supported: true, direction: 'in', source_chain_id: 100,
+          destination_chain_id: 1, canonical_asset: 'XDAI', canonical_decimals: 18,
+          reference_type: 'source_transaction_hash',
+          required_identity_fields: requiredIdentityFields,
+        },
+      },
+    },
+  });
+  const source = envelope({
+    chainId: 100, txHash: sourceTx, category: 'bridge_out', walletAddress: wallet,
+    tx: { from: wallet, to: sourceBridge, value: `0x${amount.toString(16)}` },
+    endpoints: [sourceEndpoint],
+  });
+  const destination = envelope({
+    walletId: 2, chainId: 1, txHash: destinationTx, category: 'bridge_in',
+    walletAddress: wallet, endpoints: [destinationEndpoint],
+  });
+  destination.receipt.logs = [log({
+    txHash: destinationTx, blockHash: destination.receipt.blockHash,
+    logAddress: destinationBridge, topics: [TOPICS.gnosisRelayedMessage],
+    body: data(addressWord(wallet), word(amount), sourceTx),
+  })];
+
+  const sourceEvents = decodeEnvelope(source);
+  assert.equal(sourceEvents.length, 1);
+  assert.equal(sourceEvents[0].asset_id, 'XDAI');
+  assert.equal(sourceEvents[0].correlation_key, `gnosis-legacy:${sourceTx}`);
+  const movement = buildProtocolMovements([
+    ...sourceEvents, ...decodeEnvelope(destination),
+  ])[0];
+  assert.equal(movement.status, 'protocol_verified');
+  assert.equal(movement.members.length, 2);
+});
+
 test('Gnosis legacy decodes an allowlisted ERC-20 Transfer recipient and exact RelayedMessage reference', () => {
   const sourceTx = hash('a');
   const destinationTx = hash('b');
@@ -958,6 +1023,14 @@ test('Gnosis endpoint migration records deployment bounds, ABI variants, and fin
   assert.match(migration, /"required_identity_fields"/);
   assert.match(migration, /"finality_policy"/);
   assert.match(migration, /"router_message_identity_not_decoded"/);
+  const nativeSourceMigration = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../migrations/089_gnosis_native_xdai_source.sql'),
+    'utf8'
+  );
+  assert.match(nativeSourceMigration, /\{abi_variants,legacy_source\}/);
+  assert.match(nativeSourceMigration, /"source_chain_id": 100/);
+  assert.match(nativeSourceMigration, /"destination_chain_id": 1/);
+  assert.match(nativeSourceMigration, /"reference_type": "source_transaction_hash"/);
   const l1SourceMigration = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '../migrations/085_gnosis_l1_dai_source.sql'),
     'utf8'

@@ -202,3 +202,31 @@ test('an explicit shared-scan head bounds every feed without taking a newer head
   assert.equal(boundary.throughBlock, 321);
   assert.deepEqual(timestamps.map((row) => row.block), [0, 321]);
 });
+
+test('coverage timestamps fall back to the account explorer when consensus history is pruned', async (t) => {
+  const originalRpc = EtherscanService._rpcRequest;
+  const originalRequest = EtherscanService._request;
+  const calls = [];
+  EtherscanService._rpcRequest = async () => {
+    const error = new Error('pruned history unavailable');
+    error.code = 'ETHERSCAN_API_ERROR';
+    throw error;
+  };
+  EtherscanService._request = async (params, options) => {
+    calls.push({ params, options });
+    return { timestamp: '0x0' };
+  };
+  t.after(() => {
+    EtherscanService._rpcRequest = originalRpc;
+    EtherscanService._request = originalRequest;
+  });
+
+  const timestamp = await EtherscanService._blockTimestamp('key', 1, 0);
+  assert.equal(timestamp.toISOString(), '1970-01-01T00:00:00.000Z');
+  assert.deepEqual(calls, [{
+    params: {
+      module: 'proxy', action: 'eth_getBlockByNumber', tag: '0x0', boolean: 'false',
+    },
+    options: { apiKey: 'key', chainId: 1 },
+  }]);
+});
