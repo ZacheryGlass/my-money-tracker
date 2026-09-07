@@ -230,3 +230,42 @@ test('coverage timestamps fall back to the account explorer when consensus histo
     options: { apiKey: 'key', chainId: 1 },
   }]);
 });
+
+test('bridge evidence falls back wholesale when a consensus RPC prunes old transaction data', async (t) => {
+  const hash = `0x${'1'.repeat(64)}`;
+  const blockHash = `0x${'2'.repeat(64)}`;
+  const originalRpc = EtherscanService._rpcRequest;
+  const originalRequest = EtherscanService._request;
+  const calls = [];
+  EtherscanService._rpcRequest = async () => {
+    const error = new Error('pruned history unavailable');
+    error.code = 'ETHERSCAN_API_ERROR';
+    throw error;
+  };
+  EtherscanService._request = async (params, options) => {
+    calls.push({ params, options });
+    if (params.action === 'eth_getTransactionByHash') {
+      return { hash, blockNumber: '0x10', blockHash };
+    }
+    if (params.action === 'eth_getTransactionReceipt') {
+      return { transactionHash: hash, blockNumber: '0x10', blockHash, status: '0x1', logs: [] };
+    }
+    if (params.tag === 'finalized') return { number: '0x20', hash: `0x${'3'.repeat(64)}` };
+    return { number: '0x10', hash: blockHash };
+  };
+  t.after(() => {
+    EtherscanService._rpcRequest = originalRpc;
+    EtherscanService._request = originalRequest;
+  });
+
+  const evidence = await EtherscanService.getTransactionEvidence(hash, 'key', 1);
+  assert.equal(evidence.transaction.hash, hash);
+  assert.equal(evidence.receipt.transactionHash, hash);
+  assert.equal(evidence.provider, 'Etherscan');
+  assert.equal(evidence.providerBoundary.finality.status, 'finalized');
+  assert.deepEqual(calls.map((call) => call.params.action), [
+    'eth_getTransactionByHash', 'eth_getTransactionReceipt',
+    'eth_getBlockByNumber', 'eth_getBlockByNumber',
+  ]);
+  assert.ok(calls.every((call) => call.options.apiKey === 'key' && call.options.chainId === 1));
+});

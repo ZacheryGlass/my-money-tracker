@@ -690,24 +690,38 @@ class EtherscanService {
     if (!/^0x[0-9a-f]{64}$/.test(hash)) {
       throw new Error('Invalid transaction hash for bridge receipt lookup');
     }
-    let transaction;
-    let receipt;
-    let provider;
-    if (consensusRpcUrl(chainId)) {
-      provider = 'json-rpc';
-      transaction = await this._rpcRequest(chainId, 'eth_getTransactionByHash', [hash]);
-      receipt = await this._rpcRequest(chainId, 'eth_getTransactionReceipt', [hash]);
-    } else {
-      provider = this._provider(chainId).name;
-      transaction = await this._request(
-        { module: 'proxy', action: 'eth_getTransactionByHash', txhash: hash },
-        { apiKey, chainId }
-      );
-      receipt = await this._request(
-        { module: 'proxy', action: 'eth_getTransactionReceipt', txhash: hash },
-        { apiKey, chainId }
-      );
-    }
+    const hasConsensusRpc = Boolean(consensusRpcUrl(chainId));
+    const usedProviders = new Set();
+    const proxyParams = (method, params) => {
+      if (method === 'eth_getTransactionByHash' || method === 'eth_getTransactionReceipt') {
+        return { module: 'proxy', action: method, txhash: params[0] };
+      }
+      if (method === 'eth_getBlockByNumber') {
+        return { module: 'proxy', action: method, tag: params[0], boolean: 'false' };
+      }
+      throw new Error(`No account-explorer proxy mapping for ${method}`);
+    };
+    const evidenceRequest = async (method, params) => {
+      if (hasConsensusRpc) {
+        try {
+          const result = await this._rpcRequest(chainId, method, params);
+          usedProviders.add('json-rpc');
+          return result;
+        } catch (rpcError) {
+          // Consensus endpoints routinely prune old transaction bodies and
+          // canonical block payloads. The account explorer indexes those same
+          // public objects, so use its proxy before invalidating retained
+          // bridge evidence during a later rebuild.
+          logger.warn({ chainId, method, err: rpcError.message },
+            'Chain RPC bridge evidence unavailable; using account explorer proxy');
+        }
+      }
+      const result = await this._request(proxyParams(method, params), { apiKey, chainId });
+      usedProviders.add(this._provider(chainId, apiKey).name);
+      return result;
+    };
+    const transaction = await evidenceRequest('eth_getTransactionByHash', [hash]);
+    const receipt = await evidenceRequest('eth_getTransactionReceipt', [hash]);
     if (!transaction || !receipt) {
       const error = new Error(`Transaction evidence is unavailable on chain ${chainId}`);
       error.code = 'BRIDGE_RECEIPT_UNAVAILABLE';
@@ -721,12 +735,9 @@ class EtherscanService {
       finalityError = cachedFinality.error;
     } else {
       try {
-      finalizedBlock = consensusRpcUrl(chainId)
-          ? await this._rpcRequest(chainId, 'eth_getBlockByNumber', ['finalized', false])
-          : await this._request(
-            { module: 'proxy', action: 'eth_getBlockByNumber', tag: 'finalized', boolean: 'false' },
-            { apiKey, chainId }
-          );
+        finalizedBlock = await evidenceRequest(
+          'eth_getBlockByNumber', ['finalized', false]
+        );
       } catch (error) {
         finalityError = { code: error.code || 'FINALIZED_BLOCK_UNAVAILABLE' };
       }
@@ -742,12 +753,9 @@ class EtherscanService {
     try {
       const receiptBlock = receipt?.blockNumber;
       if (receiptBlock == null) throw new Error('receipt has no block number');
-      canonicalBlock = consensusRpcUrl(chainId)
-        ? await this._rpcRequest(chainId, 'eth_getBlockByNumber', [receiptBlock, false])
-        : await this._request(
-          { module: 'proxy', action: 'eth_getBlockByNumber', tag: receiptBlock, boolean: 'false' },
-          { apiKey, chainId }
-        );
+      canonicalBlock = await evidenceRequest(
+        'eth_getBlockByNumber', [receiptBlock, false]
+      );
     } catch (error) {
       canonicalError = { code: error.code || 'CANONICAL_BLOCK_UNAVAILABLE' };
     }
@@ -757,7 +765,7 @@ class EtherscanService {
     return {
       transaction,
       receipt,
-      provider,
+      provider: [...usedProviders].join('+'),
       providerBoundary: {
         chain_id: chainId,
         methods: [
