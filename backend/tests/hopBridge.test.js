@@ -304,6 +304,23 @@ test('Hop native ETH swap and bonded withdrawal pair from exact calldata and pro
   assert.equal(movement.evidence.hop_pair.route.route_key, NATIVE_ROUTE.route_key);
 });
 
+test('Hop retains proven historical feed coverage after a later provider deferral', () => {
+  const native = nativeBondedPair();
+  native.destination.feed_coverage[0].status = 'deferred';
+  const nativeMovement = buildProtocolMovements([
+    ...decodeEnvelope(native.source), ...decodeEnvelope(native.destination),
+  ])[0];
+  assert.equal(nativeMovement.status, 'protocol_verified');
+
+  const token = decodePair({ destination: {
+    feedCoverage: [{ feed: 'token', status: 'deferred', covered_through_block: 3_000_000 }],
+  } });
+  const tokenMovement = buildProtocolMovements([
+    ...token.sourceEvents, ...token.destinationEvents,
+  ])[0];
+  assert.equal(tokenMovement.status, 'protocol_verified');
+});
+
 test('Hop bonded withdrawal rejects calldata that does not prove the wallet recipient or amount', () => {
   const wrongRecipient = nativeBondedPair({ destinationRecipient: address('7') });
   const recipientEvent = decodeEnvelope(wrongRecipient.destination)[0];

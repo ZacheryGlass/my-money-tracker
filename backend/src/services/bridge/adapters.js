@@ -1063,8 +1063,7 @@ function hopCoverage(envelope, assetObservation) {
     if (!candidates.length) {
       return { status: 'incomplete', reason: 'destination_native_feed_coverage_missing' };
     }
-    const complete = candidates.find((entry) => entry.status === 'complete'
-      && Number.isSafeInteger(Number(entry.covered_through_block))
+    const complete = candidates.find((entry) => Number.isSafeInteger(Number(entry.covered_through_block))
       && Number(entry.covered_through_block) >= block);
     if (complete) {
       return {
@@ -1086,13 +1085,17 @@ function hopCoverage(envelope, assetObservation) {
   if (!tokenCoverage) {
     return { status: 'incomplete', reason: 'destination_token_feed_coverage_missing', feed: 'token' };
   }
+  const coveredThrough = Number(tokenCoverage.covered_through_block);
+  if (Number.isSafeInteger(block) && Number.isSafeInteger(coveredThrough)
+      && coveredThrough >= block) {
+    return { status: 'complete', feed: 'token', covered_through_block: coveredThrough };
+  }
   if (tokenCoverage.status !== 'complete') {
     return {
       status: 'incomplete', reason: `destination_token_feed_${tokenCoverage.status || 'unknown'}`,
       feed: 'token', coverage_status: tokenCoverage.status || null,
     };
   }
-  const coveredThrough = Number(tokenCoverage.covered_through_block);
   if (!Number.isSafeInteger(block) || !Number.isSafeInteger(coveredThrough)
       || coveredThrough < block) {
     return {
