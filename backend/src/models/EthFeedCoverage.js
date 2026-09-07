@@ -155,7 +155,7 @@ class EthFeedCoverage {
       `SELECT c.wallet_id, c.chain_id, c.feed, c.status, c.covered_through_block
          FROM eth_feed_coverage c
          JOIN eth_wallets w ON w.id = c.wallet_id
-        WHERE w.user_id = $1 AND c.feed = 'token'
+        WHERE w.user_id = $1 AND c.feed IN ('normal', 'internal', 'token')
         ORDER BY c.wallet_id, c.chain_id, c.feed`,
       [userId]
     );

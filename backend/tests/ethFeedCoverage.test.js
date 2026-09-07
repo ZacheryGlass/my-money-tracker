@@ -159,6 +159,18 @@ test('coverage report reads only wallets owned by the requesting user', async ()
   assert.deepEqual(queries[0].params, [42]);
 });
 
+test('bridge coverage includes every feed consumed by native and token bridge matching', async () => {
+  queries.length = 0;
+  returnedRows = [];
+  await EthFeedCoverage.findBridgeCoverageForUser(42);
+  assert.match(
+    sqlOf(queries[0]),
+    /c\.feed IN \('normal', 'internal', 'token'\)/,
+  );
+  assert.match(sqlOf(queries[0]), /WHERE w\.user_id = \$1/);
+  assert.deepEqual(queries[0].params, [42]);
+});
+
 test('history audit counts deferred coverage as an incomplete gap', () => {
   const auditScript = fs.readFileSync(
     path.join(__dirname, '..', 'scripts', 'audit-history.js'),
