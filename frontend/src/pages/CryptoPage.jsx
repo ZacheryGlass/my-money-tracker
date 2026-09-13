@@ -19,6 +19,8 @@ import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/acco
 import { formatCategoryLabel } from '../utils/dataLabels';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import CryptoLedger from '../components/CryptoLedger';
+import EthLedger from '../components/EthLedger';
+import SegmentedControl from '../components/SegmentedControl';
 import DataTable, { DataTablePagination } from '../components/DataTable';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
@@ -825,7 +827,16 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                 </div>
               )}
 
-              {txView === LEDGER_VIEW ? (
+              <div className="mb-4">
+                <SegmentedControl label="Ledger" value={txView === 'eth' ? 'eth' : LEDGER_VIEW}
+                  onChange={setTxView} options={[
+                    { value: LEDGER_VIEW, label: 'All crypto activity' },
+                    { value: 'eth', label: 'ETH running balance' },
+                  ]} />
+              </div>
+              {txView === 'eth' ? (
+                <EthLedger key={`${selectedWalletId ?? 'all'}:${syncNonce}`} walletId={selectedWalletId} />
+              ) : txView === LEDGER_VIEW ? (
                 <CryptoLedger
                   walletId={selectedWalletId}
                   refreshKey={syncNonce}

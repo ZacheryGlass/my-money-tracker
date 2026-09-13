@@ -3,6 +3,7 @@
 const express = require('express');
 const requireUser = require('../middleware/auth');
 const CryptoLedger = require('../models/CryptoLedger');
+const EthLedger = require('../models/EthLedger');
 const EthWallet = require('../models/EthWallet');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const EthBridgeMovement = require('../models/EthBridgeMovement');
@@ -132,6 +133,42 @@ function withBridgeLabel(row) {
 // The unified ledger: eth_activity and exchange_records interleaved by time,
 // with an exchange record that carries a matched on-chain hash folded into that
 // transaction's row rather than rendered a second time.
+router.get('/eth-ledger', async (req, res) => {
+  try {
+    const allowed = new Set(['wallet_id', 'scope', 'limit', 'offset']);
+    if (Object.keys(req.query).some((key) => !allowed.has(key))) {
+      return res.status(400).json({ error: 'Unsupported ETH ledger filter' });
+    }
+    const integer = (value, fallback, min, max) => {
+      if (value === undefined) return fallback;
+      if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+      const n = Number(value);
+      return Number.isSafeInteger(n) && n >= min && n <= max ? n : null;
+    };
+    const limit = integer(req.query.limit, 100, 1, 500);
+    const offset = integer(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+    const walletId = integer(req.query.wallet_id, null, 1, 2147483647);
+    const scope = req.query.scope ?? null;
+    if (limit === null || offset === null
+        || (req.query.wallet_id !== undefined && walletId === null)
+        || (scope !== null && (typeof scope !== 'string'
+          || !/^(wallet:\d+:\d+|exchange:\d+)$/.test(scope)))) {
+      return res.status(400).json({ error: 'Invalid ETH ledger scope or pagination' });
+    }
+    if (walletId !== null && !await EthWallet.findByIdForUser(walletId, req.user.id)) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+    const result = await EthLedger.findForUser(req.user.id, { walletId, scope, limit, offset });
+    if (scope !== null && !result.scopes.some((s) => s.scope === scope)) {
+      return res.status(404).json({ error: 'Ledger account not found' });
+    }
+    return res.json({ ...result, pagination: { total: result.total, limit, offset } });
+  } catch (error) {
+    logger.error({ err: error }, 'Get ETH ledger error');
+    return res.status(500).json({ error: 'Failed to retrieve the ETH ledger' });
+  }
+});
+
 router.get('/ledger', async (req, res) => {
   try {
     const parsed = await parseFilters(req);

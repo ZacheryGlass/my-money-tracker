@@ -10,6 +10,11 @@ A modern web application for personal portfolio tracking, replacing the legacy G
 - **Dashboard**: Consolidated view of all assets and liabilities with sorting and filtering
 - **Authentication**: Google sign-in via Azure Easy Auth, allowlisted accounts, fully isolated per-user data
 - **AI Access**: Read-only financial MCP endpoint with semantic analysis tools
+- **ETH Ledger**: Crypto → Activity → ETH running balance shows recorded native ETH movements, gas (including ERC-20/NFT calls and failed transactions), exchange ETH entries, and exchange fees from oldest to newest, with exact running and per-account balances.
+
+The ETH ledger starts its reconstructed balance at zero and includes both sides of transfers between tracked accounts. Select a wallet/network or exchange account to inspect its balance alone. Coverage limitations and audit-only adjustments remain visible; missing history or opening balances are not filled with guessed transactions. Wrapped ETH and non-ETH gas assets are excluded. Equal timestamps use a stable tie order rather than claiming an execution order the source does not record.
+
+`GET /api/crypto/eth-ledger` serves this read-only, user-scoped view. Optional parameters are `wallet_id`, `scope` (`wallet:<id>:<chain-id>` or `exchange:<id>`), `limit` (1–500), and `offset`. Balances and deltas are integer wei strings, computed over the selected history before pagination; an unknown ETH amount makes subsequent balances unknown. The response includes source coverage, the last native audit, and excluded reconciliation adjustments. No migration or additional API key is required.
 
 ## Tech Stack
 

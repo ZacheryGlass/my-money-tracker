@@ -528,6 +528,12 @@ export const eth = {
 // The unified crypto ledger (#63): on-chain activity and exchange records
 // interleaved by time, with a matched pair rendered once.
 export const crypto = {
+  getEthLedger: async ({ walletId, ...params } = {}) => {
+    const response = await api.get('/api/crypto/eth-ledger', {
+      params: { ...params, ...(walletId != null ? { wallet_id: walletId } : {}) },
+    });
+    return response.data;
+  },
   // filters: { category, source, needsReview, walletId, exchangeAccountId }.
   // An unknown category/source is a 400 server-side, so the client's filter
   // values come from utils/dataLabels LEDGER_CATEGORIES rather than free text.

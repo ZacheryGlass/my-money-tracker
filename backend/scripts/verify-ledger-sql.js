@@ -1113,6 +1113,8 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
         (seeded) => String(seeded.id) === String(row.id) && seeded.external_id === row.external_id
       )));
 
+  await require('../tests/ethLedgerSqlChecks')(pool, ok);
+
   const { buildReport } = require('./audit-history');
   const historyReport = await buildReport(1);
   const reportText = JSON.stringify(historyReport);

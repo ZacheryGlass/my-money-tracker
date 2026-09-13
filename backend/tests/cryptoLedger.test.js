@@ -143,6 +143,11 @@ function fakeQuery(text, params = []) {
   const sql = String(text).replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
   queries.push({ sql, params });
 
+  if (sql.startsWith('WITH wallet_scopes AS')) {
+    return { rows: [{ data: [], total: 0, closing_balance_wei: '0', unknown_amounts: 0,
+      scopes: [{ scope: 'wallet:1:1' }, { scope: 'exchange:7' }] }] };
+  }
+
   if (/^SELECT \* FROM eth_wallets WHERE id = \$1 AND user_id = \$2/.test(sql)) {
     const [id, userId] = params;
     return { rows: id === OWNED_WALLET_ID && userId === OWNER_ID ? [{ id, user_id: userId, address: WALLET }] : [] };
@@ -820,4 +825,22 @@ test('wei is scaled through BigInt, so no precision is invented or lost', () => 
   assert.equal(trimDecimal('-0.500000000000000000'), '-0.5');
   assert.equal(trimDecimal('0.000000000000000000'), '0');
   assert.equal(trimDecimal('1832'), '1832');
+});
+
+// ETH balance view rejects filters that could hide balance-affecting entries.
+test('ETH ledger validates pagination, scopes, and wallet ownership', async () => {
+  for (const query of ['limit=0', 'limit=501', 'offset=-1', 'offset=1abc', 'wallet_id=1abc',
+    'scope=wallet:1', 'scope[]=wallet:1:1', 'spam=exclude', 'category=swap']) {
+    assert.equal((await request(app).get(`/api/crypto/eth-ledger?${query}`)).status, 400, query);
+  }
+  assert.equal((await request(app).get('/api/crypto/eth-ledger?wallet_id=99')).status, 404);
+  assert.equal((await request(app).get('/api/crypto/eth-ledger?scope=exchange:99')).status, 404);
+  const response = await request(app).get('/api/crypto/eth-ledger?wallet_id=1&scope=wallet:1:1&offset=100');
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.pagination, { total: 0, limit: 100, offset: 100 });
+  const query = queries.findLast((q) => q.sql.startsWith('WITH wallet_scopes AS'));
+  assert.equal(query.params[0], OWNER_ID);
+  assert.deepEqual(query.params.slice(2), [1, 'wallet:1:1', 100, 100]);
+  assert.ok(!query.params[1].includes(137));
+  assert.ok(!query.params[1].includes(100));
 });
