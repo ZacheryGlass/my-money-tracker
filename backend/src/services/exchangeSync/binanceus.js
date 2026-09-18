@@ -6,6 +6,8 @@ const {
   absAmount,
   negateAmount,
   addAmounts,
+  compareAmounts,
+  isNegativeAmount,
   parseTimestamp,
   contentId,
   finalizeRecord,
@@ -183,13 +185,16 @@ function accountBalances(body) {
   return accountBalanceDetails(body).balances;
 }
 
-function accountBalanceDetails(body) {
+function accountBalanceDetails(body, staking = null) {
   const balances = {};
   const balanceDetails = {};
-  for (const row of body?.balances || []) {
+  let complete = Array.isArray(body?.balances);
+  for (const row of Array.isArray(body?.balances) ? body.balances : []) {
     const coin = asset(row.asset);
-    if (!coin) continue;
-    const total = addAmounts(amount(row.free) ?? '0', amount(row.locked) ?? '0');
+    const free = amount(row.free);
+    const locked = amount(row.locked);
+    if (!coin || free === null || locked === null) { complete = false; continue; }
+    const total = addAmounts(free, locked);
     if (total !== null) {
       balances[coin] = addAmounts(balances[coin] ?? '0', total);
       const providerCode = String(row.asset).trim();
@@ -201,10 +206,33 @@ function accountBalanceDetails(body) {
       balanceDetails[coin] = detail;
     }
   }
+  // Staked funds live outside the spot free/locked balance. Pending rewards
+  // are not credited holdings. An in-progress unstake has undocumented overlap
+  // semantics, so retain the evidence but do not certify that snapshot.
+  if (staking?.success !== true || staking.code !== '000000' || !Array.isArray(staking.data)) {
+    complete = false;
+  } else {
+    const seen = new Set();
+    for (const row of staking.data) {
+      const coin = asset(row.asset);
+      const staked = amount(row.stakingAmount);
+      if (!coin || staked === null || isNegativeAmount(staked) || seen.has(coin)) {
+        complete = false; continue;
+      }
+      seen.add(coin);
+      const unstaking = amount(row.unstakeInProgress ?? '0');
+      if (unstaking === null || compareAmounts(unstaking, '0') !== 0) complete = false;
+      balances[coin] = addAmounts(balances[coin] ?? '0', staked);
+      const detail = balanceDetails[coin] ||= { provider_asset_codes: [coin], provider_balances: {} };
+      detail.provider_balances[coin] = addAmounts(detail.provider_balances[coin] ?? '0', staked);
+      detail.staking = { amount: staked, unstake_in_progress: row.unstakeInProgress ?? null,
+        pending_rewards: row.pendingRewards ?? null };
+    }
+  }
   for (const detail of Object.values(balanceDetails)) {
     detail.provider_asset_codes = [...new Set(detail.provider_asset_codes)].sort();
   }
-  return { balances, balanceDetails };
+  return { balances, balanceDetails, complete };
 }
 
 function emptyCursor() {
@@ -248,6 +276,9 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   };
 
   const account = await call('/api/v3/account');
+  // A staking permission/outage must not discard otherwise recoverable history
+  // or publish a spot-only snapshot as the user's full holdings.
+  const staking = await call('/sapi/v1/staking/stakingBalance').catch(() => null);
   const balanceObservedAt = new Date().toISOString();
   const exchangeInfo = await call('/api/v3/exchangeInfo', {}, { signed: false });
   const listedSymbols = Array.isArray(exchangeInfo.symbols) ? exchangeInfo.symbols : [];
@@ -401,14 +432,17 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
       : []),
   ];
 
-  const normalizedBalances = accountBalanceDetails(account);
+  const normalizedBalances = accountBalanceDetails(account, staking);
+  if (!normalizedBalances.complete) {
+    coverageLimitations.push('Binance.US staking balances are unavailable, malformed, or include an unresolved unstake; total balance reconciliation is incomplete.');
+  }
   return {
     records,
     cursor: state,
     balances: normalizedBalances.balances,
     balance_details: normalizedBalances.balanceDetails,
     balance_observed_at: balanceObservedAt,
-    balancesComplete: true,
+    balancesComplete: normalizedBalances.complete,
     coverageLimitations,
     stats: {
       rows: records.length, requests, unknownTypes,

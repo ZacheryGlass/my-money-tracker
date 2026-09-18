@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { cleanAmount } = require('./shared');
+const { cleanAmount, addAmounts } = require('./shared');
 
 const FINGERPRINT_VERSION = 1;
 
@@ -140,8 +140,19 @@ function sourceSnapshot(record) {
 
 function annotateRecord(exchange, record) {
   const fingerprint = fingerprintFor(exchange, record);
+  // Coinbase's historical ETH2 code is staked ETH. Store the canonical asset
+  // on every economic leg, not only inside the dedupe fingerprint, so all SQL
+  // readers agree. Source payloads and original asset spellings stay available.
+  const assets = {};
+  for (const field of ['base_asset', 'quote_asset', 'fee_asset']) {
+    if (exchange === 'coinbase' && record[field] === 'ETH2') assets[field] = canonicalAsset(exchange, record[field]);
+  }
   return {
     ...record,
+    ...assets,
+    ...(Object.keys(assets).length ? {
+      dedupe_provenance: [...(record.dedupe_provenance || []), sourceSnapshot(record)],
+    } : {}),
     fingerprint,
     fingerprint_version: fingerprint ? FINGERPRINT_VERSION : null,
     // The insert names every column explicitly, so PostgreSQL's column
@@ -149,6 +160,17 @@ function annotateRecord(exchange, record) {
     // candidate path promotes it to TRUE later when ambiguity is observed.
     duplicate_candidate: Boolean(record?.duplicate_candidate),
   };
+}
+
+// Also accept historical provider snapshots that still separate staked ETH.
+// Other venues and wrapped/staking receipt tokens retain their own identities.
+function canonicalBalances(exchange, balances = {}) {
+  const result = { ...balances };
+  if (exchange === 'coinbase' && Object.hasOwn(result, 'ETH2')) {
+    result.ETH = addAmounts(String(result.ETH ?? '0'), String(result.ETH2));
+    delete result.ETH2;
+  }
+  return result;
 }
 
 function annotateRecords(exchange, records) {
@@ -159,6 +181,7 @@ module.exports = {
   FINGERPRINT_VERSION,
   ASSET_ALIASES,
   canonicalAsset,
+  canonicalBalances,
   canonicalAmount,
   canonicalParts,
   canonicalInstant,

@@ -148,6 +148,13 @@ function subtractAmounts(a, b) {
   return addAmounts(a ?? '0', negateAmount(b ?? '0'));
 }
 
+// Exact product, refusing sub-wei precision rather than silently rounding a leg.
+function multiplyAmounts(a, b) {
+  if (a == null || b == null) return null;
+  const product = toScaled(a) * toScaled(b);
+  return product % SCALE_FACTOR === 0n ? fromScaled(product / SCALE_FACTOR) : null;
+}
+
 // -1 / 0 / 1, exact at NUMERIC(38,18). Comparing these as JS numbers is the
 // same mistake as adding them: a balance check that rounds is a balance check
 // that reports a mismatch on a healthy account, or misses a real one.
@@ -432,6 +439,7 @@ module.exports = {
   // a mismatch out of rounding and flag a healthy account for review.
   addAmounts,
   subtractAmounts,
+  multiplyAmounts,
   compareAmounts,
   scaleByPowerOfTen,
   normalizeNetwork,

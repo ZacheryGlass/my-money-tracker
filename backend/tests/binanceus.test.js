@@ -105,6 +105,7 @@ test('Binance.US history feeds use endpoint-specific request contracts', async (
   BinanceUSClient.prototype.get = async function get(path, params = {}) {
     requests.push({ path, params });
     if (path === '/api/v3/account') return { balances: [] };
+    if (path === '/sapi/v1/staking/stakingBalance') return { success: true, code: '000000', data: [] };
     if (path === '/api/v3/exchangeInfo') return { symbols: [] };
     if (path === '/sapi/v1/capital/config/getall') return [];
     if (path === '/sapi/v1/fiatpayment/query/deposit/history') {
@@ -133,8 +134,30 @@ test('Binance.US history feeds use endpoint-specific request contracts', async (
     assert.equal(result.records.length, 2);
     assert.equal(result.stats.backfillPending, false);
     assert.equal(result.coverageLimitations.length, 3);
+    assert.equal(result.balancesComplete, true);
     assert.equal(result.cursor.phase, 'trades');
   } finally {
     BinanceUSClient.prototype.get = originalGet;
   }
+});
+
+test('Binance.US staking outage keeps history available but refuses a complete balance snapshot', async () => {
+  const originalGet = BinanceUSClient.prototype.get;
+  BinanceUSClient.prototype.get = async function get(path) {
+    if (path === '/api/v3/account') return { balances: [{ asset: 'ETH', free: '1', locked: '0' }] };
+    if (path === '/sapi/v1/staking/stakingBalance') throw new Error('Staking read unavailable');
+    if (path === '/api/v3/exchangeInfo') return { symbols: [] };
+    if (path === '/sapi/v1/capital/config/getall') return [];
+    if (path.includes('/fiatpayment/')) return { assetLogRecordList: [] };
+    if (path.includes('assetDistributionHistory')) return { rows: [] };
+    if (path.includes('dust-logs')) return { userDustConvertHistory: [] };
+    throw new Error(`Unexpected endpoint ${path}`);
+  };
+  try {
+    const result = await connector.sync({ apiKey: 'key', apiSecret: 'secret' });
+    assert.equal(result.balancesComplete, false);
+    assert.equal(result.balances.ETH, '1');
+    assert.equal(result.stats.backfillPending, false);
+    assert.ok(result.coverageLimitations.some(reason => reason.includes('staking balances are unavailable')));
+  } finally { BinanceUSClient.prototype.get = originalGet; }
 });

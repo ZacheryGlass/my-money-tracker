@@ -403,6 +403,9 @@ class ExchangeSyncService {
             result.balances || {},
             result.balance_observed_at || new Date().toISOString()
           );
+        if (providerSnapshot && result.balance_details) {
+          providerSnapshot.balance_details = result.balance_details;
+        }
         const reconciliation = ExchangeReconciliationService.buildReconciliation({
           account: lockedAccount,
           derived,

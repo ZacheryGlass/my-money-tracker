@@ -10,6 +10,7 @@ const {
   conflictingDetails,
   fingerprintFor,
   annotateRecord,
+  canonicalBalances,
 } = require('../src/services/exchangeImport/canonicalFingerprint');
 const { parseExchangeCsv } = require('../src/services/exchangeImport');
 const binanceConnector = require('../src/services/exchangeSync/binanceus');
@@ -42,6 +43,30 @@ test('annotated ordinary records carry the required false candidate flag', () =>
   const annotated = annotateRecord('coinbase', apiTrade);
   assert.equal(annotated.duplicate_candidate, false);
   assert.equal(annotateRecord('coinbase', { ...apiTrade, duplicate_candidate: true }).duplicate_candidate, true);
+});
+
+test('Coinbase ingestion canonicalizes all ETH2 legs while preserving evidence and replay identity', () => {
+  const original = { ...apiTrade, quote_asset: 'ETH', quote_amount: '-1', fee_asset: 'ETH2',
+    raw: { Asset: 'ETH2', Quantity: '1' } };
+  const normalized = annotateRecord('coinbase', original);
+  assert.equal(normalized.base_asset, 'ETH');
+  assert.equal(normalized.quote_asset, 'ETH');
+  assert.equal(normalized.fee_asset, 'ETH');
+  assert.equal(normalized.base_amount, original.base_amount);
+  assert.equal(normalized.external_id, original.external_id);
+  assert.deepEqual(normalized.raw, original.raw);
+  assert.equal(normalized.dedupe_provenance[0].original_assets.base_asset, 'ETH2');
+  assert.equal(normalized.fingerprint, fingerprintFor('coinbase', original));
+  assert.deepEqual(annotateRecord('coinbase', normalized), normalized, 'normalization is idempotent');
+  assert.equal(annotateRecord('other', original).base_asset, 'ETH2');
+  assert.equal(annotateRecord('coinbase', { ...original, base_asset: 'cbETH' }).base_asset, 'cbETH');
+});
+
+test('historical Coinbase balance aliases sum exactly without changing other assets or inputs', () => {
+  const balances = { ETH: '2.000000000000000001', ETH2: '3.000000000000000002', cbETH: '4' };
+  assert.deepEqual(canonicalBalances('coinbase', balances), { ETH: '5.000000000000000003', cbETH: '4' });
+  assert.deepEqual(canonicalBalances('other', balances), balances);
+  assert.equal(balances.ETH2, '3.000000000000000002');
 });
 
 test('API and CSV versions of one Coinbase event share a fingerprint', () => {

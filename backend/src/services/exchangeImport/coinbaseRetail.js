@@ -5,6 +5,9 @@ const {
   cleanAmount,
   absAmount,
   negateAmount,
+  multiplyAmounts,
+  addAmounts,
+  compareAmounts,
   isNegativeAmount,
   parseTimestamp,
   contentId,
@@ -239,6 +242,11 @@ function parse(rows) {
   const emitSingle = (row, { needsReview = false } = {}) => {
     let quoteAsset = null;
     let quoteAmount = null;
+    let feeAsset = row.priceCurrency;
+    // Staking quantities are the rewards credited after Coinbase's commission.
+    // The export's fiat fee valuation is not a separate debit to the USD wallet.
+    // Keep it in raw; subtracting it here would charge the commission again.
+    const fee = row.rawType.toLowerCase() === 'staking income' ? null : row.fee;
 
     if (row.recordType === 'trade') {
       // The export signs Subtotal inconsistently (a sale is sometimes positive,
@@ -248,6 +256,30 @@ function parse(rows) {
       if (magnitude !== null && row.priceCurrency) {
         quoteAsset = row.priceCurrency;
         quoteAmount = isNegativeAmount(row.baseAmount ?? '0') ? magnitude : negateAmount(magnitude);
+      }
+    }
+
+    // Advanced exports can value a USDC fill in USD and round Subtotal. The
+    // execution note names the actual pair, price and net consideration.
+    if (/^advanced trade (buy|sell)$/i.test(row.rawType)) {
+      const note = /^(Bought|Sold) ([\d.]+) (\S+) for ([\d.]+) (\S+) on (\S+)-(\S+) at ([\d.]+) (\S+)\/(\S+)$/i.exec(row.notes);
+      if (note) {
+        const [, verb, quantity, base, net, quote, productBase, productQuote, price, priceQuote, priceBase] = note;
+        const selling = verb.toLowerCase() === 'sold';
+        const noteQuantity = cleanAmount(quantity);
+        const noteNet = cleanAmount(net);
+        const gross = multiplyAmounts(absAmount(row.baseAmount), cleanAmount(price));
+        const expectedNet = gross === null ? null : addAmounts(gross, selling ? negateAmount(absAmount(row.fee) ?? '0') : absAmount(row.fee) ?? '0');
+        if (noteQuantity !== null && noteNet !== null && row.baseAmount !== null
+          && base === row.baseAsset && base === productBase && base === priceBase
+          && quote === productQuote && quote === priceQuote && base !== quote
+          && selling === isNegativeAmount(row.baseAmount ?? '0')
+          && compareAmounts(noteQuantity, absAmount(row.baseAmount)) === 0
+          && expectedNet !== null && compareAmounts(noteNet, expectedNet) === 0) {
+          quoteAsset = quote;
+          quoteAmount = selling ? gross : negateAmount(gross);
+          feeAsset = quote;
+        } else needsReview = true;
       }
     }
 
@@ -268,8 +300,8 @@ function parse(rows) {
         // Fees are stored as positive magnitudes across every importer: a fee is
         // a cost, and its sign in the source depends only on which side of the
         // ledger the exchange printed it from. Zero fees stay null.
-        fee_asset: row.fee && row.fee !== '0' ? row.priceCurrency : null,
-        fee_amount: row.fee && row.fee !== '0' ? absAmount(row.fee) : null,
+        fee_asset: fee && fee !== '0' ? feeAsset : null,
+        fee_amount: fee && fee !== '0' ? absAmount(fee) : null,
         tx_hash: null,
         address,
         external_id: row.externalId,

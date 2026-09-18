@@ -126,7 +126,7 @@ test('coinbase retail: $-prefixed amounts parse and a trade carries both legs pl
   // sale's subtotal the opposite way from a purchase's.
   const sell = records.get('cb:aaaa000000000000000000f4');
   assert.equal(sell.base_amount, '-0.25');
-  assert.equal(sell.quote_amount, '625.00');
+  assert.equal(sell.quote_amount, '625');
 });
 
 test('coinbase retail: addresses follow the direction of the transfer', () => {

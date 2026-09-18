@@ -1,12 +1,15 @@
 'use strict';
 
 const CoinbaseClient = require('./coinbaseClient');
+const { canonicalAsset } = require('../exchangeImport/canonicalFingerprint');
 const {
   UNKNOWN_RECORD_TYPE,
   cleanAmount,
   absAmount,
   negateAmount,
   addAmounts,
+  multiplyAmounts,
+  compareAmounts,
   isNegativeAmount,
   parseTimestamp,
   finalizeRecord,
@@ -28,9 +31,8 @@ const logger = require('../../config/logger');
 // transaction of type `advanced_trade_fill`. Importing both would double every
 // trade. The v2 feed is the canonical one because it is the only feed that
 // covers EVERYTHING -- sends, receives, rewards, fiat ramps, conversions --
-// and because the retail CSV export's ID column is the v2 transaction id, so
-// keying records on it is what makes an API backfill and a CSV upload of the
-// same period collapse onto the same rows instead of duplicating.
+// and supplies stable replay IDs. Some CSV exports use different legacy IDs;
+// cross-source deduplication must also check their economic details.
 // Fills are fetched only to fill in the quote leg and the real commission on
 // trades, which the v2 row alone does not always carry.
 
@@ -143,6 +145,51 @@ function currencyOf(money) {
   return code || null;
 }
 
+// Wallet-only accounts (including staking) are absent from Advanced Trade.
+// Join the two surfaces by account ID, not ticker: several wallets can own ETH.
+// Prefer v3 for an overlapping account because v2 rounds its balance to 8 dp.
+function accountBalances(brokerageAccounts, walletAccounts) {
+  const accounts = new Map();
+  let complete = true;
+  for (const [source, rows] of [['wallet', walletAccounts], ['brokerage', brokerageAccounts]]) {
+    const seen = new Map();
+    for (const row of rows) {
+      const id = source === 'wallet' ? row.id : row.uuid;
+      const code = source === 'wallet' ? currencyOf(row.balance) : currencyOf(row.available_balance);
+      const amount = source === 'wallet' ? amountOf(row.balance) : amountOf(row.available_balance);
+      const hold = source === 'wallet' ? '0' : amountOf(row.hold);
+      if (!id || !code || amount === null || hold === null
+        || (currencyOf(row.hold) && currencyOf(row.hold) !== code)) {
+        complete = false;
+        continue;
+      }
+      const total = addAmounts(amount, hold);
+      const previous = accounts.get(id);
+      if ((previous && canonicalAsset(EXCHANGE, previous.code) !== canonicalAsset(EXCHANGE, code))
+        || (seen.has(id) && seen.get(id) !== `${code}:${total}`)) complete = false;
+      seen.set(id, `${code}:${total}`);
+      accounts.set(id, { code, total, source, reported_balance: source === 'wallet' ? row.balance.amount : null });
+    }
+  }
+  const balances = {};
+  const balanceDetails = {};
+  for (const [id, { code, total, source, reported_balance }] of accounts) {
+    const asset = canonicalAsset(EXCHANGE, code);
+    balances[asset] = addAmounts(balances[asset] ?? '0', total);
+    const detail = balanceDetails[asset] ||= { provider_asset_codes: [], provider_balances: {}, accounts: [] };
+    detail.provider_asset_codes.push(code);
+    detail.provider_balances[code] = addAmounts(detail.provider_balances[code] ?? '0', total);
+    detail.accounts.push({ id, source, balance: total, ...(reported_balance !== null ? { reported_balance } : {}) });
+  }
+  return {
+    balances: Object.fromEntries(sortedEntries(balances)),
+    balance_details: Object.fromEntries(sortedEntries(balanceDetails).map(([asset, detail]) => [asset, {
+      ...detail, provider_asset_codes: [...new Set(detail.provider_asset_codes)].sort(),
+    }])),
+    complete,
+  };
+}
+
 // Missing provider ids are uncommon, but a fallback external id still has to
 // be stable when the same row is fetched again. JSON keeps object-valued
 // fields meaningful; String(object) would collapse every destination object
@@ -181,8 +228,15 @@ async function pageV2(client, path, {
       : { limit, order });
     pages += 1;
 
-    const data = Array.isArray(body?.data) ? body.data : [];
-    if (data.length === 0) break;
+    if (!Array.isArray(body?.data) || !body.pagination
+      || !Object.hasOwn(body.pagination, 'next_uri')) {
+      throw new Error('Coinbase v2 list omitted data or pagination; completeness cannot be established');
+    }
+    const data = body.data;
+    if (data.length === 0) {
+      if (body.pagination.next_uri) throw new Error('Coinbase returned an empty page with an unfinished cursor');
+      break;
+    }
 
     let stopped = false;
     for (const row of data) {
@@ -227,7 +281,8 @@ async function pageV3Accounts(client, { maxPages = 20 } = {}) {
   for (let page = 0; page < maxPages; page += 1) {
     const body = await client.listBrokerageAccounts({ limit: V3_ACCOUNT_LIMIT, cursor });
     accounts.push(...body.accounts);
-    if (!body.has_next) { truncated = false; break; }
+    if (body.has_next === false) { truncated = false; break; }
+    if (body.has_next !== true) break;
     if (!body.cursor) {
       logger.warn({ exchange: EXCHANGE, pages: page + 1 },
         'Coinbase brokerage account list claimed another page without a cursor; balance reconciliation skipped');
@@ -318,10 +373,8 @@ function summarizeFills(fills) {
 /**
  * One v2 transaction -> one exchange_records row.
  *
- * Keyed `cb:<transaction id>`, which is exactly what the retail CSV importer
- * builds from the export's ID column -- the two sources describe the same
- * event with the same id, so an overlapping CSV upload after an API backfill
- * dedupes instead of doubling.
+ * Keyed `cb:<transaction id>` for provider replay. A validated Advanced Trade
+ * quote-account mirror returns null: the base-account record carries both legs.
  */
 function recordFromTransaction(tx, { line, fillsByOrder }) {
   const rawType = String(tx.type ?? '').toLowerCase();
@@ -363,19 +416,6 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
   // the API and CSV readers would disagree about the body of a record they both
   // key `cb:<transaction id>`.
   //
-  // UNVERIFIED AGAINST A LIVE ACCOUNT -- the first thing to check with a real
-  // key. If Coinbase also writes an `advanced_trade_fill` transaction into the
-  // FIAT account for the same fill, that leg imports as its own record and the
-  // fiat side is counted twice: once as this record's quote and once as that
-  // record's base. The docs do not say either way and the retail CSV export
-  // writes a buy as a single self-contained row, which is why it is modelled
-  // that way here.
-  //
-  // Deliberately not guessed away: dropping the quote would leave every trade
-  // without a cost basis, silently. Keeping it makes the failure LOUD instead
-  // -- a doubled fiat position is exactly what the post-sync balance
-  // reconciliation compares against the live endpoint, so a wrong assumption
-  // here surfaces as a flagged account rather than as quietly wrong history.
   let quoteAsset = null;
   let quoteAmount = null;
   if (mapped === 'trade') {
@@ -411,6 +451,34 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
         quoteAmount = summary.quoteAmount;
       }
     }
+  }
+
+  // Advanced Trade writes the fill into BOTH asset accounts. native_amount is
+  // only a rounded display valuation (even for an ETH-USDC trade it can be USD).
+  // The product, signed base quantity and execution price define the trade.
+  // Selecting the base account deterministically also works across page/run
+  // boundaries; pairing only the current batch would duplicate resumed fills.
+  let incompleteFill = false;
+  if (rawType === 'advanced_trade_fill') {
+    const [productBase, productQuote, extra] = String(fill?.product_id ?? '').toUpperCase().split('-');
+    const side = String(fill?.order_side ?? '').toLowerCase();
+    const price = cleanAmount(fill?.fill_price);
+    const commission = cleanAmount(fill?.commission);
+    const valid = Boolean(productBase && productQuote && productBase !== productQuote && !extra
+      && ['buy', 'sell'].includes(side) && price && compareAmounts(price, '0') > 0
+      && commission !== null && compareAmounts(commission, '0') >= 0
+      && baseAmount && compareAmounts(baseAmount, '0') !== 0 && tx.id && occurredAt);
+    const expectedNegative = baseAsset === productBase ? side === 'sell' : side === 'buy';
+    const directionMatches = valid && isNegativeAmount(baseAmount) === expectedNegative;
+    if (directionMatches && baseAsset === productQuote && tx.status === 'completed') return null;
+    const exactQuote = directionMatches && baseAsset === productBase
+      ? multiplyAmounts(negateAmount(baseAmount), price) : null;
+    quoteAsset = exactQuote === null ? null : productQuote;
+    quoteAmount = exactQuote;
+    feeAsset = productQuote || feeAsset;
+    // Unknown metadata stays visible with its original account movement. Never
+    // substitute a display valuation or an entire order's aggregate proceeds.
+    incompleteFill = exactQuote === null;
   }
 
   // A fee with no asset is invisible to derivedBalances, which filters on
@@ -460,7 +528,7 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
     // both what surfaces it for review and what lets a later, complete fetch
     // of the SAME leg upgrade it in place. A fee whose currency nobody could
     // determine is flagged for a third: reconciliation cannot see it.
-    needs_review: isUnknown || directionUnknown || !hasNativeId || Boolean(tx._unpairedConversion) || feeUnattributed,
+    needs_review: isUnknown || directionUnknown || !hasNativeId || Boolean(tx._unpairedConversion) || feeUnattributed || incompleteFill,
     raw: { _format: 'coinbase', _source: 'api', ...tx },
   }, { line, amountCell });
 }
@@ -616,9 +684,8 @@ const coinbaseConnector = {
     const watermark = Number.isFinite(sinceMs) ? sinceMs - RESUME_OVERLAP_MS : null;
     const startedAt = new Date().toISOString();
 
-    // Advanced Trade balances -- the live figure the derived one is checked
-    // against, and the same call the probe makes.
-    const { accounts: brokerageAccounts, truncated: balancesTruncated } = await pageV3Accounts(client);
+    // Trading balances alone omit staking; merge them with the wallet list below.
+    const { accounts: brokerageAccounts, truncated: brokerageTruncated } = await pageV3Accounts(client);
     const balanceObservedAt = new Date().toISOString();
 
     const fills = await pageV3Fills(client, {
@@ -640,6 +707,13 @@ const coinbaseConnector = {
       maxPages: 25,
       startAfter: accountListStartAfter,
     });
+    // A resumed account-history enumeration contains only the tail. Balance
+    // snapshots must read a fresh full list, never combine balances from runs
+    // on different days or declare the tail to be the whole portfolio.
+    const balanceWallets = accountListStartAfter
+      ? await pageV2(client, '/v2/accounts', { maxPages: 25 }) : v2Accounts;
+    const normalizedBalances = accountBalances(brokerageAccounts, balanceWallets.rows);
+    const balancesTruncated = brokerageTruncated || balanceWallets.truncated || !normalizedBalances.complete;
     if (v2Accounts.truncated && !v2Accounts.resumeAfter) {
       const error = new Error('Coinbase account list was truncated without a resume cursor');
       error.code = 'COINBASE_CURSOR_STALLED';
@@ -736,31 +810,9 @@ const coinbaseConnector = {
     for (const tx of singles) {
       line += 1;
       const record = recordFromTransaction(tx, { line, fillsByOrder });
+      if (!record) continue;
       if (record.needs_review && TYPE_MAP[String(tx.type ?? '').toLowerCase()] === undefined) unknownTypes += 1;
       records.push(record);
-    }
-
-    const balances = {};
-    const balanceDetails = {};
-    for (const account of brokerageAccounts) {
-      const providerCode = currencyOf(account.available_balance) ?? String(account.currency ?? '').toUpperCase();
-      const asset = providerCode;
-      const available = amountOf(account.available_balance);
-      const hold = amountOf(account.hold);
-      if (!asset) continue;
-      // available + hold is the total position; comparing the ledger against
-      // `available` alone would flag every account with an open order.
-      // Seeded from '0' rather than null so the sum always runs through the
-      // exact scaled path and comes out in one canonical form -- "0.06" and
-      // "0.0600" must not read as two different balances.
-      balances[asset] = addAmounts(addAmounts(balances[asset] ?? '0', available ?? '0'), hold ?? '0');
-      const total = addAmounts(available ?? '0', hold ?? '0');
-      const detail = balanceDetails[asset] || { provider_asset_codes: [], provider_balances: {} };
-      detail.provider_asset_codes.push(providerCode);
-      detail.provider_balances[providerCode] = addAmounts(
-        detail.provider_balances[providerCode] ?? '0', total
-      );
-      balanceDetails[asset] = detail;
     }
 
     return {
@@ -790,11 +842,8 @@ const coinbaseConnector = {
           pending: {},
           done: [],
         },
-      balances: Object.fromEntries(sortedEntries(balances)),
-      balance_details: Object.fromEntries(sortedEntries(balanceDetails).map(([key, detail]) => [key, {
-        ...detail,
-        provider_asset_codes: [...new Set(detail.provider_asset_codes)].sort(),
-      }])),
+      balances: normalizedBalances.balances,
+      balance_details: normalizedBalances.balance_details,
       balance_observed_at: balanceObservedAt,
       // Half a live balance picture reads every unenumerated portfolio as zero
       // and flags a healthy account, so the caller skips the comparison rather
@@ -817,5 +866,5 @@ const coinbaseConnector = {
 
 module.exports = coinbaseConnector;
 module.exports._internals = {
-  pageV2, pageV3Fills, summarizeFills, foldConversions, recordFromTransaction, recordFromConversion,
+  pageV2, pageV3Fills, summarizeFills, foldConversions, recordFromTransaction, recordFromConversion, accountBalances,
 };

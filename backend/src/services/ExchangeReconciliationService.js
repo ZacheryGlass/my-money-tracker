@@ -2,6 +2,7 @@
 
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
+const { canonicalBalances } = require('./exchangeImport/canonicalFingerprint');
 const {
   absAmount, subtractAmounts, compareAmounts, scaleByPowerOfTen,
 } = require('./exchangeImport/shared');
@@ -132,7 +133,10 @@ function buildReconciliation({
     return { status: STATUS.UNKNOWN, report };
   }
 
-  const comparison = reconcile(derived, snapshot.balances);
+  const comparison = reconcile(
+    canonicalBalances(account.exchange, derived),
+    canonicalBalances(account.exchange, snapshot.balances)
+  );
   const snapshotTime = new Date(snapshotAt).getTime();
   const nowTime = new Date(checkedAt).getTime();
   const latestTime = latestAt ? new Date(latestAt).getTime() : null;

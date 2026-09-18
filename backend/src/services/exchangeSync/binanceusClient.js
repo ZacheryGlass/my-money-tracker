@@ -26,6 +26,7 @@ const ALLOWED_ENDPOINTS = new Set([
   '/sapi/v1/fiatpayment/query/deposit/history',
   '/sapi/v1/fiatpayment/query/withdraw/history',
   '/sapi/v1/staking/history',
+  '/sapi/v1/staking/stakingBalance',
   '/sapi/v1/staking/stakingRewardsHistory',
 ]);
 

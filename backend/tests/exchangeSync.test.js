@@ -416,7 +416,7 @@ function coinbaseResponse(url, config) {
     if (coinbaseAccountPages) {
       const after = config?.params?.starting_after;
       const index = after ? coinbaseAccountPages.findIndex((page) => page._after === after) : 0;
-      return { status: 200, data: coinbaseAccountPages[index] ?? { data: [], pagination: {} } };
+      return { status: 200, data: coinbaseAccountPages[index] ?? { data: [], pagination: { next_uri: null } } };
     }
     return { status: 200, data: COINBASE.v2Accounts };
   }
@@ -428,7 +428,7 @@ function coinbaseResponse(url, config) {
       if (!path.includes('11111111')) return { status: 200, data: { data: [], pagination: { next_uri: null } } };
       const after = config?.params?.starting_after;
       const index = after ? coinbaseTransactionPages.findIndex((page) => page._after === after) : 0;
-      return { status: 200, data: coinbaseTransactionPages[index] ?? { data: [], pagination: {} } };
+      return { status: 200, data: coinbaseTransactionPages[index] ?? { data: [], pagination: { next_uri: null } } };
     }
     // Only the first v2 account carries the transactions; the second returns
     // an empty page so the per-account loop is exercised both ways.
@@ -555,16 +555,19 @@ function useLegacyCoinbaseFixture() {
   coinbaseBrokeragePages = [{
     accounts: [
       {
+        uuid: '11111111-1111-1111-1111-111111111111',
         currency: 'BTC',
         available_balance: { value: '0.00030000', currency: 'BTC' },
         hold: { value: '0', currency: 'BTC' },
       },
       {
+        uuid: '22222222-2222-2222-2222-222222222222',
         currency: 'USD',
         available_balance: { value: '1.00', currency: 'USD' },
         hold: { value: '0', currency: 'USD' },
       },
       {
+        uuid: 'synthetic-staked-eth',
         currency: 'ETH2',
         available_balance: { value: '1.00000000', currency: 'ETH2' },
         hold: { value: '0', currency: 'ETH2' },
@@ -1147,6 +1150,39 @@ test('coinbase: buys, sends, rewards and conversions map to the right record typ
   assert.equal(byId.get('cb:cccccccc-0000-0000-0000-00000000000c').record_type, 'reward');
 });
 
+test('coinbase: sync emits one trade when both Advanced Trade account legs arrive', async () => {
+  const base = COINBASE.transactions.data.find(tx => tx.type === 'advanced_trade_fill');
+  const mirror = {
+    ...base, id: 'synthetic-quote-mirror',
+    amount: { amount: '-310', currency: 'USD' },
+  };
+  coinbaseTransactionPages = [{ data: [base, mirror], pagination: { next_uri: null } }];
+  const result = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: null }
+  );
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].external_id, `cb:${base.id}`);
+  assert.equal(result.records[0].quote_amount, '-310');
+  assert.equal(result.records[0].fee_amount, '1.55');
+});
+
+test('Coinbase live balances combine ETH and ETH2 and retain separate provider evidence', async () => {
+  coinbaseBrokeragePages = [{ accounts: [
+    { uuid: 'eth', currency: 'ETH', available_balance: { currency: 'ETH', value: '2.000000000000000001' }, hold: { value: '0.5' } },
+    { uuid: 'staked', currency: 'ETH2', available_balance: { currency: 'ETH2', value: '3' }, hold: { value: '0.25' } },
+    { uuid: 'wrapped', currency: 'cbETH', available_balance: { currency: 'cbETH', value: '7' }, hold: { value: '0' } },
+  ], has_next: false }];
+  const result = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey }, { cursor: null }
+  );
+  assert.equal(result.balances.ETH, '5.750000000000000001');
+  assert.equal(result.balances.ETH2, undefined);
+  assert.equal(result.balances.CBETH, '7');
+  assert.deepEqual(result.balance_details.ETH.provider_asset_codes, ['ETH', 'ETH2']);
+  assert.deepEqual(result.balance_details.ETH.provider_balances, { ETH: '2.500000000000000001', ETH2: '3.25' });
+});
+
 test('coinbase: an incoming send is a deposit and a directionless send fails closed', () => {
   const { recordFromTransaction } = coinbaseConnector._internals;
   const incoming = recordFromTransaction({
@@ -1308,6 +1344,7 @@ test('coinbase: an account list that was cut short is not reported as a finished
   // never read at all.
   assert.equal(result.stats.backfillPending, true);
   assert.equal(result.cursor.since, null);
+  assert.equal(result.balancesComplete, false, 'an incomplete wallet list cannot certify staking balances');
 });
 
 test('coinbase: an oversized account list resumes from its last account cursor', async () => {
@@ -1328,12 +1365,14 @@ test('coinbase: an oversized account list resumes from its last account cursor',
   assert.equal(first.cursor.accountsStartAfter, 'acct-2499');
 
   requests.length = 0;
-  await coinbaseConnector.sync(
+  const second = await coinbaseConnector.sync(
     { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
     { cursor: first.cursor, interactive: false }
   );
   const accountCalls = requests.filter((entry) => entry.path === '/v2/accounts');
   assert.equal(accountCalls[0].params.starting_after, 'acct-2499');
+  assert.ok(accountCalls.some(call => !call.params.starting_after), 'balance enumeration restarts from the head');
+  assert.equal(second.balancesComplete, false, 'the resumed tail alone is not a complete balance snapshot');
 });
 
 test('coinbase: a multi-run backfill dates the watermark from when it started', async () => {
@@ -2067,7 +2106,7 @@ test('coinbase: a commission with no native_amount takes its currency from the f
 
   assert.equal(rescued.fee_amount, '2.00');
   assert.equal(rescued.fee_asset, 'USD');
-  assert.equal(rescued.needs_review, false);
+  assert.equal(rescued.needs_review, true, 'missing execution metadata must remain reviewable');
 
   // Nothing anywhere names the currency: the fee is kept, because it was really
   // charged, and the row is flagged rather than stored in a shape

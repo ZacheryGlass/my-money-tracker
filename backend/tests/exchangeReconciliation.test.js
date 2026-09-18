@@ -10,6 +10,22 @@ const account = {
   credentials_updated_at: '2026-07-31T12:00:00.000Z',
 };
 
+test('Coinbase reconciliation combines both sides of a historical ETH/ETH2 snapshot', () => {
+  const result = ExchangeReconciliationService.buildReconciliation({
+    account: { ...account, exchange: 'coinbase' },
+    derived: { ETH: '2', ETH2: '3.000000000000000001', cbETH: '4' },
+    snapshot: {
+      provider: 'coinbase', credential_generation: account.credentials_updated_at,
+      observed_at: '2026-07-31T12:30:00.000Z', complete: true,
+      balances: { ETH: '1', ETH2: '4.000000000000000001', cbETH: '4' },
+    },
+    latestRecordAt: '2026-07-31T11:00:00.000Z', now: new Date('2026-07-31T13:00:00Z'),
+  });
+  assert.equal(result.status, 'current');
+  assert.equal(result.report.assets_checked, 2);
+  assert.equal(result.report.mismatch_count, 0);
+});
+
 test('a complete equal snapshot is current and preserves exact decimal strings', () => {
   const result = ExchangeReconciliationService.buildReconciliation({
     account,

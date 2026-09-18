@@ -93,6 +93,35 @@ module.exports = async function checkEthLedger(pool, ok) {
     unknown.unknown_amounts === 1 && unknown.closing_balance_wei === null
       && unknown.data.at(-1).balance_wei === null && unknown.data.at(-1).delta_wei === null
       && unknown.data[0].balance_wei === all.data[0].balance_wei);
+  const coinbase = (await pool.query(`INSERT INTO exchange_accounts (user_id, name, exchange)
+    VALUES ($1, 'Staking fixture', 'coinbase') RETURNING id`, [owner])).rows[0].id;
+  await pool.query(`INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at,
+    base_asset, base_amount, quote_asset, quote_amount, fee_asset, fee_amount, external_id, raw)
+    VALUES ($1, 'deposit', '2026-02-01', 'ETH', 10, NULL, NULL, NULL, NULL, 'stake-funding', '{}'),
+      ($1, 'conversion', '2026-02-02', 'ETH', -10, 'ETH2', 10, NULL, NULL, 'stake', '{"to":"ETH2"}'),
+      ($1, 'reward', '2026-02-03', 'ETH2', 0.500000000000000001, NULL, NULL, NULL, NULL, 'stake-reward', '{"asset":"ETH2"}'),
+      ($1, 'conversion', '2026-02-04', 'ETH2', -4, 'ETH', 4, 'ETH2', 0.01, 'unstake', '{"from":"ETH2"}'),
+      ($1, 'deposit', '2026-02-05', 'CBETH', 50, NULL, NULL, NULL, NULL, 'wrapped', '{}'),
+      ($2, 'deposit', '2026-02-05', 'ETH2', 99, NULL, NULL, NULL, NULL, 'unrelated-eth2', '{}')`, [coinbase, exchange]);
+  const original = (await pool.query('SELECT id, raw, external_id, base_amount, quote_amount, fee_amount FROM exchange_records WHERE exchange_account_id=$1 ORDER BY id', [coinbase])).rows;
+  const migration = require('node:fs').readFileSync(require('node:path').join(__dirname, '../migrations/090_coinbase_eth2_asset_alias.sql'), 'utf8');
+  await pool.query(migration);
+  const saved = (await pool.query('SELECT id, raw, external_id, base_amount, quote_amount, fee_amount FROM exchange_records WHERE exchange_account_id=$1 ORDER BY id', [coinbase])).rows;
+  const balance = await ExchangeRecord.derivedBalances(coinbase, owner);
+  const stakingLedger = await EthLedger.findForUser(owner, { scope: `exchange:${coinbase}` });
+  ok('Coinbase ETH2 migration preserves quantities, source evidence and record identities', JSON.stringify(original) === JSON.stringify(saved));
+  ok('ETH staking principal cancels and rewards and fees contribute exactly once',
+    balance.ETH === '10.490000000000000001' && balance.ETH2 === undefined
+      && balance.CBETH === '50.000000000000000000' && stakingLedger.closing_balance_wei === '10490000000000000001'
+      && stakingLedger.data.length === 7);
+  const byReference = ref => stakingLedger.data.filter(r => r.reference === ref).reduce((sum, r) => sum + BigInt(r.delta_wei), 0n);
+  ok('ETH2 staking and unstaking preserve principal in the running ledger',
+    byReference('stake') === 0n && byReference('unstake') === -10000000000000000n);
+  const otherBalance = await ExchangeRecord.derivedBalances(exchange, owner);
+  ok('Coinbase ETH2 alias does not merge another venue or another users data',
+    otherBalance.ETH2 === '99.000000000000000000'
+      && (await EthLedger.findForUser(2, { scope: `exchange:${coinbase}` })).data.length === 0);
+  ok('ETH2 migration is idempotent', (await pool.query(migration)).rowCount === 0);
   await pool.query('DELETE FROM eth_wallets WHERE user_id = $1', [owner]);
   await pool.query('DELETE FROM exchange_accounts WHERE user_id = $1', [owner]);
   await pool.query('DELETE FROM users WHERE id = $1', [owner]);
