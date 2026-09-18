@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const BinanceUSClient = require('./binanceusClient');
 const {
   cleanAmount,
@@ -25,6 +26,9 @@ const EXCHANGE = 'binance_us';
 const TRADE_PAGE_SIZE = 1000;
 const CAPITAL_PAGE_SIZE = 1000;
 const DISTRIBUTION_PAGE_SIZE = 500;
+const CAPITAL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+// Binance.US first accepted deposits in September 2019. Include that entire month.
+const HISTORY_START = Date.UTC(2019, 8, 1);
 const MAX_REQUESTS_INTERACTIVE = 100;
 const MAX_REQUESTS_JOB = 1000;
 const MAX_SYMBOLS = 2000;
@@ -103,7 +107,7 @@ function capitalRecord(row, type) {
   const external = row.id ?? row.withdrawOrderId ?? row.txId ?? row.txid
     ?? contentId(`binanceus:${type}`, [coin, row.amount, occurredAt, txHash, row.address]);
   const status = String(row.status ?? '').toLowerCase();
-  const successful = !status || ['success', 'completed', '1', 'confirmed'].includes(status);
+  const successful = !status || ['success', 'completed', 'confirmed', isDeposit ? '1' : '6'].includes(status);
   const malformed = !occurredAt || !coin || rawAmount === null || !successful;
   return record({
     record_type: isDeposit ? 'deposit' : 'withdrawal', occurred_at: occurredAt,
@@ -116,7 +120,7 @@ function capitalRecord(row, type) {
   }, row.amount);
 }
 
-function distributionRecord(row) {
+function distributionRecord(row, endpoint = '/sapi/v1/asset/assetDistributionHistory') {
   const coin = asset(row.asset || row.coin);
   const rawAmount = amount(row.amount);
   const occurredAt = timestampOf(row.divTime, row.insertTime, row.time);
@@ -129,7 +133,7 @@ function distributionRecord(row) {
     fee_asset: null, fee_amount: null, tx_hash: null, address: null,
     network: null, chain_id: null, external_id: `binanceus:distribution:${id}`,
     needs_review: !occurredAt || !coin || rawAmount === null,
-    raw: rawRecord('/sapi/v1/asset/assetDistributionHistory', row),
+    raw: rawRecord(endpoint, row),
   }, row.amount);
 }
 
@@ -235,29 +239,40 @@ function accountBalanceDetails(body, staking = null) {
   return { balances, balanceDetails, complete };
 }
 
-function emptyCursor() {
+function emptyCursor(capitalThrough = {}) {
   return {
-    version: 1, phase: 'trades', symbolIndex: 0, tradeFromId: null,
-    coinIndex: 0, depositOffset: 0, withdrawalOffset: 0,
-    fiatDepositPage: 1, fiatWithdrawPage: 1,
+    version: 2, phase: 'trades', symbolIndex: 0, tradeFromId: null,
+    coinIndex: 0, capitalCoins: null, capitalEnd: null, capitalStart: null,
+    capitalFeed: 'deposit', capitalOffset: 0, capitalFingerprint: null, capitalThrough: { ...capitalThrough },
+    rewardsPage: 1, rewardsEnd: null, rewardsFingerprint: null,
     fiatDepositDone: false, fiatWithdrawDone: false,
-    fiatDepositFingerprint: null, fiatWithdrawFingerprint: null,
-    fiatDepositHistory: [], fiatWithdrawHistory: [],
     distributionEnd: null, dustEnd: null,
   };
 }
 
 function normalizeCursor(cursor) {
-  const base = emptyCursor();
-  if (!cursor || typeof cursor !== 'object') return base;
-  return { ...base, ...cursor, version: 1 };
+  // v1 only queried the implicit recent capital window. Restart once rather
+  // than reinterpret its offsets as proof of historical coverage. Replay IDs
+  // make the other feeds safe to revisit too.
+  return cursor?.version === 2 ? { ...emptyCursor(), ...cursor, capitalThrough: { ...cursor.capitalThrough } } : emptyCursor();
+}
+
+function pageFingerprint(rows) {
+  return crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+}
+
+function historyError(message) {
+  const error = new Error(`Binance.US ${message}`);
+  error.code = 'BINANCE_US_HISTORY_INCOMPLETE';
+  return error;
 }
 
 function advancePhase(state, phase) {
   const order = ['trades', 'capital', 'fiat', 'distributions', 'dust'];
   const index = order.indexOf(phase);
   const next = order[index + 1];
-  return next ? { ...state, phase: next } : { ...emptyCursor(), phase: 'trades' };
+  return next ? { ...state, phase: next } : { ...emptyCursor(state.capitalThrough), rewardsPage: state.rewardsPage,
+    rewardsEnd: state.rewardsEnd, rewardsFingerprint: state.rewardsFingerprint };
 }
 
 async function sync(credentials, { cursor = null, interactive = true } = {}) {
@@ -269,6 +284,7 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   let backfillPending = false;
   let unknownTypes = 0;
   let completedAllPhases = false;
+  const feedLimitations = [];
 
   const call = async (path, params = {}, options = {}) => {
     requests += 1;
@@ -289,7 +305,46 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   const symbolMap = new Map(symbols.map((row) => [String(row.symbol).toUpperCase(), {
     baseAsset: row.baseAsset, quoteAsset: row.quoteAsset,
   }]));
-  const coins = listCoins(await call('/sapi/v1/capital/config/getall'));
+  const config = await call('/sapi/v1/capital/config/getall');
+  if (!Array.isArray(config)) throw historyError('coin list is malformed');
+  const coins = listCoins(config);
+
+  // Read one rewards page on EVERY batch, including while the much larger
+  // capital backfill is pending. Stable provider IDs are shared with CSV and
+  // distribution records; staking principal and restakes never become income.
+  try {
+    const endTime = state.rewardsEnd ?? Date.now();
+    const body = await call('/sapi/v1/staking/stakingRewardsHistory', {
+      startTime: 0, endTime, page: state.rewardsPage, limit: DISTRIBUTION_PAGE_SIZE,
+    });
+    if (body?.success !== true || body.code !== '000000' || !Array.isArray(body.data)
+        || !Number.isSafeInteger(body.total) || body.total < 0) {
+      throw historyError('staking rewards response is malformed');
+    }
+    const rows = body.data;
+    const read = (state.rewardsPage - 1) * DISTRIBUTION_PAGE_SIZE + rows.length;
+    if (rows.length > DISTRIBUTION_PAGE_SIZE || read > body.total
+        || (rows.length < DISTRIBUTION_PAGE_SIZE && read < body.total)
+        || rows.some(row => !row || row.tranId === undefined || row.tranId === null)) {
+      throw historyError('staking rewards page is incomplete');
+    }
+    const fingerprint = pageFingerprint(rows);
+    if (rows.length && fingerprint === state.rewardsFingerprint) {
+      throw historyError('staking rewards pagination repeated a page');
+    }
+    records.push(...rows.map(row => distributionRecord(row, '/sapi/v1/staking/stakingRewardsHistory')));
+    if (read < body.total) {
+      state.rewardsPage += 1;
+      state.rewardsEnd = endTime;
+      state.rewardsFingerprint = fingerprint;
+      backfillPending = true;
+    } else {
+      state.rewardsPage = 1; state.rewardsEnd = null; state.rewardsFingerprint = null;
+    }
+  } catch (error) {
+    backfillPending = true;
+    feedLimitations.push(`Binance.US staking reward history is incomplete: ${error.message}`);
+  }
 
   // Trades are symbol-specific. A page full of rows advances by trade id;
   // a short page completes that symbol. Delisted symbols are not in
@@ -324,25 +379,51 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   }
   if (state.phase === 'trades' && state.symbolIndex < symbols.length) backfillPending = true;
 
-  // Deposit/withdrawal history is paged per coin by offset. Both endpoints
-  // return at most 1000 rows and expose tx id/address/network for matching.
-  while (state.phase === 'capital' && requests < budget) {
-    const coin = coins[state.coinIndex];
-    if (!coin) { Object.assign(state, advancePhase(state, 'capital')); break; }
-    const deposits = await call('/sapi/v1/capital/deposit/hisrec', { coin, offset: state.depositOffset, limit: CAPITAL_PAGE_SIZE });
-    const withdrawals = await call('/sapi/v1/capital/withdraw/history', { coin, offset: state.withdrawalOffset, limit: CAPITAL_PAGE_SIZE });
-    for (const item of Array.isArray(deposits) ? deposits : []) records.push(capitalRecord(item, 'deposit'));
-    for (const item of Array.isArray(withdrawals) ? withdrawals : []) records.push(capitalRecord(item, 'withdrawal'));
-    const depositFull = Array.isArray(deposits) && deposits.length >= CAPITAL_PAGE_SIZE;
-    const withdrawalFull = Array.isArray(withdrawals) && withdrawals.length >= CAPITAL_PAGE_SIZE;
-    if (depositFull) state.depositOffset += CAPITAL_PAGE_SIZE;
-    else state.depositOffset = 0;
-    if (withdrawalFull) state.withdrawalOffset += CAPITAL_PAGE_SIZE;
-    else state.withdrawalOffset = 0;
-    if (!depositFull && !withdrawalFull) state.coinIndex += 1;
-    if (requests >= budget && (depositFull || withdrawalFull)) backfillPending = true;
+  // Capital requires both a coin and explicit <=90-day windows. Freeze the
+  // coin list and upper bound across batches; a changed provider list must not
+  // make a saved numeric index skip a coin. Checkpoints survive generations.
+  if (state.phase === 'capital' && state.capitalCoins === null) {
+    state.capitalCoins = [...new Set([...coins, ...Object.keys(state.capitalThrough)])].sort();
+    state.capitalEnd = Date.now();
   }
-  if (state.phase === 'capital' && state.coinIndex < coins.length) backfillPending = true;
+  while (state.phase === 'capital' && requests < budget) {
+    const coin = state.capitalCoins[state.coinIndex];
+    if (!coin) { Object.assign(state, advancePhase(state, 'capital')); break; }
+    const startTime = state.capitalStart ?? Math.max(
+      HISTORY_START, (state.capitalThrough[coin] ?? HISTORY_START) - CAPITAL_WINDOW_MS
+    );
+    const endTime = Math.min(startTime + CAPITAL_WINDOW_MS - 1, state.capitalEnd);
+    const isDeposit = state.capitalFeed === 'deposit';
+    const endpoint = isDeposit ? 'deposit/hisrec' : 'withdraw/history';
+    const rows = await call(`/sapi/v1/capital/${endpoint}`, {
+      coin, startTime, endTime, offset: state.capitalOffset, limit: CAPITAL_PAGE_SIZE,
+    });
+    if (!Array.isArray(rows) || rows.length > CAPITAL_PAGE_SIZE) {
+      throw historyError(`${state.capitalFeed} history is malformed`);
+    }
+    const fingerprint = pageFingerprint(rows);
+    if (rows.length && fingerprint === state.capitalFingerprint) {
+      throw historyError(`${state.capitalFeed} pagination repeated a page`);
+    }
+    records.push(...rows.map(row => capitalRecord(row, isDeposit ? 'deposit' : 'withdrawal')));
+    if (rows.length === CAPITAL_PAGE_SIZE) {
+      state.capitalOffset += CAPITAL_PAGE_SIZE;
+      state.capitalFingerprint = fingerprint;
+      state.capitalStart = startTime;
+    } else {
+      state.capitalOffset = 0; state.capitalFingerprint = null;
+      if (isDeposit) {
+        state.capitalFeed = 'withdrawal'; state.capitalStart = startTime;
+      } else {
+        state.capitalFeed = 'deposit';
+        state.capitalStart = endTime + 1;
+        if (endTime === state.capitalEnd) {
+          state.capitalThrough[coin] = endTime;
+          state.coinIndex += 1; state.capitalStart = null;
+        }
+      }
+    }
+  }
 
   // Fiat history is not a generic page/rows endpoint. Binance.US exposes an
   // offset plus a provider-defined (currently 90-day) time window and returns
@@ -371,7 +452,7 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
     }
     const body = await call('/sapi/v1/asset/assetDistributionHistory', params);
     const rows = Array.isArray(body?.rows) ? body.rows : (Array.isArray(body) ? body : []);
-    records.push(...rows.map(distributionRecord));
+    records.push(...rows.map(row => distributionRecord(row)));
     if (rows.length >= DISTRIBUTION_PAGE_SIZE) {
       const times = rows.map((row) => Date.parse(timestampOf(row.divTime, row.insertTime, row.time) || '')).filter(Number.isFinite);
       const oldest = times.length ? Math.min(...times) : null;
@@ -421,11 +502,12 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   // phase marker has not advanced yet. Treat that as pending too; the next
   // batch will advance it without skipping the following feed.
   if (!completedAllPhases) backfillPending = true;
-  if (completedAllPhases && !backfillPending) Object.assign(state, emptyCursor());
+  if (completedAllPhases && !backfillPending) Object.assign(state, emptyCursor(state.capitalThrough));
 
   const coverageLimitations = [
     'Binance.US exchangeInfo omits delisted symbols; historical trades for those symbols require an export.',
-    'Product-specific staking/Earn and internal venue-transfer history are not asserted by the generic feeds; retain an account export for those rows.',
+    'Staking rewards are fetched separately; staking allocations and internal venue transfers are not asserted as external flows or income.',
+    ...feedLimitations,
     'Binance.US fiat history uses a provider-defined 90-day window; older fiat deposits or withdrawals require an account export.',
     ...(symbolsTruncated
       ? [`Binance.US returned more than ${MAX_SYMBOLS} symbols; the trade walk is capped at the first ${MAX_SYMBOLS}.`]
@@ -467,5 +549,5 @@ module.exports = connector;
 module.exports.MAX_REQUESTS_INTERACTIVE = MAX_REQUESTS_INTERACTIVE;
 module.exports._internals = {
   timestampOf, tradeRecord, capitalRecord, distributionRecord, dustRecord, fiatRecord,
-  accountBalances, accountBalanceDetails, normalizeCursor, emptyCursor,
+  accountBalances, accountBalanceDetails, normalizeCursor, emptyCursor, HISTORY_START, CAPITAL_WINDOW_MS,
 };

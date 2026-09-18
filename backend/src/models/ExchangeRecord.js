@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const logger = require('../config/logger');
 const {
   FINGERPRINT_VERSION,
+  canonicalAmount,
   conflictingDetails,
   sourceSnapshot,
 } = require('../services/exchangeImport/canonicalFingerprint');
@@ -261,6 +262,38 @@ class ExchangeRecord {
       const auditedIncomingIds = new Set(
         dedupeAuditResult.rows.map((row) => row.incoming_external_id)
       );
+      // Binance capital APIs expose submission time/hash-based IDs; CSVs may
+      // expose later credit time/different native IDs. Legacy CSVs may also
+      // predate fingerprints. An amount/time resemblance is NOT identity:
+      // refuse the batch rather than silently count both or auto-merge them.
+      const binanceCapital = unique.filter(record => record.source === 'api'
+        && record.raw?._format === 'binance_us'
+        && ['deposit', 'withdrawal'].includes(record.record_type)
+        && !existingById.has(record.external_id) && !auditedIncomingIds.has(record.external_id));
+      if (binanceCapital.length) {
+        const csv = await database.query(
+          `SELECT er.* FROM exchange_records er
+           WHERE er.exchange_account_id = $1
+             AND er.record_type IN ('deposit', 'withdrawal')
+             AND (er.source = 'csv' OR er.raw->>'_source' = 'csv')
+           FOR UPDATE`, [exchangeAccountId]
+        );
+        const overlaps = binanceCapital.flatMap(incoming => csv.rows.filter(existing =>
+          existing.record_type === incoming.record_type
+          && existing.base_asset === incoming.base_asset
+          && canonicalAmount(existing.base_amount) !== null
+          && canonicalAmount(existing.base_amount) === canonicalAmount(incoming.base_amount)
+          && Math.abs(new Date(existing.occurred_at) - new Date(incoming.occurred_at)) <= 86400000
+          && !(existing.tx_hash && incoming.tx_hash
+            && existing.tx_hash.toLowerCase() !== incoming.tx_hash.toLowerCase())
+        ).map(existing => ({ record_id: existing.id, incoming_external_id: incoming.external_id })));
+        if (overlaps.length) {
+          const error = new Error('Binance.US capital history overlaps existing CSV records. Review the possible duplicates before this batch can be imported.');
+          error.code = 'BINANCE_US_CAPITAL_OVERLAP';
+          error.candidates = overlaps;
+          throw error;
+        }
+      }
       const incomingByFingerprint = new Map();
       for (const record of unique) {
         if (!record.fingerprint) continue;

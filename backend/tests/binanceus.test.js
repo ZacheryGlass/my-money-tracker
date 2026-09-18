@@ -106,6 +106,7 @@ test('Binance.US history feeds use endpoint-specific request contracts', async (
     requests.push({ path, params });
     if (path === '/api/v3/account') return { balances: [] };
     if (path === '/sapi/v1/staking/stakingBalance') return { success: true, code: '000000', data: [] };
+    if (path === '/sapi/v1/staking/stakingRewardsHistory') return { success: true, code: '000000', total: 0, data: [] };
     if (path === '/api/v3/exchangeInfo') return { symbols: [] };
     if (path === '/sapi/v1/capital/config/getall') return [];
     if (path === '/sapi/v1/fiatpayment/query/deposit/history') {
@@ -146,6 +147,7 @@ test('Binance.US staking outage keeps history available but refuses a complete b
   BinanceUSClient.prototype.get = async function get(path) {
     if (path === '/api/v3/account') return { balances: [{ asset: 'ETH', free: '1', locked: '0' }] };
     if (path === '/sapi/v1/staking/stakingBalance') throw new Error('Staking read unavailable');
+    if (path === '/sapi/v1/staking/stakingRewardsHistory') return { success: true, code: '000000', total: 0, data: [] };
     if (path === '/api/v3/exchangeInfo') return { symbols: [] };
     if (path === '/sapi/v1/capital/config/getall') return [];
     if (path.includes('/fiatpayment/')) return { assetLogRecordList: [] };
@@ -160,4 +162,169 @@ test('Binance.US staking outage keeps history available but refuses a complete b
     assert.equal(result.stats.backfillPending, false);
     assert.ok(result.coverageLimitations.some(reason => reason.includes('staking balances are unavailable')));
   } finally { BinanceUSClient.prototype.get = originalGet; }
+});
+
+// Synthetic responses only; no customer history in this public repository.
+async function withHistoryApi({ coins = ['ETH'], now, respond }, run) {
+  const originalGet = BinanceUSClient.prototype.get;
+  const originalNow = Date.now;
+  const requests = [];
+  let clock = now ?? connector._internals.HISTORY_START + 86400000;
+  Date.now = () => clock;
+  BinanceUSClient.prototype.get = async function get(path, params = {}) {
+    requests.push({ path, params: { ...params } });
+    const custom = await respond?.(path, params);
+    if (custom !== undefined) return custom;
+    if (path === '/api/v3/account') return { balances: [] };
+    if (path === '/sapi/v1/staking/stakingBalance') return { success: true, code: '000000', data: [] };
+    if (path === '/sapi/v1/staking/stakingRewardsHistory') return { success: true, code: '000000', total: 0, data: [] };
+    if (path === '/api/v3/exchangeInfo') return { symbols: [] };
+    if (path === '/sapi/v1/capital/config/getall') return coins.map(coin => ({ coin }));
+    if (path.includes('/capital/')) return [];
+    if (path.includes('/fiatpayment/')) return { assetLogRecordList: [] };
+    if (path.includes('assetDistributionHistory')) return { rows: [] };
+    if (path.includes('dust-logs')) return { userDustConvertHistory: [] };
+    throw new Error(`Unexpected endpoint ${path}`);
+  };
+  try { await run({ requests, setNow: value => { clock = value; } }); }
+  finally { BinanceUSClient.prototype.get = originalGet; Date.now = originalNow; }
+}
+const credentials = { apiKey: 'synthetic-key', apiSecret: 'synthetic-secret' };
+const capitalRequests = requests => requests.filter(r => /capital\/(deposit|withdraw)\//.test(r.path));
+
+test('Binance.US backfills contiguous 90-day windows and keeps per-coin checkpoints', async () => {
+  const { HISTORY_START: start, CAPITAL_WINDOW_MS: window } = connector._internals;
+  const end = start + window * 2 + 4321;
+  await withHistoryApi({ now: end }, async ({ requests, setNow }) => {
+    const first = await connector.sync(credentials);
+    const calls = capitalRequests(requests);
+    assert.equal(calls.length, 6);
+    for (let i = 0; i < 3; i += 1) {
+      assert.equal(calls[i * 2].params.startTime, start + i * window);
+      assert.equal(calls[i * 2].params.endTime, Math.min(end, start + (i + 1) * window - 1));
+      assert.deepEqual(calls[i * 2].params, calls[i * 2 + 1].params);
+      assert.equal(calls[i * 2].params.coin, 'ETH');
+    }
+    assert.equal(first.stats.backfillPending, false);
+    assert.equal(first.cursor.capitalThrough.ETH, end);
+    requests.length = 0;
+    setNow(end + 86400000);
+    const next = await connector.sync(credentials, { cursor: first.cursor });
+    assert.equal(capitalRequests(requests)[0].params.startTime, end - window);
+    assert.equal(next.cursor.capitalThrough.ETH, end + 86400000);
+    assert.equal(first.cursor.capitalThrough.ETH, end, 'caller cursor is immutable');
+  });
+});
+
+test('Binance.US capital pagination finishes deposits before walking withdrawals', async () => {
+  const start = connector._internals.HISTORY_START;
+  const deposit = id => ({ id, coin: 'ETH', amount: '0.001', insertTime: start + 5000, status: 1 });
+  await withHistoryApi({ respond(path, params) {
+    if (path.endsWith('/deposit/hisrec')) return params.offset === 0
+      ? Array.from({ length: 1000 }, (_, id) => deposit(`synthetic-${id}`)) : [deposit('synthetic-final')];
+  } }, async ({ requests }) => {
+    const result = await connector.sync(credentials);
+    assert.equal(result.records.length, 1001);
+    assert.equal(result.stats.backfillPending, false);
+    const calls = capitalRequests(requests);
+    assert.deepEqual(calls.map(c => c.params.offset), [0, 1000, 0]);
+    assert.ok(calls[2].path.endsWith('/withdraw/history'));
+  });
+});
+
+test('Binance.US capital resumes at the budget boundary with frozen coins and time range', async () => {
+  const coins = Array.from({ length: 50 }, (_, i) => `COIN${String(i).padStart(2, '0')}`);
+  await withHistoryApi({ coins }, async ({ requests, setNow }) => {
+    const first = await connector.sync(credentials);
+    assert.equal(first.stats.requests, connector.MAX_REQUESTS_INTERACTIVE);
+    assert.equal(first.stats.backfillPending, true);
+    assert.equal(first.cursor.phase, 'capital');
+    assert.equal(first.cursor.capitalFeed, 'withdrawal');
+    const boundary = first.cursor.capitalEnd;
+    const old = JSON.stringify(first.cursor);
+    coins.reverse(); coins.unshift('NEWCOIN');
+    requests.length = 0;
+    setNow(boundary + 86400000);
+    const second = await connector.sync(credentials, { cursor: first.cursor });
+    assert.equal(JSON.stringify(first.cursor), old);
+    const calls = capitalRequests(requests);
+    assert.equal(calls[0].params.coin, 'COIN47');
+    assert.ok(calls[0].path.endsWith('/withdraw/history'));
+    assert.ok(calls.every(c => c.params.endTime === boundary));
+    assert.equal(second.stats.backfillPending, false);
+    assert.equal(Object.keys(second.cursor.capitalThrough).length, 50);
+    assert.equal(second.cursor.capitalThrough.NEWCOIN, undefined);
+    assert.ok(requests.some(r => r.path.endsWith('/stakingRewardsHistory')));
+  });
+});
+
+test('Binance.US v1 cursor restarts rather than asserting historical coverage', () => {
+  const result = connector._internals.normalizeCursor({ version: 1, phase: 'dust', coinIndex: 999, depositOffset: 1000 });
+  assert.equal(result.version, 2);
+  assert.equal(result.phase, 'trades');
+  assert.equal(result.coinIndex, 0);
+  assert.deepEqual(result.capitalThrough, {});
+});
+
+test('Binance.US staking rewards preserve replay IDs and paginate across batches', async () => {
+  const start = connector._internals.HISTORY_START;
+  const reward = id => ({ asset: 'ETH', amount: '0.0001', time: start + 6000, tranId: id, autoRestaked: true });
+  await withHistoryApi({ coins: [], respond(path, params) {
+    if (path.endsWith('/stakingRewardsHistory')) return {
+      success: true, code: '000000', total: 501,
+      data: params.page === 1 ? Array.from({ length: 500 }, (_, i) => reward(i + 1)) : [reward(501)],
+    };
+  } }, async ({ requests, setNow }) => {
+    const first = await connector.sync(credentials);
+    assert.equal(first.records.length, 500);
+    assert.equal(first.cursor.rewardsPage, 2);
+    assert.equal(first.stats.backfillPending, true);
+    const fixedEnd = first.cursor.rewardsEnd;
+    requests.length = 0;
+    setNow(fixedEnd + 86400000);
+    const second = await connector.sync(credentials, { cursor: first.cursor });
+    assert.equal(requests.find(r => r.path.endsWith('/stakingRewardsHistory')).params.endTime, fixedEnd);
+    assert.equal(second.stats.backfillPending, false);
+    assert.equal(second.cursor.rewardsPage, 1);
+    assert.equal(second.records[0].external_id, 'binanceus:distribution:501');
+    assert.equal(second.records[0].record_type, 'reward');
+    assert.equal(second.records[0].base_amount, '0.0001');
+    assert.equal(second.records[0].raw._source_endpoint, '/sapi/v1/staking/stakingRewardsHistory');
+    assert.equal(second.records[0].raw.autoRestaked, true);
+    assert.ok(!requests.some(r => r.path.endsWith('/staking/history')));
+  });
+});
+
+test('Binance.US reward failure preserves other feeds and refuses completion', async () => {
+  await withHistoryApi({ respond(path) {
+    if (path.endsWith('/stakingRewardsHistory')) return { success: true, code: '000000', total: 10, data: [] };
+  } }, async () => {
+    const result = await connector.sync(credentials);
+    assert.equal(result.stats.backfillPending, true);
+    assert.equal(result.cursor.rewardsPage, 1);
+    assert.ok(result.coverageLimitations.some(r => r.includes('rewards page is incomplete')));
+    assert.ok(result.cursor.capitalThrough.ETH);
+  });
+});
+
+test('Binance.US malformed or repeated capital pages cannot advance durable coverage', async () => {
+  for (const body of [{ rows: [] }, Array.from({ length: 1000 }, (_, id) => ({
+    id: `synthetic-${id}`, coin: 'ETH', amount: '0.001', status: 1,
+    insertTime: connector._internals.HISTORY_START + 5000,
+  }))]) {
+    await withHistoryApi({ respond(path) { if (path.endsWith('/deposit/hisrec')) return body; } }, async () => {
+      const cursor = connector._internals.emptyCursor(); cursor.phase = 'capital';
+      const before = JSON.stringify(cursor);
+      await assert.rejects(connector.sync(credentials, { cursor }), { code: 'BINANCE_US_HISTORY_INCOMPLETE' });
+      assert.equal(JSON.stringify(cursor), before);
+    });
+  }
+});
+
+test('Binance.US withdrawal completion status differs from deposit status', () => {
+  const row = { id: 'synthetic-withdrawal', coin: 'ETH', amount: '2', transactionFee: '0.01', applyTime: 1700000000000 };
+  assert.equal(connector._internals.capitalRecord({ ...row, status: 6 }, 'withdrawal').needs_review, false);
+  assert.equal(connector._internals.capitalRecord({ ...row, status: 1 }, 'withdrawal').needs_review, true);
+  assert.equal(connector._internals.capitalRecord({ ...row, status: 1 }, 'deposit').needs_review, false);
+  assert.equal(connector._internals.capitalRecord({ ...row, status: 6 }, 'withdrawal').fee_amount, '0.01');
 });
