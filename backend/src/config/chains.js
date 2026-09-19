@@ -130,6 +130,8 @@ const REGISTRY = [
     accountApi: {
       provider: 'Blockscout',
       baseUrl: 'https://arbitrum-nova.blockscout.com/api',
+      v2BaseUrl: 'https://arbitrum-nova.blockscout.com/api/v2/',
+      v2NormalTransactions: true,
       requiresApiKey: false,
     },
     consensusRpcUrl: configuredRpcUrl(
@@ -155,9 +157,25 @@ const REGISTRY = [
     coingeckoPlatform: 'zksync',
     enabledByDefault: true,
     accountApi: {
+      // Keep Blockscout for token/NFT feeds: Matter Labs' official explorer
+      // does not publish the same complete token1155tx contract. Native
+      // account history is routed separately through the official explorer.
       provider: 'Blockscout',
       baseUrl: 'https://zksync.blockscout.com/api',
       requiresApiKey: false,
+      nativeHistoryApi: {
+        // Its indexed-block endpoint matched the public RPC head, an inactive
+        // wallet canary exhausted both native feeds from genesis, and a recent
+        // internal-value positive control matched debug_traceTransaction on
+        // 2026-09-19. Its documented page maximum is 100 rows.
+        provider: 'ZKsync Explorer',
+        baseUrl: 'https://block-explorer-api.mainnet.zksync.io/api',
+        requiresApiKey: false,
+        pageSize: 100,
+        blockPageSize: 100,
+        normalFeeField: 'fee',
+        verifyRpcIndexedHead: true,
+      },
     },
     rpcUrl: configuredRpcUrl('ZKSYNC_ERA_RPC_URL', 'https://mainnet.era.zksync.io'),
     traceRpcUrl: configuredRpcUrl('ZKSYNC_ERA_TRACE_RPC_URL', null),
@@ -220,21 +238,21 @@ const REGISTRY = [
     coingeckoPlatform: 'xdai',
     enabledByDefault: true,
     // Gnosis' own documentation names this Blockscout instance as an execution
-    // explorer. Its legacy account API was live-probed against balance,
-    // txlist, txlistinternal, tokentx, tokennfttx and token1155tx on
-    // 2026-07-29. Blockscout explicitly reports incompletely indexed internal
-    // ranges; those are recorded as a visible feed gap rather than ingested as
-    // complete history.
+    // explorer. The legacy API remains healthy for the ordinary account feeds,
+    // but its txlistinternal route reports old ranges as incompletely indexed.
+    // Blockscout V2 passed two independent history canaries on 2026-09-19: an
+    // inactive address returned an exhausted empty history, while an active
+    // address returned every independently recovered trace plus a previously
+    // unseen trace. The adapter still requires V2's global block and internal
+    // indexing ratios to be 100% before it accepts any page as complete.
     accountApi: {
       provider: 'Blockscout',
-      baseUrl: 'https://gnosis.blockscout.com/api',
+      baseUrl: 'https://gnosisscan.io/api',
+      v2BaseUrl: 'https://gnosisscan.io/api/v2/',
+      v2NormalTransactions: true,
+      v2InternalTransactions: true,
       requiresApiKey: false,
     },
-    // Keep the explicit Blockscout gap until an alternative passes historical
-    // canaries. Consensus bridge credits cannot be positive controls for
-    // ordinary internal traces: they are minted without a wallet transaction.
-    // A successful HTTP response or an empty result alone cannot validate a
-    // replacement account-history source.
     // Blockscout's indexed account balance may be stale while it refreshes in
     // the background. Reconciliation needs the chain head, so native and token
     // balance reads use Gnosis' public JSON-RPC endpoint instead.
@@ -261,6 +279,8 @@ const REGISTRY = [
     accountApi: {
       provider: 'Blockscout',
       baseUrl: 'https://explorer.optimism.io/api',
+      v2BaseUrl: 'https://explorer.optimism.io/api/v2/',
+      v2NormalTransactions: true,
       requiresApiKey: false,
     },
     rpcUrl: configuredRpcUrl('OPTIMISM_RPC_URL', 'https://mainnet.optimism.io'),

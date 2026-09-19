@@ -583,6 +583,20 @@ test('the delete SQL applies the from_address include/exclude scope', async () =
   assert.equal(queries[2].params.length, 4);
 });
 
+test('audit-backed native credits collapse only exact source-log duplicates', async () => {
+  queries.length = 0;
+  await EthTransfer.deleteDuplicateAuditNativeCredits(7, 100, GNOSIS_REWARD);
+  const query = queries.at(-1);
+  const sql = sqlOf(query);
+  assert.match(sql, /source\.source_log_index IS NOT NULL/);
+  assert.match(sql, /audited\.source_log_index = source\.source_log_index/);
+  assert.match(sql, /audited\.tx_hash = source\.tx_hash/);
+  assert.match(sql, /audited\.value_wei = source\.value_wei/);
+  assert.match(sql, /audited\.audit_effect_key IS NOT NULL/);
+  assert.match(sql, /source\.audit_effect_key IS NULL/);
+  assert.deepEqual(query.params, [7, 100, GNOSIS_REWARD]);
+});
+
 test('the state-sync cursor resumes and advances independently of the internal one', async (t) => {
   const { calls } = harness(t, {
     chainSet: '137',

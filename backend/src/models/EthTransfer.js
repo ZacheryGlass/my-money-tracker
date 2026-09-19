@@ -247,6 +247,39 @@ class EthTransfer {
     return inserted;
   }
 
+  // A verified audit can backfill a native-credit log before the ordinary
+  // state-sync feed reaches it. The feed later inserts the same immutable log
+  // under its normal ordinal, while audit rows are deliberately protected from
+  // overlap deletes. Collapse only byte-for-byte economic duplicates at the
+  // same transaction/log coordinate; differing rows remain visible as an
+  // audit conflict instead of being guessed away.
+  static async deleteDuplicateAuditNativeCredits(
+    walletId, chainId, stateSyncContract, { client = pool } = {}
+  ) {
+    if (!stateSyncContract) return 0;
+    const result = await client.query(
+      `DELETE FROM eth_transfers source
+       USING eth_transfers audited
+       WHERE source.wallet_id = $1 AND source.chain_id = $2
+         AND source.transfer_type = 'internal'
+         AND source.from_address = LOWER($3)
+         AND source.audit_effect_key IS NULL
+         AND source.source_log_index IS NOT NULL
+         AND audited.wallet_id = source.wallet_id
+         AND audited.chain_id = source.chain_id
+         AND audited.transfer_type = source.transfer_type
+         AND audited.tx_hash = source.tx_hash
+         AND audited.source_log_index = source.source_log_index
+         AND audited.from_address = source.from_address
+         AND audited.to_address IS NOT DISTINCT FROM source.to_address
+         AND audited.value_wei = source.value_wei
+         AND audited.is_error = source.is_error
+         AND audited.audit_effect_key IS NOT NULL`,
+      [walletId, chainId, stateSyncContract]
+    );
+    return result.rowCount;
+  }
+
   // Selectors this wallet has stored but cannot yet name -- the decode pass's
   // work list. Derived from stored rows rather than from the batch the sync
   // just inserted, so a selector deferred by the lookup budget or stranded by a

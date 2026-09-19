@@ -124,11 +124,14 @@ function scannedThroughBlock(rows) {
   return rows.scannedThroughBlock ?? maxBlock(rows);
 }
 
-function providerName(chain) {
+function providerName(chain, feed = null) {
   if (chain.historyProvider === 'zksync-lite') {
     return 'Matter Labs zkSync Lite archive';
   }
-  const accountApi = chain.accountApi;
+  const accountApi = chain.accountApi?.nativeHistoryApi
+      && ['normal', 'internal'].includes(feed)
+    ? { ...chain.accountApi, ...chain.accountApi.nativeHistoryApi }
+    : chain.accountApi;
   if (accountApi) {
     const accountUrl = accountApi.v2BaseUrl || accountApi.baseUrl;
     return `${accountApi.provider || 'chain explorer'} (${accountUrl})`;
@@ -204,7 +207,7 @@ class EthWalletService {
           ? {
             feed: spec.key,
             cursorKind: 'archive_serial',
-            provider: providerName(chain),
+            provider: providerName(chain, spec.key),
             status: failureStatus,
             attemptedFromBlock: resume,
             errorCode: error.code || 'ZKSYNC_LITE_ARCHIVE_ERROR',
@@ -214,7 +217,7 @@ class EthWalletService {
           : {
             feed: spec.key,
             cursorKind: 'archive_serial',
-            provider: providerName(chain),
+            provider: providerName(chain, spec.key),
             status: 'not_applicable',
           }
       )));
@@ -245,7 +248,7 @@ class EthWalletService {
         ? {
           feed: spec.key,
           cursorKind: 'archive_serial',
-          provider: providerName(chain),
+          provider: providerName(chain, spec.key),
           status: 'complete',
           coveredFromBlock: 0,
           coveredThroughBlock: history.scannedThroughBlock,
@@ -261,7 +264,7 @@ class EthWalletService {
         : {
           feed: spec.key,
           cursorKind: 'archive_serial',
-          provider: providerName(chain),
+          provider: providerName(chain, spec.key),
           status: 'not_applicable',
         }
     )));
@@ -760,7 +763,7 @@ class EthWalletService {
         feedActive(spec)
           ? {
             feed: spec.key,
-            provider: providerName(chain),
+            provider: providerName(chain, spec.key),
             status: failureStatus,
             attemptedFromBlock: resume[spec.key],
             errorCode: error.code || 'ETHERSCAN_API_ERROR',
@@ -769,7 +772,7 @@ class EthWalletService {
           }
           : {
             feed: spec.key,
-            provider: providerName(chain),
+            provider: providerName(chain, spec.key),
             status: 'not_applicable',
           }
       )));
@@ -869,7 +872,7 @@ class EthWalletService {
             walletId: wallet.id,
             chainId: chain.id,
             feed: spec.key,
-            provider: providerName(chain),
+            provider: providerName(chain, spec.key),
             retryAfterMs: err.retryAfterMs,
           }, 'Explorer rate limited; remaining feeds deferred for this chain');
         } else if (err.code === 'ETHERSCAN_CHAIN_UNAVAILABLE' || err.code === 'ETHERSCAN_FEED_UNSUPPORTED') {
@@ -911,20 +914,26 @@ class EthWalletService {
       }
       await EthTransfer.deleteFromBlock(wallet.id, chain.id, spec.types, resume[spec.key], deleteOpts);
     }
-    const inserted = await EthTransfer.bulkInsert(rows);
+    let inserted = await EthTransfer.bulkInsert(rows);
+    if (stateSyncContract) {
+      const duplicateNativeCredits = await EthTransfer.deleteDuplicateAuditNativeCredits(
+        wallet.id, chain.id, stateSyncContract
+      );
+      inserted = Math.max(0, inserted - duplicateNativeCredits);
+    }
 
     await EthFeedCoverage.recordAttempts(wallet.id, chain.id, FEED_SPECS.map((spec) => {
       if (!feedActive(spec)) {
         return {
           feed: spec.key,
-          provider: providerName(chain),
+          provider: providerName(chain, spec.key),
           status: 'not_applicable',
         };
       }
       if (fetchedOk[spec.key]) {
         return {
           feed: spec.key,
-          provider: providerName(chain),
+          provider: providerName(chain, spec.key),
           status: 'complete',
           coveredFromBlock: boundary.fromBlock,
           coveredThroughBlock: scannedThroughBlock(feeds[spec.key]),
@@ -938,7 +947,7 @@ class EthWalletService {
       const status = coverageFailureStatus(error);
       return {
         feed: spec.key,
-        provider: providerName(chain),
+        provider: providerName(chain, spec.key),
         status,
         indexedHead,
         attemptedFromBlock: resume[spec.key],
