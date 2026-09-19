@@ -64,7 +64,7 @@ function tx(hash, blockNumber, op, overrides = {}) {
 test('Era and legacy Lite have distinct, explicit registry identities', () => {
   const era = chains.getChain(324);
   assert.equal(era.accountApi.baseUrl, 'https://zksync.blockscout.com/api');
-  assert.equal(era.rpcUrl, 'https://mainnet.era.zksync.io');
+  assert.equal(era.consensusRpcUrl, 'https://mainnet.era.zksync.io');
   assert.equal(era.coingeckoPlatform, 'zksync');
 
   const lite = chains.getChain(ZkSyncLiteService.CHAIN_ID);

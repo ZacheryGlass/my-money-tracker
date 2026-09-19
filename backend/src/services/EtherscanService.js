@@ -43,6 +43,14 @@ function responseRawText(response) {
   return JSON.stringify(response?.data ?? null);
 }
 
+// Anonymous explorer limits are applied per host, not per URL path. Keep the
+// legacy Etherscan-compatible API and Blockscout V2 API on one queue when they
+// share an origin, or each transport can independently consume the same
+// provider-wide allowance.
+function originProviderKey(kind, baseUrl) {
+  return `${kind}:${new URL(baseUrl).origin}`;
+}
+
 // The logs (getLogs) endpoint caps a single response at 1000 rows, so the
 // state-sync fetch walks a block cursor the same way _fetchPaged does. A wallet
 // has a handful of bridge deposits over its whole life, so this almost never
@@ -268,18 +276,16 @@ function keyFingerprint(apiKey) {
 function rpcProvider(chainId, rpcUrl) {
   return {
     name: `Chain ${chainId} JSON-RPC`,
-    key: `rpc:${keyFingerprint(rpcUrl)}`,
+    key: originProviderKey('rpc', rpcUrl),
     spacingMs: etherscan.RPC_REQUEST_SPACING_MS,
   };
 }
 
 // Consensus-sensitive reads must use the operator's declared consensus
-// endpoint when one exists.  `rpcUrl` remains the compatibility fallback for
-// chains that have not split their public endpoint yet (and for the legacy
-// Lite importer, which never reaches this helper).
+// endpoint. The legacy Lite importer never reaches this helper.
 function consensusRpcUrl(chainId) {
   const chain = chains.getChain(chainId);
-  return chain?.consensusRpcUrl || chain?.rpcUrl || null;
+  return chain?.consensusRpcUrl || null;
 }
 
 function rateLimitError(provider, chainId, params, retryAfterMs, cause = null) {
@@ -402,23 +408,19 @@ class EtherscanService {
   static _provider(chainId, apiKey = null, action = null) {
     const custom = this._accountApi(chainId, action);
     if (custom) {
-      const providerDefaultSpacing = custom.provider === 'Blockscout'
-        ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
-        : etherscan.REQUEST_SPACING_MS;
       return {
         name: custom.provider || 'chain explorer',
         baseUrl: custom.baseUrl,
         requiresApiKey: custom.requiresApiKey !== false,
-        params: custom.params || {},
-        key: custom.provider === 'Etherscan'
-          ? `etherscan:${keyFingerprint(apiKey)}`
-          : `account:${custom.baseUrl}`,
-        // A chain may raise the shared provider floor, but it must never
-        // weaken a stricter operator override.
-        spacingMs: Math.max(
-          Number(custom.requestSpacingMs) || 0,
-          providerDefaultSpacing
-        ),
+        params: {},
+        key: custom.requiresApiKey === false
+          ? originProviderKey('account', custom.baseUrl)
+          : (custom.provider === 'Etherscan'
+            ? `etherscan:${keyFingerprint(apiKey)}`
+            : `account:${custom.baseUrl}`),
+        spacingMs: custom.provider === 'Blockscout'
+          ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
+          : etherscan.REQUEST_SPACING_MS,
       };
     }
     return {
@@ -1217,14 +1219,14 @@ class EtherscanService {
     }
     const accountApi = this._accountApi(chainId, action);
     if (action === 'txlist' && accountApi?.v2NormalTransactions) {
-      yield* this._blockscoutV2NormalPages(
-        address, cursor, endBlock, apiKey, chainId, accountApi
+      yield* this._blockscoutV2AddressHistoryPages(
+        'normal', address, cursor, endBlock, apiKey, chainId, accountApi
       );
       return;
     }
     if (action === 'txlistinternal' && accountApi?.v2InternalTransactions) {
-      yield* this._blockscoutV2InternalPages(
-        address, cursor, endBlock, apiKey, chainId, accountApi
+      yield* this._blockscoutV2AddressHistoryPages(
+        'internal', address, cursor, endBlock, apiKey, chainId, accountApi
       );
       return;
     }
@@ -1306,7 +1308,7 @@ class EtherscanService {
     const provider = {
       ...baseProvider,
       baseUrl: root,
-      key: `account:${root}`,
+      key: originProviderKey('account', root),
     };
     const requestParams = { ...params };
     const response = await runThrottledRequest({
@@ -1440,41 +1442,74 @@ class EtherscanService {
     };
   }
 
-  static async *_blockscoutV2NormalPages(
-    address, startBlock, endBlock, apiKey, chainId, accountApi
+  // Blockscout V2 uses the same exhaustive, newest-first cursor contract for
+  // normal and internal address history. Keep that proof walk in one place so
+  // both feeds reject malformed pages, repeated rows/cursors and incomplete
+  // global indexes identically. Feed-specific normalization and trace status
+  // hydration stay explicit in this small definition.
+  static async *_blockscoutV2AddressHistoryPages(
+    kind, address, startBlock, endBlock, apiKey, chainId, accountApi
   ) {
+    const config = kind === 'internal'
+      ? {
+        path: 'internal-transactions',
+        normalize: (row) => this._normalizeBlockscoutV2Internal(row),
+        rowKey: (row) => `${row.hash}:${row.traceId}`,
+        repeated: 'internal trace',
+        requiredRatio: 'indexed_internal_transactions_ratio',
+        incomplete: 'internal index',
+        hydrate: (rows) => this._hydrateBlockscoutV2InternalStatus(rows, chainId),
+      }
+      : {
+        path: 'transactions',
+        normalize: (row) => this._normalizeBlockscoutV2Normal(row),
+        rowKey: (row) => row.hash,
+        repeated: 'transaction',
+        requiredRatio: null,
+        incomplete: 'block index',
+        hydrate: null,
+      };
     if (!/^0x[0-9a-f]{40}$/i.test(String(address))) {
-      throw apiError('Blockscout V2 normal history requires a valid address; cursor frozen');
+      throw apiError(`Blockscout V2 ${kind} history requires a valid address; cursor frozen`);
     }
     const baseUrl = accountApi.v2BaseUrl;
+    if (!baseUrl) {
+      throw apiError(`Blockscout V2 ${kind} history has no endpoint; cursor frozen`);
+    }
     const statusResponse = await this._blockscoutV2Request(
       chainId, apiKey, baseUrl, 'main-page/indexing-status'
     );
     const status = statusResponse.payload;
-    if (status.finished_indexing !== true || status.finished_indexing_blocks !== true
-        || Number(status.indexed_blocks_ratio) !== 1) {
-      throw apiError('Blockscout V2 block index is incomplete; cursor frozen');
+    const complete = status.finished_indexing === true
+      && status.finished_indexing_blocks === true
+      && Number(status.indexed_blocks_ratio) === 1
+      && (!config.requiredRatio || Number(status[config.requiredRatio]) === 1);
+    if (!complete) {
+      throw apiError(`Blockscout V2 ${config.incomplete} is incomplete; cursor frozen`);
     }
-    const encodedAddress = encodeURIComponent(String(address).toLowerCase());
-    const path = `addresses/${encodedAddress}/transactions`;
+
+    const normalizedAddress = String(address).toLowerCase();
+    const path = `addresses/${encodeURIComponent(normalizedAddress)}/${config.path}`;
     const sourcePages = [];
     const rows = [];
-    const hashes = new Set();
+    const rowKeys = new Set();
     const cursorKeys = new Set();
     let next = {};
     let exhausted = false;
     for (let count = 0; count < MAX_ACCOUNT_PAGES; count += 1) {
       const page = await this._blockscoutV2Request(chainId, apiKey, baseUrl, path, next);
-      if (!Array.isArray(page.payload.items)) {
-        throw apiError('Blockscout V2 normal history returned no items array; cursor frozen');
+      const items = page.payload.items;
+      if (!Array.isArray(items)) {
+        throw apiError(`Blockscout V2 ${kind} history returned no items array; cursor frozen`);
       }
       sourcePages.push(page);
-      for (const item of page.payload.items) {
-        const normalized = this._normalizeBlockscoutV2Normal(item);
-        if (hashes.has(normalized.hash)) {
-          throw apiError(`Blockscout V2 repeated transaction ${normalized.hash}; cursor frozen`);
+      for (const item of items) {
+        const normalized = config.normalize(item);
+        const key = config.rowKey(normalized);
+        if (rowKeys.has(key)) {
+          throw apiError(`Blockscout V2 repeated ${config.repeated} ${key}; cursor frozen`);
         }
-        hashes.add(normalized.hash);
+        rowKeys.add(key);
         const block = Number(normalized.blockNumber);
         if (block >= startBlock && block <= endBlock) rows.push(normalized);
       }
@@ -1488,7 +1523,9 @@ class EtherscanService {
           || Object.values(nextParams).some((value) => !['string', 'number'].includes(typeof value))) {
         throw apiError('Blockscout V2 returned an invalid pagination cursor; cursor frozen');
       }
-      const cursorKey = JSON.stringify(Object.entries(nextParams).sort(([a], [b]) => a.localeCompare(b)));
+      const cursorKey = JSON.stringify(
+        Object.entries(nextParams).sort(([a], [b]) => a.localeCompare(b))
+      );
       if (cursorKeys.has(cursorKey)) {
         throw apiError('Blockscout V2 repeated its pagination cursor; cursor frozen');
       }
@@ -1496,23 +1533,42 @@ class EtherscanService {
       next = nextParams;
     }
     if (!exhausted) {
-      throw apiError(`Blockscout V2 normal walk exceeded ${MAX_ACCOUNT_PAGES} pages; cursor frozen`);
+      throw apiError(`Blockscout V2 ${kind} walk exceeded ${MAX_ACCOUNT_PAGES} pages; cursor frozen`);
     }
-    rows.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber)
-      || a.hash.localeCompare(b.hash));
-    const responseJson = { indexing_status: statusResponse.payload,
-      pages: sourcePages.map((page) => page.payload) };
-    const rawText = JSON.stringify({ indexing_status: statusResponse.evidence.rawText,
-      pages: sourcePages.map((page) => page.evidence.rawText) });
+
+    const outputRows = config.hydrate ? await config.hydrate(rows) : rows;
+    outputRows.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber)
+      || a.hash.localeCompare(b.hash)
+      || (a.blockscoutTraceIndex ?? 0) - (b.blockscoutTraceIndex ?? 0));
+
+    // Retain the exact raw body of every provider response inside one evidence
+    // envelope. The sync path consumes only rows, while the audit path can
+    // persist and hash this bounded, complete proof as one logical page.
+    const responseJson = {
+      indexing_status: statusResponse.payload,
+      pages: sourcePages.map((page) => page.payload),
+    };
+    const rawText = JSON.stringify({
+      indexing_status: statusResponse.evidence.rawText,
+      pages: sourcePages.map((page) => page.evidence.rawText),
+    });
     yield {
       provider: 'Blockscout V2',
       endpoint: new URL(path, `${String(baseUrl).replace(/\/$/, '')}/`).toString(),
-      requestParams: { address: String(address).toLowerCase(), startblock: startBlock,
-        endblock: endBlock, page_count: sourcePages.length },
-      rawText, responseJson,
+      requestParams: {
+        address: normalizedAddress,
+        startblock: startBlock,
+        endblock: endBlock,
+        page_count: sourcePages.length,
+      },
+      rawText,
+      responseJson,
       responseSha256: crypto.createHash('sha256').update(rawText).digest('hex'),
-      requestId: null, rows, cursorIn: String(startBlock), cursorOut: null,
-      itemCount: rows.length,
+      requestId: null,
+      rows: outputRows,
+      cursorIn: String(startBlock),
+      cursorOut: null,
+      itemCount: outputRows.length,
     };
   }
 
@@ -1575,114 +1631,6 @@ class EtherscanService {
         isError: reverted ? '1' : '0',
       };
     });
-  }
-
-  // Gnosis' legacy txlistinternal endpoint declares historical ranges
-  // incomplete. Its V2 endpoint uses cursor pagination and exposes a separate
-  // global indexing-status contract. Walk the complete address history before
-  // filtering to the caller's overlap window: without an exhaustive terminal
-  // cursor, an empty incremental page would not prove that older traces exist.
-  static async *_blockscoutV2InternalPages(
-    address, startBlock, endBlock, apiKey, chainId, accountApi
-  ) {
-    if (!/^0x[0-9a-f]{40}$/i.test(String(address))) {
-      throw apiError('Blockscout V2 internal history requires a valid address; cursor frozen');
-    }
-    const baseUrl = accountApi.v2BaseUrl;
-    if (!baseUrl) throw apiError('Blockscout V2 internal history has no endpoint; cursor frozen');
-    const statusResponse = await this._blockscoutV2Request(
-      chainId, apiKey, baseUrl, 'main-page/indexing-status'
-    );
-    const status = statusResponse.payload;
-    const complete = status.finished_indexing === true
-      && status.finished_indexing_blocks === true
-      && Number(status.indexed_blocks_ratio) === 1
-      && Number(status.indexed_internal_transactions_ratio) === 1;
-    if (!complete) {
-      throw apiError('Blockscout V2 internal index is incomplete; cursor frozen');
-    }
-
-    const encodedAddress = encodeURIComponent(String(address).toLowerCase());
-    const path = `addresses/${encodedAddress}/internal-transactions`;
-    const sourcePages = [];
-    const rows = [];
-    const rowKeys = new Set();
-    const cursorKeys = new Set();
-    let next = {};
-    let exhausted = false;
-    for (let count = 0; count < MAX_ACCOUNT_PAGES; count += 1) {
-      const page = await this._blockscoutV2Request(
-        chainId, apiKey, baseUrl, path, next
-      );
-      const items = page.payload.items;
-      if (!Array.isArray(items)) {
-        throw apiError('Blockscout V2 internal history returned no items array; cursor frozen');
-      }
-      sourcePages.push(page);
-      for (const item of items) {
-        const normalized = this._normalizeBlockscoutV2Internal(item);
-        const key = `${normalized.hash}:${normalized.traceId}`;
-        if (rowKeys.has(key)) {
-          throw apiError(`Blockscout V2 repeated internal trace ${key}; cursor frozen`);
-        }
-        rowKeys.add(key);
-        const block = Number(normalized.blockNumber);
-        if (block >= startBlock && block <= endBlock) rows.push(normalized);
-      }
-      const nextParams = page.payload.next_page_params;
-      if (nextParams == null) {
-        exhausted = true;
-        break;
-      }
-      if (typeof nextParams !== 'object' || Array.isArray(nextParams)
-          || Object.keys(nextParams).length === 0
-          || Object.values(nextParams).some((value) => !['string', 'number'].includes(typeof value))) {
-        throw apiError('Blockscout V2 returned an invalid pagination cursor; cursor frozen');
-      }
-      const cursorKey = JSON.stringify(Object.entries(nextParams).sort(([a], [b]) => a.localeCompare(b)));
-      if (cursorKeys.has(cursorKey)) {
-        throw apiError('Blockscout V2 repeated its pagination cursor; cursor frozen');
-      }
-      cursorKeys.add(cursorKey);
-      next = nextParams;
-    }
-    if (!exhausted) {
-      throw apiError(`Blockscout V2 internal walk exceeded ${MAX_ACCOUNT_PAGES} pages; cursor frozen`);
-    }
-    const hydratedRows = await this._hydrateBlockscoutV2InternalStatus(rows, chainId);
-    hydratedRows.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber)
-      || a.hash.localeCompare(b.hash)
-      || a.blockscoutTraceIndex - b.blockscoutTraceIndex);
-
-    // Retain the exact raw body of every provider response inside one evidence
-    // envelope. The sync path consumes only rows, while the audit path can
-    // persist and hash this bounded, complete proof as one logical page.
-    const responseJson = {
-      indexing_status: statusResponse.payload,
-      pages: sourcePages.map((page) => page.payload),
-    };
-    const rawText = JSON.stringify({
-      indexing_status: statusResponse.evidence.rawText,
-      pages: sourcePages.map((page) => page.evidence.rawText),
-    });
-    yield {
-      provider: 'Blockscout V2',
-      endpoint: new URL(path, `${String(baseUrl).replace(/\/$/, '')}/`).toString(),
-      requestParams: {
-        address: String(address).toLowerCase(),
-        startblock: startBlock,
-        endblock: endBlock,
-        page_count: sourcePages.length,
-      },
-      rawText,
-      responseJson,
-      responseSha256: crypto.createHash('sha256').update(rawText).digest('hex'),
-      requestId: null,
-      rows: hydratedRows,
-      cursorIn: String(startBlock),
-      cursorOut: null,
-      itemCount: hydratedRows.length,
-    };
   }
 
   static async _fetchPaged(

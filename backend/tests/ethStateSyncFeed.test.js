@@ -60,7 +60,8 @@ const MethodSignatureService = require('../src/services/MethodSignatureService')
 const EthActivityService = require('../src/services/EthActivityService');
 const normalizer = require('../src/services/evmAudit/normalizer');
 
-const { bridgeAsset, buildActivityRows } = EthActivityService;
+const { buildActivityRows } = require('../src/services/ethActivity/rows');
+const { bridgeAsset } = require('../src/services/ethActivity/bridge');
 
 // Synthetic actors by rule -- real wallet addresses, tx hashes and amounts are
 // personal history and the repo is public. The precompile, DepositManager and

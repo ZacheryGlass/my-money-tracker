@@ -277,29 +277,6 @@ class ExchangeBalanceReconciliation {
     return { row: null, stale: true, currentVersion: exists.rows[0].version };
   }
 
-  static async accountAuditSummary(userId, accountIds) {
-    requireUserId('accountAuditSummary', userId);
-    if (!accountIds.length) return new Map();
-    const result = await pool.query(
-      `SELECT ea.id AS exchange_account_id,
-              COUNT(e.id) FILTER (WHERE e.status IN ('open', 'accepted'))::int AS balance_exception_count,
-              COUNT(e.id) FILTER (WHERE e.status = 'open'
-                OR (e.status = 'accepted'
-                  AND e.category IN ('parser_defect', 'missing_activity')))::int AS balance_blocking_count,
-              MAX(r.calculated_at) FILTER (WHERE r.run_status = 'authoritative') AS balance_audited_at,
-              (SELECT ar.run_status FROM exchange_balance_audit_runs ar
-               WHERE ar.exchange_account_id = ea.id
-               ORDER BY ar.calculated_at DESC, ar.id DESC LIMIT 1) AS balance_audit_status
-       FROM exchange_accounts ea
-       LEFT JOIN exchange_balance_exceptions e ON e.exchange_account_id = ea.id
-       LEFT JOIN exchange_balance_audit_runs r ON r.exchange_account_id = ea.id
-       WHERE ea.user_id = $1 AND ea.id = ANY($2::int[])
-       GROUP BY ea.id`,
-      [userId, accountIds]
-    );
-    return new Map(result.rows.map((row) => [row.exchange_account_id, row]));
-  }
-
   // Review decisions are immediate: once the user accepts a non-blocking
   // explanation, the account badge should not remain red until the next API
   // sync. A coverage-limited latest run deliberately prevents this refresh;

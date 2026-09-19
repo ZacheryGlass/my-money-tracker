@@ -142,23 +142,14 @@ function App() {
   }, []);
   useEffect(() => {
     let cancelled = false;
-    const counterpartyPromise = typeof ethAPI?.getUnreviewedCounterparties === 'function'
-      ? ethAPI.getUnreviewedCounterparties().catch(() => null)
-      : Promise.resolve(undefined);
-    const balanceExceptionPromise = typeof exchangesAPI?.getBalanceExceptions === 'function'
-      ? exchangesAPI.getBalanceExceptions({ limit: 1 }).catch(() => null)
-      : Promise.resolve(undefined);
     Promise.all([
       cryptoAPI.getLedgerSummary().catch(() => null),
       ethAPI.getWallets().catch(() => null),
-      counterpartyPromise,
-      balanceExceptionPromise,
+      ethAPI.getUnreviewedCounterparties().catch(() => null),
+      exchangesAPI.getBalanceExceptions({ limit: 1 }).catch(() => null),
     ]).then(([ledger, wallets, counterparties, balanceExceptions]) => {
       if (cancelled) return;
-      const reviewDecisions = counterparties && (
-        balanceExceptions !== null
-        || typeof exchangesAPI?.getBalanceExceptions !== 'function'
-      )
+      const reviewDecisions = counterparties && balanceExceptions
         ? (counterparties.summary?.count || 0) + (balanceExceptions?.summary?.count || 0)
         : null;
       applyBootCryptoAttention({

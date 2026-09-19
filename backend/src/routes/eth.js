@@ -289,20 +289,16 @@ router.post('/wallets/bulk', async (req, res) => {
       }
     }
 
-    // Same background-sync contract as the single add, but SERIAL: the initial
-    // sync walks every feed from block 0, and firing a hundred of them at once
-    // would just pile up behind the one global Etherscan throttle while holding
-    // that many rebuild lanes open.
+    // Same background-sync contract as the single add. The service runs all
+    // new wallets' raw feeds in one owner batch and publishes exactly one
+    // user-wide derived tail after they land.
     if (added.length) {
-      (async () => {
-        for (const wallet of added) {
-          try {
-            await EthWalletService.syncWallet(wallet.id);
-          } catch (err) {
-            logger.error({ walletId: wallet.id, err }, 'Initial ETH wallet sync failed');
-          }
-        }
-      })();
+      EthWalletService.syncWalletsForUser(req.user.id, {
+        walletIds: added.map((wallet) => wallet.id),
+      }).catch((err) => {
+        logger.error({ userId: req.user.id, walletIds: added.map((wallet) => wallet.id), err },
+          'Initial bulk ETH wallet sync failed');
+      });
     }
 
     res.status(added.length ? 201 : 200).json({

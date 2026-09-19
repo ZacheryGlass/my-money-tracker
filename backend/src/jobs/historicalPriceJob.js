@@ -54,47 +54,52 @@ async function run({ maxAssets } = {}) {
     // any user-triggered sync or label write in flight.
     const byUser = new Map();
     for (const wallet of wallets) {
-      const key = wallet.user_id ?? null;
+      const key = wallet.user_id;
       if (!byUser.has(key)) byUser.set(key, []);
       byUser.get(key).push(wallet);
     }
 
     for (const [userId, userWallets] of byUser) {
       await EthDerivedPipeline.serializedForUser(userId, async () => {
+        const rebuiltForUser = new Set();
         for (const wallet of userWallets) {
           try {
             // Rebuilt UNCONDITIONALLY, not only when a valuation moved:
             // applyToWallet is idempotent, so "0 legs changed" is also what a
             // successful run looks like the night AFTER a rebuild threw, and a
             // single transient failure would otherwise strand the mirror on
-            // pre-backfill amounts permanently. rebuildMatches: false, like
-            // every per-wallet walker -- the match pass is user-wide and runs
-            // once in the tail below.
-            const derived = await EthDerivedPipeline.rebuildWallet(wallet.id, {
-              rebuildMatches: false,
-            });
+            // pre-backfill amounts permanently. Matching and the transactions
+            // mirror are user-wide and run once in the tail below.
+            const derived = await EthDerivedPipeline.rebuildWallet(wallet.id);
             revalued.legs += derived.valued;
             revalued.rebuilt++;
+            rebuiltForUser.add(wallet.id);
           } catch (err) {
             revalued.failed++;
             logger.warn({ job: JOB_NAME, walletId: wallet.id, err }, 'Re-valuation failed for one wallet');
           }
         }
 
-        // The user-wide tail: match, bridge, and the classification backfill.
+        // The user-wide tail: exchange match, bridge match, mirror and
+        // classification.
         // Not optional cleanup -- rebuildWallet replaced eth_activity rows and
         // that DELETE cascaded eth_activity_links away, so skipping this would
         // render one $6,000 bridge as two rows summing $12,000 for the rest of
-        // the day. Ownerless wallets have no tail: all three passes are
-        // user-scoped derivations.
-        if (userId == null) return;
+        // the day. All four passes are scoped to the wallet owner.
         try {
-          await EthDerivedPipeline.finishUser(userId, {
+          const finished = await EthDerivedPipeline.finishUser(userId, {
             matchContext: { reason: 'historical-prices' },
             context: 'nightly re-valuation',
           });
+          for (const walletId of rebuiltForUser) {
+            if (finished.mirror?.resultsByWallet?.get(walletId)?.error) revalued.failed++;
+          }
         } catch (err) {
-          logger.warn({ job: JOB_NAME, userId, err }, 'Match/bridge rebuild failed for one user');
+          // The consolidated mirror is the only transactions projection pass
+          // for this owner. If it fails, every wallet in this owner block needs
+          // a retry even though their transfer/activity rebuilds completed.
+          revalued.failed += rebuiltForUser.size;
+          logger.warn({ job: JOB_NAME, userId, err }, 'Derived tail failed for one user');
         }
       });
     }

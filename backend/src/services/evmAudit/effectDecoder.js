@@ -140,7 +140,7 @@ function effectsFromRpc(context, transaction, receipt, observationIds = new Map(
     const dataWords = words(log.data);
 
     const chain = context.chain;
-    const nativeCredit = chain?.auditNativeCredits || chain?.stateSyncDeposits;
+    const nativeCredit = chain?.stateSyncDeposits;
     if (nativeCredit
         && contract === nativeCredit.contract.toLowerCase()
         && topic0 === nativeCredit.topic0.toLowerCase()) {

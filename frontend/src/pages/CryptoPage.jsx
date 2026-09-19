@@ -138,10 +138,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [spamActivity, setSpamActivity] = useState(null);
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
   const [exchangeFocusAccountId, setExchangeFocusAccountId] = useState(null);
-  // undefined = this build/API does not expose the durable audit yet; null =
-  // the endpoint was attempted but failed; an object is a successful read.
+  // undefined = not loaded yet; null = the request failed; an object is a
+  // successful read.
   const [exchangeExceptions, setExchangeExceptions] = useState(undefined);
-  const [exchangeExceptionsError, setExchangeExceptionsError] = useState(null);
   // Loaded-and-empty and failed-to-load must not look alike: "No Exchange
   // Accounts" after a failed request invites the user to add one they already
   // have, and hides the imports they made.
@@ -179,9 +178,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         holdingsAPI.getAll(),
         accountsAPI.getAll(),
         historyApi.getAccounts({ limit: 10000, withCount: false }),
-        typeof ethAPI.getAddressNotes === 'function'
-          ? ethAPI.getAddressNotes().catch(() => null)
-          : Promise.resolve(null),
+        ethAPI.getAddressNotes().catch(() => null),
       ]);
       setWallets(walletsData?.wallets || []);
       setHoldings(holdingsData.holdings || []);
@@ -219,10 +216,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // Each list degrades on its own: a failed labels request must not blank the
   // exchange accounts beside it, and the two nullable ones say so themselves.
   const fetchManageData = useCallback(async () => {
-    const hasExchangeExceptionQueue = typeof exchangesAPI.getBalanceExceptions === 'function';
-    const exchangeExceptionsPromise = hasExchangeExceptionQueue
-      ? exchangesAPI.getBalanceExceptions({ limit: 50 }).catch(() => null)
-      : Promise.resolve(undefined);
+    const exchangeExceptionsPromise = exchangesAPI.getBalanceExceptions({ limit: 50 })
+      .catch(() => null);
     const [ignoredResult, labelsResult, counterpartyResult, spamResult, exchangeResult, exchangeExceptionResult] = await Promise.all([
       ethAPI.getIgnoredTokens().catch(() => null),
       ethAPI.getAddressLabels().catch(() => null),
@@ -247,14 +242,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     // Only treated as unavailable on a response that actually said so: a
     // failed request must not read as "the server cannot store keys".
     setExchangeEncryptionConfigured(exchangeResult ? exchangeResult.encryption_configured !== false : true);
-    if (exchangeExceptionResult !== undefined) {
-      setExchangeExceptions(exchangeExceptionResult);
-      setExchangeExceptionsError(exchangeExceptionResult ? null : 'Couldn\'t load the exchange balance review queue.');
-    }
-    const reviewDecisions = counterpartyResult && (
-      exchangeExceptionResult !== null
-      || !hasExchangeExceptionQueue
-    )
+    setExchangeExceptions(exchangeExceptionResult);
+    const reviewDecisions = counterpartyResult && exchangeExceptionResult
       ? (counterpartyResult.summary?.count || 0) + (exchangeExceptionResult?.summary?.count || 0)
       : null;
     onAttentionChange?.({ reviewDecisions });
@@ -355,7 +344,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const reviewAttentionCount = (counterpartyData?.summary?.count || 0) + exchangeExceptionAttentionCount;
   const reviewAttentionUnknown = !manageLoaded
     || counterpartyData === null
-    || (typeof exchangesAPI.getBalanceExceptions === 'function' && exchangeExceptions === null);
+    || exchangeExceptions === null;
   // Typeahead for the triage form keeps every exchange name, builtins included.
   const exchangeNameOptions = useMemo(
     () => [...new Set(addressLabels.filter((l) => !l.kind || l.kind === 'exchange').map((l) => l.name))],
@@ -949,7 +938,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                 showSuccess={showSuccess}
                 onRetry={fetchManageData}
                 exchangeExceptions={exchangeExceptions}
-                exchangeExceptionsError={exchangeExceptionsError}
+                exchangeExceptionsError={exchangeExceptions === null
+                  ? 'Couldn\'t load the exchange balance review queue.'
+                  : null}
                 onOpenExchanges={(accountId) => {
                   setExchangeFocusAccountId(accountId);
                   onTabChange?.(EXCHANGES_TAB);

@@ -539,6 +539,10 @@ function connectAccount({ exchange = 'kraken', apiKey = 'KRAKEN-KEY-1234', apiSe
   };
 }
 
+function syncAccount(exchangeAccountId = OWNED_ACCOUNT_ID) {
+  return ExchangeSyncService.syncAccount(OWNER_ID, exchangeAccountId, { interactive: true });
+}
+
 function legacyCoinbaseRecords() {
   return COINBASE_LEGACY.transactions.data.map((transaction, index) => (
     coinbaseConnector._internals.recordFromTransaction(transaction, {
@@ -1062,16 +1066,15 @@ test('coinbase: a full backfill upgrades legacy rows and recalculates durable st
   const incoming = legacyCoinbaseRecords();
   incoming.forEach((record) => seedStoredRecord(COINBASE_ACCOUNT_ID, record, { needsReview: true }));
 
-  const response = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
+  const result = await syncAccount(COINBASE_ACCOUNT_ID);
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.imported, 0);
-  assert.equal(response.body.upgraded, incoming.length);
-  assert.equal(response.body.duplicates, 0);
-  assert.equal(response.body.needs_review, 0);
-  assert.equal(response.body.status, 'ok');
-  assert.equal(response.body.balance_report.mismatch_count, 0);
-  assert.equal(response.body.backfill_pending, false);
+  assert.equal(result.imported, 0);
+  assert.equal(result.upgraded, incoming.length);
+  assert.equal(result.duplicates, 0);
+  assert.equal(result.needs_review, 0);
+  assert.equal(result.status, 'ok');
+  assert.equal(result.balance_report.mismatch_count, 0);
+  assert.equal(result.backfill_pending, false);
   assert.equal(stored.size, incoming.length);
 
   for (const record of incoming) {
@@ -1090,11 +1093,10 @@ test('coinbase: a full backfill upgrades legacy rows and recalculates durable st
   // The first pass advanced the cursor. Force the same full-history contract a
   // second time to prove clean rows are duplicates, not repeat upgrades.
   accountOverrides = { ...accountOverrides, sync_cursor: null };
-  const second = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
-  assert.equal(second.status, 200);
-  assert.equal(second.body.imported, 0);
-  assert.equal(second.body.upgraded, 0);
-  assert.equal(second.body.duplicates, incoming.length);
+  const second = await syncAccount(COINBASE_ACCOUNT_ID);
+  assert.equal(second.imported, 0);
+  assert.equal(second.upgraded, 0);
+  assert.equal(second.duplicates, incoming.length);
   assert.equal(stored.size, incoming.length);
 });
 
@@ -1607,11 +1609,11 @@ test('disconnect waits for an active sync instead of revoking its live key', asy
   assert.equal(queries.some((entry) => /^UPDATE exchange_accounts SET api_key_encrypted = NULL/.test(entry.sql)), false);
 });
 
-test('a sync with no encryption key is a 503 about the server, not a 409 about the account', async () => {
+test('starting a sync with no encryption key is a 503 about the server, not a 409 about the account', async () => {
   connectAccount();
   delete process.env.SECRETS_ENCRYPTION_KEY;
 
-  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync/start`);
 
   // The stored credential is fine; the server just cannot read it. Blaming the
   // account would send the user to re-enter a key that is already correct.
@@ -1625,7 +1627,7 @@ test('credential and sync routes 404 for an account that is not the caller\'s', 
     ['put', `/api/exchanges/${OWNED_ACCOUNT_ID}/credentials`],
     ['delete', `/api/exchanges/${OWNED_ACCOUNT_ID}/credentials`],
     ['post', `/api/exchanges/${OWNED_ACCOUNT_ID}/test`],
-    ['post', `/api/exchanges/${OWNED_ACCOUNT_ID}/sync`],
+    ['post', `/api/exchanges/${OWNED_ACCOUNT_ID}/sync/start`],
   ]) {
     const response = await request(app)[method](url).send({ api_key: 'k', api_secret: 's' });
     assert.equal(response.status, 404, `${method} ${url}`);
@@ -1679,8 +1681,8 @@ test('a rejected key comes back as the provider\'s own message, not a 500', asyn
   assert.match(response.body.error, /Permission denied/);
 });
 
-test('syncing an account with no key stored is a 409 that says so', async () => {
-  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+test('starting a sync for an account with no key stored is a 409 that says so', async () => {
+  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync/start`);
 
   assert.equal(response.status, 409);
   assert.equal(response.body.code, 'EXCHANGE_NOT_CONFIGURED');
@@ -1688,11 +1690,22 @@ test('syncing an account with no key stored is a 409 that says so', async () => 
 
 test('an unsupported venue is told to use CSV rather than offered a broken sync', async () => {
   accountOverrides = { exchange: 'other' };
-  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync/start`);
 
   assert.equal(response.status, 400);
   assert.equal(response.body.code, 'EXCHANGE_NOT_SUPPORTED');
   assert.match(response.body.error, /CSV import/);
+});
+
+test('the bounded sync compatibility endpoint still returns its detailed receipt', async () => {
+  connectAccount();
+
+  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.account_id, OWNED_ACCOUNT_ID);
+  assert.equal(response.body.imported, 11, 'thirteen ledger rows, eleven economic events');
+  assert.equal(response.body.backfill_pending, false);
 });
 
 // --- The dedupe contract ---------------------------------------------------
@@ -1700,9 +1713,8 @@ test('an unsupported venue is told to use CSV rather than offered a broken sync'
 test('a CSV upload after an API backfill of the same period adds nothing', async () => {
   connectAccount();
 
-  const synced = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
-  assert.equal(synced.status, 200);
-  assert.equal(synced.body.imported, 11, 'thirteen ledger rows, eleven economic events');
+  const synced = await syncAccount();
+  assert.equal(synced.imported, 11, 'thirteen ledger rows, eleven economic events');
   assert.equal(stored.size, 11);
 
   // The same events, now as the CSV export. Both readers normalize into one
@@ -1758,16 +1770,16 @@ test('a CSV-first import still gains the addresses only the API can see', async 
   // The Kraken ledgers export carries no txid and no destination at all.
   assert.equal(chainDetails.size, 0);
 
-  const synced = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+  const synced = await syncAccount();
 
-  assert.equal(synced.body.imported, 0, 'the events were already known');
-  assert.equal(synced.body.duplicates, 11);
+  assert.equal(synced.imported, 0, 'the events were already known');
+  assert.equal(synced.duplicates, 11);
   // The ON CONFLICT upgrade is deliberately one-directional -- it only fires
   // on a review-flagged row -- so it cannot fill this hole. Without the
   // additive backfill, connecting a key after a CSV upload would leave the
   // whole back history with no addresses, and forgotten-wallet discovery
   // reads exactly that column.
-  assert.ok(synced.body.chain_details_filled >= 2);
+  assert.ok(synced.chain_details_filled >= 2);
   const withdrawal = chainDetails.get(`${OWNED_ACCOUNT_ID}|kraken:LKKKKK-11111-KKKKKK`);
   assert.equal(withdrawal.address, 'bc1qsynthetic0000000000000000000000000test');
   assert.equal(withdrawal.network, 'Bitcoin');
@@ -1777,8 +1789,13 @@ test('a failed sync leaves the resume point exactly where it was', async () => {
   connectAccount();
   failNextKrakenWith = 'EService:Unavailable';
 
-  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
-  assert.equal(response.status, 502);
+  await assert.rejects(
+    () => syncAccount(),
+    (error) => {
+      assert.equal(error.code, 'KRAKEN_API_ERROR');
+      return true;
+    }
+  );
 
   const save = queries.find((entry) => /^UPDATE exchange_accounts SET sync_cursor/.test(entry.sql));
   // COALESCE($2, sync_cursor) with a null cursor keeps the stored one. An
@@ -1793,12 +1810,11 @@ test('a balance mismatch flags the account instead of being silently trusted', a
   // misparsed, which is exactly what this check exists to catch.
   derivedBalances = { BTC: '0.0000000000', ETH: '0.2000000000', USD: '997.2500' };
 
-  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+  const result = await syncAccount();
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.status, 'balance_mismatch');
-  assert.equal(response.body.balance_report.mismatch_count, 1);
-  assert.equal(response.body.balance_report.mismatches[0].asset, 'BTC');
+  assert.equal(result.status, 'balance_mismatch');
+  assert.equal(result.balance_report.mismatch_count, 1);
+  assert.equal(result.balance_report.mismatches[0].asset, 'BTC');
 });
 
 test('an unfinished backfill is not reported as a balance mismatch', async () => {
@@ -1813,13 +1829,13 @@ test('an unfinished backfill is not reported as a balance mismatch', async () =>
     count: 2000,
   }));
 
-  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+  const result = await syncAccount();
 
-  assert.equal(response.body.backfill_pending, true);
+  assert.equal(result.backfill_pending, true);
   // A partial history disagreeing with the live balance says nothing about the
   // parser. Calling it a mismatch here trains the user to ignore the flag
   // before it ever means anything.
-  assert.equal(response.body.status, 'ok');
+  assert.equal(result.status, 'ok');
 });
 
 // --- The job ---------------------------------------------------------------
@@ -1881,9 +1897,8 @@ test('a Coinbase CSV upload after an API backfill of the same period adds nothin
     apiSecret: EC_KEY_PEM.privateKey,
   });
 
-  const synced = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
-  assert.equal(synced.status, 200);
-  assert.equal(synced.body.imported, 5, 'six v2 transactions, five economic events');
+  const synced = await syncAccount(COINBASE_ACCOUNT_ID);
+  assert.equal(synced.imported, 5, 'six v2 transactions, five economic events');
   assert.equal(stored.size, 5);
 
   // The same events, now as the retail CSV export. Both readers key every row
@@ -2142,13 +2157,12 @@ test('coinbase: an incomplete live balance picture skips reconciliation instead 
   }));
   derivedBalances = { BTC: '999.0' };
 
-  const response = await request(app).post(`/api/exchanges/${COINBASE_ACCOUNT_ID}/sync`);
+  const result = await syncAccount(COINBASE_ACCOUNT_ID);
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.status, 'coverage_limited', 'half a balance picture must surface a coverage warning');
-  assert.equal(response.body.balance_report.skipped, 'live_balances_incomplete');
-  assert.equal(response.body.balance_report.mismatch_count, 0);
-  assert.equal(response.body.coverage_limitations.length, 1);
+  assert.equal(result.status, 'coverage_limited', 'half a balance picture must surface a coverage warning');
+  assert.equal(result.balance_report.skipped, 'live_balances_incomplete');
+  assert.equal(result.balance_report.mismatch_count, 0);
+  assert.equal(result.coverage_limitations.length, 1);
 });
 
 test('coinbase: a missing v3 balance cursor fails closed as incomplete', async () => {
@@ -2171,8 +2185,13 @@ test('a server without an encryption key writes no per-account sync status', asy
   connectAccount();
   delete process.env.SECRETS_ENCRYPTION_KEY;
 
-  const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
-  assert.equal(response.status, 503);
+  await assert.rejects(
+    () => syncAccount(),
+    (error) => {
+      assert.equal(error.code, 'SECRETS_NOT_CONFIGURED');
+      return true;
+    }
+  );
 
   // 'not_configured' against THIS account records a server misconfiguration as
   // a fact about a credential that is stored and fine -- and it outlives the
@@ -2187,17 +2206,16 @@ test('a second sync of the same account while one is running is refused, not dou
   // is dispatched and the test would prove nothing.
   transportDelayMs = 25;
 
-  const [first, second] = await Promise.all([
-    request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`),
-    request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`),
+  const results = await Promise.allSettled([
+    syncAccount(),
+    syncAccount(),
   ]);
 
   // Two passes on one cursor both read from the same resume point, fetch the
   // same pages, and whichever finishes last overwrites the other's cursor.
-  const statuses = [first.status, second.status].sort();
-  assert.deepEqual(statuses, [200, 409]);
-  const refused = first.status === 409 ? first : second;
-  assert.equal(refused.body.code, 'EXCHANGE_SYNC_IN_PROGRESS');
+  assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 1);
+  const refused = results.find(({ status }) => status === 'rejected');
+  assert.equal(refused.reason.code, 'EXCHANGE_SYNC_IN_PROGRESS');
   assert.equal(stored.size, 11, 'the refused pass imported nothing of its own');
 });
 
@@ -2206,8 +2224,7 @@ test('complete live balances reach portfolio holdings even while history is pend
   const original = krakenConnector.sync;
   try {
     krakenConnector.sync = async () => ({ records: [], balances: { ETH: '3.25' }, balancesComplete: true, stats: { backfillPending: true } });
-    const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
-    assert.equal(response.status, 200);
+    await syncAccount();
     assert.ok(queries.some((entry) => /^INSERT INTO accounts/.test(entry.sql)));
     const holding = queries.find((entry) => /^INSERT INTO holdings/.test(entry.sql));
     assert.equal(holding.params[3], '3.25');
@@ -2219,8 +2236,7 @@ test('partial live balance lists never rewrite portfolio holdings', async () => 
   const original = krakenConnector.sync;
   try {
     krakenConnector.sync = async () => ({ records: [], balances: {}, balancesComplete: false, stats: {} });
-    const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
-    assert.equal(response.status, 200);
+    await syncAccount();
     assert.equal(queries.some((entry) => /^(INSERT INTO|UPDATE|DELETE FROM) holdings/.test(entry.sql)), false);
     assert.equal(queries.some((entry) => /^INSERT INTO accounts/.test(entry.sql)), false);
   } finally { krakenConnector.sync = original; }

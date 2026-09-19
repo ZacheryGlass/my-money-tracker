@@ -382,7 +382,7 @@ class EthWalletService {
   // rows (contract calls, approvals) are dropped as noise; their economic
   // content is the gas row and/or the token row from the token feed.
   static normalizeFeeds(walletAddress, { normal = [], internal = [], token = [], nft = [], nft1155 = [], statesync = [] } = {}, {
-    stateSyncContract = null, classicDeposits = null, opStackDeposits = null, preserveZeroValue = false,
+    stateSyncContract = null, classicDeposits = null, opStackDeposits = null,
   } = {}) {
     const wallet = walletAddress.toLowerCase();
     const rows = [];
@@ -525,7 +525,7 @@ class EthWalletService {
       }
 
       const hasNativeLeg = raw.value !== '0';
-      if (hasNativeLeg || preserveZeroValue) {
+      if (hasNativeLeg) {
         rows.push({
           ...baseRow(raw, 'native'),
           value_wei: raw.value,
@@ -567,7 +567,7 @@ class EthWalletService {
     }
 
     for (const raw of internal) {
-      if (raw.value === '0' && !preserveZeroValue) continue;
+      if (raw.value === '0') continue;
       // A trace FROM the precompile belongs to the STATE-SYNC feed. Today
       // txlistinternal does not serve such traces (that absence is the sixth
       // feed's whole premise), but the internal feed's delete already excludes
@@ -643,8 +643,6 @@ class EthWalletService {
   // providers, same rate limit, twice.
   static async syncWallet(walletId, {
     fillPrices = true,
-    deferUserFinish = false,
-    rebuildMatches = true,
   } = {}) {
     // The rebuild lane is keyed by OWNER (EthDerivedPipeline.serializedForUser),
     // so the wallet row is read before enqueueing just to pick the lane;
@@ -652,9 +650,7 @@ class EthWalletService {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     return EthDerivedPipeline.serializedForUser(wallet.user_id,
-      () => this._syncWallet(walletId, {
-        fillPrices, deferUserFinish, rebuildMatches,
-      }));
+      () => this._syncWallet(walletId, { fillPrices }));
   }
 
   // Safe replacement for the old remove-and-re-add workaround for forward-only
@@ -1017,7 +1013,6 @@ class EthWalletService {
   static async _syncWallet(walletId, {
     fillPrices = true,
     deferUserFinish = false,
-    rebuildMatches = true,
   } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
@@ -1102,25 +1097,31 @@ class EthWalletService {
 
       // Everything derived from these transfers is rebuilt ONCE for the whole
       // wallet, after every chain has landed. Counterparty labels are
-      // address-keyed with no chain dimension, and holdings/mirror rows span
+      // address-keyed with no chain dimension, and holdings/activity span
       // chains, so doing this per chain would rebuild the same rows N times
       // and briefly publish a wallet whose holdings reflect only the chains
       // synced so far. The step list and its ordering live in
       // EthDerivedPipeline; any step throwing lands in the outer catch below,
-      // which badges the wallet.
-      //
-      // A single-wallet sync keeps the exchange-match pass embedded in the
-      // activity rebuild so its result rides on the sync response. The nightly
-      // all-wallet caller defers both the match pass and the user-wide tail
-      // until every wallet owned by this user has landed.
+      // which badges the wallet. The user-wide mirror runs in finishUser after
+      // exchange and bridge matching have landed.
       const derived = await EthDerivedPipeline.rebuildWallet(walletId, {
         reclassifyUserId: wallet.user_id,
         fillPrices,
         holdings: true,
-        rebuildMatches,
       });
       if (!deferUserFinish) {
-        await EthDerivedPipeline.finishUser(wallet.user_id, { match: false, walletId });
+        const finished = await EthDerivedPipeline.finishUser(wallet.user_id, {
+          matchContext: { walletId }, walletId,
+        });
+        // Preserve the public sync response shape while the work itself now
+        // runs once in the user-wide tail.
+        derived.mirror = finished.mirror?.resultsByWallet?.get(walletId)?.receipt
+          ?? finished.mirror?.summary;
+        // Existing interactive callers read the exchange-match receipt from
+        // sync.activity.matches. finishUser now owns that user-wide pass, so
+        // retain the response contract without coupling it back into the
+        // per-wallet activity rebuild.
+        derived.activity = { ...derived.activity, matches: finished.matches ?? null };
       }
 
       // The balance audit (#62): does the ledger we just stored reproduce the
@@ -1231,22 +1232,67 @@ class EthWalletService {
     }
   }
 
-  // The nightly job's entry point. fillPrices defaults FALSE here and only
-  // here: the historical price job at 8:10 owns the provider walk for every
-  // wallet, so the 7:50 sync must not do it first. A caller that wants the
-  // interactive behaviour passes it explicitly.
-  static async syncAllWallets({
+  // Shared raw-sync orchestration for the nightly job and an interactive
+  // owner's batch. Each user's raw feeds run in its established rebuild lane,
+  // followed by one user-wide derived tail. `derivedWallets` lets a caller
+  // fetch a subset of raw wallets (such as a bulk add) while still rebuilding
+  // every wallet the owner needs for cross-wallet matching and mirroring.
+  static async _syncWalletBatch(wallets, {
     fillPrices = false,
     deferredRetryAttempts = SYNC_DEFERRED_RETRY_ATTEMPTS,
     deferredRetryMaxMs = SYNC_DEFERRED_RETRY_MAX_MS,
+    derivedWallets = null,
   } = {}) {
-    const wallets = await EthWallet.findAllForJobs();
     const outcomes = new Map();
+    // A deferred retry can rebuild every sibling wallet's projection without
+    // re-fetching those siblings. Keep the latest result in one explicit map.
+    // Failures are durable immediately. A whole-tail failure stops this user's
+    // retries; an isolated wallet mirror failure may be repaired by the next
+    // retry tail and then restores the raw sync's prior badge.
+    const derivedByWallet = new Map();
+    const blockedUsers = new Set();
+    const previousErrors = new Map();
+    const rememberCurrentError = async (wallet) => {
+      const entry = outcomes.get(wallet.id);
+      if (entry?.status === 'complete' || entry?.status === 'unsupported') {
+        previousErrors.set(wallet.id, null);
+        return;
+      }
+      const current = await EthWallet.findById(wallet.id);
+      previousErrors.set(wallet.id, current?.error_code ? {
+        code: current.error_code,
+        message: current.error_message,
+      } : null);
+    };
+    const recordDerivedFailure = async (wallet, error) => {
+      if (!previousErrors.has(wallet.id)) await rememberCurrentError(wallet);
+      derivedByWallet.set(wallet.id, { receipt: null, error });
+      try {
+        await EthWallet.setError(wallet.id, error.code || 'SYNC_ERROR', error.message);
+      } catch (recordErr) {
+        logger.error({ walletId: wallet.id, err: recordErr },
+          'Could not record nightly ETH derived error');
+      }
+    };
+    const restoreDerivedFailure = async (wallet) => {
+      if (!previousErrors.has(wallet.id)) return null;
+      const previous = previousErrors.get(wallet.id);
+      try {
+        if (previous) await EthWallet.setError(wallet.id, previous.code, previous.message);
+        else await EthWallet.clearError(wallet.id);
+        previousErrors.delete(wallet.id);
+        return null;
+      } catch (recordErr) {
+        logger.error({ walletId: wallet.id, err: recordErr },
+          'Could not restore repaired ETH wallet status');
+        return recordErr;
+      }
+    };
 
     const runBatch = async (batch) => {
       const byUser = new Map();
       for (const wallet of batch) {
-        const key = wallet.user_id ?? null;
+        const key = wallet.user_id;
         if (!byUser.has(key)) byUser.set(key, []);
         byUser.get(key).push(wallet);
       }
@@ -1256,14 +1302,13 @@ class EthWalletService {
       // blocks that owner's label writes or unrelated wallet actions.
       for (const [userId, userWallets] of byUser) {
         await EthDerivedPipeline.serializedForUser(userId, async () => {
-          const successful = [];
+          let landed = false;
           for (const wallet of userWallets) {
             const attempts = Number(outcomes.get(wallet.id)?.attempts || 0) + 1;
             try {
               const result = await this._syncWallet(wallet.id, {
                 fillPrices,
                 deferUserFinish: true,
-                rebuildMatches: false,
               });
               const entry = {
                 walletId: wallet.id,
@@ -1272,7 +1317,8 @@ class EthWalletService {
                 ...result,
               };
               outcomes.set(wallet.id, entry);
-              successful.push({ wallet, entry });
+              if (previousErrors.has(wallet.id)) await rememberCurrentError(wallet);
+              landed = true;
             } catch (err) {
               if (err.code === 'ETHERSCAN_NOT_CONFIGURED') {
                 outcomes.set(wallet.id, {
@@ -1282,6 +1328,7 @@ class EthWalletService {
                   status: 'skipped',
                   skipped: 'not_configured',
                 });
+                if (previousErrors.has(wallet.id)) await rememberCurrentError(wallet);
                 logger.warn({ walletId: wallet.id, userId: wallet.user_id },
                   'Skipping ETH wallet: owner has no Etherscan key');
                 continue;
@@ -1293,28 +1340,52 @@ class EthWalletService {
                 status: 'failed',
                 error: err.message,
               });
+              if (previousErrors.has(wallet.id)) await rememberCurrentError(wallet);
               logger.error({ walletId: wallet.id, err }, 'Failed to sync ETH wallet');
             }
           }
 
-          if (!successful.length) return;
+          if (!landed) return;
+          const ownerWallets = (derivedWallets || wallets)
+            .filter((wallet) => wallet.user_id === userId);
           try {
-            await EthDerivedPipeline.finishUser(userId, {
-              match: userId != null,
+            const finished = await EthDerivedPipeline.finishUser(userId, {
               context: 'nightly ETH sync',
             });
-          } catch (err) {
-            // Match the old per-wallet failure semantics: a failed user-wide
-            // tail invalidates every wallet whose ingest succeeded in this block.
-            for (const { wallet, entry } of successful) {
-              entry.status = 'failed';
-              entry.error = err.message;
-              try {
-                await EthWallet.setError(wallet.id, err.code || 'SYNC_ERROR', err.message);
-              } catch (recordErr) {
-                logger.error({ walletId: wallet.id, err: recordErr },
-                  'Could not record coalesced nightly ETH tail error');
+            for (const wallet of ownerWallets) {
+              const result = finished.mirror?.resultsByWallet?.get(wallet.id);
+              const raw = outcomes.get(wallet.id);
+              // A partial raw sync has already recorded its concrete chain or
+              // feed diagnosis. A follow-on mirror error is useful for a
+              // clean raw result, but must not replace that retryable source
+              // failure with a generic projection error.
+              if (result?.error) {
+                if (!['failed', 'skipped', 'deferred'].includes(raw?.status)) {
+                  await recordDerivedFailure(wallet, result.error);
+                }
+              } else if (result) {
+                const restoreError = await restoreDerivedFailure(wallet);
+                if (restoreError) await recordDerivedFailure(wallet, restoreError);
+                else derivedByWallet.set(wallet.id, result);
               }
+            }
+          } catch (err) {
+            // A user-wide tail can only invalidate wallets whose raw ingest
+            // fully landed. Keeping a raw failed/skipped/deferred wallet's
+            // original error is crucial: otherwise a follow-on mirror failure
+            // overwrites the provider diagnosis that tells the user what to
+            // retry and when.
+            // The user-wide tail itself failed, so do not repeat a raw
+            // cooldown batch whose next tail would necessarily fail again.
+            // This applies even when every raw result already has its own
+            // diagnostic and therefore must retain that diagnostic below.
+            blockedUsers.add(userId);
+            const landedWallets = ownerWallets.filter((wallet) => {
+              const entry = outcomes.get(wallet.id);
+              return entry && !['failed', 'skipped', 'deferred'].includes(entry.status);
+            });
+            for (const wallet of landedWallets) {
+              await recordDerivedFailure(wallet, err);
             }
             logger.error({ userId, err }, 'Nightly ETH user-wide tail failed');
           }
@@ -1337,7 +1408,8 @@ class EthWalletService {
     let waitedMs = 0;
     for (let retry = 0; retry < retryLimit; retry++) {
       const pending = wallets.filter((wallet) => (
-        outcomes.get(wallet.id)?.deferredFeeds?.length > 0
+        !blockedUsers.has(wallet.user_id)
+        && outcomes.get(wallet.id)?.deferredFeeds?.length > 0
       ));
       if (!pending.length) break;
       const delayMs = Math.max(...pending.map((wallet) =>
@@ -1352,6 +1424,18 @@ class EthWalletService {
       await sleep(delayMs);
       waitedMs += delayMs;
       await runBatch(pending);
+    }
+
+    for (const wallet of wallets) {
+      const entry = outcomes.get(wallet.id);
+      if (!entry || entry.status === 'failed' || entry.status === 'skipped') continue;
+      const { receipt, error } = derivedByWallet.get(wallet.id) || {};
+      if (error) {
+        entry.status = 'failed';
+        entry.error = error.message;
+      } else if (receipt != null) {
+        entry.mirror = receipt;
+      }
     }
 
     const summary = {
@@ -1375,6 +1459,47 @@ class EthWalletService {
       }
     }
     return summary;
+  }
+
+  // Interactive owner-scoped batch. Passing no walletIds syncs all of the
+  // caller's wallets; a bulk add passes only the newly-created ids for raw
+  // history ingest, while the user-wide tail still sees all owned wallets.
+  static async syncWalletsForUser(userId, {
+    walletIds = null,
+    fillPrices = true,
+    deferredRetryAttempts = SYNC_DEFERRED_RETRY_ATTEMPTS,
+    deferredRetryMaxMs = SYNC_DEFERRED_RETRY_MAX_MS,
+  } = {}) {
+    const ownerWallets = await EthWallet.findAllByUser(userId);
+    const requestedIds = walletIds == null
+      ? null
+      : new Set(walletIds.map((id) => Number(id)).filter(Number.isInteger));
+    const wallets = requestedIds
+      ? ownerWallets.filter((wallet) => requestedIds.has(wallet.id))
+      : ownerWallets;
+    return this._syncWalletBatch(wallets, {
+      fillPrices,
+      deferredRetryAttempts,
+      deferredRetryMaxMs,
+      derivedWallets: ownerWallets,
+    });
+  }
+
+  // The nightly job's entry point. fillPrices defaults FALSE here and only
+  // here: the historical price job at 8:10 owns the provider walk for every
+  // wallet, so the 7:50 sync must not do it first. A caller that wants the
+  // interactive behaviour passes it explicitly.
+  static async syncAllWallets({
+    fillPrices = false,
+    deferredRetryAttempts = SYNC_DEFERRED_RETRY_ATTEMPTS,
+    deferredRetryMaxMs = SYNC_DEFERRED_RETRY_MAX_MS,
+  } = {}) {
+    const wallets = await EthWallet.findAllForJobs();
+    return this._syncWalletBatch(wallets, {
+      fillPrices,
+      deferredRetryAttempts,
+      deferredRetryMaxMs,
+    });
   }
 
   static async addWallet(userId, address, label) {
@@ -1717,8 +1842,8 @@ class EthWalletService {
   //
   // Scoped to the owner: wallets and labels only ever classify against their
   // own user's addresses, so rebuilding every user's rows was wasted work on an
-  // edit they never made. The final backfill stays global -- it is an
-  // account-keyed derivation over transactions, not an eth-wallet read.
+  // edit they never made. The final transaction-classification backfill is
+  // scoped to the same owner.
   static refreshClassificationsForUser(userId) {
     return EthDerivedPipeline.serializedForUser(userId, () => EthDerivedPipeline.runForUser(userId, {
       reclassify: true,

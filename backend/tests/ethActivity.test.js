@@ -299,7 +299,8 @@ const EthActivity = require('../src/models/EthActivity');
 const EthTransfer = require('../src/models/EthTransfer');
 const EthActivityService = require('../src/services/EthActivityService');
 
-const { buildActivityRows, REVIEW_REASONS } = EthActivityService;
+const { buildActivityRows } = require('../src/services/ethActivity/rows');
+const { REVIEW_REASONS } = require('../src/utils/ethActivityVocabulary');
 
 // --- leg fixtures ----------------------------------------------------------
 

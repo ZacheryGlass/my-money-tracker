@@ -250,14 +250,14 @@ test('POST /api/eth/wallets/bulk without ETHERSCAN_API_KEY returns 503', async (
 test('POST /api/eth/wallets/bulk allows a keyless-only chain set', async () => {
   const EthWalletService = require('../src/services/EthWalletService');
   const originalAddWallet = EthWalletService.addWallet;
-  const originalSyncWallet = EthWalletService.syncWallet;
+  const originalSyncWalletsForUser = EthWalletService.syncWalletsForUser;
   const priorChains = process.env.ETH_CHAINS;
   process.env.ETH_CHAINS = '324';
   EthWalletService.addWallet = async (userId, address) => ({
     wallet: { id: 77, user_id: userId, address },
     account: { id: 88 },
   });
-  EthWalletService.syncWallet = async () => ({});
+  EthWalletService.syncWalletsForUser = async () => ({});
   try {
     const response = await request(app)
       .post('/api/eth/wallets/bulk')
@@ -268,7 +268,7 @@ test('POST /api/eth/wallets/bulk allows a keyless-only chain set', async () => {
     assert.equal(response.body.summary.added, 1);
   } finally {
     EthWalletService.addWallet = originalAddWallet;
-    EthWalletService.syncWallet = originalSyncWallet;
+    EthWalletService.syncWalletsForUser = originalSyncWalletsForUser;
     if (priorChains === undefined) delete process.env.ETH_CHAINS;
     else process.env.ETH_CHAINS = priorChains;
   }
@@ -279,12 +279,12 @@ test('POST /api/eth/wallets/bulk reports each address and adds the good ones', a
   const EthWalletService = require('../src/services/EthWalletService');
   const originalGetUserKey = SecretsService.getUserKey;
   const originalAddWallet = EthWalletService.addWallet;
-  const originalSyncWallet = EthWalletService.syncWallet;
+  const originalSyncWalletsForUser = EthWalletService.syncWalletsForUser;
 
   const good = '0x1111111111111111111111111111111111111111';
   const tracked = '0x2222222222222222222222222222222222222222';
   const bad = 'not-an-address';
-  const synced = [];
+  const batches = [];
 
   SecretsService.getUserKey = async () => 'test-key';
   EthWalletService.addWallet = async (userId, address) => {
@@ -300,7 +300,7 @@ test('POST /api/eth/wallets/bulk reports each address and adds the good ones', a
     }
     return { wallet: { id: 7, address }, account: { id: 9 } };
   };
-  EthWalletService.syncWallet = async (id) => { synced.push(id); };
+  EthWalletService.syncWalletsForUser = async (...args) => { batches.push(args); };
 
   try {
     const response = await request(app)
@@ -317,10 +317,11 @@ test('POST /api/eth/wallets/bulk reports each address and adds the good ones', a
       [[good, 'added'], [bad, 'failed'], [tracked, 'duplicate'], [good, 'duplicate']]
     );
     assert.match(response.body.results[1].error, /0x-prefixed/);
+    assert.deepEqual(batches, [[1, { walletIds: [7] }]]);
   } finally {
     SecretsService.getUserKey = originalGetUserKey;
     EthWalletService.addWallet = originalAddWallet;
-    EthWalletService.syncWallet = originalSyncWallet;
+    EthWalletService.syncWalletsForUser = originalSyncWalletsForUser;
   }
 });
 

@@ -66,7 +66,7 @@ function classifyActivity({
   // but the OTHER half of that movement is a separate transaction on a separate
   // chain, which this pure per-transaction function cannot see. So the rung
   // states only what this transaction shows and flags the row; the cross-chain
-  // matching pass (matchBridgeTransfersForUser) clears the flag once it finds
+  // user-wide bridge matching clears the flag once it finds
   // the far side, and an unmatched leg stays visible rather than silently
   // asserting a transfer that may never have arrived.
   //
@@ -83,7 +83,8 @@ function classifyActivity({
   //     rule 8's `send`, flagged as possible spending. That is the exact
   //     mistake this issue exists to fix.
   // Label precedence itself (user row shadows builtin) is resolved in SQL
-  // before the set ever reaches here -- see _bridgeAddressesForUser.
+  // before the set ever reaches here -- see _bridgeEndpointAddressesForUser
+  // and _manualBridgeAddressesForUser.
   const bridgeLegs = valueLegs.filter(
     (leg) => !leg.counterparty_is_own && bridgeAddresses.has(counterpartyAddress(wallet, leg))
   );

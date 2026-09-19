@@ -100,7 +100,7 @@ END $$;
 -- These rows are recomputed from amounts and timestamps, so ON DELETE CASCADE
 -- is correct: rebuilding a wallet drops the links that pointed at its rows, and
 -- the matching pass immediately re-derives the ones still true. Every caller of
--- rebuildForWallet runs matchBridgeTransfersForUser afterwards for that reason.
+-- The derived pipeline runs the user-wide bridge matcher afterwards for that reason.
 --
 -- The two UNIQUE constraints are the pairing's integrity: a leg can be claimed
 -- by at most one link from each side, so a bridge_out cannot be presented as

@@ -302,8 +302,7 @@ class BridgeMatchingService {
           record = result.receipt;
         } catch (error) {
           const chain = chains.getChain(Number(activity.chain_id));
-          const provider = (chain?.consensusRpcUrl || chain?.rpcUrl)
-            ? 'json-rpc' : 'chain-explorer';
+          const provider = chain?.consensusRpcUrl ? 'json-rpc' : 'chain-explorer';
           await EthBridgeReceipt.upsertFailure({
             walletId: activity.wallet_id,
             chainId: Number(activity.chain_id),
@@ -467,7 +466,10 @@ class BridgeMatchingService {
       verdicts.filter((verdict) => verdict.verdict === 'rejected').map(pairKeyFromVerdict)
     );
     const suggestions = suggestBridgeLegs(
-      annotatedActivities.filter((activity) => !excludedCoordinates.has(activityCoordinate(activity))),
+      annotatedActivities.filter((activity) => (
+        Number(activity.chain_id) !== EXCLUDED_BASE_CHAIN_ID
+        && !excludedCoordinates.has(activityCoordinate(activity))
+      )),
       rejectedPairs
     )
       .filter((suggestion) => !occupiedPairs.has(suggestionPairKey(

@@ -152,7 +152,7 @@ const {
   assetKeyForTransfer, tokenAssetKey, parseAssetKey, NATIVE_ASSET_KEY,
 } = require('../src/utils/assetPriceKey');
 const { TOKEN_PRICE_ALIASES, validateAliases } = require('../src/config/tokenPriceAliases');
-const { buildActivityRows } = require('../src/services/EthActivityService');
+const { buildActivityRows } = require('../src/services/ethActivity/rows');
 const { buildMirrorRow } = require('../src/services/EthTransactionMirrorService');
 
 // The service asks for the shared CoinGecko key on every request; the fake DB
@@ -1185,9 +1185,16 @@ const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
 const EthTransactionMirrorService = require('../src/services/EthTransactionMirrorService');
 const EthActivityService = require('../src/services/EthActivityService');
 const ExchangeMatchService = require('../src/services/ExchangeMatchService');
+const BridgeMatchingService = require('../src/services/BridgeMatchingService');
 const TransactionClassificationService = require('../src/services/TransactionClassificationService');
 
-async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = null } = {}) {
+async function runJobWithStubs(wallets, {
+  failMatchesFor = null,
+  failMirrorFor = null,
+  failMirrorWallets = [],
+  failActivityFor = null,
+  holdLaneFor = null,
+} = {}) {
   const calls = [];
   const saved = {
     createIfNotRunning: JobLog.createIfNotRunning, complete: JobLog.complete,
@@ -1195,11 +1202,11 @@ async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = n
     findAllForJobs: EthWallet.findAllForJobs,
     applyToWallet: AssetPriceHistory.applyToWallet,
     ledgerAssets: HistoricalPriceService.backfillLedgerAssets,
-    mirror: EthTransactionMirrorService.rebuildForWallet,
+    mirror: EthTransactionMirrorService.rebuildForUser,
     activity: EthActivityService.rebuildForWallet,
-    bridge: EthActivityService.matchBridgeTransfersForUser,
+    bridge: BridgeMatchingService.rebuildForUser,
     matches: ExchangeMatchService.rebuildForUserSafely,
-    backfill: TransactionClassificationService.backfill,
+    backfill: TransactionClassificationService.backfillForUser,
   };
   JobLog.createIfNotRunning = async () => ({ id: 1 });
   JobLog.complete = async () => {};
@@ -1209,11 +1216,24 @@ async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = n
   HistoricalPriceService.backfillLedgerAssets = async () => ({
     assets: 0, covered: 0, rangeLimited: 0, failed: 0,
   });
-  EthTransactionMirrorService.rebuildForWallet = async (id) => { calls.push(['mirror', id]); };
-  EthActivityService.rebuildForWallet = async (id, options) => {
-    calls.push(['activity', id, options]);
+  EthTransactionMirrorService.rebuildForUser = async (userId) => {
+    calls.push(['mirror', userId]);
+    if (userId === failMirrorFor) throw new Error('mirror rebuild blew up');
+    const userWallets = wallets.filter((wallet) => wallet.user_id === userId);
+    return {
+      summary: { wallets: userWallets.length, mirrored: 0, unpricedSkipped: 0 },
+      resultsByWallet: new Map(userWallets.map((wallet) => [wallet.id, {
+        receipt: failMirrorWallets.includes(wallet.id) ? null : {},
+        error: failMirrorWallets.includes(wallet.id)
+          ? new Error(`wallet ${wallet.id} mirror failed`) : null,
+      }])),
+    };
   };
-  EthActivityService.matchBridgeTransfersForUser = async (userId) => {
+  EthActivityService.rebuildForWallet = async (id) => {
+    calls.push(['activity', id]);
+    if (id === failActivityFor) throw new Error('activity rebuild blew up');
+  };
+  BridgeMatchingService.rebuildForUser = async (userId) => {
     calls.push(['bridge', userId]);
   };
   ExchangeMatchService.rebuildForUserSafely = async (userId, context) => {
@@ -1221,7 +1241,9 @@ async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = n
     if (userId === failMatchesFor) throw new Error('match rebuild blew up');
     return {};
   };
-  TransactionClassificationService.backfill = async () => { calls.push(['backfill']); };
+  TransactionClassificationService.backfillForUser = async (userId) => {
+    calls.push(['backfill', userId]);
+  };
   try {
     if (holdLaneFor != null) {
       // Occupy the user's rebuild lane the way an in-flight sync would, start
@@ -1253,11 +1275,11 @@ async function runJobWithStubs(wallets, { failMatchesFor = null, holdLaneFor = n
     EthWallet.findAllForJobs = saved.findAllForJobs;
     AssetPriceHistory.applyToWallet = saved.applyToWallet;
     HistoricalPriceService.backfillLedgerAssets = saved.ledgerAssets;
-    EthTransactionMirrorService.rebuildForWallet = saved.mirror;
+    EthTransactionMirrorService.rebuildForUser = saved.mirror;
     EthActivityService.rebuildForWallet = saved.activity;
-    EthActivityService.matchBridgeTransfersForUser = saved.bridge;
+    BridgeMatchingService.rebuildForUser = saved.bridge;
     ExchangeMatchService.rebuildForUserSafely = saved.matches;
-    TransactionClassificationService.backfill = saved.backfill;
+    TransactionClassificationService.backfillForUser = saved.backfill;
   }
 }
 
@@ -1275,15 +1297,17 @@ test('the nightly job runs each user as one block: wallets, then the full tail',
   // the classification backfill present and last -- the step this job used to
   // forget. User 2's block starts only after user 1's tail completes.
   assert.deepEqual(calls, [
-    ['mirror', 1], ['activity', 1, { rebuildMatches: false }],
-    ['mirror', 2], ['activity', 2, { rebuildMatches: false }],
+    ['activity', 1],
+    ['activity', 2],
     ['matches', OWNER_ID, { reason: 'historical-prices' }],
     ['bridge', OWNER_ID],
-    ['backfill'],
-    ['mirror', 3], ['activity', 3, { rebuildMatches: false }],
+    ['mirror', OWNER_ID],
+    ['backfill', OWNER_ID],
+    ['activity', 3],
     ['matches', 2, { reason: 'historical-prices' }],
     ['bridge', 2],
-    ['backfill'],
+    ['mirror', 2],
+    ['backfill', 2],
   ]);
 });
 
@@ -1297,13 +1321,41 @@ test('one user\'s failed tail does not skip the next user\'s', async () => {
   // skipped -- but user 2's full tail still runs. Per-user isolation, the same
   // shape the wallet loop uses.
   assert.deepEqual(calls, [
-    ['mirror', 1], ['activity', 1, { rebuildMatches: false }],
+    ['activity', 1],
     ['matches', OWNER_ID, { reason: 'historical-prices' }],
-    ['mirror', 2], ['activity', 2, { rebuildMatches: false }],
+    ['activity', 2],
     ['matches', 2, { reason: 'historical-prices' }],
     ['bridge', 2],
-    ['backfill'],
+    ['mirror', 2],
+    ['backfill', 2],
   ]);
+});
+
+test('a failed user tail counts only wallets whose earlier rebuild succeeded', async () => {
+  const { calls, result } = await runJobWithStubs(
+    [{ id: 1, user_id: OWNER_ID }, { id: 2, user_id: OWNER_ID }],
+    { failActivityFor: 1, failMirrorFor: OWNER_ID }
+  );
+
+  assert.deepEqual(calls, [
+    ['activity', 1],
+    ['activity', 2],
+    ['matches', OWNER_ID, { reason: 'historical-prices' }],
+    ['bridge', OWNER_ID],
+    ['mirror', OWNER_ID],
+  ]);
+  assert.equal(result.revalued.rebuilt, 1);
+  assert.equal(result.revalued.failed, 2);
+  assert.ok(result.revalued.failed <= result.revalued.wallets);
+});
+
+test('the price job counts a mirror failure only for that wallet', async () => {
+  const { result } = await runJobWithStubs(
+    [{ id: 1, user_id: OWNER_ID }, { id: 2, user_id: OWNER_ID }],
+    { failMirrorWallets: [2] }
+  );
+  assert.equal(result.revalued.rebuilt, 2);
+  assert.equal(result.revalued.failed, 1);
 });
 
 test('the job waits for the user\'s rebuild lane instead of racing it', async () => {
@@ -1317,9 +1369,10 @@ test('the job waits for the user\'s rebuild lane instead of racing it', async ()
   // delete-then-insert rebuilds unqueued, racing whatever was in flight.
   assert.deepEqual(callsWhileHeld, []);
   assert.deepEqual(calls, [
-    ['mirror', 1], ['activity', 1, { rebuildMatches: false }],
+    ['activity', 1],
     ['matches', OWNER_ID, { reason: 'historical-prices' }],
     ['bridge', OWNER_ID],
-    ['backfill'],
+    ['mirror', OWNER_ID],
+    ['backfill', OWNER_ID],
   ]);
 });

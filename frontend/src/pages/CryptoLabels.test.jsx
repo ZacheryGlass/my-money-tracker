@@ -26,6 +26,7 @@ const apiMocks = vi.hoisted(() => ({
   exchanges: {
     getAll: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(),
     importCsv: vi.fn(), getRecords: vi.fn(), resolveRecord: vi.fn(),
+    getBalanceExceptions: vi.fn(),
   },
 }));
 
@@ -51,6 +52,7 @@ beforeEach(() => {
     data: [], summary: { spam_count: 0, needs_review_count: 0 }, pagination: { total: 0 },
   });
   apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
+  apiMocks.exchanges.getBalanceExceptions.mockResolvedValue({ summary: { count: 0 } });
   apiMocks.accounts.getAll.mockResolvedValue({ accounts: [] });
   apiMocks.holdings.getAll.mockResolvedValue({ holdings: [] });
   apiMocks.history.getAccounts.mockResolvedValue({ data: [] });

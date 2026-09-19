@@ -271,20 +271,37 @@ class EthTransactionMirrorService {
   }
 
   // Rebuild all wallet mirrors after the user-wide bridge matcher has produced
-  // links. The per-wallet derivation necessarily runs before matching (the far
-  // side may live on another wallet), so this second database-only pass is
-  // what publishes confirmed bridge links to the legacy transactions table.
-  static async rebuildForUser(userId) {
+  // links. This single database-only pass publishes confirmed bridge links to
+  // the legacy transactions table and retains each wallet's result/error so
+  // sync receipts and failure handling stay wallet-scoped.
+  static async rebuildForUser(userId, { context = null } = {}) {
     if (!userId) throw new Error('EthTransactionMirrorService.rebuildForUser requires a userId');
     const wallets = await EthWallet.findAllByUser(userId);
-    const results = [];
+    const resultsByWallet = new Map();
     for (const wallet of wallets) {
-      results.push(await this.rebuildForWallet(wallet.id, { includeBridgeLinks: true }));
+      try {
+        const receipt = await this.rebuildForWallet(wallet.id, { includeBridgeLinks: true });
+        resultsByWallet.set(wallet.id, { receipt, error: null });
+      } catch (err) {
+        resultsByWallet.set(wallet.id, { receipt: null, error: err });
+        logger.warn(
+          { userId, walletId: wallet.id, err },
+          `Transaction mirror rebuild failed during ${context || 'derived-data refresh'}`
+        );
+      }
     }
+    const receipts = [...resultsByWallet.values()]
+      .map((result) => result.receipt)
+      .filter(Boolean);
     return {
-      wallets: wallets.length,
-      mirrored: results.reduce((sum, result) => sum + Number(result.mirrored || 0), 0),
-      unpricedSkipped: results.reduce((sum, result) => sum + Number(result.unpricedSkipped || 0), 0),
+      summary: {
+        wallets: wallets.length,
+        mirrored: receipts.reduce((sum, receipt) => sum + Number(receipt.mirrored || 0), 0),
+        unpricedSkipped: receipts.reduce(
+          (sum, receipt) => sum + Number(receipt.unpricedSkipped || 0), 0
+        ),
+      },
+      resultsByWallet,
     };
   }
 

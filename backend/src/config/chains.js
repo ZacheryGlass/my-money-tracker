@@ -177,7 +177,9 @@ const REGISTRY = [
         verifyRpcIndexedHead: true,
       },
     },
-    rpcUrl: configuredRpcUrl('ZKSYNC_ERA_RPC_URL', 'https://mainnet.era.zksync.io'),
+    consensusRpcUrl: configuredRpcUrl(
+      'ZKSYNC_ERA_RPC_URL', 'https://mainnet.era.zksync.io'
+    ),
     traceRpcUrl: configuredRpcUrl('ZKSYNC_ERA_TRACE_RPC_URL', null),
   },
   {
@@ -256,7 +258,7 @@ const REGISTRY = [
     // Blockscout's indexed account balance may be stale while it refreshes in
     // the background. Reconciliation needs the chain head, so native and token
     // balance reads use Gnosis' public JSON-RPC endpoint instead.
-    rpcUrl: configuredRpcUrl('GNOSIS_RPC_URL', 'https://rpc.gnosischain.com'),
+    consensusRpcUrl: configuredRpcUrl('GNOSIS_RPC_URL', 'https://rpc.gnosischain.com'),
     traceRpcUrl: configuredRpcUrl('GNOSIS_TRACE_RPC_URL', null),
     // Gnosis mints bridged xDAI through consensus. No account feed contains the
     // credit; the Block Reward contract's AddedReceiver log is the on-chain
@@ -283,7 +285,7 @@ const REGISTRY = [
       v2NormalTransactions: true,
       requiresApiKey: false,
     },
-    rpcUrl: configuredRpcUrl('OPTIMISM_RPC_URL', 'https://mainnet.optimism.io'),
+    consensusRpcUrl: configuredRpcUrl('OPTIMISM_RPC_URL', 'https://mainnet.optimism.io'),
     traceRpcUrl: configuredRpcUrl('OPTIMISM_TRACE_RPC_URL', null),
     // Bump when stored feed rows must be rebuilt under new normalization.
     // Existing chain rows below this version reset all feed cursors once;

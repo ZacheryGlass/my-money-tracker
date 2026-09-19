@@ -277,6 +277,9 @@ test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged
   const EthFeedCoverage = require('../src/models/EthFeedCoverage');
   const SecretsService = require('../src/services/SecretsService');
   const MirrorService = require('../src/services/EthTransactionMirrorService');
+  const EthActivityService = require('../src/services/EthActivityService');
+  const ExchangeMatchService = require('../src/services/ExchangeMatchService');
+  const BridgeMatchingService = require('../src/services/BridgeMatchingService');
   const TransactionClassificationService = require('../src/services/TransactionClassificationService');
 
   const restore = [];
@@ -330,8 +333,16 @@ test('a failing NFT feed is isolated: sync succeeds, no delete, cursor unchanged
   stub(EthWalletChain, 'updateSyncTime', async () => {});
   stub(EthTransfer, 'reclassifyCounterparties', async () => {});
   stub(EthWalletService, 'refreshHoldings', async () => ({}));
-  stub(MirrorService, 'rebuildForWallet', async () => ({}));
-  stub(TransactionClassificationService, 'backfill', async () => {});
+  stub(EthActivityService, 'rebuildForWallet', async () => ({ activity: 0 }));
+  stub(ExchangeMatchService, 'rebuildForUserSafely', async () => null);
+  stub(BridgeMatchingService, 'rebuildForUser', async () => null);
+  stub(MirrorService, 'rebuildForUser', async () => {
+    return {
+      summary: { wallets: 1, mirrored: 0, unpricedSkipped: 0 },
+      resultsByWallet: new Map([[7, { receipt: {}, error: null }]]),
+    };
+  });
+  stub(TransactionClassificationService, 'backfillForUser', async () => {});
   let clearedError = false;
   stub(EthWallet, 'clearError', async () => { clearedError = true; });
   let walletError = null;

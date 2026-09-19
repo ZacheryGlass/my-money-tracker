@@ -17,9 +17,10 @@ const apiMocks = vi.hoisted(() => ({
   },
   eth: {
     addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), getCoverage: vi.fn(), syncWallet: vi.fn(), recaptureWallet: vi.fn(), removeWallet: vi.fn(),
-    startHistoryAudit: vi.fn(), getHistoryAudit: vi.fn(), getHistoryAudits: vi.fn(),
+    startHistoryAudit: vi.fn(), getHistoryAudits: vi.fn(),
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
     getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
+    getAddressNotes: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getReconciliation: vi.fn(),
     getActivity: vi.fn(), setActivitySpam: vi.fn(),
     getDiscoveryCandidates: vi.fn(), getDiscoveryReceipts: vi.fn(), runDiscovery: vi.fn(), decideDiscovery: vi.fn(),
@@ -28,6 +29,7 @@ const apiMocks = vi.hoisted(() => ({
   exchanges: {
     getAll: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(),
     importCsv: vi.fn(), getRecords: vi.fn(), resolveRecord: vi.fn(),
+    getBalanceExceptions: vi.fn(),
   },
 }));
 
@@ -79,6 +81,7 @@ describe('Crypto -> Wallets tab', () => {
     apiMocks.eth.getWallets.mockResolvedValue({ wallets: [] });
     apiMocks.eth.getIgnoredTokens.mockResolvedValue({ tokens: [] });
     apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
+    apiMocks.eth.getAddressNotes.mockResolvedValue({ notes: [] });
     apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({
       data: [], summary: { count: 0, dust_count: 0, usd_volume: 0 },
     });
@@ -86,10 +89,10 @@ describe('Crypto -> Wallets tab', () => {
       data: [], summary: { spam_count: 0, needs_review_count: 0 }, pagination: { total: 0 },
     });
     apiMocks.eth.getHistoryAudits.mockResolvedValue({ audits: [] });
-    apiMocks.eth.getHistoryAudit.mockResolvedValue({ audit: null });
     apiMocks.eth.getDiscoveryCandidates.mockResolvedValue({ candidates: [] });
     apiMocks.eth.getDiscoveryReceipts.mockResolvedValue({ receipts: [] });
     apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
+    apiMocks.exchanges.getBalanceExceptions.mockResolvedValue({ summary: { count: 0 } });
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [] });
     apiMocks.holdings.getAll.mockResolvedValue({ holdings: [] });
     apiMocks.history.getAccounts.mockResolvedValue({ data: [] });

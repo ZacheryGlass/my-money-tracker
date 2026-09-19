@@ -4,10 +4,10 @@
 //
 // Everything derived from eth_transfers is rebuilt in this order:
 //
-//   reclassify? -> ensureAssets? -> value -> holdings? -> mirror -> activity
-//      (user)        (wallet)      (wallet)  (wallet)     (wallet)   (wallet)
-//   -> match? -> bridge -> mirror -> backfill
-//       (user)    (user)    (user)    (global)
+//   reclassify? -> ensureAssets? -> value -> holdings? -> activity
+//      (user)        (wallet)      (wallet)  (wallet)     (wallet)
+//   -> exchange match -> bridge match -> mirror -> classification
+//          (user)          (user)       (user)       (user)
 //
 // Before this module the sequence was hand-copied at four sites (_syncWallet,
 // refreshClassificationsForUser, refreshDerivedForUser, historicalPriceJob),
@@ -16,8 +16,8 @@
 // unclassified until the next day's expense sync. The step list lives here and
 // the call sites only parameterize it.
 //
-// Value before mirror and activity is load-bearing: both derivations read
-// eth_transfers.usd_at_time, so a stale valuation would be baked into both.
+// Value before activity and the later mirror is load-bearing: both derivations
+// read eth_transfers.usd_at_time, so a stale valuation would be baked into both.
 // Value before holdings is canonicalization only -- holdings read no usd
 // columns -- chosen to match the sync site's historical order.
 //
@@ -36,6 +36,7 @@ const HistoricalPriceService = require('./HistoricalPriceService');
 const EthTransactionMirrorService = require('./EthTransactionMirrorService');
 const EthActivityService = require('./EthActivityService');
 const ExchangeMatchService = require('./ExchangeMatchService');
+const BridgeMatchingService = require('./BridgeMatchingService');
 const TransactionClassificationService = require('./TransactionClassificationService');
 
 // --- serialization ----------------------------------------------------------
@@ -66,7 +67,7 @@ function serializedOn(key, fn) {
 }
 
 function serializedForUser(userId, fn) {
-  return serializedOn(userId == null ? 'user:null' : `user:${userId}`, fn);
+  return serializedOn(`user:${userId}`, fn);
 }
 
 // Test introspection: how many lanes still hold work.
@@ -89,7 +90,6 @@ async function rebuildWallet(walletId, {
   reclassifyUserId = null,
   fillPrices = false,
   holdings = false,
-  rebuildMatches = false,
   isolateSteps = false,
   context = null,
 } = {}) {
@@ -139,35 +139,27 @@ async function rebuildWallet(walletId, {
       () => require('./EthWalletService').refreshHoldings(walletId));
   }
 
-  results.mirror = await runStep('Mirror rebuild',
-    () => EthTransactionMirrorService.rebuildForWallet(walletId));
-
-  // rebuildMatches: false is for a caller walking EVERY wallet of one user --
-  // the match pass is user-wide, so it belongs in finishUser after the loop,
-  // not once per wallet against a half-rebuilt feed. The single-wallet sync
-  // passes true so the pass runs inside the rebuild and its result rides on
-  // the sync response.
   results.activity = await runStep('Activity rebuild',
-    () => EthActivityService.rebuildForWallet(walletId, { rebuildMatches }));
+    () => EthActivityService.rebuildForWallet(walletId));
 
   return results;
 }
 
 // The user-wide tail every walker runs once after its wallets have landed:
-// match -> bridge -> mirror -> backfill.
+// exchange match -> bridge match -> mirror -> classification. Keeping every
+// user-wide derivation here avoids rebuilding the transactions mirror before
+// and after bridge links exist and avoids matching a half-rebuilt wallet set.
 async function finishUser(userId, {
-  match = true,
   matchContext = {},
   context = null,
+  isolateMirror = false,
   // For log metadata only, on the sync-flavored call where the caller is a
   // single wallet rather than a user-wide refresh.
   walletId = null,
 } = {}) {
   // rebuildForUserSafely never throws; a failed match pass logs itself and
   // returns null.
-  const matches = match
-    ? await ExchangeMatchService.rebuildForUserSafely(userId, matchContext)
-    : null;
+  const matches = await ExchangeMatchService.rebuildForUserSafely(userId, matchContext);
 
   // Bridge pairing is cross-CHAIN and cross-WALLET, so it runs once over the
   // owner's whole activity set -- the far side of a bridge a sync just
@@ -177,27 +169,42 @@ async function finishUser(userId, {
   // activity DELETE cascades eth_activity_links away, so skipping this would
   // silently unpair every bridge the user has ever made.
   try {
-    await EthActivityService.matchBridgeTransfersForUser(userId);
-    // The per-wallet mirror runs before this user-wide matcher because the far
-    // side of a bridge may live on another wallet. Once links exist, rebuild
-    // the legacy transactions mirror so a confirmed bridge is a self-transfer
-    // everywhere, while unmatched legs retain their conservative category.
-    await EthTransactionMirrorService.rebuildForUser(userId);
+    await BridgeMatchingService.rebuildForUser(userId);
   } catch (err) {
     if (context) logger.warn({ userId, err }, `Bridge matching failed during ${context}`);
     else logger.warn({ walletId, err }, 'Bridge matching failed; legs stay flagged for review');
   }
 
-  // The final backfill stays GLOBAL -- it is an account-keyed derivation over
-  // transactions, not an eth-wallet read -- and it throws: the callers that
-  // treat the tail as fatal are the ones whose response promises the rebuild
-  // landed. With per-user lanes, two users' tails could otherwise run this
-  // full-table upsert concurrently -- a lock-order deadlock candidate -- so it
-  // takes the one reserved cross-user chokepoint. No cycle: user lanes await
-  // this lane, never the reverse.
-  await serializedOn('global:backfill', () => TransactionClassificationService.backfill());
+  // Even if bridge matching failed, rebuild the mirror from the activity state
+  // that did land. The activity DELETE cascades old links, so this publishes a
+  // conservative unmatched row instead of leaving a stale pre-sync mirror.
+  // The mirror itself isolates wallets so one broken projection cannot skip
+  // the rest. Interactive syncs and audits still fail when their requested
+  // wallet is the one that broke; batch callers consume the error map.
+  let mirror = null;
+  try {
+    mirror = await EthTransactionMirrorService.rebuildForUser(userId, { context });
+  } catch (err) {
+    if (context) logger.warn({ userId, err }, `Transaction mirror rebuild failed during ${context}`);
+    else logger.warn({ walletId, err }, 'Transaction mirror rebuild failed');
+    if (!isolateMirror) throw err;
+  }
 
-  return { matches };
+  // The mirror walks all of the owner's wallets so bridge-aware rows publish
+  // once. A failure in some other wallet must not fail an interactive sync or
+  // audit of this one; the nightly callers consume the full error map below.
+  // Classification is scoped to the same owner as the serialized lane, so
+  // unrelated users no longer contend on a full-table backfill. It stays
+  // fatal. It also runs before a requested-wallet mirror error is returned:
+  // sibling wallets whose mirrors succeeded must not be left unclassified.
+  await TransactionClassificationService.backfillForUser(userId);
+
+  const requestedMirrorError = walletId == null
+    ? null
+    : mirror?.resultsByWallet?.get(walletId)?.error;
+  if (requestedMirrorError && !isolateMirror) throw requestedMirrorError;
+
+  return { mirror, matches };
 }
 
 // The whole pipeline for every wallet of one user, with per-step isolation --
@@ -216,15 +223,17 @@ async function runForUser(userId, {
   const wallets = await EthWallet.findAllByUser(userId);
   for (const wallet of wallets) {
     await rebuildWallet(wallet.id, {
-      holdings, rebuildMatches: false, isolateSteps: true, context,
+      holdings, isolateSteps: true, context,
     });
   }
-  return finishUser(userId, { matchContext: { reason: matchReason }, context });
+  return finishUser(userId, {
+    matchContext: { reason: matchReason }, context, isolateMirror: true,
+  });
 }
 
 // syncAllWallets uses the same primitives directly: it keeps each owner's
-// wallet ingests in this lane, suppresses the per-wallet match pass, and calls
-// finishUser once after the owner block has landed.
+// wallet ingests in this lane and calls finishUser once after the owner block
+// has landed.
 
 module.exports = {
   rebuildWallet,

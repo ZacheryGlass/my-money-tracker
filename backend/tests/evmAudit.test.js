@@ -16,7 +16,7 @@ const {
 } = require('../src/services/evmAudit/effectDecoder');
 const chains = require('../src/config/chains');
 const {
-  matchesLegacyTransfer, matchesMoralisTransfer,
+  matchesLegacyTransfer, matchesIndexedTransfer,
 } = require('../src/services/evmAudit/corroboratedIdentity');
 
 const WALLET = '0x1111111111111111111111111111111111111111';
@@ -1169,13 +1169,13 @@ test('cross-provider transfer repair requires the exact Moralis log coordinate a
     tx_hash: HASH, transfer_type: 'token', from_address: OTHER, to_address: WALLET,
     value_wei: '8', token_contract: CONTRACT, token_id: null,
   };
-  assert.equal(matchesMoralisTransfer(effect, moralis), true);
-  assert.equal(matchesMoralisTransfer(effect, {
+  assert.equal(matchesIndexedTransfer(effect, moralis), true);
+  assert.equal(matchesIndexedTransfer(effect, {
     ...moralis, payload_json: { ...moralis.payload_json, value: 8 },
   }), true);
   assert.equal(matchesLegacyTransfer(effect, legacy), true);
-  assert.equal(matchesMoralisTransfer(effect, { ...moralis, log_index: 4 }), false);
-  assert.equal(matchesMoralisTransfer(effect, {
+  assert.equal(matchesIndexedTransfer(effect, { ...moralis, log_index: 4 }), false);
+  assert.equal(matchesIndexedTransfer(effect, {
     ...moralis, payload_json: { ...moralis.payload_json, value: '9' },
   }), false);
   assert.equal(matchesLegacyTransfer(effect, { ...legacy, token_contract: OTHER }), false);
@@ -1194,24 +1194,24 @@ test('NFT corroboration uses Moralis amount units instead of its non-unit value 
       amount: '2', value: '0.000000000000000001', token_id: '7',
     },
   };
-  assert.equal(matchesMoralisTransfer(effect, observation), true);
-  assert.equal(matchesMoralisTransfer(effect, {
+  assert.equal(matchesIndexedTransfer(effect, observation), true);
+  assert.equal(matchesIndexedTransfer(effect, {
     ...observation, payload_json: { ...observation.payload_json, amount: '3' },
   }), false);
-  assert.equal(matchesMoralisTransfer(effect, {
+  assert.equal(matchesIndexedTransfer(effect, {
     ...observation, payload_json: { ...observation.payload_json, amount: null, value: '2' },
   }), false);
-  assert.equal(matchesMoralisTransfer(effect, {
+  assert.equal(matchesIndexedTransfer(effect, {
     ...observation, payload_json: { ...observation.payload_json, amount: [2] },
   }), false);
-  assert.equal(matchesMoralisTransfer(effect, {
+  assert.equal(matchesIndexedTransfer(effect, {
     ...observation,
     payload_json: {
       ...observation.payload_json, amount: '9007199254740992',
       __evm_json_numeric_fields: ['amount'],
     },
   }), false);
-  assert.equal(matchesMoralisTransfer(effect, {
+  assert.equal(matchesIndexedTransfer(effect, {
     ...observation,
     payload_json: {
       ...observation.payload_json, token_id: '9007199254740992',

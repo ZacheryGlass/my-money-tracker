@@ -48,6 +48,9 @@ const SecretsService = require('../src/services/SecretsService');
 const RpcClient = require('../src/services/evmAudit/RpcClient');
 const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
 const MirrorService = require('../src/services/EthTransactionMirrorService');
+const EthActivityService = require('../src/services/EthActivityService');
+const ExchangeMatchService = require('../src/services/ExchangeMatchService');
+const BridgeMatchingService = require('../src/services/BridgeMatchingService');
 const TransactionClassificationService = require('../src/services/TransactionClassificationService');
 const { collapseDuplicateKeys } = require('../src/services/SnapshotService');
 
@@ -224,8 +227,16 @@ function harness(t, {
   stub(EthWalletChain, 'findForWallet', async () => []);
   stub(EthTransfer, 'reclassifyCounterparties', async () => {});
   stub(EthWalletService, 'refreshHoldings', async () => ({}));
-  stub(MirrorService, 'rebuildForWallet', async () => ({}));
-  stub(TransactionClassificationService, 'backfill', async () => {});
+  stub(EthActivityService, 'rebuildForWallet', async () => ({ activity: 0 }));
+  stub(ExchangeMatchService, 'rebuildForUserSafely', async () => null);
+  stub(BridgeMatchingService, 'rebuildForUser', async () => null);
+  stub(MirrorService, 'rebuildForUser', async () => {
+    return {
+      summary: { wallets: 1, mirrored: 0, unpricedSkipped: 0 },
+      resultsByWallet: new Map([[7, { receipt: {}, error: null }]]),
+    };
+  });
+  stub(TransactionClassificationService, 'backfillForUser', async () => {});
   stub(EthWallet, 'clearError', async () => { calls.walletCleared = true; });
   stub(EthWallet, 'setError', async (id, code, message) => { calls.walletError = { code, message }; });
   stub(EthWallet, 'updateSyncTime', async () => {});
@@ -281,6 +292,30 @@ test('Gnosis routes internal history through its canary-verified Blockscout V2 a
   assert.equal(chains.getChain(100).accountApi.v2InternalTransactions, true);
   assert.equal(chains.getChain(100).accountApi.v2NormalTransactions, true);
   assert.equal(chains.getChain(100).accountApi.v2BaseUrl, 'https://gnosisscan.io/api/v2/');
+});
+
+test('legacy and V2 anonymous explorer requests share one origin throttle queue', async (t) => {
+  const axios = require('axios');
+  const originalGet = axios.get;
+  const originalThrottled = etherscanConfig.throttled;
+  const keys = [];
+  axios.get = async () => ({ data: {} });
+  etherscanConfig.throttled = async (fn, options) => {
+    keys.push(options.key);
+    return fn();
+  };
+  t.after(() => {
+    axios.get = originalGet;
+    etherscanConfig.throttled = originalThrottled;
+  });
+
+  const legacyKey = EtherscanService._provider(100, null, 'txlist').key;
+  await EtherscanService._blockscoutV2Request(
+    100, null, chains.getChain(100).accountApi.v2BaseUrl, 'main-page/indexing-status'
+  );
+
+  assert.equal(legacyKey, 'account:https://gnosisscan.io');
+  assert.deepEqual(keys, [legacyKey]);
 });
 
 test('OP Mainnet routes normal history through its fully indexed Blockscout V2 API', () => {
@@ -778,7 +813,455 @@ test('the full-wallet job waits outside the user lane and retries deferred walle
   assert.equal(summary.unsupported, 1);
   assert.equal(summary.results.find((entry) => entry.walletId === 7).attempts, 2);
   assert.deepEqual(laneEvents, ['enter:1', 'exit:1', 'enter:1', 'exit:1'],
-    'the cooldown wait occurs between serialized lane acquisitions');
+    'each landed batch publishes its user tail before the cooldown wait');
+});
+
+test('a user batch ingests selected wallets and publishes one owner-wide tail', async (t) => {
+  const originals = {
+    findAllByUser: EthWallet.findAllByUser,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllByUser = originals.findAllByUser;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [
+    { id: 7, user_id: 1, address: WALLET },
+    { id: 8, user_id: 1, address: '0x1111111111111111111111111111111111111111' },
+    { id: 9, user_id: 1, address: '0x2222222222222222222222222222222222222222' },
+  ];
+  EthWallet.findAllByUser = async () => wallets;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  const raw = [];
+  EthWalletService._syncWallet = async (walletId, options) => {
+    raw.push({ walletId, options });
+    return { status: 'complete', deferredFeeds: [], unsupportedFeeds: [] };
+  };
+  const tails = [];
+  EthDerivedPipeline.finishUser = async (userId) => {
+    tails.push(userId);
+    return { mirror: { resultsByWallet: new Map() } };
+  };
+
+  const summary = await EthWalletService.syncWalletsForUser(1, {
+    walletIds: [7, 8], deferredRetryAttempts: 0,
+  });
+
+  assert.deepEqual(raw.map(({ walletId }) => walletId), [7, 8]);
+  assert.ok(raw.every(({ options }) => options.fillPrices === true));
+  assert.deepEqual(tails, [1]);
+  assert.equal(summary.processed, 2);
+  assert.equal(summary.succeeded, 2);
+});
+
+test('a user-wide tail failure preserves a raw failed wallet result and badge', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    setError: EthWallet.setError,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWallet.setError = originals.setError;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [
+    { id: 7, user_id: 1, address: WALLET },
+    { id: 8, user_id: 1, address: '0x1111111111111111111111111111111111111111' },
+  ];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  EthWalletService._syncWallet = async (walletId) => {
+    if (walletId === 7) throw new Error('explorer transport failed');
+    return { status: 'complete', deferredFeeds: [], unsupportedFeeds: [] };
+  };
+  EthDerivedPipeline.finishUser = async () => {
+    throw new Error('user-wide mirror failed');
+  };
+  const recorded = [];
+  EthWallet.setError = async (...args) => { recorded.push(args); };
+
+  const summary = await EthWalletService.syncAllWallets();
+
+  const rawFailure = summary.results.find((entry) => entry.walletId === 7);
+  assert.equal(rawFailure.status, 'failed');
+  assert.equal(rawFailure.error, 'explorer transport failed');
+  assert.deepEqual(recorded, [[8, 'SYNC_ERROR', 'user-wide mirror failed']]);
+});
+
+test('a per-wallet mirror error does not overwrite a partial raw sync badge', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    setError: EthWallet.setError,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWallet.setError = originals.setError;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [{ id: 7, user_id: 1, address: WALLET }];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  const recorded = [];
+  EthWallet.setError = async (...args) => { recorded.push(args); };
+  EthWalletService._syncWallet = async () => {
+    await EthWallet.setError(7, 'FEED_SKIPPED', 'Polygon token feed failed');
+    return { status: 'failed', deferredFeeds: [], failedFeeds: ['Polygon/token'], unsupportedFeeds: [] };
+  };
+  EthDerivedPipeline.finishUser = async () => ({
+    mirror: {
+      resultsByWallet: new Map([[7, {
+        receipt: null,
+        error: new Error('mirror projection failed'),
+      }]]),
+    },
+  });
+
+  const summary = await EthWalletService.syncAllWallets();
+
+  assert.equal(summary.results[0].status, 'failed');
+  assert.deepEqual(recorded, [[7, 'FEED_SKIPPED', 'Polygon token feed failed']]);
+});
+
+test('a mirror error leaves a deferred raw wallet retryable when retries are exhausted', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    setError: EthWallet.setError,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWallet.setError = originals.setError;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [{ id: 7, user_id: 1, address: WALLET }];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  const recorded = [];
+  EthWallet.setError = async (...args) => { recorded.push(args); };
+  let rawAttempts = 0;
+  EthWalletService._syncWallet = async () => {
+    rawAttempts++;
+    await EthWallet.setError(7, 'SYNC_DEFERRED', 'Explorer cooldown; retry pending');
+    return {
+      status: 'deferred', deferredFeeds: ['Gnosis/normal'], retryAfterMs: 60_000,
+      unsupportedFeeds: [],
+    };
+  };
+  EthDerivedPipeline.finishUser = async () => ({
+    mirror: {
+      resultsByWallet: new Map([[7, {
+        receipt: null,
+        error: new Error('mirror projection failed'),
+      }]]),
+    },
+  });
+
+  const summary = await EthWalletService.syncAllWallets({ deferredRetryAttempts: 0 });
+
+  assert.equal(rawAttempts, 1);
+  assert.equal(summary.deferred, 1);
+  assert.equal(summary.failed, 0);
+  assert.equal(summary.results[0].status, 'deferred');
+  assert.equal(summary.results[0].retryAfterMs, 60_000);
+  assert.deepEqual(recorded, [[7, 'SYNC_DEFERRED', 'Explorer cooldown; retry pending']]);
+});
+
+test('a whole-tail failure preserves a deferred raw wallet badge and retry timing', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    setError: EthWallet.setError,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWallet.setError = originals.setError;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [{ id: 7, user_id: 1, address: WALLET }];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  const recorded = [];
+  EthWallet.setError = async (...args) => { recorded.push(args); };
+  let rawAttempts = 0;
+  EthWalletService._syncWallet = async () => {
+    rawAttempts++;
+    await EthWallet.setError(7, 'SYNC_DEFERRED', 'Explorer cooldown; retry pending');
+    return {
+      status: 'deferred', deferredFeeds: ['Gnosis/normal'], retryAfterMs: 60_000,
+      unsupportedFeeds: [],
+    };
+  };
+  EthDerivedPipeline.finishUser = async () => {
+    throw new Error('user-wide mirror failed');
+  };
+
+  const summary = await EthWalletService.syncAllWallets({
+    deferredRetryAttempts: 1, deferredRetryMaxMs: 120_000,
+  });
+
+  assert.equal(rawAttempts, 1);
+  assert.equal(summary.deferred, 1);
+  assert.equal(summary.failed, 0);
+  assert.equal(summary.results[0].status, 'deferred');
+  assert.equal(summary.results[0].retryAfterMs, 60_000);
+  assert.deepEqual(recorded, [[7, 'SYNC_DEFERRED', 'Explorer cooldown; retry pending']]);
+});
+
+test('a whole-tail failure blocks retries even when every raw outcome already failed', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [{ id: 7, user_id: 1, address: WALLET }];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  let rawAttempts = 0;
+  EthWalletService._syncWallet = async () => {
+    rawAttempts++;
+    return {
+      status: 'failed', failedFeeds: ['Polygon/token'], deferredFeeds: ['Gnosis/normal'],
+      retryAfterMs: 1, unsupportedFeeds: [],
+    };
+  };
+  let tails = 0;
+  EthDerivedPipeline.finishUser = async () => {
+    tails++;
+    throw new Error('user-wide mirror failed');
+  };
+
+  const summary = await EthWalletService.syncAllWallets({
+    deferredRetryAttempts: 1, deferredRetryMaxMs: 100,
+  });
+
+  assert.equal(rawAttempts, 1);
+  assert.equal(tails, 1);
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.results[0].status, 'failed');
+});
+
+test('a failed restored wallet status stays failed in the batch summary', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    findById: EthWallet.findById,
+    setError: EthWallet.setError,
+    clearError: EthWallet.clearError,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWallet.findById = originals.findById;
+    EthWallet.setError = originals.setError;
+    EthWallet.clearError = originals.clearError;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [
+    { id: 7, user_id: 1, address: WALLET },
+    { id: 8, user_id: 1, address: '0x1111111111111111111111111111111111111111' },
+  ];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthWallet.findById = async () => null;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  const recorded = [];
+  EthWallet.setError = async (...args) => { recorded.push(args); };
+  EthWallet.clearError = async () => { throw new Error('wallet status write failed'); };
+  let deferredAttempts = 0;
+  EthWalletService._syncWallet = async (walletId) => {
+    if (walletId === 7) {
+      return { status: 'complete', deferredFeeds: [], unsupportedFeeds: [] };
+    }
+    deferredAttempts++;
+    return deferredAttempts === 1
+      ? { status: 'deferred', deferredFeeds: ['Gnosis/normal'], retryAfterMs: 1, unsupportedFeeds: [] }
+      : { status: 'complete', deferredFeeds: [], unsupportedFeeds: [] };
+  };
+  let tails = 0;
+  EthDerivedPipeline.finishUser = async () => {
+    tails++;
+    return {
+      mirror: {
+        resultsByWallet: new Map([
+          [7, tails === 1
+            ? { receipt: null, error: new Error('transient mirror failure') }
+            : { receipt: { mirrored: 1 }, error: null }],
+          [8, { receipt: { mirrored: 1 }, error: null }],
+        ]),
+      },
+    };
+  };
+
+  const summary = await EthWalletService.syncAllWallets({
+    deferredRetryAttempts: 1, deferredRetryMaxMs: 100,
+  });
+
+  assert.equal(deferredAttempts, 2);
+  assert.equal(summary.failed, 1);
+  const repaired = summary.results.find((entry) => entry.walletId === 7);
+  assert.equal(repaired.status, 'failed');
+  assert.match(repaired.error, /wallet status write failed/);
+  assert.deepEqual(recorded, [
+    [7, 'SYNC_ERROR', 'transient mirror failure'],
+    [7, 'SYNC_ERROR', 'wallet status write failed'],
+  ]);
+});
+
+test('the full-wallet job isolates a mirror failure to its wallet', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    setError: EthWallet.setError,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWallet.setError = originals.setError;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [
+    { id: 7, user_id: 1, address: WALLET },
+    { id: 8, user_id: 1, address: '0x1111111111111111111111111111111111111111' },
+    { id: 9, user_id: 1, address: '0x2222222222222222222222222222222222222222' },
+  ];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  EthWalletService._syncWallet = async () => ({
+    status: 'complete', deferredFeeds: [], unsupportedFeeds: [],
+    activity: { activity: 1 },
+  });
+  const mirrorError = new Error('wallet 8 mirror failed');
+  EthDerivedPipeline.finishUser = async () => {
+    const mirror = {
+      summary: { wallets: 3, mirrored: 2, unpricedSkipped: 0 },
+      resultsByWallet: new Map([
+        [7, { receipt: { mirrored: 1, unpricedSkipped: 0 }, error: null }],
+        [8, { receipt: null, error: mirrorError }],
+        [9, { receipt: { mirrored: 1, unpricedSkipped: 0 }, error: null }],
+      ]),
+    };
+    return { mirror };
+  };
+  const recorded = [];
+  EthWallet.setError = async (...args) => { recorded.push(args); };
+
+  const summary = await EthWalletService.syncAllWallets();
+
+  assert.equal(summary.succeeded, 2);
+  assert.equal(summary.failed, 1);
+  assert.equal(summary.results.find((entry) => entry.walletId === 8).status, 'failed');
+  assert.deepEqual(summary.results.find((entry) => entry.walletId === 9).mirror,
+    { mirrored: 1, unpricedSkipped: 0 });
+  assert.deepEqual(recorded, [[8, 'SYNC_ERROR', 'wallet 8 mirror failed']]);
+});
+
+test('a deferred retry can repair a sibling mirror failure after persisting it', async (t) => {
+  const originals = {
+    findAllForJobs: EthWallet.findAllForJobs,
+    setError: EthWallet.setError,
+    clearError: EthWallet.clearError,
+    sync: EthWalletService._syncWallet,
+    serialized: EthDerivedPipeline.serializedForUser,
+    finishUser: EthDerivedPipeline.finishUser,
+  };
+  t.after(() => {
+    EthWallet.findAllForJobs = originals.findAllForJobs;
+    EthWallet.setError = originals.setError;
+    EthWallet.clearError = originals.clearError;
+    EthWalletService._syncWallet = originals.sync;
+    EthDerivedPipeline.serializedForUser = originals.serialized;
+    EthDerivedPipeline.finishUser = originals.finishUser;
+  });
+
+  const wallets = [
+    { id: 7, user_id: 1, address: WALLET },
+    { id: 8, user_id: 1, address: '0x1111111111111111111111111111111111111111' },
+  ];
+  EthWallet.findAllForJobs = async () => wallets;
+  EthDerivedPipeline.serializedForUser = async (_userId, fn) => fn();
+  const attempts = new Map();
+  EthWalletService._syncWallet = async (walletId) => {
+    const attempt = Number(attempts.get(walletId) || 0) + 1;
+    attempts.set(walletId, attempt);
+    return walletId === 7 && attempt === 1
+      ? { status: 'deferred', deferredFeeds: ['Gnosis/normal'], retryAfterMs: 1 }
+      : { status: 'complete', deferredFeeds: [] };
+  };
+  let tails = 0;
+  EthDerivedPipeline.finishUser = async () => {
+    tails++;
+    return {
+      mirror: {
+        summary: { wallets: 2, mirrored: 2, unpricedSkipped: 0 },
+        resultsByWallet: new Map([
+          [7, { receipt: {}, error: null }],
+          [8, tails === 1
+            ? { receipt: null, error: new Error('transient sibling mirror failure') }
+            : { receipt: { mirrored: 1 }, error: null }],
+        ]),
+      },
+    };
+  };
+  const recorded = [];
+  EthWallet.setError = async (...args) => { recorded.push(args); };
+  const cleared = [];
+  EthWallet.clearError = async (walletId) => { cleared.push(walletId); };
+
+  const summary = await EthWalletService.syncAllWallets({
+    deferredRetryAttempts: 1,
+    deferredRetryMaxMs: 100,
+  });
+
+  assert.equal(attempts.get(7), 2, 'raw provider retry remains independent of sibling projection failure');
+  assert.equal(attempts.get(8), 1, 'the healthy sibling is not re-fetched');
+  assert.equal(tails, 2);
+  assert.equal(summary.results.find((entry) => entry.walletId === 7).status, 'complete');
+  assert.equal(summary.results.find((entry) => entry.walletId === 8).status, 'complete');
+  assert.deepEqual(summary.results.find((entry) => entry.walletId === 8).mirror, { mirrored: 1 });
+  assert.deepEqual(recorded, [[8, 'SYNC_ERROR', 'transient sibling mirror failure']]);
+  assert.deepEqual(cleared, [8], 'repair clears the persisted projection failure');
 });
 
 test('the full-wallet job retries deferred feeds even when another feed failed', async (t) => {
@@ -828,6 +1311,22 @@ test('the full-wallet job retries deferred feeds even when another feed failed',
   assert.equal(summary.failed, 1);
   assert.equal(summary.deferred, 0);
   assert.equal(summary.results[0].attempts, 2);
+});
+
+test('a single-wallet sync retains the user-wide match receipt on its activity result', async (t) => {
+  const { stub } = harness(t, { chainSet: '1' });
+  const matches = { matched: 3, suggestions: 1 };
+  stub(EthDerivedPipeline, 'finishUser', async () => ({
+    matches,
+    mirror: {
+      summary: { wallets: 1, mirrored: 0, unpricedSkipped: 0 },
+      resultsByWallet: new Map([[7, { receipt: {}, error: null }]]),
+    },
+  }));
+
+  const result = await EthWalletService.syncWallet(7);
+
+  assert.equal(result.activity.matches, matches);
 });
 
 test.skip('a rate-limited coverage boundary returns a deferred chain instead of failing the wallet', async (t) => {
@@ -885,7 +1384,10 @@ test('a chain that throws outright is isolated: the chains that landed still reb
   let rebuilds = 0;
   stub(EthWalletService, 'refreshHoldings', async () => { rebuilds++; return {}; });
   let mirrors = 0;
-  stub(MirrorService, 'rebuildForWallet', async () => { mirrors++; return {}; });
+  stub(EthDerivedPipeline, 'finishUser', async () => {
+    mirrors++;
+    return { mirror: { summary: {}, resultsByWallet: new Map() } };
+  });
 
   const result = await EthWalletService.syncWallet(7);
 
@@ -1362,6 +1864,29 @@ test('Gnosis live balances use keyless RPC instead of Blockscout indexed balance
   assert.equal(rpcCalls[0].body.method, 'eth_getBalance');
   assert.equal(rpcCalls[1].body.method, 'eth_call');
   assert.match(rpcCalls[1].body.params[0].data, /^0x70a08231[0-9a-f]{64}$/);
+});
+
+test('JSON-RPC throttle queues are keyed by origin rather than endpoint path', async (t) => {
+  const axios = require('axios');
+  const chain = chains.getChain(100);
+  const originalPost = axios.post;
+  const originalThrottled = etherscanConfig.throttled;
+  const originalUrl = chain.consensusRpcUrl;
+  const keys = [];
+  chain.consensusRpcUrl = 'https://rpc.gnosischain.com/custom/path';
+  axios.post = async () => ({ data: { jsonrpc: '2.0', id: 1, result: '0x2a' } });
+  etherscanConfig.throttled = async (fn, options) => {
+    keys.push(options.key);
+    return fn();
+  };
+  t.after(() => {
+    chain.consensusRpcUrl = originalUrl;
+    axios.post = originalPost;
+    etherscanConfig.throttled = originalThrottled;
+  });
+
+  assert.equal(await EtherscanService._rpcRequest(100, 'eth_blockNumber', []), '0x2a');
+  assert.deepEqual(keys, ['rpc:https://rpc.gnosischain.com']);
 });
 
 test('OP Mainnet live balances use its public RPC endpoint', async (t) => {

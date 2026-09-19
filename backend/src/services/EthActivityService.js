@@ -2,37 +2,23 @@
 
 // The orchestrating half of the activity layer (#56): every database read and
 // write lives here, while the policy surface -- the classification ladder, the
-// spam quarantine, the row assembly and the bridge pairing -- lives as pure
-// modules under services/ethActivity/. This module re-exports that surface
-// unchanged (see the bottom), so requiring EthActivityService keeps working
-// for every caller and test that predates the split.
+// spam quarantine and row assembly -- lives as pure modules under
+// services/ethActivity/. Callers of those pure policies import them directly;
+// this service exposes only database orchestration.
 
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const EthActivity = require('../models/EthActivity');
-const ExchangeMatchService = require('./ExchangeMatchService');
-const BridgeMatchingService = require('./BridgeMatchingService');
-const { DEFAULT_CHAIN_ID } = require('../config/chains');
-const {
-  CATEGORIES, ZERO_ADDRESS, REVIEW_REASONS, SPAM_REASONS, SPAM_DUST_USD,
-} = require('../utils/ethActivityVocabulary');
 const { buildActivityRows } = require('./ethActivity/rows');
 const { interpretProtocolActivity } = require('./ethActivity/protocolInterpretation');
-const {
-  bridgeAsset, BRIDGE_DEPOSIT_WINDOW_MS, BRIDGE_WITHDRAWAL_WINDOW_MS,
-} = require('./ethActivity/bridge');
 
 class EthActivityService {
   // Deterministic full rebuild of one wallet's activity rows. Called after
   // every sync and every classification refresh, exactly like the ledger
   // mirror. Overrides live in their own table and are untouched here.
   //
-  // `rebuildMatches: false` is for a caller that is walking EVERY wallet of one
-  // user: the match pass is user-wide by design, so running it per wallet
-  // repeats the same full re-derivation N times. Such a caller runs it once
-  // itself, after the loop -- see EthWalletService.
-  static async rebuildForWallet(walletId, { rebuildMatches = true } = {}) {
+  static async rebuildForWallet(walletId) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
 
@@ -161,20 +147,8 @@ class EthActivityService {
     }
     const written = await EthActivity.replaceForWallet(walletId, rows);
 
-    // The exchange matching pass (#61), re-derived here for the same reason the
-    // rows above are: it is a claim about these rows, and eth_activity is
-    // delete-then-insert, so any match written earlier was cascaded away by the
-    // DELETE that just ran. It also OWNS the needs_review flag on the two
-    // exchange categories -- an exchange flow with no record behind it is the
-    // thing the issue wants surfaced -- so it has to run after the ladder, not
-    // inside it. Non-fatal: a sync that fetched every transfer must not report
-    // failure because a derived side table could not be refreshed.
-    const matches = rebuildMatches
-      ? await ExchangeMatchService.rebuildForUserSafely(wallet.user_id, { walletId })
-      : null;
-
     logger.info({ walletId, activity: written }, 'ETH activity rebuilt');
-    return { activity: written, matches };
+    return { activity: written };
   }
 
   // The owner's addresses carrying one label kind, precedence already resolved.
@@ -206,10 +180,6 @@ class EthActivityService {
       [userId, kind]
     );
     return new Set(result.rows.map((row) => row.address));
-  }
-
-  static _bridgeAddressesForUser(userId) {
-    return this._addressesOfKindForUser(userId, 'bridge');
   }
 
   static async _bridgeEndpointAddressesForUser(userId) {
@@ -251,13 +221,6 @@ class EthActivityService {
     return new Set(rows.map((row) => row.address));
   }
 
-  // Evidence-first user-wide movement rebuild. The compatibility method name
-  // is retained for callers, but the old amount/time matcher no longer exists.
-  static async matchBridgeTransfersForUser(userId, options = {}) {
-    if (!userId) throw new Error('EthActivityService.matchBridgeTransfersForUser requires a userId');
-    return BridgeMatchingService.rebuildForUser(userId, options);
-  }
-
   // Fills counterparty_name for display from the owner's labels, resolved with
   // the same precedence as classification: a user row shadows a builtin. An
   // exchange name is already denormalized onto the leg, so those rows keep it.
@@ -286,13 +249,3 @@ class EthActivityService {
 }
 
 module.exports = EthActivityService;
-module.exports.buildActivityRows = buildActivityRows;
-module.exports.CATEGORIES = CATEGORIES;
-module.exports.DEFAULT_CHAIN_ID = DEFAULT_CHAIN_ID;
-module.exports.ZERO_ADDRESS = ZERO_ADDRESS;
-module.exports.REVIEW_REASONS = REVIEW_REASONS;
-module.exports.SPAM_REASONS = SPAM_REASONS;
-module.exports.SPAM_DUST_USD = SPAM_DUST_USD;
-module.exports.bridgeAsset = bridgeAsset;
-module.exports.BRIDGE_DEPOSIT_WINDOW_MS = BRIDGE_DEPOSIT_WINDOW_MS;
-module.exports.BRIDGE_WITHDRAWAL_WINDOW_MS = BRIDGE_WITHDRAWAL_WINDOW_MS;

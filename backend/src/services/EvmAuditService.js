@@ -155,7 +155,7 @@ function mergeObservedTokenUniverse(derivedTokens, observedTokens) {
 
 function consensusRpcConfigured(chainId) {
   const chain = chains.getChain(chainId);
-  return Boolean(chain?.consensusRpcUrl || chain?.rpcUrl);
+  return Boolean(chain?.consensusRpcUrl);
 }
 
 function moralisFallbackError(error) {
@@ -214,7 +214,7 @@ function effectSignature(row, address, chain) {
     if (row.transfer_type === 'native'
         && chain?.opStackDeposits?.creditSource?.toLowerCase() === from) type = 'native_credit';
     if (row.transfer_type === 'internal') {
-      const nativeCredit = chain?.auditNativeCredits || chain?.stateSyncDeposits;
+      const nativeCredit = chain?.stateSyncDeposits;
       type = nativeCredit?.contract?.toLowerCase() === from ? 'native_credit' : 'internal';
     }
   }
@@ -284,7 +284,7 @@ function unmatchedEffectCount(canonical, legacy, address, chain) {
 }
 
 function legacyCapability(row, chain) {
-  const nativeCredit = chain?.auditNativeCredits || chain?.stateSyncDeposits;
+  const nativeCredit = chain?.stateSyncDeposits;
   if (row.transfer_type === 'internal'
       && nativeCredit?.contract?.toLowerCase() === String(row.from_address || '').toLowerCase()) {
     return 'native_credit';
@@ -1636,8 +1636,10 @@ class EvmAuditService {
       );
       if (inserted) {
         await EthDerivedPipeline.serializedForUser(job.user_id, async () => {
-          await EthDerivedPipeline.rebuildWallet(job.requested_wallet_id, { rebuildMatches: false });
-          await EthDerivedPipeline.finishUser(job.user_id);
+          await EthDerivedPipeline.rebuildWallet(job.requested_wallet_id);
+          await EthDerivedPipeline.finishUser(job.user_id, {
+            walletId: job.requested_wallet_id,
+          });
         });
         legacyRows = await EvmAudit.storedTransferRows(
           job.user_id, job.subject_id, chainId, boundary.number
@@ -1872,8 +1874,10 @@ class EvmAuditService {
     // explained.
     if (missingActivity > 0) {
       await EthDerivedPipeline.serializedForUser(job.user_id, async () => {
-        await EthDerivedPipeline.rebuildWallet(job.requested_wallet_id, { rebuildMatches: false });
-        await EthDerivedPipeline.finishUser(job.user_id);
+        await EthDerivedPipeline.rebuildWallet(job.requested_wallet_id);
+        await EthDerivedPipeline.finishUser(job.user_id, {
+          walletId: job.requested_wallet_id,
+        });
       });
       activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
       missingActivity = transactions.filter((row) => !activityHashes.has(row.tx_hash)).length;

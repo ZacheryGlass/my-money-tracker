@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import CryptoPage from './CryptoPage';
 import { exchanges as exchangesAPI } from '../utils/api';
 
@@ -18,6 +18,7 @@ vi.mock('../utils/api', () => ({
     getWallets: vi.fn().mockResolvedValue({ wallets: [] }),
     getIgnoredTokens: vi.fn().mockResolvedValue({ tokens: [] }),
     getAddressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+    getAddressNotes: vi.fn().mockResolvedValue({ notes: [] }),
     getUnreviewedCounterparties: vi.fn().mockResolvedValue({ data: [], summary: { count: 0 }, pagination: {} }),
     getActivity: vi.fn().mockResolvedValue({ data: [], summary: { spam_count: 0 }, pagination: { total: 0 } }),
   },
@@ -35,9 +36,9 @@ vi.mock('../utils/api', () => ({
     setCredentials: vi.fn(),
     clearCredentials: vi.fn(),
     testConnection: vi.fn(),
-    sync: vi.fn(),
     startSync: vi.fn(),
     getSyncStatus: vi.fn(),
+    getBalanceExceptions: vi.fn(),
     setMatchVerdict: vi.fn(),
   },
 }));
@@ -115,6 +116,7 @@ const renderSettings = async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   exchangesAPI.getAll.mockResolvedValue(listResponse([ACCOUNT]));
+  exchangesAPI.getBalanceExceptions.mockResolvedValue({ summary: { count: 0 } });
   exchangesAPI.getRecords.mockResolvedValue({ data: FLAGGED, pagination: { total: FLAGGED.length } });
   exchangesAPI.getMatches.mockResolvedValue({
     data: [{
@@ -177,9 +179,10 @@ beforeEach(() => {
     pagination: { total: 1 },
   });
   exchangesAPI.resolveRecord.mockResolvedValue({ record: { id: 11, needs_review: false } });
-  // Existing receipt tests exercise the compatibility path; the dedicated
-  // background test below swaps this implementation for a job receipt.
-  exchangesAPI.startSync.mockImplementation((id) => exchangesAPI.sync(id));
+  exchangesAPI.startSync.mockResolvedValue({
+    account_id: 3,
+    job: { id: 44, account_id: 3, status: 'queued', batches: 0, fetched: 0, imported: 0 },
+  });
   exchangesAPI.getSyncStatus.mockResolvedValue({ job: null });
 });
 
@@ -463,11 +466,6 @@ describe('Crypto -> Exchanges tab', () => {
 
   it('shows the masked key and offers Sync Now once connected', async () => {
     exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
-    exchangesAPI.sync.mockResolvedValue({
-      fetched: 13, imported: 11, upgraded: 0, duplicates: 0,
-      chain_details_filled: 2, needs_review: 2, backfill_pending: false, status: 'ok',
-      balance_report: { mismatch_count: 0, mismatches: [] },
-    });
     await renderSettings();
 
     expect(await screen.findByText('Key ••••WXYZ')).toBeInTheDocument();
@@ -476,24 +474,29 @@ describe('Crypto -> Exchanges tab', () => {
 
     fireEvent.click(screen.getByLabelText('Sync Kraken Spot now'));
 
-    await waitFor(() => expect(exchangesAPI.sync).toHaveBeenCalledWith(3));
-    expect(await screen.findByText(/11 new/)).toBeInTheDocument();
-    expect(screen.getByText(/2 gained an on-chain address/)).toBeInTheDocument();
-    expect(screen.getByText(/2 flagged for review/)).toBeInTheDocument();
+    await waitFor(() => expect(exchangesAPI.startSync).toHaveBeenCalledWith(3));
+    expect((await screen.findAllByText(/Sync in progress/)).length).toBeGreaterThan(0);
   });
 
-  it('says a backfill is unfinished rather than letting it read as the whole history', async () => {
+  it('shows provider coverage limits retained by a completed durable sync', async () => {
     exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
-    exchangesAPI.sync.mockResolvedValue({
-      fetched: 1250, imported: 1250, upgraded: 0, duplicates: 0,
-      chain_details_filled: 0, needs_review: 0, backfill_pending: true, status: 'ok',
-      balance_report: { mismatch_count: 0, mismatches: [] },
+    exchangesAPI.getSyncStatus.mockResolvedValue({
+      job: {
+        id: 43, account_id: 3, status: 'completed', fetched: 1250, imported: 1250,
+        last_batch: {
+          status: 'coverage_limited',
+          coverage_limitations: ['Older fiat orders require a CSV export.'],
+          balance_report: {
+            snapshot_at: '2026-09-19T12:00:00.000Z',
+            coverage_limitations: ['Older fiat orders require a CSV export.'],
+          },
+        },
+      },
     });
     await renderSettings();
-    fireEvent.click(await screen.findByLabelText('Sync Kraken Spot now'));
 
-    // A truncated walk looks exactly like a complete one from the outside.
-    expect(await screen.findByText(/More history is still to come/)).toBeInTheDocument();
+    expect(await screen.findByText(/Reconciliation is stale/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Older fiat orders require a CSV export/)).toHaveLength(1);
   });
 
   it('queues a durable backfill and tells the user it is still running', async () => {
@@ -520,6 +523,95 @@ describe('Crypto -> Exchanges tab', () => {
     await waitFor(() => expect(exchangesAPI.startSync).toHaveBeenCalledWith(3));
     expect(await screen.findByText(/Sync in progress/)).toBeInTheDocument();
     expect(screen.getByText(/continues automatically in the background/)).toBeInTheDocument();
+  });
+
+  it('checks durable status when the start response is lost', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.getSyncStatus.mockResolvedValue({ job: null });
+    await renderSettings();
+    await waitFor(() => expect(exchangesAPI.getSyncStatus).toHaveBeenCalledWith(3));
+    const initialReads = exchangesAPI.getSyncStatus.mock.calls.length;
+    exchangesAPI.startSync.mockRejectedValue(new Error('connection reset'));
+    let resolveStatus;
+    exchangesAPI.getSyncStatus.mockImplementation(() => new Promise((resolve) => {
+      resolveStatus = resolve;
+    }));
+
+    fireEvent.click(screen.getByLabelText('Sync Kraken Spot now'));
+
+    expect(await screen.findByText(/Could not confirm whether the sync started/)).toBeInTheDocument();
+    await waitFor(() => expect(exchangesAPI.getSyncStatus.mock.calls.length).toBeGreaterThan(initialReads));
+    await act(async () => resolveStatus({
+      job: { id: 46, account_id: 3, status: 'running', fetched: 0, imported: 0 },
+    }));
+    expect((await screen.findAllByText(/Sync in progress/)).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.queryByText(/Could not confirm whether the sync started/))
+      .not.toBeInTheDocument());
+  });
+
+  it('does not mistake the previous completed job for a sync whose response was lost', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    const previousJob = {
+      id: 42,
+      account_id: 3,
+      status: 'completed',
+      requested_at: '2026-07-30T12:00:00.000Z',
+      completed_at: '2026-07-30T12:01:00.000Z',
+      fetched: 9,
+      imported: 0,
+      duplicates: 9,
+      last_batch: {},
+    };
+    exchangesAPI.getSyncStatus.mockResolvedValue({ job: previousJob });
+    await renderSettings();
+    expect(await screen.findByText(/Sync complete — read 9 ledger rows/)).toBeInTheDocument();
+    exchangesAPI.startSync.mockRejectedValue(new Error('connection reset'));
+
+    fireEvent.click(screen.getByLabelText('Sync Kraken Spot now'));
+
+    expect(await screen.findByText('The sync did not start. Try again.')).toBeInTheDocument();
+    expect(screen.queryByText(/Could not confirm whether the sync started/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Sync Kraken Spot now')).not.toBeDisabled();
+  });
+
+  it('accepts a new completed job by id without comparing browser and server clocks', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.getSyncStatus.mockResolvedValue({
+      job: { id: 42, account_id: 3, status: 'completed', requested_at: '2026-09-19T12:00:00Z' },
+    });
+    await renderSettings();
+    await waitFor(() => expect(exchangesAPI.getSyncStatus).toHaveBeenCalledWith(3));
+    exchangesAPI.startSync.mockRejectedValue(new Error('connection reset'));
+    exchangesAPI.getSyncStatus.mockResolvedValue({
+      job: {
+        id: 43,
+        account_id: 3,
+        status: 'completed',
+        requested_at: '2026-09-19T11:59:50Z',
+        fetched: 3,
+        imported: 3,
+        last_batch: {},
+      },
+    });
+
+    fireEvent.click(screen.getByLabelText('Sync Kraken Spot now'));
+
+    expect(await screen.findByText(/Sync complete — read 3 ledger rows/)).toBeInTheDocument();
+    expect(screen.queryByText('The sync did not start. Try again.')).not.toBeInTheDocument();
+  });
+
+  it('ends a lost-response check when the server still has no durable job', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.getSyncStatus.mockResolvedValue({ job: null });
+    await renderSettings();
+    await waitFor(() => expect(exchangesAPI.getSyncStatus).toHaveBeenCalledWith(3));
+    exchangesAPI.startSync.mockRejectedValue(new Error('connection reset'));
+
+    fireEvent.click(screen.getByLabelText('Sync Kraken Spot now'));
+
+    expect(await screen.findByText('The sync did not start. Try again.')).toBeInTheDocument();
+    expect(screen.queryByText(/Could not confirm whether the sync started/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Sync Kraken Spot now')).not.toBeDisabled();
   });
 
   it('replaces the queue receipt with the durable completed snapshot', async () => {
@@ -562,21 +654,111 @@ describe('Crypto -> Exchanges tab', () => {
 
     expect(await screen.findByText(/Sync complete — read 17 ledger rows/)).toBeInTheDocument();
     expect(screen.queryByText(/Sync in progress/)).not.toBeInTheDocument();
+    await waitFor(() => expect(exchangesAPI.getAll).toHaveBeenCalledTimes(2));
   });
 
-  it('surfaces a balance mismatch instead of silently trusting the import', async () => {
+  it('refreshes account data once when a durable sync stops', async () => {
     exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
-    exchangesAPI.sync.mockResolvedValue({
-      fetched: 13, imported: 0, upgraded: 0, duplicates: 13,
-      chain_details_filled: 0, needs_review: 0, backfill_pending: false,
-      status: 'balance_mismatch',
-      balance_report: { mismatch_count: 1, mismatches: [{ asset: 'BTC', derived: '0', live: '0.5' }] },
+    exchangesAPI.getSyncStatus.mockResolvedValue({ job: null });
+    await renderSettings();
+    await waitFor(() => expect(exchangesAPI.getSyncStatus).toHaveBeenCalledWith(3));
+    exchangesAPI.getSyncStatus.mockResolvedValue({
+      job: {
+        id: 47,
+        account_id: 3,
+        status: 'failed',
+        requested_at: '2026-09-19T12:01:00.000Z',
+        completed_at: '2026-09-19T12:01:02.000Z',
+        fetched: 4,
+        imported: 2,
+        last_error: { message: 'provider unavailable' },
+      },
+    });
+
+    fireEvent.click(screen.getByLabelText('Sync Kraken Spot now'));
+
+    expect(await screen.findByText(/Sync stopped: provider unavailable/)).toBeInTheDocument();
+    await waitFor(() => expect(exchangesAPI.getAll).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(exchangesAPI.getSyncStatus.mock.calls.length).toBeGreaterThan(1));
+    expect(exchangesAPI.getAll).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a balance mismatch from a completed durable sync', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.getSyncStatus.mockResolvedValue({
+      job: {
+        id: 48,
+        account_id: 3,
+        status: 'completed',
+        fetched: 13,
+        imported: 0,
+        duplicates: 13,
+        last_batch: {
+          status: 'balance_mismatch',
+          reconciliation_status: 'current',
+          balance_report: {
+            mismatch_count: 1,
+            mismatches: [{ asset: 'ETH', derived: '0', live: '0.5' }],
+          },
+        },
+      },
     });
     await renderSettings();
-    fireEvent.click(await screen.findByLabelText('Sync Kraken Spot now'));
 
-    expect(await screen.findByText(/do not match the balance the exchange reports/)).toBeInTheDocument();
-    expect(screen.getByText(/BTC/)).toBeInTheDocument();
+    expect(await screen.findByText(/derived balances disagree with the exchange/)).toBeInTheDocument();
+  });
+
+  it('renders one mismatch notice when the account and latest job carry the same audit', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([{
+      ...CONNECTED,
+      reconciliation_status: 'mismatch',
+      balance_report: {
+        mismatch_count: 1,
+        mismatches: [{ asset: 'ETH', derived: '0', live: '0.5' }],
+      },
+    }]));
+    exchangesAPI.getSyncStatus.mockResolvedValue({
+      job: {
+        id: 51,
+        account_id: 3,
+        status: 'completed',
+        fetched: 13,
+        imported: 0,
+        last_batch: {
+          status: 'balance_mismatch',
+          balance_report: {
+            mismatch_count: 1,
+            mismatches: [{ asset: 'ETH', derived: '0', live: '0.5' }],
+          },
+        },
+      },
+    });
+    await renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/derived balances disagree with the exchange/)).toHaveLength(1);
+    });
+  });
+
+  it('shows accepted balance exceptions from a completed durable sync', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([CONNECTED]));
+    exchangesAPI.getSyncStatus.mockResolvedValue({
+      job: {
+        id: 50,
+        account_id: 3,
+        status: 'completed',
+        fetched: 13,
+        imported: 0,
+        last_batch: {
+          status: 'reconciled_with_exceptions',
+          reconciliation_status: 'current',
+          balance_report: {},
+        },
+      },
+    });
+    await renderSettings();
+
+    expect(await screen.findByText(/documented balance exceptions/)).toBeInTheDocument();
   });
 
   it('shows a mismatch found by the nightly job without anything being pressed', async () => {

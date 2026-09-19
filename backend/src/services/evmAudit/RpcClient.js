@@ -262,7 +262,7 @@ class RpcClient {
     const chain = chains.getChain(chainId);
     const rpcUrl = endpoint === 'trace'
       ? chain?.traceRpcUrl
-      : chain?.consensusRpcUrl || chain?.rpcUrl;
+      : chain?.consensusRpcUrl;
     if (!rpcUrl) {
       throw rpcError(
         `Chain ${chainId} has no configured ${endpoint === 'trace' ? 'trace' : 'consensus'} RPC`,

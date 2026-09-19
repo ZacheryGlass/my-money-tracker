@@ -87,10 +87,6 @@ function matchesIndexedTransfer(effect, observation) {
     && fields.tokenId === (effect.effect_type === 'erc20' ? null : decimal(effect.token_id));
 }
 
-function matchesMoralisTransfer(effect, observation) {
-  return observation?.provider === 'moralis' && matchesIndexedTransfer(effect, observation);
-}
-
 function matchesLegacyTransfer(effect, row) {
   return Boolean(effect && row)
     && TRANSFER_TYPES[effect.effect_type] === row.transfer_type
@@ -108,5 +104,4 @@ module.exports = {
   TRANSFER_TYPES,
   matchesLegacyTransfer,
   matchesIndexedTransfer,
-  matchesMoralisTransfer,
 };

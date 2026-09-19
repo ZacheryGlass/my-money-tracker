@@ -737,6 +737,8 @@ router.post('/:id/test', async (req, res) => {
   }
 });
 
+// Compatibility endpoint for clients that need one bounded pass and its
+// detailed receipt. The app uses the durable /sync/start contract below.
 router.post('/:id/sync', async (req, res) => {
   try {
     const account = await loadAccount(req, res);
@@ -748,21 +750,14 @@ router.post('/:id/sync', async (req, res) => {
       });
     }
 
-    // A caller that cannot use the explicit /sync/start route can opt into the
-    // same durable behavior without changing the legacy bounded response for
-    // existing API clients.
     if (req.query.background === 'true') {
       const job = await ExchangeBackfillService.enqueue(req.user.id, account.id);
       return res.status(202).json({ job, account_id: account.id });
     }
 
-    // interactive: a request is waiting, so the page budget is sized to finish
-    // inside a proxy timeout. A history longer than that budget comes back
-    // with backfill_pending set rather than being silently cut short.
-    const result = await ExchangeSyncService.syncAccount(req.user.id, account.id, { interactive: true });
-    // Preserve the old bounded receipt, but never strand a partial history for
-    // API clients that still call this endpoint. The continuation is queued
-    // only after the bounded pass releases the account lock.
+    const result = await ExchangeSyncService.syncAccount(
+      req.user.id, account.id, { interactive: true }
+    );
     const continuation = result.backfill_pending
       ? await ExchangeBackfillService.enqueue(req.user.id, account.id)
       : null;
@@ -776,10 +771,8 @@ router.post('/:id/sync', async (req, res) => {
   }
 });
 
-// The interactive endpoint above is deliberately retained for API clients
-// that need one bounded pass and its detailed receipt. The app's Sync Now
-// button uses the durable background contract below: the HTTP request only
-// queues work, so a years-long history cannot be cut off by a proxy timeout.
+// Sync Now queues durable work and returns immediately, so a years-long
+// history cannot be cut off by a proxy timeout.
 router.post('/:id/sync/start', async (req, res) => {
   try {
     const account = await loadAccount(req, res);

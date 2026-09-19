@@ -18,6 +18,8 @@ const BridgeMatchingService = require('../src/services/BridgeMatchingService');
 const EthBridgeEndpoint = require('../src/models/EthBridgeEndpoint');
 const EthBridgeMovement = require('../src/models/EthBridgeMovement');
 const EthActivityLink = require('../src/models/EthActivityLink');
+const EthHopBridgeRoute = require('../src/models/EthHopBridgeRoute');
+const EthFeedCoverage = require('../src/models/EthFeedCoverage');
 const pool = require('../src/config/database');
 const {
   endpointApplies, unsupportedMovement, excludedBaseMovement,
@@ -992,6 +994,75 @@ test('Base exclusion evidence is explicit and does not match shared OP predeploy
   assert.equal(excludedBaseMovement(envelope({
     chainId: 1, txHash: hash('c'), category: 'bridge_out',
   }), [event({ evidence: { identity_fields: { destination_chain_id: '10' } } })]), null);
+});
+
+test('Base activities cannot enter amount and time bridge suggestions', async (t) => {
+  const originals = {
+    activities: BridgeMatchingService._activitiesForUser,
+    acquire: BridgeMatchingService._acquire,
+    endpoints: EthBridgeEndpoint.findForTransactions,
+    routes: EthHopBridgeRoute.findForTransactions,
+    coverage: EthFeedCoverage.findBridgeCoverageForUser,
+    verdicts: EthBridgeMovement.findVerdictsForUser,
+    replace: EthBridgeMovement.replaceForUser,
+    project: EthBridgeMovement.rebuildProjectionForUser,
+    review: EthActivityLink.syncBridgeReviewState,
+  };
+  t.after(() => {
+    BridgeMatchingService._activitiesForUser = originals.activities;
+    BridgeMatchingService._acquire = originals.acquire;
+    EthBridgeEndpoint.findForTransactions = originals.endpoints;
+    EthHopBridgeRoute.findForTransactions = originals.routes;
+    EthFeedCoverage.findBridgeCoverageForUser = originals.coverage;
+    EthBridgeMovement.findVerdictsForUser = originals.verdicts;
+    EthBridgeMovement.replaceForUser = originals.replace;
+    EthBridgeMovement.rebuildProjectionForUser = originals.project;
+    EthActivityLink.syncBridgeReviewState = originals.review;
+  });
+
+  const base = {
+    block_time: '2026-01-01T00:00:00.000Z',
+    counterparty_address: null,
+    legs: [{ asset: 'ETH', amount: '1', token_standard: null, symbol_known: true }],
+  };
+  BridgeMatchingService._activitiesForUser = async () => [
+    {
+      ...base, wallet_id: 1, chain_id: 1, tx_hash: hash('1'), category: 'bridge_out',
+      legs: [{ ...base.legs[0], direction: 'out' }],
+    },
+    {
+      ...base, wallet_id: 2, chain_id: 8453, tx_hash: hash('2'), category: 'bridge_in',
+      block_time: '2026-01-01T00:05:00.000Z',
+      legs: [{ ...base.legs[0], direction: 'in' }],
+    },
+    {
+      ...base, wallet_id: 3, chain_id: 10, tx_hash: hash('3'), category: 'bridge_in',
+      block_time: '2026-01-01T00:06:00.000Z',
+      legs: [{ ...base.legs[0], direction: 'in' }],
+    },
+  ];
+  EthBridgeEndpoint.findForTransactions = async () => [];
+  EthHopBridgeRoute.findForTransactions = async () => [];
+  EthFeedCoverage.findBridgeCoverageForUser = async () => [];
+  BridgeMatchingService._acquire = async () => [];
+  EthBridgeMovement.findVerdictsForUser = async () => [];
+  let savedSuggestions = null;
+  EthBridgeMovement.replaceForUser = async (_userId, _movements, suggestions) => {
+    savedSuggestions = suggestions;
+  };
+  EthBridgeMovement.rebuildProjectionForUser = async () => 0;
+  EthActivityLink.syncBridgeReviewState = async () => 0;
+
+  const result = await BridgeMatchingService._rebuildForUserLocked(7, {
+    client: { query: async () => ({ rows: [] }) }, acquireReceipts: false,
+  });
+
+  assert.equal(result.suggestions, 1);
+  assert.equal(savedSuggestions.length, 1);
+  assert.equal(savedSuggestions[0].in_chain_id, 10);
+  assert.ok(savedSuggestions.every((suggestion) => (
+    suggestion.out_chain_id !== 8453 && suggestion.in_chain_id !== 8453
+  )));
 });
 
 test('migration enforces evidence-only folds and cross-owner isolation', () => {

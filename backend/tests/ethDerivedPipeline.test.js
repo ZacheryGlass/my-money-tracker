@@ -6,7 +6,8 @@
 //   * the canonical step order, in both fatality modes
 //   * the sync policy (first failure throws, later steps never run) vs the
 //     refresh policy (each step isolated, neighbours and other wallets go on)
-//   * the user-wide tail: match -> bridge (non-fatal) -> backfill (fatal),
+//   * the user-wide tail: match -> bridge -> mirror -> backfill, with mirror
+//     fatal for sync/audit callers and isolated per wallet for refresh callers
 //     exactly once, after every wallet
 //   * late binding: every dependency is resolved off the module object at call
 //     time, because the suite's harnesses stub by property assignment and a
@@ -42,6 +43,7 @@ const HistoricalPriceService = require('../src/services/HistoricalPriceService')
 const MirrorService = require('../src/services/EthTransactionMirrorService');
 const EthActivityService = require('../src/services/EthActivityService');
 const ExchangeMatchService = require('../src/services/ExchangeMatchService');
+const BridgeMatchingService = require('../src/services/BridgeMatchingService');
 const TransactionClassificationService = require('../src/services/TransactionClassificationService');
 
 // Records every step as a tuple, in call order. `failures[name]` throws that
@@ -53,6 +55,7 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
   t.after(() => { for (const [o, k, v] of restore.reverse()) o[k] = v; });
 
   const calls = [];
+  const mirrorOptions = [];
   const maybeFail = (name, scope) => {
     const failure = failures[name];
     if (failure === true || (failure != null && failure === scope)) {
@@ -75,32 +78,34 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
     calls.push(['holdings', walletId]); maybeFail('holdings', walletId);
     return { liveWeiByChain: {} };
   });
-  stub(MirrorService, 'rebuildForWallet', async (walletId) => {
-    calls.push(['mirror', walletId]); maybeFail('mirror', walletId);
-    return { written: 1 };
-  });
-  stub(EthActivityService, 'rebuildForWallet', async (walletId, options) => {
-    calls.push(['activity', walletId, options]); maybeFail('activity', walletId);
-    return { activity: 1, matches: null };
+  stub(EthActivityService, 'rebuildForWallet', async (walletId) => {
+    calls.push(['activity', walletId]); maybeFail('activity', walletId);
+    return { activity: 1 };
   });
   stub(ExchangeMatchService, 'rebuildForUserSafely', async (userId, context) => {
     calls.push(['matches', userId, context]); maybeFail('matches', userId);
     return { matched: 0 };
   });
-  stub(EthActivityService, 'matchBridgeTransfersForUser', async (userId) => {
+  stub(BridgeMatchingService, 'rebuildForUser', async (userId) => {
     calls.push(['bridge', userId]); maybeFail('bridge', userId);
     return { matched: 0, unmatched: 0 };
   });
-  stub(MirrorService, 'rebuildForUser', async (userId) => {
-    calls.push(['bridgeMirror', userId]); maybeFail('bridgeMirror', userId);
-    return { wallets: wallets.length, mirrored: 0, unpricedSkipped: 0 };
+  stub(MirrorService, 'rebuildForUser', async (userId, options) => {
+    calls.push(['mirror', userId]); maybeFail('mirror', userId);
+    mirrorOptions.push(options);
+    return {
+      summary: { wallets: wallets.length, mirrored: 0, unpricedSkipped: 0 },
+      resultsByWallet: new Map(wallets.map((wallet) => [
+        wallet.id, { receipt: { mirrored: 0, unpricedSkipped: 0 }, error: null },
+      ])),
+    };
   });
-  stub(TransactionClassificationService, 'backfill', async () => {
-    calls.push(['backfill']); maybeFail('backfill');
+  stub(TransactionClassificationService, 'backfillForUser', async (userId) => {
+    calls.push(['backfill', userId]); maybeFail('backfill', userId);
   });
   stub(EthWallet, 'findAllByUser', async () => wallets);
 
-  return { calls, stub };
+  return { calls, mirrorOptions, stub };
 }
 
 // ---------------------------------------------------------------------------
@@ -110,38 +115,37 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
 test('rebuildWallet runs the sync shape in canonical order', async (t) => {
   const { calls } = harness(t);
   const result = await EthDerivedPipeline.rebuildWallet(7, {
-    reclassifyUserId: 1, fillPrices: true, holdings: true, rebuildMatches: true,
+    reclassifyUserId: 1, fillPrices: true, holdings: true,
   });
   assert.deepEqual(calls, [
     ['reclassify', 1],
     ['ensureAssets', 7],
     ['value', 7],
     ['holdings', 7],
-    ['mirror', 7],
-    ['activity', 7, { rebuildMatches: true }],
+    ['activity', 7],
   ]);
   assert.deepEqual(result, {
     priced: { assets: 2 },
     valued: 3,
     holdings: { liveWeiByChain: {} },
-    mirror: { written: 1 },
-    activity: { activity: 1, matches: null },
+    mirror: null,
+    activity: { activity: 1 },
   });
 });
 
 test('rebuildWallet skips the provider walk and reclassify when not asked for them', async (t) => {
   const { calls } = harness(t);
   await EthDerivedPipeline.rebuildWallet(7, { holdings: true });
-  assert.deepEqual(calls.map((c) => c[0]), ['value', 'holdings', 'mirror', 'activity']);
+  assert.deepEqual(calls.map((c) => c[0]), ['value', 'holdings', 'activity']);
 });
 
-test('sync shape: a mirror failure is fatal and the activity rebuild never runs', async (t) => {
-  const { calls } = harness(t, { failures: { mirror: true } });
+test('sync shape: an activity failure is fatal', async (t) => {
+  const { calls } = harness(t, { failures: { activity: true } });
   await assert.rejects(
     () => EthDerivedPipeline.rebuildWallet(7, { holdings: true }),
-    /mirror failed/
+    /activity failed/
   );
-  assert.ok(!calls.some((c) => c[0] === 'activity'), 'activity must not run after a fatal mirror');
+  assert.equal(calls.at(-1)[0], 'activity');
 });
 
 test('sync shape: a price-fill failure warns and the pipeline continues', async (t) => {
@@ -149,14 +153,14 @@ test('sync shape: a price-fill failure warns and the pipeline continues', async 
   const result = await EthDerivedPipeline.rebuildWallet(7, { fillPrices: true, holdings: true });
   assert.equal(result.priced, null);
   assert.deepEqual(calls.map((c) => c[0]),
-    ['ensureAssets', 'value', 'holdings', 'mirror', 'activity']);
+    ['ensureAssets', 'value', 'holdings', 'activity']);
 });
 
 // ---------------------------------------------------------------------------
 // finishUser -- the user-wide tail
 // ---------------------------------------------------------------------------
 
-test('finishUser runs match -> bridge -> bridge mirror -> backfill and returns the match result', async (t) => {
+test('finishUser runs match -> bridge -> mirror -> backfill once', async (t) => {
   const { calls } = harness(t);
   const result = await EthDerivedPipeline.finishUser(1, {
     matchContext: { reason: 'classification-refresh' },
@@ -164,21 +168,74 @@ test('finishUser runs match -> bridge -> bridge mirror -> backfill and returns t
   assert.deepEqual(calls, [
     ['matches', 1, { reason: 'classification-refresh' }],
     ['bridge', 1],
-    ['bridgeMirror', 1],
-    ['backfill'],
+    ['mirror', 1],
+    ['backfill', 1],
   ]);
+  assert.deepEqual(result.mirror.summary, { wallets: 2, mirrored: 0, unpricedSkipped: 0 });
   assert.deepEqual(result.matches, { matched: 0 });
 });
 
-test('finishUser: a bridge failure is non-fatal and the backfill still runs', async (t) => {
+test('finishUser: a bridge failure is non-fatal and mirror plus backfill still run', async (t) => {
   const { calls } = harness(t, { failures: { bridge: true } });
-  await EthDerivedPipeline.finishUser(1, { match: false });
-  assert.deepEqual(calls, [['bridge', 1], ['backfill']]);
+  await EthDerivedPipeline.finishUser(1);
+  assert.deepEqual(calls, [
+    ['matches', 1, {}], ['bridge', 1], ['mirror', 1], ['backfill', 1],
+  ]);
+});
+
+test('finishUser: a mirror failure is fatal by default', async (t) => {
+  const { calls } = harness(t, { failures: { mirror: true } });
+  await assert.rejects(() => EthDerivedPipeline.finishUser(1), /mirror failed/);
+  assert.deepEqual(calls, [
+    ['matches', 1, {}], ['bridge', 1], ['mirror', 1],
+  ]);
+});
+
+test('finishUser: an isolated mirror failure still lets classification run', async (t) => {
+  const { calls } = harness(t, { failures: { mirror: true } });
+  const result = await EthDerivedPipeline.finishUser(1, { isolateMirror: true });
+  assert.deepEqual(calls, [
+    ['matches', 1, {}], ['bridge', 1], ['mirror', 1], ['backfill', 1],
+  ]);
+  assert.equal(result.mirror, null);
+});
+
+test('finishUser passes refresh context to the user-wide mirror', async (t) => {
+  const { mirrorOptions } = harness(t);
+  await EthDerivedPipeline.finishUser(1, {
+    isolateMirror: true,
+    context: 'classification refresh',
+  });
+  assert.deepEqual(mirrorOptions.at(-1), {
+    context: 'classification refresh',
+  });
+});
+
+test('finishUser classifies sibling mirrors, then fails only the requested wallet', async (t) => {
+  const { calls, stub } = harness(t);
+  const mirror = {
+    summary: { wallets: 2, mirrored: 1, unpricedSkipped: 0 },
+    resultsByWallet: new Map([
+      [7, { receipt: null, error: new Error('wallet 7 mirror failed') }],
+      [8, { receipt: { mirrored: 1, unpricedSkipped: 0 }, error: null }],
+    ]),
+  };
+  stub(MirrorService, 'rebuildForUser', async () => mirror);
+
+  await assert.rejects(
+    () => EthDerivedPipeline.finishUser(1, { walletId: 7 }),
+    /wallet 7 mirror failed/
+  );
+  assert.equal(calls.filter((call) => call[0] === 'backfill').length, 1,
+    'successful sibling mirrors are classified before the target error returns');
+  const other = await EthDerivedPipeline.finishUser(1, { walletId: 8 });
+  assert.equal(other.mirror, mirror);
+  assert.equal(calls.filter((call) => call[0] === 'backfill').length, 2);
 });
 
 test('finishUser: a backfill failure propagates', async (t) => {
   harness(t, { failures: { backfill: true } });
-  await assert.rejects(() => EthDerivedPipeline.finishUser(1, { match: false }), /backfill failed/);
+  await assert.rejects(() => EthDerivedPipeline.finishUser(1), /backfill failed/);
 });
 
 // ---------------------------------------------------------------------------
@@ -193,15 +250,13 @@ test('runForUser classification shape: reclassify first, per-wallet steps, tail 
   assert.deepEqual(calls, [
     ['reclassify', 1],
     ['value', 7],
-    ['mirror', 7],
-    ['activity', 7, { rebuildMatches: false }],
+    ['activity', 7],
     ['value', 8],
-    ['mirror', 8],
-    ['activity', 8, { rebuildMatches: false }],
+    ['activity', 8],
     ['matches', 1, { reason: 'classification-refresh' }],
     ['bridge', 1],
-    ['bridgeMirror', 1],
-    ['backfill'],
+    ['mirror', 1],
+    ['backfill', 1],
   ]);
 });
 
@@ -213,38 +268,34 @@ test('runForUser derived shape: holdings after value, no reclassify', async (t) 
   assert.deepEqual(calls, [
     ['value', 7],
     ['holdings', 7],
-    ['mirror', 7],
-    ['activity', 7, { rebuildMatches: false }],
+    ['activity', 7],
     ['value', 8],
     ['holdings', 8],
-    ['mirror', 8],
-    ['activity', 8, { rebuildMatches: false }],
+    ['activity', 8],
     ['matches', 1, { reason: 'derived-refresh' }],
     ['bridge', 1],
-    ['bridgeMirror', 1],
-    ['backfill'],
+    ['mirror', 1],
+    ['backfill', 1],
   ]);
 });
 
 test('runForUser isolates a step failure to that step, not its wallet or its neighbour', async (t) => {
-  // Wallet 7's mirror throws; wallet 7's activity, all of wallet 8, and the
-  // tail must still run. This is the refresh policy: one derivation's hiccup
-  // cannot skip the rebuild the user's click was actually for.
-  const { calls } = harness(t, { failures: { mirror: 7 } });
+  // Wallet 7's activity rebuild throws; all of wallet 8 and the user-wide tail
+  // must still run. This is the refresh policy: one derivation's hiccup cannot
+  // skip the rebuild the user's click was actually for.
+  const { calls } = harness(t, { failures: { activity: 7 } });
   await EthDerivedPipeline.runForUser(1, {
     context: 'classification refresh', matchReason: 'classification-refresh',
   });
   assert.deepEqual(calls.map((c) => c.slice(0, 2)), [
     ['value', 7],
-    ['mirror', 7],
     ['activity', 7],
     ['value', 8],
-    ['mirror', 8],
     ['activity', 8],
     ['matches', 1],
     ['bridge', 1],
-    ['bridgeMirror', 1],
-    ['backfill'],
+    ['mirror', 1],
+    ['backfill', 1],
   ]);
 });
 
@@ -320,31 +371,6 @@ test('settled lanes are cleaned out of the map', async () => {
   await EthDerivedPipeline.serializedForUser(2, async () => 'y');
   await tick();
   assert.equal(EthDerivedPipeline.pendingQueueCount(), 0);
-});
-
-test('the global backfill chokepoint keeps two users\' backfills from overlapping', async (t) => {
-  const { stub } = harness(t);
-  const events = [];
-  const g = gate();
-  t.after(g.release);
-  let firstEntered;
-  const entered = new Promise((resolve) => { firstEntered = resolve; });
-  stub(TransactionClassificationService, 'backfill', async () => {
-    const isFirst = events.length === 0;
-    events.push('backfill-start');
-    if (isFirst) { firstEntered(); await g.promise; }
-    events.push('backfill-end');
-  });
-
-  const first = EthDerivedPipeline.finishUser(1, { match: false });
-  await entered;
-  const second = EthDerivedPipeline.finishUser(2, { match: false });
-  await tick();
-  await tick();
-  assert.deepEqual(events, ['backfill-start'], 'the second backfill must wait for the first');
-  g.release();
-  await Promise.all([first, second]);
-  assert.deepEqual(events, ['backfill-start', 'backfill-end', 'backfill-start', 'backfill-end']);
 });
 
 // ---------------------------------------------------------------------------

@@ -96,9 +96,9 @@ function fakeQuery(text, params = []) {
   if (/^SELECT contract_address FROM eth_ignored_tokens/.test(sql)) {
     return { rows: db.ignoredTokens.map((contract_address) => ({ contract_address })) };
   }
-  // The bridge set: kind filtered OUTSIDE the DISTINCT ON, so shadowing wins.
+  // The resolved kind set: kind filtered OUTSIDE DISTINCT ON, so shadowing wins.
   if (/^SELECT address FROM \( SELECT DISTINCT ON \(address\) address, kind/.test(sql)) {
-    return { rows: resolvedLabels(params[0]).filter((l) => l.kind === 'bridge').map((l) => ({ address: l.address })) };
+    return { rows: resolvedLabels(params[0]).filter((l) => l.kind === params[1]).map((l) => ({ address: l.address })) };
   }
   if (/^SELECT DISTINCT ON \(address\) address, name FROM eth_address_labels/.test(sql)) {
     const wanted = new Set(params[0]);
@@ -196,9 +196,9 @@ const EthActivityService = require('../src/services/EthActivityService');
 const EthActivity = require('../src/models/EthActivity');
 const EthTransfer = require('../src/models/EthTransfer');
 
-const {
-  buildActivityRows, bridgeAsset, REVIEW_REASONS,
-} = EthActivityService;
+const { buildActivityRows } = require('../src/services/ethActivity/rows');
+const { bridgeAsset } = require('../src/services/ethActivity/bridge');
+const { REVIEW_REASONS } = require('../src/utils/ethActivityVocabulary');
 const { projectionAmounts } = require('../src/models/EthBridgeMovement');
 
 // --- leg fixtures ----------------------------------------------------------
@@ -366,21 +366,21 @@ test('an ignored spam token cannot manufacture a bridge leg', () => {
 
 // --- label precedence, resolved in SQL -------------------------------------
 
-test("a user's 'external' verdict shadows a builtin bridge label", async () => {
-  db.labels = [{ user_id: null, address: BRIDGE, name: 'Arbitrum: Delayed Inbox', kind: 'bridge' }];
-  assert.deepEqual([...await EthActivityService._bridgeAddressesForUser(OWNER_ID)], [BRIDGE]);
+test("a user's 'external' verdict shadows a builtin service label", async () => {
+  db.labels = [{ user_id: null, address: BRIDGE, name: 'Instant swap', kind: 'service' }];
+  assert.deepEqual([...await EthActivityService._serviceAddressesForUser(OWNER_ID)], [BRIDGE]);
 
   // The correction is a separate user row; the builtin is untouched (deleting
   // it would only be undone by the next boot's seed).
-  db.labels.push({ user_id: OWNER_ID, address: BRIDGE, name: 'Not a bridge', kind: 'external' });
-  assert.deepEqual([...await EthActivityService._bridgeAddressesForUser(OWNER_ID)], [],
-    'a user row must be able to overrule a seeded bridge');
+  db.labels.push({ user_id: OWNER_ID, address: BRIDGE, name: 'Not a service', kind: 'external' });
+  assert.deepEqual([...await EthActivityService._serviceAddressesForUser(OWNER_ID)], [],
+    'a user row must be able to overrule a seeded service');
 
   // ...and another user is unaffected by that correction.
-  assert.deepEqual([...await EthActivityService._bridgeAddressesForUser(2)], [BRIDGE]);
+  assert.deepEqual([...await EthActivityService._serviceAddressesForUser(2)], [BRIDGE]);
 });
 
-test('the bridge-set query filters kind OUTSIDE the DISTINCT ON', async () => {
+test('the resolved-kind query filters kind OUTSIDE the DISTINCT ON', async () => {
   // The trap this codebase has hit before (reclassifyCounterparties' second
   // UPDATE): narrowing the candidate set on `kind` before precedence resolves
   // drops the user's override and lets the builtin resurface underneath it.
@@ -390,7 +390,7 @@ test('the bridge-set query filters kind OUTSIDE the DISTINCT ON', async () => {
     seen.push(String(text).replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim());
     return original(text, params);
   };
-  await EthActivityService._bridgeAddressesForUser(OWNER_ID);
+  await EthActivityService._serviceAddressesForUser(OWNER_ID);
   require('../src/config/database').query = original;
 
   const sql = seen[0];
@@ -402,23 +402,18 @@ test('the bridge-set query filters kind OUTSIDE the DISTINCT ON', async () => {
   assert.match(sql, /\) resolved WHERE kind = \$2/);
 });
 
-test('the service set is fetched by the same precedence-resolving query as bridge', async () => {
-  // 046 shares one query between the two kinds precisely so a second kind
-  // cannot grow its own precedence rules. If these ever diverge, a user's
-  // 'external' override would stop suppressing a builtin on one of them.
+test('the service set uses the shared precedence-resolving kind query', async () => {
   const seen = [];
   const original = require('../src/config/database').query;
   require('../src/config/database').query = async (text, params) => {
     seen.push({ text: String(text).replace(/\s+/g, ' ').trim(), params });
     return original(text, params);
   };
-  await EthActivityService._bridgeAddressesForUser(OWNER_ID);
   await EthActivityService._serviceAddressesForUser(OWNER_ID);
   require('../src/config/database').query = original;
 
-  assert.equal(seen[0].text, seen[1].text, 'both kinds must use the identical query');
-  assert.deepEqual(seen[0].params, [OWNER_ID, 'bridge']);
-  assert.deepEqual(seen[1].params, [OWNER_ID, 'service']);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].params, [OWNER_ID, 'service']);
 });
 
 test('any label kind drains the counterparty triage queue, bridge and service included', () => {

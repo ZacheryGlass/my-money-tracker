@@ -21,7 +21,9 @@ require.cache[pgModulePath] = {
   },
 };
 
-const { buildMirrorRow } = require('../src/services/EthTransactionMirrorService');
+const EthTransactionMirrorService = require('../src/services/EthTransactionMirrorService');
+const { buildMirrorRow } = EthTransactionMirrorService;
+const EthWallet = require('../src/models/EthWallet');
 const { CATEGORY_DIRECTIONS, classify } = require('../src/services/TransactionClassificationService');
 
 const WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -233,4 +235,35 @@ test('mirror categories map onto safe classification directions', () => {
   const deposit = classify({ category: 'CRYPTO_EXCHANGE_DEPOSIT', amount: 500 });
   assert.equal(deposit.direction, 'internal_transfer');
   assert.equal(deposit.isInternalTransfer, true);
+});
+
+test('user mirror refresh isolates one wallet and preserves wallet-local receipts', async (t) => {
+  const originalFind = EthWallet.findAllByUser;
+  const originalRebuild = EthTransactionMirrorService.rebuildForWallet;
+  t.after(() => {
+    EthWallet.findAllByUser = originalFind;
+    EthTransactionMirrorService.rebuildForWallet = originalRebuild;
+  });
+
+  EthWallet.findAllByUser = async () => [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const attempted = [];
+  EthTransactionMirrorService.rebuildForWallet = async (walletId) => {
+    attempted.push(walletId);
+    if (walletId === 2) throw new Error('wallet 2 mirror failed');
+    return { mirrored: walletId, unpricedSkipped: walletId - 1 };
+  };
+
+  const result = await EthTransactionMirrorService.rebuildForUser(7, {
+    context: 'classification refresh',
+  });
+  assert.deepEqual(attempted, [1, 2, 3]);
+  assert.deepEqual(result.summary, { wallets: 3, mirrored: 4, unpricedSkipped: 2 });
+  assert.deepEqual(result.resultsByWallet.get(1), {
+    receipt: { mirrored: 1, unpricedSkipped: 0 }, error: null,
+  });
+  assert.equal(result.resultsByWallet.get(2).receipt, null);
+  assert.match(result.resultsByWallet.get(2).error.message, /wallet 2 mirror failed/);
+  assert.deepEqual(result.resultsByWallet.get(3), {
+    receipt: { mirrored: 3, unpricedSkipped: 2 }, error: null,
+  });
 });

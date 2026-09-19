@@ -6,8 +6,8 @@
 -- money looked like it left and then arrived from nowhere. This table is the
 -- statement that they are the same money.
 --
--- DERIVED WHOLESALE, exactly like eth_activity itself: the matching pass runs
--- inside the activity rebuild, deletes every match it owns and re-derives them.
+-- DERIVED WHOLESALE, exactly like eth_activity itself: the derived pipeline
+-- runs matching after activity, deletes every match it owns and re-derives them.
 -- That is why activity_id can be a plain surrogate FK here and must NOT be one
 -- in the verdict table below -- see there.
 --

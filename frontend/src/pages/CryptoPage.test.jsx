@@ -12,6 +12,7 @@ const apiMocks = vi.hoisted(() => ({
     getTransfers: vi.fn(),
     ignoreToken: vi.fn(),
     getAddressLabels: vi.fn(),
+    getAddressNotes: vi.fn(),
     labelAddress: vi.fn(),
     setActivityOverride: vi.fn(),
     clearActivityOverride: vi.fn(),
@@ -56,6 +57,7 @@ describe('CryptoPage', () => {
     apiMocks.eth.getWallets.mockResolvedValue({ wallets: [] });
     apiMocks.eth.getTransfers.mockResolvedValue({ data: [], pagination: { total: 0 } });
     apiMocks.eth.getAddressLabels.mockResolvedValue({ labels: [] });
+    apiMocks.eth.getAddressNotes.mockResolvedValue({ notes: [] });
     apiMocks.holdings.getAll.mockResolvedValue({ holdings: [] });
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [] });
     apiMocks.history.getAccounts.mockResolvedValue({ data: [] });

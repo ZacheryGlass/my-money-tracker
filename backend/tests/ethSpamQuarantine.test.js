@@ -265,7 +265,8 @@ const EthActivityService = require('../src/services/EthActivityService');
 
 const { tokenAssetKey } = require('../src/utils/assetPriceKey');
 
-const { buildActivityRows, SPAM_REASONS } = EthActivityService;
+const { buildActivityRows } = require('../src/services/ethActivity/rows');
+const { SPAM_REASONS } = require('../src/utils/ethActivityVocabulary');
 
 // The providers' verdict on the junk contracts these fixtures use: no series at
 // all. Rule 4 requires it, because 'unpriced' on its own ALSO means 'the dated

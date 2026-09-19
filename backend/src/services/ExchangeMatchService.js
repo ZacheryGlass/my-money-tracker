@@ -303,10 +303,9 @@ class ExchangeMatchService {
   /**
    * Re-derive every match this user has, from scratch.
    *
-   * Runs at the END of the activity rebuild (EthActivityService), which is what
-   * the issue asks for and also the only order that works: eth_activity is
-   * delete-then-insert, so a match written before the rebuild is cascaded away
-   * by it.
+   * Runs in EthDerivedPipeline's user-wide tail after every activity rebuild.
+   * That order is required because eth_activity is delete-then-insert, so a
+   * match written before the rebuild is cascaded away by it.
    *
    * Scoped to the USER rather than to the wallet whose rebuild triggered it.
    * Matching is a one-to-one claim over a shared pool of exchange records, so a

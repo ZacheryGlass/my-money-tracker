@@ -124,13 +124,6 @@ class EvmAudit {
     }, { moralis: null });
   }
 
-  static async credentialGeneration(userId) {
-    const generations = await this.credentialGenerations(userId);
-    return [generations.moralis]
-      .filter(Boolean)
-      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
-  }
-
   static async ensureSubject(userId, address, client = pool) {
     const normalized = String(address).toLowerCase();
     const { rows } = await client.query(
@@ -664,61 +657,6 @@ class EvmAudit {
     }
   }
 
-  // Persist the provider response before normalizing it. If a malformed or
-  // conflicting page makes the scan fail, the raw page remains inspectable
-  // while the scope cursor stays at the last normalized checkpoint.
-  static async recordRawPage(scopeId, page, fence = {}) {
-    validateProviderPage(page);
-    const evidenceIdentity = page.evidenceIdentitySha256 || page.responseSha256;
-    const transactional = Boolean(fence.jobId && fence.owner);
-    const client = transactional ? await pool.connect() : pool;
-    try {
-      if (transactional) {
-        await client.query('BEGIN');
-        await assertActiveLease(client, fence.jobId, fence.owner);
-      }
-      const inserted = await client.query(
-      `INSERT INTO evm_provider_pages (
-         scope_id, job_id, provider, endpoint, request_params, cursor_in, cursor_out,
-         response_sha256, evidence_identity_sha256, response_raw, response_json, request_id, item_count
-       )
-       SELECT sc.id, sc.job_id, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11, $12
-         FROM evm_audit_scopes sc
-        WHERE sc.id = $1
-       ON CONFLICT (scope_id, evidence_identity_sha256)
-       DO NOTHING
-       RETURNING id`,
-      [
-        scopeId, page.provider, page.endpoint, JSON.stringify(page.requestParams),
-        page.cursorIn, page.cursorOut, page.responseSha256, evidenceIdentity,
-        page.responseRaw, JSON.stringify(page.responseJson), page.requestId, page.itemCount,
-      ]
-      );
-      let row = inserted.rows[0];
-      const pageWasNew = Boolean(row);
-      if (!row) {
-        const existing = await client.query(
-          `SELECT * FROM evm_provider_pages WHERE scope_id = $1 AND evidence_identity_sha256 = $2`,
-          [scopeId, evidenceIdentity]
-        );
-        row = existing.rows[0];
-      }
-      if (!row) throw new Error('Audit scope no longer exists');
-      if (!pageWasNew && pageConflict(row, page)) {
-        const error = new Error('EVM provider page identity conflicts with retained evidence');
-        error.code = 'EVM_CONFLICTING_PAGE';
-        throw error;
-      }
-      if (transactional) await client.query('COMMIT');
-      return row.id;
-    } catch (error) {
-      if (transactional) await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      if (transactional) client.release();
-    }
-  }
-
   static async commitPage(scopeId, page, observations, fence = {}) {
     validateProviderPage(page);
     const evidenceIdentity = page.evidenceIdentitySha256 || page.responseSha256;
@@ -1065,21 +1003,6 @@ class EvmAudit {
         WHERE ${clauses.join(' AND ')}
         ORDER BY o.chain_id, o.block_number, o.transaction_index, o.log_index, o.id`,
       params
-    );
-    return rows;
-  }
-
-  static async transactionObservationsForSubject(
-    subjectId, chainId, provider, fromBlock = 0
-  ) {
-    const providers = Array.isArray(provider) ? provider : [provider];
-    const { rows } = await pool.query(
-      `SELECT * FROM evm_provider_observations
-        WHERE subject_id = $1 AND chain_id = $2 AND provider = ANY($3::text[])
-          AND evidence_kind = 'transaction'
-          AND (block_number IS NULL OR block_number >= $4)
-        ORDER BY block_number, transaction_index, id`,
-      [subjectId, chainId, providers, fromBlock]
     );
     return rows;
   }

@@ -115,12 +115,39 @@ function ReconciliationNotice({ status, report }) {
     );
   }
 
+  if (effectiveStatus === 'reconciled_with_exceptions') {
+    return (
+      <p className="mt-1 flex items-start gap-2 text-orange-400">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+        The audit found documented balance exceptions. Review the Balance audit section;
+        accepted explanations affect reconciliation only.
+      </p>
+    );
+  }
+
   return null;
 }
 
-function legacyReconciliationStatus(status, report) {
-  return status
-    || (report?.mismatch_count > 0 ? 'mismatch' : null);
+function durableReconciliationStatus(batch) {
+  if (batch?.status === 'balance_mismatch') return 'mismatch';
+  if (batch?.status === 'coverage_limited') return 'stale';
+  if (batch?.status === 'reconciled_with_exceptions') return 'reconciled_with_exceptions';
+  if (batch?.coverage_limitations?.length > 0) return 'stale';
+  return batch?.reconciliation_status || null;
+}
+
+function durableReconciliationReport(batch) {
+  const report = batch?.balance_report || batch?.reconciliation || null;
+  if (!batch?.coverage_limitations?.length || report?.coverage_limitations?.length) return report;
+  return { ...report, coverage_limitations: batch.coverage_limitations };
+}
+
+const ACTIVE_SYNC_STATUSES = new Set(['queued', 'running', 'backoff']);
+
+function confirmsUncertainStart(job, attempt) {
+  if (!job || !attempt?.startUncertain) return false;
+  return attempt.baselineJobId == null
+    || String(job.id) !== String(attempt.baselineJobId);
 }
 
 // Exchange accounts: read-only API keys, CSV imports, and the per-account queue
@@ -157,10 +184,21 @@ function ExchangesPanel({
   const [syncingIds, setSyncingIds] = useState(() => new Set());
   // Per account, so one account's failure does not blank another's receipt.
   const [syncResults, setSyncResults] = useState({});
+  const setAccountSyncResult = (accountId, value) => {
+    setSyncResults((previous) => ({ ...previous, [accountId]: value }));
+  };
+  const setAccountSyncing = (accountId, syncing) => {
+    setSyncingIds((previous) => {
+      const next = new Set(previous);
+      if (syncing) next.add(accountId);
+      else next.delete(accountId);
+      return next;
+    });
+  };
   // Durable server-side job snapshots. These survive a page reload because the
   // status endpoint returns the latest completed job as well as active work.
   const [syncStatuses, setSyncStatuses] = useState({});
-  const completionNotifiedRef = useRef(new Set());
+  const terminalNotifiedRef = useRef(new Set());
   const syncingIdsRef = useRef(syncingIds);
   const syncStatusesRef = useRef(syncStatuses);
   syncingIdsRef.current = syncingIds;
@@ -180,7 +218,6 @@ function ExchangesPanel({
   // completed receipt after a reload, and the server's durable status means a
   // browser tab closing cannot make an in-flight provider walk look lost.
   useEffect(() => {
-    if (typeof exchangesAPI.getSyncStatus !== 'function') return undefined;
     let cancelled = false;
     let timer = null;
     let statusReadFailures = 0;
@@ -203,11 +240,26 @@ function ExchangesPanel({
       const failedReads = usable.length < connected.length;
       if (failedReads) statusReadFailures += 1;
       else statusReadFailures = 0;
-      const active = usable.filter(({ job }) => job && ['queued', 'running', 'backoff'].includes(job.status));
+      const active = usable.filter(({ job }) => job && ACTIVE_SYNC_STATUSES.has(job.status));
       setSyncStatuses((previous) => {
         const next = { ...previous };
         usable.forEach(({ accountId, job }) => { next[accountId] = job; });
         return next;
+      });
+      setSyncResults((previous) => {
+        let changed = false;
+        const next = { ...previous };
+        usable.forEach(({ accountId, job }) => {
+          const attempt = previous[accountId];
+          if (confirmsUncertainStart(job, attempt)) {
+            next[accountId] = { job };
+            changed = true;
+          } else if (attempt?.startUncertain) {
+            next[accountId] = { error: 'The sync did not start. Try again.' };
+            changed = true;
+          }
+        });
+        return changed ? next : previous;
       });
       setSyncingIds((previous) => {
         const next = new Set(previous);
@@ -224,20 +276,22 @@ function ExchangesPanel({
         return next;
       });
 
-      const completed = usable.filter(({ accountId, job }) => (
-        job?.status === 'completed'
-          && !completionNotifiedRef.current.has(`${accountId}:${job.id}`)
+      const terminal = usable.filter(({ accountId, job }) => (
+        ['completed', 'failed'].includes(job?.status)
+          && !terminalNotifiedRef.current.has(`${accountId}:${job.id}:${job.status}`)
       ));
-      if (completed.length > 0) {
-        completed.forEach(({ accountId, job }) => completionNotifiedRef.current.add(`${accountId}:${job.id}`));
+      if (terminal.length > 0) {
+        terminal.forEach(({ accountId, job }) => (
+          terminalNotifiedRef.current.add(`${accountId}:${job.id}:${job.status}`)
+        ));
         // Refresh record counts and the review badge once, after the worker's
-        // final batch commits. Polling itself remains read-only.
+        // final committed batch, including a job that later stopped.
         void onChanged();
       }
       const localActive = connected.some((account) => {
         const local = syncingIdsRef.current.has(account.id);
         const prior = syncStatusesRef.current[account.id];
-        return local || (prior && ['queued', 'running', 'backoff'].includes(prior.status));
+        return local || (prior && ACTIVE_SYNC_STATUSES.has(prior.status));
       });
       const backoffDelays = active
         .filter(({ job }) => job.status === 'backoff' && job.next_run_at)
@@ -352,7 +406,7 @@ function ExchangesPanel({
     // Always empty. The server never returns a stored key, so a pre-filled
     // field could only ever be a lie about what is saved.
     setCredentialInputs({ apiKey: '', apiSecret: '' });
-    setSyncResults((prev) => ({ ...prev, [account.id]: null }));
+    setAccountSyncResult(account.id, null);
   };
 
   const handleSaveCredentials = async (account, event) => {
@@ -362,10 +416,9 @@ function ExchangesPanel({
     const apiSecret = credentialInputs.apiSecret.trim();
     const fields = credentialFields[account.exchange] || {};
     if (!apiKey || !apiSecret) {
-      setSyncResults((prev) => ({
-        ...prev,
-        [account.id]: { error: `Enter both the ${fields.keyLabel || 'API key'} and the ${fields.secretLabel || 'secret'}.` },
-      }));
+      setAccountSyncResult(account.id, {
+        error: `Enter both the ${fields.keyLabel || 'API key'} and the ${fields.secretLabel || 'secret'}.`,
+      });
       return;
     }
     setSavingCredentialsId(account.id);
@@ -375,27 +428,22 @@ function ExchangesPanel({
       // component state once the server has it.
       setCredentialInputs({ apiKey: '', apiSecret: '' });
       setConnectingId(null);
-      setSyncingIds((previous) => {
-        const next = new Set(previous);
-        next.delete(account.id);
-        return next;
-      });
+      setAccountSyncing(account.id, false);
       setSyncStatuses((previous) => {
         const next = { ...previous };
         delete next[account.id];
         return next;
       });
-      setSyncResults((previous) => ({ ...previous, [account.id]: null }));
-      completionNotifiedRef.current = new Set(
-        [...completionNotifiedRef.current].filter((key) => !key.startsWith(`${account.id}:`))
+      setAccountSyncResult(account.id, null);
+      terminalNotifiedRef.current = new Set(
+        [...terminalNotifiedRef.current].filter((key) => !key.startsWith(`${account.id}:`))
       );
       showSuccess('API key saved');
       await onChanged();
     } catch (err) {
-      setSyncResults((prev) => ({
-        ...prev,
-        [account.id]: { error: err.response?.data?.error || 'Failed to save the API key' },
-      }));
+      setAccountSyncResult(account.id, {
+        error: err.response?.data?.error || 'Failed to save the API key',
+      });
     } finally {
       setSavingCredentialsId(null);
     }
@@ -405,17 +453,13 @@ function ExchangesPanel({
     setDisconnectingId(null);
     try {
       await exchangesAPI.clearCredentials(account.id);
-      setSyncingIds((previous) => {
-        const next = new Set(previous);
-        next.delete(account.id);
-        return next;
-      });
+      setAccountSyncing(account.id, false);
       setSyncStatuses((previous) => {
         const next = { ...previous };
         delete next[account.id];
         return next;
       });
-      setSyncResults((previous) => ({ ...previous, [account.id]: null }));
+      setAccountSyncResult(account.id, null);
       showSuccess('API key removed; imported records were kept');
       await onChanged();
     } catch (err) {
@@ -425,66 +469,68 @@ function ExchangesPanel({
 
   const handleTestConnection = async (account) => {
     setTestingId(account.id);
-    setSyncResults((prev) => ({ ...prev, [account.id]: null }));
+    setAccountSyncResult(account.id, null);
     try {
       const result = await exchangesAPI.testConnection(account.id);
-      setSyncResults((prev) => ({ ...prev, [account.id]: { tested: result.detail } }));
+      setAccountSyncResult(account.id, { tested: result.detail });
     } catch (err) {
       // The provider's own refusal names the permission that was forgotten, so
       // it reaches the screen verbatim rather than as "connection failed".
-      setSyncResults((prev) => ({
-        ...prev,
-        [account.id]: { error: err.response?.data?.error || 'Could not reach the exchange' },
-      }));
+      setAccountSyncResult(account.id, {
+        error: err.response?.data?.error || 'Could not reach the exchange',
+      });
     } finally {
       setTestingId(null);
     }
   };
 
   const handleSync = async (account) => {
-    setSyncingIds((previous) => new Set(previous).add(account.id));
-    setSyncResults((prev) => ({ ...prev, [account.id]: null }));
-    try {
-      // New clients enqueue a durable backfill. The fallback keeps older
-      // embedded/test clients working while they roll forward.
-      const result = typeof exchangesAPI.startSync === 'function'
-        ? await exchangesAPI.startSync(account.id)
-        : await exchangesAPI.sync(account.id);
-      if (result?.job) {
-        setSyncStatuses((previous) => ({ ...previous, [account.id]: result.job }));
-        setSyncResults((prev) => ({ ...prev, [account.id]: { job: result.job } }));
-        setStatusPollNonce((nonce) => nonce + 1);
-        // Counts are unchanged until a batch commits; the poller refreshes
-        // them once the durable job reaches completed.
+    setAccountSyncing(account.id, true);
+    setAccountSyncResult(account.id, null);
+    let baselineJobId;
+    if (Object.hasOwn(syncStatusesRef.current, account.id)) {
+      baselineJobId = syncStatusesRef.current[account.id]?.id ?? null;
+    } else {
+      // A known baseline job id (including known-null) lets a lost POST
+      // response be reconciled by identity alone. Server and browser clocks
+      // are deliberately irrelevant.
+      try {
+        const baseline = await exchangesAPI.getSyncStatus(account.id);
+        const job = baseline.job || null;
+        baselineJobId = job?.id ?? null;
+        setSyncStatuses((previous) => ({ ...previous, [account.id]: job }));
+      } catch {
+        setAccountSyncResult(account.id, {
+          error: 'Could not read the current sync status. Try again.',
+        });
+        setAccountSyncing(account.id, false);
         return;
       }
-      // Compatibility receipt from the legacy bounded endpoint.
-      setSyncingIds((previous) => {
-        const next = new Set(previous);
-        next.delete(account.id);
-        return next;
-      });
-      setSyncResults((prev) => ({ ...prev, [account.id]: { sync: result } }));
-      await onChanged();
+    }
+    try {
+      const { job } = await exchangesAPI.startSync(account.id);
+      setSyncStatuses((previous) => ({ ...previous, [account.id]: job }));
+      setAccountSyncResult(account.id, { job });
+      setStatusPollNonce((nonce) => nonce + 1);
+      // Counts are unchanged until a batch commits; the poller refreshes them
+      // once the durable job reaches completed.
     } catch (err) {
-      setSyncResults((prev) => ({
-        ...prev,
-        [account.id]: { error: err.response?.data?.error || 'Failed to sync from the exchange' },
-      }));
-      setSyncingIds((previous) => {
-        const next = new Set(previous);
-        next.delete(account.id);
-        return next;
+      const responseStatus = Number(err.response?.status || 0);
+      const startUncertain = responseStatus === 0 || responseStatus >= 500;
+      setAccountSyncResult(account.id, {
+        error: err.response?.data?.error || (startUncertain
+          ? 'Could not confirm whether the sync started. Checking server status…'
+          : 'Failed to start the exchange sync.'),
+        startUncertain,
+        baselineJobId,
       });
-    } finally {
-      // A queued job stays disabled until polling observes completed/failed.
-      // The legacy synchronous fallback has already finished here.
-      if (typeof exchangesAPI.startSync !== 'function') {
-        setSyncingIds((previous) => {
-          const next = new Set(previous);
-          next.delete(account.id);
-          return next;
-        });
+      if (startUncertain) {
+        // The server may have committed the durable job before the response
+        // was lost. Keep the marker through one status read; only a new/active
+        // job proves this click started work.
+        setStatusPollNonce((nonce) => nonce + 1);
+      } else {
+        setAccountSyncing(account.id, false);
       }
     }
   };
@@ -851,13 +897,20 @@ function ExchangesPanel({
             const connected = Boolean(account.credentials?.configured);
             const syncResult = syncResults[account.id];
             const syncJob = syncStatuses[account.id];
-            const jobActive = Boolean(syncJob && ['queued', 'running', 'backoff'].includes(syncJob.status));
+            const jobActive = Boolean(syncJob && ACTIVE_SYNC_STATUSES.has(syncJob.status));
             const syncing = syncingIds.has(account.id) || jobActive;
             const receiptJob = syncResult?.job;
             const visibleJob = receiptJob && syncJob && receiptJob.id !== syncJob.id
               ? (new Date(receiptJob.requested_at || 0).getTime() >= new Date(syncJob.requested_at || 0).getTime()
                 ? receiptJob : syncJob)
               : syncJob || receiptJob;
+            const visibleReconciliation = visibleJob?.status === 'completed'
+              ? durableReconciliationStatus(visibleJob.last_batch)
+              : null;
+            const persistedReconciliationStatus = account.reconciliation_status
+              || (account.last_sync_status === 'balance_mismatch' ? 'mismatch'
+                : account.last_sync_status === 'coverage_limited' ? 'stale' : null)
+              || (account.balance_report?.mismatch_count > 0 ? 'mismatch' : null);
             const testing = testingId === account.id;
             const balanceAudit = balanceAudits[account.id];
             return (
@@ -1166,11 +1219,10 @@ function ExchangesPanel({
                                   && `, ${Number(visibleJob.last_batch?.duplicate_candidates || visibleJob.duplicate_candidates).toLocaleString()} possible duplicates sent to review`}
                                 {Number(visibleJob.flagged || 0) > 0 && `, ${Number(visibleJob.flagged).toLocaleString()} flagged for review`}.
                               </p>
-                              {visibleJob.last_batch?.coverage_limitations?.length > 0 && (
-                                <p className="mt-1 text-loss">
-                                  Known coverage limits remain: {visibleJob.last_batch.coverage_limitations.join(' ')}
-                                </p>
-                              )}
+                              <ReconciliationNotice
+                                status={durableReconciliationStatus(visibleJob.last_batch)}
+                                report={durableReconciliationReport(visibleJob.last_batch)}
+                              />
                             </>
                           ) : visibleJob.status === 'failed' ? (
                             <p>Sync stopped: {visibleJob.last_error?.message || 'the exchange backfill failed'}.</p>
@@ -1226,62 +1278,13 @@ function ExchangesPanel({
                     </div>
                   )}
 
-                  {syncResult?.sync && (
-                    <div className="mt-5 rounded border border-border bg-surface-2 p-4 text-xs leading-relaxed text-secondary">
-                      <p>
-                        Read {syncResult.sync.fetched.toLocaleString()} ledger rows:{' '}
-                        <span className="font-semibold text-primary">{syncResult.sync.imported.toLocaleString()} new</span>
-                        {syncResult.sync.upgraded > 0 && `, ${syncResult.sync.upgraded.toLocaleString()} completed from an earlier partial import`}
-                        {syncResult.sync.duplicates > 0 && `, ${syncResult.sync.duplicates.toLocaleString()} already held`}
-                        {syncResult.sync.deduplicated > 0 && `, ${syncResult.sync.deduplicated.toLocaleString()} matched across sources`}
-                        {syncResult.sync.duplicate_candidates > 0 && `, ${syncResult.sync.duplicate_candidates.toLocaleString()} possible duplicates sent to review`}
-                        {syncResult.sync.chain_details_filled > 0 && `, ${syncResult.sync.chain_details_filled.toLocaleString()} gained an on-chain address`}
-                        {syncResult.sync.needs_review > 0 && (
-                          <span className="text-loss">, {syncResult.sync.needs_review.toLocaleString()} flagged for review</span>
-                        )}
-                        .
-                      </p>
-                      {/* A truncated walk looks exactly like a complete one
-                          from the outside. Saying so is what stops the user
-                          reading a partial history as the whole of it. */}
-                      {syncResult.sync.backfill_pending && (
-                        <p className="mt-1 text-tertiary">
-                          More history is still to come — the background worker will keep working backwards
-                          automatically. No second click is needed.
-                        </p>
-                      )}
-                      <ReconciliationNotice
-                        status={syncResult.sync.reconciliation_status
-                          || (syncResult.sync.status === 'balance_mismatch' ? 'mismatch'
-                            : syncResult.sync.status === 'coverage_limited' ? 'stale' : null)}
-                        report={syncResult.sync.reconciliation || syncResult.sync.balance_report}
-                      />
-                      {syncResult.sync.status === 'reconciled_with_exceptions' && (
-                        <p className="mt-1 flex items-start gap-2 text-orange-400">
-                          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                          The audit found documented balance exceptions. Review the Balance audit section;
-                          accepted explanations affect reconciliation only.
-                        </p>
-                      )}
-                    </div>
-                  )}
-
                   {/* Persisted from the last run, so a mismatch found by the
                       nightly job is visible without pressing anything. */}
-                  {!syncResult && !result
-                    && ['mismatch', 'stale', 'unknown'].includes(
-                      legacyReconciliationStatus(
-                        account.reconciliation_status
-                          || (account.last_sync_status === 'balance_mismatch' ? 'mismatch'
-                            : account.last_sync_status === 'coverage_limited' ? 'stale' : null),
-                        account.balance_report
-                      )
-                    ) && (
+                  {!syncResult && !result && !visibleReconciliation
+                    && ['mismatch', 'stale', 'unknown'].includes(persistedReconciliationStatus) && (
                     <div className="mt-5 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
                       <ReconciliationNotice
-                        status={account.reconciliation_status
-                          || (account.last_sync_status === 'balance_mismatch' ? 'mismatch'
-                            : account.last_sync_status === 'coverage_limited' ? 'stale' : null)}
+                        status={persistedReconciliationStatus}
                         report={account.balance_report}
                       />
                     </div>

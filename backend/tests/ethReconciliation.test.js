@@ -55,6 +55,8 @@ const EthWallet = require('../src/models/EthWallet');
 const SecretsService = require('../src/services/SecretsService');
 const MirrorService = require('../src/services/EthTransactionMirrorService');
 const EthActivityService = require('../src/services/EthActivityService');
+const ExchangeMatchService = require('../src/services/ExchangeMatchService');
+const BridgeMatchingService = require('../src/services/BridgeMatchingService');
 const MethodSignatureService = require('../src/services/MethodSignatureService');
 const TransactionClassificationService = require('../src/services/TransactionClassificationService');
 
@@ -830,10 +832,17 @@ test('a failing audit leaves the sync itself successful', async (t) => {
   stub(EthWalletChain, 'clearError', async () => {});
   stub(EthWalletChain, 'updateSyncTime', async () => {});
   stub(EthWalletService, 'refreshHoldings', async () => ({ liveWeiByChain: { 1: '0' } }));
-  stub(MirrorService, 'rebuildForWallet', async () => ({}));
   stub(EthActivityService, 'rebuildForWallet', async () => ({}));
+  stub(ExchangeMatchService, 'rebuildForUserSafely', async () => null);
+  stub(BridgeMatchingService, 'rebuildForUser', async () => null);
+  stub(MirrorService, 'rebuildForUser', async () => {
+    return {
+      summary: { wallets: 1, mirrored: 0, unpricedSkipped: 0 },
+      resultsByWallet: new Map([[WALLET.id, { receipt: {}, error: null }]]),
+    };
+  });
   stub(MethodSignatureService, 'decodePendingForWallet', async () => ({}));
-  stub(TransactionClassificationService, 'backfill', async () => {});
+  stub(TransactionClassificationService, 'backfillForUser', async () => {});
   stub(EthWallet, 'clearError', async () => {});
   stub(EthWallet, 'updateSyncTime', async () => {});
   let walletError = null;
