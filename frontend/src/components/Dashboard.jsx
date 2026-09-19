@@ -387,6 +387,20 @@ const Dashboard = ({ onNavigate }) => {
         navState: { tab: 'institutions' },
       });
     }
+    if (freshness?.exchanges?.staleCount > 0) {
+      issues.push({
+        title: 'Exchange balances are stale',
+        detail: freshness.exchanges.attentionAccounts.map((account) => account.name).join(', '),
+        page: 'crypto-exchanges',
+      });
+    }
+    if (freshness?.exchanges?.manualOverlapAssets?.length) {
+      issues.push({
+        title: 'Manual crypto holdings may overlap',
+        detail: `Review manual amounts for ${freshness.exchanges.manualOverlapAssets.join(', ')} to avoid counting synced balances twice.`,
+        page: 'crypto-holdings',
+      });
+    }
     if (freshness?.prices?.isStale) {
       issues.push({
         title: 'Market prices are stale',

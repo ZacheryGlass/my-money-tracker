@@ -38,7 +38,7 @@ import { isWalletSyncFailure } from '../utils/walletSync';
 const getHoldingValue = (holding) => parseFloat(holding.current_value ?? holding.manual_value ?? 0) || 0;
 
 // Wallet syncs rebuild these rows; manual edits would be silently clobbered.
-const isSyncManaged = (holding) => Boolean(holding.is_plaid_managed || holding.account_eth_wallet_id);
+const isSyncManaged = (holding) => Boolean(holding.is_plaid_managed || holding.account_eth_wallet_id || holding.account_exchange_account_id);
 
 const formatEthQuantity = (quantity) =>
   Number(quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -295,7 +295,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // Wallet-backed accounts are rebuilt by every sync, so a manual holding can
   // only go in an account the user made themselves.
   const manualCryptoAccounts = useMemo(
-    () => cryptoAccounts.filter((account) => !account.eth_wallet_id),
+    () => cryptoAccounts.filter((account) => !account.eth_wallet_id && !account.exchange_account_id),
     [cryptoAccounts]
   );
   const cryptoHistory = useMemo(
@@ -520,6 +520,15 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-body-sm font-semibold text-primary">{getValue()}</span>
           {row.original.account_eth_wallet_id && <EthWalletBadge />}
+          {row.original.account_exchange_account_id && row.original.current_value == null && row.original.manual_value == null && (
+            <span className="text-caption text-tertiary">Unpriced</span>
+          )}
+          {row.original.account_exchange_account_id && (
+            <span className={`text-caption ${row.original.exchange_balance_stale ? 'text-loss' : 'text-tertiary'}`}
+              title={`Exchange balance observed ${formatRelativeTime(row.original.exchange_balance_as_of)}`}>
+              {row.original.exchange_balance_stale ? 'Exchange · stale' : 'Exchange'}
+            </span>
+          )}
         </div>
       ),
     },

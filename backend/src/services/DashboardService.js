@@ -51,7 +51,7 @@ class DashboardService {
       let value = 0;
 
       const qty = parseFloat(holding.quantity || 0);
-      if (holding.ticker && qty > 0 && priceMap[holding.ticker.toUpperCase()]) {
+      if (holding.ticker && qty !== 0 && priceMap[holding.ticker.toUpperCase()]) {
         value = qty * priceMap[holding.ticker.toUpperCase()];
       } else if (holding.manual_value !== null) {
         value = parseFloat(holding.manual_value);
@@ -93,6 +93,15 @@ class DashboardService {
       .reduce((sum, item) => sum + Math.abs(item.value), 0);
 
     const freshness = await this.getFreshness(userId, latestFetchedAt);
+    const staleExchanges = new Map(holdings.filter((h) => h.exchange_balance_stale)
+      .map((h) => [h.account_id, { accountId: h.account_id, name: h.account_name, observedAt: h.exchange_balance_as_of }]));
+    freshness.exchanges = { staleCount: staleExchanges.size, attentionAccounts: [...staleExchanges.values()] };
+    const exchangeAssets = new Set(holdings.filter((h) => h.account_exchange_account_id).map((h) => h.ticker));
+    freshness.exchanges.manualOverlapAssets = [...new Set(holdings.filter((h) =>
+      h.account_type === 'crypto' && !h.account_eth_wallet_id && !h.account_exchange_account_id
+      && h.ticker && Number(h.quantity) !== 0 && exchangeAssets.has(h.ticker)
+    ).map((h) => h.ticker))].sort();
+    if (staleExchanges.size || freshness.exchanges.manualOverlapAssets.length) freshness.status = 'warning';
 
     return {
       items,

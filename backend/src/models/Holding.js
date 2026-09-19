@@ -2,6 +2,17 @@ const pool = require('../config/database');
 
 const ACCOUNT_DISPLAY_SELECT = "COALESCE(NULLIF(TRIM(a.display_name), ''), a.name) as account_name, a.name as account_source_name, a.display_name as account_display_name";
 
+// Source freshness is independent of historical-ledger reconciliation.
+const EXCHANGE_STALE_SQL = `(a.exchange_account_id IS NOT NULL AND (
+  a.exchange_balance_as_of IS NULL OR a.exchange_balance_as_of < CURRENT_TIMESTAMP - INTERVAL '2 days'
+  OR ea.api_key_encrypted IS NULL OR ea.provider_balance_snapshot IS NULL
+  OR ea.last_sync_status IN ('error', 'not_configured', 'deferred', 'rate_limited')
+  OR COALESCE((ea.balance_report->>'balances_incomplete')::boolean, FALSE)
+))`;
+const EXCHANGE_SELECT = `a.exchange_account_id AS account_exchange_account_id,
+  a.exchange_balance_as_of, ${EXCHANGE_STALE_SQL} AS exchange_balance_stale`;
+const EXCHANGE_JOIN = 'LEFT JOIN exchange_accounts ea ON ea.id = a.exchange_account_id AND ea.user_id = a.user_id';
+
 // Ownership scoping is fail-closed: a caller that forgets the userId gets an
 // error, not every user's rows. The two legitimate cross-user callers (price
 // updates and snapshots) say so at the call site via findAllForJobs.
@@ -37,7 +48,7 @@ class Holding {
     const priceSelect = withPrices
       ? `,
         CASE
-          WHEN h.ticker IS NOT NULL AND pc.price_usd IS NOT NULL AND h.quantity > 0 THEN h.quantity * pc.price_usd
+          WHEN h.ticker IS NOT NULL AND pc.price_usd IS NOT NULL AND h.quantity <> 0 THEN h.quantity * pc.price_usd
           ELSE h.manual_value
         END as current_value`
       : '';
@@ -45,9 +56,10 @@ class Holding {
       ? 'LEFT JOIN price_cache pc ON UPPER(h.ticker) = UPPER(pc.ticker)'
       : '';
     const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type${priceSelect}
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, ${EXCHANGE_SELECT}, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type${priceSelect}
       FROM holdings h
       JOIN accounts a ON h.account_id = a.id
+      ${EXCHANGE_JOIN}
       ${priceJoin}
       ${whereClause}
       ORDER BY h.updated_at DESC`,
@@ -61,7 +73,7 @@ class Holding {
     const params = [id, userId];
     const where = 'WHERE h.id = $1 AND a.user_id = $2';
     const result = await pool.query(
-      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id ${where}`,
+      `SELECT h.id, h.account_id, h.ticker, h.name, h.quantity, h.manual_value, h.category, h.notes, h.location, h.institution_cost_basis, h.institution_price, h.institution_price_as_of, h.is_plaid_managed, a.eth_wallet_id AS account_eth_wallet_id, ${EXCHANGE_SELECT}, h.updated_at, ${ACCOUNT_DISPLAY_SELECT}, a.type as account_type FROM holdings h JOIN accounts a ON h.account_id = a.id ${EXCHANGE_JOIN} ${where}`,
       params
     );
     return result.rows[0];

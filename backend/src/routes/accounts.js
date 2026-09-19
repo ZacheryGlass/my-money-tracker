@@ -15,7 +15,7 @@ const EFFECTIVE_ACCOUNT_NAME_SQL = "COALESCE(NULLIF(TRIM(a.display_name), ''), a
 const ACCOUNT_RETURN_SELECT = `a.id, a.name, a.display_name,
                  ${EFFECTIVE_ACCOUNT_NAME_SQL} AS effective_name,
                  a.is_hidden,
-                 a.type, a.subtype, a.tax_treatment, a.plaid_item_id, a.eth_wallet_id`;
+                 a.type, a.subtype, a.tax_treatment, a.plaid_item_id, a.eth_wallet_id, a.exchange_account_id, a.exchange_balance_as_of`;
 const VALID_TAX_TREATMENTS = ['taxable', 'traditional', 'roth', 'hsa'];
 
 // POST /api/accounts - Create a new manual account
@@ -178,7 +178,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const account = await client.query(
-      'SELECT id, name, plaid_item_id, eth_wallet_id FROM accounts WHERE id = $1 AND user_id = $2',
+      'SELECT id, name, plaid_item_id, eth_wallet_id, exchange_account_id FROM accounts WHERE id = $1 AND user_id = $2',
       [id, req.user.id]
     );
     if (account.rows.length === 0) {
@@ -189,6 +189,10 @@ router.delete('/:id', async (req, res) => {
     }
     if (account.rows[0].eth_wallet_id) {
       return res.status(400).json({ error: 'Cannot delete a wallet-linked account. Disconnect the Ethereum wallet first.' });
+    }
+
+    if (account.rows[0].exchange_account_id) {
+      return res.status(400).json({ error: 'Cannot delete an exchange-linked account. Remove the exchange connection first.' });
     }
 
     await client.query('BEGIN');
@@ -223,11 +227,15 @@ router.post('/migrate', async (req, res) => {
     }
 
     const [source, target] = await Promise.all([
-      client.query('SELECT id, name FROM accounts WHERE id = $1 AND user_id = $2', [sourceAccountId, req.user.id]),
-      client.query('SELECT id, name FROM accounts WHERE id = $1 AND user_id = $2', [targetAccountId, req.user.id]),
+      client.query('SELECT id, name, exchange_account_id FROM accounts WHERE id = $1 AND user_id = $2', [sourceAccountId, req.user.id]),
+      client.query('SELECT id, name, exchange_account_id FROM accounts WHERE id = $1 AND user_id = $2', [targetAccountId, req.user.id]),
     ]);
     if (source.rows.length === 0) return res.status(404).json({ error: 'Source account not found' });
     if (target.rows.length === 0) return res.status(404).json({ error: 'Target account not found' });
+
+    if (source.rows[0].exchange_account_id || target.rows[0].exchange_account_id) {
+      return res.status(400).json({ error: 'Cannot merge exchange-managed portfolio accounts' });
+    }
 
     await client.query('BEGIN');
 

@@ -448,4 +448,21 @@ describe('CryptoPage', () => {
     // would mean it opened prefilled and would take the update branch.
     expect(screen.getByRole('heading', { name: 'Add New Holding' })).toBeInTheDocument();
   });
+  it('shows exchange holdings as managed, marks stale balances, and excludes them from manual accounts', async () => {
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [
+      { id: 91, name: 'Synthetic exchange', type: 'crypto', exchange_account_id: 81 },
+    ] });
+    apiMocks.holdings.getAll.mockResolvedValue({ holdings: [
+      { id: 92, account_id: 91, account_type: 'crypto', account_exchange_account_id: 81,
+        name: 'ETH', ticker: 'ETH', quantity: '3.25', current_value: '6500',
+        exchange_balance_as_of: '2026-01-01T00:00:00Z', exchange_balance_stale: true },
+    ] });
+    render(<CryptoPage tab="crypto-holdings" onTabChange={vi.fn()} />);
+    expect(await screen.findByText('Exchange · stale')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Exchange · stale').closest('tr'));
+    expect(screen.queryByRole('heading', { name: 'Edit Holding' })).toBeNull();
+    const add = screen.queryByRole('button', { name: /add holding/i });
+    if (add) expect(add).toBeDisabled();
+  });
+
 });

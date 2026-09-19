@@ -444,6 +444,9 @@ class ExchangeSyncService {
           error.code = 'EXCHANGE_SYNC_LOCK_LOST';
           throw error;
         }
+        if (providerSnapshot) {
+          await require('./ExchangeHoldingsService').syncSnapshot(lockedAccount, providerSnapshot, { client });
+        }
         return {
           stored,
           backfilled,

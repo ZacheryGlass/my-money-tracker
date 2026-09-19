@@ -43,7 +43,7 @@ const PlaidBadge = () => (
 );
 
 const AccountConnectionPill = ({ account, compact = false }) => {
-  const isLinked = Boolean(account.plaid_item_id || account.eth_wallet_id);
+  const isLinked = Boolean(account.plaid_item_id || account.eth_wallet_id || account.exchange_account_id);
   const className = isLinked
     ? 'border-accent/20 bg-accent-muted text-accent'
     : 'border-border bg-surface-3 text-tertiary';
@@ -205,7 +205,7 @@ const AccountsPage = () => {
   }, [holdings]);
 
   const linkedCount = useMemo(() => {
-    return accounts.filter((a) => a.plaid_item_id || a.eth_wallet_id).length;
+    return accounts.filter((a) => a.plaid_item_id || a.eth_wallet_id || a.exchange_account_id).length;
   }, [accounts]);
 
   const selectedAccount = useMemo(() => {

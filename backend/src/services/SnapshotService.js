@@ -86,7 +86,7 @@ class SnapshotService {
       let price = null;
 
       const qty = parseFloat(holding.quantity || 0);
-      if (holding.ticker && qty > 0 && priceMap[holding.ticker.toUpperCase()]) {
+      if (holding.ticker && qty !== 0 && priceMap[holding.ticker.toUpperCase()]) {
         price = priceMap[holding.ticker.toUpperCase()];
         quantity = qty;
         value = qty * price;

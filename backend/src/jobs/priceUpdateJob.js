@@ -21,7 +21,7 @@ async function run() {
 
   try {
     const holdings = await Holding.findAllForJobs();
-    const holdingsWithTickers = holdings.filter(h => h.ticker && parseFloat(h.quantity || 0) > 0);
+    const holdingsWithTickers = holdings.filter(h => h.ticker && parseFloat(h.quantity || 0) !== 0);
 
     const assetTypeMap = {};
     const tickerSet = new Set();

@@ -220,6 +220,7 @@ function fakeQuery(text, params) {
   if (/^UPDATE exchange_accounts SET sync_lock_token = NULL/.test(sql)) {
     return { rows: [{ id: params[0] }] };
   }
+  if (/^INSERT INTO accounts/.test(sql)) return { rows: [{ id: 901 }] };
   if (/^UPDATE exchange_accounts SET sync_cursor/.test(sql)) {
     if (params[1] !== null && params[1] !== undefined) {
       accountOverrides = { ...accountOverrides, sync_cursor: params[1] };
@@ -2198,4 +2199,29 @@ test('a second sync of the same account while one is running is refused, not dou
   const refused = first.status === 409 ? first : second;
   assert.equal(refused.body.code, 'EXCHANGE_SYNC_IN_PROGRESS');
   assert.equal(stored.size, 11, 'the refused pass imported nothing of its own');
+});
+
+test('complete live balances reach portfolio holdings even while history is pending', async () => {
+  connectAccount();
+  const original = krakenConnector.sync;
+  try {
+    krakenConnector.sync = async () => ({ records: [], balances: { ETH: '3.25' }, balancesComplete: true, stats: { backfillPending: true } });
+    const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+    assert.equal(response.status, 200);
+    assert.ok(queries.some((entry) => /^INSERT INTO accounts/.test(entry.sql)));
+    const holding = queries.find((entry) => /^INSERT INTO holdings/.test(entry.sql));
+    assert.equal(holding.params[3], '3.25');
+  } finally { krakenConnector.sync = original; }
+});
+
+test('partial live balance lists never rewrite portfolio holdings', async () => {
+  connectAccount();
+  const original = krakenConnector.sync;
+  try {
+    krakenConnector.sync = async () => ({ records: [], balances: {}, balancesComplete: false, stats: {} });
+    const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
+    assert.equal(response.status, 200);
+    assert.equal(queries.some((entry) => /^(INSERT INTO|UPDATE|DELETE FROM) holdings/.test(entry.sql)), false);
+    assert.equal(queries.some((entry) => /^INSERT INTO accounts/.test(entry.sql)), false);
+  } finally { krakenConnector.sync = original; }
 });

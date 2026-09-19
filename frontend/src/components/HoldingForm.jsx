@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, title }) => {
+  const isManaged = Boolean(holding?.is_plaid_managed || holding?.account_eth_wallet_id || holding?.account_exchange_account_id);
   const [formData, setFormData] = useState({
     account_id: '',
     ticker: '',
@@ -53,7 +54,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (holding?.is_plaid_managed) return;
+    if (isManaged) return;
     if (!validate()) return;
 
     setIsSubmitting(true);
@@ -93,16 +94,16 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
           <h2 className="text-display-sm text-primary">
             {holding ? 'Edit Holding' : (title || 'Add New Holding')}
           </h2>
-          {holding?.is_plaid_managed && (
+          {isManaged && (
             <div className="mt-2 px-2 py-1.5 bg-accent-muted border border-accent/20 text-caption text-accent">
-              This holding is managed by Plaid and cannot be edited manually.
+              This holding is managed by a connected account and cannot be edited manually.
             </div>
           )}
         </div>
 
         <div className="overflow-y-auto p-4">
           <form onSubmit={handleSubmit}>
-            <fieldset disabled={holding?.is_plaid_managed}>
+            <fieldset disabled={isManaged}>
               <div className="space-y-3">
                 <div>
                   <label className="block text-body-sm font-semibold text-secondary mb-1">
@@ -242,7 +243,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
             </fieldset>
 
             <div className="sticky bottom-0 -mx-4 -mb-4 mt-4 flex flex-col items-stretch gap-2 border-t border-border bg-surface-2 px-4 py-3 sm:static sm:mx-0 sm:mb-0 sm:flex-row sm:items-center sm:bg-transparent sm:px-0 sm:pt-4">
-              {holding && !holding.is_plaid_managed && onDelete && (
+              {holding && !isManaged && onDelete && (
                 <button
                   type="button"
                   onClick={() => onDelete(holding.id)}
@@ -257,9 +258,9 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
                 onClick={onClose}
                 className="px-3 py-1.5 bg-surface-3 text-secondary hover:text-primary rounded text-button sm:ml-auto"
               >
-                {holding?.is_plaid_managed ? 'Close' : 'Cancel'}
+                {isManaged ? 'Close' : 'Cancel'}
               </button>
-              {!holding?.is_plaid_managed && (
+              {!isManaged && (
                 <button
                   type="submit"
                   disabled={isSubmitting}

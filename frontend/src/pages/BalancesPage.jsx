@@ -46,7 +46,7 @@ const LinkedPill = () => (
 
 // Plaid-managed holdings and holdings inside Ethereum-wallet accounts are
 // both rebuilt by their syncs; manual edits would be silently clobbered.
-const isSyncManaged = (holding) => Boolean(holding.is_plaid_managed || holding.account_eth_wallet_id);
+const isSyncManaged = (holding) => Boolean(holding.is_plaid_managed || holding.account_eth_wallet_id || holding.account_exchange_account_id);
 
 const BalancesPage = ({ tab = 'assets', onTabChange }) => {
   const [holdings, setHoldings] = useState([]);
@@ -349,7 +349,7 @@ const BalancesPage = ({ tab = 'assets', onTabChange }) => {
 
       <DataTablePagination table={table} total={filteredData.length} />
 
-      <HoldingForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSave} onDelete={handleDelete} holding={editingHolding} accounts={accounts.filter((account) => !account.eth_wallet_id && account.type !== 'crypto')} />
+      <HoldingForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSave} onDelete={handleDelete} holding={editingHolding} accounts={accounts.filter((account) => !account.eth_wallet_id && !account.exchange_account_id && account.type !== 'crypto')} />
     </div>
   );
 };

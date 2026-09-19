@@ -1114,6 +1114,7 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
       )));
 
   await require('../tests/ethLedgerSqlChecks')(pool, ok);
+  await require('../tests/exchangeHoldingsSqlChecks')(pool, ok);
 
   const { buildReport } = require('./audit-history');
   const historyReport = await buildReport(1);

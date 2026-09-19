@@ -1360,6 +1360,9 @@ const Settings = ({ user }) => {
                             Plaid
                           </span>
                         )}
+                        {account.exchange_account_id && (
+                          <span className="text-caption text-accent">Exchange</span>
+                        )}
                         {account.eth_wallet_id && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded-full bg-crypto-bg text-crypto border border-crypto-border">
                             <Wallet size={10} />
@@ -1451,7 +1454,7 @@ const Settings = ({ user }) => {
                         Clear
                       </button>
                     )}
-                    {!account.plaid_item_id && !account.eth_wallet_id && (
+                    {!account.plaid_item_id && !account.eth_wallet_id && !account.exchange_account_id && (
                       <button
                         onClick={() => setDeletingAccount(account)}
                         disabled={deletingAccountId === account.id}

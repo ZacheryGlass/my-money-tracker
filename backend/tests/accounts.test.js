@@ -222,3 +222,30 @@ test('mutations on an account the caller does not own return 404', async () => {
 
   assert.equal(response.status, 404);
 });
+
+test('exchange portfolio accounts and their holdings cannot be manually edited or deleted', async () => {
+  queryHandler = async (sql) => {
+    if (/FROM accounts/.test(sql)) return { rows: [{ id: 7, exchange_account_id: 91 }] };
+    if (/FROM holdings/.test(sql)) return { rows: [{ id: 8, account_id: 7, account_exchange_account_id: 91 }] };
+    throw new Error('Unexpected mutation');
+  };
+  assert.equal((await request(app).delete('/api/accounts/7')).status, 400);
+  assert.equal((await request(app).delete('/api/holdings/8')).status, 403);
+  assert.equal((await request(app).post('/api/holdings').send({ account_id: 7, name: 'ETH', ticker: 'ETH', quantity: 1 })).status, 403);
+  assert.equal((await request(app).put('/api/holdings/8').send({ account_id: 7, name: 'ETH', ticker: 'ETH', quantity: 1 })).status, 403);
+});
+
+test('manual holdings cannot be moved or bulk-imported into an exchange account', async () => {
+  queryHandler = async (sql) => {
+    if (/FROM holdings/.test(sql)) return { rows: [{ id: 8, account_id: 6 }] };
+    if (/FROM accounts WHERE id/.test(sql)) return { rows: [{ id: 7, exchange_account_id: 91 }] };
+    if (/FROM accounts WHERE user_id/.test(sql)) {
+      assert.match(sql, /exchange_account_id IS NULL/);
+      return { rows: [] };
+    }
+    throw new Error('Unexpected mutation');
+  };
+  assert.equal((await request(app).put('/api/holdings/8').send({ account_id: 7, name: 'ETH', ticker: 'ETH', quantity: 1 })).status, 403);
+  const imported = await request(app).post('/api/holdings/bulk-import/confirm').send({ rows: [{ account_id: 7, ticker: 'ETH', name: 'ETH', quantity: 1 }] });
+  assert.equal(imported.body.summary.imported, 0);
+});

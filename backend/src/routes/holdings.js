@@ -48,14 +48,14 @@ router.post('/', validateHolding, async (req, res) => {
     // added there would be silently deleted on the next sync. The ownership
     // filter also blocks creating holdings inside another user's account.
     const targetAccount = await pool.query(
-      'SELECT eth_wallet_id FROM accounts WHERE id = $1 AND user_id = $2',
+      'SELECT eth_wallet_id, exchange_account_id FROM accounts WHERE id = $1 AND user_id = $2',
       [account_id, req.user.id]
     );
     if (targetAccount.rows.length === 0) {
       return res.status(400).json({ error: 'Referenced account does not exist' });
     }
-    if (targetAccount.rows[0].eth_wallet_id) {
-      return res.status(403).json({ error: 'This account is managed by an Ethereum wallet sync; holdings cannot be added manually' });
+    if (targetAccount.rows[0].eth_wallet_id || targetAccount.rows[0].exchange_account_id) {
+      return res.status(403).json({ error: 'This account is managed by a wallet or exchange sync; holdings cannot be added manually' });
     }
 
     const holding = await Holding.create(
@@ -95,19 +95,22 @@ router.put('/:id', validateHolding, async (req, res) => {
     if (existing.is_plaid_managed) {
       return res.status(403).json({ error: 'This holding is managed by Plaid and cannot be manually edited' });
     }
-    if (existing.account_eth_wallet_id) {
-      return res.status(403).json({ error: 'This holding is managed by an Ethereum wallet sync and cannot be manually edited' });
+    if (existing.account_eth_wallet_id || existing.account_exchange_account_id) {
+      return res.status(403).json({ error: 'This holding is managed by a wallet or exchange sync and cannot be manually edited' });
     }
 
     // The update can move the holding to a different account; that target
     // must also belong to the caller.
     if (account_id !== existing.account_id) {
       const targetAccount = await pool.query(
-        'SELECT id FROM accounts WHERE id = $1 AND user_id = $2',
+        'SELECT id, eth_wallet_id, exchange_account_id FROM accounts WHERE id = $1 AND user_id = $2',
         [account_id, req.user.id]
       );
       if (targetAccount.rows.length === 0) {
         return res.status(400).json({ error: 'Referenced account does not exist' });
+      }
+      if (targetAccount.rows[0].eth_wallet_id || targetAccount.rows[0].exchange_account_id) {
+        return res.status(403).json({ error: 'Cannot move holdings into a sync-managed account' });
       }
     }
 
@@ -148,8 +151,8 @@ router.delete('/:id', async (req, res) => {
     if (existing.is_plaid_managed) {
       return res.status(403).json({ error: 'This holding is managed by Plaid and cannot be manually deleted' });
     }
-    if (existing.account_eth_wallet_id) {
-      return res.status(403).json({ error: 'This holding is managed by an Ethereum wallet sync and cannot be manually deleted' });
+    if (existing.account_eth_wallet_id || existing.account_exchange_account_id) {
+      return res.status(403).json({ error: 'This holding is managed by a wallet or exchange sync and cannot be manually deleted' });
     }
 
     const result = await Holding.delete(id);
@@ -170,7 +173,7 @@ router.post('/bulk-import', express.text({ type: 'text/csv', limit: '10mb' }), a
     }
 
     // Get the caller's accounts for mapping
-    const accountsResult = await pool.query('SELECT id, name FROM accounts WHERE user_id = $1', [req.user.id]);
+    const accountsResult = await pool.query('SELECT id, name FROM accounts WHERE user_id = $1 AND eth_wallet_id IS NULL AND exchange_account_id IS NULL', [req.user.id]);
     const accountsMap = new Map(accountsResult.rows.map(a => [a.name.toLowerCase(), a.id]));
 
     // Parse CSV
@@ -408,7 +411,7 @@ router.post('/bulk-import/confirm', express.json(), async (req, res) => {
 
     // The preview payload round-trips through the client; re-verify every
     // account id against the caller before inserting.
-    const ownedResult = await pool.query('SELECT id FROM accounts WHERE user_id = $1', [req.user.id]);
+    const ownedResult = await pool.query('SELECT id FROM accounts WHERE user_id = $1 AND eth_wallet_id IS NULL AND exchange_account_id IS NULL', [req.user.id]);
     const ownedIds = new Set(ownedResult.rows.map((r) => r.id));
 
     for (const row of rows) {
