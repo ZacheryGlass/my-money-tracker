@@ -287,6 +287,9 @@ const REGISTRY = [
       baseUrl: 'https://explorer.optimism.io/api',
       v2BaseUrl: 'https://explorer.optimism.io/api/v2/',
       v2NormalTransactions: true,
+      // The V2 adapter exhausted all three legacy-unsupported production
+      // histories on 2026-09-20 with complete indexing and valid empty tails.
+      v2InternalTransactions: true,
       requiresApiKey: false,
     },
     consensusRpcUrl: configuredRpcUrl('OPTIMISM_RPC_URL', 'https://mainnet.optimism.io'),

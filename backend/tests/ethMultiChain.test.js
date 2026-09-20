@@ -349,12 +349,11 @@ test('legacy and V2 anonymous explorer requests share one origin throttle queue'
   assert.deepEqual(keys, [legacyKey]);
 });
 
-test('OP Mainnet routes normal history through its fully indexed Blockscout V2 API', () => {
+test('OP Mainnet routes native history through its fully indexed Blockscout V2 API', () => {
   const accountApi = chains.getChain(10).accountApi;
   assert.equal(accountApi.v2BaseUrl, 'https://explorer.optimism.io/api/v2/');
   assert.equal(accountApi.v2NormalTransactions, true);
-  assert.equal(accountApi.v2InternalTransactions, undefined,
-    'internal history remains on the independently proven legacy feed');
+  assert.equal(accountApi.v2InternalTransactions, true);
 });
 
 test('Arbitrum Nova uses its live-probed keyless Blockscout account feeds', () => {
@@ -393,7 +392,7 @@ test('coverage provenance names the endpoint that serves each Blockscout feed', 
   );
   assert.equal(
     chains.accountHistoryProviderName(10, 'internal'),
-    'Blockscout (https://explorer.optimism.io/api)'
+    'Blockscout (https://explorer.optimism.io/api/v2/)'
   );
 });
 
