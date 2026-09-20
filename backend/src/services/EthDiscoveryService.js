@@ -169,12 +169,14 @@ class EthDiscoveryService {
       try {
         const added = await EthWalletService.addWallet(userId, candidate.address, label || null);
         wallet = added.wallet;
-        // addWallet starts its first sync in the route; the discovery action is
-        // deliberately just as safe when called from an API client, so start it
-        // here too and leave errors on the wallet's durable status.
-        EthWalletService.syncWallet(wallet.id).catch((err) => {
-          logger.error({ walletId: wallet.id, err }, 'Discovery wallet sync failed');
-        });
+        // The discovery action has no route-level starter. Use the same durable
+        // claim as manual and single-add syncs so retries cannot queue the same
+        // wallet twice and the UI can observe completion.
+        try {
+          await EthWalletService.queueSyncWallet(wallet.id);
+        } catch (err) {
+          logger.error({ walletId: wallet.id, err }, 'Discovery wallet sync failed to start');
+        }
       } catch (error) {
         // A race or a previous manual add means the candidate is already owned;
         // do not turn a successful ownership decision into a failed action.

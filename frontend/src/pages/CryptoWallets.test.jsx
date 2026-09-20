@@ -383,6 +383,37 @@ describe('Crypto -> Wallets tab', () => {
     expect(screen.getAllByText('Sync failed').length).toBeGreaterThan(0);
   });
 
+  it('waits for a manual Sync to finish before refreshing management data', async () => {
+    let finishSync;
+    apiMocks.eth.syncWallet.mockReturnValue(new Promise((resolve) => {
+      finishSync = resolve;
+    }));
+    await openEthereumTab([wallet(report())]);
+    await waitFor(() => expect(apiMocks.eth.getAddressLabels).toHaveBeenCalledTimes(1));
+
+    const syncButton = (await screen.findAllByRole('button', { name: /sync main/i }))[0];
+    const walletReadsBeforeSync = apiMocks.eth.getWallets.mock.calls.length;
+    const labelReadsBeforeSync = apiMocks.eth.getAddressLabels.mock.calls.length;
+    fireEvent.click(syncButton);
+
+    await waitFor(() => expect(apiMocks.eth.syncWallet).toHaveBeenCalledWith(1));
+    await waitFor(() => expect((screen.getAllByRole('button', { name: /sync main/i }))[0])
+      .toBeDisabled());
+    expect(apiMocks.eth.getWallets).toHaveBeenCalledTimes(walletReadsBeforeSync);
+    expect(apiMocks.eth.getAddressLabels).toHaveBeenCalledTimes(labelReadsBeforeSync);
+    expect(screen.queryByText('Wallet synced successfully')).toBeNull();
+
+    finishSync({ sync: { status: 'complete' } });
+
+    await waitFor(() => expect(apiMocks.eth.getWallets.mock.calls.length)
+      .toBeGreaterThan(walletReadsBeforeSync));
+    await waitFor(() => expect(apiMocks.eth.getAddressLabels.mock.calls.length)
+      .toBeGreaterThan(labelReadsBeforeSync));
+    expect(await screen.findByText('Wallet synced successfully')).toBeInTheDocument();
+    await waitFor(() => expect((screen.getAllByRole('button', { name: /sync main/i }))[0])
+      .not.toBeDisabled());
+  });
+
   it('reports a deferred Sync click without a red failure banner', async () => {
     apiMocks.eth.syncWallet.mockResolvedValue({ sync: { status: 'deferred' } });
     await openEthereumTab([wallet(report())]);

@@ -757,7 +757,7 @@ class EvmAuditService {
           const deferred = !standing && [
               'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
               'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED',
-              'RPC_TRANSPORT_ERROR', 'RPC_LOG_SCAN_BUDGET_EXHAUSTED',
+              'RPC_TRANSPORT_ERROR',
               'RPC_TRACE_SCAN_BUDGET_EXHAUSTED',
               'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
               'ETHERSCAN_RATE_LIMITED', 'ETHERSCAN_TRANSPORT_ERROR',
@@ -821,7 +821,7 @@ class EvmAuditService {
       const deferred = [
         'MORALIS_RATE_LIMITED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_TRANSPORT_ERROR',
         'RPC_UNSUPPORTED', 'RPC_FINALITY_UNAVAILABLE', 'RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR',
-        'RPC_LOG_SCAN_BUDGET_EXHAUSTED', 'BLOCKSCOUT_RATE_LIMITED',
+        'BLOCKSCOUT_RATE_LIMITED',
         'RPC_TRACE_SCAN_BUDGET_EXHAUSTED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
         'ETHERSCAN_TRANSPORT_ERROR', 'ZKSYNC_EXPLORER_RATE_LIMITED',
@@ -1451,7 +1451,7 @@ class EvmAuditService {
               through_block: page.throughBlock,
               finalized_boundary: boundary.number,
             }, { logs: page.logs }, page.evidence, page.logs.length,
-            page.cursorIn, page.cursorOut, 'ascending'
+            page.cursorIn, page.cursorOut, 'oldest_first'
           ), observations);
           indexedTokenLogs += page.logs.length;
           await heartbeat({
@@ -1461,15 +1461,14 @@ class EvmAuditService {
         }
       } catch (error) {
         if (error.code === 'RPC_LOG_SCAN_BUDGET_EXHAUSTED') {
+          indexedLogEnumerationComplete = false;
           await completeScope(indexedLogScope.id, {
-            status: 'deferred', paginationExhausted: false,
+            status: 'unverified', paginationExhausted: false,
             coverageBasis: 'consensus_rpc_address_indexed_token_logs_v1',
             errorCode: error.code,
-            errorDetail: `Consensus RPC token-log enumeration paused at block ${error.cursor}; the durable cursor will resume on retry.`,
+            errorDetail: `Consensus RPC token-log enumeration reached the bounded audit request budget at block ${error.cursor}; no exhaustive token-log claim is made.`,
           });
-          throw error;
-        }
-        if (error.code === 'RPC_LOG_ENUMERATION_UNSUPPORTED') {
+        } else if (error.code === 'RPC_LOG_ENUMERATION_UNSUPPORTED') {
           indexedLogEnumerationComplete = false;
           await completeScope(indexedLogScope.id, {
             status: 'unsupported', paginationExhausted: false,
@@ -1485,13 +1484,13 @@ class EvmAuditService {
     if (indexedLogEnumerationComplete) {
       await completeScope(indexedLogScope.id, {
         status: 'complete', paginationExhausted: true,
-        providerOrder: 'ascending',
+        providerOrder: 'oldest_first',
         coverageBasis: 'consensus_rpc_address_indexed_token_logs_v1',
       });
       await acceptCoverage({
         subjectId: job.subject_id, chainId, provider: 'consensus-rpc',
         capability: 'indexed_token_logs', fromBlock: 0, throughBlock: boundary.number,
-        throughHash: boundary.hash, providerOrder: 'ascending',
+        throughHash: boundary.hash, providerOrder: 'oldest_first',
         coverageBasis: 'consensus_rpc_address_indexed_token_logs_v1',
         paginationExhausted: true, status: 'complete', jobId: job.id,
       });
@@ -1561,7 +1560,7 @@ class EvmAuditService {
                 after: page.afterIn,
                 finalized_boundary: boundary.number,
               }, { traces: page.traces }, page.evidence, page.traces.length,
-              page.cursorIn, page.cursorOut, 'ascending', 'trace-rpc'
+              page.cursorIn, page.cursorOut, 'oldest_first', 'trace-rpc'
             ), observations);
             await heartbeat({
               internal_trace_cursor: page.cursorOut,
@@ -1571,12 +1570,12 @@ class EvmAuditService {
         }
         await completeScope(traceScope.id, {
           status: 'complete', paginationExhausted: true,
-          providerOrder: 'ascending', coverageBasis: traceCoverageBasis,
+          providerOrder: 'oldest_first', coverageBasis: traceCoverageBasis,
         });
         await acceptCoverage({
           subjectId: job.subject_id, chainId, provider: 'trace-rpc', capability: 'internal',
           fromBlock: 0, throughBlock: boundary.number, throughHash: boundary.hash,
-          providerOrder: 'ascending', coverageBasis: traceCoverageBasis,
+          providerOrder: 'oldest_first', coverageBasis: traceCoverageBasis,
           paginationExhausted: true, status: 'complete', jobId: job.id,
         });
         traceEnumerationComplete = true;

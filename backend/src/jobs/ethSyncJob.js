@@ -37,7 +37,16 @@ async function execute(jobLog) {
       skipped: summary.skipped,
       results: summary.results,
     });
-    logger.info({ job: JOB_NAME, ...summary }, 'ETH wallet sync job completed');
+    logger.info({
+      job: JOB_NAME,
+      processed: summary.processed,
+      succeeded: summary.succeeded,
+      failed: summary.failed,
+      deferred: summary.deferred,
+      unsupported: summary.unsupported,
+      unverified: summary.unverified,
+      skipped: summary.skipped,
+    }, 'ETH wallet sync job completed');
     return summary;
   } catch (error) {
     logger.error({ job: JOB_NAME, err: error }, 'Job failed');

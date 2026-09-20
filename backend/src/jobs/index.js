@@ -35,8 +35,7 @@ let expenseSyncTask = null;
 const INTERRUPTED_JOB_STALE_MS = 6 * 60 * 60 * 1000;
 
 async function initializeJobs() {
-  const staleBefore = new Date(Date.now() - INTERRUPTED_JOB_STALE_MS);
-  const interrupted = await JobLog.failInterruptedRuns(staleBefore);
+  const interrupted = await JobLog.failInterruptedRuns(INTERRUPTED_JOB_STALE_MS);
   if (interrupted.length > 0) {
     logger.warn({
       jobs: interrupted.map(({ id, job_name: jobName, started_at: startedAt }) => ({

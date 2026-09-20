@@ -7,9 +7,9 @@ class JobLog {
   // execution still owns it. At process boot, rows older than the caller's
   // recovery boundary are failed explicitly before any cron task is registered;
   // a rolling deployment must not fail a live row owned by another instance.
-  static async failInterruptedRuns(before) {
-    if (!(before instanceof Date) || Number.isNaN(before.getTime())) {
-      throw new TypeError('before must be a valid Date');
+  static async failInterruptedRuns(staleAfterMs) {
+    if (!Number.isSafeInteger(staleAfterMs) || staleAfterMs <= 0) {
+      throw new TypeError('staleAfterMs must be a positive integer');
     }
     const details = JSON.stringify({
       interrupted: true,
@@ -23,16 +23,19 @@ class JobLog {
            error_message = 'Application process restarted before the job completed',
            details = COALESCE(details, '{}'::jsonb) || $2::jsonb
        WHERE status = 'running'
-         AND started_at < $1
+         AND COALESCE(heartbeat_at, started_at)
+             < CURRENT_TIMESTAMP - make_interval(secs => $1::double precision / 1000)
        RETURNING id, job_name, started_at`,
-      [before, details]
+      [staleAfterMs, details]
     );
     return result.rows;
   }
 
   static async create(jobName) {
     const result = await pool.query(
-      'INSERT INTO job_logs (job_name, status, started_at) VALUES ($1, $2, CURRENT_TIMESTAMP) RETURNING *',
+      `INSERT INTO job_logs (job_name, status, started_at, heartbeat_at)
+       VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       RETURNING *`,
       [jobName, 'running']
     );
     return result.rows[0];
@@ -48,6 +51,38 @@ class JobLog {
       if (error.code === '23505') return null;
       throw error;
     }
+  }
+
+  static async heartbeat(id) {
+    const result = await pool.query(
+      `UPDATE job_logs
+       SET heartbeat_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND status = 'running'
+       RETURNING id, status, heartbeat_at`,
+      [id]
+    );
+    return result.rows[0] || null;
+  }
+
+  static async failIfStale(id, staleAfterMs, errorMessage) {
+    if (!Number.isSafeInteger(staleAfterMs) || staleAfterMs <= 0) {
+      throw new TypeError('staleAfterMs must be a positive integer');
+    }
+    const result = await pool.query(
+      `UPDATE job_logs
+       SET status = 'failed',
+           completed_at = CURRENT_TIMESTAMP,
+           duration_ms = EXTRACT(MILLISECONDS FROM (CURRENT_TIMESTAMP - started_at)),
+           error_message = $1,
+           details = COALESCE(details, '{}'::jsonb) || '{"lease_expired":true}'::jsonb
+       WHERE id = $2
+         AND status = 'running'
+         AND COALESCE(heartbeat_at, started_at)
+             < CURRENT_TIMESTAMP - make_interval(secs => $3::double precision / 1000)
+       RETURNING *`,
+      [errorMessage, id, staleAfterMs]
+    );
+    return result.rows[0] || null;
   }
 
   static async complete(id, processed, succeeded, failed, details = null) {
@@ -84,8 +119,16 @@ class JobLog {
 
   static async getLatest(jobName) {
     const result = await pool.query(
-      'SELECT * FROM job_logs WHERE job_name = $1 ORDER BY started_at DESC LIMIT 1',
+      'SELECT * FROM job_logs WHERE job_name = $1 ORDER BY started_at DESC, id DESC LIMIT 1',
       [jobName]
+    );
+    return result.rows[0];
+  }
+
+  static async getByIdAndName(id, jobName) {
+    const result = await pool.query(
+      'SELECT * FROM job_logs WHERE id = $1 AND job_name = $2 LIMIT 1',
+      [id, jobName]
     );
     return result.rows[0];
   }

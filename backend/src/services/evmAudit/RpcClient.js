@@ -59,15 +59,22 @@ const TRACE_RESULT_LIMIT = 10_000;
 function logRangeLimited(error) {
   if (error?.code !== 'RPC_API_ERROR') return false;
   if (Number(error.rpcCode) === -32005) return true;
+  const message = String(error.rpcMessage || error.message || '');
   return /too many|more than|response size|result limit|block range|range limit|query timeout/i
-    .test(String(error.rpcMessage || error.message || ''));
+    .test(message)
+    || /ranges?\s+over\s+\d[\d,]*\s+blocks?/i.test(message)
+    || /eth_getlogs.*limited to (?:a\s+)?\d[\d,]*(?:\s+blocks?)?\s+range/i.test(message)
+    || /range\s+\d[\d,]*\s+exceeds\s+(?:the\s+)?limit/i.test(message);
 }
 
 function logEnumerationUnsupported(error) {
   if (error?.code !== 'RPC_API_ERROR') return false;
+  const message = String(error.rpcMessage || error.message || '');
   return Number(error.rpcCode) === -32601
     || /method not found|unsupported method|eth_getlogs.*(?:disabled|unsupported)/i
-      .test(String(error.rpcMessage || error.message || ''));
+      .test(message)
+    || /archive requests? requires? (?:a\s+)?personal token/i.test(message)
+    || /specify an address in (?:your|the) request.*dedicated full node/i.test(message);
 }
 
 function traceRangeLimited(error) {

@@ -29,6 +29,7 @@
 // EthWalletService requires this module at load time.
 
 const logger = require('../config/logger');
+const advisoryLocks = require('../config/advisoryLocks');
 const EthTransfer = require('../models/EthTransfer');
 const EthWallet = require('../models/EthWallet');
 const AssetPriceHistory = require('../models/AssetPriceHistory');
@@ -47,8 +48,42 @@ const TransactionClassificationService = require('./TransactionClassificationSer
 // funnels through a PER-USER lane: one user's two-click label write no longer
 // queues behind another user's block-0 initial sync, which cross-user blocking
 // was all the old single global chain bought beyond this. Single-process
-// assumption, like every other coordination mechanism in this codebase.
+// assumption is not enough in production, where a rolling deployment can run
+// two App Service instances briefly.  The local lane avoids consuming two pool
+// clients for work already queued in this process; the production advisory
+// lock extends the same user boundary across processes.  PostgreSQL releases a
+// session lock automatically if a process dies.
 const queues = new Map();
+const ETH_USER_LOCK_NAMESPACE = 0x45544831;
+
+async function withProductionUserLock(userId, fn) {
+  if (process.env.NODE_ENV !== 'production') return fn();
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new TypeError('serializedForUser requires a positive integer user id');
+  }
+  const client = await advisoryLocks.connect();
+  let locked = false;
+  let destroyClient = false;
+  try {
+    await client.query('SELECT pg_advisory_lock($1, $2)', [ETH_USER_LOCK_NAMESPACE, userId]);
+    locked = true;
+    return await fn();
+  } finally {
+    if (locked) {
+      try {
+        const released = await client.query(
+          'SELECT pg_advisory_unlock($1, $2) AS released',
+          [ETH_USER_LOCK_NAMESPACE, userId]
+        );
+        if (released.rows?.[0]?.released !== true) destroyClient = true;
+      } catch (error) {
+        destroyClient = true;
+        logger.error({ userId, err: error }, 'Could not release ETH user advisory lock');
+      }
+    }
+    client.release(destroyClient);
+  }
+}
 
 function serializedOn(key, fn) {
   const prev = queues.get(key) || Promise.resolve();
@@ -67,7 +102,7 @@ function serializedOn(key, fn) {
 }
 
 function serializedForUser(userId, fn) {
-  return serializedOn(`user:${userId}`, fn);
+  return serializedOn(`user:${userId}`, () => withProductionUserLock(userId, fn));
 }
 
 // Test introspection: how many lanes still hold work.

@@ -44,6 +44,17 @@ function parseId(raw) {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+function walletSyncJobPayload(job) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    started_at: job.started_at,
+    completed_at: job.completed_at || null,
+    sync_status: job.details?.sync_status || null,
+  };
+}
+
 // 'exchange' asserts the counterparty is a venue the user controls funds at, so
 // its transfers become internal transfers. 'own' is the user's own untracked
 // address (same effect via the own set, no account created). 'external' records
@@ -220,11 +231,14 @@ router.post('/wallets', async (req, res) => {
     // interceptor would retry the POST, hitting DUPLICATE_WALLET), so it runs
     // in the background; failures land on the wallet's error_code for the
     // Settings badge and Sync retry.
-    EthWalletService.syncWallet(wallet.id).catch((err) => {
-      logger.error({ walletId: wallet.id, err }, 'Initial ETH wallet sync failed');
-    });
+    let syncStarted = false;
+    try {
+      ({ started: syncStarted } = await EthWalletService.queueSyncWallet(wallet.id));
+    } catch (syncError) {
+      logger.error({ walletId: wallet.id, err: syncError }, 'Initial ETH wallet sync failed to start');
+    }
 
-    res.status(201).json({ wallet, account, syncStarted: true });
+    res.status(201).json({ wallet, account, syncStarted });
   } catch (error) {
     logger.error({ err: error }, 'Add ETH wallet error');
     const status = statusFor(error);
@@ -525,16 +539,46 @@ router.post('/wallets/:id/sync', async (req, res) => {
       return res.status(404).json({ error: 'Wallet not found' });
     }
 
-    const result = await EthWalletService.syncWallet(id);
-    const updated = await EthWallet.findById(id);
+    // Keep the original synchronous contract for older browser bundles and API
+    // clients during a rolling deployment.  The current frontend opts into the
+    // durable background protocol explicitly so an old client can never mistake
+    // a 202 receipt for completed wallet data.
+    if (req.query.async !== 'true') {
+      const result = await EthWalletService.syncWallet(id);
+      const updated = await EthWallet.findById(id);
+      return res.status(200).json({ wallet: updated, sync: result });
+    }
 
-    res.status(200).json({ wallet: updated, sync: result });
+    const { started, job } = await EthWalletService.queueSyncWallet(id);
+    return res.status(202).json({
+      started,
+      job: walletSyncJobPayload(job),
+      message: started ? 'Wallet sync started' : 'Wallet sync is already running',
+    });
   } catch (error) {
     logger.error({ err: error, walletId: req.params.id }, 'Sync ETH wallet error');
     if (error.code === 'ETHERSCAN_NOT_CONFIGURED') {
       return res.status(503).json({ error: error.message });
     }
-    res.status(500).json({ error: 'Failed to sync wallet' });
+    return res.status(500).json({ error: 'Failed to sync wallet' });
+  }
+});
+
+router.get('/wallets/:id/sync-status', async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Wallet not found' });
+    const requestedJobId = req.query.job_id == null ? null : parseId(req.query.job_id);
+    if (req.query.job_id != null && !requestedJobId) {
+      return res.status(400).json({ error: 'job_id must be a positive integer' });
+    }
+    const wallet = await EthWallet.findByIdForUser(id, req.user.id);
+    if (!wallet) return res.status(404).json({ error: 'Wallet not found' });
+    const job = await EthWalletService.walletSyncStatus(req.user.id, id, requestedJobId);
+    return res.status(200).json({ job: walletSyncJobPayload(job) });
+  } catch (error) {
+    logger.error({ err: error, walletId: req.params.id }, 'Get ETH wallet sync status error');
+    return res.status(500).json({ error: 'Failed to retrieve wallet sync status' });
   }
 });
 

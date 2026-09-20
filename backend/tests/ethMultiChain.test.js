@@ -41,6 +41,7 @@ const etherscanConfig = require('../src/config/etherscan');
 const EthWalletService = require('../src/services/EthWalletService');
 const EtherscanService = require('../src/services/EtherscanService');
 const EthWallet = require('../src/models/EthWallet');
+const JobLog = require('../src/models/JobLog');
 const EthWalletChain = require('../src/models/EthWalletChain');
 const EthFeedCoverage = require('../src/models/EthFeedCoverage');
 const EthTransfer = require('../src/models/EthTransfer');
@@ -283,8 +284,8 @@ function withoutConsensusRpc(t, chainIds) {
 // ---------------------------------------------------------------------------
 
 test('anonymous Blockscout requests stay below a conservative minute bucket', () => {
-  assert.equal(etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS, 2000);
-  assert.ok(60_000 / etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS <= 30);
+  assert.equal(etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS, 8000);
+  assert.ok(Math.ceil(60_000 / etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS) <= 8);
 });
 
 test('the configured Blockscout floor preserves stricter operator pacing', (t) => {
@@ -598,6 +599,161 @@ test('full recapture resets every enabled feed to genesis without deleting the w
     'every active feed replays from genesis after the durable cursor reset');
   assert.ok(!queries.some((query) => /DELETE FROM eth_wallets/i.test(query.text)),
     'recapture never deletes the wallet that owns notes and review decisions');
+});
+
+test('durable wallet sync coalesces an active claim and persists privacy-safe completion', async (t) => {
+  const originals = {
+    findById: EthWallet.findById,
+    syncWallet: EthWalletService.syncWallet,
+    createIfNotRunning: JobLog.createIfNotRunning,
+    getLatest: JobLog.getLatest,
+    failIfStale: JobLog.failIfStale,
+    heartbeat: JobLog.heartbeat,
+    complete: JobLog.complete,
+    fail: JobLog.fail,
+  };
+  t.after(() => {
+    EthWallet.findById = originals.findById;
+    EthWalletService.syncWallet = originals.syncWallet;
+    JobLog.createIfNotRunning = originals.createIfNotRunning;
+    JobLog.getLatest = originals.getLatest;
+    JobLog.failIfStale = originals.failIfStale;
+    JobLog.heartbeat = originals.heartbeat;
+    JobLog.complete = originals.complete;
+    JobLog.fail = originals.fail;
+  });
+
+  const firstJob = {
+    id: 101,
+    job_name: 'eth-wallet-sync:1:7',
+    status: 'running',
+    started_at: '2026-09-19T12:00:00.000Z',
+  };
+  const secondJob = {
+    id: 102,
+    job_name: 'eth-wallet-sync:1:7',
+    status: 'running',
+    started_at: '2026-09-19T12:01:00.000Z',
+  };
+  const claims = [firstJob, null, secondJob];
+  const claimNames = [];
+  const latestNames = [];
+  const completions = [];
+  const failures = [];
+  let releaseFirst;
+  let resolveFirstCompletion;
+  let resolveSecondCompletion;
+  const firstCompletion = new Promise((resolve) => { resolveFirstCompletion = resolve; });
+  const secondCompletion = new Promise((resolve) => { resolveSecondCompletion = resolve; });
+
+  EthWallet.findById = async () => ({ id: 7, user_id: 1, address: WALLET });
+  JobLog.createIfNotRunning = async (jobName) => {
+    claimNames.push(jobName);
+    return claims.shift();
+  };
+  JobLog.getLatest = async (jobName) => {
+    latestNames.push(jobName);
+    return firstJob;
+  };
+  JobLog.failIfStale = async () => null;
+  JobLog.heartbeat = async () => ({ id: firstJob.id, status: 'running' });
+  JobLog.complete = async (...args) => {
+    completions.push(args);
+    if (args[0] === firstJob.id) resolveFirstCompletion();
+    if (args[0] === secondJob.id) resolveSecondCompletion();
+    return { id: args[0], status: 'completed' };
+  };
+  JobLog.fail = async (...args) => { failures.push(args); };
+
+  let syncCalls = 0;
+  EthWalletService.syncWallet = async () => {
+    syncCalls += 1;
+    if (syncCalls === 1) {
+      await new Promise((resolve) => { releaseFirst = resolve; });
+      return {
+        status: 'deferred',
+        failedFeeds: ['normal'],
+        deferredFeeds: ['internal', 'token'],
+        unsupportedFeeds: ['nft'],
+        address: WALLET,
+      };
+    }
+    return { status: 'complete', failedFeeds: [], deferredFeeds: [], unsupportedFeeds: [] };
+  };
+
+  const first = await EthWalletService.queueSyncWallet(7);
+  const duplicate = await EthWalletService.queueSyncWallet(7);
+  assert.deepEqual(first, { started: true, job: firstJob });
+  assert.deepEqual(duplicate, { started: false, job: firstJob });
+  assert.deepEqual(latestNames, ['eth-wallet-sync:1:7']);
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(syncCalls, 1);
+  releaseFirst();
+  await firstCompletion;
+
+  assert.deepEqual(completions[0], [
+    101,
+    1,
+    1,
+    0,
+    {
+      wallet_id: 7,
+      sync_status: 'deferred',
+      failed_feeds: 1,
+      deferred_feeds: 2,
+      unsupported_feeds: 1,
+    },
+  ]);
+  assert.equal(Object.values(completions[0][4]).includes(WALLET), false);
+  assert.deepEqual(failures, []);
+
+  const subsequent = await EthWalletService.queueSyncWallet(7);
+  assert.deepEqual(subsequent, { started: true, job: secondJob });
+  await secondCompletion;
+  assert.equal(syncCalls, 2);
+  assert.deepEqual(claimNames, [
+    'eth-wallet-sync:1:7',
+    'eth-wallet-sync:1:7',
+    'eth-wallet-sync:1:7',
+  ]);
+});
+
+test('durable wallet sync follows the winner of a stale-claim race', async (t) => {
+  const originals = {
+    findById: EthWallet.findById,
+    createIfNotRunning: JobLog.createIfNotRunning,
+    getLatest: JobLog.getLatest,
+    failIfStale: JobLog.failIfStale,
+  };
+  t.after(() => {
+    EthWallet.findById = originals.findById;
+    JobLog.createIfNotRunning = originals.createIfNotRunning;
+    JobLog.getLatest = originals.getLatest;
+    JobLog.failIfStale = originals.failIfStale;
+  });
+
+  const stale = { id: 201, status: 'running' };
+  const expired = { id: 201, status: 'failed' };
+  const winner = { id: 202, status: 'running' };
+  const latest = [stale, expired, winner];
+  let claimAttempts = 0;
+
+  EthWallet.findById = async () => ({ id: 7, user_id: 1 });
+  JobLog.createIfNotRunning = async () => {
+    claimAttempts += 1;
+    return null;
+  };
+  JobLog.getLatest = async () => latest.shift();
+  // A competing process already changed the stale row, so our guarded update
+  // cannot return it.
+  JobLog.failIfStale = async () => null;
+
+  const result = await EthWalletService.queueSyncWallet(7);
+
+  assert.deepEqual(result, { started: false, job: winner });
+  assert.equal(claimAttempts, 2);
+  assert.deepEqual(latest, []);
 });
 
 test('deletes are scoped to one chain, so an overlap window cannot wipe another chain', async (t) => {

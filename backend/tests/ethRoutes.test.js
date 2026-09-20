@@ -325,6 +325,93 @@ test('POST /api/eth/wallets/bulk reports each address and adds the good ones', a
   }
 });
 
+test('wallet sync routes preserve the legacy response and opt into a scoped durable job', async () => {
+  const EthWallet = require('../src/models/EthWallet');
+  const EthWalletService = require('../src/services/EthWalletService');
+  const originalFind = EthWallet.findByIdForUser;
+  const originalFindById = EthWallet.findById;
+  const originalQueue = EthWalletService.queueSyncWallet;
+  const originalSync = EthWalletService.syncWallet;
+  const originalStatus = EthWalletService.walletSyncStatus;
+  const queued = [];
+  EthWallet.findByIdForUser = async (id, userId) => (
+    id === 7 ? { id, user_id: userId } : null
+  );
+  EthWallet.findById = async (id) => ({ id, user_id: 1, label: 'fixture' });
+  EthWalletService.syncWallet = async () => ({ status: 'complete', inserted: 0 });
+  EthWalletService.queueSyncWallet = async (id) => {
+    queued.push(id);
+    return {
+      started: true,
+      job: {
+        id: 101,
+        job_name: 'eth-wallet-sync:1:7',
+        status: 'running',
+        started_at: '2026-09-19T12:00:00.000Z',
+        details: { wallet_id: 7, private_marker: 'must-not-leak' },
+        error_message: 'must-not-leak',
+      },
+    };
+  };
+  const statusCalls = [];
+  EthWalletService.walletSyncStatus = async (userId, walletId, jobId) => {
+    statusCalls.push([userId, walletId, jobId]);
+    return {
+      id: 101,
+      job_name: 'eth-wallet-sync:1:7',
+      status: 'completed',
+      started_at: '2026-09-19T12:00:00.000Z',
+      completed_at: '2026-09-19T12:02:00.000Z',
+      details: {
+        wallet_id: 7,
+        sync_status: 'complete',
+        private_marker: 'must-not-leak',
+      },
+      error_message: 'must-not-leak',
+    };
+  };
+  try {
+    const legacy = await request(app).post('/api/eth/wallets/7/sync');
+    assert.equal(legacy.status, 200);
+    assert.equal(legacy.body.sync.status, 'complete');
+    assert.deepEqual(queued, []);
+
+    const started = await request(app).post('/api/eth/wallets/7/sync?async=true');
+    assert.equal(started.status, 202);
+    assert.deepEqual(queued, [7]);
+    assert.deepEqual(started.body, {
+      started: true,
+      job: {
+        id: 101,
+        status: 'running',
+        started_at: '2026-09-19T12:00:00.000Z',
+        completed_at: null,
+        sync_status: null,
+      },
+      message: 'Wallet sync started',
+    });
+
+    const terminal = await request(app).get('/api/eth/wallets/7/sync-status?job_id=101');
+    assert.equal(terminal.status, 200);
+    assert.deepEqual(statusCalls, [[1, 7, 101]]);
+    assert.deepEqual(terminal.body, {
+      job: {
+        id: 101,
+        status: 'completed',
+        started_at: '2026-09-19T12:00:00.000Z',
+        completed_at: '2026-09-19T12:02:00.000Z',
+        sync_status: 'complete',
+      },
+    });
+  } finally {
+    EthWallet.findByIdForUser = originalFind;
+    EthWallet.findById = originalFindById;
+    EthWalletService.queueSyncWallet = originalQueue;
+    EthWalletService.syncWallet = originalSync;
+    EthWalletService.walletSyncStatus = originalStatus;
+  }
+});
+
 test('POST /api/eth/wallets/:id/recapture starts a background replay for an owned wallet', async () => {
   const EthWallet = require('../src/models/EthWallet');
   const EthWalletService = require('../src/services/EthWalletService');

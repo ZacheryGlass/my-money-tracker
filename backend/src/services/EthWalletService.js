@@ -12,6 +12,7 @@ const EthWallet = require('../models/EthWallet');
 const EthWalletChain = require('../models/EthWalletChain');
 const EthFeedCoverage = require('../models/EthFeedCoverage');
 const EthTransfer = require('../models/EthTransfer');
+const JobLog = require('../models/JobLog');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
@@ -101,8 +102,15 @@ function sleep(milliseconds) {
 // all wallet work for one user, but without this guard two clicks would still
 // queue two complete replays. This map covers one running process; after a
 // restart the reset cursors remain durable and the next normal sync resumes the
-// unfinished recapture from genesis.
+// unfinished recapture from genesis. Routine syncs use JobLog's cross-process
+// claim below because the UI polls their durable completion state.
 const recaptureRuns = new Map();
+const WALLET_SYNC_HEARTBEAT_MS = 30_000;
+const WALLET_SYNC_STALE_MS = 2 * 60_000;
+
+function walletSyncJobName(userId, walletId) {
+  return `eth-wallet-sync:${userId}:${walletId}`;
+}
 
 function toTimestamp(unixSeconds) {
   return new Date(Number(unixSeconds) * 1000);
@@ -640,6 +648,89 @@ class EthWalletService {
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     return EthDerivedPipeline.serializedForUser(wallet.user_id,
       () => this._syncWallet(walletId, { fillPrices }));
+  }
+
+  static async queueSyncWallet(walletId, options = {}) {
+    const wallet = await EthWallet.findById(walletId);
+    if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
+    const jobName = walletSyncJobName(wallet.user_id, wallet.id);
+    let job = await JobLog.createIfNotRunning(jobName);
+    if (!job) {
+      const existing = await JobLog.getLatest(jobName);
+      const expired = existing?.status === 'running'
+        ? await JobLog.failIfStale(
+          existing.id,
+          WALLET_SYNC_STALE_MS,
+          'Wallet sync worker heartbeat expired before completion'
+        )
+        : null;
+      if (!expired) {
+        // Another process may have expired the row and claimed its replacement
+        // between our failed insert and stale update. Re-read before returning
+        // so the caller never polls the superseded job id.
+        const current = await JobLog.getLatest(jobName);
+        if (current?.status === 'running') return { started: false, job: current };
+      }
+      job = await JobLog.createIfNotRunning(jobName);
+      if (!job) return { started: false, job: await JobLog.getLatest(jobName) };
+    }
+
+    setImmediate(() => {
+      void (async () => {
+        let heartbeatPending = false;
+        const heartbeat = setInterval(() => {
+          if (heartbeatPending) return;
+          heartbeatPending = true;
+          void JobLog.heartbeat(job.id)
+            .catch((err) => logger.warn({ walletId: wallet.id, err },
+              'Could not heartbeat background ETH wallet sync'))
+            .finally(() => { heartbeatPending = false; });
+        }, WALLET_SYNC_HEARTBEAT_MS);
+        heartbeat.unref?.();
+        try {
+          const result = await this.syncWallet(wallet.id, options);
+          const failed = result.status === 'failed' ? 1 : 0;
+          await JobLog.complete(job.id, 1, failed ? 0 : 1, failed, {
+            wallet_id: wallet.id,
+            sync_status: result.status,
+            failed_feeds: result.failedFeeds?.length || 0,
+            deferred_feeds: result.deferredFeeds?.length || 0,
+            unsupported_feeds: result.unsupportedFeeds?.length || 0,
+          });
+        } catch (err) {
+          logger.error({ walletId: wallet.id, err }, 'Background ETH wallet sync failed');
+          try {
+            await JobLog.fail(job.id, err.message, { wallet_id: wallet.id });
+          } catch (recordErr) {
+            logger.error({ walletId: wallet.id, err: recordErr },
+              'Could not record background ETH wallet sync failure');
+          }
+        } finally {
+          clearInterval(heartbeat);
+        }
+      })();
+    });
+    return { started: true, job };
+  }
+
+  static async walletSyncStatus(userId, walletId, jobId = null) {
+    if (!Number.isInteger(userId) || !Number.isInteger(walletId)) {
+      throw new TypeError('walletSyncStatus requires integer user and wallet ids');
+    }
+    if (jobId != null && (!Number.isInteger(jobId) || jobId <= 0)) {
+      throw new TypeError('walletSyncStatus job id must be a positive integer');
+    }
+    const jobName = walletSyncJobName(userId, walletId);
+    const job = jobId == null
+      ? await JobLog.getLatest(jobName)
+      : await JobLog.getByIdAndName(jobId, jobName);
+    if (job?.status !== 'running') return job;
+    const expired = await JobLog.failIfStale(
+      job.id,
+      WALLET_SYNC_STALE_MS,
+      'Wallet sync worker heartbeat expired before completion'
+    );
+    return expired || job;
   }
 
   // Safe replacement for the old remove-and-re-add workaround for forward-only
@@ -1228,7 +1319,14 @@ class EthWalletService {
           return totals;
         }, {}),
       };
-      logger.info({ walletId, address: wallet.address, results }, 'ETH wallet sync completed');
+      logger.info({
+        walletId,
+        status: results.status,
+        inserted: results.inserted,
+        failedFeeds: results.failedFeeds.length,
+        deferredFeeds: results.deferredFeeds.length,
+        unsupportedFeeds: results.unsupportedFeeds.length,
+      }, 'ETH wallet sync completed');
       return results;
     } catch (err) {
       await EthWallet.setError(walletId, err.code || 'SYNC_ERROR', err.message);
@@ -1316,7 +1414,6 @@ class EthWalletService {
               });
               const entry = {
                 walletId: wallet.id,
-                address: wallet.address,
                 attempts,
                 ...result,
               };
@@ -1327,7 +1424,6 @@ class EthWalletService {
               if (err.code === 'ETHERSCAN_NOT_CONFIGURED') {
                 outcomes.set(wallet.id, {
                   walletId: wallet.id,
-                  address: wallet.address,
                   attempts,
                   status: 'skipped',
                   skipped: 'not_configured',
@@ -1339,7 +1435,6 @@ class EthWalletService {
               }
               outcomes.set(wallet.id, {
                 walletId: wallet.id,
-                address: wallet.address,
                 attempts,
                 status: 'failed',
                 error: err.message,
@@ -1619,7 +1714,7 @@ class EthWalletService {
       logger.warn({ walletId: wallet.id, err }, 'Derived-data refresh after wallet add failed');
     }
 
-    logger.info({ walletId: wallet.id, address: normalized }, 'ETH wallet added');
+    logger.info({ walletId: wallet.id }, 'ETH wallet added');
     return { wallet, account };
   }
 

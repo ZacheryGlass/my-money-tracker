@@ -12,6 +12,15 @@ const api = axios.create({
   },
 });
 
+// At most 90 polls in the production 15-minute rate-limit window, leaving the
+// rest of the shared API allowance available for the app while a slow public
+// explorer sync is running.
+const ETH_SYNC_POLL_INTERVAL_MS = 10_000;
+const ETH_SYNC_POLL_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
+const ETH_SYNC_ROUTE_GRACE_MS = 5 * 60 * 1_000;
+const ETH_SYNC_JOB_STATUSES = new Set(['running', 'completed', 'failed']);
+const ETH_SYNC_RESULT_STATUSES = new Set(['complete', 'deferred', 'unsupported', 'failed']);
+
 // Handle auth errors and retry on 5xx / network errors (1 retry, 500ms backoff)
 api.interceptors.response.use(
   (response) => response,
@@ -35,6 +44,88 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const normalizedJobId = (value) => {
+  if (Number.isSafeInteger(value) && value > 0) return String(value);
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value)) return value;
+  return null;
+};
+
+const walletSyncProtocolError = (message) => new Error(`Wallet sync protocol error: ${message}`);
+
+const validateWalletSyncJob = (job, expectedId = null) => {
+  if (!isRecord(job)) throw walletSyncProtocolError('response did not include a job');
+
+  const jobId = normalizedJobId(job.id);
+  if (!jobId) throw walletSyncProtocolError('job id is missing or invalid');
+  if (expectedId !== null && jobId !== expectedId) {
+    throw walletSyncProtocolError(`status returned job ${jobId} instead of ${expectedId}`);
+  }
+  if (!ETH_SYNC_JOB_STATUSES.has(job.status)) {
+    throw walletSyncProtocolError(`job ${jobId} has unknown status ${String(job.status)}`);
+  }
+
+  return { job, jobId };
+};
+
+const walletSyncResultStatus = (job) => {
+  if (job.status === 'running') return null;
+  if (job.status === 'failed') return 'failed';
+  if (!ETH_SYNC_RESULT_STATUSES.has(job.sync_status)) {
+    throw walletSyncProtocolError(
+      `completed job ${String(job.id)} has invalid sync status ${String(job.sync_status)}`
+    );
+  }
+  return job.sync_status;
+};
+
+const waitForWalletSync = async (walletId, startPayload) => {
+  const initial = validateWalletSyncJob(startPayload.job);
+  const expectedJobId = initial.jobId;
+  const deadline = Date.now() + ETH_SYNC_POLL_TIMEOUT_MS;
+  const routeGraceDeadline = Date.now() + ETH_SYNC_ROUTE_GRACE_MS;
+  let job = initial.job;
+
+  while (job.status === 'running') {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error(`Wallet sync for wallet ${walletId} timed out after 2 hours`);
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, Math.min(ETH_SYNC_POLL_INTERVAL_MS, remainingMs));
+    });
+    let response;
+    try {
+      response = await api.get(
+        `/api/eth/wallets/${walletId}/sync-status?job_id=${encodeURIComponent(expectedJobId)}`
+      );
+    } catch (error) {
+      // A rolling deployment can briefly route a poll to an older instance
+      // after a newer instance accepted the background job. Give that missing
+      // route a bounded grace period; all other failures remain immediate.
+      if ([404, 405].includes(error?.response?.status) && Date.now() < routeGraceDeadline) {
+        continue;
+      }
+      throw error;
+    }
+    if (!isRecord(response?.data)) {
+      throw walletSyncProtocolError('status response is malformed');
+    }
+    ({ job } = validateWalletSyncJob(response.data.job, expectedJobId));
+    if (job.status === 'running' && Date.now() >= deadline) {
+      throw new Error(`Wallet sync for wallet ${walletId} timed out after 2 hours`);
+    }
+  }
+
+  return {
+    ...startPayload,
+    job,
+    sync: { status: walletSyncResultStatus(job) },
+  };
+};
 
 // Identity (display name for the sidebar)
 export const me = async () => {
@@ -354,8 +445,20 @@ export const eth = {
     return response.data;
   },
   syncWallet: async (id) => {
-    const response = await api.post(`/api/eth/wallets/${id}/sync`);
-    return response.data;
+    const response = await api.post(`/api/eth/wallets/${id}/sync?async=true`);
+    const payload = response.data;
+    if (!isRecord(payload)) throw walletSyncProtocolError('start response is malformed');
+
+    // Older servers kept the request open and returned the complete sync
+    // result directly. Preserve that contract during rolling deployments.
+    if (Object.prototype.hasOwnProperty.call(payload, 'sync')) {
+      if (!isRecord(payload.sync) || typeof payload.sync.status !== 'string' || !payload.sync.status) {
+        throw walletSyncProtocolError('legacy response has an invalid sync result');
+      }
+      return payload;
+    }
+
+    return waitForWalletSync(id, payload);
   },
   recaptureWallet: async (id) => {
     const response = await api.post(`/api/eth/wallets/${id}/recapture`);

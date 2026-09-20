@@ -35,6 +35,7 @@ require.cache[pgModulePath] = {
 };
 
 const EthDerivedPipeline = require('../src/services/EthDerivedPipeline');
+const advisoryLocks = require('../src/config/advisoryLocks');
 const EthWalletService = require('../src/services/EthWalletService');
 const EthWallet = require('../src/models/EthWallet');
 const EthTransfer = require('../src/models/EthTransfer');
@@ -371,6 +372,41 @@ test('settled lanes are cleaned out of the map', async () => {
   await EthDerivedPipeline.serializedForUser(2, async () => 'y');
   await tick();
   assert.equal(EthDerivedPipeline.pendingQueueCount(), 0);
+});
+
+test('production lanes hold the same PostgreSQL advisory lock across the full user task', async () => {
+  const originalConnect = advisoryLocks.connect;
+  const originalEnv = process.env.NODE_ENV;
+  const events = [];
+  const client = {
+    async query(sql, params) {
+      if (/pg_advisory_lock/.test(sql) && !/unlock/.test(sql)) {
+        events.push(['lock', ...params]);
+        return { rows: [{}] };
+      }
+      if (/pg_advisory_unlock/.test(sql)) {
+        events.push(['unlock', ...params]);
+        return { rows: [{ released: true }] };
+      }
+      throw new Error(`Unexpected advisory-lock SQL: ${sql}`);
+    },
+    release(destroy) { events.push(['release', destroy]); },
+  };
+  advisoryLocks.connect = async () => client;
+  process.env.NODE_ENV = 'production';
+  try {
+    await EthDerivedPipeline.serializedForUser(17, async () => { events.push(['work']); });
+  } finally {
+    advisoryLocks.connect = originalConnect;
+    process.env.NODE_ENV = originalEnv;
+  }
+
+  assert.deepEqual(events, [
+    ['lock', 0x45544831, 17],
+    ['work'],
+    ['unlock', 0x45544831, 17],
+    ['release', false],
+  ]);
 });
 
 // ---------------------------------------------------------------------------

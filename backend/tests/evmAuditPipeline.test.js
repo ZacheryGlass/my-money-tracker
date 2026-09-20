@@ -27,7 +27,7 @@ function evidence(result, method = 'fixture', params = []) {
 
 // Execute the real orchestration and decoders. Only the database and provider
 // boundaries are replaced; assertions concern durable outcomes, not source text.
-function harness(t) {
+function harness(t, { indexedLogError = null } = {}) {
   for (const method of ['get', 'post']) t.mock.method(require('axios'), method, async () => {
     throw new Error('Unexpected network request in audit fixture');
   });
@@ -128,6 +128,7 @@ function harness(t) {
     number: 10, numberHex: '0xa', hash: BLOCK_HASH, timestamp: '2020-01-01T00:00:00.000Z',
   }));
   stub(RpcClient.prototype, 'addressIndexedTokenLogPages', async function* () {
+    if (indexedLogError) throw indexedLogError;
     yield { fromBlock: 0, throughBlock: 10, logs: [log], evidence: [evidence([log])],
       cursorIn: '0', cursorOut: '11' };
   });
@@ -170,6 +171,16 @@ test('audit retains an explorer omission, exact token effect, and unresolved cov
   assert.equal(balance.status, 'mismatch');
   assert.equal(balance.detail.historical_check.status, 'match');
   assert.equal(audit.scopes.get('consensus-rpc:indexed_token_logs').accepted, true);
+  assert.equal(
+    audit.scopes.get('consensus-rpc:indexed_token_logs').provider_order,
+    'oldest_first',
+    'persisted provider order must satisfy migration 079 and describe the scan direction'
+  );
+  assert.equal(
+    audit.coverage.find((row) => row.provider === 'consensus-rpc'
+      && row.capability === 'indexed_token_logs').providerOrder,
+    'oldest_first'
+  );
   assert.equal(audit.scopes.get('etherscan:wallet_history').status, 'complete');
   assert.equal(audit.scopes.get('consensus-rpc:receipt_verification').status, 'unverified');
   assert.equal(audit.scopes.get('trace-rpc:internal').status, 'unsupported');
@@ -186,6 +197,23 @@ test('audit retains an explorer omission, exact token effect, and unresolved cov
   assert.equal(audit.progress.chain_1.unmatched_native_effects, 0);
   assert.equal(audit.progress.chain_1.unmatched_optional_effects, 1);
   assert.equal(result.gaps, 4);
+});
+
+test('bounded token-log scan exhaustion remains an explicit limitation without blocking native checks', async (t) => {
+  const error = Object.assign(new Error('bounded fixture'), {
+    code: 'RPC_LOG_SCAN_BUDGET_EXHAUSTED', cursor: '7',
+  });
+  const audit = harness(t, { indexedLogError: error });
+
+  const result = await audit.run();
+
+  assert.equal(result.deferred, false);
+  assert.equal(audit.scopes.get('consensus-rpc:indexed_token_logs').status, 'unverified');
+  assert.equal(audit.scopes.get('consensus-rpc:indexed_token_logs').pagination_exhausted, false);
+  assert.equal(audit.scopes.get('consensus-rpc:indexed_token_logs').accepted, undefined);
+  assert.equal(audit.progress.chain_1.indexed_token_log_enumeration_gap, 1);
+  assert.equal(audit.progress.chain_1.native_balance_match, true,
+    'native point checks still run after the optional independent log scan hits its budget');
 });
 
 test('zkSync audit records composite history and capability-specific explorer provenance', async (t) => {
