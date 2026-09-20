@@ -248,8 +248,8 @@ function internalObservationFields(observation, wallet) {
 // bounded trace_filter walk and the transaction itself has a canonical
 // consensus receipt, one unambiguous trace effect is verified. Existing
 // provider traces still require an identical ledger trace before promotion.
-// Moralis remains the indexed source for Gnosis; Blockscout is only a finite
-// fallback for chains without it.
+// Moralis remains the indexed source for Gnosis; finite account-feed fallbacks
+// include Blockscout and zkSync's official explorer.
 function effectsFromInternalObservations(context, observations, {
   verifiedTraceHashes = new Set(),
 } = {}) {
@@ -267,8 +267,9 @@ function effectsFromInternalObservations(context, observations, {
     const internalRows = rows.filter((row) => row.evidence_kind !== 'native_credit'
       && row.payload_json?.native_credit !== true);
     const indexedProviders = ['trace-rpc', 'moralis'];
-    const explorer = internalRows.filter((row) => ['blockscout', 'etherscan'].includes(row.provider));
-    const explorerProvider = ['blockscout', 'etherscan']
+    const explorerProviders = ['blockscout', 'etherscan', 'zksync explorer'];
+    const explorer = internalRows.filter((row) => explorerProviders.includes(row.provider));
+    const explorerProvider = explorerProviders
       .find((provider) => explorer.some((row) => row.provider === provider));
     const selectedProvider = indexedProviders.find((provider) =>
       internalRows.some((row) => row.provider === provider)
@@ -295,7 +296,7 @@ function effectsFromInternalObservations(context, observations, {
       const fields = internalObservationFields(row, wallet);
       if (!fields) continue;
       const signature = `${fields.from}:${fields.to}:${fields.value}`;
-      const legacyMatches = ['moralis', 'blockscout', 'etherscan'].includes(row.provider)
+      const legacyMatches = ['moralis', ...explorerProviders].includes(row.provider)
         ? (legacyBySignature.get(signature) || []) : [];
       const traceRpcProof = row.provider === 'trace-rpc'
         && verifiedTraceHashes.has(hash)

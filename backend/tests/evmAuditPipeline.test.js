@@ -38,14 +38,20 @@ function harness(t) {
   const effects = [];
   const balances = [];
   const attempts = [];
+  const coverage = [];
+  let discoveredRows = [];
   const progress = {};
   let nextId = 0;
   const stub = (object, name, fn) => t.mock.method(object, name, fn);
   for (const name of ['linkEffectEvidence', 'linkTransactionEvidence', 'invalidateMissingRpcEffects',
-    'setDiscoveredChains', 'storeNonceAudit']) stub(EvmAudit, name, async () => {});
+    'storeNonceAudit']) stub(EvmAudit, name, async () => {});
+  stub(EvmAudit, 'setDiscoveredChains', async (_job, _owner, rows) => {
+    discoveredRows = structuredClone(rows);
+  });
   for (const name of ['storedTransferRows', 'storedFeedCoverage']) stub(EvmAudit, name, async () => []);
-  for (const name of ['transactionConflictCount', 'provisionalEffectCount', 'requiredScopeGapCount',
+  for (const name of ['provisionalEffectCount', 'requiredScopeGapCount',
     'backfillVerifiedEffects']) stub(EvmAudit, name, async () => 0);
+  stub(EvmAudit, 'transactionConflictCounts', async () => ({ native: 0, optional: 0 }));
   stub(EvmAudit, 'repairCorroboratedTransferIdentities', async () => ({ repaired: 0 }));
   stub(EvmAudit, 'heartbeat', async (_job, _owner, state) => {
     Object.assign(progress, state?.progress);
@@ -75,6 +81,7 @@ function harness(t) {
     return { observationIds: ids };
   });
   stub(EvmAudit, 'acceptCoverage', async (row) => {
+    coverage.push(structuredClone(row));
     scopes.get(`${row.provider}:${row.capability}`).accepted = true;
   });
   stub(EvmAudit, 'observationsForJob', async (_job, filter = {}) => observations.filter(
@@ -146,7 +153,10 @@ function harness(t) {
     leaseState: { lost: false }, retainAttempt: async () => {}, explorerApiKey: 'fixture-key',
     ...options,
   });
-  return { run, scopes, pages, effects, balances, attempts, progress, observations };
+  return {
+    run, scopes, pages, effects, balances, attempts, progress, observations, coverage,
+    discovered: () => discoveredRows,
+  };
 }
 
 test('audit retains an explorer omission, exact token effect, and unresolved coverage gaps', async (t) => {
@@ -165,7 +175,192 @@ test('audit retains an explorer omission, exact token effect, and unresolved cov
   assert.equal(audit.scopes.get('trace-rpc:internal').status, 'unsupported');
   assert.equal(audit.progress.chain_1.receipt_enumeration_gap, 1);
   assert.equal(audit.progress.chain_1.historical_state_gap, 1);
+  assert.equal(audit.progress.chain_1.contract_version, 2);
+  assert.equal(audit.progress.chain_1.native_relevant_transactions, 0);
+  assert.equal(audit.progress.chain_1.transaction_native_conflicts, 0);
+  assert.equal(audit.progress.chain_1.transaction_optional_conflicts, 0);
+  assert.equal(audit.progress.chain_1.missing_native_activity, 0);
+  assert.equal(audit.progress.chain_1.missing_optional_activity, 0);
+  assert.equal(audit.progress.chain_1.provisional_native_effects, 0);
+  assert.equal(audit.progress.chain_1.provisional_optional_effects, 0);
+  assert.equal(audit.progress.chain_1.unmatched_native_effects, 0);
+  assert.equal(audit.progress.chain_1.unmatched_optional_effects, 1);
   assert.equal(result.gaps, 4);
+});
+
+test('zkSync audit records composite history and capability-specific explorer provenance', async (t) => {
+  const audit = harness(t);
+  await audit.run({
+    chainId: 324,
+    discovered: [{ chain_id: 324 }],
+    explorerApiKey: null,
+  });
+
+  assert.equal(audit.scopes.get('explorer-composite:wallet_history').status, 'complete');
+  assert.equal(audit.scopes.get('zksync explorer:normal').status, 'complete');
+  assert.equal(audit.scopes.get('zksync explorer:internal').status, 'complete');
+  assert.equal(audit.scopes.get('blockscout:erc20').status, 'complete');
+  assert.equal(audit.scopes.get('blockscout:erc721').status, 'complete');
+  assert.equal(audit.scopes.get('blockscout:erc1155').status, 'complete');
+  assert.ok(audit.coverage.some((row) => row.provider === 'explorer-composite'
+    && row.capability === 'wallet_history'));
+  const [discovered] = audit.discovered();
+  assert.equal(discovered.source, 'explorer-composite');
+  assert.deepEqual(discovered.source_providers, ['blockscout', 'zksync explorer']);
+  assert.deepEqual(discovered.provider_by_capability, {
+    active_chain: 'explorer-composite',
+    wallet_history: 'explorer-composite',
+    coverage_boundary: 'explorer-composite',
+    native_indexed_head: 'zksync explorer',
+    token_indexed_head: 'blockscout',
+    normal: 'zksync explorer',
+    internal: 'zksync explorer',
+    erc20: 'blockscout',
+    erc721: 'blockscout',
+    erc1155: 'blockscout',
+  });
+});
+
+test('zkSync official indexed-boundary failures retain their actual provider', async (t) => {
+  const audit = harness(t);
+  t.mock.method(EtherscanService, 'coverageBoundary', async () => {
+    throw Object.assign(new Error('official indexed head fixture failure'), {
+      code: 'ETHERSCAN_API_ERROR',
+    });
+  });
+
+  await assert.rejects(audit.run({
+    chainId: 324,
+    discovered: [{ chain_id: 324 }],
+    explorerApiKey: null,
+  }), (error) => {
+    assert.equal(error.code, 'ZKSYNC_EXPLORER_BOUNDARY_FAILED');
+    assert.equal(error.auditProvider, 'zksync explorer');
+    return true;
+  });
+  assert.equal(audit.attempts.at(-1).provider, 'zksync explorer');
+  assert.equal(audit.attempts.at(-1).errorCode, 'ZKSYNC_EXPLORER_BOUNDARY_FAILED');
+});
+
+test('zkSync indexed-boundary consensus failures retain the RPC provider', async (t) => {
+  const audit = harness(t);
+  t.mock.method(EtherscanService, 'coverageBoundary', async () => {
+    throw Object.assign(new Error('invalid consensus head fixture'), {
+      code: 'ETHERSCAN_API_ERROR', auditProvider: 'consensus-rpc',
+    });
+  });
+
+  await assert.rejects(audit.run({
+    chainId: 324,
+    discovered: [{ chain_id: 324 }],
+    explorerApiKey: null,
+  }), (error) => {
+    assert.equal(error.code, 'RPC_BOUNDARY_FAILED');
+    assert.equal(error.auditProvider, 'consensus-rpc');
+    return true;
+  });
+  assert.equal(audit.attempts.at(-1).provider, 'consensus-rpc');
+  assert.equal(audit.attempts.at(-1).errorCode, 'RPC_BOUNDARY_FAILED');
+});
+
+test('zkSync feed failures retain the capability provider and retry class', async (t) => {
+  const audit = harness(t);
+  t.mock.method(EtherscanService, 'accountFeedPages', async function* (action) {
+    if (action === 'txlist') {
+      throw Object.assign(new Error('official explorer throttled'), {
+        code: 'EXPLORER_RATE_LIMITED', provider: 'ZKsync Explorer',
+      });
+    }
+    yield { ...evidence([]), rows: [], requestParams: {}, itemCount: 0,
+      cursorIn: '0', cursorOut: null };
+  });
+
+  await assert.rejects(audit.run({
+    chainId: 324,
+    discovered: [{ chain_id: 324 }],
+    explorerApiKey: null,
+  }), (error) => {
+    assert.equal(error.code, 'ZKSYNC_EXPLORER_RATE_LIMITED');
+    assert.equal(error.auditProvider, 'zksync explorer');
+    assert.ok(error.retryAt instanceof Date);
+    return true;
+  });
+  assert.equal(audit.attempts.at(-1).provider, 'zksync explorer');
+  assert.equal(audit.attempts.at(-1).outcome, 'deferred');
+});
+
+test('zkSync malformed native-feed pages remain attributed to the selected explorer', async (t) => {
+  const audit = harness(t);
+  t.mock.method(EtherscanService, 'accountFeedPages', async function* (action) {
+    if (action === 'txlist') {
+      throw Object.assign(new Error('malformed official explorer fixture page'), {
+        code: 'ETHERSCAN_API_ERROR',
+      });
+    }
+    yield { ...evidence([]), rows: [], requestParams: {}, itemCount: 0,
+      cursorIn: '0', cursorOut: null };
+  });
+
+  await assert.rejects(audit.run({
+    chainId: 324,
+    discovered: [{ chain_id: 324 }],
+    explorerApiKey: null,
+  }), (error) => {
+    assert.equal(error.code, 'ZKSYNC_EXPLORER_FEED_FAILED');
+    assert.equal(error.auditProvider, 'zksync explorer');
+    return true;
+  });
+  assert.equal(audit.attempts.at(-1).provider, 'zksync explorer');
+});
+
+test('zkSync token-feed failures remain attributed to Blockscout', async (t) => {
+  const audit = harness(t);
+  t.mock.method(EtherscanService, 'accountFeedPages', async function* (action) {
+    if (action === 'tokentx') {
+      throw Object.assign(new Error('token index fixture throttle'), {
+        code: 'EXPLORER_RATE_LIMITED', provider: 'Blockscout',
+      });
+    }
+    yield { ...evidence([]), rows: [], requestParams: {}, itemCount: 0,
+      cursorIn: '0', cursorOut: null };
+  });
+
+  await assert.rejects(audit.run({
+    chainId: 324,
+    discovered: [{ chain_id: 324 }],
+    explorerApiKey: null,
+  }), (error) => {
+    assert.equal(error.code, 'BLOCKSCOUT_RATE_LIMITED');
+    assert.equal(error.auditProvider, 'blockscout');
+    return true;
+  });
+  assert.equal(audit.attempts.at(-1).provider, 'blockscout');
+  assert.equal(audit.attempts.at(-1).outcome, 'deferred');
+});
+
+test('internal-feed hydration failures remain attributed to consensus RPC', async (t) => {
+  const audit = harness(t);
+  t.mock.method(EtherscanService, 'accountFeedPages', async function* (action) {
+    if (action === 'txlistinternal') {
+      throw Object.assign(new Error('trace hydration fixture throttle'), {
+        code: 'EXPLORER_RATE_LIMITED', auditProvider: 'consensus-rpc',
+      });
+    }
+    yield { ...evidence([]), rows: [], requestParams: {}, itemCount: 0,
+      cursorIn: '0', cursorOut: null };
+  });
+
+  await assert.rejects(audit.run({
+    chainId: 100,
+    discovered: [{ chain_id: 100 }],
+    explorerApiKey: null,
+  }), (error) => {
+    assert.equal(error.code, 'RPC_RATE_LIMITED');
+    assert.equal(error.auditProvider, 'consensus-rpc');
+    return true;
+  });
+  assert.equal(audit.attempts.at(-1).provider, 'consensus-rpc');
+  assert.equal(audit.attempts.at(-1).outcome, 'deferred');
 });
 
 test('Moralis lookup evidence leaves exhausted history complete after canonicalization', async (t) => {

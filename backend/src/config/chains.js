@@ -15,9 +15,9 @@
 // broadly-active EOA, so an empty feed could not be mistaken for a missing one.
 // What that turned up, and why this table looks the way it does:
 //
-//   * zkSync Era (324) is not served by Etherscan V2, but its public Blockscout
-//     instance passed the same balance/txlist/txlistinternal/token/NFT probes
-//     and its public JSON-RPC endpoint supplies authoritative live balances.
+//   * zkSync Era (324) is not served by Etherscan V2. Its official explorer
+//     supplies native normal/internal history and the indexed head, Blockscout
+//     supplies token/NFT feeds, and public JSON-RPC supplies live balances.
 //   * zkSync Lite has no EIP-155 id because it predates the EVM-compatible Era
 //     chain. It uses reserved app id 32401 and a dedicated read-only importer
 //     for Matter Labs' v0.2 archive. Keeping it in this registry gives the
@@ -175,6 +175,10 @@ const REGISTRY = [
         blockPageSize: 100,
         normalFeeField: 'fee',
         verifyRpcIndexedHead: true,
+        // This public host throttles sustained multi-wallet history walks at
+        // the generic Etherscan pace. Keep a provider-specific floor while
+        // still allowing a stricter operator override.
+        requestSpacingMs: 2000,
       },
     },
     consensusRpcUrl: configuredRpcUrl(
@@ -392,13 +396,127 @@ function enabledChains() {
   return REGISTRY.filter((chain) => ids.has(chain.id));
 }
 
+const ACCOUNT_FEED_ACTION = Object.freeze({
+  normal: 'txlist',
+  internal: 'txlistinternal',
+  token: 'tokentx',
+  nft: 'tokennfttx',
+  nft1155: 'token1155tx',
+});
+const NATIVE_HISTORY_ACTIONS = new Set(['txlist', 'txlistinternal', 'getblockreward']);
+const ACCOUNT_HISTORY_ROUTE_ACTIONS = Object.freeze([
+  'txlist', 'txlistinternal', 'getblockreward',
+  'tokentx', 'tokennfttx', 'token1155tx',
+]);
+const ACCOUNT_HISTORY_CAPABILITY_ACTION = Object.freeze({
+  normal: 'txlist',
+  internal: 'txlistinternal',
+  erc20: 'tokentx',
+  erc721: 'tokennfttx',
+  erc1155: 'token1155tx',
+});
+
+// Canonical route selection for every Etherscan-shaped account request. Keep
+// transport callers, audit provenance, and completion checks on this function
+// so a split provider cannot drift into three subtly different route tables.
+function accountApiForAction(chainId, action = null) {
+  const accountApi = getChain(chainId)?.accountApi;
+  if (!accountApi) return null;
+  if (accountApi.nativeHistoryApi && NATIVE_HISTORY_ACTIONS.has(action)) {
+    return { ...accountApi, ...accountApi.nativeHistoryApi };
+  }
+  return accountApi;
+}
+
+function accountApiForFeed(chainId, feed = null) {
+  return accountApiForAction(chainId, ACCOUNT_FEED_ACTION[feed] || null);
+}
+
+function accountApiEndpointForAction(chainId, action = null) {
+  const accountApi = accountApiForAction(chainId, action);
+  if (!accountApi) return null;
+  const usesV2 = (action === 'txlist' && accountApi.v2NormalTransactions)
+    || (action === 'txlistinternal' && accountApi.v2InternalTransactions);
+  return usesV2 ? accountApi.v2BaseUrl : accountApi.baseUrl;
+}
+
+function accountApiEndpointForFeed(chainId, feed = null) {
+  return accountApiEndpointForAction(chainId, ACCOUNT_FEED_ACTION[feed] || null);
+}
+
+function accountApiProviderForAction(chainId, action = null) {
+  const chain = getChain(chainId);
+  if (chain?.historyProvider) return String(chain.historyProvider).toLowerCase();
+  return String(accountApiForAction(chainId, action)?.provider || 'Etherscan').toLowerCase();
+}
+
+// Canonical account-history route manifest consumed by sync, audit, and the
+// completion reporter. Split-provider chains such as zkSync must have one
+// source of truth for both transport and persisted provenance.
+function accountApiRoutes(chainId) {
+  const chain = getChain(chainId);
+  if (chain?.historyProvider) {
+    return [{ provider: String(chain.historyProvider).toLowerCase(), baseUrl: null }];
+  }
+  const routes = ACCOUNT_HISTORY_ROUTE_ACTIONS.map((action) => ({
+    provider: accountApiProviderForAction(chainId, action),
+    baseUrl: accountApiEndpointForAction(chainId, action),
+  }));
+  return [...new Map(routes.map((route) => [
+    `${route.provider}:${route.baseUrl || ''}`, route,
+  ])).values()];
+}
+
+function accountApiProviders(chainId) {
+  return new Set(accountApiRoutes(chainId).map((route) => route.provider));
+}
+
+function accountApiHistoryProvider(chainId) {
+  const providers = [...accountApiProviders(chainId)];
+  return providers.length > 1 ? 'explorer-composite' : providers[0];
+}
+
+function accountApiProviderManifest(chainId) {
+  const historyProvider = accountApiHistoryProvider(chainId);
+  return {
+    active_chain: historyProvider,
+    wallet_history: historyProvider,
+    coverage_boundary: historyProvider,
+    native_indexed_head: accountApiProviderForAction(chainId, 'getblockreward'),
+    token_indexed_head: accountApiProviderForAction(chainId, 'tokentx'),
+    ...Object.fromEntries(Object.entries(ACCOUNT_HISTORY_CAPABILITY_ACTION).map(
+      ([capability, action]) => [capability, accountApiProviderForAction(chainId, action)]
+    )),
+  };
+}
+
 // The default Etherscan transport needs the user's key; a chain-declared
 // account API can explicitly be keyless. Orchestration gates use this rather
 // than assuming every enabled chain needs Etherscan credentials.
 function accountApiRequiresKey(chainId) {
   const chain = getChain(chainId);
   if (chain?.requiresApiKey === false) return false;
-  return chain?.accountApi ? chain.accountApi.requiresApiKey !== false : true;
+  if (!chain?.accountApi) return true;
+  return ['txlist', 'tokentx'].some(
+    (action) => accountApiForAction(chainId, action)?.requiresApiKey !== false
+  );
+}
+
+// Exact provenance string persisted in eth_feed_coverage. Keep sync writers
+// and completion readers on one formatter so a provider route change cannot
+// leave old evidence looking current.
+function accountHistoryProviderName(chainId, feed = null) {
+  const chain = getChain(chainId);
+  if (!chain) return null;
+  if (chain.historyProvider === 'zksync-lite') {
+    return 'Matter Labs zkSync Lite archive';
+  }
+  const accountApi = accountApiForFeed(chainId, feed);
+  if (accountApi) {
+    const accountUrl = accountApiEndpointForFeed(chainId, feed);
+    return `${accountApi.provider || 'chain explorer'} (${accountUrl})`;
+  }
+  return 'Etherscan V2';
 }
 
 function enabledChainsRequireApiKey() {
@@ -470,7 +588,14 @@ module.exports = {
   enabledChains,
   enabledChainIds,
   enabledChainsRequireApiKey,
+  accountApiForAction,
+  accountApiHistoryProvider,
+  accountApiProviderForAction,
+  accountApiProviderManifest,
+  accountApiProviders,
+  accountApiRoutes,
   accountApiRequiresKey,
+  accountHistoryProviderName,
   allChains,
   getChain,
   isEnabled,

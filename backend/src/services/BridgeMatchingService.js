@@ -19,37 +19,14 @@ const {
   buildProtocolMovements, resolveProtocolCoordinateConflicts,
   suggestBridgeLegs, suggestionPairKey, verdictMovement,
 } = require('./bridge/matcher');
+const {
+  EXCLUDED_BASE_CHAIN_ID,
+  baseExclusionEndpoint,
+  excludedBaseIdentityFields,
+} = require('./evmAudit/completionPolicy');
 
 const MAX_RECEIPTS_PER_REBUILD = 250;
 const BRIDGE_LOCK_NAMESPACE = 1112688964; // ASCII-ish "BRID", signed int32-safe.
-const EXCLUDED_BASE_CHAIN_ID = 8453;
-
-// Base is intentionally outside this history.  These identities are kept in
-// a separate exclusion-only registry so an included-chain transaction can be
-// explained without re-enabling Base ingestion or treating a shared OP Stack
-// predeploy as proof of which OP Stack chain was involved.  The URLs are the
-// same first-party sources used by the retired registry and are evidence
-// metadata only; they never enter endpoint lookup or decoding.
-const BASE_EXCLUSION_ENDPOINTS = Object.freeze([
-  {
-    address: '0x3154cf16ccdb4c6d922629664174b904d80f2c35',
-    name: 'Base: L1 Standard Bridge', role: 'standard_bridge',
-    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
-  },
-  {
-    address: '0x49048044d57e1c92a77f79988d21fa8faf74e97e',
-    name: 'Base: Portal', role: 'portal',
-    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
-  },
-  {
-    address: '0x866e82a600a1414e583f7f13623f1ac5d58b0afa',
-    name: 'Base: L1 Cross Domain Messenger', role: 'cross_domain_messenger',
-    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
-  },
-]);
-const BASE_EXCLUSION_BY_ADDRESS = new Map(
-  BASE_EXCLUSION_ENDPOINTS.map((endpoint) => [endpoint.address, endpoint])
-);
 const lower = (value) => String(value || '').toLowerCase();
 
 function activityCoordinate(row) {
@@ -73,40 +50,21 @@ function baseEndpointMentioned(envelope) {
   // These are L1 deployments. The same address on another chain proves nothing.
   if (Number(envelope?.chain_id) !== 1) return null;
   for (const address of mentionedAddresses(envelope)) {
-    const endpoint = BASE_EXCLUSION_BY_ADDRESS.get(address);
+    const endpoint = baseExclusionEndpoint(address);
     if (endpoint) return endpoint;
   }
   return null;
 }
 
-function chainIdEquals(value, expected) {
-  if (value == null) return false;
-  try {
-    return BigInt(String(value)) === BigInt(expected);
-  } catch {
-    return String(value).toLowerCase() === String(expected).toLowerCase();
-  }
-}
-
-function excludedChainMention(event) {
-  const identity = event?.evidence?.identity_fields || {};
-  const hop = event?.evidence?.hop || {};
-  const fields = [
-    identity.destination_chain_id,
-    identity.origin_chain_id,
-    identity.source_chain_id,
-    hop.destination_chain_id,
-    hop.origin_chain_id,
-    hop.source_chain_id,
-  ];
-  return fields.some((value) => chainIdEquals(value, EXCLUDED_BASE_CHAIN_ID));
-}
-
 function excludedBaseMovement(envelope, decoderEvents = []) {
   if (Number(envelope?.chain_id) === EXCLUDED_BASE_CHAIN_ID) return null;
   const endpoint = baseEndpointMentioned(envelope);
-  const event = decoderEvents.find(excludedChainMention);
+  const event = decoderEvents.find((candidate) => (
+    excludedBaseIdentityFields(candidate?.evidence) != null
+  ));
   if (!endpoint && !event) return null;
+
+  const identityFields = event ? excludedBaseIdentityFields(event.evidence) : null;
 
   const source = endpoint
     ? {
@@ -117,7 +75,7 @@ function excludedBaseMovement(envelope, decoderEvents = []) {
     : {
       type: 'decoded_protocol_identity', protocol: event.protocol,
       family_version: event.family_version, correlation_key: event.correlation_key,
-      identity_fields: event.evidence?.identity_fields || event.evidence?.hop || {},
+      identity_fields: identityFields,
     };
   const key = activityCoordinate(envelope);
   return unsupportedEnvelopeMovement(envelope, {
@@ -509,4 +467,3 @@ module.exports.pairKeyFromVerdict = pairKeyFromVerdict;
 module.exports.endpointApplies = endpointApplies;
 module.exports.unsupportedMovement = unsupportedMovement;
 module.exports.excludedBaseMovement = excludedBaseMovement;
-module.exports.BASE_EXCLUSION_ENDPOINTS = BASE_EXCLUSION_ENDPOINTS;

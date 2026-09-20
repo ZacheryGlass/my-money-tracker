@@ -2,13 +2,14 @@
 
 'use strict';
 
-// Private, read-only evidence index for the non-exchange side of the EVM
-// completion audit.  Detailed rows contain hashes, addresses and quantities,
-// so they are written only to an explicit 0600 path; stdout is aggregate-only.
+// Private, read-only crypto triage index. Detailed rows include unresolved EVM
+// activity plus exchange review evidence, hashes, addresses, and quantities,
+// so they use the same strict private-file writer as the completion report.
 
-require('dotenv').config();
-const fs = require('fs');
+require('dotenv').config({ quiet: true });
 const pool = require('../src/config/database');
+const { LATEST_JOB_BY_CHAIN_CTE } = require('../src/models/evmAuditReportSql');
+const { writePrivateReport } = require('../src/utils/privateReport');
 
 async function tableExists(tableName) {
   const { rows } = await pool.query('SELECT to_regclass($1) IS NOT NULL AS exists', [tableName]);
@@ -160,30 +161,28 @@ async function buildReport(userId) {
        ORDER BY latest.attempted_at, latest.id`, [userId])).rows;
   }
 
-  // Keep the latest evidence-walk scopes beside the detailed gap rows. This
-  // is the durable answer to "which feed is still open?" after a partial
-  // provider run: a keyless primary explorer can be complete while one keyed
-  // override remains deferred. Scope rows contain no wallet address, raw
-  // response, or credential; those remain in the protected provider-page
-  // tables and are intentionally not copied into this report.
-  const auditScopesAvailable = await tableExists('evm_audit_scopes');
+  // Retain the legacy triage-report fields for downstream private tooling, but
+  // select evidence with the same per-subject/per-chain rule as the canonical
+  // completion report. A newer one-chain audit must not hide an older proof on
+  // another chain.
+  const auditTables = [
+    'evm_audit_jobs', 'evm_audit_scopes', 'evm_nonce_audits', 'evm_balance_audits',
+  ];
+  const auditScopesAvailable = (await Promise.all(
+    auditTables.map((table) => tableExists(table))
+  )).every(Boolean);
   const auditScopes = auditScopesAvailable
     ? (await pool.query(`
-      WITH latest_jobs AS (
-        SELECT DISTINCT ON (j.subject_id)
-               j.id, j.subject_id, j.status AS job_status, j.mode, j.requested_at
-          FROM evm_audit_jobs j
-          JOIN evm_subjects s ON s.id = j.subject_id
-         WHERE s.user_id = $1
-         ORDER BY j.subject_id, j.requested_at DESC, j.id DESC
-      )
+      ${LATEST_JOB_BY_CHAIN_CTE}
       SELECT sc.job_id, sc.chain_id, sc.provider, sc.capability, sc.status,
              sc.pagination_exhausted, sc.requested_from_block,
              sc.requested_through_block, sc.provider_cursor,
              sc.provider_order, sc.coverage_basis, sc.error_code,
-             sc.error_detail, j.job_status, j.mode, j.requested_at
-        FROM latest_jobs j
-        JOIN evm_audit_scopes sc ON sc.job_id = j.id
+             sc.error_detail, j.status AS job_status, j.mode, j.requested_at
+        FROM latest_job_by_chain latest
+        JOIN evm_audit_jobs j ON j.id = latest.job_id
+        JOIN evm_audit_scopes sc
+          ON sc.job_id = latest.job_id AND sc.chain_id = latest.chain_id
        ORDER BY sc.chain_id, sc.capability, sc.provider, sc.status`, [userId])).rows
     : [];
 
@@ -314,6 +313,7 @@ async function buildReport(userId) {
   }, {});
 
   return {
+    report_contract_version: 2,
     generated_at: new Date().toISOString(),
     user_id: userId,
     read_only: true,
@@ -350,6 +350,7 @@ async function buildReport(userId) {
     bridge_verdicts: bridgeVerdicts,
     bridge_receipt_failures: bridgeReceiptFailures,
     audit_scopes: auditScopes,
+    audit_evidence_report: 'Use report:evm-completion for chain-aware EVM audit evidence.',
     reconciliation,
     unpriced,
     exchange_exceptions: exchangeExceptions,
@@ -365,8 +366,7 @@ async function main() {
   const outputPath = option('--output');
   if (!outputPath) throw new Error('--output is required; detailed rows are private');
   const report = await buildReport(userId);
-  fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-  fs.chmodSync(outputPath, 0o600);
+  writePrivateReport(outputPath, report);
   process.stdout.write(`${JSON.stringify(report.summary)}\n`);
 }
 
@@ -377,4 +377,6 @@ if (require.main === module) {
   }).finally(() => pool.end().catch(() => {}));
 }
 
-module.exports = { buildReport, reviewBlocker, tableExists, unpricedReason };
+module.exports = {
+  buildReport, reviewBlocker, tableExists, unpricedReason, writePrivateReport,
+};

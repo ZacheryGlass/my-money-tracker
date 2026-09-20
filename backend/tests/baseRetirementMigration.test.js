@@ -16,6 +16,9 @@ const indexSql = indexMigration.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').tr
 const providerIdentityMigration = fs.readFileSync(
   path.join(__dirname, '..', 'migrations', '080_provider_evidence_identity.sql'), 'utf8'
 );
+const auditGenerationRetirement = fs.readFileSync(
+  path.join(__dirname, '..', 'migrations', '093_retire_moralis_audit_generation.sql'), 'utf8'
+).replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
 
 test('provider observation foreign keys are indexed before Base retirement', () => {
   assert.ok(path.basename(indexMigrationPath) < path.basename(migrationPath));
@@ -82,4 +85,21 @@ test('retired provider-page identity migration is safe on fresh installs', () =>
   assert.match(providerIdentityMigration, /IF to_regclass\('eth_provider_pages'\) IS NOT NULL/);
   assert.doesNotMatch(providerIdentityMigration, /^ALTER TABLE eth_provider_pages/m);
   assert.doesNotMatch(providerIdentityMigration, /^UPDATE eth_provider_pages/m);
+});
+
+test('provider-specific audit generation is retired on upgraded databases', () => {
+  assert.match(auditGenerationRetirement, /^BEGIN; .* COMMIT;$/);
+  const updateAt = auditGenerationRetirement.indexOf('UPDATE evm_audit_jobs');
+  const dropAt = auditGenerationRetirement.indexOf(
+    'ALTER TABLE evm_audit_jobs DROP COLUMN IF EXISTS moralis_credential_generation'
+  );
+  assert.ok(updateAt >= 0 && dropAt > updateAt);
+  assert.match(
+    auditGenerationRetirement,
+    /SET credential_generation = moralis_credential_generation/
+  );
+  assert.match(
+    auditGenerationRetirement,
+    /ALTER TABLE evm_audit_jobs DROP COLUMN IF EXISTS moralis_credential_generation/
+  );
 });

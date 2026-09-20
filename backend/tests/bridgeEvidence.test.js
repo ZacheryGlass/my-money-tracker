@@ -24,6 +24,11 @@ const pool = require('../src/config/database');
 const {
   endpointApplies, unsupportedMovement, excludedBaseMovement,
 } = BridgeMatchingService;
+const {
+  BASE_EXCLUSION_ENDPOINTS,
+  isVerifiedExcludedBaseMovement,
+  verifiedExcludedBaseMovementSql,
+} = require('../src/services/evmAudit/completionPolicy');
 const { buildFinalityBoundary } = require('../src/services/EtherscanService');
 
 const hash = (digit) => `0x${digit.repeat(64)}`;
@@ -962,6 +967,7 @@ test('Base exclusion evidence is explicit and does not match shared OP predeploy
   assert.equal(excluded.evidence.reason, 'excluded_counterparty_chain');
   assert.equal(excluded.evidence.excluded_chain_id, 8453);
   assert.equal(excluded.members.length, 1);
+  assert.equal(isVerifiedExcludedBaseMovement(excluded), true);
 
   for (const chainId of [10, 100, 137, 8453]) {
     assert.equal(excludedBaseMovement({ ...source, chain_id: chainId }, []), null,
@@ -980,6 +986,7 @@ test('Base exclusion evidence is explicit and does not match shared OP predeploy
   })]);
   assert.equal(across.protocol, 'across');
   assert.equal(across.evidence.reason, 'excluded_counterparty_chain');
+  assert.equal(isVerifiedExcludedBaseMovement(across), true);
   const acrossHex = excludedBaseMovement(envelope({
     chainId: 1, txHash: hash('9b'), category: 'bridge_out',
   }), [event({
@@ -987,6 +994,7 @@ test('Base exclusion evidence is explicit and does not match shared OP predeploy
     evidence: { identity_fields: { destination_chain_id: '0x2105' } },
   })]);
   assert.equal(acrossHex.evidence.excluded_chain_id, 8453);
+  assert.equal(isVerifiedExcludedBaseMovement(acrossHex), true);
   assert.equal(excludedBaseMovement(envelope({
     chainId: 10, txHash: hash('a'), category: 'bridge_out',
     tx: { to: '0x4200000000000000000000000000000000000010' },
@@ -994,6 +1002,110 @@ test('Base exclusion evidence is explicit and does not match shared OP predeploy
   assert.equal(excludedBaseMovement(envelope({
     chainId: 1, txHash: hash('c'), category: 'bridge_out',
   }), [event({ evidence: { identity_fields: { destination_chain_id: '10' } } })]), null);
+});
+
+test('Base scope validation rejects arbitrary endpoints and decoded identity drift', () => {
+  const endpoint = BASE_EXCLUSION_ENDPOINTS[1];
+  const endpointMovement = {
+    status: 'unsupported', verification_method: 'protocol_identity',
+    evidence: {
+      reason: 'excluded_counterparty_chain', excluded_chain_id: 8453,
+      source: {
+        type: 'source_backed_endpoint', chain_id: 1,
+        address: endpoint.address, name: endpoint.name, role: endpoint.role,
+        source_url: endpoint.source_url,
+      },
+      decoder_event: null,
+    },
+  };
+  assert.equal(isVerifiedExcludedBaseMovement(endpointMovement), true);
+  assert.equal(isVerifiedExcludedBaseMovement({
+    ...endpointMovement,
+    evidence: {
+      ...endpointMovement.evidence,
+      source: {
+        ...endpointMovement.evidence.source,
+        address: '0x1111111111111111111111111111111111111111',
+      },
+    },
+  }), false);
+
+  const decoded = {
+    status: 'unsupported', verification_method: 'protocol_identity',
+    evidence: {
+      reason: 'excluded_counterparty_chain', excluded_chain_id: 8453,
+      source: {
+        type: 'decoded_protocol_identity', protocol: 'across', family_version: 'v3',
+        correlation_key: 'across-v3:fixture',
+        identity_fields: { destination_chain_id: '8453', deposit_id: '17' },
+      },
+      decoder_event: {
+        protocol: 'across', family_version: 'v3', correlation_key: 'across-v3:fixture',
+        role: 'initiation',
+        evidence: { identity_fields: { destination_chain_id: '8453', deposit_id: '17' } },
+      },
+    },
+  };
+  assert.equal(isVerifiedExcludedBaseMovement(decoded), true);
+  for (const [field, value] of [
+    ['protocol', 'optimism'], ['family_version', 'bedrock'], ['correlation_key', 'other'],
+  ]) {
+    assert.equal(isVerifiedExcludedBaseMovement({
+      ...decoded,
+      evidence: {
+        ...decoded.evidence,
+        source: { ...decoded.evidence.source, [field]: value },
+      },
+    }), false);
+  }
+  assert.equal(isVerifiedExcludedBaseMovement({
+    ...decoded,
+    evidence: {
+      ...decoded.evidence,
+      source: {
+        ...decoded.evidence.source,
+        identity_fields: { destination_chain_id: '8453', deposit_id: '18' },
+      },
+    },
+  }), false);
+});
+
+test('bridge review accepts only the canonical numeric Base exclusion evidence', async () => {
+  const calls = [];
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rowCount: 0, rows: [] };
+    },
+  };
+
+  await EthActivityLink.syncBridgeReviewState(7, 'Synthetic unresolved bridge', client);
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].sql, /m\.status = 'unsupported'/);
+  assert.match(calls[1].sql, /m\.verification_method = 'protocol_identity'/);
+  assert.match(calls[1].sql, /m\.evidence->>'reason' = 'excluded_counterparty_chain'/);
+  assert.match(calls[1].sql, /m\.evidence->'excluded_chain_id' = '8453'::jsonb/);
+  for (const endpoint of BASE_EXCLUSION_ENDPOINTS) {
+    assert.ok(calls[1].sql.includes(endpoint.address));
+    assert.ok(calls[1].sql.includes(endpoint.name));
+  }
+  assert.match(calls[1].sql, /decoded_protocol_identity/);
+  assert.match(calls[1].sql, /m\.evidence->'decoder_event'/);
+  assert.match(calls[1].sql, /source'->>'protocol'.*=.*decoder_event'->>'protocol'/s);
+  assert.match(calls[1].sql, /source'->'identity_fields' = \(CASE WHEN/s);
+  for (const field of [
+    'destination_chain_id', 'origin_chain_id', 'source_chain_id',
+  ]) {
+    assert.match(calls[1].sql, new RegExp(`identity_fields'->'${field}'`));
+    assert.match(calls[1].sql, new RegExp(`hop'->'${field}'`));
+  }
+  assert.match(calls[1].sql, /IN \('8453', '0x2105'\)/);
+  assert.match(calls[1].sql, /source'.*= jsonb_build_object\(/s);
+  assert.equal(calls[1].sql.includes(verifiedExcludedBaseMovementSql('m')), true);
+  assert.equal(calls[1].params[0], 7);
+  assert.equal(calls[1].params[1], 'Synthetic unresolved bridge');
+  assert.equal(typeof calls[1].params[2], 'string');
 });
 
 test('Base activities cannot enter amount and time bridge suggestions', async (t) => {

@@ -11,6 +11,7 @@ require('dotenv').config();
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 const pool = require('../src/config/database');
+const { LATEST_JOB_BY_CHAIN_CTE } = require('../src/models/evmAuditReportSql');
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -303,29 +304,26 @@ async function buildReport(userId, archiveReportPath = null) {
   // aggregate-only so the public report never exposes addresses, hashes, or
   // provider request payloads, while still showing the exact capability that
   // blocks a completion claim.
-  const auditScopesAvailable = await tableExists('evm_audit_scopes');
+  const auditScopesAvailable = (await Promise.all([
+    'evm_audit_jobs', 'evm_audit_scopes', 'evm_nonce_audits', 'evm_balance_audits',
+  ].map((table) => tableExists(table)))).every(Boolean);
   const auditScopes = auditScopesAvailable
     ? await rows(
-      `WITH latest_jobs AS (
-         SELECT DISTINCT ON (j.subject_id)
-                j.id, j.subject_id, j.status AS job_status, j.mode, j.requested_at
-           FROM evm_audit_jobs j
-           JOIN evm_subjects s ON s.id = j.subject_id
-          WHERE s.user_id = $1
-          ORDER BY j.subject_id, j.requested_at DESC, j.id DESC
-       )
-       SELECT sc.chain_id, sc.provider, sc.capability, sc.status,
-              sc.pagination_exhausted, j.job_status, j.mode,
-              COUNT(*)::int AS rows,
+      `${LATEST_JOB_BY_CHAIN_CTE}
+       SELECT latest.chain_id, sc.provider, sc.capability, sc.status,
+              sc.pagination_exhausted, j.status AS job_status, j.mode,
+              COUNT(sc.id)::int AS rows,
               MIN(sc.requested_from_block) AS min_requested_from_block,
               MAX(sc.requested_through_block) AS max_requested_through_block,
               COUNT(*) FILTER (WHERE sc.status IN ('failed', 'deferred', 'unsupported'))::int AS gap_rows,
               COUNT(*) FILTER (WHERE sc.status = 'unverified')::int AS unverified_rows
-         FROM latest_jobs j
-         JOIN evm_audit_scopes sc ON sc.job_id = j.id
-        GROUP BY sc.chain_id, sc.provider, sc.capability, sc.status,
-                 sc.pagination_exhausted, j.job_status, j.mode
-        ORDER BY sc.chain_id, sc.capability, sc.provider, sc.status`,
+         FROM latest_job_by_chain latest
+         JOIN evm_audit_jobs j ON j.id = latest.job_id
+         LEFT JOIN evm_audit_scopes sc
+           ON sc.job_id = latest.job_id AND sc.chain_id = latest.chain_id
+        GROUP BY latest.chain_id, sc.provider, sc.capability, sc.status,
+                 sc.pagination_exhausted, j.status, j.mode
+        ORDER BY latest.chain_id, sc.capability, sc.provider, sc.status`,
       [userId]
     )
     : [];

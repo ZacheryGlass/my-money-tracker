@@ -8,8 +8,15 @@ process.env.DATABASE_URL = 'postgresql://test:test@localhost/test';
 
 const pool = require('../src/config/database');
 const {
-  buildReport, reviewBlocker, unpricedReason,
+  buildReport, reviewBlocker, unpricedReason, writePrivateReport,
 } = require('../scripts/report-evm-history-gaps');
+const {
+  writePrivateReport: completionPrivateWriter,
+} = require('../scripts/report-evm-completion');
+
+test('both detailed EVM reports share the strict private writer', () => {
+  assert.equal(writePrivateReport, completionPrivateWriter);
+});
 
 test('review blockers preserve notes, selector limits, and ownership decisions', () => {
   assert.equal(reviewBlocker({ override_note: 'Possibly mine' }), 'note_preserves_review_without_verdict');
@@ -45,6 +52,10 @@ test('the private gap report distinguishes every evidence-first bridge state', a
   };
 
   const report = await buildReport(7);
+  assert.equal(report.report_contract_version, 2);
+  assert.equal(report.summary.audit_scope_rows, 0);
+  assert.deepEqual(report.summary.audit_scope_by_status, {});
+  assert.deepEqual(report.audit_scopes, []);
   assert.equal(report.summary.bridge_evidence_model_available, true);
   assert.deepEqual(report.summary.bridge_movements_by_status, { pending: 1, unsupported: 1 });
   assert.equal(report.summary.bridge_suggestions, 2);

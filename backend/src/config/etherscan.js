@@ -9,8 +9,8 @@ const { DEFAULT_CHAIN_ID: CHAIN_ID } = require('./chains');
 // Free tier allows 5 req/s; space calls 250 ms apart (4 req/s) to stay under.
 // The spacing is an environment override so a provider plan can be tuned
 // without changing application code. Anonymous Blockscout limits are scoped
-// by outbound IP rather than wallet. Keep those calls at 40/minute so a long
-// multi-wallet scan does not exhaust a minute bucket even when the documented
+// by outbound IP rather than wallet. Keep those calls at 30/minute so a long
+// multi-wallet scan leaves headroom in a minute bucket even when the documented
 // per-instance default is more generous.
 function envMilliseconds(name, fallback) {
   const value = Number(process.env[name]);
@@ -18,7 +18,7 @@ function envMilliseconds(name, fallback) {
 }
 
 const REQUEST_SPACING_MS = envMilliseconds('ETHERSCAN_REQUEST_SPACING_MS', 250);
-const BLOCKSCOUT_REQUEST_SPACING_MS = envMilliseconds('BLOCKSCOUT_REQUEST_SPACING_MS', 1500);
+const BLOCKSCOUT_REQUEST_SPACING_MS = envMilliseconds('BLOCKSCOUT_REQUEST_SPACING_MS', 2000);
 const RPC_REQUEST_SPACING_MS = envMilliseconds('RPC_REQUEST_SPACING_MS', 250);
 // EtherscanService accepts endpoint-specific floors up to one minute. Retain
 // each host's completion timestamp through that whole window so a stricter

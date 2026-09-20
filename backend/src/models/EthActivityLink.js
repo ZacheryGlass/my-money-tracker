@@ -2,6 +2,9 @@
 
 const pool = require('../config/database');
 const { REVIEW_REASONS } = require('../utils/ethActivityVocabulary');
+const {
+  verifiedExcludedBaseMovementSql,
+} = require('../services/evmAudit/completionPolicy');
 
 // The cross-chain half of the activity layer: which bridge_out on chain A is
 // which bridge_in on chain B.
@@ -89,8 +92,7 @@ class EthActivityLink {
          AND mm.chain_id = a.chain_id
          AND mm.tx_hash = a.tx_hash
          AND m.user_id = $1
-         AND m.status = 'unsupported'
-         AND m.evidence->>'reason' = 'excluded_counterparty_chain'
+         AND ${verifiedExcludedBaseMovementSql('m')}
     )`;
 
     // The RESOLVED category, matching every other reader (EthActivity's

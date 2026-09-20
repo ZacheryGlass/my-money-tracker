@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const EvmAudit = require('../models/EvmAudit');
 const EthWallet = require('../models/EthWallet');
+const database = require('../config/database');
 const SecretsService = require('./SecretsService');
 const EthDerivedPipeline = require('./EthDerivedPipeline');
 const EtherscanService = require('./EtherscanService');
@@ -11,6 +12,7 @@ const logger = require('../config/logger');
 const MoralisClient = require('./evmAudit/MoralisClient');
 const RpcClient = require('./evmAudit/RpcClient');
 const normalizer = require('./evmAudit/normalizer');
+const { AUDIT_PROGRESS_CONTRACT } = require('./evmAudit/completionPolicy');
 const { effectsFromInternalObservations, effectsFromRpc } = require('./evmAudit/effectDecoder');
 
 const AUDIT_CAPABILITIES = [
@@ -19,20 +21,20 @@ const AUDIT_CAPABILITIES = [
   'token_balance', 'bridge', 'indexed_token_logs', 'receipt_verification',
 ];
 const AUDIT_CHAINS = new Map([
-  [1, { auditProvider: 'etherscan' }],
-  [10, { auditProvider: 'blockscout' }],
+  [1, { auditProvider: chains.accountApiHistoryProvider(1) }],
+  [10, { auditProvider: chains.accountApiHistoryProvider(10) }],
   [100, {
-    moralis: 'gnosis', fallbackProvider: 'blockscout',
+    moralis: 'gnosis', fallbackProvider: chains.accountApiHistoryProvider(100),
     activeIds: new Set(['0x64', '100', 'gnosis']),
   }],
-  [137, { auditProvider: 'etherscan' }],
+  [137, { auditProvider: chains.accountApiHistoryProvider(137) }],
   [324, {
-    auditProvider: 'blockscout',
-    errorDetail: 'Moralis does not enumerate zkSync Era; the configured Blockscout account feeds provide finite indexed coverage, while consensus RPC verifies mined transactions and effects.',
+    auditProvider: chains.accountApiHistoryProvider(324),
+    errorDetail: 'Moralis does not enumerate zkSync Era; the official ZKsync Explorer provides finite native/internal history and Blockscout provides finite token/NFT history, while consensus RPC verifies mined transactions and effects.',
   }],
-  [42161, { auditProvider: 'etherscan' }],
-  [42170, { auditProvider: 'blockscout' }],
-  [59144, { auditProvider: 'etherscan' }],
+  [42161, { auditProvider: chains.accountApiHistoryProvider(42161) }],
+  [42170, { auditProvider: chains.accountApiHistoryProvider(42170) }],
+  [59144, { auditProvider: chains.accountApiHistoryProvider(59144) }],
   [32401, {
     unsupported: true,
     errorCode: 'NON_EVM_CHAIN',
@@ -112,8 +114,81 @@ function activeRowMatches(row, config) {
   return candidates.some((value) => config.activeIds.has(value));
 }
 
-function configuredExplorerProvider(chainId) {
-  return String(chains.getChain(chainId)?.accountApi?.provider || 'Etherscan').toLowerCase();
+function hasRunnableExplorerFallback(requestedChains) {
+  const moralisChains = requestedChains
+    .map(Number)
+    .filter((chainId) => AUDIT_CHAINS.get(chainId)?.moralis);
+  return moralisChains.length > 0 && moralisChains.every((chainId) => (
+    AUDIT_CHAINS.get(chainId)?.fallbackProvider
+      && !chains.accountApiRequiresKey(chainId)
+  ));
+}
+
+async function requeueLegacyMoralisDeferral(job, requestedChains, userId) {
+  if (job?.status !== 'deferred'
+      || job.error_code !== 'MORALIS_NOT_CONFIGURED'
+      || !job.retry_after_at
+      || new Date(job.retry_after_at).getTime() <= Date.now()
+      || !hasRunnableExplorerFallback(requestedChains)) return job;
+
+  const { rows } = await database.query(
+    `UPDATE evm_audit_jobs
+        SET status = 'queued',
+            stage = 'queued',
+            retry_after_at = NULL,
+            error_code = NULL,
+            error_detail = NULL,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND user_id = $2
+        AND status = 'deferred'
+        AND error_code = 'MORALIS_NOT_CONFIGURED'
+        AND retry_after_at > CURRENT_TIMESTAMP
+    RETURNING *`,
+    [job.id, userId]
+  );
+  return rows[0] || job;
+}
+
+function explorerProviderFromError(chainId, error, fallbackAction = null) {
+  const configured = chains.accountApiProviders(chainId);
+  const declared = String(error?.auditProvider || error?.provider || '').toLowerCase();
+  if (configured.has(declared)) return declared;
+
+  const candidates = chains.accountApiRoutes(chainId);
+  const errorText = [
+    error?.message,
+    error?.provider,
+    error?.providerKey,
+    error?.config?.url,
+    error?.response?.config?.url,
+    error?.request?.host,
+    error?.cause?.message,
+    error?.cause?.config?.url,
+    error?.cause?.response?.config?.url,
+  ].filter(Boolean).join(' ').toLowerCase();
+  for (const candidate of candidates) {
+    let origin = '';
+    try {
+      origin = candidate.baseUrl ? new URL(candidate.baseUrl).origin.toLowerCase() : '';
+    } catch {
+      // A malformed configured URL is handled by the provider call itself.
+    }
+    if (errorText.includes(candidate.provider)
+        || (origin && errorText.includes(origin))) return candidate.provider;
+  }
+  return chains.accountApiProviderForAction(chainId, fallbackAction);
+}
+
+function auditProviderForError(chainId, error, fallbackAction = null) {
+  const code = String(error?.code || '');
+  if (code.startsWith('RPC_TRACE_')) return 'trace-rpc';
+  if (code.startsWith('RPC_')) return 'consensus-rpc';
+  if (code.startsWith('MORALIS_')) return 'moralis';
+  if (error?.auditProvider) return String(error.auditProvider).toLowerCase();
+  if (/^(?:BLOCKSCOUT_|ETHERSCAN_|ZKSYNC_EXPLORER_|EXPLORER_)/.test(code)) {
+    return explorerProviderFromError(chainId, error, fallbackAction);
+  }
+  return 'audit-worker';
 }
 
 function blockTag(blockNumber) {
@@ -160,7 +235,20 @@ function consensusRpcConfigured(chainId) {
 
 function moralisFallbackError(error) {
   if (!error) return null;
-  if (!['MORALIS_NOT_CONFIGURED', 'MORALIS_QUOTA_EXHAUSTED', 'MORALIS_AUTH_FAILED'].includes(error.code)) return null;
+  // Gnosis has an independent finite Blockscout history path. Any known
+  // Moralis provider failure should preserve its limitation and fall through
+  // to that path; lease, persistence and programming failures use non-Moralis
+  // codes and must still escape instead of being hidden by the fallback.
+  if (![
+    'MORALIS_NOT_CONFIGURED',
+    'MORALIS_QUOTA_EXHAUSTED',
+    'MORALIS_AUTH_FAILED',
+    'MORALIS_RATE_LIMITED',
+    'MORALIS_TRANSPORT_ERROR',
+    'MORALIS_API_ERROR',
+    'MORALIS_INVALID_RESPONSE',
+    'MORALIS_PAGINATION_STALLED',
+  ].includes(error.code)) return null;
   return {
     code: error.code,
     detail: error.message,
@@ -260,7 +348,7 @@ function reconcileEffects(canonical, legacy, address, chain) {
   }
   const matchedLegacy = new Set();
   const missing = [];
-  let ambiguous = 0;
+  const ambiguousEffects = [];
   for (const effect of canonical) {
     const exact = effectSignature(effect, address, chain);
     const exactRows = legacyByExact.get(exact) || [];
@@ -271,12 +359,26 @@ function reconcileEffects(canonical, legacy, address, chain) {
     }
     const economicRows = (legacyByEconomic.get(economicSignature(effect, address, chain)) || [])
       .filter((row) => !matchedLegacy.has(row.id));
-    if (economicRows.length) ambiguous += 1;
+    if (economicRows.length) ambiguousEffects.push(effect);
     else missing.push(effect);
   }
-  const extraLegacy = legacy.filter((row) => effectSignature(row, address, chain)
-    && !matchedLegacy.has(row.id)).length;
-  return { missing, ambiguous, extraLegacy, gaps: missing.length + ambiguous + extraLegacy };
+  const extraLegacyRows = legacy.filter((row) => effectSignature(row, address, chain)
+    && !matchedLegacy.has(row.id));
+  const nativeTypes = new Set(['native', 'gas', 'internal', 'native_credit']);
+  const unresolved = [...missing, ...ambiguousEffects, ...extraLegacyRows];
+  const nativeGaps = unresolved.filter((row) => {
+    const signature = effectSignature(row, address, chain);
+    return signature && nativeTypes.has(signature.split('|')[2]);
+  }).length;
+  const optionalGaps = unresolved.length - nativeGaps;
+  return {
+    missing,
+    ambiguous: ambiguousEffects.length,
+    extraLegacy: extraLegacyRows.length,
+    gaps: unresolved.length,
+    nativeGaps,
+    optionalGaps,
+  };
 }
 
 function unmatchedEffectCount(canonical, legacy, address, chain) {
@@ -299,7 +401,7 @@ function publicErrorDetail(error) {
   return String(error?.message || 'Audit failed').slice(0, 500);
 }
 
-function isBlockscoutTransient(error) {
+function isExplorerTransient(error) {
   const status = Number(error?.response?.status || error?.status);
   return [408, 425].includes(status)
     || (status >= 500 && status <= 599)
@@ -308,11 +410,17 @@ function isBlockscoutTransient(error) {
 }
 
 function explorerFailurePrefix(provider) {
-  return provider === 'blockscout' ? 'BLOCKSCOUT' : 'ETHERSCAN';
+  if (provider === 'consensus-rpc') return 'RPC';
+  if (provider === 'blockscout') return 'BLOCKSCOUT';
+  if (provider === 'zksync explorer') return 'ZKSYNC_EXPLORER';
+  return 'ETHERSCAN';
 }
 
 function explorerDisplayName(provider) {
-  return provider === 'blockscout' ? 'Blockscout' : 'Etherscan';
+  if (provider === 'consensus-rpc') return 'Consensus RPC';
+  if (provider === 'blockscout') return 'Blockscout';
+  if (provider === 'zksync explorer') return 'ZKsync Explorer';
+  return 'Etherscan';
 }
 
 function isStandingExplorerLimitation(error) {
@@ -326,6 +434,7 @@ function isStandingProviderLimitation(error) {
   return [
     'BLOCKSCOUT_FEED_UNSUPPORTED', 'BLOCKSCOUT_CHAIN_UNAVAILABLE',
     'ETHERSCAN_FEED_UNSUPPORTED', 'ETHERSCAN_CHAIN_UNAVAILABLE',
+    'ZKSYNC_EXPLORER_FEED_UNSUPPORTED', 'ZKSYNC_EXPLORER_CHAIN_UNAVAILABLE',
     'RPC_LOG_ENUMERATION_UNSUPPORTED', 'RPC_TRACE_ENUMERATION_UNSUPPORTED',
     'RPC_TRACE_REWARD_UNSUPPORTED',
   ].includes(error?.code)
@@ -354,29 +463,25 @@ class EvmAuditService {
     if (!wallet) return null;
     const selected = (requestedChains || this.configuredChainIds())
       .map(Number).filter((chainId) => AUDIT_CHAINS.has(chainId));
-    const credentialGenerations = await EvmAudit.credentialGenerations(userId);
-    const credentialGeneration = [credentialGenerations.moralis]
-      .filter(Boolean)
-      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
-    // Resolve without logging or returning credentials. This also detects a
-    // newly entered indexed-provider key so a missing-key deferral can be
-    // reopened without exposing either secret.
-    const etherscanConfigured = Boolean(await SecretsService.getUserKey(userId, 'etherscan'));
+    const credentialGeneration = await EvmAudit.credentialGeneration(userId);
+    // Resolve without logging or returning the credential. Moralis key
+    // changes are detected from the encrypted row's generation above; only
+    // Etherscan needs a direct presence check for its legacy deferral code.
+    const etherscanKey = await SecretsService.getUserKey(userId, 'etherscan');
+    const etherscanConfigured = Boolean(etherscanKey);
     const rpcConfigurationReady = selected
       .filter((chainId) => !AUDIT_CHAINS.get(chainId).unsupported)
       .every((chainId) => consensusRpcConfigured(chainId));
     const result = await EvmAudit.createOrFindActiveJob(userId, wallet, {
       mode,
       requestedChains: [...new Set(selected)],
-      requestedProviders: Object.fromEntries([...new Set(selected)].map((chainId) => {
-        const config = AUDIT_CHAINS.get(chainId);
-        return [chainId, config.moralis ? 'moralis' : config.auditProvider || 'consensus-rpc'];
-      })),
       credentialGeneration,
-      credentialGenerations,
       etherscanConfigured,
       rpcConfigurationReady,
     });
+    result.job = await requeueLegacyMoralisDeferral(
+      result.job, result.job.requested_chains || selected, userId
+    );
     if (result.job.status !== 'deferred') this.enqueue(result.job.id);
     return result;
   }
@@ -464,24 +569,19 @@ class EvmAuditService {
       if (moralisRequested.length) {
         key = await SecretsService.getUserKey(job.user_id, 'moralis');
         if (!key) {
-        moralisUnavailable = moralisFallbackError({
-          code: 'MORALIS_NOT_CONFIGURED',
-          message: 'Configure a Moralis API key in Settings to audit Gnosis Chain.',
+          moralisUnavailable = moralisFallbackError({
+            code: 'MORALIS_NOT_CONFIGURED',
+            message: 'Moralis active-chain discovery is not configured; using the free Gnosis Blockscout fallback.',
           });
         }
       }
-      const credentialGenerations = await EvmAudit.credentialGenerations(job.user_id);
-      const providerCredentialChanged = [
-        { name: 'moralis', requested: moralisRequested.length > 0 },
-      ].some(({ name, requested }) => {
-        if (!requested) return false;
-        const current = credentialGenerations[name] || null;
-        const stored = job[`${name}_credential_generation`]
-          || (moralisRequested.length === 1
-            ? job.credential_generation : null);
-        return stored == null ? current != null
-          : current == null || new Date(stored).getTime() !== new Date(current).getTime();
-      });
+      const currentCredentialGeneration = await EvmAudit.credentialGeneration(job.user_id);
+      const storedCredentialGeneration = job.credential_generation || null;
+      const providerCredentialChanged = moralisRequested.length > 0
+        && (storedCredentialGeneration == null ? currentCredentialGeneration != null
+          : currentCredentialGeneration == null
+            || new Date(storedCredentialGeneration).getTime()
+              !== new Date(currentCredentialGeneration).getTime());
       if (providerCredentialChanged) {
         return EvmAudit.finish(jobId, OWNER, 'failed', {
           errorCode: 'CREDENTIAL_GENERATION_CHANGED',
@@ -521,9 +621,9 @@ class EvmAuditService {
         } catch (error) {
           moralisUnavailable = moralisFallbackError(error);
           if (!moralisUnavailable) throw error;
-          // A quota exhaustion is a provider limitation, not evidence that the
-          // wallet has no history. Preserve the failed discovery attempt and
-          // let chains with a configured explorer fallback proceed.
+          // A provider failure is not evidence that the wallet has no history.
+          // Preserve the failed discovery attempt and let chains with an
+          // independent configured explorer fallback proceed.
           moralis = null;
         }
       }
@@ -546,16 +646,22 @@ class EvmAuditService {
         if (config.moralis && moralisUnavailable) {
           return {
             chain_id: chainId, active_hint: null, bounded: false,
-            status: 'deferred', source: 'moralis',
-            error_code: moralisUnavailable.code,
-            error_detail: moralisUnavailable.detail,
+            status: 'configured', source: config.fallbackProvider,
+            active_discovery: {
+              status: 'deferred', source: 'moralis',
+              error_code: moralisUnavailable.code,
+              error_detail: moralisUnavailable.detail,
+            },
             fallback_source: config.fallbackProvider || null,
           };
         }
         if (config.auditProvider) {
+          const source = chains.accountApiHistoryProvider(chainId);
           return {
             chain_id: chainId, active_hint: null, bounded: false,
-            status: 'configured', source: configuredExplorerProvider(chainId),
+            status: 'configured', source,
+            source_providers: [...chains.accountApiProviders(chainId)].sort(),
+            provider_by_capability: chains.accountApiProviderManifest(chainId),
             detail: config.errorDetail,
           };
         }
@@ -611,7 +717,7 @@ class EvmAuditService {
           });
         } else if (chains.accountApiRequiresKey(chainId) && !explorerApiKey) {
           unavailable.push({
-            chainId, provider: configuredExplorerProvider(chainId),
+            chainId, provider: chains.accountApiProviderForAction(chainId),
             error: {
               code: 'ETHERSCAN_NOT_CONFIGURED',
               detail: 'Configure an Etherscan API key to audit this configured chain.',
@@ -626,8 +732,12 @@ class EvmAuditService {
         gaps += await this.runUnavailableChain({ job, chainId: item.chainId,
           provider: item.provider, error: item.error, owner: OWNER });
       }
-      let providerDeferred = Boolean(moralisUnavailable || unavailable.length);
-      let deferredProviderError = moralisUnavailable;
+      // A configured finite-history fallback can finish the requested chain
+      // even when Moralis discovery is unavailable. Preserve that limitation
+      // in its scope/discovery evidence, but only defer the whole job when no
+      // runnable history provider exists or the fallback itself defers.
+      let providerDeferred = unavailable.length > 0;
+      let deferredProviderError = unavailable[0]?.error || null;
       let unsupportedProviderError = null;
       for (const chainId of runnable) {
         assertLease(leaseState);
@@ -651,12 +761,13 @@ class EvmAuditService {
               'RPC_TRACE_SCAN_BUDGET_EXHAUSTED',
               'BLOCKSCOUT_RATE_LIMITED', 'BLOCKSCOUT_TRANSPORT_ERROR',
               'ETHERSCAN_RATE_LIMITED', 'ETHERSCAN_TRANSPORT_ERROR',
+              'ZKSYNC_EXPLORER_RATE_LIMITED', 'ZKSYNC_EXPLORER_TRANSPORT_ERROR',
             ].includes(error.code);
           const chainDetail = publicErrorDetail(error);
           await EvmAudit.deferOpenScopes(job.id, chainId, {
             errorCode: error.code || 'EVM_CHAIN_AUDIT_FAILED',
             errorDetail: chainDetail,
-            provider: AUDIT_CHAINS.get(chainId).auditProvider || 'consensus-rpc',
+            provider: auditProviderForError(chainId, error),
             scopeStatus: standing ? 'unsupported' : deferred ? 'deferred' : 'failed',
             capabilities: AUDIT_CAPABILITIES,
           }, { jobId: job.id, owner: OWNER });
@@ -713,17 +824,20 @@ class EvmAuditService {
         'RPC_LOG_SCAN_BUDGET_EXHAUSTED', 'BLOCKSCOUT_RATE_LIMITED',
         'RPC_TRACE_SCAN_BUDGET_EXHAUSTED',
         'BLOCKSCOUT_TRANSPORT_ERROR', 'ETHERSCAN_RATE_LIMITED',
-        'ETHERSCAN_TRANSPORT_ERROR',
+        'ETHERSCAN_TRANSPORT_ERROR', 'ZKSYNC_EXPLORER_RATE_LIMITED',
+        'ZKSYNC_EXPLORER_TRANSPORT_ERROR',
       ]
         .includes(error.code);
       const errorCode = String(error.code || '');
       const provider = errorCode.startsWith('MORALIS_') ? 'moralis'
         : errorCode.startsWith('RPC_TRACE_') ? 'trace-rpc'
           : errorCode.startsWith('RPC_') ? 'consensus-rpc'
-          : errorCode.startsWith('ETHERSCAN_') ? 'etherscan' : 'blockscout';
+          : errorCode.startsWith('ETHERSCAN_') ? 'etherscan'
+            : errorCode.startsWith('ZKSYNC_EXPLORER_') ? 'zksync explorer' : 'blockscout';
       let failureEvidenceUnjournaled = false;
       if (errorCode.startsWith('MORALIS_') || errorCode.startsWith('RPC_')
-          || errorCode.startsWith('BLOCKSCOUT_') || errorCode.startsWith('ETHERSCAN_')) {
+          || errorCode.startsWith('BLOCKSCOUT_') || errorCode.startsWith('ETHERSCAN_')
+          || errorCode.startsWith('ZKSYNC_EXPLORER_')) {
         try {
           await EvmAudit.recordProviderAttempt({
             jobId, provider,
@@ -788,7 +902,8 @@ class EvmAuditService {
     const providerConfig = AUDIT_CHAINS.get(chainId);
     const useMoralis = Boolean(providerConfig.moralis && moralis);
     const auditProvider = useMoralis ? 'moralis'
-      : (providerConfig.moralis ? providerConfig.fallbackProvider : providerConfig.auditProvider);
+      : (providerConfig.moralis
+        ? providerConfig.fallbackProvider : chains.accountApiHistoryProvider(chainId));
     const rpc = new RpcClient(chainId, { onFailedAttempt: retainAttempt });
     // A parity-style trace endpoint is optional and must be configured
     // separately from consensus RPC. Most public consensus endpoints reject
@@ -879,9 +994,9 @@ class EvmAuditService {
       try {
         indexedBoundary = await EtherscanService.coverageBoundary(explorerApiKey, chainId);
       } catch (error) {
-        const transient = isBlockscoutTransient(error);
+        const transient = isExplorerTransient(error);
         const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
-        const boundaryProvider = configuredExplorerProvider(chainId);
+        const boundaryProvider = auditProviderForError(chainId, error, 'getblockreward');
         const prefix = explorerFailurePrefix(boundaryProvider);
         const name = explorerDisplayName(boundaryProvider);
         const wrapped = new Error(`${name} indexed boundary failed: ${publicErrorDetail(error)}`);
@@ -891,6 +1006,7 @@ class EvmAuditService {
               : `${prefix}_BOUNDARY_FAILED`;
         wrapped.httpStatus = error.response?.status || error.httpStatus || null;
         wrapped.retryAt = transient ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
+        wrapped.auditProvider = boundaryProvider;
         await recordProviderAttempt({
           jobId: job.id, scopeId: activeScope.id, provider: boundaryProvider,
           endpoint: 'indexed-boundary', requestParams: { chain_id: chainId },
@@ -904,6 +1020,15 @@ class EvmAuditService {
       ? boundary.number : Math.min(boundary.number, indexedBoundary.throughBlock);
     const nativeCreditThroughBlock = chain?.stateSyncDeposits && indexedBoundary
       ? Math.min(boundary.number, indexedBoundary.throughBlock) : null;
+    const canonicalHashAt = async (number) => {
+      if (number === boundary.number) return boundary.hash;
+      const checked = await rpc.blockByNumberWithEvidence(blockTag(number));
+      return String(checked.value.hash).toLowerCase();
+    };
+    const sourceThroughHash = await canonicalHashAt(sourceThroughBlock);
+    const nativeCreditThroughHash = nativeCreditThroughBlock == null
+      ? null : (nativeCreditThroughBlock === sourceThroughBlock
+        ? sourceThroughHash : await canonicalHashAt(nativeCreditThroughBlock));
     const prior = job.mode === 'incremental'
       ? await EvmAudit.latestCoverage(job.subject_id, chainId, auditProvider, 'wallet_history')
       : null;
@@ -911,7 +1036,7 @@ class EvmAuditService {
     const historyScope = await upsertScope({
       chainId, provider: auditProvider, capability: 'wallet_history', status: 'running',
       fromBlock, throughBlock: sourceThroughBlock,
-      throughHash: useMoralis ? boundary.hash : null,
+      throughHash: sourceThroughHash,
     });
     const fallbackAfterMoralis = async (error, scopeId) => {
       const deferredError = moralisFallbackError(error);
@@ -928,8 +1053,8 @@ class EvmAuditService {
       });
       return {
         ...fallbackResult,
-        deferred: true,
-        deferredProviderError: deferredError,
+        deferred: fallbackResult.deferred,
+        deferredProviderError: fallbackResult.deferredProviderError,
       };
     };
     const hashes = new Set();
@@ -941,8 +1066,9 @@ class EvmAuditService {
     for (const observation of durableObservations) {
       if (observation.tx_hash) hashes.add(String(observation.tx_hash).toLowerCase());
       if (observation.tx_hash
-          && !['consensus-rpc', 'moralis', configuredExplorerProvider(chainId)]
-            .includes(String(observation.provider).toLowerCase())) {
+          && !new Set([
+            'consensus-rpc', 'moralis', ...chains.accountApiProviders(chainId),
+          ]).has(String(observation.provider).toLowerCase())) {
         moralisLookupHashes.add(String(observation.tx_hash).toLowerCase());
       }
     }
@@ -956,19 +1082,25 @@ class EvmAuditService {
         try {
           next = await iterator.next();
         } catch (error) {
-          const transient = isBlockscoutTransient(error);
+          const transient = isExplorerTransient(error);
           const rateLimited = error.code === 'EXPLORER_RATE_LIMITED';
           const unsupported = isStandingExplorerLimitation(error);
-          const prefix = explorerFailurePrefix(provider);
-          const wrapped = new Error(`${explorerDisplayName(provider)} ${feed} audit feed failed: ${publicErrorDetail(error)}`);
+          // The iterator is already bound to `provider`. Override it only
+          // when a nested dependency (for example Blockscout trace hydration
+          // through consensus RPC) explicitly identifies itself.
+          const failureProvider = error.auditProvider
+            ? auditProviderForError(chainId, error) : provider;
+          const prefix = explorerFailurePrefix(failureProvider);
+          const wrapped = new Error(`${explorerDisplayName(failureProvider)} ${feed} audit feed failed: ${publicErrorDetail(error)}`);
           wrapped.code = rateLimited ? `${prefix}_RATE_LIMITED`
             : transient ? `${prefix}_TRANSPORT_ERROR`
               : unsupported ? `${prefix}_FEED_UNSUPPORTED` : `${prefix}_FEED_FAILED`;
           wrapped.httpStatus = error.response?.status || error.httpStatus || null;
           wrapped.retryAt = transient
             ? new Date(Date.now() + (rateLimited ? 60 * 60 * 1000 : 60 * 1000)) : null;
+          wrapped.auditProvider = failureProvider;
           await recordProviderAttempt({
-            scopeId: scope.id, provider, endpoint,
+            scopeId: scope.id, provider: failureProvider, endpoint,
             requestParams: {
               address: job.address,
               from_block: scope.requested_from_block,
@@ -1004,12 +1136,13 @@ class EvmAuditService {
     };
     const scanNativeCredits = async () => {
       const nativeCreditConfig = chain?.stateSyncDeposits;
-      const nativeCreditProvider = configuredExplorerProvider(chainId);
+      const nativeCreditProvider = chains.accountApiProviderForAction(chainId);
       explorerProviders.add(nativeCreditProvider);
       const throughBlock = nativeCreditThroughBlock ?? sourceThroughBlock;
       const nativeCreditScope = await upsertScope({
         chainId, provider: nativeCreditProvider, capability: 'native_credit', status: 'running',
-        fromBlock: 0, throughBlock, throughHash: null,
+        fromBlock: 0, throughBlock,
+        throughHash: nativeCreditThroughHash || sourceThroughHash,
       });
       if (!nativeCreditConfig) {
         await commitPage(nativeCreditScope.id, pageRecord(
@@ -1033,7 +1166,8 @@ class EvmAuditService {
       await acceptCoverage({
         subjectId: job.subject_id, chainId, provider: nativeCreditProvider,
         capability: 'native_credit', fromBlock: 0, throughBlock,
-        throughHash: null, paginationExhausted: true, status: 'complete', jobId: job.id,
+        throughHash: nativeCreditThroughHash || sourceThroughHash,
+        paginationExhausted: true, status: 'complete', jobId: job.id,
       });
     };
     if (useMoralis) {
@@ -1077,7 +1211,7 @@ class EvmAuditService {
     } else {
       for (const feedSpec of EXPLORER_FEEDS) {
         assertLease(leaseState);
-        const feedProvider = configuredExplorerProvider(chainId);
+        const feedProvider = chains.accountApiProviderForAction(chainId, feedSpec.action);
         explorerProviders.add(feedProvider);
         const feedPrior = job.mode === 'incremental'
           ? await EvmAudit.latestCoverage(job.subject_id, chainId, feedProvider, feedSpec.capability)
@@ -1086,7 +1220,8 @@ class EvmAuditService {
           ? Math.max(0, Number(feedPrior.through_block) - OVERLAP_BLOCKS) : 0;
         const feedScope = await upsertScope({
           chainId, provider: feedProvider, capability: feedSpec.capability, status: 'running',
-          fromBlock: feedFromBlock, throughBlock: sourceThroughBlock, throughHash: null,
+          fromBlock: feedFromBlock, throughBlock: sourceThroughBlock,
+          throughHash: sourceThroughHash,
         });
         await persistExplorerPages(feedScope, feedProvider, feedSpec.feed, `account-${feedSpec.feed}`,
           EtherscanService.accountFeedPages(
@@ -1098,7 +1233,7 @@ class EvmAuditService {
         await acceptCoverage({
           subjectId: job.subject_id, chainId, provider: feedProvider,
           capability: feedSpec.capability, fromBlock: feedFromBlock,
-          throughBlock: sourceThroughBlock, throughHash: null,
+          throughBlock: sourceThroughBlock, throughHash: sourceThroughHash,
           paginationExhausted: true, status: 'complete', jobId: job.id,
         });
       }
@@ -1114,6 +1249,10 @@ class EvmAuditService {
         discoveredChain.bounded = true;
         discoveredChain.status = 'bounded';
         discoveredChain.source = auditProvider;
+        discoveredChain.source_providers = [...explorerProviders]
+          .filter((provider) => provider !== 'explorer-composite')
+          .sort();
+        discoveredChain.provider_by_capability = chains.accountApiProviderManifest(chainId);
         if (moralisUnavailable) {
           discoveredChain.active_discovery = {
             status: 'deferred', source: 'moralis',
@@ -1129,7 +1268,7 @@ class EvmAuditService {
       await completeScope(historyScope.id, { status: 'complete', paginationExhausted: true });
       await acceptCoverage({
         subjectId: job.subject_id, chainId, provider: auditProvider, capability: 'wallet_history',
-        fromBlock, throughBlock: sourceThroughBlock, throughHash: null,
+        fromBlock, throughBlock: sourceThroughBlock, throughHash: sourceThroughHash,
         paginationExhausted: true, status: 'complete', jobId: job.id,
       });
     }
@@ -1621,8 +1760,12 @@ class EvmAuditService {
     // Legacy rows may have the right economics but no immutable log index.
     // Upgrade only the independently corroborated receipt effects before the
     // strict reconciliation pass; unresolved economic matches remain gaps.
+    const indexedIdentityProviders = [
+      'moralis', ...chains.accountApiProviders(chainId),
+    ];
     const identityRepair = await EvmAudit.repairCorroboratedTransferIdentities(
-      job.id, job.user_id, job.subject_id, chainId, boundary.number, writeFence
+      job.id, job.user_id, job.subject_id, chainId, boundary.number,
+      indexedIdentityProviders, writeFence
     );
     legacyRows = await EvmAudit.storedTransferRows(
       job.user_id, job.subject_id, chainId, boundary.number
@@ -1650,7 +1793,11 @@ class EvmAuditService {
     }
 
     const transactions = await EvmAudit.canonicalTransactions(job.subject_id, chainId);
-    const transactionConflicts = await EvmAudit.transactionConflictCount(job.subject_id, chainId);
+    const transactionConflictCounts = await EvmAudit.transactionConflictCounts(
+      job.subject_id, chainId
+    );
+    const transactionConflicts = transactionConflictCounts.native
+      + transactionConflictCounts.optional;
     await heartbeat(undefined, 'nonce_verification');
     const codeEvidence = await rpc.codeWithEvidence(job.address, boundary.numberHex);
     await commitPage(nonceScope.id, rpcPageRecord(
@@ -1865,14 +2012,21 @@ class EvmAuditService {
             : null,
     });
 
+    const nativeImpactHashes = new Set(canonicalEffects
+      .filter((effect) => ['native', 'gas', 'internal', 'native_credit']
+        .includes(effect.effect_type))
+      .map((effect) => effect.tx_hash));
+    for (const transaction of transactions) {
+      if (transaction.signedness === 'user_signed') nativeImpactHashes.add(transaction.tx_hash);
+    }
     let activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
-    let missingActivity = transactions.filter((row) => !activityHashes.has(row.tx_hash)).length;
+    let missingTransactions = transactions.filter((row) => !activityHashes.has(row.tx_hash));
     // Canonical transactions can be discovered without any wallet leg (for
     // example, an externally signed zero-value contract call). In that case no
     // effect backfill runs, but the derived activity table still needs one
     // serialized rebuild before the audit can claim every mined transaction is
     // explained.
-    if (missingActivity > 0) {
+    if (missingTransactions.length > 0) {
       await EthDerivedPipeline.serializedForUser(job.user_id, async () => {
         await EthDerivedPipeline.rebuildWallet(job.requested_wallet_id);
         await EthDerivedPipeline.finishUser(job.user_id, {
@@ -1880,14 +2034,25 @@ class EvmAuditService {
         });
       });
       activityHashes = await EvmAudit.activityTxHashes(job.user_id, job.subject_id, chainId, boundary.number);
-      missingActivity = transactions.filter((row) => !activityHashes.has(row.tx_hash)).length;
+      missingTransactions = transactions.filter((row) => !activityHashes.has(row.tx_hash));
     }
+    const missingNativeActivity = missingTransactions.filter(
+      (row) => nativeImpactHashes.has(row.tx_hash)
+    ).length;
+    const missingOptionalActivity = missingTransactions.length - missingNativeActivity;
+    const missingActivity = missingTransactions.length;
     await heartbeat(undefined, 'bridge_reconciliation');
     const bridgeAudit = await EvmAudit.bridgeAudit(
       job.user_id, job.subject_id, chainId, boundary.number
     );
     const unresolvedBridges = bridgeAudit.unresolved.length;
-    const provisionalEffects = await EvmAudit.provisionalEffectCount(job.subject_id, chainId);
+    const nativeEffectTypes = ['native', 'gas', 'internal', 'native_credit'];
+    const optionalEffectTypes = ['erc20', 'erc721', 'erc1155'];
+    const [provisionalNativeEffects, provisionalOptionalEffects] = await Promise.all([
+      EvmAudit.provisionalEffectCount(job.subject_id, chainId, nativeEffectTypes),
+      EvmAudit.provisionalEffectCount(job.subject_id, chainId, optionalEffectTypes),
+    ]);
+    const provisionalEffects = provisionalNativeEffects + provisionalOptionalEffects;
     const unmatchedEffects = effectReconciliation.gaps;
     const capabilityGaps = await EvmAudit.requiredScopeGapCount(job.id, chainId);
     // These scopes are deliberately non-complete proofs today: receipts verify
@@ -1910,10 +2075,14 @@ class EvmAuditService {
     await EvmAudit.heartbeat(job.id, OWNER, {
       progress: {
         [`chain_${chainId}`]: {
+          contract_version: AUDIT_PROGRESS_CONTRACT.version,
           boundary_block: boundary.number,
           transactions: transactions.length,
+          native_relevant_transactions: nativeImpactHashes.size,
           provider_lookup_gaps: providerLookupGaps,
           transaction_conflicts: transactionConflicts,
+          transaction_native_conflicts: transactionConflictCounts.native,
+          transaction_optional_conflicts: transactionConflictCounts.optional,
           capability_gaps: capabilityGaps,
           nonce_gaps: nonceGapCount,
           native_balance_match: delta === 0n,
@@ -1941,9 +2110,15 @@ class EvmAuditService {
           credential_feed_error: null,
           corroborated_identity_repairs: identityRepair.repaired,
           missing_activity: missingActivity,
+          missing_native_activity: missingNativeActivity,
+          missing_optional_activity: missingOptionalActivity,
           unresolved_bridges: bridgeAudit.unresolved,
           provisional_effects: provisionalEffects,
+          provisional_native_effects: provisionalNativeEffects,
+          provisional_optional_effects: provisionalOptionalEffects,
           unmatched_effects: unmatchedEffects,
+          unmatched_native_effects: effectReconciliation.nativeGaps,
+          unmatched_optional_effects: effectReconciliation.optionalGaps,
           unsupported_capabilities: [],
         },
       },
@@ -1964,5 +2139,7 @@ module.exports._missingRanges = missingRanges;
 module.exports._unmatchedEffectCount = unmatchedEffectCount;
 module.exports._historicalTokenPlan = buildHistoricalTokenPlan;
 module.exports._mergeObservedTokenUniverse = mergeObservedTokenUniverse;
-module.exports._isBlockscoutTransient = isBlockscoutTransient;
+module.exports._isExplorerTransient = isExplorerTransient;
 module.exports._isStandingExplorerLimitation = isStandingExplorerLimitation;
+module.exports._explorerProviderFromError = explorerProviderFromError;
+module.exports._auditProviderForError = auditProviderForError;

@@ -95,6 +95,39 @@ class EthWalletChain {
     return result.rows[0];
   }
 
+  // A feed's coverage proof belongs to the provider and cursor kind that
+  // enumerated it. When that route changes, replay only those feeds from
+  // genesis; unrelated feeds keep their independently proven cursors.
+  static async resetFeedCursors(walletId, chainId, feeds) {
+    const allowed = new Set([
+      'normal', 'internal', 'token', 'nft', 'nft1155', 'statesync',
+    ]);
+    const selected = [...new Set(feeds || [])];
+    if (!selected.length || selected.some((feed) => !allowed.has(feed))) {
+      throw new Error('EthWalletChain.resetFeedCursors requires known feed names');
+    }
+    const result = await pool.query(
+      `UPDATE eth_wallet_chains
+          SET last_block_normal = CASE
+                WHEN 'normal' = ANY($3::text[]) THEN 0 ELSE last_block_normal END,
+              last_block_internal = CASE
+                WHEN 'internal' = ANY($3::text[]) THEN 0 ELSE last_block_internal END,
+              last_block_token = CASE
+                WHEN 'token' = ANY($3::text[]) THEN 0 ELSE last_block_token END,
+              last_block_nft = CASE
+                WHEN 'nft' = ANY($3::text[]) THEN 0 ELSE last_block_nft END,
+              last_block_1155 = CASE
+                WHEN 'nft1155' = ANY($3::text[]) THEN 0 ELSE last_block_1155 END,
+              last_block_statesync = CASE
+                WHEN 'statesync' = ANY($3::text[]) THEN 0 ELSE last_block_statesync END,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE wallet_id = $1 AND chain_id = $2
+        RETURNING *`,
+      [walletId, chainId, selected]
+    );
+    return result.rows[0];
+  }
+
   // Every stored chain for the wallet, INCLUDING chains that are no longer
   // enabled. Callers that clean up derived data depend on seeing those: a
   // disabled chain's rows must be left alone, and they can only be left alone

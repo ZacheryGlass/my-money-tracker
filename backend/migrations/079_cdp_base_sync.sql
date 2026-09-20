@@ -1,7 +1,7 @@
 -- 079: generic provider-order and source-coverage metadata.
 --
--- The historical provider-specific implementation was retired by migration
--- 082. Keep only the metadata used by the generic EVM evidence model so a
+-- The historical provider-specific implementation was retired by migrations
+-- 082 and 093. Keep only the metadata used by the generic EVM evidence model so a
 -- fresh install and an upgraded database have the same shape.
 
 ALTER TABLE evm_audit_scopes

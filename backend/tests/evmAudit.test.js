@@ -8,7 +8,9 @@ const normalizer = require('../src/services/evmAudit/normalizer');
 const MoralisClient = require('../src/services/evmAudit/MoralisClient');
 const RpcClient = require('../src/services/evmAudit/RpcClient');
 const EvmAuditService = require('../src/services/EvmAuditService');
+const EtherscanService = require('../src/services/EtherscanService');
 const EvmAudit = require('../src/models/EvmAudit');
+const EthWallet = require('../src/models/EthWallet');
 const SecretsService = require('../src/services/SecretsService');
 const database = require('../src/config/database');
 const {
@@ -18,6 +20,9 @@ const chains = require('../src/config/chains');
 const {
   matchesLegacyTransfer, matchesIndexedTransfer,
 } = require('../src/services/evmAudit/corroboratedIdentity');
+const {
+  BASE_EXCLUSION_ENDPOINTS, INDEPENDENT_ENUMERATION_PROVIDERS,
+} = require('../src/services/evmAudit/completionPolicy');
 
 const WALLET = '0x1111111111111111111111111111111111111111';
 const OTHER = '0x2222222222222222222222222222222222222222';
@@ -36,6 +41,43 @@ const context = (chainId = 10) => ({
   chain: chains.getChain(chainId),
 });
 
+function gnosisWorkerHarness(t, runChain, { userKey = null, activeChains = null } = {}) {
+  const job = {
+    id: 71, user_id: 1, subject_id: 3, requested_wallet_id: 5,
+    requested_chains: [100], address: WALLET, mode: 'full',
+    credential_generation: null,
+  };
+  const discoveredSnapshots = [];
+  const finishes = [];
+  const deferredScopes = [];
+  t.mock.method(EvmAudit, 'acquireRunLock', async () => ({ id: 'fixture-lock' }));
+  t.mock.method(EvmAudit, 'releaseRunLock', async () => {});
+  t.mock.method(EvmAudit, 'claim', async () => true);
+  t.mock.method(EvmAudit, 'findById', async () => job);
+  t.mock.method(EvmAudit, 'heartbeat', async () => true);
+  t.mock.method(EvmAudit, 'credentialGeneration', async () => null);
+  t.mock.method(EvmAudit, 'setDiscoveredChains', async (_jobId, _owner, rows) => {
+    discoveredSnapshots.push(structuredClone(rows));
+  });
+  t.mock.method(EvmAudit, 'deferOpenScopes', async (...args) => {
+    deferredScopes.push(args);
+  });
+  t.mock.method(EvmAudit, 'finish', async (_jobId, _owner, status, options) => {
+    const result = { status, ...options };
+    finishes.push(result);
+    return result;
+  });
+  t.mock.method(SecretsService, 'getUserKey', async () => userKey);
+  if (activeChains) t.mock.method(MoralisClient.prototype, 'activeChains', activeChains);
+  t.mock.method(EvmAuditService, 'runChain', runChain);
+  return {
+    execute: () => EvmAuditService.run(job.id),
+    discoveredSnapshots,
+    finishes,
+    deferredScopes,
+  };
+}
+
 test('history audit enumerates every configured chain', () => {
   const original = process.env.ETH_CHAINS;
   try {
@@ -52,12 +94,257 @@ test('history audit enumerates every configured chain', () => {
   }
 });
 
-test('Moralis quota fallback remains visibly deferred and never marks discovery complete', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
-  assert.match(source, /status: 'deferred', source: 'moralis'/);
-  assert.match(source, /active_discovery = \{/);
-  assert.match(source, /key && moralisRequested\.length/);
-  assert.match(source, /let providerDeferred = Boolean\(moralisUnavailable \|\| unavailable\.length\)/);
+test('bridge audit treats only exact excluded-Base evidence as a scoped limitation', async (t) => {
+  const baseEvidence = {
+    reason: 'excluded_counterparty_chain', excluded_chain_id: 8453,
+    source: {
+      type: 'decoded_protocol_identity', protocol: 'optimism', family_version: 'bedrock',
+      correlation_key: 'optimism:fixture', identity_fields: { destination_chain_id: '8453' },
+    },
+    decoder_event: {
+      protocol: 'optimism', family_version: 'bedrock', correlation_key: 'optimism:fixture',
+      evidence: { identity_fields: { destination_chain_id: '8453' } },
+    },
+  };
+  const bridgeHashes = Array.from(
+    { length: 8 }, (_, index) => `0x${String(index + 1).repeat(64)}`
+  );
+  t.mock.method(database, 'query', async (sql) => {
+    assert.match(sql, /bm\.evidence AS movement_evidence/);
+    return {
+      rows: [
+        {
+          tx_hash: bridgeHashes[0], category: 'bridge_out', movement_id: '1',
+          movement_status: 'unsupported', verification_method: 'protocol_identity',
+          movement_evidence: baseEvidence,
+        },
+        {
+          tx_hash: bridgeHashes[1], category: 'bridge_out', movement_id: '2',
+          movement_status: 'unsupported', verification_method: 'protocol_identity',
+          movement_evidence: {},
+        },
+        {
+          tx_hash: bridgeHashes[2], category: 'bridge_out', movement_id: '3',
+          movement_status: 'unsupported', verification_method: 'protocol_identity',
+          movement_evidence: { ...baseEvidence, excluded_chain_id: 10 },
+        },
+        {
+          tx_hash: bridgeHashes[3], category: 'bridge_out', movement_id: '4',
+          movement_status: 'unsupported', verification_method: 'protocol_identity',
+          movement_evidence: { ...baseEvidence, reason: 'unsupported_protocol_path' },
+        },
+        {
+          tx_hash: bridgeHashes[4], category: 'bridge_out', movement_id: '5',
+          movement_status: 'unsupported', verification_method: 'protocol_identity',
+          movement_evidence: { ...baseEvidence, excluded_chain_id: '8453' },
+        },
+        {
+          tx_hash: bridgeHashes[5], category: 'bridge_out', movement_id: '6',
+          movement_status: 'pending', verification_method: 'protocol_identity',
+          movement_evidence: baseEvidence,
+        },
+        {
+          tx_hash: bridgeHashes[6], category: 'bridge_out', movement_id: '7',
+          movement_status: 'unsupported', verification_method: 'user_verdict',
+          movement_evidence: baseEvidence,
+        },
+        {
+          tx_hash: bridgeHashes[7], category: 'bridge_out', movement_id: '8',
+          movement_status: 'unsupported', verification_method: 'protocol_identity',
+          movement_evidence: {
+            reason: 'excluded_counterparty_chain', excluded_chain_id: 8453,
+          },
+        },
+      ],
+    };
+  });
+
+  const result = await EvmAudit.bridgeAudit(7, 70, 1, 100);
+
+  assert.equal(result.total, 8);
+  assert.deepEqual(
+    result.unresolved.map((row) => row.transaction_hash),
+    bridgeHashes.slice(1)
+  );
+  assert.equal(result.unresolved[0].movement_references[0].movement_id, '2');
+  assert.deepEqual(result.unresolved[0].movement_references[0].evidence, {});
+});
+
+test('an exact excluded-Base movement cannot hide a generic unsupported movement', async (t) => {
+  const portal = BASE_EXCLUSION_ENDPOINTS.find((endpoint) => endpoint.role === 'portal');
+  t.mock.method(database, 'query', async () => ({
+    rows: [
+      {
+        tx_hash: HASH, category: 'bridge_out', movement_id: '1',
+        movement_status: 'unsupported', verification_method: 'protocol_identity',
+        movement_evidence: {
+          reason: 'excluded_counterparty_chain', excluded_chain_id: 8453,
+          source: {
+            type: 'source_backed_endpoint', chain_id: 1,
+            ...portal,
+          },
+        },
+      },
+      {
+        tx_hash: HASH, category: 'bridge_out', movement_id: '2',
+        movement_status: 'unsupported', verification_method: 'protocol_identity',
+        movement_evidence: { reason: 'unsupported_protocol_path' },
+      },
+    ],
+  }));
+
+  const result = await EvmAudit.bridgeAudit(7, 70, 1, 100);
+
+  assert.equal(result.unresolved.length, 1);
+  assert.equal(result.unresolved[0].movement_status, 'unsupported');
+  assert.equal(result.unresolved[0].movement_references.length, 2);
+});
+
+test('Gnosis Blockscout fallback completes while retaining the Moralis limitation', async (t) => {
+  let runOptions;
+  const fixture = gnosisWorkerHarness(t, async (options) => {
+    runOptions = options;
+    const row = options.discovered.find((entry) => entry.chain_id === 100);
+    row.status = 'bounded';
+    row.bounded = true;
+    return { gaps: 0, deferred: false, unsupported: false, failed: false };
+  });
+
+  const result = await fixture.execute();
+  assert.equal(result.status, 'complete');
+  assert.equal(runOptions.moralis, null);
+  assert.equal(runOptions.explorerApiKey, null);
+  assert.equal(runOptions.moralisUnavailable.code, 'MORALIS_NOT_CONFIGURED');
+  const discovery = fixture.discoveredSnapshots[0][0];
+  assert.equal(discovery.source, 'blockscout');
+  assert.equal(discovery.status, 'configured');
+  assert.deepEqual(discovery.active_discovery, {
+    status: 'deferred',
+    source: 'moralis',
+    error_code: 'MORALIS_NOT_CONFIGURED',
+    error_detail: runOptions.moralisUnavailable.detail,
+  });
+  assert.equal(fixture.finishes.at(-1).errorCode, null);
+  assert.equal(fixture.finishes.at(-1).retryAt, null);
+});
+
+test('Gnosis falls through to Blockscout after a configured Moralis rate limit', async (t) => {
+  let runOptions;
+  const retryAt = new Date('2030-01-02T03:04:05.000Z');
+  const fixture = gnosisWorkerHarness(t, async (options) => {
+    runOptions = options;
+    const row = options.discovered.find((entry) => entry.chain_id === 100);
+    row.status = 'bounded';
+    row.bounded = true;
+    return { gaps: 0, deferred: false, unsupported: false, failed: false };
+  }, {
+    userKey: 'fixture-key',
+    activeChains: async () => {
+      throw Object.assign(new Error('Moralis fixture throttle'), {
+        code: 'MORALIS_RATE_LIMITED', retryAt,
+      });
+    },
+  });
+
+  const result = await fixture.execute();
+  assert.equal(result.status, 'complete');
+  assert.equal(runOptions.moralis, null);
+  assert.equal(runOptions.moralisUnavailable.code, 'MORALIS_RATE_LIMITED');
+  assert.equal(runOptions.moralisUnavailable.retryAt, retryAt);
+  const discovery = fixture.discoveredSnapshots[0][0];
+  assert.equal(discovery.source, 'blockscout');
+  assert.equal(discovery.active_discovery.error_code, 'MORALIS_RATE_LIMITED');
+  assert.equal(fixture.finishes.at(-1).errorCode, null);
+});
+
+test('request upgrades a future Moralis deferral when Gnosis can run on Blockscout', async (t) => {
+  const retryAfter = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const deferredJob = {
+    id: 88,
+    user_id: 7,
+    status: 'deferred',
+    error_code: 'MORALIS_NOT_CONFIGURED',
+    retry_after_at: retryAfter,
+    requested_chains: [100],
+  };
+  const queuedJob = {
+    ...deferredJob,
+    status: 'queued',
+    error_code: null,
+    error_detail: null,
+    retry_after_at: null,
+  };
+  let createOptions;
+  const queued = [];
+  const updates = [];
+
+  t.mock.method(EthWallet, 'findByIdForUser', async () => ({ id: 5, address: WALLET }));
+  t.mock.method(EvmAudit, 'credentialGeneration', async () => null);
+  t.mock.method(SecretsService, 'getUserKey', async () => null);
+  t.mock.method(EvmAudit, 'createOrFindActiveJob', async (_userId, _wallet, options) => {
+    createOptions = options;
+    return { created: false, job: deferredJob };
+  });
+  t.mock.method(database, 'query', async (sql, params) => {
+    updates.push({ sql, params });
+    return { rows: [queuedJob] };
+  });
+  t.mock.method(EvmAuditService, 'enqueue', (jobId) => queued.push(jobId));
+
+  const result = await EvmAuditService.request(7, 5, {
+    mode: 'full', requestedChains: [100],
+  });
+
+  assert.equal(Object.hasOwn(createOptions, 'requestedProviders'), false);
+  assert.equal(result.job.status, 'queued');
+  assert.deepEqual(queued, [88]);
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].sql, /error_code = 'MORALIS_NOT_CONFIGURED'/);
+  assert.match(updates[0].sql, /retry_after_at > CURRENT_TIMESTAMP/);
+  assert.deepEqual(updates[0].params, [88, 7]);
+});
+
+test('Gnosis Blockscout fallback deferral preserves retry and provider fields', async (t) => {
+  const retryAt = new Date('2030-01-02T03:04:05.000Z');
+  const fixture = gnosisWorkerHarness(t, async () => {
+    throw Object.assign(new Error('Blockscout fixture throttle'), {
+      code: 'BLOCKSCOUT_RATE_LIMITED',
+      auditProvider: 'blockscout',
+      httpStatus: 429,
+      retryAt,
+    });
+  });
+
+  const result = await fixture.execute();
+  assert.equal(result.status, 'deferred');
+  assert.equal(result.errorCode, 'BLOCKSCOUT_RATE_LIMITED');
+  assert.equal(result.errorDetail, 'Blockscout fixture throttle');
+  assert.equal(result.retryAt, retryAt);
+  assert.deepEqual(result.progress, { chains_finished: 1, gaps: 1 });
+  const [, chainId, failure] = fixture.deferredScopes[0];
+  assert.equal(chainId, 100);
+  assert.equal(failure.provider, 'blockscout');
+  assert.equal(failure.scopeStatus, 'deferred');
+  assert.equal(failure.errorCode, 'BLOCKSCOUT_RATE_LIMITED');
+  const finalDiscovery = fixture.discoveredSnapshots.at(-1)[0];
+  assert.equal(finalDiscovery.status, 'deferred');
+  assert.equal(finalDiscovery.error_code, 'BLOCKSCOUT_RATE_LIMITED');
+  assert.equal(finalDiscovery.active_discovery.error_code, 'MORALIS_NOT_CONFIGURED');
+});
+
+test('chain-level RPC failures remain attributed to consensus RPC', async (t) => {
+  const fixture = gnosisWorkerHarness(t, async () => {
+    throw Object.assign(new Error('consensus fixture unavailable'), {
+      code: 'RPC_TRANSPORT_ERROR', retryAt: new Date('2030-01-02T03:04:05.000Z'),
+    });
+  });
+
+  const result = await fixture.execute();
+  assert.equal(result.status, 'deferred');
+  assert.equal(result.errorCode, 'RPC_TRANSPORT_ERROR');
+  const [, , failure] = fixture.deferredScopes[0];
+  assert.equal(failure.provider, 'consensus-rpc');
+  assert.equal(failure.scopeStatus, 'deferred');
 });
 
 test('a chain without consensus RPC is deferred without blocking other audit chains', () => {
@@ -87,9 +374,10 @@ test('unsupported audit chains become explicit amber scopes without a provider r
   }
 });
 
-test('zkSync Era uses bounded Blockscout audit coverage instead of unsupported status', () => {
+test('zkSync Era uses bounded split-explorer audit coverage instead of unsupported status', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
-  assert.match(source, /\[324, \{\s*auditProvider: 'blockscout'/);
+  assert.equal(chains.accountApiHistoryProvider(324), 'explorer-composite');
+  assert.match(source, /\[324, \{/);
   assert.doesNotMatch(source, /\[324, \{\s*unsupported:/);
 });
 
@@ -177,7 +465,8 @@ test('identity repair keeps its canonical-effect query user-scoped', () => {
   const method = source.slice(methodStart, methodEnd);
   assert.match(method, /jo\.job_id = \$1/);
   assert.match(method, /s\.user_id = \$2/);
-  assert.match(method, /\[jobId, userId, subjectId, chainId, throughBlock/);
+  assert.match(method, /jobId, userId, subjectId, chainId, throughBlock,/);
+  assert.match(method, /o\.provider = ANY\(\$7::text\[\]\)/);
 });
 
 test('Moralis history keeps receipt, log, internal and token evidence independently', () => {
@@ -226,11 +515,100 @@ test('Blockscout normal and token feeds use the additive account-feed evidence k
   assert.match(migration, /'account_feed'/);
 });
 
-test('Blockscout transient provider failures defer instead of becoming permanent gaps', () => {
-  assert.equal(EvmAuditService._isBlockscoutTransient({ response: { status: 408 } }), true);
-  assert.equal(EvmAuditService._isBlockscoutTransient({ response: { status: 503 } }), true);
-  assert.equal(EvmAuditService._isBlockscoutTransient({ code: 'EAI_AGAIN' }), true);
-  assert.equal(EvmAuditService._isBlockscoutTransient({ response: { status: 400 } }), false);
+test('zkSync audit provenance follows the split native and token providers', () => {
+  assert.equal(chains.accountApiHistoryProvider(324), 'explorer-composite');
+  assert.equal(chains.accountApiProviderForAction(324, 'txlist'), 'zksync explorer');
+  assert.equal(
+    chains.accountApiProviderForAction(324, 'txlistinternal'),
+    'zksync explorer'
+  );
+  assert.equal(chains.accountApiProviderForAction(324, 'tokentx'), 'blockscout');
+  assert.equal(chains.accountApiProviderForAction(324, 'tokennfttx'), 'blockscout');
+  assert.deepEqual(chains.accountApiProviderManifest(324), {
+    active_chain: 'explorer-composite',
+    wallet_history: 'explorer-composite',
+    coverage_boundary: 'explorer-composite',
+    native_indexed_head: 'zksync explorer',
+    token_indexed_head: 'blockscout',
+    normal: 'zksync explorer',
+    internal: 'zksync explorer',
+    erc20: 'blockscout',
+    erc721: 'blockscout',
+    erc1155: 'blockscout',
+  });
+  assert.equal(EvmAuditService._explorerProviderFromError(324, {
+    response: { config: { url: 'https://zksync.blockscout.com/api/v2/blocks' } },
+  }, 'getblockreward'), 'blockscout');
+  assert.equal(EvmAuditService._explorerProviderFromError(324, {
+    message: 'official indexed head fixture failure',
+  }, 'getblockreward'), 'zksync explorer');
+  assert.equal(EvmAuditService._auditProviderForError(324, {
+    code: 'RPC_TRANSPORT_ERROR',
+  }), 'consensus-rpc');
+  assert.equal(EvmAuditService._auditProviderForError(324, {
+    code: 'RPC_TRACE_SCAN_BUDGET_EXHAUSTED',
+  }), 'trace-rpc');
+  assert.equal(EvmAuditService._auditProviderForError(324, {
+    code: 'ZKSYNC_EXPLORER_RATE_LIMITED', auditProvider: 'zksync explorer',
+  }), 'zksync explorer');
+});
+
+test('coverage timestamp validation retains the zkSync provider that answered', async (t) => {
+  t.mock.method(EtherscanService, '_rpcRequest', async () => null);
+  t.mock.method(EtherscanService, '_request', async () => ({ timestamp: 'not-hex' }));
+  await assert.rejects(
+    EtherscanService.coverageBoundary(null, 324, 987654321),
+    (error) => {
+      assert.equal(error.code, 'ETHERSCAN_API_ERROR');
+      assert.equal(error.provider, 'Blockscout');
+      assert.equal(error.auditProvider, 'blockscout');
+      return true;
+    }
+  );
+});
+
+test('zkSync indexed-head validation retains consensus and Blockscout identities', async (t) => {
+  t.mock.method(EtherscanService, '_rpcRequest', async () => 'not-hex');
+  await assert.rejects(EtherscanService._latestBlockNumber(null, 324), (error) => {
+    assert.equal(error.auditProvider, 'consensus-rpc');
+    assert.match(String(error.provider), /JSON-RPC/);
+    return true;
+  });
+});
+
+test('zkSync invalid token-index head remains attributed to Blockscout', async (t) => {
+  t.mock.method(require('axios'), 'get', async () => {
+    throw Object.assign(new Error('fixture V2 route unavailable'), {
+      response: { status: 400 },
+    });
+  });
+  t.mock.method(EtherscanService, '_request', async () => 'not-a-block');
+  await assert.rejects(EtherscanService._blockscoutLatestBlockNumber(
+    null, 324, chains.getChain(324).accountApi
+  ), (error) => {
+    assert.equal(error.auditProvider, 'blockscout');
+    assert.equal(error.provider, 'Blockscout');
+    return true;
+  });
+});
+
+test('Blockscout internal-status hydration attributes malformed traces to consensus RPC', async (t) => {
+  t.mock.method(EtherscanService, '_rpcBatchRequest', async () => [[]]);
+  await assert.rejects(EtherscanService._hydrateBlockscoutV2InternalStatus([{
+    hash: HASH,
+  }], 100), (error) => {
+    assert.equal(error.code, 'ETHERSCAN_API_ERROR');
+    assert.equal(error.auditProvider, 'consensus-rpc');
+    assert.match(String(error.provider), /JSON-RPC/);
+    return true;
+  });
+});
+
+test('transient explorer failures defer instead of becoming permanent gaps', () => {
+  assert.equal(EvmAuditService._isExplorerTransient({ response: { status: 408 } }), true);
+  assert.equal(EvmAuditService._isExplorerTransient({ response: { status: 503 } }), true);
+  assert.equal(EvmAuditService._isExplorerTransient({ code: 'EAI_AGAIN' }), true);
+  assert.equal(EvmAuditService._isExplorerTransient({ response: { status: 400 } }), false);
 });
 
 test('standing explorer feed limitations defer only that chain', () => {
@@ -264,8 +642,11 @@ test('required capability proof excludes the existing-ledger projection', () => 
   const end = source.indexOf('static async provisionalEffectCount', start);
   assert.ok(start >= 0 && end > start);
   const section = source.slice(start, end);
-  assert.match(section, /sc\.provider IN \('moralis', 'blockscout', 'etherscan', 'trace-rpc'\)/);
-  assert.doesNotMatch(section, /sc\.provider IN \([^)]*existing-ledger/);
+  assert.deepEqual(INDEPENDENT_ENUMERATION_PROVIDERS, [
+    'moralis', 'blockscout', 'etherscan', 'zksync explorer', 'trace-rpc',
+  ]);
+  assert.equal(INDEPENDENT_ENUMERATION_PROVIDERS.includes('existing-ledger'), false);
+  assert.match(section, /sc\.provider = ANY\(\$3::text\[\]\)/);
 });
 
 test('consensus canonicalization retains failed mined outgoing transactions and gas', () => {
@@ -334,6 +715,22 @@ test('Blockscout internal evidence can corroborate the existing ledger when Mora
   const effects = effectsFromInternalObservations(context(324), [blockscout, ledger]);
   assert.equal(effects[0].resolutionStatus, 'verified');
   assert.deepEqual(effects[0].evidenceObservationIds, [11, 12]);
+});
+
+test('zkSync Explorer internal evidence can corroborate the existing ledger', () => {
+  const explorer = {
+    id: 21, provider: 'zksync explorer', provider_object_key: `account:internal:${HASH}:3`,
+    tx_hash: HASH, trace_address: [3, 1],
+    payload_json: { from: OTHER, to: WALLET, value: '7', isError: '0' },
+  };
+  const ledger = {
+    id: 22, provider: 'existing-ledger', provider_object_key: `legacy:internal:${HASH}:0`,
+    tx_hash: HASH, trace_address: [3, 1],
+    payload_json: { from_address: OTHER, to_address: WALLET, value_wei: '7', is_error: false },
+  };
+  const effects = effectsFromInternalObservations(context(324), [explorer, ledger]);
+  assert.equal(effects[0].resolutionStatus, 'verified');
+  assert.deepEqual(effects[0].evidenceObservationIds, [21, 22]);
 });
 
 test('Etherscan internal evidence is selected and native-credit logs retain log identity', () => {
@@ -565,7 +962,6 @@ test('deferred audits can be reopened after a credential generation change', () 
   assert.match(source, /etherscanCredentialReady/);
   assert.match(source, /SET status = 'queued'/);
   assert.match(source, /credential_generation = \$2/);
-  assert.match(source, /moralis_credential_generation = \$3/);
   assert.match(source, /deferredProviderGenerationChanged/);
   assert.match(source, /credentialChanged/);
   assert.match(source, /retry_after_at = NULL/);
@@ -637,6 +1033,103 @@ test('a deferred narrow audit can be widened to full without bypassing cooldown'
   assert.equal(partialScope.requested_from_block, 0);
   assert.equal(partialScope.pagination_exhausted, false);
   assert.equal(calls.at(-1).sql, 'COMMIT');
+});
+
+async function requestAgainstDeferredBroadJob(t, {
+  activeJob,
+  requestedChains,
+}) {
+  const originalConnect = database.connect;
+  const originalEnsureSubject = EvmAudit.ensureSubject;
+  const calls = [];
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM evm_audit_jobs/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [activeJob] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  t.after(() => {
+    database.connect = originalConnect;
+    EvmAudit.ensureSubject = originalEnsureSubject;
+  });
+  database.connect = async () => client;
+  EvmAudit.ensureSubject = async () => ({ id: 8, address: WALLET });
+
+  const result = await EvmAudit.createOrFindActiveJob(7, { id: 3, address: WALLET }, {
+    mode: 'incremental', requestedChains,
+  });
+  return { result, calls };
+}
+
+test('a narrower request cannot bypass a deferred broad cooldown when scope evidence is absent', async (t) => {
+  const retryAfter = new Date(Date.now() + 60_000);
+  const activeJob = {
+    id: 44,
+    status: 'deferred',
+    mode: 'full',
+    requested_chains: [1, 100],
+    error_code: 'MORALIS_QUOTA_EXHAUSTED',
+    retry_after_at: retryAfter,
+  };
+  const { result, calls } = await requestAgainstDeferredBroadJob(t, {
+    activeJob,
+    requestedChains: [100],
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.job, activeJob);
+  assert.equal(result.job.retry_after_at, retryAfter);
+  assert.equal(calls.some(({ sql }) => /FROM evm_audit_scopes/.test(sql)), false);
+  assert.equal(calls.some(({ sql }) => /SET status = 'cancelled'/.test(sql)), false);
+  assert.equal(calls.some(({ sql }) => /INSERT INTO evm_audit_jobs/.test(sql)), false);
+  assert.equal(calls.at(-1).sql, 'COMMIT');
+});
+
+test('a complete-looking scope subset cannot supersede a deferred broad job', async (t) => {
+  const activeJob = {
+    id: 44,
+    status: 'deferred',
+    mode: 'full',
+    requested_chains: [1, 100],
+    error_code: 'MORALIS_QUOTA_EXHAUSTED',
+    retry_after_at: new Date(Date.now() + 60_000),
+  };
+  const { result, calls } = await requestAgainstDeferredBroadJob(t, {
+    activeJob,
+    requestedChains: [1],
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.job, activeJob);
+  assert.equal(calls.some(({ sql }) => /FROM evm_audit_scopes/.test(sql)), false);
+  assert.equal(calls.some(({ sql }) => /SET status = 'cancelled'/.test(sql)), false);
+  assert.equal(calls.some(({ sql }) => /INSERT INTO evm_audit_jobs/.test(sql)), false);
+});
+
+test('an apparently unrelated provider deferral cannot be bypassed by narrowing', async (t) => {
+  const activeJob = {
+    id: 44,
+    status: 'deferred',
+    mode: 'full',
+    requested_chains: [1, 100],
+    error_code: 'MORALIS_QUOTA_EXHAUSTED',
+    error_detail: 'Moralis deferred while Blockscout remains configured.',
+    retry_after_at: new Date(Date.now() + 60_000),
+  };
+  const { result, calls } = await requestAgainstDeferredBroadJob(t, {
+    activeJob,
+    requestedChains: [100],
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.job, activeJob);
+  assert.equal(calls.some(({ sql }) => /FROM evm_audit_scopes/.test(sql)), false);
+  assert.equal(calls.some(({ sql }) => /SET status = 'cancelled'/.test(sql)), false);
+  assert.equal(calls.some(({ sql }) => /INSERT INTO evm_audit_jobs/.test(sql)), false);
 });
 
 
@@ -1153,7 +1646,7 @@ test('effect reconciliation counts missing or duplicate economic legs, not just 
   ) > 0, 'economic equality without immutable log identity remains a gap');
 });
 
-test('cross-provider transfer repair requires the exact Moralis log coordinate and payload', () => {
+test('cross-provider transfer repair requires an exact indexed log coordinate and payload', () => {
   const effect = {
     effect_type: 'erc20', effect_key: `erc20:${HASH}:3`, log_index: 3,
     tx_hash: HASH, from_address: OTHER, to_address: WALLET, value_units: '8',
@@ -1179,6 +1672,83 @@ test('cross-provider transfer repair requires the exact Moralis log coordinate a
     ...moralis, payload_json: { ...moralis.payload_json, value: '9' },
   }), false);
   assert.equal(matchesLegacyTransfer(effect, { ...legacy, token_contract: OTHER }), false);
+});
+
+test('configured explorer token evidence can corroborate an exact legacy identity', () => {
+  const effect = {
+    effect_type: 'erc20', effect_key: `erc20:${HASH}:3`, log_index: 3,
+    tx_hash: HASH, from_address: OTHER, to_address: WALLET, value_units: '8',
+    token_contract: CONTRACT, token_id: null,
+  };
+  const explorer = {
+    provider: 'blockscout', evidence_kind: 'account_feed', tx_hash: HASH, log_index: 3,
+    payload_json: {
+      contractAddress: CONTRACT, from: OTHER, to: WALLET, value: '8', logIndex: '3',
+    },
+  };
+
+  assert.equal(matchesIndexedTransfer(effect, explorer, ['moralis', 'blockscout']), true);
+  assert.equal(matchesIndexedTransfer(effect, explorer, ['moralis']), false);
+  assert.equal(matchesIndexedTransfer(effect, { ...explorer, log_index: null }, [
+    'blockscout',
+  ]), false);
+});
+
+test('explorer ERC-721 account feeds corroborate exact tokenID identity', () => {
+  const tokenId = '9007199254740993';
+  const effect = {
+    effect_type: 'erc721', effect_key: `erc721:${HASH}:3`, log_index: 3,
+    tx_hash: HASH, from_address: OTHER, to_address: WALLET, value_units: '1',
+    token_contract: CONTRACT, token_id: tokenId,
+  };
+  const observation = {
+    evidence_kind: 'account_feed', tx_hash: HASH, log_index: 3,
+    payload_json: {
+      contractAddress: CONTRACT, from: OTHER, to: WALLET, tokenID: tokenId,
+    },
+  };
+
+  for (const provider of ['etherscan', 'blockscout']) {
+    const candidate = { ...observation, provider };
+    assert.equal(matchesIndexedTransfer(effect, candidate, [provider]), true);
+    assert.equal(matchesIndexedTransfer(effect, {
+      ...candidate,
+      payload_json: { ...candidate.payload_json, tokenID: '9007199254740994' },
+    }, [provider]), false);
+  }
+});
+
+test('explorer ERC-1155 account feeds require exact tokenID and tokenValue identity', () => {
+  const tokenId = '50885195465617469194167106852330514362694690086631139282090694154350210580562';
+  const effect = {
+    effect_type: 'erc1155', effect_key: `erc1155:${HASH}:3:${tokenId}`, log_index: 3,
+    tx_hash: HASH, from_address: OTHER, to_address: WALLET, value_units: '2',
+    token_contract: CONTRACT, token_id: tokenId,
+  };
+  const observation = {
+    evidence_kind: 'account_feed', tx_hash: HASH, log_index: 3,
+    payload_json: {
+      contractAddress: CONTRACT, from: OTHER, to: WALLET,
+      tokenID: tokenId, tokenValue: '2',
+    },
+  };
+
+  for (const provider of ['etherscan', 'blockscout']) {
+    const candidate = { ...observation, provider };
+    assert.equal(matchesIndexedTransfer(effect, candidate, [provider]), true);
+    assert.equal(matchesIndexedTransfer(effect, {
+      ...candidate,
+      payload_json: { ...candidate.payload_json, tokenValue: '3' },
+    }, [provider]), false);
+    assert.equal(matchesIndexedTransfer(effect, {
+      ...candidate,
+      payload_json: { ...candidate.payload_json, tokenID: '7' },
+    }, [provider]), false);
+    const { tokenValue: _missing, ...withoutTokenValue } = candidate.payload_json;
+    assert.equal(matchesIndexedTransfer(effect, {
+      ...candidate, payload_json: withoutTokenValue,
+    }, [provider]), false);
+  }
 });
 
 test('NFT corroboration uses Moralis amount units instead of its non-unit value field', () => {

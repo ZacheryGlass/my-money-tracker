@@ -31,7 +31,9 @@ function indexedTransferFields(effect, payload, provider) {
   const standard = effect.effect_type;
   const numericFields = payload.__evm_json_numeric_fields;
   if (standard !== 'erc20' && Array.isArray(numericFields)
-      && numericFields.some((field) => ['amount', 'token_id', 'tokenId'].includes(field))) {
+      && numericFields.some((field) => [
+        'amount', 'tokenValue', 'token_value', 'tokenID', 'token_id', 'tokenId',
+      ].includes(field))) {
     return null;
   }
   if (provider === 'moralis') {
@@ -50,20 +52,22 @@ function indexedTransferFields(effect, payload, provider) {
   }
   const nested = standard === 'erc20' ? payload.erc20
     : standard === 'erc721' ? payload.erc721 : payload.erc1155;
-  const contract = normalizedAddress(payload.address ?? payload.token_address
-    ?? payload.tokenAddress);
+  const contract = normalizedAddress(payload.address ?? payload.contractAddress
+    ?? payload.token_address ?? payload.tokenAddress);
   const from = normalizedAddress(payload.from_address ?? payload.from
     ?? payload.fromAddress ?? nested?.from_address ?? nested?.fromAddress);
   const to = normalizedAddress(payload.to_address ?? payload.to
     ?? payload.toAddress ?? nested?.to_address ?? nested?.toAddress);
-  const value = decimal(
-    standard === 'erc20'
-      ? (payload.value ?? payload.amount ?? nested?.value)
-      : (payload.amount ?? payload.value ?? nested?.amount ?? nested?.value ?? '1'),
-    { allowSafeNumber: standard === 'erc20' }
-  );
+  const rawValue = standard === 'erc20'
+    ? (payload.value ?? payload.amount ?? nested?.value)
+    : standard === 'erc721'
+      ? (payload.amount ?? payload.value ?? nested?.amount ?? nested?.value ?? '1')
+      : (payload.tokenValue ?? payload.token_value ?? payload.amount ?? payload.value
+        ?? nested?.tokenValue ?? nested?.token_value ?? nested?.amount ?? nested?.value);
+  const value = decimal(rawValue, { allowSafeNumber: standard === 'erc20' });
   const tokenId = standard === 'erc20' ? null : decimal(
-    payload.token_id ?? payload.tokenId ?? nested?.token_id ?? nested?.tokenId
+    payload.tokenID ?? payload.token_id ?? payload.tokenId
+      ?? nested?.tokenID ?? nested?.token_id ?? nested?.tokenId
   );
   if (!contract || !from || !to || value == null || (standard !== 'erc20' && tokenId == null)) {
     return null;
@@ -71,14 +75,18 @@ function indexedTransferFields(effect, payload, provider) {
   return { contract, from, to, value, tokenId };
 }
 
-function matchesIndexedTransfer(effect, observation) {
+function matchesIndexedTransfer(effect, observation, allowedProviders = ['moralis']) {
   if (!effect || !observation || !TRANSFER_TYPES[effect.effect_type]) return false;
-  if (observation.provider !== 'moralis') return false;
+  const provider = String(observation.provider || '').toLowerCase();
+  const allowed = new Set(allowedProviders.map((value) => String(value).toLowerCase()));
+  if (!allowed.has(provider)) return false;
   const expectedKind = `${effect.effect_type}_transfer`;
-  if (observation.evidence_kind !== expectedKind
+  const logIndex = Number(observation.log_index);
+  if (![expectedKind, 'account_feed'].includes(observation.evidence_kind)
       || String(observation.tx_hash || '').toLowerCase() !== String(effect.tx_hash).toLowerCase()
-      || Number(observation.log_index) !== Number(effect.log_index)) return false;
-  const fields = indexedTransferFields(effect, observation.payload_json || {}, observation.provider);
+      || !Number.isSafeInteger(logIndex) || logIndex < 0
+      || logIndex !== Number(effect.log_index)) return false;
+  const fields = indexedTransferFields(effect, observation.payload_json || {}, provider);
   return Boolean(fields)
     && fields.contract === String(effect.token_contract || '').toLowerCase()
     && fields.from === String(effect.from_address || '').toLowerCase()

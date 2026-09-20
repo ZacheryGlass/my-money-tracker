@@ -125,18 +125,7 @@ function scannedThroughBlock(rows) {
 }
 
 function providerName(chain, feed = null) {
-  if (chain.historyProvider === 'zksync-lite') {
-    return 'Matter Labs zkSync Lite archive';
-  }
-  const accountApi = chain.accountApi?.nativeHistoryApi
-      && ['normal', 'internal'].includes(feed)
-    ? { ...chain.accountApi, ...chain.accountApi.nativeHistoryApi }
-    : chain.accountApi;
-  if (accountApi) {
-    const accountUrl = accountApi.v2BaseUrl || accountApi.baseUrl;
-    return `${accountApi.provider || 'chain explorer'} (${accountUrl})`;
-  }
-  return 'Etherscan V2';
+  return chains.accountHistoryProviderName(chain.id, feed);
 }
 
 function coverageFailureStatus(error) {
@@ -715,6 +704,22 @@ class EthWalletService {
     if (Number(state?.ingest_version || 0) < ingestVersion) {
       state = await EthWalletChain.resetForIngestVersion(wallet.id, chain.id, ingestVersion);
     }
+    const feedActive = (spec) => !spec.chainFeed || Boolean(chain[spec.chainFeed]);
+    const storedCoverage = await EthFeedCoverage.findForWalletChain(wallet.id, chain.id);
+    const specsByFeed = new Map(FEED_SPECS.map((spec) => [spec.key, spec]));
+    const changedProviderFeeds = storedCoverage.filter((row) => {
+      const spec = specsByFeed.get(row.feed);
+      return spec && feedActive(spec) && (
+        row.provider !== providerName(chain, spec.key)
+        || row.cursor_kind !== 'evm_block'
+        || row.status === 'not_applicable'
+      );
+    }).map((row) => row.feed);
+    if (changedProviderFeeds.length) {
+      state = await EthWalletChain.resetFeedCursors(
+        wallet.id, chain.id, changedProviderFeeds
+      );
+    }
     // Resume before the stored cursor so a reorg near the tip is healed by the
     // delete-then-reinsert ingest. Per chain: an L2's cursor has nothing to do
     // with mainnet's, and block numbers are independent sequences.
@@ -733,7 +738,6 @@ class EthWalletService {
     // plus Gnosis and OP Stack native-credit events). A feed a chain does not declare is never fetched, never
     // cursor-advanced, and never a gap -- so `activeCount` (not FEED_SPECS.length)
     // is what "every feed came back unreadable" is measured against below.
-    const feedActive = (spec) => !spec.chainFeed || Boolean(chain[spec.chainFeed]);
     const activeCount = FEED_SPECS.filter(feedActive).length;
     // The from_address that marks state-sync rows, so the internal feed can
     // exclude them and the state-sync feed can scope its own delete to them.
@@ -931,9 +935,9 @@ class EthWalletService {
           feed: spec.key,
           provider: providerName(chain, spec.key),
           status: 'complete',
-          coveredFromBlock: boundary.fromBlock,
+          coveredFromBlock: resume[spec.key],
           coveredThroughBlock: scannedThroughBlock(feeds[spec.key]),
-          coveredFromAt: boundary.fromAt,
+          coveredFromAt: resume[spec.key] === boundary.fromBlock ? boundary.fromAt : null,
           coveredThroughAt: boundary.throughAt,
           indexedHead,
           attemptedFromBlock: resume[spec.key],

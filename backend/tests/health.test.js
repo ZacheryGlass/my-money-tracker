@@ -18,4 +18,6 @@ test('GET /health returns 200 with status OK', async () => {
 test('GET /health response body has timestamp', async () => {
   const response = await request(app).get('/health');
   assert.ok(response.body.timestamp, 'timestamp field should be present');
+  assert.equal(Object.hasOwn(response.body, 'revision'), true);
+  assert.equal(response.body.revision, null);
 });

@@ -40,6 +40,20 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const isProduction = process.env.NODE_ENV === 'production';
 
+function deploymentRevision() {
+  try {
+    const artifact = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '../deploy-revision.json'), 'utf8')
+    );
+    return /^[0-9a-f]{40}$/i.test(String(artifact.git_sha || ''))
+      ? String(artifact.git_sha).toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+const liveRevision = deploymentRevision();
+
 const rateLimitJsonHandler = (message) => (req, res) => {
   res.status(429).json({ error: message });
 };
@@ -80,7 +94,11 @@ const pool = require('./config/database');
 
 // Liveness: cheap, always returns 200 if the process is up.
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.status(200).json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    revision: liveRevision,
+  });
 });
 
 // Readiness: verifies the database is reachable. Used by Azure health checks.

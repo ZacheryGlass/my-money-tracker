@@ -72,6 +72,7 @@ function harness(t, {
   chainSet,
   cursors = {},
   feedBehavior = {},
+  storedCoverage = {},
   apiKey = 'key',
   indexedHead = 50000000,
 } = {}) {
@@ -126,6 +127,21 @@ function harness(t, {
       last_block_normal: 0, last_block_internal: 0, last_block_token: 0,
       last_block_nft: 0, last_block_1155: 0, last_block_statesync: 0,
     };
+    chainStates.set(chainId, reset);
+    return { ...reset };
+  });
+  stub(EthFeedCoverage, 'findForWalletChain', async (_walletId, chainId) => (
+    storedCoverage[chainId] || []
+  ));
+  stub(EthWalletChain, 'resetFeedCursors', async (walletId, chainId, feeds) => {
+    calls.providerResets ||= [];
+    calls.providerResets.push({ chainId, feeds });
+    const prior = stateFor(walletId, chainId, 0);
+    const reset = { ...prior };
+    for (const feed of feeds) {
+      const column = feed === 'nft1155' ? 'last_block_1155' : `last_block_${feed}`;
+      reset[column] = 0;
+    }
     chainStates.set(chainId, reset);
     return { ...reset };
   });
@@ -267,8 +283,8 @@ function withoutConsensusRpc(t, chainIds) {
 // ---------------------------------------------------------------------------
 
 test('anonymous Blockscout requests stay below a conservative minute bucket', () => {
-  assert.equal(etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS, 1500);
-  assert.ok(60_000 / etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS <= 40);
+  assert.equal(etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS, 2000);
+  assert.ok(60_000 / etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS <= 30);
 });
 
 test('the configured Blockscout floor preserves stricter operator pacing', (t) => {
@@ -277,6 +293,20 @@ test('the configured Blockscout floor preserves stricter operator pacing', (t) =
   t.after(() => { etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS = original; });
 
   assert.equal(EtherscanService._provider(100).spacingMs, 20000);
+});
+
+test('a custom explorer can raise but cannot weaken its transport pacing floor', (t) => {
+  const nativeHistoryApi = chains.getChain(324).accountApi.nativeHistoryApi;
+  const original = nativeHistoryApi.requestSpacingMs;
+  t.after(() => { nativeHistoryApi.requestSpacingMs = original; });
+
+  assert.equal(EtherscanService._provider(324, null, 'txlist').spacingMs, 2000);
+
+  nativeHistoryApi.requestSpacingMs = 10;
+  assert.equal(
+    EtherscanService._provider(324, null, 'txlist').spacingMs,
+    etherscanConfig.REQUEST_SPACING_MS
+  );
 });
 
 test('Gnosis routes internal history through its canary-verified Blockscout V2 adapter', () => {
@@ -337,6 +367,33 @@ test('Arbitrum Nova uses its live-probed keyless Blockscout account feeds', () =
   assert.equal(chains.getChain(42170).accountApi.v2NormalTransactions, true);
   assert.equal(chains.getChain(42170).consensusRpcUrl,
     'https://arbitrum-nova-rpc.publicnode.com');
+});
+
+test('coverage provenance names the endpoint that serves each Blockscout feed', () => {
+  assert.equal(
+    chains.accountHistoryProviderName(42170, 'normal'),
+    'Blockscout (https://arbitrum-nova.blockscout.com/api/v2/)'
+  );
+  assert.equal(
+    chains.accountHistoryProviderName(42170, 'internal'),
+    'Blockscout (https://arbitrum-nova.blockscout.com/api)'
+  );
+  assert.equal(
+    chains.accountHistoryProviderName(100, 'internal'),
+    'Blockscout (https://gnosisscan.io/api/v2/)'
+  );
+  assert.equal(
+    chains.accountHistoryProviderName(100, 'token'),
+    'Blockscout (https://gnosisscan.io/api)'
+  );
+  assert.equal(
+    chains.accountHistoryProviderName(10, 'normal'),
+    'Blockscout (https://explorer.optimism.io/api/v2/)'
+  );
+  assert.equal(
+    chains.accountHistoryProviderName(10, 'internal'),
+    'Blockscout (https://explorer.optimism.io/api)'
+  );
 });
 
 test('all live-probed chains default on through their configured providers', () => {
@@ -463,9 +520,59 @@ test('each chain resumes from its own cursor with the reorg overlap applied', as
   // decide where Arbitrum resumes. At 250M vs 1000 blocks, borrowing the wrong
   // one either refetches a decade or skips it entirely.
   assert.notEqual(startOf(1, 'normal'), startOf(42161, 'normal'));
+  const coverageStart = (chainId, feed) => calls.coverage
+    .find((call) => call.chainId === chainId).entries
+    .find((entry) => entry.feed === feed).coveredFromBlock;
+  assert.equal(coverageStart(1, 'normal'), startOf(1, 'normal'));
+  assert.equal(coverageStart(42161, 'internal'), startOf(42161, 'internal'));
   // Every enabled chain runs every feed.
   assert.equal(calls.fetches.length, 10);
   assert.deepEqual([...new Set(calls.fetches.map((c) => c.chainId))], [1, 42161]);
+});
+
+test('a provider route change replays only the affected feed from genesis', async (t) => {
+  const { calls } = harness(t, {
+    chainSet: '100',
+    cursors: {
+      100: {
+        last_block_normal: 1000,
+        last_block_internal: 900,
+        last_block_token: 800,
+        last_block_nft: 700,
+        last_block_1155: 600,
+        last_block_statesync: 500,
+      },
+    },
+    storedCoverage: {
+      100: [{
+        feed: 'token', cursor_kind: 'evm_block', status: 'complete',
+        provider: 'Blockscout (https://gnosisscan.io/api/v2/)',
+      }],
+    },
+  });
+
+  await EthWalletService.syncWallet(7);
+
+  assert.deepEqual(calls.providerResets, [{ chainId: 100, feeds: ['token'] }]);
+  const startOf = (feed) => calls.fetches
+    .find((call) => call.chainId === 100 && call.feed === feed).startBlock;
+  assert.equal(startOf('token'), 0);
+  assert.equal(startOf('normal'), 1000 - EthWalletService.REORG_OVERLAP_BLOCKS);
+  const entries = calls.coverage.find((call) => call.chainId === 100).entries;
+  assert.equal(entries.find((entry) => entry.feed === 'token').coveredFromBlock, 0);
+  assert.equal(
+    entries.find((entry) => entry.feed === 'normal').coveredFromBlock,
+    1000 - EthWalletService.REORG_OVERLAP_BLOCKS
+  );
+});
+
+test('provider resets preserve unrelated feed cursors in SQL', async () => {
+  queries.length = 0;
+  await EthWalletChain.resetFeedCursors(7, 100, ['token']);
+  const sql = sqlOf(queries[0]);
+  assert.match(sql, /WHEN 'token' = ANY\(\$3::text\[\]\) THEN 0/);
+  assert.match(sql, /ELSE last_block_normal END/);
+  assert.deepEqual(queries[0].params, [7, 100, ['token']]);
 });
 
 test('full recapture resets every enabled feed to genesis without deleting the wallet', async (t) => {

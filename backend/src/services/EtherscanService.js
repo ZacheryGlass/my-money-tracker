@@ -281,6 +281,14 @@ function rpcProvider(chainId, rpcUrl) {
   };
 }
 
+function attachProviderIdentity(error, provider, auditProvider = null) {
+  if (!error || !provider) return error;
+  error.provider ||= provider.name;
+  error.providerKey ||= provider.key;
+  error.auditProvider ||= auditProvider || String(provider.name || '').toLowerCase();
+  return error;
+}
+
 // Consensus-sensitive reads must use the operator's declared consensus
 // endpoint. The legacy Lite importer never reaches this helper.
 function consensusRpcUrl(chainId) {
@@ -392,13 +400,7 @@ async function runThrottledRequest({
 
 class EtherscanService {
   static _accountApi(chainId, action = null) {
-    const accountApi = chains.getChain(chainId)?.accountApi;
-    if (!accountApi) return null;
-    if (accountApi.nativeHistoryApi
-        && ['txlist', 'txlistinternal', 'getblockreward'].includes(action)) {
-      return { ...accountApi, ...accountApi.nativeHistoryApi };
-    }
-    return accountApi;
+    return chains.accountApiForAction(chainId, action);
   }
 
   // Preserve the public service contract while allowing a chain to route its
@@ -408,19 +410,25 @@ class EtherscanService {
   static _provider(chainId, apiKey = null, action = null) {
     const custom = this._accountApi(chainId, action);
     if (custom) {
+      const providerDefaultSpacing = custom.provider === 'Blockscout'
+        ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
+        : etherscan.REQUEST_SPACING_MS;
       return {
         name: custom.provider || 'chain explorer',
         baseUrl: custom.baseUrl,
         requiresApiKey: custom.requiresApiKey !== false,
-        params: {},
+        params: custom.params || {},
         key: custom.requiresApiKey === false
           ? originProviderKey('account', custom.baseUrl)
           : (custom.provider === 'Etherscan'
             ? `etherscan:${keyFingerprint(apiKey)}`
             : `account:${custom.baseUrl}`),
-        spacingMs: custom.provider === 'Blockscout'
-          ? etherscan.BLOCKSCOUT_REQUEST_SPACING_MS
-          : etherscan.REQUEST_SPACING_MS,
+        // A provider can raise its floor, but it must never weaken a stricter
+        // operator-wide setting for the same transport class.
+        spacingMs: Math.max(
+          Number(custom.requestSpacingMs) || 0,
+          providerDefaultSpacing
+        ),
       };
     }
     return {
@@ -455,173 +463,177 @@ class EtherscanService {
     const provider = spacingMs == null
       ? baseProvider
       : {
-        ...baseProvider,
-        spacingMs: Math.max(Number(baseProvider.spacingMs) || 0, Number(spacingMs)),
-      };
-    if (provider.requiresApiKey && !apiKey) {
-      const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
-      error.code = 'ETHERSCAN_NOT_CONFIGURED';
-      throw error;
-    }
-    const response = await runThrottledRequest({
-      provider,
-      chainId,
-      params,
-      rateLimitState,
-      fn: () => {
-        if (beforeAttempt) beforeAttempt();
-        return axios.get(provider.baseUrl, {
-          timeout: 15000,
-          ...(captureEvidence ? {
-            // Axios normally parses JSON and discards the bytes that arrived
-            // over the wire.  Audit pages must retain those bytes, so request
-            // text and parse it below while keeping ordinary callers on the
-            // existing JSON path.
-            responseType: 'text',
-            transformResponse: [(data) => data],
-          } : {}),
-          params: {
-            ...provider.params,
-            ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
-            ...params,
-          },
-        });
-      },
-    });
-
-    let payload = response.data || {};
-    const rawText = captureEvidence ? responseRawText(response) : null;
-    if (captureEvidence && typeof response.data === 'string') {
-      try {
-        payload = JSON.parse(response.data);
-      } catch {
-        throw apiError(`${provider.name} returned invalid JSON response`);
+          ...baseProvider,
+          spacingMs: Math.max(Number(baseProvider.spacingMs) || 0, Number(spacingMs)),
+        };
+    try {
+      if (provider.requiresApiKey && !apiKey) {
+        const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
+        error.code = 'ETHERSCAN_NOT_CONFIGURED';
+        throw error;
       }
-    }
-    const returnResult = (result) => {
-      if (!captureEvidence) return result;
-      return {
-        result,
-        evidence: {
-          provider: provider.name,
-          endpoint: provider.baseUrl,
-          // Keep the complete non-secret request contract, including a
-          // chain-specific provider parameter such as Etherscan's `chainid`.
-          // The API key is injected separately above and is never part of
-          // this retained evidence object.
-          requestParams: { ...provider.params, ...params },
-          rawText,
-          responseJson: payload,
-          responseSha256: crypto.createHash('sha256').update(rawText).digest('hex'),
-          requestId: responseRequestId(response),
+      const response = await runThrottledRequest({
+        provider,
+        chainId,
+        params,
+        rateLimitState,
+        fn: () => {
+          if (beforeAttempt) beforeAttempt();
+          return axios.get(provider.baseUrl, {
+            timeout: 15000,
+            ...(captureEvidence ? {
+              // Axios normally parses JSON and discards the bytes that arrived
+              // over the wire.  Audit pages must retain those bytes, so request
+              // text and parse it below while keeping ordinary callers on the
+              // existing JSON path.
+              responseType: 'text',
+              transformResponse: [(data) => data],
+            } : {}),
+            params: {
+              ...provider.params,
+              ...(provider.requiresApiKey ? { apikey: apiKey } : {}),
+              ...params,
+            },
+          });
         },
-      };
-    };
-    const { status, message, result } = payload;
+      });
 
-    // The proxy-style endpoints intentionally return an Ethereum JSON-RPC
-    // envelope rather than Etherscan's {status,message,result} envelope. This
-    // is how Etherscan V2 serves module=proxy/action=eth_blockNumber, and how
-    // Blockscout serves module=block/action=eth_block_number. Reject errors and
-    // nulls, but accept a well-formed result before applying the account/log
-    // response rules below.
-    if (payload.jsonrpc === '2.0') {
-      if (!payload.error && payload.result != null) return returnResult(payload.result);
-      const detail = payload.error?.message || 'invalid JSON-RPC response';
-      if (isRateLimitedDetail(payload.error) || isRateLimitedDetail(detail)) {
+      let payload = response.data || {};
+      const rawText = captureEvidence ? responseRawText(response) : null;
+      if (captureEvidence && typeof response.data === 'string') {
+        try {
+          payload = JSON.parse(response.data);
+        } catch {
+          throw apiError(`${provider.name} returned invalid JSON response`);
+        }
+      }
+      const returnResult = (result) => {
+        if (!captureEvidence) return result;
+        return {
+          result,
+          evidence: {
+            provider: provider.name,
+            endpoint: provider.baseUrl,
+            // Keep the complete non-secret request contract, including a
+            // chain-specific provider parameter such as Etherscan's `chainid`.
+            // The API key is injected separately above and is never part of
+            // this retained evidence object.
+            requestParams: { ...provider.params, ...params },
+            rawText,
+            responseJson: payload,
+            responseSha256: crypto.createHash('sha256').update(rawText).digest('hex'),
+            requestId: responseRequestId(response),
+          },
+        };
+      };
+      const { status, message, result } = payload;
+
+      // The proxy-style endpoints intentionally return an Ethereum JSON-RPC
+      // envelope rather than Etherscan's {status,message,result} envelope. This
+      // is how Etherscan V2 serves module=proxy/action=eth_blockNumber, and how
+      // Blockscout serves module=block/action=eth_block_number. Reject errors and
+      // nulls, but accept a well-formed result before applying the account/log
+      // response rules below.
+      if (payload.jsonrpc === '2.0') {
+        if (!payload.error && payload.result != null) return returnResult(payload.result);
+        const detail = payload.error?.message || 'invalid JSON-RPC response';
+        if (isRateLimitedDetail(payload.error) || isRateLimitedDetail(detail)) {
+          return retryAfterRateLimit({
+            provider,
+            chainId,
+            params,
+            rateLimitState,
+            error: responseDetailError(detail, response),
+            retry: () => this._request(params, {
+              apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
+              malformedResponseAttempt, captureEvidence,
+            }),
+          });
+        }
+        // Etherscan occasionally returns a nominal JSON-RPC envelope with
+        // neither a result nor an error for eth_blockNumber. That is not an
+        // authoritative chain response and must not fail every feed sharing the
+        // head immediately. Retry it through the same provider queue as a
+        // transient transport failure, then remain fail-closed after the small
+        // bounded retry budget is exhausted.
+        if (!payload.error && payload.result == null
+            && malformedResponseAttempt < EXPLORER_MALFORMED_RESPONSE_RETRIES) {
+          const delayMs = EXPLORER_TRANSIENT_RETRY_BASE_MS
+            * (2 ** malformedResponseAttempt);
+          logger.warn({
+            chainId,
+            provider: provider.name,
+            attempt: malformedResponseAttempt + 1,
+            delayMs,
+            params: { module: params?.module, action: params?.action },
+          }, 'Explorer returned a malformed JSON-RPC envelope; retrying');
+          await sleep(delayMs);
+          return this._request(params, {
+            apiKey,
+            chainId,
+            rateLimitState,
+            spacingMs,
+            beforeAttempt,
+            malformedResponseAttempt: malformedResponseAttempt + 1,
+            captureEvidence,
+          });
+        }
+        const error = new Error(`${provider.name} JSON-RPC error: ${detail}`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+
+      const detail = `${message || ''} ${typeof result === 'string' ? result : ''}`;
+      if (isRateLimitedDetail(detail)) {
         return retryAfterRateLimit({
           provider,
           chainId,
           params,
           rateLimitState,
-          error: responseDetailError(detail, response),
+          error: responseDetailError(
+            detail.trim() || `${provider.name} rate limited`,
+            response
+          ),
           retry: () => this._request(params, {
             apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
             malformedResponseAttempt, captureEvidence,
           }),
         });
       }
-      // Etherscan occasionally returns a nominal JSON-RPC envelope with
-      // neither a result nor an error for eth_blockNumber. That is not an
-      // authoritative chain response and must not fail every feed sharing the
-      // head immediately. Retry it through the same provider queue as a
-      // transient transport failure, then remain fail-closed after the small
-      // bounded retry budget is exhausted.
-      if (!payload.error && payload.result == null
-          && malformedResponseAttempt < EXPLORER_MALFORMED_RESPONSE_RETRIES) {
-        const delayMs = EXPLORER_TRANSIENT_RETRY_BASE_MS
-          * (2 ** malformedResponseAttempt);
-        logger.warn({
-          chainId,
-          provider: provider.name,
-          attempt: malformedResponseAttempt + 1,
-          delayMs,
-          params: { module: params?.module, action: params?.action },
-        }, 'Explorer returned a malformed JSON-RPC envelope; retrying');
-        await sleep(delayMs);
-        return this._request(params, {
-          apiKey,
-          chainId,
-          rateLimitState,
-          spacingMs,
-          beforeAttempt,
-          malformedResponseAttempt: malformedResponseAttempt + 1,
-          captureEvidence,
-        });
+      if (status === '1') return returnResult(result);
+
+      // Standing provider limitations must be classified BEFORE the empty-array
+      // shortcut below. Blockscout can return status=2 + result=[] while an
+      // internal range is only partially indexed; accepting that as an empty
+      // successful feed authorizes destructive overlap deletion.
+      if (CHAIN_UNAVAILABLE_RE.test(detail)) {
+        const error = new Error(`${provider.name} cannot serve chain ${chainId} with this API key: ${detail.trim()}`);
+        error.code = 'ETHERSCAN_CHAIN_UNAVAILABLE';
+        error.chainId = chainId;
+        throw error;
       }
-      const error = new Error(`${provider.name} JSON-RPC error: ${detail}`);
+      if (FEED_UNSUPPORTED_RE.test(detail)) {
+        const error = new Error(`${provider.name} does not serve ${params.action} on chain ${chainId}: ${detail.trim()}`);
+        error.code = 'ETHERSCAN_FEED_UNSUPPORTED';
+        error.chainId = chainId;
+        throw error;
+      }
+
+      // "No transactions found" is a normal empty feed, not an error. The logs
+      // module (getLogs, #76) answers an empty match with "No records found"
+      // instead; both mean the same thing -- nothing to ingest, not a failure.
+      if (message === 'No transactions found' || message === 'No records found'
+          || message === 'No logs found'
+          || (Array.isArray(result) && result.length === 0)) {
+        return returnResult([]);
+      }
+
+      const error = new Error(`${provider.name} error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());
       error.code = 'ETHERSCAN_API_ERROR';
       throw error;
+    } catch (error) {
+      throw attachProviderIdentity(error, provider);
     }
-
-    const detail = `${message || ''} ${typeof result === 'string' ? result : ''}`;
-    if (isRateLimitedDetail(detail)) {
-      return retryAfterRateLimit({
-        provider,
-        chainId,
-        params,
-        rateLimitState,
-        error: responseDetailError(
-          detail.trim() || `${provider.name} rate limited`,
-          response
-        ),
-        retry: () => this._request(params, {
-          apiKey, chainId, rateLimitState, spacingMs, beforeAttempt,
-          malformedResponseAttempt, captureEvidence,
-        }),
-      });
-    }
-    if (status === '1') return returnResult(result);
-
-    // Standing provider limitations must be classified BEFORE the empty-array
-    // shortcut below. Blockscout can return status=2 + result=[] while an
-    // internal range is only partially indexed; accepting that as an empty
-    // successful feed authorizes destructive overlap deletion.
-    if (CHAIN_UNAVAILABLE_RE.test(detail)) {
-      const error = new Error(`${provider.name} cannot serve chain ${chainId} with this API key: ${detail.trim()}`);
-      error.code = 'ETHERSCAN_CHAIN_UNAVAILABLE';
-      error.chainId = chainId;
-      throw error;
-    }
-    if (FEED_UNSUPPORTED_RE.test(detail)) {
-      const error = new Error(`${provider.name} does not serve ${params.action} on chain ${chainId}: ${detail.trim()}`);
-      error.code = 'ETHERSCAN_FEED_UNSUPPORTED';
-      error.chainId = chainId;
-      throw error;
-    }
-
-    // "No transactions found" is a normal empty feed, not an error. The logs
-    // module (getLogs, #76) answers an empty match with "No records found"
-    // instead; both mean the same thing -- nothing to ingest, not a failure.
-    if (message === 'No transactions found' || message === 'No records found'
-        || message === 'No logs found'
-        || (Array.isArray(result) && result.length === 0)) {
-      return returnResult([]);
-    }
-
-    const error = new Error(`${provider.name} error: ${message || 'unknown'} ${typeof result === 'string' ? result : ''}`.trim());
-    error.code = 'ETHERSCAN_API_ERROR';
-    throw error;
   }
 
   static async _rpcRequest(
@@ -635,61 +647,65 @@ class EtherscanService {
     if (!rpcUrl) return null;
     const provider = rpcProvider(chainId, rpcUrl);
     const rpcParams = { module: 'rpc', action: method };
-    const response = await runThrottledRequest({
-      provider,
-      chainId,
-      params: rpcParams,
-      rateLimitState,
-      fn: () => jsonRpc.request(rpcUrl, method, params),
-    });
-    const payload = response.responseJson || {};
-    if (payload.error || payload.result == null) {
-      const detail = payload.error?.message || 'invalid response';
-      if (isRateLimitedDetail(payload.error) || isRateLimitedDetail(detail)) {
-        return retryAfterRateLimit({
-          provider,
-          chainId,
-          params: rpcParams,
-          rateLimitState,
-          error: responseDetailError(detail, { status: response.httpStatus, headers: response.headers }),
-          retry: () => this._rpcRequest(
+    try {
+      const response = await runThrottledRequest({
+        provider,
+        chainId,
+        params: rpcParams,
+        rateLimitState,
+        fn: () => jsonRpc.request(rpcUrl, method, params),
+      });
+      const payload = response.responseJson || {};
+      if (payload.error || payload.result == null) {
+        const detail = payload.error?.message || 'invalid response';
+        if (isRateLimitedDetail(payload.error) || isRateLimitedDetail(detail)) {
+          return retryAfterRateLimit({
+            provider,
+            chainId,
+            params: rpcParams,
+            rateLimitState,
+            error: responseDetailError(detail, { status: response.httpStatus, headers: response.headers }),
+            retry: () => this._rpcRequest(
+              chainId,
+              method,
+              params,
+              rateLimitState,
+              malformedResponseAttempt
+            ),
+          });
+        }
+        // Public chain RPCs occasionally return an empty JSON-RPC envelope while
+        // the endpoint is healthy. Treat that as a bounded transient response,
+        // not as a missing transaction/balance, while still failing closed after
+        // the retry budget is exhausted.
+        if (!payload.error
+            && payload.result == null
+            && malformedResponseAttempt < EXPLORER_MALFORMED_RESPONSE_RETRIES) {
+          const delayMs = EXPLORER_TRANSIENT_RETRY_BASE_MS
+            * (2 ** malformedResponseAttempt);
+          logger.warn({
+            chainId,
+            method,
+            attempt: malformedResponseAttempt + 1,
+            delayMs,
+          }, 'Chain RPC returned a malformed JSON-RPC envelope; retrying');
+          await sleep(delayMs);
+          return this._rpcRequest(
             chainId,
             method,
             params,
             rateLimitState,
-            malformedResponseAttempt
-          ),
-        });
+            malformedResponseAttempt + 1
+          );
+        }
+        const error = new Error(`Chain RPC error: ${payload.error?.message || 'invalid response'}`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
       }
-      // Public chain RPCs occasionally return an empty JSON-RPC envelope while
-      // the endpoint is healthy. Treat that as a bounded transient response,
-      // not as a missing transaction/balance, while still failing closed after
-      // the retry budget is exhausted.
-      if (!payload.error
-          && payload.result == null
-          && malformedResponseAttempt < EXPLORER_MALFORMED_RESPONSE_RETRIES) {
-        const delayMs = EXPLORER_TRANSIENT_RETRY_BASE_MS
-          * (2 ** malformedResponseAttempt);
-        logger.warn({
-          chainId,
-          method,
-          attempt: malformedResponseAttempt + 1,
-          delayMs,
-        }, 'Chain RPC returned a malformed JSON-RPC envelope; retrying');
-        await sleep(delayMs);
-        return this._rpcRequest(
-          chainId,
-          method,
-          params,
-          rateLimitState,
-          malformedResponseAttempt + 1
-        );
-      }
-      const error = new Error(`Chain RPC error: ${payload.error?.message || 'invalid response'}`);
-      error.code = 'ETHERSCAN_API_ERROR';
-      throw error;
+      return payload.result;
+    } catch (error) {
+      throw attachProviderIdentity(error, provider, 'consensus-rpc');
     }
-    return payload.result;
   }
 
   // A bounded, independently verifiable transaction envelope for bridge
@@ -798,84 +814,101 @@ class EtherscanService {
   // walk behind the Etherscan account-feed throttle.
   static async _rpcBatchRequest(chainId, calls, rateLimitState = { attempt: 0 }) {
     const rpcUrl = consensusRpcUrl(chainId);
-    if (!rpcUrl) {
-      const error = new Error(`Chain ${chainId} has no JSON-RPC endpoint configured`);
-      error.code = 'ETHERSCAN_API_ERROR';
-      throw error;
-    }
-    if (!Array.isArray(calls) || calls.length === 0) return [];
-    const body = calls.map(({ method, params }, index) => ({
-      jsonrpc: '2.0',
-      id: index + 1,
-      method,
-      params,
-    }));
-    const provider = rpcProvider(chainId, rpcUrl);
-    const rpcParams = { module: 'rpc', action: 'batch' };
-    const response = await runThrottledRequest({
-      provider,
-      chainId,
-      params: rpcParams,
-      rateLimitState,
-      fn: () => axios.post(rpcUrl, body, { timeout: 30000 }),
-    });
-    if (!Array.isArray(response.data)) {
-      const detail = response.data?.error?.message || response.data?.message || '';
-      if (RPC_RATE_LIMIT_RE.test(String(detail))) {
+    const provider = rpcUrl ? rpcProvider(chainId, rpcUrl) : {
+      name: `Chain ${chainId} JSON-RPC`,
+      key: `rpc:chain-${chainId}`,
+    };
+    try {
+      if (!rpcUrl) {
+        const error = new Error(`Chain ${chainId} has no JSON-RPC endpoint configured`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      if (!Array.isArray(calls) || calls.length === 0) return [];
+      const body = calls.map(({ method, params }, index) => ({
+        jsonrpc: '2.0',
+        id: index + 1,
+        method,
+        params,
+      }));
+      const rpcParams = { module: 'rpc', action: 'batch' };
+      const response = await runThrottledRequest({
+        provider,
+        chainId,
+        params: rpcParams,
+        rateLimitState,
+        fn: () => axios.post(rpcUrl, body, { timeout: 30000 }),
+      });
+      if (!Array.isArray(response.data)) {
+        const detail = response.data?.error?.message || response.data?.message || '';
+        if (RPC_RATE_LIMIT_RE.test(String(detail))) {
+          return retryAfterRateLimit({
+            provider,
+            chainId,
+            params: rpcParams,
+            rateLimitState,
+            error: responseDetailError(detail, response),
+            retry: () => this._rpcBatchRequest(chainId, calls, rateLimitState),
+          });
+        }
+        const suffix = detail ? `: ${detail}` : '';
+        const error = new Error(`Chain RPC batch returned a non-array response${suffix}`);
+        error.code = 'ETHERSCAN_API_ERROR';
+        throw error;
+      }
+      const rateLimited = response.data.find((item) =>
+        RPC_RATE_LIMIT_RE.test(String(item?.error?.message || item?.error || '')));
+      if (rateLimited) {
         return retryAfterRateLimit({
           provider,
           chainId,
           params: rpcParams,
           rateLimitState,
-          error: responseDetailError(detail, response),
+          error: responseDetailError(
+            String(rateLimited.error?.message || rateLimited.error),
+            response
+          ),
           retry: () => this._rpcBatchRequest(chainId, calls, rateLimitState),
         });
       }
-      const suffix = detail ? `: ${detail}` : '';
-      const error = new Error(`Chain RPC batch returned a non-array response${suffix}`);
-      error.code = 'ETHERSCAN_API_ERROR';
-      throw error;
-    }
-    const rateLimited = response.data.find((item) =>
-      RPC_RATE_LIMIT_RE.test(String(item?.error?.message || item?.error || '')));
-    if (rateLimited) {
-      return retryAfterRateLimit({
-        provider,
-        chainId,
-        params: rpcParams,
-        rateLimitState,
-        error: responseDetailError(
-          String(rateLimited.error?.message || rateLimited.error),
-          response
-        ),
-        retry: () => this._rpcBatchRequest(chainId, calls, rateLimitState),
+      const byId = new Map(response.data.map((item) => [item?.id, item]));
+      return body.map(({ id, method }) => {
+        const item = byId.get(id);
+        if (!item || item.error || item.result == null) {
+          const detail = item?.error?.message || 'missing or invalid batch item';
+          const error = new Error(`Chain RPC ${method} error: ${detail}`);
+          error.code = 'ETHERSCAN_API_ERROR';
+          throw error;
+        }
+        return item.result;
       });
+    } catch (error) {
+      throw attachProviderIdentity(error, provider, 'consensus-rpc');
     }
-    const byId = new Map(response.data.map((item) => [item?.id, item]));
-    return body.map(({ id, method }) => {
-      const item = byId.get(id);
-      if (!item || item.error || item.result == null) {
-        const detail = item?.error?.message || 'missing or invalid batch item';
-        const error = new Error(`Chain RPC ${method} error: ${detail}`);
-        error.code = 'ETHERSCAN_API_ERROR';
-        throw error;
-      }
-      return item.result;
-    });
   }
 
   static async _latestBlockNumber(apiKey, chainId, rateLimitState = { attempt: 0 }) {
-    const chain = chains.getChain(chainId);
     const headApi = this._accountApi(chainId, 'getblockreward');
+    const historyApi = chains.accountApiForAction(chainId, 'txlist');
+    const tokenApi = chains.accountApiForAction(chainId, 'tokentx');
     let result;
     if (headApi?.verifyRpcIndexedHead) {
       const rpcHead = await this._rpcRequest(chainId, 'eth_blockNumber', []);
+      const consensusProvider = rpcProvider(chainId, consensusRpcUrl(chainId));
       if (typeof rpcHead !== 'string' || !/^0x[0-9a-f]+$/i.test(rpcHead)) {
-        throw apiError(`Chain ${chainId} RPC returned no valid indexed-head candidate`);
+        throw attachProviderIdentity(
+          apiError(`Chain ${chainId} RPC returned no valid indexed-head candidate`),
+          consensusProvider,
+          'consensus-rpc'
+        );
       }
       const blockNumber = Number(BigInt(rpcHead));
       if (!Number.isSafeInteger(blockNumber) || blockNumber < 0) {
-        throw apiError(`Chain ${chainId} RPC returned an unsafe indexed-head candidate`);
+        throw attachProviderIdentity(
+          apiError(`Chain ${chainId} RPC returned an unsafe indexed-head candidate`),
+          consensusProvider,
+          'consensus-rpc'
+        );
       }
       const probe = async (height) => {
         try {
@@ -930,16 +963,16 @@ class EtherscanService {
       // When native history and token history use different indexers, the
       // boundary must be safe for both or an empty token page could advance
       // beyond Blockscout's index and permanently skip late rows.
-      if (chain?.accountApi?.nativeHistoryApi
-          && chain.accountApi.provider === 'Blockscout') {
+      if (tokenApi?.provider === 'Blockscout'
+          && (tokenApi.provider !== headApi.provider || tokenApi.baseUrl !== headApi.baseUrl)) {
         const tokenHead = await this._blockscoutLatestBlockNumber(
-          apiKey, chainId, chain.accountApi, rateLimitState
+          apiKey, chainId, tokenApi, rateLimitState
         );
         result = String(Math.min(low, tokenHead));
       }
-    } else if (chain?.accountApi?.provider === 'Blockscout') {
+    } else if (historyApi?.provider === 'Blockscout') {
       result = String(await this._blockscoutLatestBlockNumber(
-        apiKey, chainId, chain.accountApi, rateLimitState
+        apiKey, chainId, historyApi, rateLimitState
       ));
     } else {
       result = await this._request(
@@ -1018,13 +1051,16 @@ class EtherscanService {
     }
     if (typeof result === 'number') result = String(result);
     if (typeof result !== 'string' || !/^(?:0x[0-9a-f]+|\d+)$/i.test(result)) {
-      throw apiError(
+      throw attachProviderIdentity(apiError(
         `Blockscout returned an invalid indexed block number: ${JSON.stringify(result)}`
-      );
+      ), provider);
     }
     const block = Number(BigInt(result));
     if (!Number.isSafeInteger(block) || block < 0) {
-      throw apiError(`Blockscout returned an unsafe indexed block number: ${result}`);
+      throw attachProviderIdentity(
+        apiError(`Blockscout returned an unsafe indexed block number: ${result}`),
+        provider
+      );
     }
     return block;
   }
@@ -1049,13 +1085,16 @@ class EtherscanService {
       logger.warn({ chainId, blockNumber, err: error.message },
         'Chain RPC block timestamp unavailable; using account explorer proxy');
     }
+    const fallbackParams = {
+      module: 'proxy', action: 'eth_getBlockByNumber', tag, boolean: 'false',
+    };
+    const timestampProvider = rpcResult === null
+      ? this._provider(chainId, apiKey, fallbackParams.action)
+      : rpcProvider(chainId, consensusRpcUrl(chainId));
+    const timestampAuditProvider = rpcResult === null
+      ? String(timestampProvider.name || '').toLowerCase() : 'consensus-rpc';
     const block = rpcResult === null
-      ? await this._request({
-        module: 'proxy',
-        action: 'eth_getBlockByNumber',
-        tag,
-        boolean: 'false',
-      }, { apiKey, chainId })
+      ? await this._request(fallbackParams, { apiKey, chainId })
       : rpcResult;
     const timestamp = String(block?.timestamp || '');
     if (!/^0x[0-9a-f]+$/i.test(timestamp)) {
@@ -1063,7 +1102,7 @@ class EtherscanService {
         `Chain provider returned no valid timestamp for block ${blockNumber}`
       );
       error.code = 'ETHERSCAN_API_ERROR';
-      throw error;
+      throw attachProviderIdentity(error, timestampProvider, timestampAuditProvider);
     }
     const milliseconds = Number(BigInt(timestamp)) * 1000;
     const date = new Date(milliseconds);
@@ -1072,7 +1111,7 @@ class EtherscanService {
         `Chain provider returned an unsafe timestamp for block ${blockNumber}`
       );
       error.code = 'ETHERSCAN_API_ERROR';
-      throw error;
+      throw attachProviderIdentity(error, timestampProvider, timestampAuditProvider);
     }
     if (blockTimestampCache.size >= BLOCK_TIMESTAMP_CACHE_MAX) {
       blockTimestampCache.delete(blockTimestampCache.keys().next().value);
@@ -1573,6 +1612,14 @@ class EtherscanService {
   }
 
   static async _hydrateBlockscoutV2InternalStatus(rows, chainId) {
+    const rpcUrl = consensusRpcUrl(chainId);
+    const provider = rpcUrl ? rpcProvider(chainId, rpcUrl) : {
+      name: `Chain ${chainId} JSON-RPC`,
+      key: `rpc:chain-${chainId}`,
+    };
+    const traceError = (message) => attachProviderIdentity(
+      apiError(message), provider, 'consensus-rpc'
+    );
     const hashes = [...new Set(rows.map((row) => row.hash))];
     const tracesByHash = new Map();
     const batchSize = 100;
@@ -1587,12 +1634,12 @@ class EtherscanService {
         if (!Array.isArray(transactionTraces) || transactionTraces.length === 0
             || transactionTraces.some((trace) =>
               String(trace?.transactionHash || '').toLowerCase() !== expectedHash)) {
-          throw apiError(`Chain trace response is invalid for Blockscout V2 transaction ${expectedHash}; cursor frozen`);
+          throw traceError(`Chain trace response is invalid for Blockscout V2 transaction ${expectedHash}; cursor frozen`);
         }
         const roots = transactionTraces.filter((trace) =>
           Array.isArray(trace.traceAddress) && trace.traceAddress.length === 0);
         if (roots.length !== 1) {
-          throw apiError(`Chain trace response has no unique root for ${expectedHash}; cursor frozen`);
+          throw traceError(`Chain trace response has no unique root for ${expectedHash}; cursor frozen`);
         }
         tracesByHash.set(expectedHash, transactionTraces);
       });
@@ -1611,13 +1658,13 @@ class EtherscanService {
       try {
         value = BigInt(traceValue).toString();
       } catch {
-        throw apiError(`Chain trace has an invalid value for ${row.hash}; cursor frozen`);
+        throw traceError(`Chain trace has an invalid value for ${row.hash}; cursor frozen`);
       }
       const economicType = (trace?.type === 'call' && action.callType === 'call')
         || trace?.type === 'create' || trace?.type === 'suicide';
       if (!trace || !Array.isArray(traceAddress) || !economicType
           || traceFrom !== row.from || traceTo !== row.to || value !== row.value) {
-        throw apiError(`Chain trace disagrees with Blockscout V2 row ${row.hash}:${row.blockscoutTraceIndex}; cursor frozen`);
+        throw traceError(`Chain trace disagrees with Blockscout V2 row ${row.hash}:${row.blockscoutTraceIndex}; cursor frozen`);
       }
       const reverted = transactionTraces.some((ancestor) => {
         if (!ancestor?.error || !Array.isArray(ancestor.traceAddress)

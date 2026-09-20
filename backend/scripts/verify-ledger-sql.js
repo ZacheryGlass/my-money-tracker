@@ -120,6 +120,64 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   );
   const walletId = wallet.rows[0].id;
 
+  // Exercise the durable audit-job shape against the real migration chain.
+  // This catches model/schema drift that SQL-shape unit tests cannot see.
+  const auditSubject = await pool.query(
+    'INSERT INTO evm_subjects (user_id, address) VALUES (1, $1) RETURNING id',
+    [addr('a')]
+  );
+  const auditJob = await pool.query(
+    `INSERT INTO evm_audit_jobs (
+       user_id, subject_id, requested_wallet_id, mode, idempotency_key,
+       credential_generation, requested_chains
+     ) VALUES (1, $1, $2, 'full', 'verify-audit-shape',
+               '2026-01-01T00:00:00Z', '[1]'::jsonb)
+     RETURNING id, credential_generation`,
+    [auditSubject.rows[0].id, walletId]
+  );
+  ok(
+    'fresh migrations support durable EVM audit credential generations',
+    auditJob.rows[0].credential_generation instanceof Date
+  );
+  // Recreate the exact upgraded-database shape left by the original 079, then
+  // execute 093 again. This proves the generic value is repaired before the
+  // provider-specific source column is removed; a fresh-schema no-op alone
+  // would not exercise that data migration.
+  await pool.query(
+    'ALTER TABLE evm_audit_jobs ADD COLUMN moralis_credential_generation TIMESTAMPTZ'
+  );
+  await pool.query(
+    `UPDATE evm_audit_jobs
+        SET credential_generation = '2026-02-01T00:00:00Z',
+            moralis_credential_generation = '2026-01-15T00:00:00Z'
+      WHERE id = $1`,
+    [auditJob.rows[0].id]
+  );
+  await pool.query(fs.readFileSync(
+    path.join(REPO_BACKEND, 'migrations', '093_retire_moralis_audit_generation.sql'),
+    'utf8'
+  ));
+  const migratedAuditJob = await pool.query(
+    'SELECT credential_generation FROM evm_audit_jobs WHERE id = $1',
+    [auditJob.rows[0].id]
+  );
+  ok(
+    'upgraded migrations preserve the exact Moralis credential generation',
+    migratedAuditJob.rows[0].credential_generation.toISOString()
+      === '2026-01-15T00:00:00.000Z'
+  );
+  const retiredAuditGeneration = await pool.query(
+    `SELECT 1
+       FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'evm_audit_jobs'
+        AND column_name = 'moralis_credential_generation'`
+  );
+  ok(
+    'fresh migrations omit the retired provider-specific audit generation',
+    retiredAuditGeneration.rowCount === 0
+  );
+
   //  - a swap, priced
   //  - a flagged send on another chain, unpriced
   //  - a deposit a venue also recorded (the pair must render once)
@@ -845,6 +903,65 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   const lone = withLone.rows.find((r) => r.tx_hash === LONE_BRIDGE_TX);
   ok('an unlinked bridge leg stays a single, still-flagged row',
     lone && lone.bridge_match === null && lone.needs_review === true);
+
+  // Execute the shared Base-exclusion predicate against real jsonb. This
+  // guards both its SQL syntax and the decoded-event identity binding; the
+  // unit suite also checks the equivalent JavaScript policy.
+  const baseIdentity = { destination_chain_id: '8453', deposit_id: 'verify-1' };
+  const baseSource = {
+    type: 'decoded_protocol_identity', protocol: 'across', family_version: 'v3',
+    correlation_key: 'across:verify-1', identity_fields: baseIdentity,
+  };
+  const baseEvidence = {
+    reason: 'excluded_counterparty_chain', excluded_chain_id: 8453,
+    source: baseSource,
+    decoder_event: {
+      protocol: 'across', family_version: 'v3', correlation_key: 'across:verify-1',
+      evidence: { identity_fields: baseIdentity },
+    },
+  };
+  const excludedMovement = await pool.query(
+    `INSERT INTO eth_bridge_movements
+       (user_id, protocol, family_version, status, verification_method,
+        correlation_key, evidence)
+     VALUES (1, 'across', 'v3', 'unsupported', 'protocol_identity',
+             'excluded-base:verify-1', $1::jsonb)
+     RETURNING id`,
+    [JSON.stringify(baseEvidence)]
+  );
+  const excludedMovementId = excludedMovement.rows[0].id;
+  await pool.query(
+    `INSERT INTO eth_bridge_movement_members
+       (movement_id, wallet_id, chain_id, tx_hash, role, amount, evidence)
+     VALUES ($1, $2, 1, $3, 'initiation', 1, $4::jsonb)`,
+    [excludedMovementId, walletId, LONE_BRIDGE_TX, JSON.stringify(baseEvidence)]
+  );
+  const EthActivityLink = require('../src/models/EthActivityLink');
+  const { REVIEW_REASONS } = require('../src/utils/ethActivityVocabulary');
+  await EthActivityLink.syncBridgeReviewState(1, 'Synthetic unresolved bridge');
+  let baseReview = await pool.query(
+    'SELECT review_reason FROM eth_activity WHERE wallet_id = $1 AND chain_id = 1 AND tx_hash = $2',
+    [walletId, LONE_BRIDGE_TX]
+  );
+  ok('decoded Base exclusion SQL accepts only evidence bound to its decoder event',
+    baseReview.rows[0].review_reason === REVIEW_REASONS.excluded_bridge);
+  await pool.query(
+    `UPDATE eth_bridge_movements
+        SET evidence = jsonb_set(evidence, '{decoder_event,correlation_key}', '"drifted"'::jsonb)
+      WHERE id = $1`,
+    [excludedMovementId]
+  );
+  await EthActivityLink.syncBridgeReviewState(1, 'Synthetic unresolved bridge');
+  baseReview = await pool.query(
+    'SELECT review_reason FROM eth_activity WHERE wallet_id = $1 AND chain_id = 1 AND tx_hash = $2',
+    [walletId, LONE_BRIDGE_TX]
+  );
+  ok('decoded Base exclusion SQL rejects decoder identity drift',
+    baseReview.rows[0].review_reason === 'Synthetic unresolved bridge');
+  await pool.query('DELETE FROM eth_bridge_movement_members WHERE movement_id = $1', [
+    excludedMovementId,
+  ]);
+  await pool.query('DELETE FROM eth_bridge_movements WHERE id = $1', [excludedMovementId]);
 
   // A failed refresh must make the previously complete envelope ineligible
   // for the next verdict-only rebuild without erasing its raw audit evidence.

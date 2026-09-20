@@ -8,6 +8,10 @@ const {
   matchesIndexedTransfer,
   TRANSFER_TYPES,
 } = require('../services/evmAudit/corroboratedIdentity');
+const {
+  INDEPENDENT_ENUMERATION_PROVIDERS,
+  isVerifiedExcludedBaseMovement,
+} = require('../services/evmAudit/completionPolicy');
 
 const ACTIVE_JOB_STATUSES = ['queued', 'running', 'deferred'];
 const OBSERVATION_BATCH_SIZE = 500;
@@ -110,18 +114,14 @@ class EvmAudit {
     }
   }
 
-  static async credentialGenerations(userId) {
+  static async credentialGeneration(userId) {
     const { rows } = await pool.query(
-      `SELECT service, MAX(updated_at) AS updated_at
+      `SELECT MAX(updated_at) AS updated_at
          FROM user_api_keys
-        WHERE user_id = $1 AND service IN ('moralis')
-        GROUP BY service`,
+        WHERE user_id = $1 AND service = 'moralis'`,
       [userId]
     );
-    return rows.reduce((result, row) => {
-      result[row.service] = row.updated_at || null;
-      return result;
-    }, { moralis: null });
+    return rows[0]?.updated_at || null;
   }
 
   static async ensureSubject(userId, address, client = pool) {
@@ -139,18 +139,9 @@ class EvmAudit {
 
   static async createOrFindActiveJob(userId, wallet, {
     mode = 'incremental', requestedChains = [], credentialGeneration = null,
-    credentialGenerations = null,
-    requestedProviders = null,
     etherscanConfigured = false, rpcConfigurationReady = false,
   } = {}) {
-    const providerGenerations = credentialGenerations || {
-      moralis: credentialGeneration,
-    };
-    const latestCredentialGeneration = credentialGeneration
-      || [providerGenerations.moralis]
-        .filter(Boolean)
-        .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0]
-      || null;
+    const latestCredentialGeneration = credentialGeneration || null;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -169,103 +160,10 @@ class EvmAudit {
         [subject.id, ACTIVE_JOB_STATUSES]
       );
       const activeRow = active.rows[0] || null;
-      const activeChains = new Set((activeRow?.requested_chains || []).map(Number));
-      let supersededJobId = null;
-      const isDeferredBroaderScope = activeRow?.status === 'deferred'
-        && requestedChains.length > 0
-        && activeChains.size > requestedChains.length
-        && requestedChains.every((chainId) => activeChains.has(Number(chainId)));
-      let requestedScopeIsComplete = false;
-      if (isDeferredBroaderScope) {
-        // A broad job may be deferred by the requested chain itself (for
-        // example Moralis quota), so scope
-        // narrowing must not bypass that provider's retry deadline. Only
-        // supersede when every requested chain already has exclusively
-        // complete capability scopes in the broad job.
-        const requestedScope = await client.query(
-          `SELECT chain_id,
-                  COUNT(*) AS scope_count,
-                  BOOL_AND(status = 'complete') AS complete,
-                  ARRAY_AGG(DISTINCT provider) AS providers
-             FROM evm_audit_scopes
-            WHERE job_id = $1 AND chain_id = ANY($2::bigint[])
-            GROUP BY chain_id`,
-          [activeRow.id, requestedChains.map(Number)]
-        );
-        const requestedIds = new Set(requestedChains.map(Number));
-        requestedScopeIsComplete = requestedScope.rows.length === requestedIds.size
-          && requestedScope.rows.every((row) => Number(row.scope_count) > 0 && row.complete === true);
-        const requestedProviderIsIncomplete = requestedProviders
-          && requestedScope.rows.length === requestedIds.size
-          && requestedScope.rows.some((row) => {
-            const expectedProvider = requestedProviders[String(row.chain_id)];
-            return expectedProvider
-              && (row.providers || []).includes(expectedProvider)
-              && row.complete !== true;
-          });
-        const providerPrefixes = {
-          moralis: 'MORALIS_',
-          etherscan: 'ETHERSCAN_',
-          blockscout: 'BLOCKSCOUT_',
-          'consensus-rpc': 'RPC_',
-        };
-        const deferredErrorCode = String(activeRow.error_code || '');
-        const deferredErrorDetail = String(activeRow.error_detail || '');
-        const deferredErrorProvider = Object.entries(providerPrefixes)
-          .find(([, prefix]) => deferredErrorCode.startsWith(prefix))?.[0] || null;
-        const deferredErrorProviderFromDetail = deferredErrorProvider || Object.entries({
-          moralis: /moralis/i,
-          etherscan: /etherscan/i,
-          blockscout: /blockscout/i,
-          'consensus-rpc': /consensus\s+rpc|rpc/i,
-        }).find(([, pattern]) => pattern.test(deferredErrorDetail))?.[0] || null;
-        const requestedProviderOwnsDeferredError = deferredErrorProviderFromDetail
-          && Object.values(requestedProviders || {}).includes(deferredErrorProviderFromDetail);
-        // A deferred broad job can predate a provider migration. If it has no
-        // incomplete scope for the provider now required by the requested
-        // chain, a new narrow job is safe: old pages remain immutable and the
-        // new provider establishes its own bounded proof. An incomplete
-        // requested-provider scope still blocks narrowing when the broad job's
-        // own deferred error belongs to that provider. An unrelated provider
-        // error from another provider must not
-        // strand the new provider's independent proof.
-        if (requestedProviders && (!requestedProviderIsIncomplete
-          || (deferredErrorProviderFromDetail && !requestedProviderOwnsDeferredError))) {
-          requestedScopeIsComplete = true;
-        }
-      }
-      if (isDeferredBroaderScope && requestedScopeIsComplete) {
-        // A whole-EVM job can remain deferred forever because an unrelated
-        // chain has a standing provider limitation. An explicit narrower
-        // request is safe to run as a new job: the old job's pages and
-        // provider-attempt evidence remain immutable, and
-        // the new job starts its own bounded proof for the requested scope.
-        // Never supersede a running job or silently convert a broad request.
-        supersededJobId = activeRow.id;
-        await client.query(
-          `UPDATE evm_audit_jobs
-              SET status = 'cancelled',
-                  stage = 'complete',
-                  retry_after_at = NULL,
-                  finished_at = CURRENT_TIMESTAMP,
-                  lease_owner = NULL,
-                  lease_expires_at = NULL,
-                  heartbeat_at = CURRENT_TIMESTAMP,
-                  error_detail = CONCAT(
-                    COALESCE(error_detail, ''),
-                    CASE WHEN COALESCE(error_detail, '') = '' THEN '' ELSE ' ' END,
-                    'This broader audit was superseded by an explicit narrower audit scope; all retained provider evidence remains available.'
-                  ),
-                  updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1 AND status = 'deferred'
-            RETURNING *`,
-          [activeRow.id]
-        );
-      } else if (activeRow) {
+      if (activeRow) {
         let activeJob = activeRow;
         const errorCode = String(activeJob.error_code || '');
         const indexedProviderDeferred = errorCode.startsWith('MORALIS_');
-        const deferredProvider = errorCode.startsWith('MORALIS_') ? 'moralis' : null;
         // Etherscan's credential is also user-scoped, but its deferred job may
         // have no Moralis generation change to record. Re-open as soon as the
         // Settings key exists so a missing-key deferral is not sticky for 24h.
@@ -273,25 +171,13 @@ class EvmAudit {
           && etherscanConfigured;
         const rpcConfigurationReadyNow = errorCode === 'RPC_UNSUPPORTED'
           && rpcConfigurationReady;
-        const deferredProviderGeneration = deferredProvider
-          ? providerGenerations[deferredProvider] : null;
-        const deferredProviderGenerationColumn = deferredProvider
-          ? `${deferredProvider}_credential_generation` : null;
-        const priorProviderGeneration = deferredProviderGenerationColumn
-          ? activeJob[deferredProviderGenerationColumn] || (
-            // Jobs created before provider-specific generations were added can
-            // fall back to the legacy value only when exactly one indexed
-            // provider was requested. A combined timestamp is ambiguous when
-            // more than one indexed provider was in scope.
-            (activeJob.requested_chains || []).length === 1
-              ? activeJob.credential_generation : null
-          ) : null;
-        const deferredProviderGenerationChanged = indexedProviderDeferred && deferredProvider
-          && (priorProviderGeneration == null
-            ? deferredProviderGeneration != null
-            : deferredProviderGeneration == null
-              || new Date(priorProviderGeneration).getTime()
-                !== new Date(deferredProviderGeneration).getTime());
+        const priorCredentialGeneration = activeJob.credential_generation || null;
+        const deferredProviderGenerationChanged = indexedProviderDeferred
+          && (priorCredentialGeneration == null
+            ? latestCredentialGeneration != null
+            : latestCredentialGeneration == null
+              || new Date(priorCredentialGeneration).getTime()
+                !== new Date(latestCredentialGeneration).getTime());
         const credentialChanged = etherscanCredentialReady
           || deferredProviderGenerationChanged || rpcConfigurationReadyNow;
         const retryDue = activeJob.status === 'deferred'
@@ -302,14 +188,13 @@ class EvmAudit {
                 SET status = 'queued',
                     stage = 'queued',
                     credential_generation = $2,
-                    moralis_credential_generation = $3,
                     retry_after_at = NULL,
                     error_code = NULL,
                     error_detail = NULL,
                     updated_at = CURRENT_TIMESTAMP
               WHERE id = $1
             RETURNING *`,
-            [activeJob.id, latestCredentialGeneration, providerGenerations.moralis]
+            [activeJob.id, latestCredentialGeneration]
           );
           activeJob = refreshed.rows[0];
         }
@@ -373,23 +258,14 @@ class EvmAudit {
       const inserted = await client.query(
         `INSERT INTO evm_audit_jobs (
            user_id, subject_id, requested_wallet_id, mode, idempotency_key,
-           credential_generation, moralis_credential_generation, requested_chains
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+           credential_generation, requested_chains
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
          RETURNING *`,
         [
           userId, subject.id, wallet.id, mode, idempotencyKey,
-          latestCredentialGeneration, providerGenerations.moralis, JSON.stringify(requestedChains),
+          latestCredentialGeneration, JSON.stringify(requestedChains),
         ]
       );
-      if (supersededJobId) {
-        await client.query(
-          `UPDATE evm_audit_jobs
-              SET superseded_by_job_id = $2,
-                  updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1`,
-          [supersededJobId, inserted.rows[0].id]
-        );
-      }
       await client.query('COMMIT');
       return { job: inserted.rows[0], created: true };
     } catch (error) {
@@ -1346,15 +1222,42 @@ class EvmAudit {
     return new Set(rows.map((row) => row.tx_hash));
   }
 
-  static async transactionConflictCount(subjectId, chainId) {
+  static async transactionConflictCounts(subjectId, chainId) {
     const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS count
-         FROM evm_mined_transactions
-        WHERE subject_id = $1 AND chain_id = $2
-          AND resolution_status IN ('provisional', 'conflict')`,
+      `SELECT
+         COUNT(*) FILTER (WHERE
+           tx.signedness = 'user_signed'
+           OR EXISTS (
+             SELECT 1
+               FROM evm_canonical_effects effect
+              WHERE effect.subject_id = tx.subject_id
+                AND effect.chain_id = tx.chain_id
+                AND effect.tx_hash = tx.tx_hash
+                AND effect.effect_type IN ('native', 'gas', 'internal', 'native_credit')
+                AND effect.resolution_status <> 'invalidated'
+           )
+         )::int AS native_count,
+         COUNT(*) FILTER (WHERE NOT (
+           tx.signedness = 'user_signed'
+           OR EXISTS (
+             SELECT 1
+               FROM evm_canonical_effects effect
+              WHERE effect.subject_id = tx.subject_id
+                AND effect.chain_id = tx.chain_id
+                AND effect.tx_hash = tx.tx_hash
+                AND effect.effect_type IN ('native', 'gas', 'internal', 'native_credit')
+                AND effect.resolution_status <> 'invalidated'
+           )
+         ))::int AS optional_count
+       FROM evm_mined_transactions tx
+      WHERE tx.subject_id = $1 AND tx.chain_id = $2
+        AND tx.resolution_status IN ('provisional', 'conflict')`,
       [subjectId, chainId]
     );
-    return rows[0]?.count || 0;
+    return {
+      native: rows[0]?.native_count || 0,
+      optional: rows[0]?.optional_count || 0,
+    };
   }
 
   static async requiredScopeGapCount(jobId, chainId) {
@@ -1373,21 +1276,22 @@ class EvmAudit {
              -- same stored rows a provider walk is meant to verify, so
              -- allowing it to satisfy this predicate would let stale prior
              -- coverage hide a newly deferred or partial provider feed.
-             AND sc.provider IN ('moralis', 'blockscout', 'etherscan', 'trace-rpc')
+             AND sc.provider = ANY($3::text[])
              AND sc.status = 'complete' AND sc.pagination_exhausted = TRUE
         )`,
-      [jobId, chainId]
+      [jobId, chainId, INDEPENDENT_ENUMERATION_PROVIDERS]
     );
     return rows[0]?.count || 0;
   }
 
-  static async provisionalEffectCount(subjectId, chainId) {
+  static async provisionalEffectCount(subjectId, chainId, effectTypes = null) {
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS count
          FROM evm_canonical_effects
         WHERE subject_id = $1 AND chain_id = $2
-          AND resolution_status IN ('provisional', 'conflict')`,
-      [subjectId, chainId]
+          AND resolution_status IN ('provisional', 'conflict')
+          AND ($3::text[] IS NULL OR effect_type = ANY($3::text[]))`,
+      [subjectId, chainId, effectTypes]
     );
     return rows[0]?.count || 0;
   }
@@ -1602,7 +1506,7 @@ class EvmAudit {
   // provider at the exact transaction/log
   // coordinate. Economic equality alone remains a gap.
   static async repairCorroboratedTransferIdentities(
-    jobId, userId, subjectId, chainId, throughBlock, fence = {}
+    jobId, userId, subjectId, chainId, throughBlock, indexedProviders, fence = {}
   ) {
     const client = await pool.connect();
     try {
@@ -1630,8 +1534,8 @@ class EvmAudit {
            FROM evm_canonical_effects e
            JOIN evm_provider_observations o
              ON o.subject_id = e.subject_id AND o.chain_id = e.chain_id
-            AND o.provider = 'moralis'
-            AND o.evidence_kind = e.effect_type || '_transfer'
+            AND o.provider = ANY($7::text[])
+            AND o.evidence_kind IN ('account_feed', e.effect_type || '_transfer')
             AND o.tx_hash = e.tx_hash AND o.log_index = e.log_index
           JOIN evm_job_observations jo
             ON jo.job_id = $1 AND jo.observation_id = o.id
@@ -1648,7 +1552,10 @@ class EvmAudit {
             AND e.resolution_status = 'verified'
             AND tx.resolution_status = 'verified'
           ORDER BY e.id, o.id`,
-        [jobId, userId, subjectId, chainId, throughBlock, Object.keys(TRANSFER_TYPES)]
+        [
+          jobId, userId, subjectId, chainId, throughBlock,
+          Object.keys(TRANSFER_TYPES), indexedProviders,
+        ]
       );
       const legacyResult = await client.query(
         `SELECT * FROM eth_transfers
@@ -1678,7 +1585,8 @@ class EvmAudit {
             tx_hash: observation.indexed_tx_hash,
             log_index: observation.indexed_log_index,
             payload_json: observation.indexed_payload_json,
-          }
+          },
+          indexedProviders
         ));
         if (indexedMatches.length !== 1) continue;
         const candidates = legacyRows.filter((row) => matchesLegacyTransfer(effect, row)
@@ -1755,8 +1663,10 @@ class EvmAudit {
     const { rows } = await pool.query(
       `SELECT a.tx_hash,
               COALESCE(o.category, a.category) AS category,
+              bm.id AS movement_id,
               bm.status AS movement_status,
-              bm.verification_method
+              bm.verification_method,
+              bm.evidence AS movement_evidence
          FROM evm_subjects s
          JOIN eth_wallets w ON w.user_id = s.user_id AND w.address = s.address
          JOIN eth_activity a ON a.wallet_id = w.id
@@ -1769,7 +1679,8 @@ class EvmAudit {
         WHERE s.id = $2 AND s.user_id = $1 AND a.chain_id = $3
           AND a.block_number <= $4
           AND COALESCE(o.category, a.category) IN ('bridge_out', 'bridge_in')
-        GROUP BY a.tx_hash, COALESCE(o.category, a.category), bm.status, bm.verification_method
+        GROUP BY a.tx_hash, COALESCE(o.category, a.category), bm.id,
+                 bm.status, bm.verification_method, bm.evidence
         ORDER BY a.tx_hash`,
       [userId, subjectId, chainId, throughBlock]
     );
@@ -1779,19 +1690,35 @@ class EvmAudit {
       const current = byTransaction.get(row.tx_hash) || {
         transaction_hash: row.tx_hash,
         category: row.category,
-        statuses: [],
+        movement_references: [],
       };
-      current.statuses.push(row.movement_status || 'unpaired');
+      current.movement_references.push({
+        movement_id: row.movement_id || null,
+        status: row.movement_status || 'unpaired',
+        verification_method: row.verification_method || null,
+        evidence: row.movement_evidence || null,
+      });
       byTransaction.set(row.tx_hash, current);
     }
     return {
       total: byTransaction.size,
       unresolved: [...byTransaction.values()]
-        .filter((row) => !row.statuses.some((status) => proven.has(status)))
+        .filter((row) => {
+          const hasProvenMovement = row.movement_references.some(
+            (reference) => proven.has(reference.status)
+          );
+          const onlyExcludedBaseMovements = row.movement_references.length > 0
+            && row.movement_references.every(
+              (reference) => isVerifiedExcludedBaseMovement(reference)
+            );
+          return !hasProvenMovement && !onlyExcludedBaseMovements;
+        })
         .map((row) => ({
           transaction_hash: row.transaction_hash,
           category: row.category,
-          movement_status: row.statuses.find((status) => status !== 'unpaired') || 'unpaired',
+          movement_status: row.movement_references
+            .find((reference) => reference.status !== 'unpaired')?.status || 'unpaired',
+          movement_references: row.movement_references,
         })),
     };
   }

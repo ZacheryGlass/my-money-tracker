@@ -1084,7 +1084,7 @@ const Settings = ({ user }) => {
           <AlertTriangle size={16} className="mt-0.5 shrink-0" />
           <span>
             The server is missing SECRETS_ENCRYPTION_KEY, so keys cannot be stored here yet.
-            Integrations with configured server defaults can keep using them, but Moralis audits require an encrypted per-user key.
+            Integrations with configured server defaults can keep using them. Optional Moralis discovery needs an encrypted per-user key; Gnosis audits can use the free Blockscout fallback without one.
           </span>
         </div>
       )}
@@ -1097,7 +1097,7 @@ const Settings = ({ user }) => {
       <section className="mb-8">
         <div className="mb-3 px-2">
           <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Your Keys</h2>
-          <p className="mt-1 text-xs text-secondary">Credentials for pulling your own financial data. Stored encrypted; only the last four characters are ever shown. Plaid and Etherscan may use configured server defaults; Moralis requires a separate stored per-user key.</p>
+          <p className="mt-1 text-xs text-secondary">Credentials for pulling your own financial data. Stored encrypted; only the last four characters are ever shown. Plaid and Etherscan may use configured server defaults. Moralis is optional for enhanced Gnosis discovery and uses a separate stored per-user key.</p>
         </div>
         <div className="card divide-y divide-border overflow-hidden">
           {USER_KEY_ROWS.map(({ service, label }) => {

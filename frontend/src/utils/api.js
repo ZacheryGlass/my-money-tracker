@@ -703,12 +703,6 @@ export const exchanges = {
     const response = await api.post(`/api/exchanges/${id}/test`);
     return response.data;
   },
-  // Compatibility call for clients that need one bounded pass and its detailed
-  // receipt. The app itself uses the durable startSync/getSyncStatus flow.
-  sync: async (id) => {
-    const response = await api.post(`/api/exchanges/${id}/sync`);
-    return response.data;
-  },
   // Starts the durable, resumable backfill. The response is a job receipt;
   // callers poll getSyncStatus rather than keeping an HTTP request open while
   // a provider walks years of ledger pages.

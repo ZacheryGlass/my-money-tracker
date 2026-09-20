@@ -60,6 +60,15 @@ test('migration creates six-feed durable coverage without blessing old cursors a
   assert.match(deferredMigration, /ADD COLUMN IF NOT EXISTS retry_after_at TIMESTAMPTZ/);
   assert.match(deferredMigration, /'deferred'/);
   assert.match(deferredMigration, /pg_get_constraintdef\(oid\) LIKE '%deferred%'/);
+
+  const providerMigration = fs.readFileSync(
+    path.join(__dirname, '..', 'migrations', '092_correct_feed_provider_provenance.sql'),
+    'utf8'
+  );
+  assert.match(providerMigration, /chain_id = 42170/);
+  assert.match(providerMigration, /chain_id = 100/);
+  assert.match(providerMigration, /chain_id = 10/);
+  assert.match(providerMigration, /provider = 'Blockscout \(https:\/\/[^']+\/api\/v2\/\)'/);
 });
 
 test('one chain attempt is written as one six-feed snapshot with exact errors', async () => {
@@ -106,12 +115,29 @@ test('one chain attempt is written as one six-feed snapshot with exact errors', 
   assert.match(sqlOf(queries[0]), /INSERT INTO eth_feed_coverage/);
   assert.match(sqlOf(queries[0]), /\$6::varchar\(20\)/, 'status parameters are explicitly typed for PostgreSQL inference');
   assert.match(sqlOf(queries[0]), /ON CONFLICT \(wallet_id, chain_id, feed\) DO UPDATE/);
+  assert.match(
+    sqlOf(queries[0]),
+    /eth_feed_coverage\.provider IS DISTINCT FROM EXCLUDED\.provider/
+  );
+  assert.match(
+    sqlOf(queries[0]),
+    /eth_feed_coverage\.cursor_kind IS DISTINCT FROM EXCLUDED\.cursor_kind/
+  );
   assert.match(sqlOf(queries[0]), /ELSE eth_feed_coverage\.covered_through_block/);
   assert.equal(queries[0].params.length, 6 * 15);
   assert.ok(queries[0].params.includes('ETHERSCAN_FEED_UNSUPPORTED'));
   assert.ok(queries[0].params.includes('internal traces are unavailable for blocks 0-123'));
   assert.match(sqlOf(queries[0]), /WHEN EXCLUDED\.status = 'deferred' THEN EXCLUDED\.retry_after_at ELSE NULL/,
     'a later success or standing limitation clears stale provider cooldown state');
+});
+
+test('feed coverage can inspect the stored provider identity before a sync', async () => {
+  queries.length = 0;
+  returnedRows = [{ wallet_id: 7, chain_id: 100, feed: 'normal' }];
+  const rows = await EthFeedCoverage.findForWalletChain(7, 100);
+  assert.equal(rows.length, 1);
+  assert.match(sqlOf(queries[0]), /WHERE wallet_id = \$1 AND chain_id = \$2/);
+  assert.deepEqual(queries[0].params, [7, 100]);
 });
 
 test('failed coverage entries cannot omit their exact reason', async () => {

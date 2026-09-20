@@ -78,6 +78,10 @@ class EthFeedCoverage {
          provider = EXCLUDED.provider,
          status = EXCLUDED.status,
          covered_from_block = CASE
+           WHEN eth_feed_coverage.provider IS DISTINCT FROM EXCLUDED.provider
+             OR eth_feed_coverage.cursor_kind IS DISTINCT FROM EXCLUDED.cursor_kind
+             THEN CASE WHEN EXCLUDED.status = 'complete'
+               THEN EXCLUDED.covered_from_block ELSE NULL END
            WHEN EXCLUDED.status = 'complete' THEN
              COALESCE(
                LEAST(eth_feed_coverage.covered_from_block, EXCLUDED.covered_from_block),
@@ -88,11 +92,19 @@ class EthFeedCoverage {
            ELSE eth_feed_coverage.covered_from_block
          END,
          covered_through_block = CASE
+           WHEN eth_feed_coverage.provider IS DISTINCT FROM EXCLUDED.provider
+             OR eth_feed_coverage.cursor_kind IS DISTINCT FROM EXCLUDED.cursor_kind
+             THEN CASE WHEN EXCLUDED.status = 'complete'
+               THEN EXCLUDED.covered_through_block ELSE NULL END
            WHEN EXCLUDED.status = 'complete' THEN EXCLUDED.covered_through_block
            WHEN EXCLUDED.status = 'not_applicable' THEN NULL
            ELSE eth_feed_coverage.covered_through_block
          END,
          covered_from_at = CASE
+           WHEN eth_feed_coverage.provider IS DISTINCT FROM EXCLUDED.provider
+             OR eth_feed_coverage.cursor_kind IS DISTINCT FROM EXCLUDED.cursor_kind
+             THEN CASE WHEN EXCLUDED.status = 'complete'
+               THEN EXCLUDED.covered_from_at ELSE NULL END
            WHEN EXCLUDED.status = 'complete' THEN
              COALESCE(
                LEAST(eth_feed_coverage.covered_from_at, EXCLUDED.covered_from_at),
@@ -103,6 +115,10 @@ class EthFeedCoverage {
            ELSE eth_feed_coverage.covered_from_at
          END,
          covered_through_at = CASE
+           WHEN eth_feed_coverage.provider IS DISTINCT FROM EXCLUDED.provider
+             OR eth_feed_coverage.cursor_kind IS DISTINCT FROM EXCLUDED.cursor_kind
+             THEN CASE WHEN EXCLUDED.status = 'complete'
+               THEN EXCLUDED.covered_through_at ELSE NULL END
            WHEN EXCLUDED.status = 'complete' THEN EXCLUDED.covered_through_at
            WHEN EXCLUDED.status = 'not_applicable' THEN NULL
            ELSE eth_feed_coverage.covered_through_at
@@ -117,6 +133,10 @@ class EthFeedCoverage {
          END,
          last_attempt_at = CURRENT_TIMESTAMP,
          last_success_at = CASE
+           WHEN eth_feed_coverage.provider IS DISTINCT FROM EXCLUDED.provider
+             OR eth_feed_coverage.cursor_kind IS DISTINCT FROM EXCLUDED.cursor_kind
+             THEN CASE WHEN EXCLUDED.status = 'complete'
+               THEN CURRENT_TIMESTAMP ELSE NULL END
            WHEN EXCLUDED.status = 'complete' THEN CURRENT_TIMESTAMP
            ELSE eth_feed_coverage.last_success_at
          END,
@@ -124,6 +144,19 @@ class EthFeedCoverage {
        RETURNING *`,
         params
       );
+    return result.rows;
+  }
+
+  static async findForWalletChain(walletId, chainId) {
+    if (!Number.isInteger(walletId) || !Number.isInteger(chainId)) {
+      throw new Error('EthFeedCoverage.findForWalletChain requires integer wallet and chain ids');
+    }
+    const result = await pool.query(
+      `SELECT * FROM eth_feed_coverage
+        WHERE wallet_id = $1 AND chain_id = $2
+        ORDER BY feed`,
+      [walletId, chainId]
+    );
     return result.rows;
   }
 
