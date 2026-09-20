@@ -23,23 +23,25 @@ const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 // transfer_types it owns. `normal` owns two: gas rows are synthesized from
 // txlist, so they share its resume window.
 //
-// The first five are the account feeds and run on every chain. The sixth,
-// `statesync` (#76), is declared PER CHAIN: it runs only where the chain object
+// The five account feeds run on every chain. `statesync` (#76) is declared PER
+// CHAIN: it runs only where the chain object
 // carries the config named by `chainFeed` (config/chains.js
 // `stateSyncDeposits`). It stores transfer_type='internal' rows -- the same type the
 // `internal` feed owns -- so native balance math, the mirror, activity and
 // valuation read it unchanged; the two feeds are kept from clearing each other's
 // rows by from_address (see the delete loop in _syncWalletChain).
 //
-// Order matters only for throttle fairness -- the feeds are independent, and
-// each one's failure is isolated from the others (see _syncWalletChain).
+// Order matters for throttle fairness. Native-value feeds run before optional
+// token/NFT feeds so an explorer throttle cannot leave an ETH/POL/xDAI bridge
+// credit stale merely because an optional asset feed consumed the shared
+// provider budget first. Each feed's failure remains isolated below.
 const FEED_SPECS = [
   { key: 'normal', fetch: 'fetchNormalTxs', types: ['native', 'gas'] },
   { key: 'internal', fetch: 'fetchInternalTxs', types: ['internal'] },
+  { key: 'statesync', fetch: 'fetchStateSyncDeposits', types: ['internal'], chainFeed: 'stateSyncDeposits' },
   { key: 'token', fetch: 'fetchTokenTxs', types: ['token'] },
   { key: 'nft', fetch: 'fetchNftTxs', types: ['nft'] },
   { key: 'nft1155', fetch: 'fetch1155Txs', types: ['nft1155'] },
-  { key: 'statesync', fetch: 'fetchStateSyncDeposits', types: ['internal'], chainFeed: 'stateSyncDeposits' },
 ];
 
 // The transfer_type the state-sync feed shares with the `internal` feed, and the

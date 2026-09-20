@@ -56,7 +56,7 @@ const TransactionClassificationService = require('../src/services/TransactionCla
 const { collapseDuplicateKeys } = require('../src/services/SnapshotService');
 
 const sqlOf = (query) => query.text.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').trim();
-const WALLET = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+const WALLET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const MIGRATION = fs.readFileSync(
   path.join(__dirname, '..', 'migrations', '039_multichain_wallets.sql'), 'utf8'
 );
@@ -685,7 +685,10 @@ test('durable wallet sync coalesces an active claim and persists privacy-safe co
   const duplicate = await EthWalletService.queueSyncWallet(7);
   assert.deepEqual(first, { started: true, job: firstJob });
   assert.deepEqual(duplicate, { started: false, job: firstJob });
-  assert.deepEqual(latestNames, ['eth-wallet-sync:1:7']);
+  assert.deepEqual(latestNames, [
+    'eth-wallet-sync:1:7',
+    'eth-wallet-sync:1:7',
+  ], 'the duplicate path re-reads after the stale-row guard before returning');
 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(syncCalls, 1);

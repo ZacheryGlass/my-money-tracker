@@ -670,7 +670,7 @@ test('an unreadable Polygon marks all SIX feeds and still reports CHAIN_UNAVAILA
   // reaches it just like the four account feeds after normal.
   assert.deepEqual(calls.fetches.filter((c) => c.chainId === 137).map((c) => c.feed), ['normal']);
   assert.deepEqual(calls.unsupported.find((u) => u.chainId === 137).list,
-    ['normal', 'internal', 'token', 'nft', 'nft1155', 'statesync']);
+    ['normal', 'internal', 'statesync', 'token', 'nft', 'nft1155']);
   assert.equal(calls.chainErrors.find((e) => e.chainId === 137).code, 'CHAIN_UNAVAILABLE');
 });
 
@@ -692,6 +692,35 @@ test('a transiently skipped state-sync feed freezes its cursor and keeps its row
   // The internal feed still ran its exclude-scoped delete, so a stored credit is
   // protected precisely because the state-sync feed did not run this time.
   assert.ok(calls.deletes.some((d) => d.types === 'internal' && d.excludeFromAddress === PRECOMPILE));
+});
+
+test('an optional token throttle cannot defer a native state-sync credit', async (t) => {
+  const rateLimited = () => {
+    const error = new Error('rate limit reached');
+    error.code = 'EXPLORER_RATE_LIMITED';
+    error.retryAfterMs = 30_000;
+    throw error;
+  };
+  const { calls } = harness(t, {
+    chainSet: '137',
+    cursors: { 137: { last_block_statesync: 5000 } },
+    feedBehavior: { '137:token': rateLimited },
+  });
+
+  const result = await EthWalletService.syncWallet(7);
+
+  assert.deepEqual(
+    calls.fetches.filter((call) => call.chainId === 137).map((call) => call.feed),
+    ['normal', 'internal', 'statesync', 'token'],
+    'native feeds finish before the shared provider budget defers optional feeds'
+  );
+  assert.deepEqual(result.skippedFeeds, ['Polygon/token', 'Polygon/nft', 'Polygon/nft1155']);
+  assert.equal(calls.cursors.find((call) => call.chainId === 137).statesync, 90000000);
+  assert.ok(calls.deletes.some((entry) => entry.fromAddress === PRECOMPILE));
+  const stateSyncCoverage = calls.coverage
+    .flatMap((attempt) => attempt.entries)
+    .find((entry) => entry.feed === 'statesync');
+  assert.equal(stateSyncCoverage.status, 'complete');
 });
 
 // ---------------------------------------------------------------------------
