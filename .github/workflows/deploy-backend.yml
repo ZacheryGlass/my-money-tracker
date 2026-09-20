@@ -37,7 +37,8 @@ jobs:
           npm run lint || echo "Lint warnings (non-blocking)"
 
       - name: Record deployment revision
-        run: node -e "require('fs').writeFileSync('backend/deploy-revision.json', JSON.stringify({git_sha: process.env.GITHUB_SHA}) + '\\n')"
+        run: |
+          node -e "require('fs').writeFileSync('backend/deploy-revision.json', JSON.stringify({git_sha: process.env.GITHUB_SHA}) + '\\n')"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
