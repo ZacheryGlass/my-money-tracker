@@ -27,7 +27,7 @@ function evidence(result, method = 'fixture', params = []) {
 
 // Execute the real orchestration and decoders. Only the database and provider
 // boundaries are replaced; assertions concern durable outcomes, not source text.
-function harness(t, { indexedLogError = null } = {}) {
+function harness(t, { indexedLogError = null, codeError = null } = {}) {
   for (const method of ['get', 'post']) t.mock.method(require('axios'), method, async () => {
     throw new Error('Unexpected network request in audit fixture');
   });
@@ -37,14 +37,16 @@ function harness(t, { indexedLogError = null } = {}) {
   const transactions = [];
   const effects = [];
   const balances = [];
+  const nonceAudits = [];
   const attempts = [];
   const coverage = [];
   let discoveredRows = [];
   const progress = {};
   let nextId = 0;
   const stub = (object, name, fn) => t.mock.method(object, name, fn);
-  for (const name of ['linkEffectEvidence', 'linkTransactionEvidence', 'invalidateMissingRpcEffects',
-    'storeNonceAudit']) stub(EvmAudit, name, async () => {});
+  for (const name of ['linkEffectEvidence', 'linkTransactionEvidence',
+    'invalidateMissingRpcEffects']) stub(EvmAudit, name, async () => {});
+  stub(EvmAudit, 'storeNonceAudit', async (row) => nonceAudits.push(row));
   stub(EvmAudit, 'setDiscoveredChains', async (_job, _owner, rows) => {
     discoveredRows = structuredClone(rows);
   });
@@ -139,9 +141,13 @@ function harness(t, { indexedLogError = null } = {}) {
       status: '0x1', gasUsed: '0x0', effectiveGasPrice: '0x0', logs: [log] },
     block: { number: '0x1', hash: BLOCK_HASH, timestamp: '0x5e0be100' }, evidence: [],
   }));
-  for (const [method, value] of [['balance', 0n], ['transactionCount', 0n], ['code', '0x']]) {
+  for (const [method, value] of [['balance', 0n], ['transactionCount', 0n]]) {
     stub(RpcClient.prototype, `${method}WithEvidence`, async () => ({ value, evidence: evidence(String(value)) }));
   }
+  stub(RpcClient.prototype, 'codeWithEvidence', async () => {
+    if (codeError) throw codeError;
+    return { value: '0x', evidence: evidence('0x') };
+  });
   stub(RpcClient.prototype, 'erc20BalanceWithEvidence', async (_contract, _wallet, tag) => ({
     value: tag === '0xa' ? 7n : 0n, evidence: evidence(tag === '0xa' ? '0x7' : '0x0'),
   }));
@@ -155,7 +161,8 @@ function harness(t, { indexedLogError = null } = {}) {
     ...options,
   });
   return {
-    run, scopes, pages, effects, balances, attempts, progress, observations, coverage,
+    run, scopes, pages, effects, balances, nonceAudits, attempts, progress,
+    observations, coverage,
     discovered: () => discoveredRows,
   };
 }
@@ -214,6 +221,32 @@ test('bounded token-log scan exhaustion remains an explicit limitation without b
   assert.equal(audit.progress.chain_1.indexed_token_log_enumeration_gap, 1);
   assert.equal(audit.progress.chain_1.native_balance_match, true,
     'native point checks still run after the optional independent log scan hits its budget');
+});
+
+test('a pruned historical code lookup does not discard an exact nonce proof', async (t) => {
+  const codeError = Object.assign(
+    new Error('historical account code is unavailable on this pruned endpoint'),
+    { code: 'RPC_API_ERROR' }
+  );
+  const audit = harness(t, { codeError });
+
+  const result = await audit.run();
+
+  assert.equal(result.deferred, false);
+  assert.equal(audit.progress.chain_1.nonce_gaps, 0);
+  assert.equal(audit.nonceAudits.length, 1);
+  assert.equal(audit.nonceAudits[0].status, 'complete');
+  assert.equal(audit.nonceAudits[0].nextMinedNonce, '0');
+  assert.ok(audit.attempts.some((attempt) => (
+    attempt.endpoint === 'account-code'
+      && attempt.errorCode === 'RPC_API_ERROR'
+      && attempt.outcome === 'failed'
+  )));
+  assert.equal(
+    audit.pages.some((page) => page.endpoint === 'account-code'),
+    false,
+    'unavailable code is retained as a failed provider attempt, never fabricated evidence'
+  );
 });
 
 test('zkSync audit records composite history and capability-specific explorer provenance', async (t) => {

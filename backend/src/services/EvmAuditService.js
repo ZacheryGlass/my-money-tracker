@@ -1798,15 +1798,39 @@ class EvmAuditService {
     const transactionConflicts = transactionConflictCounts.native
       + transactionConflictCounts.optional;
     await heartbeat(undefined, 'nonce_verification');
-    const codeEvidence = await rpc.codeWithEvidence(job.address, boundary.numberHex);
-    await commitPage(nonceScope.id, rpcPageRecord(
-      'account-code', { address: job.address, block_tag: boundary.numberHex },
-      { address: job.address, block_tag: boundary.numberHex, code: codeEvidence.value },
-      [codeEvidence.evidence]
-    ), []);
-    const code = codeEvidence.value;
+    // Pruned public RPCs commonly retain historical nonces and balances while
+    // rejecting eth_getCode at the same finalized block. Account code is only
+    // a guard that lets us skip nonce semantics for a contract; it is not the
+    // nonce proof itself. Preserve the failed point lookup as provider
+    // evidence, then continue with the exact historical transaction count.
+    // A contract with a non-zero account nonce and no user-signed transactions
+    // still produces missing nonce ranges below, so this fallback cannot turn
+    // contract activity into a false complete EOA history. A zero nonce is a
+    // valid proof that there are no signed nonce slots to account for.
+    let code = null;
+    try {
+      const codeEvidence = await rpc.codeWithEvidence(job.address, boundary.numberHex);
+      await commitPage(nonceScope.id, rpcPageRecord(
+        'account-code', { address: job.address, block_tag: boundary.numberHex },
+        { address: job.address, block_tag: boundary.numberHex, code: codeEvidence.value },
+        [codeEvidence.evidence]
+      ), []);
+      code = codeEvidence.value;
+    } catch (error) {
+      if (!String(error.code || '').startsWith('RPC_')) throw error;
+      await recordProviderAttempt({
+        jobId: job.id, scopeId: nonceScope.id, provider: 'consensus-rpc',
+        endpoint: 'account-code',
+        requestParams: { address: job.address, block_tag: boundary.numberHex },
+        outcome: ['RPC_RATE_LIMITED', 'RPC_TRANSPORT_ERROR'].includes(error.code)
+          ? 'deferred' : 'failed',
+        httpStatus: error.httpStatus || null,
+        errorCode: error.code || 'RPC_ACCOUNT_CODE_UNAVAILABLE',
+        errorDetail: String(error.message || 'Historical account code lookup failed').slice(0, 500),
+      });
+    }
     let nonceGapCount = 0;
-    if (code !== '0x') {
+    if (code != null && code !== '0x') {
       await storeNonceAudit({
         jobId: job.id, subjectId: job.subject_id, chainId,
         boundaryBlock: boundary.number, boundaryBlockHash: boundary.hash,
