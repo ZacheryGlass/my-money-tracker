@@ -532,6 +532,33 @@ test('Blockscout account-feed evidence preserves internal trace identity and raw
   assert.equal(rows[0].payload.value, '7');
 });
 
+test('Etherscan contract-creation evidence credits the created contract', () => {
+  const [observation] = normalizer.explorerFeedObservations(
+    { ...context(1), provider: 'etherscan' },
+    'internal',
+    [{
+      hash: HASH, blockNumber: '12', traceId: '3',
+      from: OTHER, to: '', value: '7', isError: '0',
+      type: 'create', contractAddress: WALLET,
+    }]
+  );
+  const effects = effectsFromInternalObservations(context(1), [{
+    id: 91,
+    provider: observation.provider,
+    evidence_kind: observation.evidenceKind,
+    provider_object_key: observation.providerObjectKey,
+    tx_hash: observation.txHash,
+    trace_address: observation.traceAddress,
+    payload_json: observation.payload,
+  }]);
+
+  assert.equal(effects.length, 1);
+  assert.equal(effects[0].effectType, 'internal');
+  assert.equal(effects[0].direction, 'in');
+  assert.equal(effects[0].toAddress, WALLET);
+  assert.equal(effects[0].valueUnits, '7');
+});
+
 test('stored state-sync legs retain native-credit log identity in the evidence plane', () => {
   const chain = chains.getChain(137);
   const rows = normalizer.legacyTransferObservations({

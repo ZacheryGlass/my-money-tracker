@@ -236,7 +236,14 @@ function internalObservationFields(observation, wallet) {
       || payload.isError === true || payload.isError === '1'
       || payload.success === false || payload.error != null) return null;
   const from = normalizedAddress(payload.from_address ?? payload.from);
-  const to = normalizedAddress(payload.to_address ?? payload.to);
+  let to = normalizedAddress(payload.to_address ?? payload.to);
+  // Etherscan's internal CREATE rows leave `to` empty and expose the created
+  // contract separately. That address is the value recipient. Restrict the
+  // fallback to explicit create traces so token-contract metadata and other
+  // provider-specific fields can never become native transfer endpoints.
+  if (!to && String(payload.type || '').toLowerCase() === 'create') {
+    to = normalizedAddress(payload.contract_address ?? payload.contractAddress);
+  }
   const value = quantity(payload.value_wei ?? payload.value);
   const effectDirection = direction(wallet, from, to);
   if (!from || !to || value == null || value <= 0n || !effectDirection) return null;

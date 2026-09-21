@@ -134,6 +134,35 @@ test('assigns sequential ordinals within one tx hash per feed', () => {
   assert.equal(tokenRows[0].token_decimals, 18);
 });
 
+test('internal contract creation credits the created contract address', () => {
+  const rows = EthWalletService.normalizeFeeds(WALLET, {
+    internal: [{
+      hash: '0xcreate', blockNumber: '200', timeStamp: '1700000100',
+      from: OTHER, to: '', value: '500000000000000000', isError: '0',
+      type: 'create', contractAddress: WALLET, traceId: '3',
+    }],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].transfer_type, 'internal');
+  assert.equal(rows[0].to_address, WALLET.toLowerCase());
+  assert.equal(rows[0].value_wei, '500000000000000000');
+  assert.deepEqual(rows[0].source_trace_address, [3]);
+});
+
+test('non-create internal rows do not use contract metadata as a recipient', () => {
+  const rows = EthWalletService.normalizeFeeds(WALLET, {
+    internal: [{
+      hash: '0xcall', blockNumber: '200', timeStamp: '1700000100',
+      from: OTHER, to: '', value: '7', isError: '0',
+      type: 'call', contractAddress: WALLET,
+    }],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].to_address, null);
+});
+
 test('contract creation (empty to) yields a gas row with a NULL counterparty', () => {
   // Etherscan reports to:"" for contract creations. A NULL to_address must
   // survive: the reclassify UPDATE writes a NOT NULL boolean, so an

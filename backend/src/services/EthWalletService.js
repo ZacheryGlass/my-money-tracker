@@ -585,7 +585,19 @@ class EthWalletService {
       // of the balance derivation, in ordinal namespaces no UNIQUE ties
       // together.
       if (classicDeposits && (raw.from || '').toLowerCase() === classicDeposits.arbRetryableTx) continue;
-      rows.push({ ...baseRow(raw, 'internal'), value_wei: raw.value });
+      const internalRow = baseRow(raw, 'internal');
+      // Etherscan represents a successful CREATE trace with `to: ""` and
+      // puts the created address in `contractAddress`. The value funds that
+      // new contract, so leaving to_address NULL drops its opening balance and
+      // makes every later withdrawal look like a negative balance. Only use
+      // this alternate field for an explicit create trace; contractAddress has
+      // unrelated meanings on other account-feed shapes.
+      if (!internalRow.to_address
+          && String(raw.type || '').toLowerCase() === 'create'
+          && ADDRESS_RE.test(String(raw.contractAddress || ''))) {
+        internalRow.to_address = String(raw.contractAddress).toLowerCase();
+      }
+      rows.push({ ...internalRow, value_wei: raw.value });
     }
 
     // State-sync native deposits (#76). EtherscanService.fetchStateSyncDeposits
