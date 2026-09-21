@@ -22,7 +22,11 @@ UPDATE eth_feed_coverage
    SET provider = 'Blockscout (https://explorer.optimism.io/api)',
        updated_at = CURRENT_TIMESTAMP
  WHERE chain_id = 10
-   AND feed IN ('internal', 'token', 'nft', 'nft1155', 'statesync')
+   -- Normal and internal history now intentionally use Blockscout V2. Do not
+   -- relabel a V2 internal proof as legacy: that would hide the route change
+   -- from EthWalletService, which must reset and recapture the feed when the
+   -- stored provider is genuinely old.
+   AND feed IN ('token', 'nft', 'nft1155', 'statesync')
    AND provider = 'Blockscout (https://explorer.optimism.io/api/v2/)';
 
 COMMIT;

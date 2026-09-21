@@ -69,6 +69,14 @@ test('migration creates six-feed durable coverage without blessing old cursors a
   assert.match(providerMigration, /chain_id = 100/);
   assert.match(providerMigration, /chain_id = 10/);
   assert.match(providerMigration, /provider = 'Blockscout \(https:\/\/[^']+\/api\/v2\/\)'/);
+  assert.match(
+    providerMigration,
+    /WHERE chain_id = 10\s+[\s\S]*?AND feed IN \('token', 'nft', 'nft1155', 'statesync'\)/
+  );
+  assert.doesNotMatch(
+    providerMigration,
+    /WHERE chain_id = 10\s+[\s\S]*?AND feed IN \([^)]*'internal'/
+  );
 });
 
 test('one chain attempt is written as one six-feed snapshot with exact errors', async () => {
