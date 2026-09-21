@@ -300,13 +300,36 @@ function legacyTransferObservations(context, rows) {
     native: 'native_transfer', internal: 'internal_trace', token: 'erc20_transfer',
     nft: 'erc721_transfer', nft1155: 'erc1155_transfer', gas: 'gas',
   };
-  return rows.map((row) => baseObservation(context, {
-    evidenceKind: kinds[row.transfer_type] || 'native_transfer',
-    providerObjectKey: `legacy:${row.transfer_type}:${String(row.tx_hash).toLowerCase()}:${row.ordinal}`,
-    payload: row,
-    tx: row.tx_hash,
-    blockNumber: row.block_number,
-  }));
+  const wallet = address(context.address);
+  const nativeCreditContract = address(context.chain?.stateSyncDeposits?.contract);
+  return rows.map((row) => {
+    const logIndex = safeInteger(row.source_log_index);
+    // The ordinary ledger stores declared state-sync credits as internal legs
+    // so every balance reader can consume them. In the evidence plane they are
+    // still log-backed native credits, not anonymous execution traces. Keeping
+    // that identity prevents one deposit from becoming both a verified
+    // native_credit and a second provisional internal effect.
+    const nativeCredit = row.transfer_type === 'internal'
+      && nativeCreditContract != null
+      && address(row.from_address) === nativeCreditContract
+      && address(row.to_address) === wallet
+      && logIndex != null;
+    const evidenceKind = nativeCredit
+      ? 'native_credit' : (kinds[row.transfer_type] || 'native_transfer');
+    return baseObservation(context, {
+      evidenceKind,
+      providerObjectKey: nativeCredit
+        ? `legacy:native-credit:${String(row.tx_hash).toLowerCase()}:${logIndex}`
+        : `legacy:${row.transfer_type}:${String(row.tx_hash).toLowerCase()}:${row.ordinal}`,
+      payload: nativeCredit
+        ? { ...row, native_credit: true, log_index: logIndex }
+        : row,
+      tx: row.tx_hash,
+      blockNumber: row.block_number,
+      logIndex: nativeCredit ? logIndex : null,
+      traceAddress: nativeCredit ? null : row.source_trace_address,
+    });
+  });
 }
 
 function explorerFeedObservations(context, feed, rows) {

@@ -469,6 +469,39 @@ test('identity repair keeps its canonical-effect query user-scoped', () => {
   assert.match(method, /o\.provider = ANY\(\$7::text\[\]\)/);
 });
 
+test('native-credit duplicate invalidation requires one exact verified log match', async (t) => {
+  const queries = [];
+  const client = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (/WITH candidates AS/.test(sql)) {
+        return { rows: [{ id: 9, subject_id: 3, chain_id: 137, credit_observation_id: 15 }] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  t.mock.method(database, 'connect', async () => client);
+  const count = await EvmAudit.invalidateSupersededNativeCreditEffects(
+    1, 3, 137, chains.getChain(137).stateSyncDeposits.contract, 100
+  );
+  assert.equal(count, 1);
+  const statement = queries.find((query) => /WITH candidates AS/.test(query.sql));
+  assert.deepEqual(statement.params, [
+    1, 3, 137, chains.getChain(137).stateSyncDeposits.contract, 100,
+  ]);
+  assert.match(statement.sql, /subject\.user_id = \$1/);
+  assert.match(statement.sql, /internal\.effect_type = 'internal'/);
+  assert.match(statement.sql, /internal\.resolution_status = 'provisional'/);
+  assert.match(statement.sql, /credit\.effect_type = 'native_credit'/);
+  assert.match(statement.sql, /credit\.resolution_status = 'verified'/);
+  assert.match(statement.sql, /proof\.provider = 'consensus-rpc'/);
+  assert.match(statement.sql, /proof\.evidence_kind = 'log'/);
+  assert.match(statement.sql, /source_log_index'[\s\S]*credit\.log_index/);
+  assert.match(statement.sql, /HAVING COUNT\(credit\.id\) = 1/);
+  assert.ok(queries.some((query) => /INSERT INTO evm_effect_evidence/.test(query.sql)));
+});
+
 test('Moralis history keeps receipt, log, internal and token evidence independently', () => {
   const observations = normalizer.historyObservations(context(100), {
     hash: HASH,
@@ -497,6 +530,46 @@ test('Blockscout account-feed evidence preserves internal trace identity and raw
   assert.equal(rows[0].evidenceKind, 'internal_trace');
   assert.deepEqual(rows[0].traceAddress, [3, 1]);
   assert.equal(rows[0].payload.value, '7');
+});
+
+test('stored state-sync legs retain native-credit log identity in the evidence plane', () => {
+  const chain = chains.getChain(137);
+  const rows = normalizer.legacyTransferObservations({
+    ...context(137), provider: 'existing-ledger', chain,
+  }, [{
+    transfer_type: 'internal', tx_hash: HASH, ordinal: 0, block_number: 10,
+    from_address: chain.stateSyncDeposits.contract, to_address: WALLET,
+    value_wei: '17', source_log_index: 7, source_trace_address: null,
+    is_error: false,
+  }]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].evidenceKind, 'native_credit');
+  assert.equal(rows[0].logIndex, 7);
+  assert.equal(rows[0].payload.native_credit, true);
+  assert.equal(rows[0].providerObjectKey, `legacy:native-credit:${HASH}:7`);
+  const effects = effectsFromInternalObservations(context(137), [{
+    id: 19,
+    provider: rows[0].provider,
+    evidence_kind: rows[0].evidenceKind,
+    provider_object_key: rows[0].providerObjectKey,
+    tx_hash: rows[0].txHash,
+    log_index: rows[0].logIndex,
+    payload_json: rows[0].payload,
+  }]);
+  assert.equal(effects[0].effectType, 'native_credit');
+  assert.equal(effects[0].effectKey, `native-credit:${HASH}:7`);
+});
+
+test('ordinary stored internal legs keep execution-trace identity', () => {
+  const rows = normalizer.legacyTransferObservations({
+    ...context(137), provider: 'existing-ledger', chain: chains.getChain(137),
+  }, [{
+    transfer_type: 'internal', tx_hash: HASH, ordinal: 0, block_number: 10,
+    from_address: OTHER, to_address: WALLET, value_wei: '17',
+    source_log_index: null, source_trace_address: [2, 1], is_error: false,
+  }]);
+  assert.equal(rows[0].evidenceKind, 'internal_trace');
+  assert.deepEqual(rows[0].traceAddress, [2, 1]);
 });
 
 test('Blockscout normal and token feeds use the additive account-feed evidence kind', () => {

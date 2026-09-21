@@ -40,12 +40,17 @@ function harness(t, { indexedLogError = null, codeError = null } = {}) {
   const nonceAudits = [];
   const attempts = [];
   const coverage = [];
+  const nativeCreditInvalidations = [];
   let discoveredRows = [];
   const progress = {};
   let nextId = 0;
   const stub = (object, name, fn) => t.mock.method(object, name, fn);
   for (const name of ['linkEffectEvidence', 'linkTransactionEvidence',
     'invalidateMissingRpcEffects']) stub(EvmAudit, name, async () => {});
+  stub(EvmAudit, 'invalidateSupersededNativeCreditEffects', async (...args) => {
+    nativeCreditInvalidations.push(args);
+    return 0;
+  });
   stub(EvmAudit, 'storeNonceAudit', async (row) => nonceAudits.push(row));
   stub(EvmAudit, 'setDiscoveredChains', async (_job, _owner, rows) => {
     discoveredRows = structuredClone(rows);
@@ -162,7 +167,7 @@ function harness(t, { indexedLogError = null, codeError = null } = {}) {
   });
   return {
     run, scopes, pages, effects, balances, nonceAudits, attempts, progress,
-    observations, coverage,
+    observations, coverage, nativeCreditInvalidations,
     discovered: () => discoveredRows,
   };
 }
@@ -204,6 +209,15 @@ test('audit retains an explorer omission, exact token effect, and unresolved cov
   assert.equal(audit.progress.chain_1.unmatched_native_effects, 0);
   assert.equal(audit.progress.chain_1.unmatched_optional_effects, 1);
   assert.equal(result.gaps, 4);
+});
+
+test('state-sync chains invalidate only exact legacy native-credit duplicates', async (t) => {
+  const audit = harness(t);
+  await audit.run({ chainId: 137 });
+  assert.equal(audit.nativeCreditInvalidations.length, 1);
+  assert.deepEqual(audit.nativeCreditInvalidations[0].slice(0, 5), [
+    1, 1, 137, '0x0000000000000000000000000000000000001010', 10,
+  ]);
 });
 
 test('bounded token-log scan exhaustion remains an explicit limitation without blocking native checks', async (t) => {

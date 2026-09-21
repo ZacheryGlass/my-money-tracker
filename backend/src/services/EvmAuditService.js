@@ -1755,6 +1755,12 @@ class EvmAuditService {
       const stored = await upsertCanonicalEffect(effect);
       await linkEffectEvidence(stored.id, effect.evidenceObservationIds);
     }
+    if (chain?.stateSyncDeposits?.contract) {
+      await EvmAudit.invalidateSupersededNativeCreditEffects(
+        job.user_id, job.subject_id, chainId, chain.stateSyncDeposits.contract,
+        boundary.number, writeFence
+      );
+    }
 
     // Legacy rows may have the right economics but no immutable log index.
     // Upgrade only the independently corroborated receipt effects before the

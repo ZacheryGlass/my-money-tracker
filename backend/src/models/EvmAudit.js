@@ -1191,6 +1191,94 @@ class EvmAudit {
     }
   }
 
+  static async invalidateSupersededNativeCreditEffects(
+    userId, subjectId, chainId, sourceContract, throughBlock, fence = {}
+  ) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (fence.jobId && fence.owner) await assertActiveLease(client, fence.jobId, fence.owner);
+      const changed = await client.query(
+        `WITH candidates AS (
+           SELECT internal.id,
+                  MIN(credit.id) AS credit_id,
+                  MIN(proof.id) AS credit_observation_id
+             FROM evm_canonical_effects internal
+             JOIN evm_subjects subject
+               ON subject.id = internal.subject_id AND subject.user_id = $1
+             JOIN evm_provider_observations legacy
+               ON legacy.id = internal.selected_observation_id
+              AND legacy.subject_id = internal.subject_id
+              AND legacy.chain_id = internal.chain_id
+              AND legacy.provider = 'existing-ledger'
+              AND legacy.evidence_kind = 'internal_trace'
+             JOIN evm_mined_transactions tx
+               ON tx.subject_id = internal.subject_id
+              AND tx.chain_id = internal.chain_id
+              AND tx.tx_hash = internal.tx_hash
+             JOIN evm_canonical_effects credit
+               ON credit.subject_id = internal.subject_id
+              AND credit.chain_id = internal.chain_id
+              AND credit.tx_hash = internal.tx_hash
+              AND credit.effect_type = 'native_credit'
+              AND credit.resolution_status = 'verified'
+              AND credit.log_index IS NOT NULL
+             AND credit.from_address = internal.from_address
+             AND credit.to_address = internal.to_address
+             AND credit.value_units = internal.value_units
+             JOIN evm_provider_observations proof
+               ON proof.id = credit.selected_observation_id
+              AND proof.subject_id = credit.subject_id
+              AND proof.chain_id = credit.chain_id
+              AND proof.provider = 'consensus-rpc'
+              AND proof.evidence_kind = 'log'
+            WHERE internal.subject_id = $2
+              AND internal.chain_id = $3
+              AND internal.effect_type = 'internal'
+              AND internal.resolution_status = 'provisional'
+              AND internal.trace_address IS NULL
+              AND internal.from_address = $4
+              AND tx.block_number <= $5
+              AND legacy.payload_json ? 'source_log_index'
+              AND legacy.payload_json->>'source_log_index' ~ '^\\d+$'
+              AND (legacy.payload_json->>'source_log_index')::int = credit.log_index
+            GROUP BY internal.id
+           HAVING COUNT(credit.id) = 1
+         ), invalidated AS (
+           UPDATE evm_canonical_effects effect
+              SET resolution_status = 'invalidated',
+                  conflict_detail = jsonb_build_object(
+                    'reason', 'superseded_by_verified_native_credit',
+                    'verified_native_credit_effect_id', candidate.credit_id,
+                    'verified_observation_id', candidate.credit_observation_id
+                  ),
+                  updated_at = CURRENT_TIMESTAMP
+             FROM candidates candidate
+            WHERE effect.id = candidate.id
+          RETURNING effect.id, effect.subject_id, effect.chain_id,
+                    candidate.credit_observation_id
+         ), linked_evidence AS (
+           INSERT INTO evm_effect_evidence (
+             effect_id, subject_id, chain_id, observation_id
+           )
+           SELECT id, subject_id, chain_id, credit_observation_id
+             FROM invalidated
+           ON CONFLICT DO NOTHING
+           RETURNING effect_id
+         )
+         SELECT * FROM invalidated`,
+        [userId, subjectId, chainId, String(sourceContract).toLowerCase(), throughBlock]
+      );
+      await client.query('COMMIT');
+      return changed.rows.length;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   static async canonicalTransactions(subjectId, chainId) {
     const { rows } = await pool.query(
       `SELECT * FROM evm_mined_transactions
