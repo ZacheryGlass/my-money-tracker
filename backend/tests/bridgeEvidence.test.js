@@ -1177,6 +1177,105 @@ test('Base activities cannot enter amount and time bridge suggestions', async (t
   )));
 });
 
+test('verified bridge endpoints cannot reappear in cross-pair suggestions', async (t) => {
+  const originals = {
+    activities: BridgeMatchingService._activitiesForUser,
+    acquire: BridgeMatchingService._acquire,
+    endpoints: EthBridgeEndpoint.findForTransactions,
+    routes: EthHopBridgeRoute.findForTransactions,
+    coverage: EthFeedCoverage.findBridgeCoverageForUser,
+    verdicts: EthBridgeMovement.findVerdictsForUser,
+    replace: EthBridgeMovement.replaceForUser,
+    project: EthBridgeMovement.rebuildProjectionForUser,
+    review: EthActivityLink.syncBridgeReviewState,
+  };
+  t.after(() => {
+    BridgeMatchingService._activitiesForUser = originals.activities;
+    BridgeMatchingService._acquire = originals.acquire;
+    EthBridgeEndpoint.findForTransactions = originals.endpoints;
+    EthHopBridgeRoute.findForTransactions = originals.routes;
+    EthFeedCoverage.findBridgeCoverageForUser = originals.coverage;
+    EthBridgeMovement.findVerdictsForUser = originals.verdicts;
+    EthBridgeMovement.replaceForUser = originals.replace;
+    EthBridgeMovement.rebuildProjectionForUser = originals.project;
+    EthActivityLink.syncBridgeReviewState = originals.review;
+  });
+
+  const activity = {
+    counterparty_address: null,
+    legs: [{ asset: 'ETH', amount: '1', token_standard: null, symbol_known: true }],
+  };
+  BridgeMatchingService._activitiesForUser = async () => [
+    {
+      ...activity, wallet_id: 1, chain_id: 1, tx_hash: hash('1'), category: 'bridge_out',
+      block_time: '2026-01-01T00:00:00.000Z',
+      legs: [{ ...activity.legs[0], direction: 'out' }],
+    },
+    {
+      ...activity, wallet_id: 2, chain_id: 1, tx_hash: hash('2'), category: 'bridge_out',
+      block_time: '2026-01-01T00:01:00.000Z',
+      legs: [{ ...activity.legs[0], direction: 'out' }],
+    },
+    {
+      ...activity, wallet_id: 3, chain_id: 10, tx_hash: hash('3'), category: 'bridge_in',
+      block_time: '2026-01-01T00:05:00.000Z',
+      legs: [{ ...activity.legs[0], direction: 'in' }],
+    },
+    {
+      ...activity, wallet_id: 4, chain_id: 10, tx_hash: hash('4'), category: 'bridge_in',
+      block_time: '2026-01-01T00:06:00.000Z',
+      legs: [{ ...activity.legs[0], direction: 'in' }],
+    },
+  ];
+  EthBridgeEndpoint.findForTransactions = async () => [];
+  EthHopBridgeRoute.findForTransactions = async () => [];
+  EthFeedCoverage.findBridgeCoverageForUser = async () => [];
+  BridgeMatchingService._acquire = async () => [];
+  EthBridgeMovement.findVerdictsForUser = async () => [{
+    id: 9, verdict: 'confirmed',
+    out_wallet_id: 1, out_chain_id: 1, out_tx_hash: hash('1'),
+    in_wallet_id: 3, in_chain_id: 10, in_tx_hash: hash('3'),
+  }];
+  let savedSuggestions = null;
+  EthBridgeMovement.replaceForUser = async (_userId, _movements, suggestions) => {
+    savedSuggestions = suggestions;
+  };
+  EthBridgeMovement.rebuildProjectionForUser = async () => 0;
+  EthActivityLink.syncBridgeReviewState = async () => 0;
+
+  const result = await BridgeMatchingService._rebuildForUserLocked(7, {
+    client: { query: async () => ({ rows: [] }) }, acquireReceipts: false,
+  });
+
+  assert.equal(result.suggestions, 1);
+  assert.equal(savedSuggestions.length, 1);
+  assert.equal(savedSuggestions[0].out_wallet_id, 2);
+  assert.equal(savedSuggestions[0].in_wallet_id, 4);
+  assert.equal(savedSuggestions[0].ambiguous, false);
+});
+
+test('bridge rebuild prunes legacy and derived suggestions using verified endpoints', async () => {
+  const calls = [];
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [] };
+    },
+  };
+
+  await EthBridgeMovement.replaceForUser(7, [], [], client);
+
+  const prune = calls.find(({ sql }) => (
+    /DELETE FROM eth_bridge_suggestions s/.test(sql) && /JOIN eth_bridge_movement_members/.test(sql)
+  ));
+  assert.ok(prune);
+  assert.deepEqual(prune.params, [7]);
+  assert.match(prune.sql, /m\.status IN \('protocol_verified', 'user_confirmed'\)/);
+  assert.match(prune.sql, /mm\.wallet_id = s\.out_wallet_id/);
+  assert.match(prune.sql, /mm\.wallet_id = s\.in_wallet_id/);
+  assert.doesNotMatch(prune.sql, /s\.source\s*=/);
+});
+
 test('migration enforces evidence-only folds and cross-owner isolation', () => {
   const migration = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '../migrations/072_evidence_first_bridge_matching.sql'),

@@ -198,6 +198,33 @@ class EthBridgeMovement {
         );
       }
 
+      // Suggestions are review candidates for still-unmatched activities. A
+      // protocol-verified or user-confirmed movement owns every one of its
+      // activity coordinates, so neither a newly derived suggestion nor an
+      // old migration candidate may continue to reuse one as an alternative.
+      await client.query(
+        `DELETE FROM eth_bridge_suggestions s
+          WHERE s.user_id = $1
+            AND EXISTS (
+              SELECT 1
+                FROM eth_bridge_movements m
+                JOIN eth_bridge_movement_members mm ON mm.movement_id = m.id
+               WHERE m.user_id = s.user_id
+                 AND m.invalidated_at IS NULL
+                 AND m.status IN ('protocol_verified', 'user_confirmed')
+                 AND (
+                   (mm.wallet_id = s.out_wallet_id
+                    AND mm.chain_id = s.out_chain_id
+                    AND mm.tx_hash = s.out_tx_hash)
+                   OR
+                   (mm.wallet_id = s.in_wallet_id
+                    AND mm.chain_id = s.in_chain_id
+                    AND mm.tx_hash = s.in_tx_hash)
+                 )
+            )`,
+        [userId]
+      );
+
       if (ownsTransaction) await client.query('COMMIT');
       return persisted;
     } catch (error) {

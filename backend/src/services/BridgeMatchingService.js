@@ -415,33 +415,25 @@ class BridgeMatchingService {
       .map(verdictMovement);
     protocolMovements = resolveProtocolCoordinateConflicts(protocolMovements, manualMovements);
 
-    const occupiedPairs = new Set([
-      ...protocolMovements.filter((movement) => movement.status === 'protocol_verified')
-        .map(pairKeyFromMovement).filter(Boolean),
-      ...verdicts.map(pairKeyFromVerdict),
-    ]);
     const rejectedPairs = new Set(
       verdicts.filter((verdict) => verdict.verdict === 'rejected').map(pairKeyFromVerdict)
     );
+    const movements = [...protocolMovements, ...manualMovements];
+    const occupiedCoordinates = new Set(movements
+      .filter((movement) => (
+        movement.status === 'protocol_verified' || movement.status === 'user_confirmed'
+      ))
+      .flatMap((movement) => movement.members || [])
+      .map(activityCoordinate));
     const suggestions = suggestBridgeLegs(
       annotatedActivities.filter((activity) => (
         Number(activity.chain_id) !== EXCLUDED_BASE_CHAIN_ID
         && !excludedCoordinates.has(activityCoordinate(activity))
+        && !occupiedCoordinates.has(activityCoordinate(activity))
       )),
       rejectedPairs
-    )
-      .filter((suggestion) => !occupiedPairs.has(suggestionPairKey(
-        {
-          wallet_id: suggestion.out_wallet_id, chain_id: suggestion.out_chain_id,
-          tx_hash: suggestion.out_tx_hash,
-        },
-        {
-          wallet_id: suggestion.in_wallet_id, chain_id: suggestion.in_chain_id,
-          tx_hash: suggestion.in_tx_hash,
-        }
-      )));
+    );
 
-    const movements = [...protocolMovements, ...manualMovements];
     // The caller owns this already-locked transaction. Movements,
     // suggestions, compatibility folds, and review flags therefore swap as
     // one unit from a verdict snapshot taken after the same advisory lock.
