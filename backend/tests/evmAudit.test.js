@@ -515,6 +515,31 @@ test('Blockscout normal and token feeds use the additive account-feed evidence k
   assert.match(migration, /'account_feed'/);
 });
 
+test('native-credit observations are accepted by the durable evidence constraint', () => {
+  const [observation] = normalizer.explorerFeedObservations(
+    { ...context(137), provider: 'blockscout' },
+    'internal',
+    [{
+      hash: HASH,
+      blockNumber: '10',
+      blockHash: BLOCK_HASH,
+      transactionIndex: '2',
+      logIndex: '3',
+      nativeCredit: true,
+      from: OTHER,
+      to: WALLET,
+      value: '7',
+    }]
+  );
+  assert.equal(observation.evidenceKind, 'native_credit');
+  const migration = fs.readFileSync(
+    path.join(__dirname, '../migrations/095_evm_native_credit_evidence.sql'), 'utf8'
+  );
+  assert.match(migration, /pg_get_constraintdef\(c\.oid\) LIKE '%native_credit%'/);
+  assert.match(migration, /'account_feed', 'native_credit'/);
+  assert.match(migration, /DROP CONSTRAINT IF EXISTS evm_provider_observations_evidence_kind_check/);
+});
+
 test('zkSync audit provenance follows the split native and token providers', () => {
   assert.equal(chains.accountApiHistoryProvider(324), 'explorer-composite');
   assert.equal(chains.accountApiProviderForAction(324, 'txlist'), 'zksync explorer');
