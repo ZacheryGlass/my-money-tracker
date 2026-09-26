@@ -211,6 +211,43 @@ test('audit retains an explorer omission, exact token effect, and unresolved cov
   assert.equal(result.gaps, 4);
 });
 
+test('empty histories check post-genesis archive state without hiding an unavailable checkpoint', async (t) => {
+  const audit = harness(t);
+  const tags = [];
+  t.mock.method(RpcClient.prototype, 'balanceWithEvidence', async (_address, tag) => {
+    tags.push(tag);
+    if (tag !== '0xa') throw Object.assign(new Error('Historical state unavailable'), {
+      code: 'RPC_ARCHIVE_UNAVAILABLE',
+    });
+    return { value: 0n, evidence: evidence('0x0') };
+  });
+
+  await audit.run();
+
+  assert.deepEqual(tags, ['0x1', '0xa']);
+  assert.equal(audit.progress.chain_1.native_balance_match, true);
+  const native = audit.balances.find((row) => row.assetType === 'native');
+  assert.equal(native.detail.archive_check.block, 1);
+  assert.equal(native.detail.archive_check.status, 'unavailable');
+});
+
+test('known activity still probes the block immediately before its first movement', async (t) => {
+  const audit = harness(t);
+  t.mock.method(EvmAudit, 'storedTransferRows', async () => [{
+    block_number: 1, transfer_type: 'native', value_wei: '0',
+    from_address: OTHER, to_address: WALLET, tx_hash: HASH,
+  }]);
+  const tags = [];
+  t.mock.method(RpcClient.prototype, 'balanceWithEvidence', async (_address, tag) => {
+    tags.push(tag);
+    return { value: 0n, evidence: evidence('0x0') };
+  });
+
+  await audit.run();
+
+  assert.deepEqual(tags, ['0x0', '0xa']);
+});
+
 test('state-sync chains invalidate only exact legacy native-credit duplicates', async (t) => {
   const audit = harness(t);
   await audit.run({ chainId: 137 });

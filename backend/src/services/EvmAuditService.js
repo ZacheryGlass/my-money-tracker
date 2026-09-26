@@ -1303,8 +1303,12 @@ class EvmAuditService {
       .filter((value) => value != null)
       .map((value) => Number(value))
       .filter((value) => Number.isSafeInteger(value) && value >= 0);
-    const firstObservedBlock = archiveProbeRows.length ? Math.min(...archiveProbeRows) : 0;
-    const archiveProbeBlock = Math.max(0, firstObservedBlock - 1);
+    // Empty histories need an archive capability check, not an opening balance
+    // before a known transfer. Prefer the first post-genesis block: some chains
+    // expose a synthetic block zero whose account state cannot be queried.
+    const archiveProbeBlock = archiveProbeRows.length
+      ? Math.max(0, Math.min(...archiveProbeRows) - 1)
+      : Math.min(1, boundary.number);
     const archiveProbeTag = blockTag(archiveProbeBlock);
     const coverageByFeed = new Map((await EvmAudit.storedFeedCoverage(
       job.user_id, job.subject_id, chainId
