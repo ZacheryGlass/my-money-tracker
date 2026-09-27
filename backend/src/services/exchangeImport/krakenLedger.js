@@ -8,6 +8,7 @@ const {
   finalizeRecord,
   pickBaseQuote,
   combineFees,
+  compareAmounts,
 } = require('./shared');
 
 // The Kraken ledger IS the same ledger whether it arrives as a CSV export or
@@ -236,6 +237,37 @@ function buildRecords(parsedRows) {
         raw: { _format: 'kraken', rows: legs.map((leg) => leg.raw) },
       }, { line: first.line, amountCell: legs.map((leg) => leg.amountCell) }),
     });
+
+    // A record has one fee asset. Preserve any fee charged in the other asset
+    // as a source-backed fee entry, without changing the trade's gross legs.
+    // Both readers use the same refid and identity asset, making replay safe.
+    for (const asset of new Set(legs.map((leg) => leg.asset))) {
+      if (asset === feeAsset) continue;
+      const chargedLegs = legs.filter((leg) => leg.asset === asset);
+      const secondary = combineFees(chargedLegs.map((leg) => ({
+        asset: leg.asset, amount: leg.fee,
+      })), asset);
+      if (!secondary.amount || compareAmounts(secondary.amount, '0') === 0) continue;
+      const identity = chargedLegs[0].identityAsset ?? asset;
+      emitted.push({
+        order: first.line,
+        record: finalizeRecord({
+          record_type: 'fee',
+          occurred_at: first.occurredAt,
+          base_asset: asset,
+          base_amount: '0',
+          fee_asset: asset,
+          fee_amount: secondary.amount,
+          external_id: `kraken:${first.refid}:fee:${identity}`,
+          needs_review: needsReview,
+          raw: {
+            _format: 'kraken',
+            parent_external_id: `kraken:${first.refid}`,
+            fee_ledger_rows: chargedLegs.map((leg) => leg.raw),
+          },
+        }, { line: first.line, amountCell: '0' }),
+      });
+    }
   };
 
   for (const group of groups.values()) {

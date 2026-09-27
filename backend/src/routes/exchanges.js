@@ -51,7 +51,8 @@ function respondToSyncError(res, error, fallback) {
   }
   if (error.code === 'EXCHANGE_NOT_CONFIGURED'
     || error.code === 'EXCHANGE_CREDENTIAL_UNREADABLE'
-    || error.code === 'EXCHANGE_SYNC_IN_PROGRESS') {
+    || error.code === 'EXCHANGE_SYNC_IN_PROGRESS'
+    || error.code === 'EXCHANGE_FEE_PARENT_CONFLICT') {
     return res.status(409).json({ error: error.message, code: error.code });
   }
   // The provider's own refusal is the only thing that tells the user which
@@ -663,7 +664,7 @@ router.post('/:id/import', express.text({ type: 'text/csv', limit: '10mb' }), as
         code: 'UNSTORABLE_VALUE',
       });
     }
-    if (error.code === 'EXCHANGE_SYNC_IN_PROGRESS') {
+    if (error.code === 'EXCHANGE_SYNC_IN_PROGRESS' || error.code === 'EXCHANGE_FEE_PARENT_CONFLICT') {
       return res.status(409).json({ error: error.message, code: error.code });
     }
     if (error.code === 'EXCHANGE_ACCOUNT_NOT_FOUND') {

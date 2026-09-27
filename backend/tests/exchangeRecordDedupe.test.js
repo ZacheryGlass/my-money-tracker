@@ -143,6 +143,67 @@ beforeEach(() => {
   nextId = 1;
 });
 
+function krakenDualFeeRecords() {
+  const parent = record('csv', 'kraken:synthetic-dual-fee', {
+    tx_hash: null, raw: { _format: 'kraken', rows: [] },
+  });
+  const fee = record('csv', `${parent.external_id}:fee:ETH`, {
+    record_type: 'fee', base_amount: '0', quote_asset: null, quote_amount: null,
+    fee_asset: 'ETH', fee_amount: '0.001', tx_hash: null,
+    raw: { _format: 'kraken', parent_external_id: parent.external_id, fee_ledger_rows: [] },
+  });
+  return [parent, fee].map(row => annotateRecord('kraken', row));
+}
+
+test('Kraken legacy complete trade gains its missing fee exactly once', async () => {
+  const [parent, fee] = krakenDualFeeRecords();
+  await ExchangeRecord.bulkInsert(7, [parent]);
+  const result = await ExchangeRecord.bulkInsert(7, [parent, fee]);
+  assert.equal(result.inserted, 1);
+  assert.equal(rows.size, 2);
+  assert.equal([...rows.values()].find(row => row.external_id === parent.external_id).base_amount, '1');
+  const replay = await ExchangeRecord.bulkInsert(7, [parent, fee]);
+  assert.equal(replay.inserted, 0);
+  assert.equal(replay.duplicates, 2);
+});
+
+test('Kraken incomplete trade upgrades before its companion fee is counted', async () => {
+  const [parent, fee] = krakenDualFeeRecords();
+  const half = annotateRecord('kraken', {
+    ...parent, quote_asset: null, quote_amount: null,
+    fee_asset: 'ETH', fee_amount: '0.001', needs_review: true,
+  });
+  await ExchangeRecord.bulkInsert(7, [half]);
+  const result = await ExchangeRecord.bulkInsert(7, [parent, fee]);
+  assert.equal(result.upgraded, 1);
+  assert.equal(result.inserted, 1);
+  assert.equal(rows.size, 2);
+  assert.equal([...rows.values()].filter(row => row.fee_asset === 'ETH').length, 1);
+});
+
+test('Kraken manually accepted half trade blocks a fee that would be counted twice', async () => {
+  const [parent, fee] = krakenDualFeeRecords();
+  const acceptedHalf = annotateRecord('kraken', {
+    ...parent, quote_asset: null, quote_amount: null,
+    fee_asset: 'ETH', fee_amount: '0.001', needs_review: false,
+  });
+  await ExchangeRecord.bulkInsert(7, [acceptedHalf]);
+  await assert.rejects(ExchangeRecord.bulkInsert(7, [parent, fee]), { code: 'EXCHANGE_FEE_PARENT_CONFLICT' });
+  assert.equal(rows.size, 1);
+  assert.equal([...rows.values()][0].quote_asset, null);
+  assert.equal(audit.length, 0);
+});
+
+test('Kraken new companion fee requires its parent, but an existing fee replays safely', async () => {
+  const [parent, fee] = krakenDualFeeRecords();
+  await assert.rejects(ExchangeRecord.bulkInsert(7, [fee]), { code: 'EXCHANGE_FEE_PARENT_CONFLICT' });
+  assert.equal(rows.size, 0);
+  await ExchangeRecord.bulkInsert(7, [parent, fee]);
+  const replay = await ExchangeRecord.bulkInsert(7, [fee]);
+  assert.equal(replay.inserted, 0);
+  assert.equal(replay.duplicates, 1);
+});
+
 test('a matching API and CSV event collapses into one audited record', async () => {
   const first = await ExchangeRecord.bulkInsert(7, [record('api', 'api-event-1')]);
   const second = await ExchangeRecord.bulkInsert(7, [record('csv', 'csv-event-1')]);

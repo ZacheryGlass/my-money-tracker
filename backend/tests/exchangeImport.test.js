@@ -346,14 +346,41 @@ test('kraken: the two ledger legs of a trade pair by refid into one record', () 
   assert.equal(trade.base_amount, '0.2000000000');
   assert.equal(trade.quote_asset, 'USD');
   assert.equal(trade.quote_amount, '-500.0000');
-  // Kraken bills the quote side; the crumb on the ETH leg stays in raw.
+  // The trade carries the quote fee; a second fee asset gets its own entry.
   assert.equal(trade.fee_asset, 'USD');
   assert.equal(trade.fee_amount, '1.2500');
   assert.equal(trade.raw.rows.length, 2);
 
-  // 13 ledger lines, 11 events: the trade pair and the spend/receive pair each
-  // describe one thing that happened.
-  assert.equal(records.length, 11);
+  assert.equal(records.length, 12);
+});
+
+test('kraken: fees in both trade assets each affect balances exactly once', () => {
+  const { records } = parseExchangeCsv(fixture('kraken-ledgers.csv'));
+  const trade = byId(records).get('kraken:TTRD00-11111-TTTTTT');
+  const fees = records.filter((r) => r.record_type === 'fee');
+  assert.equal(fees.length, 1);
+  const fee = fees[0];
+  assert.equal(fee.base_amount, '0');
+  assert.equal(fee.fee_asset, 'ETH');
+  assert.equal(fee.fee_amount, '0.0000000001');
+  assert.equal(fee.needs_review, false);
+  assert.equal(fee.raw.parent_external_id, trade.external_id);
+  const { addAmounts, subtractAmounts } = require('../src/services/exchangeImport/shared');
+  const balances = {};
+  for (const r of [trade, fee]) {
+    for (const leg of ['base', 'quote']) {
+      if (r[`${leg}_asset`]) balances[r[`${leg}_asset`]] = addAmounts(
+        balances[r[`${leg}_asset`]] || '0', r[`${leg}_amount`]);
+    }
+    if (r.fee_asset) balances[r.fee_asset] = subtractAmounts(
+      balances[r.fee_asset] || '0', r.fee_amount);
+  }
+  assert.equal(balances.ETH, '0.1999999999');
+  assert.equal(balances.USD, '-501.25');
+  const replay = parseExchangeCsv(fixture('kraken-ledgers.csv')).records;
+  assert.equal(replay.find((r) => r.record_type === 'fee').external_id, fee.external_id);
+  const noSecondaryFee = fixture('kraken-ledgers.csv').replace('0.0000000001', '0.0000000000');
+  assert.equal(parseExchangeCsv(noSecondaryFee).records.filter((r) => r.record_type === 'fee').length, 0);
 });
 
 test('kraken: a widowed trade leg keys the refid, the same id the pair will', () => {

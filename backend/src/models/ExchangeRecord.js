@@ -5,6 +5,7 @@ const logger = require('../config/logger');
 const {
   FINGERPRINT_VERSION,
   canonicalAmount,
+  fingerprintFor,
   conflictingDetails,
   sourceSnapshot,
 } = require('../services/exchangeImport/canonicalFingerprint');
@@ -252,6 +253,22 @@ class ExchangeRecord {
       );
       const existingById = candidateRowsByExternalId(existingResult.rows);
       const existingByFingerprint = candidateRowsByFingerprint(existingResult.rows);
+      for (const fee of unique) {
+        const parentId = fee.raw?._format === 'kraken' && fee.record_type === 'fee'
+          ? fee.raw.parent_external_id : null;
+        if (!parentId || existingById.has(fee.external_id)) continue;
+        const incomingParent = byId.get(parentId);
+        const storedParent = existingById.get(parentId);
+        // A manually accepted half trade cannot be upgraded. Adding its
+        // companion fee anyway could charge a fee already on that half twice.
+        if (!incomingParent || (storedParent
+          && !(storedParent.needs_review && !incomingParent.needs_review)
+          && fingerprintFor('kraken', storedParent) !== fingerprintFor('kraken', incomingParent))) {
+          const error = new Error('Kraken secondary fee requires its complete trade. Review the existing trade before importing this fee.');
+          error.code = 'EXCHANGE_FEE_PARENT_CONFLICT';
+          throw error;
+        }
+      }
       const dedupeAuditResult = await database.query(
         `SELECT incoming_external_id
          FROM exchange_record_dedupe_events

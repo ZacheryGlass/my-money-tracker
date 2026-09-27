@@ -1704,7 +1704,7 @@ test('the bounded sync compatibility endpoint still returns its detailed receipt
 
   assert.equal(response.status, 200);
   assert.equal(response.body.account_id, OWNED_ACCOUNT_ID);
-  assert.equal(response.body.imported, 11, 'thirteen ledger rows, eleven economic events');
+  assert.equal(response.body.imported, 12, 'eleven economic events plus the second-asset fee');
   assert.equal(response.body.backfill_pending, false);
 });
 
@@ -1714,8 +1714,8 @@ test('a CSV upload after an API backfill of the same period adds nothing', async
   connectAccount();
 
   const synced = await syncAccount();
-  assert.equal(synced.imported, 11, 'thirteen ledger rows, eleven economic events');
-  assert.equal(stored.size, 11);
+  assert.equal(synced.imported, 12, 'eleven economic events plus the second-asset fee');
+  assert.equal(stored.size, 12);
 
   // The same events, now as the CSV export. Both readers normalize into one
   // shape and share krakenLedger.buildRecords, so every external_id matches --
@@ -1728,8 +1728,8 @@ test('a CSV upload after an API backfill of the same period adds nothing', async
   assert.equal(uploaded.status, 200);
   assert.equal(uploaded.body.imported, 0);
   assert.equal(uploaded.body.upgraded, 0, 'nothing was half-known, so nothing is upgraded');
-  assert.equal(uploaded.body.duplicates, 11);
-  assert.equal(stored.size, 11, 'no second copy of a single event');
+  assert.equal(uploaded.body.duplicates, 12);
+  assert.equal(stored.size, 12, 'no second copy of a single event');
 });
 
 test('every CSV import recomputes reconciliation, including a no-new-row import', async () => {
@@ -1756,7 +1756,7 @@ test('every CSV import recomputes reconciliation, including a no-new-row import'
   assert.equal(second.status, 200);
   assert.equal(second.body.imported, 0);
   assert.equal(second.body.reconciliation_status, 'mismatch');
-  assert.equal(stored.size, 11);
+  assert.equal(stored.size, 12);
 });
 
 test('a CSV-first import still gains the addresses only the API can see', async () => {
@@ -1766,14 +1766,14 @@ test('a CSV-first import still gains the addresses only the API can see', async 
     .post(`/api/exchanges/${OWNED_ACCOUNT_ID}/import`)
     .set('Content-Type', 'text/csv')
     .send(readFixture('kraken-ledgers.csv'));
-  assert.equal(uploaded.body.imported, 11);
+  assert.equal(uploaded.body.imported, 12);
   // The Kraken ledgers export carries no txid and no destination at all.
   assert.equal(chainDetails.size, 0);
 
   const synced = await syncAccount();
 
   assert.equal(synced.imported, 0, 'the events were already known');
-  assert.equal(synced.duplicates, 11);
+  assert.equal(synced.duplicates, 12);
   // The ON CONFLICT upgrade is deliberately one-directional -- it only fires
   // on a review-flagged row -- so it cannot fill this hole. Without the
   // additive backfill, connecting a key after a CSV upload would leave the
@@ -2216,7 +2216,7 @@ test('a second sync of the same account while one is running is refused, not dou
   assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 1);
   const refused = results.find(({ status }) => status === 'rejected');
   assert.equal(refused.reason.code, 'EXCHANGE_SYNC_IN_PROGRESS');
-  assert.equal(stored.size, 11, 'the refused pass imported nothing of its own');
+  assert.equal(stored.size, 12, 'the refused pass imported nothing of its own');
 });
 
 test('complete live balances reach portfolio holdings even while history is pending', async () => {

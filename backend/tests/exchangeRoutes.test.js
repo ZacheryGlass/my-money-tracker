@@ -249,15 +249,15 @@ test('uploading the same ledger twice yields one set of records', async () => {
 
   assert.equal(first.status, 200);
   assert.equal(first.body.format, 'kraken');
-  assert.equal(first.body.parsed, 11);
-  assert.equal(first.body.imported, 11);
+  assert.equal(first.body.parsed, 12);
+  assert.equal(first.body.imported, 12);
   assert.equal(first.body.upgraded, 0);
   assert.equal(first.body.duplicates, 0);
   // The unrecognized ledger type and the widowed trade leg imported rather
   // than vanishing.
   assert.equal(first.body.needs_review, 2);
   assert.equal(first.body.reconciliation_status, 'unknown');
-  assert.equal(stored.size, 11);
+  assert.equal(stored.size, 12);
 
   const second = await upload(csv);
 
@@ -266,9 +266,9 @@ test('uploading the same ledger twice yields one set of records', async () => {
   // Identical twice over: nothing new, and nothing was rewritten either. An
   // upgrade here would mean the guard is not actually guarding.
   assert.equal(second.body.upgraded, 0);
-  assert.equal(second.body.duplicates, 11);
+  assert.equal(second.body.duplicates, 12);
   assert.equal(second.body.reconciliation_status, 'unknown');
-  assert.equal(stored.size, 11, 're-import must not add a second copy');
+  assert.equal(stored.size, 12, 're-import must not add a second copy');
 });
 
 test('a fuller re-export adds only its new rows', async () => {
@@ -302,12 +302,12 @@ test('kraken: the full ledger repairs the half record the partial one left', asy
   assert.equal(first.body.needs_review, 3, 'the widowed trade leg is flagged');
 
   const second = await upload(full);
-  assert.equal(second.body.imported, 0, 'the trade was already known, half-way');
+  assert.equal(second.body.imported, 1, 'the missing leg supplies a second-asset fee');
   assert.equal(second.body.upgraded, 1, 'the half trade became the whole trade');
   assert.equal(second.body.duplicates, 10);
   // One record for that trade, not two: the id did not change when the
   // counter-leg arrived.
-  assert.equal(stored.size, 11);
+  assert.equal(stored.size, 12);
   assert.equal(stored.get(`${OWNED_ACCOUNT_ID}|kraken:TTRD00-11111-TTTTTT`), false);
 });
 
@@ -331,7 +331,7 @@ test('a shorter export never downgrades a record the fuller one completed', asyn
   const partial = withoutLines(full, (line) => line.includes('"LCCCCC-33333-CCCCCC"'));
 
   const first = await upload(full);
-  assert.equal(first.body.imported, 11);
+  assert.equal(first.body.imported, 12);
 
   // The user uploads last year's export by mistake. The half record must not
   // overwrite the whole one -- that would lose the counter-leg for good.
@@ -339,6 +339,7 @@ test('a shorter export never downgrades a record the fuller one completed', asyn
   assert.equal(second.body.imported, 0);
   assert.equal(second.body.upgraded, 0);
   assert.equal(second.body.duplicates, 11);
+  assert.equal(stored.size, 12, 'the fuller export fee survives the shorter replay');
   assert.equal(stored.get(`${OWNED_ACCOUNT_ID}|kraken:TTRD00-11111-TTTTTT`), false, 'still the complete record');
 });
 
