@@ -321,7 +321,7 @@ function effectSignature(row, address, chain) {
   else if (row.source_log_index != null && ['erc20', 'erc721', 'erc1155', 'native_credit'].includes(type)) {
     coordinate = `${type.replace('native_credit', 'native-credit')}:${hash}:${Number(row.source_log_index)}`;
   } else if (row.source_trace_address != null && type === 'internal') {
-    coordinate = `internal:${hash}:${normalizer.stableJson(row.source_trace_address)}`;
+    coordinate = `internal:${hash}:trace:${normalizer.stableJson(row.source_trace_address)}`;
   }
   else if (type === 'native' || type === 'gas') coordinate = `${type}:${hash}`;
   else if (type === 'native_credit' && row.ordinal === 0) coordinate = `native-credit:${hash}:unproven`;

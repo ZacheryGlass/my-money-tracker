@@ -1771,6 +1771,35 @@ test('effect reconciliation counts missing or duplicate economic legs, not just 
   ) > 0, 'economic equality without immutable log identity remains a gap');
 });
 
+test('decoded internal effects reconcile by the stored execution trace path', () => {
+  for (const traceAddress of [[], [2, 1]]) {
+    const legacy = {
+      id: 20, tx_hash: HASH, transfer_type: 'internal', from_address: OTHER,
+      to_address: WALLET, value_wei: '8', source_trace_address: traceAddress,
+      is_error: false,
+    };
+    const [decoded] = effectsFromInternalObservations(context(100), [{
+      id: 10, provider: 'trace-rpc', evidence_kind: 'internal_trace',
+      tx_hash: HASH, trace_address: traceAddress,
+      payload_json: { from: OTHER, to: WALLET, value: '8' },
+    }], { verifiedTraceHashes: new Set([HASH]) });
+    assert.equal(decoded.resolutionStatus, 'verified');
+    const canonical = [{
+      id: 10, effect_key: decoded.effectKey, effect_type: decoded.effectType,
+      tx_hash: decoded.txHash, from_address: decoded.fromAddress,
+      to_address: decoded.toAddress, value_units: decoded.valueUnits,
+    }];
+    const count = (rows) => EvmAuditService._unmatchedEffectCount(
+      canonical, rows, WALLET, chains.getChain(100)
+    );
+    assert.equal(count([legacy]), 0);
+    assert.equal(count([legacy, { ...legacy, id: 21 }]), 1);
+    assert.ok(count([{ ...legacy, source_trace_address: [9] }]) > 0);
+    assert.ok(count([{ ...legacy, source_trace_address: null }]) > 0);
+    assert.ok(count([{ ...legacy, value_wei: '9' }]) > 0);
+  }
+});
+
 test('cross-provider transfer repair requires an exact indexed log coordinate and payload', () => {
   const effect = {
     effect_type: 'erc20', effect_key: `erc20:${HASH}:3`, log_index: 3,
