@@ -85,6 +85,47 @@ module.exports = async function checkEthLedger(pool, ok) {
   ok('ETH ledger wallet filters and both source branches remain user isolated',
     filtered.data.every((r) => r.scope.startsWith(`wallet:${wallets[0]}:`))
       && foreign.data.length === 0 && !foreign.scopes.some((s) => s.scope === scope));
+  const { EthHistoryFindings } = require('../src/models/EthHistoryFindings');
+  await pool.query(`INSERT INTO eth_wallet_chains (wallet_id, chain_id) VALUES ($1, 1)
+    ON CONFLICT DO NOTHING`, [wallets[0]]);
+  const findings = { observed_at: '2025-01-01T00:00:00Z', issues: [{
+    kind: 'missing_history', count: 1, from: '2024-01-01T00:00:00Z', through: '2024-02-01T00:00:00Z',
+    summary: 'Synthetic statement discontinuity.', evidence_needed: 'Original source statement.',
+  }] };
+  const manifest = { user_id: owner, scopes: [
+    { scope, ...findings }, { scope: `exchange:${exchange}`, ...findings },
+  ] };
+  await EthHistoryFindings.importForUser(owner, manifest);
+  ok('history findings dry run changes no saved assessment',
+    (await EthLedger.findForUser(owner)).scopes.every((s) => s.history_findings === null));
+  await EthHistoryFindings.importForUser(owner, manifest, { apply: true });
+  await EthHistoryFindings.importForUser(owner, manifest, { apply: true });
+  const assessed = await EthLedger.findForUser(owner, { limit: 500 });
+  ok('history findings import is replayable and leaves all ledger amounts and chronology unchanged',
+    JSON.stringify(assessed.data) === JSON.stringify(all.data)
+      && assessed.closing_balance_wei === all.closing_balance_wei
+      && assessed.scopes.filter((s) => s.history_findings).length === 2);
+  const walletAssessment = await EthLedger.findForUser(owner, { walletId: wallets[0] });
+  ok('history findings preserve scope association and wallet filtering',
+    assessed.scopes.find((s) => s.scope === scope).history_findings.issues[0].summary === findings.issues[0].summary
+      && walletAssessment.scopes.every((s) => s.scope.startsWith(`wallet:${wallets[0]}:`)));
+  let rejected = 0;
+  const newer = structuredClone(manifest); newer.scopes[0].observed_at = '2025-02-01T00:00:00Z';
+  const foreignAccount = (await pool.query(`INSERT INTO exchange_accounts (user_id, name, exchange)
+    VALUES (2, 'Foreign findings fixture', 'other') RETURNING id`)).rows[0].id;
+  newer.scopes.push({ scope: `exchange:${foreignAccount}`, ...findings });
+  try { await EthHistoryFindings.importForUser(owner, newer, { apply: true }); } catch { rejected++; }
+  const older = structuredClone(manifest); older.scopes[0].observed_at = '2024-12-01T00:00:00Z';
+  try { await EthHistoryFindings.importForUser(owner, older, { apply: true }); } catch { rejected++; }
+  const foreignWallet = { user_id: 2, scopes: [{ scope, ...findings }] };
+  try { await EthHistoryFindings.importForUser(2, foreignWallet, { apply: true }); } catch { rejected++; }
+  ok('history findings reject foreign wallet/account writes atomically and refuse older evidence',
+    rejected === 3 && (await EthLedger.findForUser(owner)).scopes.find((s) => s.scope === scope)
+      .history_findings.observed_at === findings.observed_at);
+  const foreignRead = await EthLedger.findForUser(2);
+  ok('history findings never expose another owners assessment',
+    foreignRead.scopes.every((s) => !s.history_findings));
+  await pool.query('DELETE FROM exchange_accounts WHERE id=$1', [foreignAccount]);
   await pool.query(`INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at,
     base_asset, base_amount, external_id, needs_review)
     VALUES ($1, 'transfer', '2026-01-06', 'ETH', NULL, 'ledger-unknown', true)`, [exchange]);

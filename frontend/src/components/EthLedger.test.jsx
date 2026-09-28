@@ -62,4 +62,46 @@ describe('ETH ledger', () => {
     await screen.findByText('Unknown ETH');
     expect(within(screen.getByRole('table')).getAllByText('Unknown')).toHaveLength(3);
   });
+
+  it('shows dated, actionable findings and counts for only the selected account across pages', async () => {
+    const issues = [
+      { kind: 'missing_history', count: 1, from: '2024-01-01T00:00:00Z', through: '2024-03-01T00:00:00Z',
+        summary: 'A statement interval is missing.', evidence_needed: 'A complete statement spanning the discontinuity.' },
+      { kind: 'unmatched_transfer', count: 3, from: '2024-02-01T00:00:00Z', through: null,
+        summary: 'Transfers are recorded without endpoint identity.', evidence_needed: 'Native transfer identifiers.' },
+      { kind: 'fee_evidence', count: 2, summary: 'Fee breakdown missing.', evidence_needed: 'Original fee asset and amount.' },
+      { kind: 'balance_comparison', count: 1, summary: 'Staking event pending.', evidence_needed: 'Terminal event evidence.' },
+    ];
+    getEthLedger.mockResolvedValue({ ...result, scopes: [result.scopes[0],
+      { scope: 'exchange:42', name: 'Test exchange', chain_id: null,
+        history_findings: { observed_at: '2025-01-01T00:00:00Z', issues } },
+    ] });
+    render(<EthLedger />);
+    await screen.findByText(/Dated assessments available for 1 of 2/);
+    const counts = within(screen.getByRole('list', { name: 'Documented history issue counts', hidden: true }));
+    expect(counts.getByText(/Unmatched recorded transfers:/)).toHaveTextContent('3');
+    expect(counts.getByText(/Unavailable fee \/ precision evidence:/)).toHaveTextContent('2');
+    expect(screen.getByText(/Jan 1, 2025/)).toBeInTheDocument();
+    expect(screen.getByText(/Jan 1, 2024 – Mar 1, 2024/)).toBeInTheDocument();
+    expect(screen.getByText('Native transfer identifiers.')).toBeInTheDocument();
+    expect(screen.getByText(/Dates span recorded events, not a missing-history interval/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Unknown – Unknown/)).toHaveLength(2);
+    expect(screen.getByText(/Categories can overlap/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Last' }));
+    await screen.findByText(/Dated assessments available for 1 of 2/);
+    expect(screen.getByText('Terminal event evidence.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Ledger account'), { target: { value: 'wallet:1:1' } });
+    await screen.findByText(/Dated assessments available for 0 of 1/);
+    expect(screen.queryByText('Terminal event evidence.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Documented history issue counts', hidden: true })).not.toBeInTheDocument();
+  });
+
+  it('never calls absent or empty findings a verified period', async () => {
+    getEthLedger.mockResolvedValue({ ...result, scopes: [{ ...result.scopes[0],
+      history_findings: { observed_at: '2025-01-01T00:00:00Z', issues: [] } }] });
+    render(<EthLedger />);
+    await screen.findByText(/No issues documented in this assessment/);
+    expect(screen.getByText(/Dates outside documented gaps are not automatically verified/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Verified period/)).not.toBeInTheDocument();
+  });
 });

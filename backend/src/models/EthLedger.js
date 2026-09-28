@@ -21,7 +21,8 @@ const SQL = `WITH wallet_scopes AS (
     COALESCE(NULLIF(w.label, ''), w.address) AS name, w.chain_id,
     COALESCE((SELECT jsonb_agg(jsonb_build_object(
       'feed', f.feed, 'status', f.status, 'from_block', f.covered_from_block::text,
-      'through_block', f.covered_through_block::text, 'error', f.error_message
+      'through_block', f.covered_through_block::text, 'error', f.error_message,
+      'checked_at', f.last_attempt_at, 'cursor_kind', f.cursor_kind
     ) ORDER BY f.feed) FROM eth_feed_coverage f
       WHERE f.wallet_id = w.wallet_id AND f.chain_id = w.chain_id), '[]') AS coverage,
     (SELECT jsonb_build_object('status', r.status, 'checked_at', r.checked_at,
@@ -30,10 +31,12 @@ const SQL = `WITH wallet_scopes AS (
         AND r.chain_id = w.chain_id AND r.asset_type = 'native') AS audit,
     (SELECT COALESCE(SUM(a.amount_wei), 0)::text
       FROM eth_reconciliation_adjustments a WHERE a.wallet_id = w.wallet_id
-        AND a.chain_id = w.chain_id AND a.asset_key = 'ETH') AS adjustment_wei
+        AND a.chain_id = w.chain_id AND a.asset_key = 'ETH') AS adjustment_wei,
+    (SELECT c.eth_history_findings FROM eth_wallet_chains c
+      WHERE c.wallet_id=w.wallet_id AND c.chain_id=w.chain_id) AS history_findings
   FROM wallet_scopes w
   UNION ALL
-  SELECT 'exchange:' || ea.id, ea.name, NULL::int, '[]'::jsonb, NULL::jsonb, '0'
+  SELECT 'exchange:' || ea.id, ea.name, NULL::int, '[]'::jsonb, NULL::jsonb, '0', ea.eth_history_findings
   FROM exchange_accounts ea WHERE ea.user_id = $1 AND $3::int IS NULL
 ), entries AS (
   SELECT 'wallet:' || t.wallet_id || ':' || t.chain_id AS scope,

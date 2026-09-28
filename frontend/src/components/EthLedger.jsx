@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { crypto as cryptoAPI } from '../utils/api';
-import { formatExactUnits } from '../utils/format';
+import { formatExactUnits, formatDateDisplay, formatRelativeTime } from '../utils/format';
 import { explorerTxUrl } from '../utils/chains';
 import DataTable from './DataTable';
 import LoadingState from './LoadingState';
@@ -12,6 +12,33 @@ const kindLabel = (row) => ({
   gas: 'Gas fee', internal: 'Internal ETH transfer',
   native: 'ETH transfer', exchange_fee: 'Exchange fee',
 }[row.kind] || `Exchange ${row.kind}`);
+
+const ISSUE_KINDS = {
+  missing_history: 'Missing history intervals',
+  unmatched_transfer: 'Unmatched recorded transfers',
+  fee_evidence: 'Unavailable fee / precision evidence',
+  balance_comparison: 'Unresolved balance comparisons',
+  balance_evidence: 'Unavailable balance evidence',
+  source_conflict: 'Conflicting source histories',
+};
+
+function HistoryFindings({ findings }) {
+  if (!findings) return <p>No dated history assessment is stored for this account. Completeness is unknown.</p>;
+  return <div className="mt-2 space-y-2">
+    <p className="text-caption">Evidence as of <time dateTime={findings.observed_at} title={findings.observed_at}>
+      {formatDateDisplay(findings.observed_at)} ({formatRelativeTime(findings.observed_at)})
+    </time>. Saved assessment; subsequent activity or repairs may have changed these findings.</p>
+    {!findings.issues.length && <p>No issues documented in this assessment. This does not establish complete history.</p>}
+    {findings.issues.map((issue, index) => <details key={index} className="border-l border-border pl-3">
+      <summary className="cursor-pointer">{ISSUE_KINDS[issue.kind]} · {issue.count.toLocaleString()}</summary>
+      <p className="mt-1">{issue.summary}</p>
+      <p className="text-caption">Affected dates (UTC): {issue.from ? formatDateDisplay(issue.from) : 'Unknown'}
+        {' – '}{issue.through ? formatDateDisplay(issue.through) : 'Unknown'}.
+        {issue.kind === 'unmatched_transfer' && ' Dates span recorded events, not a missing-history interval.'}</p>
+      <p><strong>Evidence needed:</strong> {issue.evidence_needed}</p>
+    </details>)}
+  </div>;
+}
 
 export default function EthLedger({ walletId = null }) {
   const [scope, setScope] = useState('');
@@ -66,6 +93,11 @@ export default function EthLedger({ walletId = null }) {
   const table = useReactTable({ data: loading || error ? [] : result?.data || [], columns,
     getCoreRowModel: getCoreRowModel(), getRowId: (row) => row.id, enableSorting: false });
   const selectedScopes = (result?.scopes || []).filter((s) => !scope || s.scope === scope);
+  const assessedScopes = selectedScopes.filter((s) => s.history_findings);
+  const issueCounts = {};
+  for (const s of assessedScopes) for (const issue of s.history_findings.issues) {
+    issueCounts[issue.kind] = (issueCounts[issue.kind] || 0) + issue.count;
+  }
   const total = result?.total || 0;
 
   return <div className="space-y-4">
@@ -104,6 +136,17 @@ export default function EthLedger({ walletId = null }) {
         <p className="my-2">Coverage and audit results below are the last stored checks, not proof of lifetime completeness.
           Missing feeds, missing exchange exports and unknown opening balances affect this ledger.
           Audit-only adjustments are listed here and are not invented as transactions.</p>
+        <p>Dated assessments available for {assessedScopes.length} of {selectedScopes.length} selected accounts / networks.</p>
+        {assessedScopes.length > 0 && <>
+          <ul className="my-2 flex flex-wrap gap-x-4 gap-y-1" aria-label="Documented history issue counts">
+            {Object.entries(issueCounts).map(([kind, count]) => <li key={kind}>
+              {ISSUE_KINDS[kind]}: <strong>{count.toLocaleString()}</strong>
+            </li>)}
+          </ul>
+          <p className="mb-3 text-caption">Counts describe the saved evidence dates below, across the full selected history, not this page.
+            Categories can overlap; do not add them together. Unmatched transfers are already recorded, not necessarily missing money.
+            Dates outside documented gaps are not automatically verified.</p>
+        </>}
         <ul className="space-y-2">
           {selectedScopes.map((s) => <li key={s.scope}>
             <strong>{s.name} · {s.chain_name || 'Exchange'}</strong>
@@ -112,9 +155,11 @@ export default function EthLedger({ walletId = null }) {
                 {s.audit?.reason && ` ${s.audit.reason}`}
                 {s.adjustment_wei !== '0' && ` Audit-only adjustment excluded: ${amount(s.adjustment_wei)} ETH.`}</p>
               {s.coverage.length ? s.coverage.map((f) => <p key={f.feed} className="text-caption">
-                {f.feed}: {f.status} · blocks {f.from_block ?? '?'}–{f.through_block ?? '?'}{f.error ? ` · ${f.error}` : ''}
+                {f.feed}: {f.status} · {f.cursor_kind === 'archive_serial' ? 'archive positions' : 'blocks'} {f.from_block ?? '?'}–{f.through_block ?? '?'}{f.error ? ` · ${f.error}` : ''}
+                {f.checked_at && ` · Last checked ${formatDateDisplay(f.checked_at)}`}
               </p>) : <p>History coverage has not been recorded.</p>}
             </> : <p>Imported records only. Check Crypto → Exchanges for export coverage and balance exceptions.</p>}
+            <HistoryFindings findings={s.history_findings} />
           </li>)}
         </ul>
       </details>
