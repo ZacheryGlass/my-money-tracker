@@ -11,6 +11,7 @@ const amount = (wei) => formatExactUnits(wei, 18) ?? 'Unknown';
 const kindLabel = (row) => ({
   gas: 'Gas fee', internal: 'Internal ETH transfer',
   native: 'ETH transfer', exchange_fee: 'Exchange fee',
+  rounding_adjustment: 'Assumed rounding adjustment',
 }[row.kind] || `Exchange ${row.kind}`);
 
 const ISSUE_KINDS = {

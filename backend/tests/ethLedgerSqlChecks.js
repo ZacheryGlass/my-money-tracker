@@ -126,6 +126,48 @@ module.exports = async function checkEthLedger(pool, ok) {
   ok('history findings never expose another owners assessment',
     foreignRead.scopes.every((s) => !s.history_findings));
   await pool.query('DELETE FROM exchange_accounts WHERE id=$1', [foreignAccount]);
+  const deposit = (await pool.query(`SELECT * FROM exchange_records
+    WHERE exchange_account_id=$1 AND external_id='ledger-deposit'`, [exchange])).rows[0];
+  const roundingNote = 'Assumed rounding adjustment for a synthetic deposit; owner accepted.';
+  await pool.query(`UPDATE exchange_records SET eth_rounding_adjustment_wei=-37,
+    eth_rounding_adjustment_note=$2 WHERE id=$1`, [deposit.id, roundingNote]);
+  const rounded = await EthLedger.findForUser(owner, { limit: 500 });
+  const depositLegs = rounded.data.filter(r => r.reference === 'ledger-deposit');
+  const savedDeposit = (await pool.query('SELECT * FROM exchange_records WHERE id=$1', [deposit.id])).rows[0];
+  const { eth_rounding_adjustment_wei, eth_rounding_adjustment_note, ...savedSource } = savedDeposit;
+  const { eth_rounding_adjustment_wei: _wei, eth_rounding_adjustment_note: _note, ...originalSource } = deposit;
+  ok('manual rounding splits an ETH receipt without changing source records or balances',
+    JSON.stringify(savedSource) === JSON.stringify(originalSource)
+      && eth_rounding_adjustment_wei === '-37' && eth_rounding_adjustment_note === roundingNote
+      && rounded.total === all.total + 1 && rounded.closing_balance_wei === all.closing_balance_wei
+      && depositLegs.length === 2 && depositLegs[0].delta_wei === '1000000000000000037'
+      && depositLegs[1].delta_wei === '-37' && depositLegs[1].kind === 'rounding_adjustment'
+      && depositLegs[1].description === roundingNote
+      && (await ExchangeRecord.derivedBalances(exchange, owner)).ETH === exchangeBalance.ETH);
+  const adjustmentIndex = rounded.data.findIndex(r => r.kind === 'rounding_adjustment');
+  const adjustmentPage = await EthLedger.findForUser(owner, { limit: 1, offset: adjustmentIndex });
+  const foreignAdjustment = await EthLedger.findForUser(2, { scope: `exchange:${exchange}` });
+  ok('manual rounding preserves pagination running balances and owner isolation',
+    JSON.stringify(adjustmentPage.data[0]) === JSON.stringify(rounded.data[adjustmentIndex])
+      && foreignAdjustment.data.length === 0
+      && depositLegs[1].account_balance_wei === '1000000000000000000');
+  let invalidRounding = 0;
+  for (const query of [
+    "UPDATE exchange_records SET eth_rounding_adjustment_wei=37 WHERE id=$1",
+    "UPDATE exchange_records SET eth_rounding_adjustment_note=NULL WHERE id=$1",
+    "UPDATE exchange_records SET record_type='withdrawal' WHERE id=$1",
+    "UPDATE exchange_records SET base_asset=NULL WHERE id=$1",
+    "UPDATE exchange_records SET base_amount=NULL WHERE id=$1",
+  ]) {
+    try { await pool.query(query, [deposit.id]); } catch (error) {
+      if (error.code === '23514') invalidRounding++;
+    }
+  }
+  ok('manual rounding requires a explained loss on a known ETH deposit', invalidRounding === 5);
+  await pool.query(`UPDATE exchange_records SET eth_rounding_adjustment_wei=NULL,
+    eth_rounding_adjustment_note=NULL WHERE id=$1`, [deposit.id]);
+  ok('removing a manual rounding assumption restores the original ledger exactly',
+    JSON.stringify((await EthLedger.findForUser(owner, { limit: 500 })).data) === JSON.stringify(all.data));
   await pool.query(`INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at,
     base_asset, base_amount, external_id, needs_review)
     VALUES ($1, 'transfer', '2026-01-06', 'ETH', NULL, 'ledger-unknown', true)`, [exchange]);

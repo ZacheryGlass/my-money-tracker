@@ -59,15 +59,22 @@ const SQL = `WITH wallet_scopes AS (
   SELECT 'exchange:' || ea.id, 'exchange:' || er.id || ':' || leg.part,
     er.occurred_at, NULL::int, NULL::bigint,
     COALESCE(er.tx_hash, er.external_id), leg.part::bigint,
-    CASE WHEN leg.part = 3 THEN 'exchange_fee' ELSE er.record_type END,
-    er.record_type, NULL::text, er.address,
-    leg.amount * 1000000000000000000::numeric, false, er.needs_review
+    CASE WHEN leg.part = 4 THEN 'rounding_adjustment'
+      WHEN leg.part = 3 THEN 'exchange_fee' ELSE er.record_type END,
+    CASE WHEN leg.part = 4 THEN er.eth_rounding_adjustment_note
+      WHEN leg.part = 1 AND er.eth_rounding_adjustment_wei IS NOT NULL
+        THEN 'Gross deposit before assumed rounding adjustment'
+      ELSE er.record_type END, NULL::text, er.address,
+    leg.delta, false, er.needs_review
   FROM exchange_records er JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
   CROSS JOIN LATERAL (VALUES
-    (1, er.base_asset, er.base_amount),
-    (2, er.quote_asset, er.quote_amount),
-    (3, er.fee_asset, -er.fee_amount)
-  ) leg(part, asset, amount)
+    (1, er.base_asset, er.base_amount * 1000000000000000000::numeric
+      - COALESCE(er.eth_rounding_adjustment_wei, 0)),
+    (2, er.quote_asset, er.quote_amount * 1000000000000000000::numeric),
+    (3, er.fee_asset, -er.fee_amount * 1000000000000000000::numeric),
+    (4, CASE WHEN er.eth_rounding_adjustment_wei IS NOT NULL THEN 'ETH' END,
+      er.eth_rounding_adjustment_wei)
+  ) leg(part, asset, delta)
   WHERE ea.user_id = $1 AND $3::int IS NULL AND leg.asset = 'ETH'
 ), selected AS (
   SELECT e.*, s.name FROM entries e JOIN scopes s USING (scope)

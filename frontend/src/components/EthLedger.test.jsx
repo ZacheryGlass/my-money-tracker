@@ -41,6 +41,19 @@ describe('ETH ledger', () => {
     await waitFor(() => expect(getEthLedger).toHaveBeenLastCalledWith({ walletId: 1, scope: 'wallet:1:1', limit: 100, offset: 0 }));
   });
 
+  it('labels manual rounding separately from provider fees and shows its explanation', async () => {
+    getEthLedger.mockResolvedValue({ ...result, data: [{ ...entry, chain_id: null,
+      kind: 'rounding_adjustment', delta_wei: '-37',
+      description: 'Assumed rounding adjustment for a deposit; accepted by the owner.',
+    }] });
+    render(<EthLedger />);
+    const table = within(await screen.findByRole('table'));
+    expect(table.getByText('Assumed rounding adjustment')).toBeInTheDocument();
+    expect(table.getByText('-0.000000000000000037')).toBeInTheDocument();
+    expect(table.getByText(/accepted by the owner/)).toBeInTheDocument();
+    expect(table.queryByText('Exchange fee')).not.toBeInTheDocument();
+  });
+
   it('does not display stale rows while a new scope loads or replace errors with zero', async () => {
     let rejectRequest;
     render(<EthLedger />);
