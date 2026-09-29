@@ -64,6 +64,9 @@ async function resolveGroup(client, group, userId) {
     [ids, userId]
   );
   if (result.rows.length !== 2) throw new Error(`candidate group ${group.fingerprint} no longer has two owned rows`);
+  if (result.rows.some(row => row.eth_rounding_adjustment_wei != null)) {
+    throw new Error('Manual rounding disclosures require separate adjudication before merging');
+  }
   const survivor = result.rows.find((row) => String(row.id) === String(group.suggested_survivor_id));
   const duplicate = result.rows.find((row) => row !== survivor);
   if (!survivor || !duplicate) throw new Error(`candidate group ${group.fingerprint} has no declared survivor`);
@@ -163,4 +166,4 @@ if (require.main === module) {
     .finally(() => pool.end().catch(() => {}));
 }
 
-module.exports = { eligibleGroups };
+module.exports = { eligibleGroups, resolveGroup };

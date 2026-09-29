@@ -41,6 +41,8 @@ test('cross-account equality rejects changed provider fields', () => {
   assert.equal(recordsMatch(row(), row({ occurred_at: '2022-01-01T12:00:01.000Z' })), false);
   assert.equal(recordsMatch(row(), row({ base_amount: '101' })), false);
   assert.equal(recordsMatch(row(), row({ raw: { _format: 'coinbase_retail' } })), false);
+  assert.equal(recordsMatch(row({ eth_rounding_adjustment_wei: '-37' }), row()), false);
+  assert.equal(recordsMatch(row(), row({ eth_rounding_adjustment_wei: '-37' })), false);
 });
 
 test('provenance records the original account alongside the raw source snapshot', () => {

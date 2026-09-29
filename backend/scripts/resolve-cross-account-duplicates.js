@@ -60,6 +60,7 @@ function sameText(left, right) {
 // fields agree. Raw payloads are retained separately in provenance, so a
 // harmless source-line difference between exports does not block a merge.
 function recordsMatch(survivor, duplicate) {
+  if (survivor?.eth_rounding_adjustment_wei != null || duplicate?.eth_rounding_adjustment_wei != null) return false;
   if (!survivor?.external_id || survivor.external_id !== duplicate?.external_id) return false;
   if (survivor.record_type !== duplicate.record_type || !sameInstant(survivor.occurred_at, duplicate.occurred_at)) return false;
   for (const field of ['base_asset', 'quote_asset', 'fee_asset', 'tx_hash', 'address', 'network']) {
