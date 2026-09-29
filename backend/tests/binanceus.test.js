@@ -192,6 +192,26 @@ async function withHistoryApi({ coins = ['ETH'], now, respond }, run) {
 const credentials = { apiKey: 'synthetic-key', apiSecret: 'synthetic-secret' };
 const capitalRequests = requests => requests.filter(r => /capital\/(deposit|withdraw)\//.test(r.path));
 
+test('Binance.US sync includes pending ETH principal without importing a restake as income', async () => {
+  for (const available of [true, false]) {
+    await withHistoryApi({ coins: [], now: 1700000100000, respond(path) {
+      if (path.endsWith('/stakingBalance')) return { success: true, code: '000000',
+        data: [{ asset: 'ETH', stakingAmount: '5', pendingRewards: '0.75', unstakeInProgress: '0' }] };
+      if (path.endsWith('/staking/history')) {
+        if (!available) throw new Error('history unavailable');
+        return [{ asset: 'ETH', amount: '0.125', type: 'auto-restaked',
+          status: 'PROCESSING', initiatedTime: 1700000000000 }];
+      }
+    } }, async () => {
+      const result = await connector.sync(credentials);
+      assert.equal(result.balancesComplete, available);
+      assert.equal(result.balances.ETH, available ? '5.125' : '5');
+      assert.equal(result.records.length, 0, 'principal is not a new economic event');
+      assert.equal(result.balance_details.ETH.staking.restake_in_progress, available ? '0.125' : null);
+    });
+  }
+});
+
 test('Binance.US backfills contiguous 90-day windows and keeps per-coin checkpoints', async () => {
   const { HISTORY_START: start, CAPITAL_WINDOW_MS: window } = connector._internals;
   const end = start + window * 2 + 4321;

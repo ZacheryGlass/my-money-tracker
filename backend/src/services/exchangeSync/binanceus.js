@@ -189,7 +189,7 @@ function accountBalances(body) {
   return accountBalanceDetails(body).balances;
 }
 
-function accountBalanceDetails(body, staking = null) {
+function accountBalanceDetails(body, staking = null, restaking = null) {
   const balances = {};
   const balanceDetails = {};
   let complete = Array.isArray(body?.balances);
@@ -231,12 +231,69 @@ function accountBalanceDetails(body, staking = null) {
       detail.provider_balances[coin] = addAmounts(detail.provider_balances[coin] ?? '0', staked);
       detail.staking = { amount: staked, unstake_in_progress: row.unstakeInProgress ?? null,
         pending_rewards: row.pendingRewards ?? null };
+      // ETH auto-restakes are already credited principal, displayed separately
+      // from Staked ETH as Pending Balance. They are not pending rewards.
+      if (coin === 'ETH') {
+        const pending = amount(restaking?.amount);
+        if (!restaking?.complete || pending === null || isNegativeAmount(pending)) {
+          complete = false;
+        } else {
+          balances[coin] = addAmounts(balances[coin], pending);
+          detail.provider_balances[coin] = addAmounts(detail.provider_balances[coin], pending);
+        }
+        detail.staking.restake_in_progress = restaking?.complete ? pending : null;
+      }
     }
   }
   for (const detail of Object.values(balanceDetails)) {
     detail.provider_asset_codes = [...new Set(detail.provider_asset_codes)].sort();
   }
   return { balances, balanceDetails, complete };
+}
+
+async function ethRestakingBalance(call, account, staking) {
+  if (!Array.isArray(staking?.data) || !staking.data.some(row => asset(row?.asset) === 'ETH')) return null;
+  try {
+    const endTime = Date.now();
+    const events = [];
+    const seen = new Set();
+    // A bounded full walk prevents an old pending request falling outside a
+    // recent-history window. Unfinished or repeated pages cannot certify zero.
+    for (let page = 1; page <= 5; page += 1) {
+      const rows = await call('/sapi/v1/staking/history', {
+        asset: 'ETH', startTime: 0, endTime, page, limit: 500,
+      });
+      if (!Array.isArray(rows) || rows.length > 500) throw historyError('staking history malformed');
+      for (const row of rows) {
+        const value = amount(row?.amount);
+        const time = timestampOf(row?.initiatedTime);
+        const key = JSON.stringify([row?.asset, row?.type, time, value]);
+        if (asset(row?.asset) !== 'ETH' || value === null || isNegativeAmount(value)
+            || !time || Date.parse(time) > endTime || seen.has(key)
+            || !['SUCCESS', 'PROCESSING', 'FAILED'].includes(row.status)) {
+          throw historyError('staking history ambiguous');
+        }
+        seen.add(key);
+        if (row.status === 'PROCESSING') {
+          if (row.type !== 'auto-restaked') throw historyError('staking principal overlap unresolved');
+          events.push(row);
+        }
+      }
+      if (rows.length === 500) continue;
+      // A restake may finish between requests. Do not add an earlier pending
+      // principal to a later staking balance that already includes it.
+      const afterAccount = await call('/api/v3/account');
+      const afterStaking = await call('/sapi/v1/staking/stakingBalance');
+      if (JSON.stringify(account.balances) !== JSON.stringify(afterAccount.balances)
+          || JSON.stringify(staking) !== JSON.stringify(afterStaking)) {
+        throw historyError('balances changed during staking history read');
+      }
+      return { complete: true, amount: events.reduce((sum, row) => addAmounts(sum, row.amount), '0'), events };
+    }
+  } catch {
+    // Retain other history; an unavailable balance component is not zero.
+  }
+  return { complete: false, amount: null };
 }
 
 function emptyCursor(capitalThrough = {}) {
@@ -295,6 +352,7 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
   // A staking permission/outage must not discard otherwise recoverable history
   // or publish a spot-only snapshot as the user's full holdings.
   const staking = await call('/sapi/v1/staking/stakingBalance').catch(() => null);
+  const restaking = await ethRestakingBalance(call, account, staking);
   const balanceObservedAt = new Date().toISOString();
   const exchangeInfo = await call('/api/v3/exchangeInfo', {}, { signed: false });
   const listedSymbols = Array.isArray(exchangeInfo.symbols) ? exchangeInfo.symbols : [];
@@ -514,9 +572,9 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
       : []),
   ];
 
-  const normalizedBalances = accountBalanceDetails(account, staking);
+  const normalizedBalances = accountBalanceDetails(account, staking, restaking);
   if (!normalizedBalances.complete) {
-    coverageLimitations.push('Binance.US staking balances are unavailable, malformed, or include an unresolved unstake; total balance reconciliation is incomplete.');
+    coverageLimitations.push('Binance.US staking balances are unavailable, malformed, changed during the read, or include unresolved staking principal; total balance reconciliation is incomplete.');
   }
   return {
     records,
@@ -549,5 +607,5 @@ module.exports = connector;
 module.exports.MAX_REQUESTS_INTERACTIVE = MAX_REQUESTS_INTERACTIVE;
 module.exports._internals = {
   timestampOf, tradeRecord, capitalRecord, distributionRecord, dustRecord, fiatRecord,
-  accountBalances, accountBalanceDetails, normalizeCursor, emptyCursor, HISTORY_START, CAPITAL_WINDOW_MS,
+  accountBalances, accountBalanceDetails, ethRestakingBalance, normalizeCursor, emptyCursor, HISTORY_START, CAPITAL_WINDOW_MS,
 };
