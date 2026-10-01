@@ -17,7 +17,7 @@ const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
 const { CREDENTIAL_FIELDS, connectorFor } = require('../services/exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
 const { toCsv } = require('../utils/csv');
-const { cleanAmount } = require('../services/exchangeImport/shared');
+const { cleanAmount, compareAmounts } = require('../services/exchangeImport/shared');
 const logger = require('../config/logger');
 
 const router = express.Router();
@@ -446,6 +446,9 @@ router.post('/matches/verdict', async (req, res) => {
     const matchable = new Set(ExchangeMatch.MATCHABLE_RECORD_TYPES);
     const anchor = records.get(target.exchangeRecordId);
     const counter = target.counterRecordId ? records.get(target.counterRecordId) : null;
+    // Internal venue moves retain their signed quantity as type 'transfer'.
+    // They can be manually paired without rewriting either imported record.
+    if (counter) matchable.add('transfer');
     for (const record of [anchor, counter]) {
       if (record && !matchable.has(record.record_type)) {
         return res.status(400).json({
@@ -458,10 +461,21 @@ router.post('/matches/verdict', async (req, res) => {
     // exactly this reason -- one identity per movement instead of two orderings
     // of the same two ids -- and a verdict stored the other way round would
     // never line up with the match it is supposed to confirm or suppress.
-    if (counter && !(anchor?.record_type === 'withdrawal' && counter.record_type === 'deposit')) {
+    const pairDirection = (record) => {
+      if (record.record_type !== 'transfer') return record.record_type;
+      const amount = cleanAmount(record.base_amount);
+      if (!amount || record.quote_asset || cleanAmount(record.quote_amount)) return null;
+      const sign = compareAmounts(amount, '0');
+      return sign < 0 ? 'withdrawal' : sign > 0 ? 'deposit' : null;
+    };
+    if (counter && !(pairDirection(anchor) === 'withdrawal' && pairDirection(counter) === 'deposit')) {
       return res.status(400).json({
         error: 'A pair runs withdrawal -> deposit: exchange_record_id must be the withdrawal and counter_record_id the deposit',
       });
+    }
+    if (counter && [anchor, counter].some((record) => record.record_type === 'transfer')
+      && (!anchor.base_asset || anchor.base_asset !== counter.base_asset)) {
+      return res.status(400).json({ error: 'An internal transfer pair must use the same base asset' });
     }
 
     // Two confirmations claiming the same record is the same money explained

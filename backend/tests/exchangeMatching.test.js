@@ -220,12 +220,12 @@ function fakeQuery(text, params = []) {
     db.labels.push({ user_id: userId, address, name, source: 'auto-match', kind: 'exchange', confidence: 'low' });
     return { rows: [{ address }] };
   }
-  if (/^SELECT er\.id, er\.record_type FROM exchange_records er/.test(sql)) {
+  if (/^SELECT er\.id, er\.record_type, er\.base_asset/.test(sql)) {
     const [userId, ids] = params;
     if (userId !== OWNER_ID) return { rows: [] };
     return {
       rows: ids.filter((id) => db.records.has(id))
-        .map((id) => ({ id, record_type: db.records.get(id).record_type })),
+        .map((id) => ({ id, ...db.records.get(id) })),
     };
   }
   if (/^SELECT v\.id, v\.exchange_record_id, v\.counter_record_id, v\.wallet_id/.test(sql)) {
@@ -1208,6 +1208,53 @@ test('a pair verdict has to run withdrawal -> deposit', async () => {
   const rightWayRound = await request(app).post('/api/exchanges/matches/verdict')
     .send({ exchange_record_id: 600, counter_record_id: 700, verdict: 'confirmed' });
   assert.equal(rightWayRound.status, 201);
+});
+
+for (const [sendingType, receivingType] of [
+  ['transfer', 'deposit'], ['withdrawal', 'transfer'], ['transfer', 'transfer'],
+]) {
+  test(`a signed internal ${sendingType} -> ${receivingType} pair can be manually confirmed without rewriting sources`, async () => {
+    const sender = recordRow(600, { record_type: sendingType, base_amount: '-1.4' });
+    const receiver = recordRow(700, { record_type: receivingType });
+    seedRecords(sender, receiver);
+
+    const response = await request(app).post('/api/exchanges/matches/verdict')
+      .send({ exchange_record_id: 600, counter_record_id: 700, verdict: 'confirmed' });
+
+    assert.equal(response.status, 201);
+    assert.equal(db.matches.length, 1);
+    assert.equal(db.matches[0].match_method, 'manual');
+    assert.equal(db.matches[0].counter_record_id, 700);
+    await ExchangeMatchService.rebuildForUser(OWNER_ID);
+    assert.equal(db.matches.length, 1, 'the manual pairing survives a rebuild');
+    assert.deepEqual(db.records.get(600), sender);
+    assert.deepEqual(db.records.get(700), receiver);
+    assert.deepEqual(db.labels, [], 'manual confirmation never teaches an address');
+  });
+}
+
+test('internal pair confirmations reject unknown direction, incompatible assets and multi-asset entries', async () => {
+  for (const overrides of [
+    { base_amount: '0' }, { base_amount: null }, { base_amount: 'bad' },
+    { base_amount: '1.4' }, { base_asset: 'USD' },
+    { quote_asset: 'USD', quote_amount: '12' },
+  ]) {
+    seedRecords(recordRow(600, { record_type: 'transfer', base_amount: '-1.4', ...overrides }), recordRow(700));
+    const response = await request(app).post('/api/exchanges/matches/verdict')
+      .send({ exchange_record_id: 600, counter_record_id: 700, verdict: 'confirmed' });
+    assert.equal(response.status, 400);
+    assert.equal(db.verdicts.size, 0);
+  }
+});
+
+test('signed internal transfers remain excluded from on-chain verdicts and automatic candidates', async () => {
+  db.activity = [activityRow()];
+  seedRecords(recordRow(500, { record_type: 'transfer', base_amount: '-1.4' }));
+  const response = await request(app).post('/api/exchanges/matches/verdict')
+    .send({ exchange_record_id: 500, wallet_id: WALLET_ID, tx_hash: TX, verdict: 'confirmed' });
+  assert.equal(response.status, 400);
+  assert.deepEqual(ExchangeMatch.MATCHABLE_RECORD_TYPES, ['deposit', 'withdrawal']);
+  assert.equal(db.verdicts.size, 0);
 });
 
 test('a second confirmation claiming the same record is refused, not silently dropped', async () => {

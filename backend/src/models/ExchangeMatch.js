@@ -1078,7 +1078,8 @@ class ExchangeMatch {
   static async verdictTargetExists(userId, { exchangeRecordId, counterRecordId = null, walletId = null, chainId = DEFAULT_CHAIN_ID, txHash = null }) {
     requireUserId('verdictTargetExists', userId);
     const ownsRecord = await pool.query(
-      `SELECT er.id, er.record_type
+      `SELECT er.id, er.record_type, er.base_asset, er.base_amount::text,
+              er.quote_asset, er.quote_amount::text
        FROM exchange_records er
        JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
        WHERE ea.user_id = $1 AND er.id = ANY($2::bigint[])`,
