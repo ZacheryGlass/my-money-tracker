@@ -168,7 +168,8 @@ class EthFeedCoverage {
               w.label AS wallet_label,
               wc.last_synced_at AS chain_last_synced_at,
               wc.error_code AS chain_error_code,
-              wc.error_message AS chain_error_message
+              wc.error_message AS chain_error_message,
+              COALESCE(wc.excluded, FALSE) AS chain_excluded
          FROM eth_feed_coverage c
          JOIN eth_wallets w ON w.id = c.wallet_id
          LEFT JOIN eth_wallet_chains wc

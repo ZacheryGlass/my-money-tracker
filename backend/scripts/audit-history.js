@@ -59,6 +59,7 @@ async function buildReport(userId, archiveReportPath = null) {
     `SELECT COUNT(DISTINCT w.id)::int AS wallet_count,
             COUNT(wc.wallet_id)::int AS wallet_chain_count,
             COUNT(DISTINCT wc.chain_id)::int AS chain_count,
+            COUNT(wc.wallet_id) FILTER (WHERE wc.excluded)::int AS excluded_wallet_chain_count,
             MIN(w.created_at) AS first_wallet_added,
             MAX(w.last_synced_at) AS last_wallet_sync
        FROM eth_wallets w
@@ -77,7 +78,8 @@ async function buildReport(userId, archiveReportPath = null) {
             COUNT(*) FILTER (WHERE c.status = 'unverified')::int AS unverified_rows
        FROM eth_feed_coverage c
        JOIN eth_wallets w ON w.id = c.wallet_id
-      WHERE w.user_id = $1
+       LEFT JOIN eth_wallet_chains wc ON wc.wallet_id = c.wallet_id AND wc.chain_id = c.chain_id
+      WHERE w.user_id = $1 AND NOT COALESCE(wc.excluded, FALSE)
       GROUP BY c.chain_id, c.feed, c.status, c.provider
       ORDER BY c.chain_id, c.feed, c.status, c.provider`,
     [userId]
@@ -351,6 +353,7 @@ async function buildReport(userId, archiveReportPath = null) {
       wallet_count: number(wallets.wallet_count),
       chain_count: number(wallets.chain_count),
       wallet_chain_count: number(wallets.wallet_chain_count),
+      excluded_wallet_chain_count: number(wallets.excluded_wallet_chain_count),
     },
     wallet_sync: {
       first_wallet_added: wallets.first_wallet_added || null,

@@ -142,11 +142,11 @@ class EthReconciliationService {
   // verdict skips the chain as CHAIN_ERROR rather than being ignored, because
   // an unrecognised code means the last run left a hole of unknown shape and
   // comparing across it manufactures drift that means nothing.
-  static chainGates(chainResults, chainStates) {
+  static chainGates(chainResults, chainStates, enabledChains = chains.enabledChains()) {
     const gates = new Map();
     const stored = new Map((chainStates || []).map((state) => [Number(state.chain_id), state]));
 
-    for (const chain of chains.enabledChains()) {
+    for (const chain of enabledChains) {
       const result = (chainResults || []).find((entry) => Number(entry.chainId) === chain.id);
       const state = stored.get(chain.id);
       const gate = { chainId: chain.id, chainName: chain.name, skip: null, unsupportedFeeds: [] };
@@ -196,7 +196,9 @@ class EthReconciliationService {
    */
   static async reconcileWallet(wallet, { liveWeiByChain = {}, chainResults = null, apiKey = null } = {}) {
     const chainStates = chainResults ? null : await EthWalletChain.findForWallet(wallet.id);
-    const gates = this.chainGates(chainResults, chainStates);
+    const gates = this.chainGates(
+      chainResults, chainStates, await EthWalletChain.enabledChainsForWallet(wallet.id)
+    );
     // Unreachable while enabledChains() floors at mainnet, and shaped exactly
     // like the real summary anyway so a caller reading .matched off it cannot
     // silently get undefined the day that floor moves.

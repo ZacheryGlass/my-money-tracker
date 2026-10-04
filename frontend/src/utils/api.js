@@ -460,6 +460,10 @@ export const eth = {
 
     return waitForWalletSync(id, payload);
   },
+  setWalletChainExcluded: async (id, chainId, excluded) => {
+    const response = await api.put(`/api/eth/wallets/${id}/chains/${chainId}`, { excluded });
+    return response.data;
+  },
   recaptureWallet: async (id) => {
     const response = await api.post(`/api/eth/wallets/${id}/recapture`);
     return response.data;

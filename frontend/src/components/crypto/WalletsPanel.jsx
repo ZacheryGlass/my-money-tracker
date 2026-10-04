@@ -400,6 +400,7 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
   const [auditByWallet, setAuditByWallet] = useState({});
   const [recapturing, setRecapturing] = useState(null);
   const [recaptureStartingId, setRecaptureStartingId] = useState(null);
+  const [chainUpdating, setChainUpdating] = useState(null);
   const [coverageReport, setCoverageReport] = useState(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [disconnecting, setDisconnecting] = useState(null);
@@ -529,6 +530,23 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
       onError(err.response?.data?.error || 'Failed to sync wallet');
     } finally {
       setSyncingId(null);
+    }
+  };
+
+  const handleChainExcluded = async (wallet, chain) => {
+    const excluded = !chain.excluded;
+    setChainUpdating(`${wallet.id}:${chain.chain_id}`);
+    onError(null);
+    try {
+      await ethAPI.setWalletChainExcluded(wallet.id, chain.chain_id, excluded);
+      await onChanged();
+      showSuccess(excluded
+        ? `${chain.name} excluded for ${walletName(wallet)}. Stored history is kept.`
+        : `${chain.name} included again for ${walletName(wallet)}. It resumes at the next sync.`);
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to update wallet chain');
+    } finally {
+      setChainUpdating(null);
     }
   };
 
@@ -803,12 +821,26 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
       })()}
       {wallet.chains?.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          {wallet.chains.map((chain) => (
-            <span
+          {wallet.chains.map((chain) => {
+            const Badge = chain.excludable ? 'button' : 'span';
+            const status = chain.error_message
+              || (chain.excluded ? 'Excluded for this wallet; stored history kept'
+                : chain.enabled ? `Last synced ${formatRelativeTime(chain.last_synced_at)}`
+                  : 'Chain turned off; stored history kept');
+            return (
+            <Badge
               key={chain.chain_id}
-              title={chain.error_message
-                || (chain.enabled ? `Last synced ${formatRelativeTime(chain.last_synced_at)}` : 'Chain turned off; stored history kept')}
+              {...(chain.excludable ? {
+                type: 'button',
+                onClick: () => handleChainExcluded(wallet, chain),
+                disabled: chainUpdating === `${wallet.id}:${chain.chain_id}`,
+                'aria-pressed': !chain.excluded,
+              } : {})}
+              title={chain.excludable
+                ? `${status}. Click to ${chain.excluded ? 'include' : 'exclude'} ${chain.name} for this wallet.`
+                : status}
               className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold uppercase tracking-wide ${
+                chain.excludable ? 'cursor-pointer hover:border-primary disabled:opacity-50 ' : ''}${
                 !chain.enabled ? 'bg-surface-3 border-border text-tertiary'
                   : chainIssueTone(chain) === 'failed' ? 'bg-loss/5 border-loss/20 text-loss'
                     : chainIssueTone(chain) !== 'neutral' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
@@ -817,14 +849,15 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
             >
               {chain.enabled && chainIssueTone(chain) !== 'neutral' && <AlertTriangle size={10} />}
               {chain.name}
-              {!chain.enabled && <span className="font-normal normal-case">off</span>}
+              {!chain.enabled && <span className="font-normal normal-case">{chain.excluded ? 'excluded' : 'off'}</span>}
               {chain.unsupported_feeds?.length > 0 && (
                 <span className="font-normal normal-case">
                   no {chain.unsupported_feeds.join(', ')}
                 </span>
               )}
-            </span>
-          ))}
+            </Badge>
+            );
+          })}
         </div>
       )}
 

@@ -8,6 +8,7 @@ const SecretsService = require('./SecretsService');
 const EthDerivedPipeline = require('./EthDerivedPipeline');
 const EtherscanService = require('./EtherscanService');
 const chains = require('../config/chains');
+const EthWalletChain = require('../models/EthWalletChain');
 const logger = require('../config/logger');
 const MoralisClient = require('./evmAudit/MoralisClient');
 const RpcClient = require('./evmAudit/RpcClient');
@@ -458,10 +459,16 @@ class EvmAuditService {
     return [...AUDIT_CHAINS.keys()].filter((chainId) => enabled.has(chainId));
   }
 
+  // configuredChainIds minus the chains the user excluded for this wallet (098).
+  static async configuredChainIdsForWallet(walletId) {
+    const enabled = new Set((await EthWalletChain.enabledChainsForWallet(walletId)).map((chain) => chain.id));
+    return [...AUDIT_CHAINS.keys()].filter((chainId) => enabled.has(chainId));
+  }
+
   static async request(userId, walletId, { mode = 'incremental', requestedChains = null } = {}) {
     const wallet = await EthWallet.findByIdForUser(walletId, userId);
     if (!wallet) return null;
-    const selected = (requestedChains || this.configuredChainIds())
+    const selected = (requestedChains || await this.configuredChainIdsForWallet(wallet.id))
       .map(Number).filter((chainId) => AUDIT_CHAINS.has(chainId));
     const credentialGeneration = await EvmAudit.credentialGeneration(userId);
     // Resolve without logging or returning the credential. Moralis key

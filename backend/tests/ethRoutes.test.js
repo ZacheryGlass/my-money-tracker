@@ -603,3 +603,61 @@ test('GET /api/eth/coverage returns a user-scoped gap summary', async () => {
     EthFeedCoverage.findForUser = originalFind;
   }
 });
+
+test('PUT /api/eth/wallets/:id/chains/:chainId excludes an L2 for an owned wallet', async () => {
+  const EthWallet = require('../src/models/EthWallet');
+  const EthWalletChain = require('../src/models/EthWalletChain');
+  const originalFind = EthWallet.findByIdForUser;
+  const originalSet = EthWalletChain.setExcluded;
+  const calls = [];
+  EthWallet.findByIdForUser = async (id, userId) => (id === 7 ? { id, user_id: userId } : null);
+  EthWalletChain.setExcluded = async (walletId, chainId, excluded) => {
+    calls.push([walletId, chainId, excluded]);
+    return { wallet_id: walletId, chain_id: chainId, excluded };
+  };
+  try {
+    const response = await request(app).put('/api/eth/wallets/7/chains/10').send({ excluded: true });
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, [[7, 10, true]]);
+    assert.equal(response.body.chain.enabled, false);
+  } finally {
+    EthWallet.findByIdForUser = originalFind;
+    EthWalletChain.setExcluded = originalSet;
+  }
+});
+
+test('PUT /api/eth/wallets/:id/chains/:chainId refuses mainnet, bad bodies and foreign wallets', async () => {
+  const EthWallet = require('../src/models/EthWallet');
+  const EthWalletChain = require('../src/models/EthWalletChain');
+  const originalFind = EthWallet.findByIdForUser;
+  const originalSet = EthWalletChain.setExcluded;
+  let wrote = false;
+  EthWallet.findByIdForUser = async (id, userId) => (id === 7 ? { id, user_id: userId } : null);
+  EthWalletChain.setExcluded = async () => { wrote = true; };
+  try {
+    assert.equal((await request(app).put('/api/eth/wallets/7/chains/1').send({ excluded: true })).status, 400);
+    assert.equal((await request(app).put('/api/eth/wallets/7/chains/10').send({ excluded: 'yes' })).status, 400);
+    assert.equal((await request(app).put('/api/eth/wallets/7/chains/999999').send({ excluded: true })).status, 400);
+    assert.equal((await request(app).put('/api/eth/wallets/8/chains/10').send({ excluded: true })).status, 404);
+    assert.equal(wrote, false);
+  } finally {
+    EthWallet.findByIdForUser = originalFind;
+    EthWalletChain.setExcluded = originalSet;
+  }
+});
+
+test('EthWalletChain.enabledChainsForWallet drops excluded chains but never mainnet', async () => {
+  const pool = require('../src/config/database');
+  const EthWalletChain = require('../src/models/EthWalletChain');
+  const chains = require('../src/config/chains');
+  const originalQuery = pool.query;
+  pool.query = async () => ({ rows: [{ chain_id: 1 }, { chain_id: 10 }] });
+  try {
+    const ids = (await EthWalletChain.enabledChainsForWallet(7)).map((chain) => chain.id);
+    assert.ok(ids.includes(1));
+    assert.ok(!ids.includes(10));
+    assert.equal(ids.length, chains.enabledChains().filter((chain) => chain.id !== 10).length);
+  } finally {
+    pool.query = originalQuery;
+  }
+});

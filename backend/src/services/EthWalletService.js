@@ -756,7 +756,7 @@ class EthWalletService {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
     return EthDerivedPipeline.serializedForUser(wallet.user_id, async () => {
-      for (const chain of chains.enabledChains()) {
+      for (const chain of await EthWalletChain.enabledChainsForWallet(wallet.id)) {
         await EthWalletChain.ensure(wallet.id, chain.id, Number(chain.ingestVersion || 0));
         await EthWalletChain.resetForRecapture(wallet.id, chain.id);
       }
@@ -1136,7 +1136,8 @@ class EthWalletService {
       // eth_wallet_chains row, its cursors and every transfer it ever ingested
       // -- disabling stops syncing, it does not delete history, so switching it
       // back on resumes from where it left off instead of refetching years.
-      const enabled = chains.enabledChains();
+      // A chain the user excluded for this wallet (098) is treated the same way.
+      const enabled = await EthWalletChain.enabledChainsForWallet(wallet.id);
       const perChain = [];
       // Isolation is per CHAIN, not merely per feed. _syncWalletChain already
       // absorbs Etherscan's own failures, but everything else it does can throw
@@ -1790,7 +1791,7 @@ class EthWalletService {
     // cannot burn the whole per-wallet budget on calls destined to fail.
     const liveWeiByChain = {};
 
-    for (const chain of chains.enabledChains()) {
+    for (const chain of await EthWalletChain.enabledChainsForWallet(walletId)) {
       if (unreadable.has(chain.id)) {
         logger.warn({ walletId, chainId: chain.id }, 'Skipping balance: chain unreadable with this key');
         continue;

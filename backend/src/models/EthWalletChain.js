@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
+const chains = require('../config/chains');
 
 // Per-(wallet, chain) sync state: resume cursors, the error/degraded slot, and
 // the record of which feeds this chain could not serve. Rows are created by
@@ -126,6 +127,49 @@ class EthWalletChain {
       [walletId, chainId, selected]
     );
     return result.rows[0];
+  }
+
+  // The registry's enabled chains minus the ones the user excluded for this
+  // wallet (098). Mainnet is never excluded, so the list cannot go empty.
+  static async enabledChainsForWallet(walletId) {
+    const result = await pool.query(
+      'SELECT chain_id FROM eth_wallet_chains WHERE wallet_id = $1 AND excluded',
+      [walletId]
+    );
+    const excluded = new Set((result?.rows || []).map((row) => Number(row.chain_id)));
+    return chains.enabledChains()
+      .filter((chain) => chain.id === chains.DEFAULT_CHAIN_ID || !excluded.has(chain.id));
+  }
+
+  // Excluding drops the chain's reconciliation verdicts: they are derived, the
+  // next audit after re-including rewrites them, and a stale skip left behind
+  // would keep reporting a gap on a chain the user has said is not theirs.
+  // Cursors, coverage and transfers stay.
+  static async setExcluded(walletId, chainId, excluded) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO eth_wallet_chains (wallet_id, chain_id, excluded)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (wallet_id, chain_id) DO UPDATE SET excluded = EXCLUDED.excluded
+         RETURNING *`,
+        [walletId, chainId, excluded]
+      );
+      if (excluded) {
+        await client.query(
+          'DELETE FROM eth_reconciliation WHERE wallet_id = $1 AND chain_id = $2',
+          [walletId, chainId]
+        );
+      }
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // Every stored chain for the wallet, INCLUDING chains that are no longer

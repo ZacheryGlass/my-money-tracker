@@ -378,7 +378,8 @@ router.get('/wallets', async (req, res) => {
           chains: chainStates.map((state) => ({
             ...state,
             name: chains.chainLabel(state.chain_id),
-            enabled: chains.isEnabled(state.chain_id),
+            enabled: chains.isEnabled(state.chain_id) && !state.excluded,
+            excludable: chains.isEnabled(state.chain_id) && Number(state.chain_id) !== chains.DEFAULT_CHAIN_ID,
             source: chains.getChain(state.chain_id)?.historyProvider || 'evm-account-feeds',
           })),
           // Does the stored transfer ledger reproduce the balance the chain
@@ -498,7 +499,7 @@ router.get('/coverage', async (req, res) => {
     const rows = (await EthFeedCoverage.findForUser(req.user.id)).map((row) => ({
       ...row,
       chain_name: chains.chainLabel(row.chain_id),
-      enabled: chains.isEnabled(row.chain_id),
+      enabled: chains.isEnabled(row.chain_id) && !row.chain_excluded,
     }));
     const summary = {
       rows: rows.length,
@@ -561,6 +562,34 @@ router.post('/wallets/:id/sync', async (req, res) => {
       return res.status(503).json({ error: error.message });
     }
     return res.status(500).json({ error: 'Failed to sync wallet' });
+  }
+});
+
+// Exclude (or re-include) one chain for one wallet: an address that never used
+// a network should not keep reporting that network's provider gaps. Exclusion
+// stops sync, balance reads and audits there; stored history and cursors stay.
+router.put('/wallets/:id/chains/:chainId', async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    const chainId = parseId(req.params.chainId);
+    const wallet = id && await EthWallet.findByIdForUser(id, req.user.id);
+    if (!wallet) return res.status(404).json({ error: 'Wallet not found' });
+    if (typeof req.body?.excluded !== 'boolean') {
+      return res.status(400).json({ error: 'excluded must be a boolean' });
+    }
+    if (!chainId || !chains.isEnabled(chainId)) {
+      return res.status(400).json({ error: 'chainId must be an enabled chain' });
+    }
+    if (chainId === chains.DEFAULT_CHAIN_ID) {
+      return res.status(400).json({ error: 'Ethereum mainnet cannot be excluded' });
+    }
+    const state = await EthDerivedPipeline.serializedForUser(
+      req.user.id, () => EthWalletChain.setExcluded(id, chainId, req.body.excluded)
+    );
+    return res.status(200).json({ chain: { ...state, enabled: !state.excluded } });
+  } catch (error) {
+    logger.error({ err: error, walletId: req.params.id }, 'Update ETH wallet chain exclusion error');
+    return res.status(500).json({ error: 'Failed to update wallet chain' });
   }
 });
 
