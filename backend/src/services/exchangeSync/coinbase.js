@@ -15,6 +15,7 @@ const {
   finalizeRecord,
   contentId,
 } = require('../exchangeImport/shared');
+const { impliedFundingRecord } = require('../exchangeImport/coinbaseFunding');
 const logger = require('../../config/logger');
 
 // Coinbase connector.
@@ -416,6 +417,12 @@ function recordFromTransaction(tx, { line, fillsByOrder }) {
   // the API and CSV readers would disagree about the body of a record they both
   // key `cb:<transaction id>`.
   //
+  // This leg is booked against the fiat balance whatever paid for the trade.
+  // For a buy funded from a bank or card (or a sale paid out to one) the fiat
+  // never touched the wallet, so sync() emits the implied deposit/withdrawal
+  // beside the trade (coinbaseFunding.js) rather than dropping this leg, which
+  // is the trade's cost basis.
+  //
   let quoteAsset = null;
   let quoteAmount = null;
   if (mapped === 'trade') {
@@ -813,6 +820,11 @@ const coinbaseConnector = {
       if (!record) continue;
       if (record.needs_review && TYPE_MAP[String(tx.type ?? '').toLowerCase()] === undefined) unknownTypes += 1;
       records.push(record);
+      // A buy paid from a bank or card, or a sale paid out to one: the fiat
+      // crossed the bank boundary, not the wallet. Keyed `<trade id>:funding`,
+      // so a replayed trade replays its funding as a plain duplicate.
+      const funding = impliedFundingRecord(record, { line });
+      if (funding) records.push(funding);
     }
 
     return {

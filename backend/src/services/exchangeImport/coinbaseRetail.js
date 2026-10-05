@@ -15,6 +15,7 @@ const {
   finalizeRecord,
   ImportFormatError,
 } = require('./shared');
+const { impliedFundingRecord } = require('./coinbaseFunding');
 const { isBlankRow } = require('../../utils/csv');
 
 const FORMAT = 'coinbase_retail';
@@ -288,27 +289,32 @@ function parse(rows) {
     else if (row.recordType === 'deposit') address = row.sender || row.recipient;
     else address = row.recipient || row.sender;
 
-    emitted.push({
-      order: row.line,
-      record: finalizeRecord({
-        record_type: row.recordType,
-        occurred_at: row.occurredAt,
-        base_asset: row.baseAsset,
-        base_amount: row.baseAmount,
-        quote_asset: quoteAsset,
-        quote_amount: quoteAmount,
-        // Fees are stored as positive magnitudes across every importer: a fee is
-        // a cost, and its sign in the source depends only on which side of the
-        // ledger the exchange printed it from. Zero fees stay null.
-        fee_asset: fee && fee !== '0' ? feeAsset : null,
-        fee_amount: fee && fee !== '0' ? absAmount(fee) : null,
-        tx_hash: null,
-        address,
-        external_id: row.externalId,
-        needs_review: row.isUnknown || needsReview,
-        raw: row.raw,
-      }, { line: row.line, amountCell: row.quantityCell }),
-    });
+    const record = finalizeRecord({
+      record_type: row.recordType,
+      occurred_at: row.occurredAt,
+      base_asset: row.baseAsset,
+      base_amount: row.baseAmount,
+      quote_asset: quoteAsset,
+      quote_amount: quoteAmount,
+      // Fees are stored as positive magnitudes across every importer: a fee is
+      // a cost, and its sign in the source depends only on which side of the
+      // ledger the exchange printed it from. Zero fees stay null.
+      fee_asset: fee && fee !== '0' ? feeAsset : null,
+      fee_amount: fee && fee !== '0' ? absAmount(fee) : null,
+      tx_hash: null,
+      address,
+      external_id: row.externalId,
+      needs_review: row.isUnknown || needsReview,
+      raw: row.raw,
+    }, { line: row.line, amountCell: row.quantityCell });
+    emitted.push({ order: row.line, record });
+
+    // "Bought ... using bank account <name>": the quote leg above debits the
+    // fiat balance, but a bank or card paid it. The implied deposit (or, for a
+    // sale paid out to a bank, withdrawal) nets the wallet back to zero and
+    // keys `<this row's id>:funding`, the same id the API reader derives.
+    const funding = impliedFundingRecord(record, { line: row.line });
+    if (funding) emitted.push({ order: row.line, record: funding });
   };
 
   // A Convert writes two ledger lines and puts the same note on both. Applying

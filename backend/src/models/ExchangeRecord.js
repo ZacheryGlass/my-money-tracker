@@ -815,3 +815,6 @@ class ExchangeRecord {
 module.exports = ExchangeRecord;
 module.exports.BAD_VALUE_CODES = BAD_VALUE_CODES;
 module.exports.applyMerge = applyMerge;
+// Read-only previews (scripts/backfill-coinbase-implied-funding.js) classify
+// an incoming row the way bulkInsert would without writing it.
+module.exports.isDistinctSameSourceEvent = isDistinctSameSourceEvent;

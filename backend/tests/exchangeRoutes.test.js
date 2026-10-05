@@ -430,7 +430,8 @@ test('a JSON body may carry the CSV alongside an explicit format', async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.body.format, 'coinbase_retail');
-  assert.equal(response.body.imported, 23);
+  // 22 ledger events plus the implied bank funding of the one bank-paid Buy.
+  assert.equal(response.body.imported, 23 + 1);
   assert.equal(response.body.skipped_header_rows, 2);
 });
 

@@ -12,7 +12,7 @@ const path = require('path');
 // Real exports are personal financial history and never enter this repository.
 const { parseExchangeCsv, ImportFormatError } = require('../src/services/exchangeImport');
 const {
-  cleanAmount, parseTimestamp, chainIdForNetwork,
+  cleanAmount, parseTimestamp, chainIdForNetwork, addAmounts, negateAmount,
 } = require('../src/services/exchangeImport/shared');
 const {
   normalizeAssetParts, normalizeAsset, buildRecords,
@@ -63,7 +63,9 @@ test('coinbase retail: detected past its preamble and mapped type by type', () =
   assert.equal(typeOf('0104'), 'transfer');      // Retail Eth2 Deprecation
 
   assert.equal(stats.unknownTypes, 1);
-  assert.equal(records.length, 23);
+  // The bank-paid Buy (f3) also emits its implied funding deposit.
+  assert.equal(records.length, 23 + 1);
+  assert.equal(records_by_id.get('cb:aaaa000000000000000000f3:funding')?.record_type, 'deposit');
 });
 
 test('coinbase retail: the moves between Coinbase surfaces are transfers, whatever they are called', () => {
@@ -127,6 +129,80 @@ test('coinbase retail: $-prefixed amounts parse and a trade carries both legs pl
   const sell = records.get('cb:aaaa000000000000000000f4');
   assert.equal(sell.base_amount, '-0.25');
   assert.equal(sell.quote_amount, '625');
+});
+
+// The fiat side of a buy paid from a bank never touched the USD wallet, so the
+// trade's quote leg alone would debit a wallet that did not move.
+// Summed exactly, as derivedBalances sums them (base + quote - fee).
+const usdNet = (records) => records.reduce((total, record) => {
+  let sum = total;
+  if (record.base_asset === 'USD') sum = addAmounts(sum, record.base_amount);
+  if (record.quote_asset === 'USD') sum = addAmounts(sum, record.quote_amount);
+  if (record.fee_asset === 'USD') sum = addAmounts(sum, negateAmount(record.fee_amount));
+  return sum;
+}, '0');
+
+test('coinbase retail: a bank-paid Buy emits its implied funding deposit', () => {
+  const records = byId(parseExchangeCsv(fixture('coinbase-retail.csv')).records);
+  const buy = records.get('cb:aaaa000000000000000000f3');
+  const funding = records.get('cb:aaaa000000000000000000f3:funding');
+
+  assert.ok(funding, 'a Buy "using bank account" carries its bank leg');
+  assert.equal(funding.record_type, 'deposit');
+  assert.equal(funding.base_asset, 'USD');
+  // Subtotal 400 plus the 10 USD fee: what the bank actually paid.
+  assert.equal(funding.base_amount, '410');
+  assert.equal(funding.quote_asset, null);
+  assert.equal(funding.fee_asset, null);
+  assert.equal(funding.occurred_at, buy.occurred_at);
+  assert.equal(funding.needs_review, false);
+  assert.equal(funding.raw._format, 'coinbase_implied_funding');
+  assert.equal(funding.raw.payment_method_name, 'Test Bank ****1234');
+  assert.equal(funding.raw.trade_external_id, buy.external_id);
+  // The trade itself is untouched: its quote leg is the cost basis.
+  assert.equal(buy.quote_amount, '-400.00');
+  assert.equal(usdNet([buy, funding]), '0');
+});
+
+test('coinbase retail: only a bank or card pays from outside the wallet', () => {
+  const header = 'ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,'
+    + 'Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes,Sender Address,Recipient Address';
+  const { records } = parseExchangeCsv([
+    header,
+    'bbbb000000000000000000a1,2024-02-01 10:00:00 UTC,Buy,BTC,0.002,USD,$40000.00,$80.00,$81.50,$1.50,'
+      + 'Bought 0.002 BTC for 81.50 USD using USD Wallet,,',
+    'bbbb000000000000000000a2,2024-02-02 10:00:00 UTC,Buy,ETH,0.05,USD,$2000.00,$100.00,$103.99,$3.99,'
+      + 'Bought 0.05 ETH for 103.99 USD using Visa debit ****9999,,',
+    'bbbb000000000000000000a3,2024-02-03 10:00:00 UTC,Sell,ETH,-0.1,USD,$2100.00,$210.00,$206.85,$3.15,'
+      + 'Sold 0.1 ETH for 206.85 USD to bank account Test Bank ****1234,,',
+    'bbbb000000000000000000a4,2024-02-04 10:00:00 UTC,Sell,ETH,-0.1,USD,$2100.00,$210.00,$206.85,$3.15,'
+      + 'Sold 0.1 ETH for 206.85 USD,,',
+    'bbbb000000000000000000a5,2024-02-05 10:00:00 UTC,Advanced Trade Buy,BTC,0.001,USD,$40000.00,$40.00,$40.20,$0.20,'
+      + 'Bought 0.001 BTC for 40.20 USD on BTC-USD at 40000 USD/BTC,,',
+  ].join('\n'));
+  const fundings = records.filter((record) => record.raw?._format === 'coinbase_implied_funding');
+  const byFunding = byId(fundings);
+
+  // Wallet-paid, payout not named, and Advanced Trade: no bank leg at all.
+  assert.deepEqual([...byFunding.keys()].sort(), [
+    'cb:bbbb000000000000000000a2:funding',
+    'cb:bbbb000000000000000000a3:funding',
+  ]);
+
+  const card = byFunding.get('cb:bbbb000000000000000000a2:funding');
+  assert.equal(card.record_type, 'deposit');
+  assert.equal(card.base_amount, '103.99');
+  assert.equal(card.raw.payment_method_name, 'Visa debit ****9999');
+
+  // A sale paid out to a bank: the proceeds net of the fee left for the bank.
+  const payout = byFunding.get('cb:bbbb000000000000000000a3:funding');
+  assert.equal(payout.record_type, 'withdrawal');
+  assert.equal(payout.base_amount, '-206.85');
+  assert.equal(payout.raw.payment_method_name, 'Test Bank ****1234');
+
+  const tradesWithFunding = records.filter((record) => ['bbbb000000000000000000a2', 'bbbb000000000000000000a3']
+    .some((id) => record.external_id.startsWith(`cb:${id}`)));
+  assert.equal(usdNet(tradesWithFunding), '0', 'a bank-settled trade leaves the USD wallet untouched');
 });
 
 test('coinbase retail: addresses follow the direction of the transfer', () => {

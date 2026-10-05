@@ -478,6 +478,8 @@ const ExchangeRecord = require('../src/models/ExchangeRecord');
 const { buildRecords } = require('../src/services/exchangeImport/krakenLedger');
 const { parseExchangeCsv } = require('../src/services/exchangeImport');
 const { addAmounts, negateAmount } = require('../src/services/exchangeImport/shared');
+const { impliedFundingRecord } = require('../src/services/exchangeImport/coinbaseFunding');
+const { fingerprintFor } = require('../src/services/exchangeImport/canonicalFingerprint');
 
 // A throwaway P-256 key in the shape Coinbase hands out. Generated here rather
 // than committed: a PEM in a public repo reads like a leaked credential even
@@ -1271,6 +1273,135 @@ test('coinbase: a trade\'s quote leg is signed against the base, as the CSV read
   }, { line: 2, fillsByOrder: new Map() });
 
   assert.equal(sell.quote_amount, '1000.00', 'selling receives the quote');
+});
+
+test('coinbase: a bank-paid buy and a sale paid out to a bank carry their implied fiat movements', async () => {
+  // Synthetic shapes of the documented v2 buy/sell expansions. native_amount is
+  // the total: cost including the fee for a buy, proceeds net of it for a sale.
+  const tx = (id, type, at, amount, currency, total, method) => ({
+    id,
+    type,
+    status: 'completed',
+    created_at: at,
+    amount: { amount, currency },
+    native_amount: { amount: type === 'buy' ? total : `-${total}`, currency: 'USD' },
+    [type]: {
+      id: `${id}-order`,
+      total: { amount: total, currency: 'USD' },
+      payment_method_name: method,
+    },
+    resource: 'transaction',
+  });
+  coinbaseTransactionPages = [{
+    data: [
+      tx('dddddddd-0000-0000-0000-0000000000b1', 'buy', '2024-04-01T10:00:00Z', '0.01000000', 'BTC', '410.00', 'Test Bank ****1234'),
+      tx('dddddddd-0000-0000-0000-0000000000b2', 'buy', '2024-04-02T10:00:00Z', '0.01000000', 'BTC', '405.00', 'USD Wallet'),
+      tx('dddddddd-0000-0000-0000-0000000000b3', 'sell', '2024-04-03T10:00:00Z', '-0.10000000', 'ETH', '206.85', 'Test Bank ****1234'),
+    ],
+    pagination: { next_uri: null },
+  }];
+  const result = await coinbaseConnector.sync(
+    { apiKey: 'organizations/o/apiKeys/k', apiSecret: EC_KEY_PEM.privateKey },
+    { cursor: null }
+  );
+  const byId = new Map(result.records.map((record) => [record.external_id, record]));
+
+  assert.equal(result.records.length, 5, 'three trades, two of them settled at a bank');
+  assert.equal(byId.has('cb:dddddddd-0000-0000-0000-0000000000b2:funding'), false, 'a wallet-paid buy has no bank leg');
+
+  const buy = byId.get('cb:dddddddd-0000-0000-0000-0000000000b1');
+  const deposit = byId.get('cb:dddddddd-0000-0000-0000-0000000000b1:funding');
+  assert.equal(buy.quote_amount, '-410.00', 'the trade keeps its cost basis');
+  assert.equal(deposit.record_type, 'deposit');
+  assert.equal(deposit.base_asset, 'USD');
+  assert.equal(deposit.base_amount, '410');
+  assert.equal(deposit.occurred_at, buy.occurred_at);
+  assert.equal(deposit.needs_review, false);
+  assert.equal(deposit.raw.payment_method_name, 'Test Bank ****1234');
+  assert.equal(deposit.raw._source, 'api');
+
+  const sell = byId.get('cb:dddddddd-0000-0000-0000-0000000000b3');
+  const withdrawal = byId.get('cb:dddddddd-0000-0000-0000-0000000000b3:funding');
+  assert.equal(sell.quote_amount, '206.85');
+  assert.equal(withdrawal.record_type, 'withdrawal');
+  assert.equal(withdrawal.base_amount, '-206.85');
+});
+
+test('both Coinbase readers derive the same implied funding for the same bank-paid buy', () => {
+  const { recordFromTransaction } = coinbaseConnector._internals;
+  const id = 'eeeeeeee-0000-0000-0000-0000000000c1';
+  const api = recordFromTransaction({
+    id,
+    type: 'buy',
+    status: 'completed',
+    created_at: '2024-04-05T12:00:00Z',
+    amount: { amount: '0.01000000', currency: 'BTC' },
+    native_amount: { amount: '410.00', currency: 'USD' },
+    buy: { id: 'buy-order', total: { amount: '410.00', currency: 'USD' }, payment_method_name: 'Test Bank ****1234' },
+  }, { line: 1, fillsByOrder: new Map() });
+  const apiFunding = impliedFundingRecord(api);
+
+  // A current retail export carries the v2 transaction id in its ID column.
+  const csv = parseExchangeCsv([
+    'ID,Timestamp,Transaction Type,Asset,Quantity Transacted,Price Currency,Price at Transaction,'
+      + 'Subtotal,Total (inclusive of fees and/or spread),Fees and/or Spread,Notes,Sender Address,Recipient Address',
+    `${id},2024-04-05 12:00:00 UTC,Buy,BTC,0.01,USD,$40000.00,$400.00,$410.00,$10.00,`
+      + 'Bought 0.01 BTC for 410 USD using bank account Test Bank ****1234,,',
+  ].join('\n'));
+  const csvFunding = csv.records.find((record) => record.raw?._format === 'coinbase_implied_funding');
+
+  assert.equal(apiFunding.external_id, `cb:${id}:funding`);
+  assert.equal(csvFunding.external_id, apiFunding.external_id);
+  assert.equal(csvFunding.base_amount, apiFunding.base_amount);
+  assert.equal(csvFunding.occurred_at, apiFunding.occurred_at);
+  assert.equal(csvFunding.raw.payment_method_name, apiFunding.raw.payment_method_name);
+  assert.equal(
+    fingerprintFor('coinbase', { ...csvFunding, source: 'csv' }),
+    fingerprintFor('coinbase', { ...apiFunding, source: 'api' }),
+    'the cross-source fingerprint agrees too',
+  );
+});
+
+test('implied funding from a stored row matches the reader and fails closed on contradictions', () => {
+  const stored = {
+    record_type: 'trade',
+    // node-pg hands back a Date and NUMERIC(38,18) text for stored rows.
+    occurred_at: new Date('2024-04-05T12:00:00Z'),
+    base_asset: 'BTC',
+    base_amount: '0.010000000000000000',
+    quote_asset: 'USD',
+    quote_amount: '-410.000000000000000000',
+    fee_asset: null,
+    fee_amount: null,
+    external_id: 'cb:eeeeeeee-0000-0000-0000-0000000000c2',
+    source: 'api',
+    raw: {
+      _format: 'coinbase', _source: 'api', type: 'buy',
+      buy: { payment_method_name: 'Test Bank ****1234' },
+    },
+  };
+  const funding = impliedFundingRecord(stored, { source: 'api' });
+  assert.equal(funding.occurred_at, '2024-04-05T12:00:00.000Z', 'UTC text, never a host-local Date');
+  assert.equal(funding.base_amount, '410');
+  assert.equal(funding.source, 'api');
+
+  // The provider says buy but the legs say sell: not guessed into a bank leg.
+  assert.equal(impliedFundingRecord({ ...stored, quote_amount: '410' }), null);
+  // Wallet-paid, Advanced Trade, and conversions have no bank leg.
+  assert.equal(impliedFundingRecord({
+    ...stored, raw: { ...stored.raw, buy: { payment_method_name: 'USD Wallet' } },
+  }), null);
+  assert.equal(impliedFundingRecord({ ...stored, raw: { _format: 'coinbase', type: 'advanced_trade_fill' } }), null);
+  assert.equal(impliedFundingRecord({ ...stored, record_type: 'conversion' }), null);
+  // A CSV payload on an API-labelled survivor keeps the payload's provenance.
+  const merged = impliedFundingRecord({
+    ...stored,
+    raw: {
+      _format: 'coinbase_retail', 'Transaction Type': 'Buy',
+      Notes: 'Bought 0.01 BTC for 410 USD using bank account Test Bank ****1234',
+    },
+  });
+  assert.equal(merged.raw._source, 'csv');
 });
 
 test('coinbase: a transaction without a provider id gets a stable reviewable fallback id', () => {
