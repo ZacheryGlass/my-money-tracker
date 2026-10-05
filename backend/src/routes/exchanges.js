@@ -56,6 +56,14 @@ function respondToSyncError(res, error, fallback) {
     || error.code === 'EXCHANGE_FEE_PARENT_CONFLICT') {
     return res.status(409).json({ error: error.message, code: error.code });
   }
+  // The blocked pairs were stored for review; say so instead of a bare 500.
+  if (error.code === 'BINANCE_US_CAPITAL_OVERLAP') {
+    return res.status(409).json({
+      error: `${error.message} Decide them under /overlap-reviews.`,
+      code: error.code,
+      pending_reviews: new Set((error.candidates || []).map((c) => c.incoming_external_id)).size,
+    });
+  }
   // The provider's own refusal is the only thing that tells the user which
   // permission they forgot to tick, so it survives to the client verbatim.
   if (['KRAKEN_AUTH_FAILED', 'COINBASE_AUTH_FAILED', 'COINBASE_KEY_FORMAT', 'BINANCE_US_AUTH_FAILED'].includes(error.code)) {
