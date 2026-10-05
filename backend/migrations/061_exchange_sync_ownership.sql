@@ -39,6 +39,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_job_logs_one_running_per_name
 -- Binance (and some provider-side enrichment feeds) can be honest about a
 -- known historical coverage boundary while still importing the rows they can
 -- enumerate. Preserve that distinction in the durable account status.
+-- 062 re-adds this constraint too, so both list the UNION of every value:
+-- a narrower list here fails every boot once a row says
+-- 'reconciled_with_exceptions'.
 DO $$
 BEGIN
   IF EXISTS (
@@ -50,6 +53,8 @@ BEGIN
   END IF;
   ALTER TABLE exchange_accounts
     ADD CONSTRAINT exchange_accounts_last_sync_status_check
-    CHECK (last_sync_status IS NULL
-           OR last_sync_status IN ('ok', 'error', 'balance_mismatch', 'not_configured', 'coverage_limited'));
+    CHECK (last_sync_status IS NULL OR last_sync_status IN (
+      'ok', 'error', 'balance_mismatch', 'not_configured', 'coverage_limited',
+      'reconciled_with_exceptions'
+    ));
 END $$;
