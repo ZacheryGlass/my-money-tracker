@@ -60,3 +60,33 @@ test('materiality stays exact and treats a changed live value as a mismatch', ()
     'mismatch'
   );
 });
+
+test('an accepted rounding_dust verdict survives a delta that stays dust, and only that', () => {
+  const previous = {
+    status: 'accepted', category: 'rounding_dust', evidence: 'staking reward rounding',
+    adjustment: '0', reviewer_id: 1, reviewed_at: '2026-10-05T00:00:00.000Z',
+    previous_derived_balance: '1.000000003814', previous_live_balance: '1.000000000000',
+    previous_delta: '0.000000003814', previous_provider_asset_codes: ['ETH'],
+    previous_provider_balances: { ETH: '1.000000000000' },
+  };
+  const [dust] = ExchangeBalanceReconciliationService.snapshotsFor(
+    { ETH: '1.000000005806' }, { ETH: '1.000000000000' }, {}
+  );
+  assert.equal(dust.comparison_status, 'dust');
+  const kept = ExchangeBalanceReconciliationService.currentState(previous, dust);
+  assert.equal(kept.status, 'accepted');
+  assert.equal(kept.category, 'rounding_dust');
+
+  const [grown] = ExchangeBalanceReconciliationService.snapshotsFor(
+    { ETH: '1.5' }, { ETH: '1.0' }, {}
+  );
+  assert.equal(ExchangeBalanceReconciliationService.currentState(previous, grown).status, 'open');
+  assert.equal(
+    ExchangeBalanceReconciliationService.currentState({ ...previous, category: 'parser_defect' }, dust).status,
+    'open'
+  );
+  assert.equal(
+    ExchangeBalanceReconciliationService.currentState({ ...previous, adjustment: '-0.000000003814' }, dust).status,
+    'open'
+  );
+});

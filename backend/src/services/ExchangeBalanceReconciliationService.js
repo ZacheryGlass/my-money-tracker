@@ -91,8 +91,19 @@ function changedSnapshot(previous, snapshot) {
     || !sameJson(previous.previous_provider_balances, snapshot.provider_balances);
 }
 
+// A reviewed `rounding_dust` verdict covers a delta that stays inside the dust
+// band: staking rewards move the sub-gwei residue with every credit, and
+// reopening on each one would keep the account blocked forever. A delta that
+// grows past dust, or an acceptance carrying an adjustment, reopens as before.
+function dustAcceptanceHolds(previous, snapshot) {
+  return previous?.status === 'accepted'
+    && previous.category === 'rounding_dust'
+    && compareAmounts(previous.adjustment || '0', '0') === 0
+    && snapshot.comparison_status === 'dust';
+}
+
 function currentState(previous, snapshot) {
-  const changed = changedSnapshot(previous, snapshot);
+  const changed = changedSnapshot(previous, snapshot) && !dustAcceptanceHolds(previous, snapshot);
   if (!previous || changed) {
     return {
       status: 'open', category: null, evidence: null, adjustment: '0',
@@ -122,6 +133,8 @@ class ExchangeBalanceReconciliationService {
   static snapshotsFor(derived, live, balanceDetails, calculatedAt = new Date().toISOString()) {
     return snapshotsFor(derived, live, balanceDetails, calculatedAt);
   }
+
+  static currentState(previous, snapshot) { return currentState(previous, snapshot); }
 
   static async auditAccount(exchangeAccountId, {
     syncJobId = null,
