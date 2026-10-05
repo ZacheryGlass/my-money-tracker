@@ -243,16 +243,19 @@ class ExchangeBalanceReconciliation {
     version, status, category, evidence, adjustment,
   }) {
     requireUserId('updateForUser', userId);
+    // $4 is cast explicitly: assigned to a varchar column and compared to a
+    // text literal, Postgres otherwise refuses with "inconsistent types
+    // deduced for parameter $4" and every review save 500s.
     const result = await pool.query(
       `UPDATE exchange_balance_exceptions e
-       SET status = $4,
+       SET status = $4::text,
            category = $5,
            evidence = $6,
            adjustment = $7,
            adjusted_delta = s.delta + $7,
            reviewer_id = $3,
            reviewed_at = CURRENT_TIMESTAMP,
-           resolved_at = CASE WHEN $4 = 'open' THEN NULL ELSE e.resolved_at END,
+           resolved_at = CASE WHEN $4::text = 'open' THEN NULL ELSE e.resolved_at END,
            updated_at = CURRENT_TIMESTAMP,
            version = e.version + 1
        FROM exchange_accounts ea, exchange_balance_audit_snapshots s
