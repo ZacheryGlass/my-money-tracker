@@ -2,7 +2,7 @@
 
 const {
   UNKNOWN_RECORD_TYPE,
-  absAmount,
+  cleanAmount,
   contentId,
   makeDupCounter,
   finalizeRecord,
@@ -192,7 +192,9 @@ function buildRecords(parsedRows) {
         quote_asset: null,
         quote_amount: null,
         fee_asset: row.fee && row.fee !== '0' ? row.asset : null,
-        fee_amount: row.fee && row.fee !== '0' ? absAmount(row.fee) : null,
+        // Signed, as Kraken writes it: a reversed withdrawal refunds its fee
+        // as a NEGATIVE fee, and the balance math (amount - fee) adds it back.
+        fee_amount: row.fee && row.fee !== '0' ? cleanAmount(row.fee) : null,
         // Only ever set by the API reader: the CSV ledgers export carries no
         // network id or destination at all. Both stay null on the CSV path.
         tx_hash: row.txHash ?? null,

@@ -736,3 +736,17 @@ test('a longer re-export keeps the ids the earlier one produced', () => {
 
   assert.deepEqual(after.slice(0, before.length), before);
 });
+
+test('kraken: a reversed withdrawal keeps its fee refund negative so the balance adds it back', () => {
+  const csv = [
+    '"txid","refid","time","type","subtype","aclass","asset","wallet","amount","fee","balance"',
+    '"LWD001-AAAAA-AAAAAA","QWD001-AAAAA-AAAAAA","2022-04-18 10:00:00","withdrawal","","currency","ZUSD","spot / main","-100.0000","4.0000","0.0000"',
+    '"LWD002-AAAAA-AAAAAA","QWD001-AAAAA-AAAAAA","2022-04-18 11:00:00","withdrawal","","currency","ZUSD","spot / main","100.0000","-4.0000","104.0000"',
+  ].join('\n');
+  const { records } = parseExchangeCsv(csv);
+  const fees = records.map((record) => record.fee_amount);
+  assert.deepEqual(fees.map(Number), [4, -4]);
+  // amount - fee per row nets to zero across the reversal, as Kraken's balance column does.
+  const net = records.reduce((sum, record) => sum + Number(record.base_amount) - Number(record.fee_amount), 0);
+  assert.equal(net, 0);
+});
