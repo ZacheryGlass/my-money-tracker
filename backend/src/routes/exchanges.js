@@ -4,6 +4,7 @@ const express = require('express');
 const requireUser = require('../middleware/auth');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
+const ExchangeOverlapReview = require('../models/ExchangeOverlapReview');
 const ExchangeMatch = require('../models/ExchangeMatch');
 const ExchangeSyncJob = require('../models/ExchangeSyncJob');
 const ExchangeImportService = require('../services/ExchangeImportService');
@@ -840,6 +841,55 @@ router.patch('/:id/records/:recordId/resolve', async (req, res) => {
     logger.error({ err: error, accountId: req.params.id, recordId: req.params.recordId },
       'Resolve exchange record error');
     return res.status(500).json({ error: 'Failed to resolve exchange record' });
+  }
+});
+
+// --- capital overlap reviews ----------------------------------------------
+//
+// A Binance.US API deposit/withdrawal that resembles a stored CSV record
+// blocks its sync batch until someone says whether the two are one event.
+
+const OVERLAP_STATUSES = new Set(['pending', 'confirmed', 'rejected', 'all']);
+
+router.get('/:id/overlap-reviews', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+    const status = req.query.status === undefined ? 'pending' : String(req.query.status);
+    if (!OVERLAP_STATUSES.has(status)) {
+      return res.status(400).json({ error: `status must be one of: ${[...OVERLAP_STATUSES].join(', ')}` });
+    }
+    const reviews = await ExchangeOverlapReview.listForUser(req.user.id, account.id, {
+      status: status === 'all' ? null : status,
+    });
+    return res.status(200).json({ reviews });
+  } catch (error) {
+    logger.error({ err: error, accountId: req.params.id }, 'List overlap reviews error');
+    return res.status(500).json({ error: 'Failed to list overlap reviews' });
+  }
+});
+
+router.patch('/:id/overlap-reviews/:reviewId', async (req, res) => {
+  try {
+    const account = await loadAccount(req, res);
+    if (!account) return undefined;
+    const reviewId = parseId(req.params.reviewId);
+    const verdict = typeof req.body?.verdict === 'string' ? req.body.verdict.trim().toLowerCase() : '';
+    if (!ExchangeOverlapReview.VERDICTS.has(verdict)) {
+      return res.status(400).json({ error: 'verdict must be same or different' });
+    }
+    const result = reviewId
+      ? await ExchangeOverlapReview.decideForUser(req.user.id, account.id, reviewId, verdict)
+      : { row: null };
+    if (!result.row) return res.status(404).json({ error: 'Overlap review not found' });
+    if (result.conflict) {
+      return res.status(409).json({ error: 'This overlap review was already decided', review: result.row });
+    }
+    return res.status(200).json({ review: result.row });
+  } catch (error) {
+    logger.error({ err: error, accountId: req.params.id, reviewId: req.params.reviewId },
+      'Decide overlap review error');
+    return res.status(500).json({ error: 'Failed to save the overlap review' });
   }
 });
 

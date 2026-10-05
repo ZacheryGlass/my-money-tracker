@@ -15,9 +15,10 @@ const csv = { ...incoming, id: 999, source: 'csv', fingerprint: null,
   occurred_at: '2020-01-02T00:03:00Z', base_amount: '-2.000000000000000000',
   raw: { _format: 'binance_us', _source: 'csv' } };
 
-function clientFor(rows, replay = false) {
+function clientFor(rows, replay = false, rejected = []) {
   const writes = [];
   return { writes, async query(sql) {
+    if (sql.includes('FROM exchange_overlap_reviews')) return { rows: rejected };
     if (sql.includes('SELECT incoming_external_id')) return { rows: replay ? [{ incoming_external_id: incoming.external_id }] : [] };
     if (sql.includes("er.source = 'csv'")) return { rows };
     if (/^\s*(INSERT|UPDATE|DELETE)/.test(sql)) writes.push(sql);
@@ -29,7 +30,10 @@ test('Binance capital overlap guard catches legacy CSV and midnight differences 
   const client = clientFor([csv]);
   await assert.rejects(ExchangeRecord.bulkInsert(9, [incoming], { client }), error => {
     assert.equal(error.code, 'BINANCE_US_CAPITAL_OVERLAP');
-    assert.deepEqual(error.candidates, [{ record_id: 999, incoming_external_id: incoming.external_id }]);
+    assert.deepEqual(error.candidates.map(({ record_id, incoming_external_id }) => ({ record_id, incoming_external_id })),
+      [{ record_id: 999, incoming_external_id: incoming.external_id }]);
+    // The incoming row is persisted for review from the error, so it must ride along.
+    assert.equal(error.candidates[0].incoming.external_id, incoming.external_id);
     return true;
   });
   assert.deepEqual(client.writes, []);
@@ -52,4 +56,10 @@ test('Binance capital guard does not block different assets, amounts, dates, or 
     await ExchangeRecord.bulkInsert(9, [{ ...incoming, tx_hash: '0x111' }], { client });
     assert.ok(client.writes.some(sql => sql.includes('INSERT')));
   }
+});
+
+test('Binance capital pairs the user called different events no longer block', async () => {
+  const client = clientFor([csv], false, [{ record_id: 999, incoming_external_id: incoming.external_id }]);
+  await ExchangeRecord.bulkInsert(9, [incoming], { client });
+  assert.ok(client.writes.some(sql => sql.includes('INSERT INTO exchange_records')));
 });

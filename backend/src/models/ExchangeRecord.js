@@ -119,6 +119,38 @@ function mergeCandidate(existing, incoming) {
   return merged;
 }
 
+// Folds an incoming observation into the stored record it duplicates: details
+// the survivor lacks are filled, the incoming payload joins its provenance,
+// and the audit row makes a later replay of that provider id a plain duplicate.
+async function applyMerge(database, exchangeAccountId, existing, incoming) {
+  const merged = mergeCandidate(existing, incoming);
+  const values = updateValues(merged);
+  const params = [existing.id, exchangeAccountId, ...values];
+  const assignments = COLUMNS
+    .filter((column) => !IDENTITY_COLUMNS.has(column))
+    .map((column) => `${column} = $${COLUMNS.indexOf(column) + 3}`)
+    .join(', ');
+  // The identity column is matched rather than assigned. Leaving its bind
+  // parameter unreferenced makes Postgres refuse the statement outright
+  // ("could not determine data type of parameter").
+  await database.query(
+    `UPDATE exchange_records
+     SET ${assignments}
+     WHERE id = $1 AND exchange_account_id = $2
+       AND external_id = $${COLUMNS.indexOf('external_id') + 3}`,
+    params
+  );
+  await database.query(
+    `INSERT INTO exchange_record_dedupe_events
+       (exchange_account_id, survivor_record_id, incoming_external_id,
+        incoming_source, fingerprint, fingerprint_version, incoming_snapshot)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [exchangeAccountId, existing.id, incoming.external_id, incoming.source || null,
+      incoming.fingerprint, incoming.fingerprint_version || FINGERPRINT_VERSION,
+      jsonValue(sourceSnapshot(incoming))]
+  );
+}
+
 function candidateMarker(record, candidates, conflicts = []) {
   const raw = record.raw && typeof record.raw === 'object' ? { ...record.raw } : {};
   raw._dedupe = {
@@ -143,6 +175,24 @@ function candidateRowsByFingerprint(existingRows) {
 
 function candidateRowsByExternalId(existingRows) {
   return new Map(existingRows.map((row) => [row.external_id, row]));
+}
+
+// Binance.US keys one fill differently per source: the CSV's Transaction ID
+// and the API's trade id are separate id spaces, the API rounds quoteQty and
+// reports milliseconds the CSV drops. Both carry the order id, so order id +
+// base leg + the second it filled identifies the fill across sources.
+function binanceOrderId(record) {
+  if (record?.raw?._format !== 'binance_us' || record.record_type !== 'trade') return null;
+  const orderId = record.raw['Order ID'] ?? record.raw.orderId;
+  return orderId === undefined || orderId === null || orderId === '' ? null : String(orderId);
+}
+
+function binanceFillKey(record) {
+  const orderId = binanceOrderId(record);
+  const amount = canonicalAmount(record?.base_amount);
+  const time = new Date(record?.occurred_at).getTime();
+  if (!orderId || amount === null || !record.base_asset || !Number.isFinite(time)) return null;
+  return `${orderId}|${record.base_asset}|${amount}|${Math.floor(time / 1000)}`;
 }
 
 // A provider can legitimately report the same economic shape more than once
@@ -287,6 +337,9 @@ class ExchangeRecord {
         && record.raw?._format === 'binance_us'
         && ['deposit', 'withdrawal'].includes(record.record_type)
         && !existingById.has(record.external_id) && !auditedIncomingIds.has(record.external_id));
+      // Pairs a person already called different events: they neither block
+      // the batch nor come back as same-day duplicate candidates.
+      let rejectedPairs = new Set();
       if (binanceCapital.length) {
         const csv = await database.query(
           `SELECT er.* FROM exchange_records er
@@ -295,7 +348,7 @@ class ExchangeRecord {
              AND (er.source = 'csv' OR er.raw->>'_source' = 'csv')
            FOR UPDATE`, [exchangeAccountId]
         );
-        const overlaps = binanceCapital.flatMap(incoming => csv.rows.filter(existing =>
+        let overlaps = binanceCapital.flatMap(incoming => csv.rows.filter(existing =>
           existing.record_type === incoming.record_type
           && existing.base_asset === incoming.base_asset
           && canonicalAmount(existing.base_amount) !== null
@@ -303,7 +356,19 @@ class ExchangeRecord {
           && Math.abs(new Date(existing.occurred_at) - new Date(incoming.occurred_at)) <= 86400000
           && !(existing.tx_hash && incoming.tx_hash
             && existing.tx_hash.toLowerCase() !== incoming.tx_hash.toLowerCase())
-        ).map(existing => ({ record_id: existing.id, incoming_external_id: incoming.external_id })));
+        ).map(existing => ({ record_id: existing.id, incoming_external_id: incoming.external_id, incoming })));
+        if (overlaps.length) {
+          // A pair the user has said are different events must not block again.
+          const rejected = await database.query(
+            `SELECT record_id, incoming_external_id
+             FROM exchange_overlap_reviews
+             WHERE exchange_account_id = $1 AND status = 'rejected'
+               AND incoming_external_id = ANY($2::text[])`,
+            [exchangeAccountId, overlaps.map((overlap) => overlap.incoming_external_id)]
+          );
+          rejectedPairs = new Set((rejected.rows || []).map((row) => `${row.record_id}|${row.incoming_external_id}`));
+          overlaps = overlaps.filter((overlap) => !rejectedPairs.has(`${overlap.record_id}|${overlap.incoming_external_id}`));
+        }
         if (overlaps.length) {
           const error = new Error('Binance.US capital history overlaps existing CSV records. Review the possible duplicates before this batch can be imported.');
           error.code = 'BINANCE_US_CAPITAL_OVERLAP';
@@ -318,6 +383,29 @@ class ExchangeRecord {
         rows.push(record);
         incomingByFingerprint.set(record.fingerprint, rows);
       }
+
+      const fillOrderIds = [...new Set(unique
+        .filter((record) => !existingById.has(record.external_id) && binanceFillKey(record))
+        .map(binanceOrderId))];
+      const existingByFill = new Map();
+      if (fillOrderIds.length) {
+        const fills = await database.query(
+          `SELECT er.*
+           FROM exchange_records er
+           WHERE er.exchange_account_id = $1
+             AND er.record_type = 'trade'
+             AND er.raw->>'_format' = 'binance_us'
+             AND COALESCE(er.raw->>'Order ID', er.raw->>'orderId') = ANY($2::text[])
+           FOR UPDATE`,
+          [exchangeAccountId, fillOrderIds]
+        );
+        for (const row of fills.rows || []) {
+          const key = binanceFillKey(row);
+          if (!key) continue;
+          existingByFill.set(key, [...(existingByFill.get(key) || []), row]);
+        }
+      }
+      const claimedFills = new Set();
 
       const inserts = [];
       const merges = [];
@@ -336,10 +424,31 @@ class ExchangeRecord {
           inserts.push(record);
           continue;
         }
+        const fillKey = binanceFillKey(record);
+        const fillTwins = fillKey ? (existingByFill.get(fillKey) || [])
+          .filter((row) => row.external_id !== record.external_id
+            && row.source && record.source && row.source !== record.source) : [];
+        if (fillTwins.length === 1 && !claimedFills.has(fillTwins[0].id)
+            && !fillTwins[0].needs_review && !fillTwins[0].duplicate_candidate && !record.needs_review) {
+          claimedFills.add(fillTwins[0].id);
+          merges.push({ existing: fillTwins[0], incoming: record });
+          continue;
+        }
+        if (fillTwins.length > 0) {
+          // Several same-second fills of one order at one size: the order id
+          // cannot say which is which, so neither side is merged silently.
+          duplicateCandidates += 1;
+          record.duplicate_candidate = true;
+          record.needs_review = true;
+          record.raw = candidateMarker(record, fillTwins);
+          inserts.push(record);
+          continue;
+        }
         const sameBatch = record.fingerprint ? (incomingByFingerprint.get(record.fingerprint) || []) : [];
         const candidates = (existingByFingerprint.get(record.fingerprint) || [])
           .filter((candidate) => candidate.external_id !== record.external_id)
-          .filter((candidate) => !isDistinctSameSourceEvent(candidate, record));
+          .filter((candidate) => !isDistinctSameSourceEvent(candidate, record))
+          .filter((candidate) => !rejectedPairs.has(`${candidate.id}|${record.external_id}`));
         const sameBatchCandidates = sameBatch
           .filter((candidate) => candidate.external_id !== record.external_id)
           .filter((candidate) => !isDistinctSameSourceEvent(candidate, record));
@@ -399,28 +508,7 @@ class ExchangeRecord {
       }
 
       for (const { existing, incoming } of merges) {
-        const merged = mergeCandidate(existing, incoming);
-        const values = updateValues(merged);
-        const params = [existing.id, exchangeAccountId, ...values];
-        const assignments = COLUMNS
-          .filter((column) => !IDENTITY_COLUMNS.has(column))
-          .map((column) => `${column} = $${COLUMNS.indexOf(column) + 3}`)
-          .join(', ');
-        await database.query(
-          `UPDATE exchange_records
-           SET ${assignments}
-           WHERE id = $1 AND exchange_account_id = $2`,
-          params
-        );
-        await database.query(
-          `INSERT INTO exchange_record_dedupe_events
-             (exchange_account_id, survivor_record_id, incoming_external_id,
-              incoming_source, fingerprint, fingerprint_version, incoming_snapshot)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-          [exchangeAccountId, existing.id, incoming.external_id, incoming.source || null,
-            incoming.fingerprint, incoming.fingerprint_version || FINGERPRINT_VERSION,
-            jsonValue(sourceSnapshot(incoming))]
-        );
+        await applyMerge(database, exchangeAccountId, existing, incoming);
         deduplicated += 1;
       }
 
@@ -726,3 +814,4 @@ class ExchangeRecord {
 
 module.exports = ExchangeRecord;
 module.exports.BAD_VALUE_CODES = BAD_VALUE_CODES;
+module.exports.applyMerge = applyMerge;

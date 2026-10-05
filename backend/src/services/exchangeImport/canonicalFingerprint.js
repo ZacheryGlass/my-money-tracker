@@ -9,12 +9,21 @@ const FINGERPRINT_VERSION = 1;
 // is not safe to collapse: the raw provider spelling remains in provenance.
 const ASSET_ALIASES = Object.freeze({
   coinbase: Object.freeze({ ETH2: 'ETH', XBT: 'BTC' }),
-  binance_us: Object.freeze({ XBT: 'BTC' }),
+  // Binance.US's API reports the legacy USD market's quote and commission
+  // as USD4; the CSV export of the same fills (same order id) says USD.
+  binance_us: Object.freeze({ XBT: 'BTC', USD4: 'USD' }),
   kraken: Object.freeze({
     XETH: 'ETH', XXBT: 'BTC', XBT: 'BTC', ZUSD: 'USD', ETH2: 'ETH',
     XXDG: 'DOGE', XDG: 'DOGE',
   }),
   other: Object.freeze({}),
+});
+
+// Codes rewritten on the STORED legs, not only inside the fingerprint, so every
+// SQL reader sees one asset. The provider spelling stays in dedupe_provenance.
+const STORED_ALIASES = Object.freeze({
+  coinbase: Object.freeze({ ETH2: 'ETH' }),
+  binance_us: Object.freeze({ USD4: 'USD' }),
 });
 
 const KRAKEN_SUFFIX = /\.(?:S|M|F|P)$/;
@@ -140,12 +149,14 @@ function sourceSnapshot(record) {
 
 function annotateRecord(exchange, record) {
   const fingerprint = fingerprintFor(exchange, record);
-  // Coinbase's historical ETH2 code is staked ETH. Store the canonical asset
-  // on every economic leg, not only inside the dedupe fingerprint, so all SQL
-  // readers agree. Source payloads and original asset spellings stay available.
+  // Coinbase's historical ETH2 code is staked ETH and Binance.US's USD4 is USD.
+  // Store the canonical asset on every economic leg, not only inside the dedupe
+  // fingerprint, so all SQL readers agree. Source payloads and original asset
+  // spellings stay available.
   const assets = {};
+  const stored = STORED_ALIASES[exchange] || {};
   for (const field of ['base_asset', 'quote_asset', 'fee_asset']) {
-    if (exchange === 'coinbase' && record[field] === 'ETH2') assets[field] = canonicalAsset(exchange, record[field]);
+    if (stored[record[field]]) assets[field] = stored[record[field]];
   }
   return {
     ...record,
@@ -162,13 +173,14 @@ function annotateRecord(exchange, record) {
   };
 }
 
-// Also accept historical provider snapshots that still separate staked ETH.
+// Also accept provider snapshots that still separate staked ETH or USD4.
 // Other venues and wrapped/staking receipt tokens retain their own identities.
 function canonicalBalances(exchange, balances = {}) {
   const result = { ...balances };
-  if (exchange === 'coinbase' && Object.hasOwn(result, 'ETH2')) {
-    result.ETH = addAmounts(String(result.ETH ?? '0'), String(result.ETH2));
-    delete result.ETH2;
+  for (const [code, target] of Object.entries(STORED_ALIASES[exchange] || {})) {
+    if (!Object.hasOwn(result, code)) continue;
+    result[target] = addAmounts(String(result[target] ?? '0'), String(result[code]));
+    delete result[code];
   }
   return result;
 }

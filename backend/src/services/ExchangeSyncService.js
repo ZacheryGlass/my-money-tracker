@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
+const ExchangeOverlapReview = require('../models/ExchangeOverlapReview');
 const ExchangeSyncJob = require('../models/ExchangeSyncJob');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const TransactionClassificationService = require('./TransactionClassificationService');
@@ -365,7 +366,31 @@ class ExchangeSyncService {
     }
 
     const records = annotateRecords(account.exchange, result.records.map((record) => ({ ...record, source: 'api' })));
-    const write = await ExchangeAccount.withSyncWriteTransaction(
+    const write = await this._writeSyncBatch(account, records, result, { syncLockToken });
+    return this._finishSync(account, records, result, write, { syncLockToken, syncJobId });
+  }
+
+  // A capital-overlap refusal rolls the whole batch back, and the incoming
+  // rows exist nowhere else. Keep the pairs for review outside that
+  // transaction, or every nightly run rediscovers them and nobody can decide.
+  static async _writeSyncBatch(account, records, result, { syncLockToken }) {
+    try {
+      return await this._writeSyncTransaction(account, records, result, { syncLockToken });
+    } catch (err) {
+      if (err.code === 'BINANCE_US_CAPITAL_OVERLAP') {
+        await ExchangeOverlapReview.recordCandidates(account.id, err.candidates);
+        await ExchangeAccount.saveSyncState(account.id, {
+          status: 'error',
+          error: `${err.message} ${new Set((err.candidates || []).map((c) => c.incoming_external_id)).size} incoming record(s) await review.`,
+          syncLockToken,
+        });
+      }
+      throw err;
+    }
+  }
+
+  static async _writeSyncTransaction(account, records, result, { syncLockToken }) {
+    return ExchangeAccount.withSyncWriteTransaction(
       account.id,
       account.user_id,
       syncLockToken,
@@ -461,6 +486,9 @@ class ExchangeSyncService {
         };
       }
     );
+  }
+
+  static async _finishSync(account, records, result, write, { syncLockToken, syncJobId }) {
     const {
       stored, backfilled, pending, balancesIncomplete, coverageLimitations,
       report, reconciliationStatus, status: legacyStatus, saved: initiallySaved, derived,
