@@ -348,3 +348,32 @@ test('Binance.US withdrawal completion status differs from deposit status', () =
   assert.equal(connector._internals.capitalRecord({ ...row, status: 1 }, 'deposit').needs_review, false);
   assert.equal(connector._internals.capitalRecord({ ...row, status: 6 }, 'withdrawal').fee_amount, '0.01');
 });
+
+test('Binance.US token migration distributions are conversions, not income', () => {
+  const { distributionRecord } = connector._internals;
+  const migrated = distributionRecord({
+    tranId: 9001, asset: 'POL', amount: '0.0703', divTime: 1737005450000,
+    category: 'MATIC Migration to POL',
+  });
+  assert.equal(migrated.record_type, 'conversion');
+  assert.equal(migrated.base_asset, 'MATIC');
+  assert.equal(migrated.base_amount, '-0.0703');
+  assert.equal(migrated.quote_asset, 'POL');
+  assert.equal(migrated.quote_amount, '0.0703');
+  assert.equal(migrated.needs_review, false);
+  assert.equal(migrated.external_id, 'binanceus:distribution:9001');
+
+  const unknownRatio = distributionRecord({
+    tranId: 9002, asset: 'AAVE', amount: '1', divTime: 1737005450000,
+    category: 'LEND Migration to AAVE',
+  });
+  assert.equal(unknownRatio.record_type, 'conversion');
+  assert.equal(unknownRatio.base_asset, 'AAVE');
+  assert.equal(unknownRatio.quote_asset, null);
+  assert.equal(unknownRatio.needs_review, true);
+
+  const reward = distributionRecord({
+    tranId: 9003, asset: 'ETH', amount: '0.01', divTime: 1737005450000, category: 'ETH Staking',
+  });
+  assert.equal(reward.record_type, 'reward');
+});

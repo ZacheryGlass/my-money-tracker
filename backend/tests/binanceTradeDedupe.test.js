@@ -36,6 +36,12 @@ test('Binance.US USD4 is stored as USD and folded into USD balances', () => {
   assert.deepEqual(canonicalBalances('binance_us', { USD: '1', USD4: '2' }), { USD: '3' });
 });
 
+test('Binance.US NANO fills are stored as XNO, the code its balances and deposits use', () => {
+  assert.equal(api.base_asset, 'XNO');
+  assert.equal(api.dedupe_provenance.at(-1).original_assets.base_asset, 'NANO');
+  assert.deepEqual(canonicalBalances('binance_us', { XNO: '0.5', NANO: '1' }), { XNO: '1.5' });
+});
+
 test('an API fill merges into its CSV twin by order id instead of inserting', async () => {
   const client = clientFor([csv]);
   const result = await ExchangeRecord.bulkInsert(3, [api], { client });

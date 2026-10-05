@@ -5,6 +5,7 @@ const logger = require('../config/logger');
 const {
   FINGERPRINT_VERSION,
   canonicalAmount,
+  canonicalAsset,
   fingerprintFor,
   conflictingDetails,
   sourceSnapshot,
@@ -191,8 +192,10 @@ function binanceFillKey(record) {
   const orderId = binanceOrderId(record);
   const amount = canonicalAmount(record?.base_amount);
   const time = new Date(record?.occurred_at).getTime();
-  if (!orderId || amount === null || !record.base_asset || !Number.isFinite(time)) return null;
-  return `${orderId}|${record.base_asset}|${amount}|${Math.floor(time / 1000)}`;
+  // Canonical, so a row stored before an alias (NANO before XNO) still pairs.
+  const asset = canonicalAsset('binance_us', record?.base_asset);
+  if (!orderId || amount === null || !asset || !Number.isFinite(time)) return null;
+  return `${orderId}|${asset}|${amount}|${Math.floor(time / 1000)}`;
 }
 
 // A provider can legitimately report the same economic shape more than once

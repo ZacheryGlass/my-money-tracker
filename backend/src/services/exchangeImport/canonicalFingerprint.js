@@ -11,7 +11,8 @@ const ASSET_ALIASES = Object.freeze({
   coinbase: Object.freeze({ ETH2: 'ETH', XBT: 'BTC' }),
   // Binance.US's API reports the legacy USD market's quote and commission
   // as USD4; the CSV export of the same fills (same order id) says USD.
-  binance_us: Object.freeze({ XBT: 'BTC', USD4: 'USD' }),
+  // NANO was renamed XNO: 2021 fills say NANO, deposits and balances say XNO.
+  binance_us: Object.freeze({ XBT: 'BTC', USD4: 'USD', NANO: 'XNO' }),
   kraken: Object.freeze({
     XETH: 'ETH', XXBT: 'BTC', XBT: 'BTC', ZUSD: 'USD', ETH2: 'ETH',
     XXDG: 'DOGE', XDG: 'DOGE',
@@ -23,7 +24,7 @@ const ASSET_ALIASES = Object.freeze({
 // SQL reader sees one asset. The provider spelling stays in dedupe_provenance.
 const STORED_ALIASES = Object.freeze({
   coinbase: Object.freeze({ ETH2: 'ETH' }),
-  binance_us: Object.freeze({ USD4: 'USD' }),
+  binance_us: Object.freeze({ USD4: 'USD', NANO: 'XNO' }),
 });
 
 const KRAKEN_SUFFIX = /\.(?:S|M|F|P)$/;

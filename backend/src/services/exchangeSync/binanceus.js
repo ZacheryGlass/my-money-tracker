@@ -120,11 +120,31 @@ function capitalRecord(row, type) {
   }, row.amount);
 }
 
+// A token migration ("MATIC Migration to POL") arrives as a distribution of the
+// new asset only. It is a conversion, not income: a known 1:1 swap debits the
+// old asset by the same amount; any other ratio stays reviewable.
+const MIGRATION_CATEGORY = /^\s*([A-Z0-9]+)\s+migration\s+to\s+([A-Z0-9]+)\s*$/i;
+const ONE_TO_ONE_MIGRATIONS = new Set(['MATIC>POL']);
+
 function distributionRecord(row, endpoint = '/sapi/v1/asset/assetDistributionHistory') {
   const coin = asset(row.asset || row.coin);
   const rawAmount = amount(row.amount);
   const occurredAt = timestampOf(row.divTime, row.insertTime, row.time);
   const id = row.tranId || row.id || contentId('binanceus:distribution', [coin, row.amount, occurredAt, row.category]);
+  const migration = String(row.category ?? '').match(MIGRATION_CATEGORY);
+  if (migration && asset(migration[2]) === coin) {
+    const from = asset(migration[1]);
+    const oneToOne = ONE_TO_ONE_MIGRATIONS.has(`${from}>${coin}`) && rawAmount !== null;
+    return record({
+      record_type: 'conversion', occurred_at: occurredAt,
+      base_asset: oneToOne ? from : coin, base_amount: oneToOne ? negateAmount(rawAmount) : rawAmount,
+      quote_asset: oneToOne ? coin : null, quote_amount: oneToOne ? rawAmount : null,
+      fee_asset: null, fee_amount: null, tx_hash: null, address: null,
+      network: null, chain_id: null, external_id: `binanceus:distribution:${id}`,
+      needs_review: !occurredAt || !coin || !oneToOne,
+      raw: rawRecord(endpoint, row),
+    }, row.amount);
+  }
   const category = String(row.category ?? '').toLowerCase();
   const recordType = category.includes('fee') ? 'fee' : 'reward';
   return record({
