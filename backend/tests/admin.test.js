@@ -118,3 +118,36 @@ test('non-admins cannot set or clear shared keys', async () => {
     .set('Content-Type', 'application/json');
   assert.equal(own.status, 200);
 });
+
+test('POST /api/admin/snapshots/requantify re-prices one holding and shifts the account total', async () => {
+  queryHandler = async (text) => {
+    if (text.includes('UPDATE ticker_snapshots')) {
+      return { rows: [{ snapshot_date: '2026-07-26', old_quantity: '199.1956898', old_value: '374428.14', new_value: '237230.83', account_total: '675220.92' }] };
+    }
+    return { rows: [] };
+  };
+  const response = await request(app)
+    .post('/api/admin/snapshots/requantify')
+    .send({ account_id: 1, ticker: 'ETH', from: '2026-07-26', to: '2026-08-05', quantity: '126.2066188' })
+    .set('Content-Type', 'application/json');
+  assert.equal(response.status, 200);
+  assert.equal(response.body.updated, 1);
+  const q = queries.find((x) => x.text.includes('UPDATE ticker_snapshots'));
+  assert.ok(q.text.includes('a.user_id = $1'));
+  assert.deepEqual(q.params.slice(1), [1, 'ETH', '2026-07-26', '2026-08-05', '126.2066188']);
+});
+
+test('POST /api/admin/snapshots/requantify rejects bad input and non-admins', async () => {
+  const bad = await request(app)
+    .post('/api/admin/snapshots/requantify')
+    .send({ account_id: 1, ticker: 'ETH', from: '2026-08-05', to: '2026-07-26', quantity: '1' })
+    .set('Content-Type', 'application/json');
+  assert.equal(bad.status, 400);
+
+  asUser(2, 'alice');
+  const forbidden = await request(app)
+    .post('/api/admin/snapshots/requantify')
+    .send({ account_id: 1, ticker: 'ETH', from: '2026-07-26', to: '2026-08-05', quantity: '1' })
+    .set('Content-Type', 'application/json');
+  assert.equal(forbidden.status, 403);
+});

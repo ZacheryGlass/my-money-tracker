@@ -122,4 +122,58 @@ router.get('/overview', async (req, res) => {
   }
 });
 
+// POST /api/admin/snapshots/requantify - correct one holding's quantity in
+// past snapshots (e.g. a manual entry that double counted a tracked wallet).
+// Value is re-priced at each day's stored price_usd and the account total
+// moves by the same delta, in one statement. Rows without a stored price are
+// left alone. Scoped to the admin's own accounts.
+router.post('/snapshots/requantify', async (req, res) => {
+  const { account_id: accountId, ticker, from, to, quantity } = req.body || {};
+  const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  if (!Number.isInteger(accountId) || typeof ticker !== 'string' || !ticker
+      || !isDate(from) || !isDate(to) || from > to
+      || typeof quantity !== 'string' || !/^\d+(\.\d+)?$/.test(quantity)) {
+    return res.status(400).json({
+      error: 'account_id (int), ticker, from/to (YYYY-MM-DD) and quantity (decimal string) are required',
+    });
+  }
+  try {
+    const result = await pool.query(
+      `WITH old AS (
+         SELECT t.id, t.snapshot_date, t.quantity, t.value
+           FROM ticker_snapshots t
+           JOIN accounts a ON a.id = t.account_id AND a.user_id = $1
+          WHERE t.account_id = $2 AND t.ticker = $3
+            AND t.snapshot_date BETWEEN $4 AND $5
+            AND t.price_usd IS NOT NULL
+          FOR UPDATE OF t
+       ), upd AS (
+         UPDATE ticker_snapshots t
+            SET quantity = $6::numeric, value = ROUND($6::numeric * t.price_usd, 2)
+           FROM old
+          WHERE t.id = old.id
+         RETURNING t.snapshot_date, old.quantity AS old_quantity,
+                   old.value AS old_value, t.value AS new_value
+       ), acct AS (
+         UPDATE account_snapshots s
+            SET total_value = s.total_value - upd.old_value + upd.new_value
+           FROM upd
+          WHERE s.account_id = $2 AND s.snapshot_date = upd.snapshot_date
+         RETURNING s.snapshot_date, s.total_value
+       )
+       SELECT upd.snapshot_date, upd.old_quantity, upd.old_value, upd.new_value,
+              acct.total_value AS account_total
+         FROM upd LEFT JOIN acct USING (snapshot_date)
+        ORDER BY upd.snapshot_date`,
+      [req.user.id, accountId, ticker, from, to, quantity]
+    );
+    logger.info({ accountId, ticker, from, to, quantity, rows: result.rows.length },
+      'Admin snapshot requantify');
+    res.status(200).json({ updated: result.rows.length, rows: result.rows });
+  } catch (error) {
+    logger.error({ err: error }, 'Admin snapshot requantify error');
+    res.status(500).json({ error: 'Failed to requantify snapshots' });
+  }
+});
+
 module.exports = router;
