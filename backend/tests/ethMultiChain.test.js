@@ -2832,6 +2832,45 @@ test('a disabled chain keeps its stored holdings: cleanup is scoped to refreshed
   assert.ok(inserted.some((q) => q.params.includes('Ethereum') && q.params.includes('ETH')));
 });
 
+test('an ignored token leaves holdings on a chain this run did not refresh', async (t) => {
+  const restore = [];
+  const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
+  const priorChains = process.env.ETH_CHAINS;
+  process.env.ETH_CHAINS = '1';
+  t.after(() => {
+    for (const [o, k, v] of restore) o[k] = v;
+    if (priorChains === undefined) delete process.env.ETH_CHAINS;
+    else process.env.ETH_CHAINS = priorChains;
+  });
+
+  stub(EthWallet, 'findById', async () => ({ id: 7, user_id: 1, address: WALLET }));
+  stub(EthWallet, 'getAccountForWallet', async () => ({ id: 9 }));
+  stub(SecretsService, 'getUserKey', async () => 'key');
+  stub(EtherscanService, 'getEthBalance', async () => '1000000000000000000');
+  stub(EthWalletChain, 'findForWallet', async () => []);
+  stub(EthTransfer, 'tokenBalanceDeltas', async () => [
+    { chain_id: 1, token_contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', token_symbol: 'USDC', token_decimals: 6, balance_units: '5000000' },
+  ]);
+  // A counterfeit USDC on Gnosis, ignored by the user. Gnosis is not
+  // refreshed this run (disabled here; excluded for the wallet in production),
+  // so the refreshed-chain reap alone would leave its fake balance standing.
+  stub(EthTransfer, 'ignoredTokenKeys', async () => [
+    { chain_id: 100, token_contract: '0xa577a679bc92ae12f74fee0a7a5cfcb643e5a811', token_symbol: 'USDC' },
+    // A name this run just wrote is never reaped, even if it collides.
+    { chain_id: 1, token_contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', token_symbol: 'USDC' },
+  ]);
+
+  queries.length = 0;
+  await EthWalletService.refreshHoldings(7);
+
+  const reap = queries.find((q) => /DELETE FROM holdings/.test(q.text) && /name = ANY\(\$2::text\[\]\)/.test(q.text));
+  assert.ok(reap, 'ignored tokens are reaped by name');
+  assert.match(sqlOf(reap), /ticker IS NULL/);
+  assert.equal(reap.params[0], 9);
+  assert.ok(reap.params[1].includes('USDC 0xa577…a811 (Gnosis)'));
+  assert.ok(reap.params[2].includes('USDC 0xa0b8…eb48'), 'the row written this run is protected');
+});
+
 test('an L2 whose balance call fails keeps last night’s position', async (t) => {
   const restore = [];
   const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };

@@ -436,6 +436,28 @@ class EthTransfer {
     return result.rows;
   }
 
+  // The (chain, contract, symbol) of every IGNORED ERC-20 this wallet has
+  // moved, filtered exactly like tokenBalanceDeltas so the symbol -- and so the
+  // holding name built from it -- is the one that delta would have produced.
+  // The holdings refresh uses it to reap an ignored token on every chain.
+  static async ignoredTokenKeys(walletId) {
+    const result = await pool.query(
+      `SELECT t.chain_id,
+              t.token_contract,
+              MAX(t.token_symbol) AS token_symbol
+       FROM eth_transfers t
+       JOIN eth_wallets w ON w.id = t.wallet_id
+       WHERE t.wallet_id = $1
+         AND t.transfer_type = 'token'
+         AND t.token_standard = 'erc20'
+         AND t.is_error = FALSE
+         AND t.token_contract IN (SELECT contract_address FROM eth_ignored_tokens WHERE user_id = w.user_id)
+       GROUP BY t.chain_id, t.token_contract`,
+      [walletId]
+    );
+    return result.rows;
+  }
+
   // Net NATIVE (ETH) balance per chain, derived from the stored ledger alone --
   // the number the balance audit (#62) compares against what the chain reports.
   //

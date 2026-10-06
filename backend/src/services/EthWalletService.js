@@ -110,6 +110,12 @@ const recaptureRuns = new Map();
 const WALLET_SYNC_HEARTBEAT_MS = 30_000;
 const WALLET_SYNC_STALE_MS = 2 * 60_000;
 
+// A token holding's name, which is also its match key: chains are in the name
+// because one contract address is a different asset on each chain.
+function tokenHoldingName(symbol, contract, chainId) {
+  return `${symbol || 'TOKEN'} ${shortAddress(contract)}${chains.holdingSuffix(chainId)}`;
+}
+
 function walletSyncJobName(userId, walletId) {
   return `eth-wallet-sync:${userId}:${walletId}`;
 }
@@ -1880,9 +1886,7 @@ class EthWalletService {
       desired.push({
         chain_id: chainId,
         ticker: null,
-        // Same contract address can exist on several chains as different
-        // assets, so the chain has to be in the name -- it is the match key.
-        name: `${delta.token_symbol || 'TOKEN'} ${shortAddress(delta.token_contract)}${chains.holdingSuffix(chainId)}`,
+        name: tokenHoldingName(delta.token_symbol, delta.token_contract, chainId),
         quantity,
         manual_value: manualValue,
       });
@@ -1917,6 +1921,26 @@ class EthWalletService {
          AND name <> ALL($4::text[])`,
       [account.id, chains.DEFAULT_CHAIN_ID, refreshedChainIds, desired.map((h) => h.name)]
     );
+
+    // An ignored token leaves holdings on EVERY chain. The reap above is
+    // scoped to refreshed chains so a failed or excluded chain keeps its last
+    // positions -- which also kept an ignored scam token's fake balance on
+    // screen for good on a chain excluded for this wallet, since an excluded
+    // chain is never refreshed. Ignoring takes effect immediately everywhere
+    // else (balances, reconciliation, classification), so holdings follow.
+    // Matched by exact holding name, never a row this run just wrote.
+    const ignoredNames = (await EthTransfer.ignoredTokenKeys(walletId))
+      .map((row) => tokenHoldingName(row.token_symbol, row.token_contract, Number(row.chain_id)));
+    if (ignoredNames.length) {
+      await pool.query(
+        `DELETE FROM holdings
+         WHERE account_id = $1
+           AND ticker IS NULL
+           AND name = ANY($2::text[])
+           AND name <> ALL($3::text[])`,
+        [account.id, ignoredNames, desired.map((h) => h.name)]
+      );
+    }
 
     // ETH-only by design, not by oversight: these two report the ETH figure the
     // UI shows under an ETH heading, and a chain with a different native asset
