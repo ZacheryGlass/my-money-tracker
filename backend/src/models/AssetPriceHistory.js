@@ -330,6 +330,22 @@ class AssetPriceHistory {
          AND (t.token_contract IS NULL
               OR t.token_contract NOT IN (
                 SELECT contract_address FROM eth_ignored_tokens WHERE user_id = $1))
+         -- A quarantined transaction (045) is hidden by the ledger and left
+         -- out of its unpriced_count, so its scam tokens are not a gap in the
+         -- USD column. Naming them here meant every new spam airdrop refilled
+         -- the banner, which could then never reach zero. The verdict resolves
+         -- override over derived, the same NOT EXISTS the counterparty triage
+         -- queue uses, so an un-quarantined row comes straight back.
+         AND NOT EXISTS (
+           SELECT 1 FROM eth_activity act
+           LEFT JOIN eth_activity_overrides ovr
+             ON ovr.wallet_id = act.wallet_id
+            AND ovr.chain_id = act.chain_id
+            AND ovr.tx_hash = act.tx_hash
+           WHERE act.wallet_id = t.wallet_id
+             AND act.chain_id = t.chain_id
+             AND act.tx_hash = t.tx_hash
+             AND COALESCE(ovr.spam, act.spam))
        GROUP BY 1
        ORDER BY COUNT(*) DESC, 1`,
       [userId]

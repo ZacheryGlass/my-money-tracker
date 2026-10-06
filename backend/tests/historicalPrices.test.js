@@ -935,6 +935,10 @@ test('the unpriced enumeration is fail-closed and reports the provider verdict',
   // exact silently-zero state this endpoint exists to expose. Matches 043's
   // index predicate.
   assert.ok(/t\.usd_basis IS NULL OR t\.usd_basis = 'unpriced'/.test(scoped.sql));
+  // Quarantined transactions are excluded with the reader's resolved verdict
+  // (override over derived), matching the ledger's unpriced_count.
+  assert.ok(/NOT EXISTS \(\s*SELECT 1 FROM eth_activity act/.test(scoped.sql));
+  assert.ok(/COALESCE\(ovr\.spam, act\.spam\)/.test(scoped.sql));
 });
 
 test('GET /api/eth/prices/unpriced enumerates them for the calling user only', async () => {

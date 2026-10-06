@@ -35,7 +35,7 @@ const REQUIRED_SCHEMA = Object.freeze({
     'wallet_id', 'chain_id', 'last_block_normal', 'last_block_internal',
     'last_block_token', 'last_block_nft', 'last_block_1155', 'last_block_statesync',
     'unsupported_feeds', 'error_code', 'error_message', 'last_synced_at',
-    'ingest_version', 'coverage_recapture_version',
+    'ingest_version', 'coverage_recapture_version', 'excluded',
   ],
   eth_feed_coverage: [
     'wallet_id', 'chain_id', 'feed', 'cursor_kind', 'provider', 'status',
@@ -498,6 +498,30 @@ function completionForCoordinate(context) {
       }],
       evidence_boundary: {
         claim_scope: 'deliberate_scope_exclusion',
+        audit_block: null,
+        required_feeds: [],
+        latest_comparison_at: null,
+        wall_clock_currentness_inferred: false,
+      },
+    };
+  }
+
+  // A per-wallet chain exclusion (migration 098) is the user's scope decision:
+  // that coordinate is no longer synced, reconciled or audited, so its frozen
+  // sync error and missing audits are not gaps in the in-scope history.
+  // Mainnet cannot be excluded in the app, so an excluded mainnet row is not
+  // honoured here either.
+  if (chainState?.excluded === true && chain.id !== chains.DEFAULT_CHAIN_ID) {
+    return {
+      verdict: 'excluded',
+      blocker_count: 0,
+      blockers: [],
+      source_limitations: [{
+        code: 'WALLET_CHAIN_EXCLUDED',
+        detail: 'Excluded for this wallet by the user; stored history is kept but not synced, reconciled or audited.',
+      }],
+      evidence_boundary: {
+        claim_scope: 'wallet_chain_exclusion',
         audit_block: null,
         required_feeds: [],
         latest_comparison_at: null,
@@ -1345,7 +1369,7 @@ async function readEvidence(db, userId) {
              wc.last_block_statesync, wc.unsupported_feeds,
              wc.error_code AS chain_error_code, wc.error_message AS chain_error_message,
              wc.last_synced_at AS chain_last_synced_at,
-             wc.ingest_version, wc.coverage_recapture_version
+             wc.ingest_version, wc.coverage_recapture_version, wc.excluded
         FROM eth_wallets w
         LEFT JOIN evm_subjects s ON s.user_id = w.user_id AND s.address = w.address
         LEFT JOIN eth_wallet_chains wc ON wc.wallet_id = w.id

@@ -660,6 +660,33 @@ test('Base evidence is retained as a deliberate scope exclusion', async () => {
   assert.equal(report.overall_verdict, 'complete_through_boundary_with_limitations');
 });
 
+test('a chain the user excluded for one wallet is a scope exclusion, not a sync gap', async () => {
+  const fixture = completeFixture();
+  fixture.wallets.push({
+    ...fixture.wallets[0],
+    chain_id: 10,
+    excluded: true,
+    chain_error_code: 'SYNC_DEFERRED',
+    chain_error_message: 'Partial sync: OP Mainnet explorer rate limited',
+  });
+  const report = await buildReport(7, fakeDatabase(fixture));
+  const optimism = report.wallets[0].networks.find((network) => network.chain.id === 10);
+
+  assert.equal(optimism.completion.verdict, 'excluded');
+  assert.equal(optimism.completion.blocker_count, 0);
+  assert.equal(optimism.completion.source_limitations[0].code, 'WALLET_CHAIN_EXCLUDED');
+  assert.equal(report.overall_verdict, 'complete_through_boundary_with_limitations');
+});
+
+test('an excluded mainnet row is not honoured as a scope exclusion', async () => {
+  const fixture = completeFixture();
+  fixture.wallets[0] = { ...fixture.wallets[0], excluded: true };
+  const report = await buildReport(7, fakeDatabase(fixture));
+  const mainnet = report.wallets[0].networks.find((network) => network.chain.id === 1);
+
+  assert.equal(mainnet.completion.verdict, 'complete_through_boundary_with_limitations');
+});
+
 test('an exact excluded-Base bridge movement is an explicit referenced limitation', async () => {
   const fixture = completeFixture();
   const txHash = `0x${'e'.repeat(64)}`;
