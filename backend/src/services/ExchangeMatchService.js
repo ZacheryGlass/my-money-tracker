@@ -2,7 +2,27 @@
 
 const ExchangeMatch = require('../models/ExchangeMatch');
 const ExchangeFiatMatch = require('../models/ExchangeFiatMatch');
+const pool = require('../config/database');
 const logger = require('../config/logger');
+
+// Transaction-scoped advisory lock ("EXM1") taken after the per-user lane's
+// session lock, never before it: lane (session) -> EXM1/BRID (transaction).
+const MATCH_LOCK_NAMESPACE = 0x45584D31;
+
+// A statement that fails inside a transaction aborts it. The best-effort steps
+// below (fiat links, learned labels) run under a savepoint so their failure
+// rolls back only themselves.
+async function withSavepoint(client, name, fn) {
+  await client.query(`SAVEPOINT ${name}`);
+  try {
+    const result = await fn();
+    await client.query(`RELEASE SAVEPOINT ${name}`);
+    return result;
+  } catch (error) {
+    await client.query(`ROLLBACK TO SAVEPOINT ${name}`);
+    throw error;
+  }
+}
 const { ZERO_ADDRESS } = require('../utils/ethActivityVocabulary');
 
 // eth_activity.review_reason is VARCHAR(200). Deliberately NOT the activity
@@ -313,28 +333,60 @@ class ExchangeMatchService {
    * the one that rebuilt first -- the answer would depend on iteration order.
    * Re-deriving the whole user is a handful of rows and has no order at all.
    */
-  static async rebuildForUser(userId) {
-    if (!userId) throw new Error('ExchangeMatchService.rebuildForUser requires a userId');
+  static async lockForUser(userId, client) {
+    if (!userId || !client?.query) throw new Error('Exchange match lock requires a user and transaction client');
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [MATCH_LOCK_NAMESPACE, Number(userId)]);
+  }
 
-    const [onChain, pairs, verdicts] = await Promise.all([
-      ExchangeMatch.onChainCandidates(userId),
-      ExchangeMatch.exchangePairCandidates(userId),
-      ExchangeMatch.verdictsForUser(userId),
-    ]);
+  // Every read and write of one rebuild happens on ONE client inside ONE
+  // transaction, under the user's lane and the EXM1 lock, so candidates are
+  // never read from a snapshot older than the rows the rebuild then replaces.
+  // A caller that passes `client` (a verdict write that must commit with its
+  // rebuild) owns that transaction and must already hold the user's lane.
+  static async rebuildForUser(userId, { client = null } = {}) {
+    if (!userId) throw new Error('ExchangeMatchService.rebuildForUser requires a userId');
+    if (client) {
+      await this.lockForUser(userId, client);
+      return this._rebuildLocked(userId, client);
+    }
+    // Lazy: EthDerivedPipeline requires this module at load time.
+    const EthDerivedPipeline = require('./EthDerivedPipeline');
+    return EthDerivedPipeline.serializedForUser(Number(userId), async () => {
+      const own = await pool.connect();
+      try {
+        await own.query('BEGIN');
+        await this.lockForUser(userId, own);
+        const result = await this._rebuildLocked(userId, own);
+        await own.query('COMMIT');
+        return result;
+      } catch (error) {
+        try { await own.query('ROLLBACK'); } catch (rollbackError) { void rollbackError; }
+        throw error;
+      } finally {
+        own.release();
+      }
+    });
+  }
+
+  static async _rebuildLocked(userId, client) {
+    const onChain = await ExchangeMatch.onChainCandidates(userId, client);
+    const pairs = await ExchangeMatch.exchangePairCandidates(userId, client);
+    const verdicts = await ExchangeMatch.verdictsForUser(userId, client);
 
     const { rows, suggestions, learn } = selectMatches({ onChain, pairs, verdicts });
-    const replacement = await ExchangeMatch.replaceForUser(userId, rows, suggestions);
+    const replacement = await ExchangeMatch.replaceForUser(userId, rows, suggestions, { client });
     const matches = replacement.inserted;
     // Order matters between these two only in that both are idempotent and
     // mutually exclusive: one needs a match to exist, the other needs one not
     // to. Clearing first keeps a row that just gained a match from being read
     // as unmatched in the same pass.
-    const cleared = await ExchangeMatch.clearReviewForMatched(userId);
-    const unavailable = await ExchangeMatch.clearReviewForUnavailable(userId);
-    const restored = await ExchangeMatch.restoreReviewForAvailable(userId, REVIEW_REASONS.unmatched_exchange);
+    const cleared = await ExchangeMatch.clearReviewForMatched(userId, client);
+    const unavailable = await ExchangeMatch.clearReviewForUnavailable(userId, client);
+    const restored = await ExchangeMatch.restoreReviewForAvailable(userId, REVIEW_REASONS.unmatched_exchange, client);
     let fiat = { matched: 0 };
     try {
-      fiat = await ExchangeFiatMatch.rebuildForUser(userId);
+      fiat = await withSavepoint(client, 'exchange_fiat_match',
+        () => ExchangeFiatMatch.rebuildForUser(userId, { client }));
     } catch (error) {
       // The fiat link is a derived companion to exchange matching. Keep the
       // core exchange/on-chain pass usable during a rolling deploy where the
@@ -345,7 +397,8 @@ class ExchangeMatchService {
     const flagged = await ExchangeMatch.flagUnmatchedExchangeFlows(
       userId,
       REVIEW_REASONS.unmatched_exchange,
-      REVIEW_REASONS.suggested_exchange
+      REVIEW_REASONS.suggested_exchange,
+      client
     );
 
     // Labels heal FUTURE classification, exactly as the issue says: nothing
@@ -355,7 +408,9 @@ class ExchangeMatchService {
     let learned = 0;
     for (const label of learn) {
       try {
-        if (await ExchangeMatch.learnExchangeLabel(userId, label.address, label.name)) learned += 1;
+        const wrote = await withSavepoint(client, 'exchange_match_learn',
+          () => ExchangeMatch.learnExchangeLabel(userId, label.address, label.name, client));
+        if (wrote) learned += 1;
       } catch (err) {
         logger.warn({ userId, address: label.address, err }, 'Auto-label from exchange match failed');
       }
@@ -369,9 +424,15 @@ class ExchangeMatchService {
   // finishing some OTHER piece of work -- a CSV import, an API sync, deleting
   // an account -- and none of them should report failure because a derived
   // side table could not be refreshed.
-  static async rebuildForUserSafely(userId, context = {}) {
+  //
+  // With `client`, the pass runs under a savepoint inside the caller's
+  // transaction, so a failed rebuild rolls back only itself and the caller's
+  // own write (a verdict) still commits.
+  static async rebuildForUserSafely(userId, context = {}, { client = null } = {}) {
     try {
-      return await this.rebuildForUser(userId);
+      if (!client) return await this.rebuildForUser(userId);
+      return await withSavepoint(client, 'exchange_match_rebuild',
+        () => this.rebuildForUser(userId, { client }));
     } catch (err) {
       logger.warn({ userId, ...context, err }, 'Exchange match rebuild failed');
       return null;
@@ -384,3 +445,4 @@ module.exports.selectMatches = selectMatches;
 module.exports.REVIEW_REASONS = REVIEW_REASONS;
 module.exports.METHOD_RANK = METHOD_RANK;
 module.exports.amountEvidencePasses = amountEvidencePasses;
+module.exports.MATCH_LOCK_NAMESPACE = MATCH_LOCK_NAMESPACE;

@@ -7,11 +7,14 @@ function requireUserId(userId) {
 }
 
 class ExchangeFiatMatch {
-  static async rebuildForUser(userId) {
+  // Joins the caller's transaction when given its client (the exchange match
+  // rebuild runs as one); otherwise owns a transaction of its own.
+  static async rebuildForUser(userId, { client: outerClient = null } = {}) {
     requireUserId(userId);
-    const client = await pool.connect();
+    const ownsTransaction = !outerClient;
+    const client = outerClient || await pool.connect();
     try {
-      await client.query('BEGIN');
+      if (ownsTransaction) await client.query('BEGIN');
       await client.query(
         `DELETE FROM exchange_fiat_matches efm
          USING exchange_records er, exchange_accounts ea
@@ -79,13 +82,15 @@ class ExchangeFiatMatch {
          RETURNING id`,
         [userId]
       );
-      await client.query('COMMIT');
+      if (ownsTransaction) await client.query('COMMIT');
       return { matched: inserted.rowCount || 0 };
     } catch (error) {
-      try { await client.query('ROLLBACK'); } catch (rollbackError) { void rollbackError; }
+      if (ownsTransaction) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) { void rollbackError; }
+      }
       throw error;
     } finally {
-      client.release();
+      if (ownsTransaction) client.release();
     }
   }
 

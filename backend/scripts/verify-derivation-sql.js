@@ -234,6 +234,31 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
 
   console.log(`receipt fetch attempts across two rebuilds: ${receiptCalls.length}`);
 
+  // --- scenario: concurrent rebuilds and match passes, production locking ---
+  // Session lane lock + transaction EXM1/BRID locks, as production takes them.
+  // Every combination must finish (no 40P01) and land on the same answer.
+  const ExchangeMatchService = require('../src/services/ExchangeMatchService');
+  process.env.NODE_ENV = 'production';
+  let concurrencyError = null;
+  try {
+    await Promise.all([
+      EthDerivedPipeline.runForUser(1, { reclassify: true, context: 'harness concurrent 1' }),
+      ExchangeMatchService.rebuildForUser(1),
+      EthDerivedPipeline.runForUser(1, { context: 'harness concurrent 2' }),
+      ExchangeMatchService.rebuildForUser(1),
+      EthDerivedPipeline.runForUser(2, { context: 'harness concurrent other user' }),
+    ]);
+  } catch (error) {
+    concurrencyError = error;
+  } finally {
+    process.env.NODE_ENV = 'test';
+  }
+  ok('concurrent rebuilds and match passes finish without deadlock', !concurrencyError, concurrencyError && { message: concurrencyError.message, detail: concurrencyError.detail, where: concurrencyError.where, stack: concurrencyError.stack?.split('\n').slice(0, 8) });
+  const afterConcurrency = await snapshot(1);
+  ok('concurrent rebuilds land on the sequential answer',
+    afterConcurrency.derived_sha256 === first.derived_sha256,
+    require('./lib/derivedDigest').diffDigests(first, afterConcurrency).derived);
+
   await pool.end();
   await advisoryLocks.end();
 

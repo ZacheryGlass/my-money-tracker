@@ -13,6 +13,8 @@ const ExchangeBackfillService = require('../services/ExchangeBackfillService');
 const ExchangeMatchService = require('../services/ExchangeMatchService');
 const ExchangeBalanceReconciliation = require('../models/ExchangeBalanceReconciliation');
 const ExchangeFiatMatch = require('../models/ExchangeFiatMatch');
+const EthDerivedPipeline = require('../services/EthDerivedPipeline');
+const pool = require('../config/database');
 const chains = require('../config/chains');
 const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
 const { CREDENTIAL_FIELDS, connectorFor } = require('../services/exchangeSync');
@@ -422,6 +424,27 @@ router.get('/matches/export', async (req, res) => {
   }
 });
 
+// One transaction on one client, inside the user's rebuild lane, holding the
+// exchange match lock. Lock order matches every other caller: lane (session)
+// then EXM1 (transaction).
+async function withMatchTransaction(userId, fn) {
+  return EthDerivedPipeline.serializedForUser(userId, async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await ExchangeMatchService.lockForUser(userId, client);
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (rollbackError) { void rollbackError; }
+      throw error;
+    } finally {
+      client.release();
+    }
+  });
+}
+
 // Confirm or reject a match. Stored in its own table so the rebuild cannot
 // erase it -- the same reason eth_activity_overrides is a second table -- and
 // re-derived immediately so the answer is visible on the next read.
@@ -487,28 +510,34 @@ router.post('/matches/verdict', async (req, res) => {
       return res.status(400).json({ error: 'An internal transfer pair must use the same base asset' });
     }
 
-    // Two confirmations claiming the same record is the same money explained
-    // twice. They sit under different unique keys, so the database takes both
-    // and selectMatches then drops one by an ordering the user never sees.
-    if (verdict === 'confirmed') {
-      const conflict = await ExchangeMatch.findConflictingConfirmation(req.user.id, target);
-      if (conflict) {
-        return res.status(409).json({
-          error: 'Another confirmed match already claims one of these records; remove that verdict first',
-          conflict,
-        });
+    // The conflict check, the verdict write and the rebuild share one
+    // transaction under the user's lane and the match lock, so no concurrent
+    // rebuild can read the verdict set between the write and its re-derive.
+    const outcome = await withMatchTransaction(req.user.id, async (client) => {
+      // Two confirmations claiming the same record is the same money explained
+      // twice. They sit under different unique keys, so the database takes both
+      // and selectMatches then drops one by an ordering the user never sees.
+      if (verdict === 'confirmed') {
+        const conflict = await ExchangeMatch.findConflictingConfirmation(req.user.id, target, client);
+        if (conflict) return { conflict };
       }
-    }
-
-    const saved = await ExchangeMatch.upsertVerdict(req.user.id, {
-      ...target,
-      verdict,
-      note: body.note?.trim() || null,
+      const saved = await ExchangeMatch.upsertVerdict(req.user.id, {
+        ...target,
+        verdict,
+        note: body.note?.trim() || null,
+      }, client);
+      if (!saved) return { notFound: true };
+      const result = await ExchangeMatchService.rebuildForUserSafely(req.user.id, {}, { client });
+      return { saved, result };
     });
-    if (!saved) return res.status(404).json({ error: 'Exchange record not found' });
-
-    const result = await ExchangeMatchService.rebuildForUserSafely(req.user.id);
-    return res.status(201).json({ verdict: saved, matches: result?.matches ?? null });
+    if (outcome.conflict) {
+      return res.status(409).json({
+        error: 'Another confirmed match already claims one of these records; remove that verdict first',
+        conflict: outcome.conflict,
+      });
+    }
+    if (outcome.notFound) return res.status(404).json({ error: 'Exchange record not found' });
+    return res.status(201).json({ verdict: outcome.saved, matches: outcome.result?.matches ?? null });
   } catch (error) {
     logger.error({ err: error }, 'Set exchange match verdict error');
     return res.status(500).json({ error: 'Failed to save the match verdict' });
@@ -521,10 +550,12 @@ router.delete('/matches/verdict', async (req, res) => {
     const { target, error: invalid } = parseVerdictTarget(req.query || {});
     if (invalid) return res.status(400).json({ error: invalid });
 
-    const removed = await ExchangeMatch.deleteVerdict(req.user.id, target);
+    const removed = await withMatchTransaction(req.user.id, async (client) => {
+      const deleted = await ExchangeMatch.deleteVerdict(req.user.id, target, client);
+      if (deleted) await ExchangeMatchService.rebuildForUserSafely(req.user.id, {}, { client });
+      return deleted;
+    });
     if (!removed) return res.status(404).json({ error: 'Match verdict not found' });
-
-    await ExchangeMatchService.rebuildForUserSafely(req.user.id);
     return res.status(200).json({ message: 'Match verdict removed' });
   } catch (error) {
     logger.error({ err: error }, 'Remove exchange match verdict error');

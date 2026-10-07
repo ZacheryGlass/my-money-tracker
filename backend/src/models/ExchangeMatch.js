@@ -222,9 +222,9 @@ class ExchangeMatch {
    * mirror image for a withdrawal. Without that, a deposit and a withdrawal of
    * the same size on the same day match each other.
    */
-  static async onChainCandidates(userId) {
+  static async onChainCandidates(userId, client = pool) {
     requireUserId('onChainCandidates', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `WITH ${SCOPED_ACTIVITY},
        ${SCOPED_RECORDS}
        SELECT sa.activity_id, sr.record_id AS exchange_record_id,
@@ -348,9 +348,9 @@ class ExchangeMatch {
    * the SAME account are two unrelated movements that happen to be the same
    * size, and pairing them would delete both from the history.
    */
-  static async exchangePairCandidates(userId) {
+  static async exchangePairCandidates(userId, client = pool) {
     requireUserId('exchangePairCandidates', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `WITH ${SCOPED_RECORDS}
        SELECT sent.record_id AS exchange_record_id, received.record_id AS counter_record_id,
               TRUE AS direction_compatible,
@@ -433,9 +433,9 @@ class ExchangeMatch {
    * is not currently in eth_activity resolves to NULL and is simply inert
    * until the row comes back.
    */
-  static async verdictsForUser(userId) {
+  static async verdictsForUser(userId, client = pool) {
     requireUserId('verdictsForUser', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `SELECT v.id, v.exchange_record_id, v.counter_record_id, v.verdict, v.note,
               v.wallet_id, v.chain_id, v.tx_hash, a.id AS activity_id
        FROM exchange_match_verdicts v
@@ -459,7 +459,7 @@ class ExchangeMatch {
    * EthActivity.replaceForWallet: the derived table is rebuilt in full and the
    * verdict table is never touched.
    */
-  static async replaceForUser(userId, rows, suggestions = []) {
+  static async replaceForUser(userId, rows, suggestions = [], { client: outerClient = null } = {}) {
     requireUserId('replaceForUser', userId);
     if (!Array.isArray(rows) || !Array.isArray(suggestions)) {
       throw new TypeError('ExchangeMatch.replaceForUser requires match and suggestion arrays');
@@ -478,13 +478,16 @@ class ExchangeMatch {
 
     // One transaction, following ExchangeRecord.bulkUpsert. Delete-then-insert
     // outside one is a window in which this user has NO matches at all, and a
-    // failure mid-insert leaves that window open permanently.
-    const client = await pool.connect();
+    // failure mid-insert leaves that window open permanently. A caller that
+    // passes its client owns the transaction (ExchangeMatchService runs the
+    // whole rebuild in one); otherwise this opens its own.
+    const ownsTransaction = !outerClient;
+    const client = outerClient || await pool.connect();
     let inserted = 0;
     let suggested = 0;
     let invalidated = 0;
     try {
-      await client.query('BEGIN');
+      if (ownsTransaction) await client.query('BEGIN');
       const existing = await client.query(
         `SELECT m.id, m.exchange_record_id, m.activity_id, m.counter_record_id,
                 m.match_method, m.confidence, m.rule_version, m.comparison_kind,
@@ -630,16 +633,18 @@ class ExchangeMatch {
         );
         suggested += result.rowCount || 0;
       }
-      await client.query('COMMIT');
+      if (ownsTransaction) await client.query('COMMIT');
     } catch (err) {
-      try {
-        await client.query('ROLLBACK');
-      } catch (rollbackError) {
-        logger.warn({ err: rollbackError, userId }, 'Exchange match rebuild rollback failed');
+      if (ownsTransaction) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          logger.warn({ err: rollbackError, userId }, 'Exchange match rebuild rollback failed');
+        }
       }
       throw err;
     } finally {
-      client.release();
+      if (ownsTransaction) client.release();
     }
 
     // DO NOTHING is a safety net, not a plan: selectMatches already enforces
@@ -675,9 +680,9 @@ class ExchangeMatch {
    * from rewriting rows that already say the right thing, so `cleared` still
    * counts real changes and a no-op rebuild writes nothing.
    */
-  static async clearReviewForMatched(userId) {
+  static async clearReviewForMatched(userId, client = pool) {
     requireUserId('clearReviewForMatched', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `UPDATE eth_activity a
        SET needs_review = FALSE,
            review_reason = NULL,
@@ -700,9 +705,9 @@ class ExchangeMatch {
   // provider records.  An exchange label linked to that account is terminal
   // evidence for the on-chain leg: it is explained as venue custody, while
   // the missing trade history remains visible in the account summary.
-  static async clearReviewForUnavailable(userId) {
+  static async clearReviewForUnavailable(userId, client = pool) {
     requireUserId('clearReviewForUnavailable', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `UPDATE eth_activity a
        SET needs_review = FALSE,
            review_reason = 'exchange_records_unavailable',
@@ -735,9 +740,9 @@ class ExchangeMatch {
   // state, not a permanent user override: once the account is available again
   // the activity belongs back in the review queue until a real record or
   // confirmation explains it.
-  static async restoreReviewForAvailable(userId, reviewReason) {
+  static async restoreReviewForAvailable(userId, reviewReason, client = pool) {
     requireUserId('restoreReviewForAvailable', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `UPDATE eth_activity a
        SET needs_review = TRUE,
            review_reason = $2,
@@ -785,9 +790,9 @@ class ExchangeMatch {
    * transfer also shrinks the covered period past it, leaving the transfer
    * marked explained by evidence that no longer exists.
    */
-  static async flagUnmatchedExchangeFlows(userId, reviewReason, suggestionReason = null) {
+  static async flagUnmatchedExchangeFlows(userId, reviewReason, suggestionReason = null, client = pool) {
     requireUserId('flagUnmatchedExchangeFlows', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `UPDATE eth_activity a
        SET needs_review = TRUE,
            review_reason = CASE WHEN EXISTS (
@@ -879,9 +884,9 @@ class ExchangeMatch {
    * is never written over, and a builtin's is never outranked because its mere
    * presence stops the insert.
    */
-  static async learnExchangeLabel(userId, address, name) {
+  static async learnExchangeLabel(userId, address, name, client = pool) {
     requireUserId('learnExchangeLabel', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `INSERT INTO eth_address_labels (user_id, address, name, source, confidence, kind, note)
        SELECT $1, $2::text, $3, 'auto-match', 'low', 'exchange',
               'Learned from a transaction this exchange published'
@@ -1110,10 +1115,10 @@ class ExchangeMatch {
    * silently, and by an ordering the user never sees. The same money cannot be
    * explained twice, so the second answer is refused at the door instead.
    */
-  static async findConflictingConfirmation(userId, { exchangeRecordId, counterRecordId = null, walletId = null, chainId = null, txHash = null }) {
+  static async findConflictingConfirmation(userId, { exchangeRecordId, counterRecordId = null, walletId = null, chainId = null, txHash = null }, client = pool) {
     requireUserId('findConflictingConfirmation', userId);
     const recordIds = counterRecordId ? [exchangeRecordId, counterRecordId] : [exchangeRecordId];
-    const result = await pool.query(
+    const result = await client.query(
       `SELECT v.id, v.exchange_record_id, v.counter_record_id, v.wallet_id, v.chain_id, v.tx_hash
        FROM exchange_match_verdicts v
        JOIN exchange_records er ON er.id = v.exchange_record_id
@@ -1147,13 +1152,13 @@ class ExchangeMatch {
   // write a verdict pointing at another user's wallet. A verdict is an UPSERT
   // so re-answering replaces the previous answer instead of stacking a second
   // one.
-  static async upsertVerdict(userId, { exchangeRecordId, counterRecordId = null, walletId = null, chainId = DEFAULT_CHAIN_ID, txHash = null, verdict, note = null }) {
+  static async upsertVerdict(userId, { exchangeRecordId, counterRecordId = null, walletId = null, chainId = DEFAULT_CHAIN_ID, txHash = null, verdict, note = null }, client = pool) {
     requireUserId('upsertVerdict', userId);
     const onChain = counterRecordId === null;
     const conflictTarget = onChain
       ? '(exchange_record_id, wallet_id, chain_id, tx_hash) WHERE counter_record_id IS NULL'
       : '(exchange_record_id, counter_record_id) WHERE counter_record_id IS NOT NULL';
-    const result = await pool.query(
+    const result = await client.query(
       `INSERT INTO exchange_match_verdicts
          (exchange_record_id, wallet_id, chain_id, tx_hash, counter_record_id, verdict, note)
        -- $2 is cast on both of its uses, or Postgres deduces two types for one
@@ -1186,9 +1191,9 @@ class ExchangeMatch {
 
   // An answer the user regrets has to be undoable, exactly like an activity
   // override: deleting it uncovers whatever the matcher derives on its own.
-  static async deleteVerdict(userId, { exchangeRecordId, counterRecordId = null, walletId = null, chainId = DEFAULT_CHAIN_ID, txHash = null }) {
+  static async deleteVerdict(userId, { exchangeRecordId, counterRecordId = null, walletId = null, chainId = DEFAULT_CHAIN_ID, txHash = null }, client = pool) {
     requireUserId('deleteVerdict', userId);
-    const result = await pool.query(
+    const result = await client.query(
       `DELETE FROM exchange_match_verdicts v
        USING exchange_records er
        JOIN exchange_accounts ea ON ea.id = er.exchange_account_id

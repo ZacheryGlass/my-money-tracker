@@ -291,6 +291,15 @@ async function runForUser(userId, {
   context = null,
   matchReason = null,
 } = {}) {
+  // Always inside the user's lane: the lane is re-entrant, so the callers that
+  // already hold it run directly, and a caller that forgot cannot race a
+  // rebuild or a match pass for the same user.
+  return serializedForUser(userId, () => runForUserInLane(userId, {
+    reclassify, holdings, context, matchReason,
+  }));
+}
+
+async function runForUserInLane(userId, { reclassify, holdings, context, matchReason }) {
   const timings = {};
   const started = Date.now();
   const { result, calls } = await providerCalls.measure(async () => {
