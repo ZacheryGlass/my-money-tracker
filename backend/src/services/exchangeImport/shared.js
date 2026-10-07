@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const chains = require('../../config/chains');
 
 // Thrown when a file's shape is not something any importer can read. Fail
 // closed: a half-understood export that imports "most" rows is worse than one
@@ -326,6 +327,10 @@ function normalizeAddress(value) {
   return `0x${hex.toLowerCase()}`;
 }
 
+function retiredToNull(chainId) {
+  return chainId != null && chains.isRetiredChain(chainId) ? null : chainId;
+}
+
 function hasText(value) {
   if (Array.isArray(value)) return value.some(hasText);
   return value !== null && value !== undefined && String(value).trim() !== '';
@@ -371,7 +376,9 @@ function finalizeRecord(record, { line, amountCell } = {}) {
     tx_hash: trimTo(record.tx_hash, 80),
     address: trimTo(normalizeAddress(record.address), 80),
     network,
-    chain_id: suppliedChainId ?? chainIdForNetwork(network),
+    // A retired chain keeps its network text but never a normalized id: this
+    // is the policy 082 used to re-apply on every boot.
+    chain_id: retiredToNull(suppliedChainId ?? chainIdForNetwork(network)),
     external_id: trimTo(record.external_id, 120),
     needs_review: Boolean(record.needs_review) || unreadableAmount || invalidChainId,
     raw: record.raw ?? null,

@@ -826,3 +826,15 @@ test('kraken: a reversed withdrawal keeps its fee refund negative so the balance
   const net = records.reduce((sum, record) => sum + Number(record.base_amount) - Number(record.fee_amount), 0);
   assert.equal(net, 0);
 });
+
+test('a retired chain keeps its network text but never a normalized chain id', () => {
+  const { finalizeRecord } = require('../src/services/exchangeImport/shared');
+  const base = {
+    record_type: 'withdrawal', occurred_at: '2024-01-01T00:00:00Z', base_asset: 'ETH', base_amount: '-1',
+    external_id: 'x-1', raw: {},
+  };
+  const supplied = finalizeRecord({ ...base, network: 'Base', chain_id: 8453 });
+  assert.equal(supplied.chain_id, null);
+  assert.equal(supplied.network, 'Base');
+  assert.equal(finalizeRecord({ ...base, network: 'Optimism' }).chain_id, 10);
+});

@@ -361,6 +361,14 @@ const NATIVE_ASSETS = {
 // no chain to pass keeps behaving exactly as it did before #58.
 const DEFAULT_CHAIN_ID = 1;
 
+// Chains this app once supported and has retired (082 removed Base). A retired
+// id must never be re-attached to new data: imports store the provider's
+// network text but no normalized chain id for it.
+const RETIRED_CHAIN_IDS = Object.freeze([8453]);
+function isRetiredChain(chainId) {
+  return RETIRED_CHAIN_IDS.includes(Number(chainId));
+}
+
 const BY_ID = new Map(REGISTRY.map((chain) => [chain.id, chain]));
 
 // Every native symbol in the registry. The price-key parser needs this to tell
@@ -587,6 +595,8 @@ function holdingSuffix(chainId) {
 
 module.exports = {
   DEFAULT_CHAIN_ID,
+  RETIRED_CHAIN_IDS,
+  isRetiredChain,
   NATIVE_ASSETS,
   enabledChains,
   enabledChainIds,
