@@ -126,6 +126,22 @@ function capitalRecord(row, type) {
 const MIGRATION_CATEGORY = /^\s*([A-Z0-9]+)\s+migration\s+to\s+([A-Z0-9]+)\s*$/i;
 const ONE_TO_ONE_MIGRATIONS = new Set(['MATIC>POL']);
 
+// Fail-closed category vocabulary for the generic distribution feed. Only a
+// category that NAMES a reward or a fee is booked as one; anything else (an
+// airdrop of unknown value, a corporate action, a category Binance adds later)
+// imports as a reviewable transfer instead of silently becoming income. The
+// staking-rewards endpoint needs no category: the endpoint itself says what
+// every row is.
+const STAKING_REWARDS_ENDPOINT = '/sapi/v1/staking/stakingRewardsHistory';
+const REWARD_CATEGORY = /\b(?:staking|stake|rewards?|interest|referral|commission|rebate|cashback|bonus)\b/i;
+const FEE_CATEGORY = /\bfees?\b/i;
+
+function distributionType(endpoint, category) {
+  if (FEE_CATEGORY.test(category)) return 'fee';
+  if (endpoint === STAKING_REWARDS_ENDPOINT || REWARD_CATEGORY.test(category)) return 'reward';
+  return null;
+}
+
 function distributionRecord(row, endpoint = '/sapi/v1/asset/assetDistributionHistory') {
   const coin = asset(row.asset || row.coin);
   const rawAmount = amount(row.amount);
@@ -145,14 +161,13 @@ function distributionRecord(row, endpoint = '/sapi/v1/asset/assetDistributionHis
       raw: rawRecord(endpoint, row),
     }, row.amount);
   }
-  const category = String(row.category ?? '').toLowerCase();
-  const recordType = category.includes('fee') ? 'fee' : 'reward';
+  const recordType = distributionType(endpoint, String(row.category ?? ''));
   return record({
-    record_type: recordType, occurred_at: occurredAt, base_asset: coin,
+    record_type: recordType || 'transfer', occurred_at: occurredAt, base_asset: coin,
     base_amount: rawAmount, quote_asset: null, quote_amount: null,
     fee_asset: null, fee_amount: null, tx_hash: null, address: null,
     network: null, chain_id: null, external_id: `binanceus:distribution:${id}`,
-    needs_review: !occurredAt || !coin || rawAmount === null,
+    needs_review: !recordType || !occurredAt || !coin || rawAmount === null,
     raw: rawRecord(endpoint, row),
   }, row.amount);
 }
@@ -410,7 +425,7 @@ async function sync(credentials, { cursor = null, interactive = true } = {}) {
     if (rows.length && fingerprint === state.rewardsFingerprint) {
       throw historyError('staking rewards pagination repeated a page');
     }
-    records.push(...rows.map(row => distributionRecord(row, '/sapi/v1/staking/stakingRewardsHistory')));
+    records.push(...rows.map(row => distributionRecord(row, STAKING_REWARDS_ENDPOINT)));
     if (read < body.total) {
       state.rewardsPage += 1;
       state.rewardsEnd = endTime;

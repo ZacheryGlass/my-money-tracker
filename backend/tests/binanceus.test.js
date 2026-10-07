@@ -377,3 +377,22 @@ test('Binance.US token migration distributions are conversions, not income', () 
   });
   assert.equal(reward.record_type, 'reward');
 });
+
+test('distribution categories fail closed: only named rewards and fees are booked as such', () => {
+  const { distributionRecord } = connector._internals;
+  const row = (category) => ({ tranId: `t-${category}`, asset: 'ETH', amount: '0.01', divTime: 1700000000000, category });
+  const typed = (category, endpoint) => {
+    const record = distributionRecord(row(category), endpoint);
+    return [record.record_type, record.needs_review];
+  };
+  assert.deepEqual(typed('ETH Staking'), ['reward', false]);
+  assert.deepEqual(typed('Staking Rewards'), ['reward', false]);
+  assert.deepEqual(typed('Referral Commission'), ['reward', false]);
+  assert.deepEqual(typed('Trading Fee'), ['fee', false]);
+  // Unknown or value-ambiguous categories are never silently income.
+  assert.deepEqual(typed('Airdrop'), ['transfer', true]);
+  assert.deepEqual(typed('Token Swap'), ['transfer', true]);
+  assert.deepEqual(typed(''), ['transfer', true]);
+  // The staking-rewards endpoint states what every row is.
+  assert.deepEqual(typed('', '/sapi/v1/staking/stakingRewardsHistory'), ['reward', false]);
+});
