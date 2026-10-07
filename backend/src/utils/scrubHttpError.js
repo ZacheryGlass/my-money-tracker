@@ -1,5 +1,7 @@
 'use strict';
 
+const { redactUrl } = require('../crypto/infra/http/redact');
+
 /**
  * Strip the request context off an axios error before it propagates.
  *
@@ -13,8 +15,9 @@
  *
  * What survives is what anyone debugging actually needs: the message, the code,
  * the method and URL, the status, and the response body (the provider's own
- * error fields). The URL is kept because these clients never put a secret in
- * one -- Kraken signs a POST body and Coinbase signs a header.
+ * error fields). The URL is kept with its credential-bearing query values
+ * redacted: Binance.US signs the query string itself (signature, timestamp),
+ * and Etherscan-shaped providers take their key as a query parameter.
  *
  * Mutates and returns the error so `throw scrubHttpError(err)` keeps the
  * original type, stack and `code` that call sites match on.
@@ -23,7 +26,7 @@ function scrubHttpError(err) {
   if (!err || typeof err !== 'object') return err;
 
   const method = err.config && err.config.method ? String(err.config.method).toUpperCase() : null;
-  const url = err.config ? err.config.url ?? null : null;
+  const url = err.config ? redactUrl(err.config.url ?? null) : null;
   const status = err.response ? err.response.status ?? null : null;
   const data = err.response ? err.response.data : undefined;
 
