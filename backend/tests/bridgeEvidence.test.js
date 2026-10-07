@@ -1338,14 +1338,14 @@ test('endpoint deployment bounds route only receipts from the reviewed version w
 test('the reviewed endpoint pack and generated migration seed cannot drift', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const { buildSeed } = require('../scripts/generate-bridge-endpoint-seed');
+  const { buildSeed, START, END } = require('../scripts/generate-bridge-endpoint-seed');
+  const { latestBlock } = require('../scripts/lib/seedDelta');
   const pack = JSON.parse(fs.readFileSync(
     path.join(__dirname, '../data/builtin-bridge-labels.json'), 'utf8'
   ));
-  const migration = fs.readFileSync(
-    path.join(__dirname, '../migrations/072_evidence_first_bridge_matching.sql'), 'utf8'
-  );
-  assert.ok(migration.includes(buildSeed(pack)));
+  // The newest generated block is the cumulative registry (072, or a later
+  // delta migration the generator appended).
+  assert.equal(latestBlock(START, END).block, buildSeed(pack));
 });
 
 test('OP Mainnet keeps its shared OP Stack predeploy metadata', () => {

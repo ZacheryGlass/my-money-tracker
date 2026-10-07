@@ -365,3 +365,11 @@ test('the committed migration is a regeneration of the committed JSON pack', () 
   // edit of either artifact would ship silently without this check.
   assert.equal(buildSql(PACK.labels, PACK.counts), SEED_SQL);
 });
+
+test('the newest generated label block is the committed JSON pack (cumulative)', () => {
+  // Later pack changes land as delta migrations, never as edits to 036; the
+  // newest block between the markers must equal the JSON.
+  const { latestBlock } = require('../scripts/lib/seedDelta');
+  const { seedBlockOf, SEED_START, SEED_END } = require('../scripts/generate-label-seed');
+  assert.equal(latestBlock(SEED_START, SEED_END).block, seedBlockOf(buildSql(PACK.labels, PACK.counts)));
+});

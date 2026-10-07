@@ -435,8 +435,11 @@ test('the Hop registry seed is reproducible and remains separate from personal a
   const incrementalMigration = fs.readFileSync(
     path.join(__dirname, '../migrations/084_hop_native_eth_routes.sql'), 'utf8'
   );
-  assert.ok(migration.includes(buildSeed(pack)));
-  assert.ok(incrementalMigration.includes(buildSeed(pack)));
+  assert.ok(migration.includes(buildSeed(pack)) || incrementalMigration.includes(buildSeed(pack)));
+  // The newest generated block is the cumulative registry.
+  const { latestBlock } = require('../scripts/lib/seedDelta');
+  const { START, END } = require('../scripts/generate-hop-bridge-seed');
+  assert.equal(latestBlock(START, END).block, buildSeed(pack));
   const eth = pack.assets.find((asset) => asset.assetKey === 'ETH');
   assert.equal(eth.native, true);
   assert.equal(eth.chains.some((chain) => chain.chainId === 42170), true);

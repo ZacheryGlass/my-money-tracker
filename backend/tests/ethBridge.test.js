@@ -749,4 +749,8 @@ test('the committed migration is a regeneration of the committed JSON pack', () 
   // The generator is the only sanctioned way to edit the seed; a hand-typed
   // address in the SQL would otherwise ship with nothing to compare it against.
   assert.equal(buildSql(PACK, preambleOf(SEED_SQL)), SEED_SQL);
+  // And the newest generated block (044, or a later delta) is the pack.
+  const { latestBlock } = require('../scripts/lib/seedDelta');
+  const { buildSeed, SEED_MARKER, SEED_END } = require('../scripts/generate-bridge-seed');
+  assert.equal(latestBlock(SEED_MARKER, SEED_END).block, buildSeed(PACK).trimEnd());
 });

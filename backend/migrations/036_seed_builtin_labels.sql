@@ -45,6 +45,7 @@
 -- Requires 035 (source widened to VARCHAR(40) and its CHECK extended to admit
 -- 'eth-labels'; confidence column added).
 
+-- BEGIN GENERATED LABEL SEED (backend/scripts/generate-label-seed.js)
 INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence) VALUES
   (NULL, '0x000000000000541e251335090ac5b47176af4f7e', 'dex.blue', 'eth-labels', 'external', 'low'),
   (NULL, '0x000000000000d5775ff7721cefb8097af62e52dd', 'OKX 213', 'eth-labels', 'exchange', 'low'),
@@ -5206,3 +5207,4 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0xffec0067f5a79cff07527f63d83dd5462ccf8ba4', 'Nexo 2', 'eth-labels', 'exchange', 'low'),
   (NULL, '0xfff52a282c215aed0c4c71786d85519bbcc86464', 'Exmo 4', 'eth-labels', 'exchange', 'low')
 ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING;
+-- END GENERATED LABEL SEED (backend/scripts/generate-label-seed.js)

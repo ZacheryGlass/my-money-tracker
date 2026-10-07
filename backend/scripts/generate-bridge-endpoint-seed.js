@@ -8,9 +8,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeSeedDelta } = require('./lib/seedDelta');
 
 const PACK_PATH = path.join(__dirname, '../data/builtin-bridge-labels.json');
-const MIGRATION_PATH = path.join(__dirname, '../migrations/072_evidence_first_bridge_matching.sql');
 const START = '-- BEGIN GENERATED ENDPOINT SEED (backend/scripts/generate-bridge-endpoint-seed.js)';
 const END = '-- END GENERATED ENDPOINT SEED';
 
@@ -104,17 +104,32 @@ function buildSeed(pack) {
   ].join('\n');
 }
 
+// Never rewrites an applied migration: a pack change becomes the next
+// migration (full block + updates + tombstones), see scripts/lib/seedDelta.js.
+const DELTA_SPECS = {
+  eth_bridge_endpoints: {
+    key: ['protocol', 'family_version', 'chain_id', 'address', 'role'],
+    // Hop endpoints share the table and belong to generate-hop-bridge-seed.js.
+    scope: "protocol <> 'hop'",
+  },
+};
+
 function main() {
   const pack = JSON.parse(fs.readFileSync(PACK_PATH, 'utf8'));
-  const migration = fs.readFileSync(MIGRATION_PATH, 'utf8');
-  const start = migration.indexOf(START);
-  const end = migration.indexOf(END, start);
-  if (start < 0 || end < 0) throw new Error('Migration seed markers are missing');
-  const output = `${migration.slice(0, start)}${buildSeed(pack)}${migration.slice(end + END.length)}`;
-  fs.writeFileSync(MIGRATION_PATH, output);
-  process.stdout.write(`Wrote ${endpointRows(pack).length} chain-scoped bridge endpoints\n`);
+  const result = writeSeedDelta({
+    start: START,
+    end: END,
+    desiredBlock: buildSeed(pack),
+    stem: 'bridge_endpoint_seed_delta',
+    header: '-- Chain-scoped bridge endpoint registry delta.\n'
+      + '-- GENERATED FILE -- run backend/scripts/generate-bridge-endpoint-seed.js, do not edit.',
+    specs: DELTA_SPECS,
+  });
+  process.stdout.write(result.written
+    ? `Wrote ${path.basename(result.written)}: ${JSON.stringify(result.summary)}\n`
+    : `Endpoint seed is up to date (${result.latest})\n`);
 }
 
 if (require.main === module) main();
 
-module.exports = { buildSeed, endpointRows, familyVersion, role, direction, START, END };
+module.exports = { buildSeed, endpointRows, familyVersion, role, direction, START, END, DELTA_SPECS };

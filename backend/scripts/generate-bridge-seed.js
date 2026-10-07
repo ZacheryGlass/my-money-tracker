@@ -1,29 +1,30 @@
 #!/usr/bin/env node
 'use strict';
 
-// Regenerates the seed half of migrations/044_bridge_labels.sql from
-// data/builtin-bridge-labels.json. Run after editing the JSON:
+// Seeds the builtin bridge label pack from data/builtin-bridge-labels.json.
+// Run after editing the JSON:
 //
 //   node backend/scripts/generate-bridge-seed.js
 //
 // Unlike 036's generator this reads a COMMITTED, hand-curated list rather than
 // a 21MB dump -- the JSON is the record of the research, not a cache of it. The
-// generator exists so the migration and the JSON cannot drift: a test asserts
-// buildSql(pack) equals the committed file byte for byte, which is the only
-// thing standing between "someone hand-edited an address into the SQL" and a
-// silent wrong verdict on real money.
+// generator exists so the migrations and the JSON cannot drift: a test asserts
+// the newest generated block equals buildSeed(pack) byte for byte, which is the
+// only thing standing between "someone hand-edited an address into the SQL"
+// and a silent wrong verdict on real money.
 //
-// The migration's PREAMBLE (everything above the seed marker) is preserved
-// as-is; only the INSERT is regenerated.
+// The pack first shipped in 044. A change never rewrites an applied migration;
+// it becomes the next migration (scripts/lib/seedDelta.js).
 
 const fs = require('fs');
 const path = require('path');
+const { writeSeedDelta } = require('./lib/seedDelta');
 
 const PACK_PATH = path.join(__dirname, '../data/builtin-bridge-labels.json');
-const MIGRATION_PATH = path.join(__dirname, '../migrations/044_bridge_labels.sql');
 
-// Everything after this line in the migration is generated.
+// Everything between these lines in the migration is generated.
 const SEED_MARKER = '-- BEGIN GENERATED SEED (backend/scripts/generate-bridge-seed.js)';
+const SEED_END = '-- END GENERATED SEED (backend/scripts/generate-bridge-seed.js)';
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 const NAME_MAX = 64;
@@ -83,6 +84,7 @@ function buildSeed(pack) {
     'INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence, note) VALUES',
     ...rows,
     'ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING;',
+    SEED_END,
     '',
   ].join('\n');
 }
@@ -98,13 +100,28 @@ function preambleOf(sql) {
   return sql.slice(0, at);
 }
 
+// Never rewrites an applied migration: a pack change becomes the next
+// migration (full block + updates + tombstones), see scripts/lib/seedDelta.js.
+const DELTA_SPECS = {
+  eth_address_labels: { key: ['address'], scope: "user_id IS NULL AND source = 'builtin-bridge'" },
+};
+
 function main() {
   const pack = validate(JSON.parse(fs.readFileSync(PACK_PATH, 'utf-8')));
-  const existing = fs.readFileSync(MIGRATION_PATH, 'utf-8');
-  fs.writeFileSync(MIGRATION_PATH, buildSql(pack, preambleOf(existing)));
-  console.log(`Wrote ${pack.labels.length} bridge labels into ${path.basename(MIGRATION_PATH)}`);
+  const result = writeSeedDelta({
+    start: SEED_MARKER,
+    end: SEED_END,
+    desiredBlock: buildSeed(pack),
+    stem: 'bridge_label_seed_delta',
+    header: '-- Builtin bridge label pack delta.\n'
+      + '-- GENERATED FILE -- edit data/builtin-bridge-labels.json and run backend/scripts/generate-bridge-seed.js.',
+    specs: DELTA_SPECS,
+  });
+  console.log(result.written
+    ? `Wrote ${path.basename(result.written)}: ${JSON.stringify(result.summary)}`
+    : `Bridge label seed is up to date (${result.latest})`);
 }
 
 if (require.main === module) main();
 
-module.exports = { buildSql, buildSeed, preambleOf, validate, quote, SEED_MARKER, NAME_MAX, ADDRESS_RE };
+module.exports = { buildSql, buildSeed, preambleOf, validate, quote, SEED_MARKER, SEED_END, NAME_MAX, ADDRESS_RE, DELTA_SPECS };

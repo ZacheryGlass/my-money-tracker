@@ -187,3 +187,4 @@ INSERT INTO eth_address_labels (user_id, address, name, source, kind, confidence
   (NULL, '0x401f6c983ea34274ec46f84d70b31c151321188b', 'Polygon: Plasma Deposit Manager', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 1. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json'),
   (NULL, '0x0000000000000000000000000000000000001010', 'Polygon: MRC20 (Native POL / State Sync)', 'builtin-bridge', 'bridge', 'high', 'Cross-chain bridge on chain 137. Source: https://raw.githubusercontent.com/maticnetwork/static/master/network/mainnet/v1/index.json')
 ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING;
+-- END GENERATED SEED (backend/scripts/generate-bridge-seed.js)

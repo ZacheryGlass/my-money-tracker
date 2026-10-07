@@ -7,12 +7,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeSeedDelta } = require('./lib/seedDelta');
 
 const PACK_PATH = path.join(__dirname, '../data/hop-bridge-registry.json');
-const MIGRATION_PATH = path.join(__dirname, '../migrations/074_hop_bridge_matching.sql');
-const INCREMENTAL_MIGRATION_PATH = path.join(
-  __dirname, '../migrations/084_hop_native_eth_routes.sql'
-);
 const START = '-- BEGIN GENERATED HOP SEED (backend/scripts/generate-hop-bridge-seed.js)';
 const END = '-- END GENERATED HOP SEED';
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
@@ -234,23 +231,35 @@ function buildSeed(pack) {
   return [START, endpointSeed(pack), routeSeed(pack), END].join('\n');
 }
 
+// Never rewrites an applied migration: a registry change becomes the next
+// migration (full block + updates + tombstones), see scripts/lib/seedDelta.js.
+const DELTA_SPECS = {
+  eth_bridge_endpoints: {
+    key: ['protocol', 'family_version', 'chain_id', 'address', 'role'],
+    scope: "protocol = 'hop'",
+  },
+  eth_hop_bridge_routes: {
+    key: ['deployment_key', 'family_version', 'route_key'],
+    scope: 'TRUE',
+  },
+};
+
 function main() {
   const pack = JSON.parse(fs.readFileSync(PACK_PATH, 'utf8'));
-  for (const migrationPath of [MIGRATION_PATH, INCREMENTAL_MIGRATION_PATH]) {
-    const migration = fs.readFileSync(migrationPath, 'utf8');
-    const start = migration.indexOf(START);
-    const end = migration.indexOf(END, start);
-    if (start < 0 || end < 0) {
-      throw new Error(`Hop migration seed markers are missing: ${migrationPath}`);
-    }
-    const output = `${migration.slice(0, start)}${buildSeed(pack)}${migration.slice(end + END.length)}`;
-    fs.writeFileSync(migrationPath, output);
-  }
-  process.stdout.write(
-    `Wrote ${endpointRows(pack).length} Hop endpoints and ${routeRows(pack).length} routes\n`
-  );
+  const result = writeSeedDelta({
+    start: START,
+    end: END,
+    desiredBlock: buildSeed(pack),
+    stem: 'hop_bridge_seed_delta',
+    header: '-- Hop endpoint and route registry delta.\n'
+      + '-- GENERATED FILE -- run backend/scripts/generate-hop-bridge-seed.js, do not edit.',
+    specs: DELTA_SPECS,
+  });
+  process.stdout.write(result.written
+    ? `Wrote ${path.basename(result.written)}: ${JSON.stringify(result.summary)}\n`
+    : `Hop seed is up to date (${result.latest})\n`);
 }
 
 if (require.main === module) main();
 
-module.exports = { buildSeed, chainRows, endpointRows, routeRows, START, END };
+module.exports = { buildSeed, chainRows, endpointRows, routeRows, START, END, DELTA_SPECS };

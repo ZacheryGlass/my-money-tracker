@@ -34,13 +34,21 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeSeedDelta } = require('./lib/seedDelta');
 
 const DATASET_URL = 'https://github.com/dawsbot/eth-labels';
 const DATASET_FILE = 'v1/data/json/accounts.json';
 const DATASET_LICENSE = 'MIT';
 
 const JSON_OUT = path.join(__dirname, '../data/builtin-address-labels.json');
-const SQL_OUT = path.join(__dirname, '../migrations/036_seed_builtin_labels.sql');
+// The pack first shipped in 036. A change never rewrites an applied
+// migration: it becomes the next migration (scripts/lib/seedDelta.js), and the
+// newest block between these markers is the cumulative pack.
+const SEED_START = '-- BEGIN GENERATED LABEL SEED (backend/scripts/generate-label-seed.js)';
+const SEED_END = '-- END GENERATED LABEL SEED (backend/scripts/generate-label-seed.js)';
+const DELTA_SPECS = {
+  eth_address_labels: { key: ['address'], scope: "user_id IS NULL AND source = 'eth-labels'" },
+};
 
 // The dataset's `label` field is a coarse category. Only two of its ~200 values
 // are safe to act on unattended:
@@ -272,7 +280,19 @@ function buildSql(labels, counts) {
       + 'ON CONFLICT (address) WHERE user_id IS NULL DO NOTHING;'
     );
   }
-  return `${header}\n\n${chunks.join('\n\n')}\n`;
+  return `${header}\n\n${buildSeedBlock(chunks)}\n`;
+}
+
+function buildSeedBlock(chunks) {
+  return `${SEED_START}\n${chunks.join('\n\n')}\n${SEED_END}`;
+}
+
+// The generated block alone (no header), as a delta migration carries it.
+function seedBlockOf(sql) {
+  const start = sql.indexOf(SEED_START);
+  const end = sql.indexOf(SEED_END, start);
+  if (start < 0 || end < 0) throw new Error('label seed markers are missing');
+  return sql.slice(start, end + SEED_END.length);
 }
 
 function main() {
@@ -309,9 +329,18 @@ function main() {
     exchange: labels.filter((l) => l.kind === 'exchange').length,
     external: labels.filter((l) => l.kind === 'external').length,
   };
-  fs.writeFileSync(SQL_OUT, buildSql(labels, counts));
-  const statements = Math.ceil(labels.length / ROWS_PER_INSERT);
-  console.log(`Wrote ${path.relative(process.cwd(), SQL_OUT)}: ${counts.total} rows in ${statements} INSERT statement(s)`);
+  const result = writeSeedDelta({
+    start: SEED_START,
+    end: SEED_END,
+    desiredBlock: seedBlockOf(buildSql(labels, counts)),
+    stem: 'builtin_label_seed_delta',
+    header: `-- Builtin counterparty label pack delta: ${counts.total} addresses (${counts.exchange} exchange, ${counts.external} external).\n`
+      + '-- GENERATED FILE -- run backend/scripts/generate-label-seed.js, do not edit. Same rules as 036.',
+    specs: DELTA_SPECS,
+  });
+  console.log(result.written
+    ? `Wrote ${path.relative(process.cwd(), result.written)}: ${JSON.stringify(result.summary)}`
+    : `Label seed is up to date (${result.latest})`);
 }
 
 if (require.main === module) main();
@@ -320,4 +349,6 @@ if (require.main === module) main();
 // places where a quiet mistake reaches the database as a wrong verdict or a
 // broken statement, and neither is observable from the generated artifacts
 // alone once the input dump is gone.
-module.exports = { cleanName, extract, buildSql, MERCHANT_NAME_RE, NAME_MAX };
+module.exports = {
+  cleanName, extract, buildSql, seedBlockOf, MERCHANT_NAME_RE, NAME_MAX, SEED_START, SEED_END, DELTA_SPECS,
+};
