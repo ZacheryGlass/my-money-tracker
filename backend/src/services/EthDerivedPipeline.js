@@ -39,6 +39,19 @@ const EthActivityService = require('./EthActivityService');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const BridgeMatchingService = require('./BridgeMatchingService');
 const TransactionClassificationService = require('./TransactionClassificationService');
+const providerCalls = require('../crypto/infra/providerCalls');
+
+// Wall-clock per step, summed across wallets, so a slow label write can be
+// attributed to the step that made it slow.
+async function timed(timings, label, fn) {
+  if (!timings) return fn();
+  const started = Date.now();
+  try {
+    return await fn();
+  } finally {
+    timings[label] = (timings[label] || 0) + (Date.now() - started);
+  }
+}
 
 // --- serialization ----------------------------------------------------------
 //
@@ -127,13 +140,14 @@ async function rebuildWallet(walletId, {
   holdings = false,
   isolateSteps = false,
   context = null,
+  timings = null,
 } = {}) {
   const results = { priced: null, valued: null, holdings: null, mirror: null, activity: null };
 
   const runStep = async (label, fn) => {
-    if (!isolateSteps) return fn();
+    if (!isolateSteps) return timed(timings, label, fn);
     try {
-      return await fn();
+      return await timed(timings, label, fn);
     } catch (err) {
       logger.warn({ walletId, err }, `${label} failed during ${context}`);
       return null;
@@ -146,7 +160,7 @@ async function rebuildWallet(walletId, {
   // modes -- a reclassify that did not land makes every later step derive from
   // stale verdicts.
   if (reclassifyUserId != null) {
-    await EthTransfer.reclassifyCounterparties(reclassifyUserId);
+    await timed(timings, 'Reclassify', () => EthTransfer.reclassifyCounterparties(reclassifyUserId));
   }
 
   // At-the-time valuation (#73), BEFORE the mirror and the activity rebuild:
@@ -157,7 +171,8 @@ async function rebuildWallet(walletId, {
   // (never $0, never today's price) until the nightly job reaches them.
   if (fillPrices) {
     try {
-      results.priced = await HistoricalPriceService.ensureAssetsForWallet(walletId);
+      results.priced = await timed(timings, 'Price fill',
+        () => HistoricalPriceService.ensureAssetsForWallet(walletId));
     } catch (err) {
       logger.warn({ walletId, err }, 'Historical price fill failed; legs keep their previous valuation');
     }
@@ -191,10 +206,12 @@ async function finishUser(userId, {
   // For log metadata only, on the sync-flavored call where the caller is a
   // single wallet rather than a user-wide refresh.
   walletId = null,
+  timings = null,
 } = {}) {
   // rebuildForUserSafely never throws; a failed match pass logs itself and
   // returns null.
-  const matches = await ExchangeMatchService.rebuildForUserSafely(userId, matchContext);
+  const matches = await timed(timings, 'Exchange match',
+    () => ExchangeMatchService.rebuildForUserSafely(userId, matchContext));
 
   // Bridge pairing is cross-CHAIN and cross-WALLET, so it runs once over the
   // owner's whole activity set -- the far side of a bridge a sync just
@@ -204,7 +221,7 @@ async function finishUser(userId, {
   // activity DELETE cascades eth_activity_links away, so skipping this would
   // silently unpair every bridge the user has ever made.
   try {
-    await BridgeMatchingService.rebuildForUser(userId);
+    await timed(timings, 'Bridge match', () => BridgeMatchingService.rebuildForUser(userId));
   } catch (err) {
     if (context) logger.warn({ userId, err }, `Bridge matching failed during ${context}`);
     else logger.warn({ walletId, err }, 'Bridge matching failed; legs stay flagged for review');
@@ -218,7 +235,8 @@ async function finishUser(userId, {
   // wallet is the one that broke; batch callers consume the error map.
   let mirror = null;
   try {
-    mirror = await EthTransactionMirrorService.rebuildForUser(userId, { context });
+    mirror = await timed(timings, 'Mirror',
+      () => EthTransactionMirrorService.rebuildForUser(userId, { context }));
   } catch (err) {
     if (context) logger.warn({ userId, err }, `Transaction mirror rebuild failed during ${context}`);
     else logger.warn({ walletId, err }, 'Transaction mirror rebuild failed');
@@ -232,7 +250,8 @@ async function finishUser(userId, {
   // unrelated users no longer contend on a full-table backfill. It stays
   // fatal. It also runs before a requested-wallet mirror error is returned:
   // sibling wallets whose mirrors succeeded must not be left unclassified.
-  await TransactionClassificationService.backfillForUser(userId);
+  await timed(timings, 'Classification backfill',
+    () => TransactionClassificationService.backfillForUser(userId));
 
   const requestedMirrorError = walletId == null
     ? null
@@ -250,20 +269,28 @@ async function runForUser(userId, {
   context = null,
   matchReason = null,
 } = {}) {
-  // Propagates, like the sync site: classification is what the caller's click
-  // was for, so a reclassify that did not land is a failure, not a warning.
-  if (reclassify) {
-    await EthTransfer.reclassifyCounterparties(userId);
-  }
-  const wallets = await EthWallet.findAllByUser(userId);
-  for (const wallet of wallets) {
-    await rebuildWallet(wallet.id, {
-      holdings, isolateSteps: true, context,
+  const timings = {};
+  const started = Date.now();
+  const { result, calls } = await providerCalls.measure(async () => {
+    // Propagates, like the sync site: classification is what the caller's click
+    // was for, so a reclassify that did not land is a failure, not a warning.
+    if (reclassify) {
+      await timed(timings, 'Reclassify', () => EthTransfer.reclassifyCounterparties(userId));
+    }
+    const wallets = await EthWallet.findAllByUser(userId);
+    for (const wallet of wallets) {
+      await rebuildWallet(wallet.id, {
+        holdings, isolateSteps: true, context, timings,
+      });
+    }
+    return finishUser(userId, {
+      matchContext: { reason: matchReason }, context, isolateMirror: true, timings,
     });
-  }
-  return finishUser(userId, {
-    matchContext: { reason: matchReason }, context, isolateMirror: true,
   });
+  logger.info({
+    userId, context, totalMs: Date.now() - started, stepMs: timings, providerCalls: calls,
+  }, 'Derived rebuild finished');
+  return result;
 }
 
 // syncAllWallets uses the same primitives directly: it keeps each owner's

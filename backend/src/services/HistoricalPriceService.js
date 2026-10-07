@@ -10,6 +10,7 @@ const {
 } = require('../utils/coingecko');
 const { aliasForAssetKey } = require('../config/tokenPriceAliases');
 const logger = require('../config/logger');
+const providerCalls = require('../crypto/infra/providerCalls');
 
 // =============================================================================
 // PRICE SOURCES -- chosen after probing every candidate live on 2026-07-26,
@@ -141,7 +142,10 @@ const queues = {
 };
 
 function throttled(provider, fn) {
-  const run = queues[provider].then(fn);
+  const run = queues[provider].then(() => {
+    providerCalls.record(`price:${provider}`);
+    return fn();
+  });
   queues[provider] = run
     .catch(() => {})
     .then(() => new Promise((resolve) => setTimeout(resolve, spacingFor(provider))));

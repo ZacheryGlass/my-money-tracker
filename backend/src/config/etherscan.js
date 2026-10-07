@@ -1,5 +1,7 @@
 'use strict';
 
+const providerCalls = require('../crypto/infra/providerCalls');
+
 // Etherscan API V2: one key serves every chain; the chain is picked per
 // request via the chainid param. The set of chains and their ids live in
 // ./chains.js; CHAIN_ID here is only the fallback for a caller that names none.
@@ -81,6 +83,7 @@ function throttled(fn, {
       if (pauseRemainingMs > 0 && !bypassPause) {
         throw pausedError(key, pauseRemainingMs);
       }
+      providerCalls.record(key);
       return await fn();
     } finally {
       state.completedAt = Date.now();
