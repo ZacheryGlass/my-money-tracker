@@ -37,6 +37,7 @@ jobs:
           PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
           npm run verify:ledger --prefix backend -- --pg-bin "$PG_BIN"
           npm run verify:derivation --prefix backend -- --pg-bin "$PG_BIN"
+          npm run verify:migrations --prefix backend -- --pg-bin "$PG_BIN"
 
       - name: Frontend lint
         run: npm run lint --prefix frontend
