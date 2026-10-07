@@ -11,98 +11,25 @@
 //
 //   node scripts/verify-ledger-sql.js [--pg-bin /path/to/postgres/bin]
 //
-// It NEVER touches the configured DATABASE_URL: the cluster is initdb'd into a
-// fresh temp dir, listens on a kernel-assigned TCP port with no unix socket,
-// and is removed on exit.
+// It NEVER touches the configured DATABASE_URL (see lib/throwawayCluster.js).
 
-const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
-const net = require('net');
-const os = require('os');
 const path = require('path');
-
-const REPO_BACKEND = path.join(__dirname, '..');
-
-// Homebrew, Postgres.app, then a plain PATH install.
-function findPgBin() {
-  const flagIndex = process.argv.indexOf('--pg-bin');
-  if (flagIndex !== -1 && process.argv[flagIndex + 1]) return process.argv[flagIndex + 1];
-  const roots = ['/opt/homebrew/opt', '/usr/local/opt', '/Applications/Postgres.app/Contents/Versions'];
-  for (const root of roots) {
-    if (!fs.existsSync(root)) continue;
-    for (const entry of fs.readdirSync(root).sort().reverse()) {
-      const bin = path.join(root, entry, 'bin');
-      if (fs.existsSync(path.join(bin, 'initdb'))) return bin;
-    }
-  }
-  const which = spawnSync('sh', ['-c', 'command -v initdb'], { encoding: 'utf8' });
-  if (which.status === 0 && which.stdout.trim()) return path.dirname(which.stdout.trim());
-  return null;
-}
-
-const PG = findPgBin();
-if (!PG) {
-  console.error('No Postgres binaries found. Pass --pg-bin /path/to/bin.');
-  process.exit(2);
-}
-
-const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-verify-'));
-// LC_ALL/LANG on BOTH initdb and pg_ctl: a mismatch makes the cluster refuse to
-// start with a locale error that reads as a corrupt data directory.
-const env = { ...process.env, LC_ALL: 'C', LANG: 'C', PGDATA: DATA };
-let started = false;
-
-function stop() {
-  if (started) {
-    spawnSync(path.join(PG, 'pg_ctl'), ['-D', DATA, '-m', 'immediate', 'stop'], { env });
-    started = false;
-  }
-  try { fs.rmSync(DATA, { recursive: true, force: true }); } catch { /* best effort */ }
-}
-process.on('exit', stop);
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-}
+const { startCluster, applyMigrations, REPO_BACKEND } = require('./lib/throwawayCluster');
 
 const checks = [];
 const ok = (name, condition) => checks.push([name, Boolean(condition)]);
 
 (async () => {
-  console.log(`initdb -> ${DATA}`);
-  execFileSync(path.join(PG, 'initdb'),
-    ['-D', DATA, '-U', 'postgres', '--encoding=UTF8', '--locale=C', '-A', 'trust'],
-    { env, stdio: 'pipe' });
-
-  const pgPort = await freePort();
-  execFileSync(path.join(PG, 'pg_ctl'), [
-    '-D', DATA, '-l', path.join(DATA, 'server.log'), '-w', '-o',
-    // TCP only: unix_socket_directories='' keeps the cluster off any shared
-    // socket path, so nothing else on the machine can reach it.
-    `-p ${pgPort} -h 127.0.0.1 -k "" -c unix_socket_directories=''`, 'start',
-  ], { env, stdio: 'pipe' });
-  started = true;
-
-  const url = `postgresql://postgres@127.0.0.1:${pgPort}/postgres`;
-  for (const pass of [1, 2]) {
-    const result = spawnSync('node', ['scripts/migrate.js'], {
-      cwd: REPO_BACKEND,
-      env: { ...process.env, DATABASE_URL: url, NODE_ENV: 'test' },
-      encoding: 'utf8',
-    });
-    if (result.status !== 0) {
-      console.error(`migration pass ${pass} FAILED\n${result.stdout}\n${result.stderr}`);
-      process.exit(1);
-    }
-    console.log(`migrations pass ${pass}: OK`);
+  let cluster;
+  try {
+    cluster = await startCluster({ prefix: 'ledger-verify-' });
+    applyMigrations(cluster.url);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(error.code === 'NO_PG_BIN' ? 2 : 1);
   }
+  const { url } = cluster;
 
   process.env.DATABASE_URL = url;
   const { Pool } = require('pg');

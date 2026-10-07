@@ -32,10 +32,11 @@ jobs:
 
       # The runner image ships PostgreSQL binaries off PATH; verify:ledger
       # initdb's a throwaway cluster and applies every migration twice.
-      - name: Ledger SQL against real Postgres
+      - name: Ledger and derivation SQL against real Postgres
         run: |
           PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
           npm run verify:ledger --prefix backend -- --pg-bin "$PG_BIN"
+          npm run verify:derivation --prefix backend -- --pg-bin "$PG_BIN"
 
       - name: Frontend lint
         run: npm run lint --prefix frontend

@@ -16,6 +16,7 @@
     "export": "node scripts/exportFromGoogleSheets.js",
     "export:excel": "node scripts/exportFromExcel.js",
     "verify:ledger": "node scripts/verify-ledger-sql.js",
+    "verify:derivation": "node scripts/verify-derivation-sql.js",
     "report:exchange-duplicates": "node scripts/report-exchange-duplicates.js",
     "resolve:exchange-duplicates": "node scripts/resolve-exchange-duplicates.js",
     "audit:exchange-archive": "node scripts/audit-exchange-archive.js",
