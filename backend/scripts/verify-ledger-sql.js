@@ -5,9 +5,9 @@
 // The rest of the suite fakes the pg Pool, which cannot execute SQL -- so a
 // 250-line UNION with a LATERAL, four LEFT JOINs and a window function is
 // otherwise only ever asserted as TEXT. This boots a cluster, applies the full
-// migration chain TWICE (migrations re-run on every boot, so idempotence is
-// part of what is under test), seeds both sources including a matched pair, and
-// checks the answers.
+// migration chain and then re-runs every file (--rerun-all: a database may
+// still meet the old every-boot runner, so idempotence stays under test), seeds
+// both sources including a matched pair, and checks the answers.
 //
 //   node scripts/verify-ledger-sql.js [--pg-bin /path/to/postgres/bin]
 //

@@ -1368,8 +1368,8 @@ router.delete('/address-labels/:address', async (req, res) => {
   try {
     const label = await EthAddressLabel.delete(req.user.id, req.params.address);
     if (!label) {
-      // Distinguish "builtin, refused" from "no such label": deleting a
-      // builtin would only resurrect it when the seed migration re-runs.
+      // Distinguish "builtin, refused" from "no such label": a builtin is a
+      // shared row, so one user cannot delete it.
       const existing = await EthAddressLabel.findByAddress(req.user.id, req.params.address);
       if (existing) {
         return res.status(409).json({

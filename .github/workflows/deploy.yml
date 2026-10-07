@@ -1,9 +1,9 @@
 name: Deploy to Azure App Service
 
 # DB migrations are not run here: the App Service startup command is
-# "cd /home/site/wwwroot/backend && npm run start:prod", which applies
-# backend/migrations/ before starting the server. Migrations must stay
-# idempotent -- scripts/migrate.js re-runs every file on each boot.
+# "cd /home/site/wwwroot/backend && npm run start:prod", which applies any
+# unrecorded files in backend/migrations/ (tracked in schema_migrations, under
+# a lock) before starting the server.
 
 on:
   push:

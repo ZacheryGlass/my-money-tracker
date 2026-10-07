@@ -112,8 +112,8 @@ class EthAddressLabel {
     return result.rows[0];
   }
 
-  // Builtins (user_id NULL) are not deletable: removing the row would only
-  // resurrect it on the next boot when the seed re-runs. Callers 409 instead.
+  // Builtins (user_id NULL) are shared by every user and are not deletable;
+  // callers 409 instead. A user overrides one with a row of their own.
   static async delete(userId, address) {
     const result = await pool.query(
       `DELETE FROM eth_address_labels

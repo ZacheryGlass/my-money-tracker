@@ -81,11 +81,13 @@ async function startCluster({ prefix = 'pg-verify-', argv = process.argv, log = 
   return { url: `postgresql://postgres@127.0.0.1:${port}/postgres`, pgBin, stop };
 }
 
-// Applies the full migration chain `passes` times through the real runner.
-// Migrations re-run on every boot, so a second pass is part of what is tested.
+// Applies the full migration chain through the real runner. Pass 1 adopts a
+// fresh database; later passes use --rerun-all, which re-runs every file the
+// way the legacy runner did on every boot -- idempotency stays under test
+// while a database migrated by the old runner can still meet these files.
 function applyMigrations(url, { passes = 2, log = console.log } = {}) {
   for (let pass = 1; pass <= passes; pass += 1) {
-    const result = spawnSync('node', ['scripts/migrate.js'], {
+    const result = spawnSync('node', ['scripts/migrate.js', '--strict', ...(pass > 1 ? ['--rerun-all'] : [])], {
       cwd: REPO_BACKEND,
       env: { ...process.env, DATABASE_URL: url, NODE_ENV: 'test' },
       encoding: 'utf8',
