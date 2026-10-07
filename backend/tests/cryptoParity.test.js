@@ -1,0 +1,132 @@
+'use strict';
+
+// Copies of one fact must agree until the refactor leaves a single source.
+// Each test names the copies it compares; when a slice removes a copy, its
+// test switches to asserting the copy reads from the registry.
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = 'postgresql://test:test@localhost/test';
+
+const ROOT = path.join(__dirname, '..', '..');
+const MIGRATIONS = path.join(__dirname, '..', 'migrations');
+const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
+const sorted = (values) => [...values].sort();
+
+// Values of the LAST migration (in boot order) that adds this CHECK.
+function lastCheckValues(constraint) {
+  let values = null;
+  for (const file of fs.readdirSync(MIGRATIONS).filter((name) => name.endsWith('.sql')).sort()) {
+    const sql = fs.readFileSync(path.join(MIGRATIONS, file), 'utf8');
+    const pattern = new RegExp(`ADD\\s+CONSTRAINT\\s+${constraint}\\s+CHECK\\s*\\(([\\s\\S]*?)\\)\\s*(?:NOT\\s+VALID\\s*)?;`, 'gi');
+    for (const match of sql.matchAll(pattern)) {
+      values = [...match[1].matchAll(/'([^']*)'/g)].map((value) => value[1]);
+    }
+  }
+  return values;
+}
+
+function objectKeys(source, constName) {
+  const body = source.match(new RegExp(`const ${constName} = \\{([\\s\\S]*?)\\n\\};`))[1];
+  return [...body.matchAll(/^  (\w+|'[^']+'):/gm)].map((match) => match[1].replace(/'/g, ''));
+}
+
+test('frontend explorer table covers every backend chain', () => {
+  const chains = require('../src/config/chains');
+  const explorers = objectKeys(read('frontend/src/utils/chains.js'), 'EXPLORERS');
+  assert.deepEqual(sorted(explorers.map(Number)), sorted(chains.allChains().map((chain) => chain.id)));
+});
+
+test('frontend native-asset exceptions match the backend registry', () => {
+  const chains = require('../src/config/chains');
+  const source = read('frontend/src/utils/chains.js');
+  const body = source.match(/const NATIVE_ASSETS = \{([\s\S]*?)\n\};/)[1];
+  const frontend = Object.fromEntries([...body.matchAll(/(\d+): '([A-Z]+)'/g)].map((m) => [Number(m[1]), m[2]]));
+  const backend = Object.fromEntries(chains.allChains()
+    .filter((chain) => chain.nativeAsset !== 'ETH').map((chain) => [chain.id, chain.nativeAsset]));
+  assert.deepEqual(frontend, backend);
+});
+
+test('frontend ledger categories match CryptoLedger.CATEGORIES', () => {
+  const CryptoLedger = require('../src/models/CryptoLedger');
+  const source = read('frontend/src/utils/dataLabels.js');
+  const body = source.match(/export const LEDGER_CATEGORIES = \[([\s\S]*?)\n\];/)[1];
+  const frontend = [...body.matchAll(/\['([a-z_]+)',/g)].map((match) => match[1]);
+  assert.deepEqual(sorted(frontend), sorted(CryptoLedger.CATEGORIES));
+});
+
+test('activity categories match the eth_activity CHECK', () => {
+  const { CATEGORIES } = require('../src/utils/ethActivityVocabulary');
+  assert.deepEqual(sorted(lastCheckValues('eth_activity_category_check')), sorted(CATEGORIES));
+});
+
+test('frontend spam reason labels cover every backend spam code', () => {
+  const { SPAM_REASONS } = require('../src/utils/ethActivityVocabulary');
+  const frontend = objectKeys(read('frontend/src/utils/dataLabels.js'), 'SPAM_REASON_LABELS');
+  assert.deepEqual(sorted(frontend), sorted(Object.values(SPAM_REASONS)));
+});
+
+test('label kinds agree across the route, the frontend verdicts and the CHECK', () => {
+  const route = read('backend/src/routes/eth.js').match(/const LABEL_KINDS = new Set\(\[([^\]]*)\]\)/)[1];
+  const routeKinds = [...route.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+  const options = read('frontend/src/utils/dataLabels.js').match(/export const LABEL_VERDICT_OPTIONS = \[([\s\S]*?)\n\];/)[1];
+  const frontendKinds = [...options.matchAll(/value: '([a-z_]+)'/g)].map((match) => match[1]);
+  assert.deepEqual(sorted(routeKinds), sorted(frontendKinds));
+  assert.deepEqual(sorted(lastCheckValues('eth_address_labels_kind_check')), sorted(routeKinds));
+});
+
+test('venue ids match the exchange_accounts CHECK', () => {
+  const ExchangeAccount = require('../src/models/ExchangeAccount');
+  assert.deepEqual(sorted(lastCheckValues('exchange_accounts_exchange_check')), sorted(ExchangeAccount.EXCHANGES));
+});
+
+test('every API connector is a known venue', () => {
+  const ExchangeAccount = require('../src/models/ExchangeAccount');
+  const { CONNECTORS, CREDENTIAL_FIELDS } = require('../src/services/exchangeSync');
+  for (const venue of CONNECTORS.keys()) assert.ok(ExchangeAccount.EXCHANGES.has(venue), venue);
+  assert.deepEqual(sorted(Object.keys(CREDENTIAL_FIELDS)), sorted(CONNECTORS.keys()));
+});
+
+test('user key services match the user_api_keys CHECK', () => {
+  const SecretsService = require('../src/services/SecretsService');
+  assert.deepEqual(sorted(lastCheckValues('user_api_keys_service_check')), sorted(SecretsService.USER_SERVICES));
+});
+
+test('the EVM audit names every registry chain', () => {
+  const chains = require('../src/config/chains');
+  const EvmAuditService = require('../src/services/EvmAuditService');
+  assert.deepEqual(
+    sorted([...EvmAuditService._AUDIT_CHAINS.keys()]),
+    sorted(chains.allChains().map((chain) => chain.id))
+  );
+});
+
+test('LabelsPanel builtin sources match the backend builtin packs', { todo: 'fixed in S1 step 1.9' }, () => {
+  const panel = read('frontend/src/components/crypto/LabelsPanel.jsx')
+    .match(/const BUILTIN_LABEL_SOURCES = new Set\(\[([^\]]*)\]\)/)[1];
+  const backend = read('backend/src/models/EthAddressLabel.js')
+    .match(/source IN \(([^)]*)\)/)[1];
+  const values = (text) => sorted([...text.matchAll(/'([a-z-]+)'/g)].map((match) => match[1]));
+  assert.deepEqual(values(panel), values(backend));
+});
+
+// Boot order is filename order, so two files sharing a numeric prefix run in
+// an order chosen by the rest of their names. The existing collisions are
+// grandfathered; new migrations take a fresh three-digit prefix.
+test('migration prefixes are unique outside the grandfathered set', () => {
+  const GRANDFATHERED = new Map([['062', 5], ['074', 2], ['081', 2]]);
+  const counts = new Map();
+  for (const file of fs.readdirSync(MIGRATIONS).filter((name) => name.endsWith('.sql'))) {
+    const match = file.match(/^(\d{3})([a-z]?)_[a-z0-9_]+\.sql$/);
+    assert.ok(match, `migration name does not match NNN_snake_case.sql: ${file}`);
+    if (match[2]) assert.equal(`${match[1]}${match[2]}`, '081a', `letter suffixes are grandfathered only: ${file}`);
+    counts.set(match[1], (counts.get(match[1]) || 0) + 1);
+  }
+  for (const [prefix, count] of counts) {
+    assert.equal(count, GRANDFATHERED.get(prefix) || 1, `migration prefix ${prefix} is used by ${count} files`);
+  }
+});

@@ -1,0 +1,724 @@
+{
+  "registry": [
+    {
+      "id": 1,
+      "name": "Ethereum",
+      "shortName": "Ethereum",
+      "nativeAsset": "ETH",
+      "coingeckoPlatform": "ethereum",
+      "enabledByDefault": true,
+      "consensusRpcUrl": "https://ethereum-rpc.publicnode.com",
+      "traceRpcUrl": null,
+      "enabled": true
+    },
+    {
+      "id": 42161,
+      "name": "Arbitrum One",
+      "shortName": "Arbitrum",
+      "nativeAsset": "ETH",
+      "coingeckoPlatform": "arbitrum-one",
+      "enabledByDefault": true,
+      "consensusRpcUrl": "https://arb1.arbitrum.io/rpc",
+      "traceRpcUrl": null,
+      "classicRetryableDeposits": {
+        "arbRetryableTx": "0x000000000000000000000000000000000000006e",
+        "lastClassicBlock": 22207817,
+        "depositMethodId": "0x679b6ded"
+      },
+      "enabled": true
+    },
+    {
+      "id": 42170,
+      "name": "Arbitrum Nova",
+      "shortName": "Arbitrum Nova",
+      "nativeAsset": "ETH",
+      "coingeckoPlatform": "arbitrum-nova",
+      "enabledByDefault": true,
+      "accountApi": {
+        "provider": "Blockscout",
+        "baseUrl": "https://arbitrum-nova.blockscout.com/api",
+        "v2BaseUrl": "https://arbitrum-nova.blockscout.com/api/v2/",
+        "v2NormalTransactions": true,
+        "requiresApiKey": false
+      },
+      "consensusRpcUrl": "https://arbitrum-nova-rpc.publicnode.com",
+      "traceRpcUrl": null,
+      "enabled": true
+    },
+    {
+      "id": 59144,
+      "name": "Linea",
+      "shortName": "Linea",
+      "nativeAsset": "ETH",
+      "coingeckoPlatform": "linea",
+      "enabledByDefault": true,
+      "consensusRpcUrl": "https://rpc.linea.build",
+      "traceRpcUrl": null,
+      "enabled": true
+    },
+    {
+      "id": 324,
+      "name": "ZKsync Era",
+      "shortName": "zkSync Era",
+      "nativeAsset": "ETH",
+      "coingeckoPlatform": "zksync",
+      "enabledByDefault": true,
+      "accountApi": {
+        "provider": "Blockscout",
+        "baseUrl": "https://zksync.blockscout.com/api",
+        "requiresApiKey": false,
+        "nativeHistoryApi": {
+          "provider": "ZKsync Explorer",
+          "baseUrl": "https://block-explorer-api.mainnet.zksync.io/api",
+          "requiresApiKey": false,
+          "pageSize": 100,
+          "blockPageSize": 100,
+          "normalFeeField": "fee",
+          "verifyRpcIndexedHead": true,
+          "requestSpacingMs": 2000
+        }
+      },
+      "consensusRpcUrl": "https://mainnet.era.zksync.io",
+      "traceRpcUrl": null,
+      "enabled": true
+    },
+    {
+      "id": 32401,
+      "name": "zkSync Lite (legacy)",
+      "shortName": "zkSync Lite",
+      "nativeAsset": "ETH",
+      "coingeckoPlatform": "ethereum",
+      "enabledByDefault": true,
+      "historyProvider": "zksync-lite",
+      "requiresApiKey": false,
+      "enabled": true
+    },
+    {
+      "id": 137,
+      "name": "Polygon",
+      "shortName": "Polygon",
+      "nativeAsset": "POL",
+      "coingeckoPlatform": "polygon-pos",
+      "enabledByDefault": true,
+      "consensusRpcUrl": "https://polygon.drpc.org",
+      "traceRpcUrl": null,
+      "stateSyncDeposits": {
+        "contract": "0x0000000000000000000000000000000000001010",
+        "topic0": "0x4e2ca0515ed1aef1395f66b5303bb5d6f1bf9d61a353fa53f73f8ac9973fa9f6"
+      },
+      "enabled": true
+    },
+    {
+      "id": 100,
+      "name": "Gnosis Chain",
+      "shortName": "Gnosis",
+      "nativeAsset": "XDAI",
+      "coingeckoPlatform": "xdai",
+      "enabledByDefault": true,
+      "accountApi": {
+        "provider": "Blockscout",
+        "baseUrl": "https://gnosisscan.io/api",
+        "v2BaseUrl": "https://gnosisscan.io/api/v2/",
+        "v2NormalTransactions": true,
+        "v2InternalTransactions": true,
+        "requiresApiKey": false
+      },
+      "consensusRpcUrl": "https://rpc.gnosischain.com",
+      "traceRpcUrl": null,
+      "stateSyncDeposits": {
+        "contract": "0x481c034c6d9441db23ea48de68bcae812c5d39ba",
+        "topic0": "0x3c798bbcf33115b42c728b8504cff11dd58736e9fa789f1cda2738db7d696b2a",
+        "userTopicIndex": 1
+      },
+      "enabled": true
+    },
+    {
+      "id": 10,
+      "name": "OP Mainnet",
+      "shortName": "Optimism",
+      "nativeAsset": "ETH",
+      "coingeckoPlatform": "optimistic-ethereum",
+      "enabledByDefault": true,
+      "accountApi": {
+        "provider": "Blockscout",
+        "baseUrl": "https://explorer.optimism.io/api",
+        "v2BaseUrl": "https://explorer.optimism.io/api/v2/",
+        "v2NormalTransactions": true,
+        "v2InternalTransactions": true,
+        "requiresApiKey": false
+      },
+      "consensusRpcUrl": "https://mainnet.optimism.io",
+      "traceRpcUrl": null,
+      "ingestVersion": 1,
+      "opStackDeposits": {
+        "creditSource": "0x4200000000000000000000000000000000000010"
+      },
+      "stateSyncDeposits": {
+        "contract": "0x4200000000000000000000000000000000000010",
+        "topic0": "0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d",
+        "userTopicIndex": 2
+      },
+      "enabled": true
+    }
+  ],
+  "chains": [
+    {
+      "id": 1,
+      "name": "Ethereum",
+      "shortName": "Ethereum",
+      "nativeAsset": "ETH",
+      "enabledByDefault": true,
+      "nativeSymbol": "ETH",
+      "ethHoldingName": "Ethereum",
+      "holdingSuffix": "",
+      "requiresKey": true,
+      "historyProvider": "etherscan",
+      "providerNames": {
+        "normal": "Etherscan V2",
+        "internal": "Etherscan V2",
+        "token": "Etherscan V2",
+        "nft": "Etherscan V2",
+        "nft1155": "Etherscan V2",
+        "statesync": "Etherscan V2",
+        "(none)": "Etherscan V2"
+      },
+      "providerManifest": {
+        "active_chain": "etherscan",
+        "wallet_history": "etherscan",
+        "coverage_boundary": "etherscan",
+        "native_indexed_head": "etherscan",
+        "token_indexed_head": "etherscan",
+        "normal": "etherscan",
+        "internal": "etherscan",
+        "erc20": "etherscan",
+        "erc721": "etherscan",
+        "erc1155": "etherscan"
+      },
+      "routes": [
+        {
+          "provider": "etherscan",
+          "baseUrl": null
+        }
+      ],
+      "ingestVersion": null
+    },
+    {
+      "id": 42161,
+      "name": "Arbitrum One",
+      "shortName": "Arbitrum",
+      "nativeAsset": "ETH",
+      "enabledByDefault": true,
+      "nativeSymbol": "ETH",
+      "ethHoldingName": "ETH (Arbitrum)",
+      "holdingSuffix": " (Arbitrum)",
+      "requiresKey": true,
+      "historyProvider": "etherscan",
+      "providerNames": {
+        "normal": "Etherscan V2",
+        "internal": "Etherscan V2",
+        "token": "Etherscan V2",
+        "nft": "Etherscan V2",
+        "nft1155": "Etherscan V2",
+        "statesync": "Etherscan V2",
+        "(none)": "Etherscan V2"
+      },
+      "providerManifest": {
+        "active_chain": "etherscan",
+        "wallet_history": "etherscan",
+        "coverage_boundary": "etherscan",
+        "native_indexed_head": "etherscan",
+        "token_indexed_head": "etherscan",
+        "normal": "etherscan",
+        "internal": "etherscan",
+        "erc20": "etherscan",
+        "erc721": "etherscan",
+        "erc1155": "etherscan"
+      },
+      "routes": [
+        {
+          "provider": "etherscan",
+          "baseUrl": null
+        }
+      ],
+      "ingestVersion": null
+    },
+    {
+      "id": 42170,
+      "name": "Arbitrum Nova",
+      "shortName": "Arbitrum Nova",
+      "nativeAsset": "ETH",
+      "enabledByDefault": true,
+      "nativeSymbol": "ETH",
+      "ethHoldingName": "ETH (Arbitrum Nova)",
+      "holdingSuffix": " (Arbitrum Nova)",
+      "requiresKey": false,
+      "historyProvider": "blockscout",
+      "providerNames": {
+        "normal": "Blockscout (https://arbitrum-nova.blockscout.com/api/v2/)",
+        "internal": "Blockscout (https://arbitrum-nova.blockscout.com/api)",
+        "token": "Blockscout (https://arbitrum-nova.blockscout.com/api)",
+        "nft": "Blockscout (https://arbitrum-nova.blockscout.com/api)",
+        "nft1155": "Blockscout (https://arbitrum-nova.blockscout.com/api)",
+        "statesync": "Blockscout (https://arbitrum-nova.blockscout.com/api)",
+        "(none)": "Blockscout (https://arbitrum-nova.blockscout.com/api)"
+      },
+      "providerManifest": {
+        "active_chain": "blockscout",
+        "wallet_history": "blockscout",
+        "coverage_boundary": "blockscout",
+        "native_indexed_head": "blockscout",
+        "token_indexed_head": "blockscout",
+        "normal": "blockscout",
+        "internal": "blockscout",
+        "erc20": "blockscout",
+        "erc721": "blockscout",
+        "erc1155": "blockscout"
+      },
+      "routes": [
+        {
+          "provider": "blockscout",
+          "baseUrl": "https://arbitrum-nova.blockscout.com/api/v2/"
+        },
+        {
+          "provider": "blockscout",
+          "baseUrl": "https://arbitrum-nova.blockscout.com/api"
+        }
+      ],
+      "ingestVersion": null
+    },
+    {
+      "id": 59144,
+      "name": "Linea",
+      "shortName": "Linea",
+      "nativeAsset": "ETH",
+      "enabledByDefault": true,
+      "nativeSymbol": "ETH",
+      "ethHoldingName": "ETH (Linea)",
+      "holdingSuffix": " (Linea)",
+      "requiresKey": true,
+      "historyProvider": "etherscan",
+      "providerNames": {
+        "normal": "Etherscan V2",
+        "internal": "Etherscan V2",
+        "token": "Etherscan V2",
+        "nft": "Etherscan V2",
+        "nft1155": "Etherscan V2",
+        "statesync": "Etherscan V2",
+        "(none)": "Etherscan V2"
+      },
+      "providerManifest": {
+        "active_chain": "etherscan",
+        "wallet_history": "etherscan",
+        "coverage_boundary": "etherscan",
+        "native_indexed_head": "etherscan",
+        "token_indexed_head": "etherscan",
+        "normal": "etherscan",
+        "internal": "etherscan",
+        "erc20": "etherscan",
+        "erc721": "etherscan",
+        "erc1155": "etherscan"
+      },
+      "routes": [
+        {
+          "provider": "etherscan",
+          "baseUrl": null
+        }
+      ],
+      "ingestVersion": null
+    },
+    {
+      "id": 324,
+      "name": "ZKsync Era",
+      "shortName": "zkSync Era",
+      "nativeAsset": "ETH",
+      "enabledByDefault": true,
+      "nativeSymbol": "ETH",
+      "ethHoldingName": "ETH (zkSync Era)",
+      "holdingSuffix": " (zkSync Era)",
+      "requiresKey": false,
+      "historyProvider": "explorer-composite",
+      "providerNames": {
+        "normal": "ZKsync Explorer (https://block-explorer-api.mainnet.zksync.io/api)",
+        "internal": "ZKsync Explorer (https://block-explorer-api.mainnet.zksync.io/api)",
+        "token": "Blockscout (https://zksync.blockscout.com/api)",
+        "nft": "Blockscout (https://zksync.blockscout.com/api)",
+        "nft1155": "Blockscout (https://zksync.blockscout.com/api)",
+        "statesync": "Blockscout (https://zksync.blockscout.com/api)",
+        "(none)": "Blockscout (https://zksync.blockscout.com/api)"
+      },
+      "providerManifest": {
+        "active_chain": "explorer-composite",
+        "wallet_history": "explorer-composite",
+        "coverage_boundary": "explorer-composite",
+        "native_indexed_head": "zksync explorer",
+        "token_indexed_head": "blockscout",
+        "normal": "zksync explorer",
+        "internal": "zksync explorer",
+        "erc20": "blockscout",
+        "erc721": "blockscout",
+        "erc1155": "blockscout"
+      },
+      "routes": [
+        {
+          "provider": "zksync explorer",
+          "baseUrl": "https://block-explorer-api.mainnet.zksync.io/api"
+        },
+        {
+          "provider": "blockscout",
+          "baseUrl": "https://zksync.blockscout.com/api"
+        }
+      ],
+      "ingestVersion": null
+    },
+    {
+      "id": 32401,
+      "name": "zkSync Lite (legacy)",
+      "shortName": "zkSync Lite",
+      "nativeAsset": "ETH",
+      "enabledByDefault": true,
+      "nativeSymbol": "ETH",
+      "ethHoldingName": "ETH (zkSync Lite)",
+      "holdingSuffix": " (zkSync Lite)",
+      "requiresKey": false,
+      "historyProvider": "zksync-lite",
+      "providerNames": {
+        "normal": "Matter Labs zkSync Lite archive",
+        "internal": "Matter Labs zkSync Lite archive",
+        "token": "Matter Labs zkSync Lite archive",
+        "nft": "Matter Labs zkSync Lite archive",
+        "nft1155": "Matter Labs zkSync Lite archive",
+        "statesync": "Matter Labs zkSync Lite archive",
+        "(none)": "Matter Labs zkSync Lite archive"
+      },
+      "providerManifest": {
+        "active_chain": "zksync-lite",
+        "wallet_history": "zksync-lite",
+        "coverage_boundary": "zksync-lite",
+        "native_indexed_head": "zksync-lite",
+        "token_indexed_head": "zksync-lite",
+        "normal": "zksync-lite",
+        "internal": "zksync-lite",
+        "erc20": "zksync-lite",
+        "erc721": "zksync-lite",
+        "erc1155": "zksync-lite"
+      },
+      "routes": [
+        {
+          "provider": "zksync-lite",
+          "baseUrl": null
+        }
+      ],
+      "ingestVersion": null
+    },
+    {
+      "id": 137,
+      "name": "Polygon",
+      "shortName": "Polygon",
+      "nativeAsset": "POL",
+      "enabledByDefault": true,
+      "nativeSymbol": "POL",
+      "ethHoldingName": "POL (Polygon)",
+      "holdingSuffix": " (Polygon)",
+      "requiresKey": true,
+      "historyProvider": "etherscan",
+      "providerNames": {
+        "normal": "Etherscan V2",
+        "internal": "Etherscan V2",
+        "token": "Etherscan V2",
+        "nft": "Etherscan V2",
+        "nft1155": "Etherscan V2",
+        "statesync": "Etherscan V2",
+        "(none)": "Etherscan V2"
+      },
+      "providerManifest": {
+        "active_chain": "etherscan",
+        "wallet_history": "etherscan",
+        "coverage_boundary": "etherscan",
+        "native_indexed_head": "etherscan",
+        "token_indexed_head": "etherscan",
+        "normal": "etherscan",
+        "internal": "etherscan",
+        "erc20": "etherscan",
+        "erc721": "etherscan",
+        "erc1155": "etherscan"
+      },
+      "routes": [
+        {
+          "provider": "etherscan",
+          "baseUrl": null
+        }
+      ],
+      "ingestVersion": null
+    },
+    {
+      "id": 100,
+      "name": "Gnosis Chain",
+      "shortName": "Gnosis",
+      "nativeAsset": "XDAI",
+      "enabledByDefault": true,
+      "nativeSymbol": "XDAI",
+      "ethHoldingName": "XDAI (Gnosis)",
+      "holdingSuffix": " (Gnosis)",
+      "requiresKey": false,
+      "historyProvider": "blockscout",
+      "providerNames": {
+        "normal": "Blockscout (https://gnosisscan.io/api/v2/)",
+        "internal": "Blockscout (https://gnosisscan.io/api/v2/)",
+        "token": "Blockscout (https://gnosisscan.io/api)",
+        "nft": "Blockscout (https://gnosisscan.io/api)",
+        "nft1155": "Blockscout (https://gnosisscan.io/api)",
+        "statesync": "Blockscout (https://gnosisscan.io/api)",
+        "(none)": "Blockscout (https://gnosisscan.io/api)"
+      },
+      "providerManifest": {
+        "active_chain": "blockscout",
+        "wallet_history": "blockscout",
+        "coverage_boundary": "blockscout",
+        "native_indexed_head": "blockscout",
+        "token_indexed_head": "blockscout",
+        "normal": "blockscout",
+        "internal": "blockscout",
+        "erc20": "blockscout",
+        "erc721": "blockscout",
+        "erc1155": "blockscout"
+      },
+      "routes": [
+        {
+          "provider": "blockscout",
+          "baseUrl": "https://gnosisscan.io/api/v2/"
+        },
+        {
+          "provider": "blockscout",
+          "baseUrl": "https://gnosisscan.io/api"
+        }
+      ],
+      "ingestVersion": null
+    },
+    {
+      "id": 10,
+      "name": "OP Mainnet",
+      "shortName": "Optimism",
+      "nativeAsset": "ETH",
+      "enabledByDefault": true,
+      "nativeSymbol": "ETH",
+      "ethHoldingName": "ETH (Optimism)",
+      "holdingSuffix": " (Optimism)",
+      "requiresKey": false,
+      "historyProvider": "blockscout",
+      "providerNames": {
+        "normal": "Blockscout (https://explorer.optimism.io/api/v2/)",
+        "internal": "Blockscout (https://explorer.optimism.io/api/v2/)",
+        "token": "Blockscout (https://explorer.optimism.io/api)",
+        "nft": "Blockscout (https://explorer.optimism.io/api)",
+        "nft1155": "Blockscout (https://explorer.optimism.io/api)",
+        "statesync": "Blockscout (https://explorer.optimism.io/api)",
+        "(none)": "Blockscout (https://explorer.optimism.io/api)"
+      },
+      "providerManifest": {
+        "active_chain": "blockscout",
+        "wallet_history": "blockscout",
+        "coverage_boundary": "blockscout",
+        "native_indexed_head": "blockscout",
+        "token_indexed_head": "blockscout",
+        "normal": "blockscout",
+        "internal": "blockscout",
+        "erc20": "blockscout",
+        "erc721": "blockscout",
+        "erc1155": "blockscout"
+      },
+      "routes": [
+        {
+          "provider": "blockscout",
+          "baseUrl": "https://explorer.optimism.io/api/v2/"
+        },
+        {
+          "provider": "blockscout",
+          "baseUrl": "https://explorer.optimism.io/api"
+        }
+      ],
+      "ingestVersion": 1
+    }
+  ],
+  "unknownChain": {
+    "nativeSymbol": "ETH",
+    "ethHoldingName": "ETH (Chain 999999)",
+    "holdingSuffix": " (Chain 999999)",
+    "chainLabel": "Chain 999999"
+  },
+  "nativeAssets": {
+    "ETH": {
+      "coingeckoId": "ethereum",
+      "coinbaseProduct": "ETH-USD",
+      "historyStart": "2016-05-18"
+    },
+    "POL": {
+      "coingeckoId": "polygon-ecosystem-token",
+      "coinbaseProduct": "POL-USD",
+      "historyStart": "2024-09-04"
+    },
+    "XDAI": {
+      "coingeckoId": "xdai",
+      "coinbaseProduct": "DAI-USD",
+      "historyStart": "2020-04-30"
+    }
+  },
+  "auditChains": {
+    "1": {
+      "auditProvider": "etherscan"
+    },
+    "10": {
+      "auditProvider": "blockscout"
+    },
+    "100": {
+      "moralis": "gnosis",
+      "fallbackProvider": "blockscout",
+      "activeIds": [
+        "0x64",
+        "100",
+        "gnosis"
+      ]
+    },
+    "137": {
+      "auditProvider": "etherscan"
+    },
+    "324": {
+      "auditProvider": "explorer-composite",
+      "errorDetail": "Moralis does not enumerate zkSync Era; the official ZKsync Explorer provides finite native/internal history and Blockscout provides finite token/NFT history, while consensus RPC verifies mined transactions and effects."
+    },
+    "32401": {
+      "unsupported": true,
+      "errorCode": "NON_EVM_CHAIN",
+      "errorDetail": "zkSync Lite is a legacy non-EVM history source and is outside the EVM audit contract."
+    },
+    "42161": {
+      "auditProvider": "etherscan"
+    },
+    "42170": {
+      "auditProvider": "blockscout"
+    },
+    "59144": {
+      "auditProvider": "etherscan"
+    }
+  },
+  "vocabulary": {
+    "categories": [
+      "airdrop",
+      "approval",
+      "bridge_in",
+      "bridge_out",
+      "contract_interaction",
+      "exchange_deposit",
+      "exchange_trade",
+      "exchange_withdrawal",
+      "failed",
+      "nft_burn",
+      "nft_mint",
+      "nft_purchase",
+      "nft_sale",
+      "receive",
+      "self_transfer",
+      "send",
+      "spend",
+      "staking_reward",
+      "swap"
+    ],
+    "reviewReasons": {
+      "unlabeled_send": "Counterparty has no verdict: spending, a gift, or a transfer?",
+      "unlabeled_receive": "Counterparty has no verdict: income, a refund, or a transfer?",
+      "unmatched": "Inbound and outbound legs did not match a known shape",
+      "no_legs": "No transfer legs found for this transaction",
+      "unmatched_bridge": "Bridge transfer with no matching leg on the other chain yet",
+      "excluded_bridge": "Bridge counterparty is Base (8453), which is excluded from this history"
+    },
+    "spamReasons": {
+      "ADDRESS_POISONING": "address_poisoning",
+      "ZERO_VALUE_TRANSFER": "zero_value_transfer",
+      "UNSOLICITED_TOKEN": "unsolicited_token",
+      "UNSOLICITED_NFT": "unsolicited_nft"
+    },
+    "neverSpamCategories": [
+      "bridge_in",
+      "bridge_out",
+      "exchange_deposit",
+      "exchange_trade",
+      "exchange_withdrawal",
+      "failed",
+      "nft_burn",
+      "nft_purchase",
+      "nft_sale",
+      "self_transfer",
+      "spend",
+      "swap"
+    ],
+    "usdBasisRank": {
+      "exact": 0,
+      "carried": 1,
+      "unpriced": 2,
+      "not_applicable": 3
+    }
+  },
+  "venues": {
+    "ids": [
+      "binance_us",
+      "coinbase",
+      "kraken",
+      "other"
+    ],
+    "connectors": [
+      "binance_us",
+      "coinbase",
+      "kraken"
+    ],
+    "credentialVenues": [
+      "binance_us",
+      "coinbase",
+      "kraken"
+    ],
+    "csvFormats": [
+      "binance_us",
+      "coinbase_pro",
+      "coinbase_retail",
+      "generic",
+      "kraken"
+    ]
+  },
+  "userKeyServices": [
+    "plaid_client_id",
+    "plaid_secret",
+    "etherscan",
+    "moralis"
+  ],
+  "bridge": {
+    "protocols": [
+      "op-stack",
+      "arbitrum",
+      "polygon",
+      "gnosis",
+      "zksync",
+      "zksync-lite",
+      "linea",
+      "across",
+      "hop"
+    ],
+    "ruleVersion": "bridge-match-v1"
+  },
+  "locks": {
+    "ethUserLane": 1163151409,
+    "bridge": 1112688964,
+    "evmAuditHashtext": [
+      "evm-audit-run",
+      "evm-audit-worker"
+    ]
+  },
+  "jobNames": [
+    "benchmark-update",
+    "eth-sync",
+    "exchange-match-policy-v3",
+    "exchange-sync",
+    "expense-sync",
+    "historical-prices",
+    "plaid-sync",
+    "price-update",
+    "snapshot-creation"
+  ]
+}

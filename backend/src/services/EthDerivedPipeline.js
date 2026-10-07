@@ -276,4 +276,5 @@ module.exports = {
   runForUser,
   serializedForUser,
   pendingQueueCount,
+  ETH_USER_LOCK_NAMESPACE,
 };

@@ -2176,6 +2176,7 @@ class EvmAuditService {
 
 module.exports = EvmAuditService;
 module.exports._missingRanges = missingRanges;
+module.exports._AUDIT_CHAINS = AUDIT_CHAINS;
 module.exports._unmatchedEffectCount = unmatchedEffectCount;
 module.exports._historicalTokenPlan = buildHistoricalTokenPlan;
 module.exports._mergeObservedTokenUniverse = mergeObservedTokenUniverse;

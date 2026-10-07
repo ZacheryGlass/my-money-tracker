@@ -459,3 +459,4 @@ module.exports.pairKeyFromVerdict = pairKeyFromVerdict;
 module.exports.endpointApplies = endpointApplies;
 module.exports.unsupportedMovement = unsupportedMovement;
 module.exports.excludedBaseMovement = excludedBaseMovement;
+module.exports.BRIDGE_LOCK_NAMESPACE = BRIDGE_LOCK_NAMESPACE;
