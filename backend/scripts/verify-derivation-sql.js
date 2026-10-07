@@ -251,7 +251,10 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
   ok('derived digest is non-trivial',
     first.derived.eth_activity.rows >= 9 && first.derived.eth_activity_links.rows === 1, first.derived);
 
-  console.log(`receipt fetch attempts across two rebuilds: ${receiptCalls.length}`);
+  ok('label/ignore-style refreshes (runForUser) fetch no receipts', receiptCalls.length === 0, receiptCalls);
+  await EthDerivedPipeline.serializedForUser(1, () => EthDerivedPipeline.finishUser(1, { context: 'harness sync tail' }));
+  ok('a sync tail acquires receipts for unsettled bridge candidates', receiptCalls.length === 2, receiptCalls);
+  ok('a sync tail over the same inputs keeps the digest', (await snapshot(1)).derived_sha256 === first.derived_sha256);
 
   // --- scenario: a replace that fails mid-write keeps the previous rows -----
   const EthActivity = require('../src/models/EthActivity');

@@ -229,6 +229,10 @@ async function finishUser(userId, {
   // single wallet rather than a user-wide refresh.
   walletId = null,
   timings = null,
+  // Bridge receipts are provider calls. Syncs, recaptures and audit
+  // completion acquire them; label, ignore, price and verdict refreshes
+  // re-derive from stored receipts only, so a click never waits on a network.
+  acquireReceipts = true,
 } = {}) {
   // rebuildForUserSafely never throws; a failed match pass logs itself and
   // returns null.
@@ -243,7 +247,7 @@ async function finishUser(userId, {
   // activity DELETE cascades eth_activity_links away, so skipping this would
   // silently unpair every bridge the user has ever made.
   try {
-    await timed(timings, 'Bridge match', () => BridgeMatchingService.rebuildForUser(userId));
+    await timed(timings, 'Bridge match', () => BridgeMatchingService.rebuildForUser(userId, { acquireReceipts }));
   } catch (err) {
     if (context) logger.warn({ userId, err }, `Bridge matching failed during ${context}`);
     else logger.warn({ walletId, err }, 'Bridge matching failed; legs stay flagged for review');
@@ -316,6 +320,7 @@ async function runForUserInLane(userId, { reclassify, holdings, context, matchRe
     }
     return finishUser(userId, {
       matchContext: { reason: matchReason }, context, isolateMirror: true, timings,
+      acquireReceipts: false,
     });
   });
   logger.info({

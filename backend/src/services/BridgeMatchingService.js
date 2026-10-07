@@ -25,9 +25,37 @@ const {
   excludedBaseIdentityFields,
 } = require('./evmAudit/completionPolicy');
 
-const MAX_RECEIPTS_PER_REBUILD = 250;
+// Receipt FETCHES per acquisition run. Candidates beyond it keep their stored
+// evidence and are fetched by a later sync, oldest first, so a large history
+// converges instead of failing the whole bridge rebuild.
+const MAX_RECEIPT_FETCHES_PER_RUN = 250;
+// A failed or unsupported fetch is not retried by a run that starts within
+// this window of the last attempt (a sync and its audit back to back).
+const FAILED_RECEIPT_RETRY_MS = 10 * 60 * 1000;
 const BRIDGE_LOCK_NAMESPACE = 1112688964; // ASCII-ish "BRID", signed int32-safe.
 const lower = (value) => String(value || '').toLowerCase();
+
+// A finalized, complete receipt is settled evidence: its block cannot reorg,
+// so a rebuild reuses it with no provider call. The decoders re-read the raw
+// receipt JSON on every rebuild, so a decoder change needs no refetch either.
+function receiptReusable(record) {
+  return record?.fetch_status === 'complete'
+    && record.provider_boundary?.finality?.status === 'finalized';
+}
+
+function recentlyFailed(record, now = Date.now()) {
+  if (!record || !['failed', 'unsupported'].includes(record.fetch_status)) return false;
+  const attemptedAt = record.fetched_at ? new Date(record.fetched_at).getTime() : 0;
+  return Number.isFinite(attemptedAt) && now - attemptedAt < FAILED_RECEIPT_RETRY_MS;
+}
+
+function acquisitionOrder(a, b) {
+  const timeA = new Date(a.block_time).getTime() || 0;
+  const timeB = new Date(b.block_time).getTime() || 0;
+  return timeA - timeB
+    || Number(a.chain_id) - Number(b.chain_id)
+    || lower(a.tx_hash).localeCompare(lower(b.tx_hash));
+}
 
 function activityCoordinate(row) {
   return `${Number(row?.wallet_id)}:${Number(row?.chain_id)}:${lower(row?.tx_hash)}`;
@@ -171,11 +199,6 @@ class BridgeMatchingService {
         ORDER BY a.block_time, a.chain_id, a.id`,
       [userId]
     );
-    if (rows.length > MAX_RECEIPTS_PER_REBUILD) {
-      const error = new Error(`Bridge evidence rebuild exceeded ${MAX_RECEIPTS_PER_REBUILD} candidate transactions`);
-      error.code = 'BRIDGE_EVIDENCE_BOUND_EXCEEDED';
-      throw error;
-    }
     return rows;
   }
 
@@ -214,8 +237,10 @@ class BridgeMatchingService {
       ? await SecretsService.getUserKey(userId, 'etherscan')
       : null;
     const envelopes = [];
+    const acquisition = { reused: 0, fetched: 0, deferred: 0, backedOff: 0 };
+    const ordered = acquireReceipts ? [...activities].sort(acquisitionOrder) : activities;
 
-    for (const activity of activities) {
+    for (const activity of ordered) {
       const key = `${activity.wallet_id}:${activity.chain_id}:${lower(activity.tx_hash)}`;
       // Base is an explicit scope exclusion.  Even if a pre-retirement row is
       // still present on an upgraded database, bridge rebuilds must not make a
@@ -243,7 +268,19 @@ class BridgeMatchingService {
       }
 
       let record = stored.get(key) || null;
-      if (acquireReceipts) {
+      let fetchNow = acquireReceipts;
+      if (fetchNow && receiptReusable(record)) {
+        acquisition.reused += 1;
+        fetchNow = false;
+      } else if (fetchNow && recentlyFailed(record)) {
+        acquisition.backedOff += 1;
+        fetchNow = false;
+      } else if (fetchNow && acquisition.fetched >= MAX_RECEIPT_FETCHES_PER_RUN) {
+        acquisition.deferred += 1;
+        fetchNow = false;
+      }
+      if (fetchNow) {
+        acquisition.fetched += 1;
         try {
           const fetched = await EtherscanService.getTransactionEvidence(
             activity.tx_hash, apiKey, Number(activity.chain_id)
@@ -280,7 +317,7 @@ class BridgeMatchingService {
           }, 'Bridge receipt refresh failed; movement remains unfolded');
         }
       }
-      if (!acquireReceipts && record?.fetch_status !== 'complete') record = null;
+      if (!fetchNow && record?.fetch_status !== 'complete') record = null;
       if (!record) continue;
       envelopes.push({
         ...activity,
@@ -292,6 +329,9 @@ class BridgeMatchingService {
         known_endpoints: knownEndpoints,
         hop_routes: hopRoutes,
       });
+    }
+    if (acquireReceipts) {
+      logger.info({ userId, ...acquisition, cap: MAX_RECEIPT_FETCHES_PER_RUN }, 'Bridge receipts acquired');
     }
     return envelopes;
   }
@@ -336,6 +376,36 @@ class BridgeMatchingService {
       return result;
     } catch (error) {
       await client.query('ROLLBACK');
+      // The activity DELETE already cascaded this user's links away. The
+      // movements survived (they key on wallet/chain/tx, not activity ids), so
+      // put their folds and review flags back from the database alone before
+      // reporting the failure.
+      try {
+        await this.reprojectForUser(userId);
+      } catch (reprojectError) {
+        logger.warn({ userId, err: reprojectError }, 'Bridge fold re-projection failed after a failed rebuild');
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Database only: re-project the stored movements onto the current activity
+  // rows and resync their review flags, in one locked transaction.
+  static async reprojectForUser(userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.lockForUser(userId, client);
+      const linkRows = await EthBridgeMovement.rebuildProjectionForUser(userId, client);
+      const unmatched = await EthActivityLink.syncBridgeReviewState(
+        userId, REVIEW_REASONS.unmatched_bridge, client
+      );
+      await client.query('COMMIT');
+      return { linkRows, unmatched };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (rollbackError) { void rollbackError; }
       throw error;
     } finally {
       client.release();
@@ -460,3 +530,5 @@ module.exports.endpointApplies = endpointApplies;
 module.exports.unsupportedMovement = unsupportedMovement;
 module.exports.excludedBaseMovement = excludedBaseMovement;
 module.exports.BRIDGE_LOCK_NAMESPACE = BRIDGE_LOCK_NAMESPACE;
+module.exports.MAX_RECEIPT_FETCHES_PER_RUN = MAX_RECEIPT_FETCHES_PER_RUN;
+module.exports.receiptReusable = receiptReusable;

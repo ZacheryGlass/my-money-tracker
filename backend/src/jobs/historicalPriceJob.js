@@ -90,6 +90,9 @@ async function run({ maxAssets } = {}) {
           const finished = await EthDerivedPipeline.finishUser(userId, {
             matchContext: { reason: 'historical-prices' },
             context: 'nightly re-valuation',
+            // Re-valuation changes dollars, not bridge evidence; the ETH sync
+            // twenty minutes earlier already acquired receipts.
+            acquireReceipts: false,
           });
           for (const walletId of rebuiltForUser) {
             if (finished.mirror?.resultsByWallet?.get(walletId)?.error) revalued.failed++;
