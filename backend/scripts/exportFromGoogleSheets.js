@@ -129,10 +129,7 @@ function convertToCsv(data) {
     return '';
   }
 
-  // Get headers from first row
-  const headers = data[0];
-
-  // Build CSV rows
+  // Build CSV rows (the first row is the header row)
   const csvRows = data.map(row => {
     return row.map(cell => csvEscape(cell)).join(',');
   });

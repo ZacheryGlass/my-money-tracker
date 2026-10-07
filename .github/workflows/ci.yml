@@ -1,0 +1,47 @@
+name: CI
+
+# Runs on pull requests and on every push except main; deploy.yml calls it as a
+# reusable workflow so main deploys only after the same checks pass.
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          npm ci --prefix backend
+          npm ci --prefix frontend
+
+      - name: Backend lint
+        run: npm run lint --prefix backend
+
+      - name: Backend tests
+        run: npm test --prefix backend
+
+      # The runner image ships PostgreSQL binaries off PATH; verify:ledger
+      # initdb's a throwaway cluster and applies every migration twice.
+      - name: Ledger SQL against real Postgres
+        run: |
+          PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+          npm run verify:ledger --prefix backend -- --pg-bin "$PG_BIN"
+
+      - name: Frontend lint
+        run: npm run lint --prefix frontend
+
+      - name: Frontend tests
+        run: npm test --prefix frontend
+
+      - name: Frontend build
+        run: npm run build --prefix frontend
