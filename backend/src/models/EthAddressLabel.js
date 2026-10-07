@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
+const { CURATED_PROTOCOL_SOURCES } = require('../crypto/interpretation/protocolIdentity');
 
 class EthAddressLabel {
   // The user's own rows plus the shared builtins, with a user row shadowing
@@ -40,6 +41,25 @@ class EthAddressLabel {
       [userId]
     );
     return result.rows;
+  }
+
+  // Curated protocol addresses with BOTH rows: the builtin and this user's row
+  // (or null). Shadowing is deliberately NOT resolved here -- protocol identity
+  // and protocol verdicts read the pair (crypto/interpretation/protocolIdentity).
+  // `addresses` narrows the set; omitted, every curated address is returned.
+  static async protocolLabelsForUser(userId, addresses = null) {
+    if (!userId) throw new Error('EthAddressLabel.protocolLabelsForUser requires a userId');
+    const { rows } = await pool.query(
+      `SELECT b.address, to_jsonb(b) AS builtin,
+              CASE WHEN u.id IS NULL THEN NULL ELSE to_jsonb(u) END AS user_label
+         FROM eth_address_labels b
+         LEFT JOIN eth_address_labels u ON u.address = b.address AND u.user_id = $1
+        WHERE b.user_id IS NULL
+          AND b.source = ANY($2::text[])
+          AND ($3::varchar[] IS NULL OR b.address = ANY($3::varchar[]))`,
+      [userId, CURATED_PROTOCOL_SOURCES, addresses]
+    );
+    return new Map(rows.map((row) => [row.address, { builtin: row.builtin, user: row.user_label }]));
   }
 
   static async findByAddress(userId, address) {

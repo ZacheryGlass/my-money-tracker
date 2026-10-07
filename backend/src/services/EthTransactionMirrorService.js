@@ -3,6 +3,8 @@
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
+const EthAddressLabel = require('../models/EthAddressLabel');
+const { verdictHolds } = require('../crypto/interpretation/protocolIdentity');
 const chains = require('../config/chains');
 const { shortAddress } = require('../utils/ethAddress');
 
@@ -191,17 +193,14 @@ class EthTransactionMirrorService {
           ORDER BY a.id, l.id`,
         [walletId, wallet.user_id]
       ) : Promise.resolve({ rows: [] }),
-      pool.query(
-        `SELECT address, name
-         FROM (
-           SELECT DISTINCT ON (address) address, name, source
-           FROM eth_address_labels
-           WHERE user_id = $1 OR user_id IS NULL
-           ORDER BY address, user_id NULLS LAST
-         ) resolved
-         WHERE source = 'builtin-etherdelta'`,
-        [wallet.user_id]
-      ),
+      // The custody mapping changes how a leg books, so it follows the protocol
+      // VERDICT rule (a rename keeps it, a re-voted kind drops it) and shows
+      // the user's name for the address when they gave one.
+      EthAddressLabel.protocolLabelsForUser(wallet.user_id).then((pairs) => ({
+        rows: [...pairs.entries()]
+          .filter(([, pair]) => pair.builtin.source === 'builtin-etherdelta' && verdictHolds(pair))
+          .map(([address, pair]) => ({ address, name: pair.user?.name || pair.builtin.name })),
+      })),
     ]);
     const transfers = transfersResult.rows;
     const ignoredContracts = new Set(ignoredResult.rows.map((row) => row.contract_address));

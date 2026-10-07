@@ -337,6 +337,38 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
     afterConcurrency.derived_sha256 === first.derived_sha256,
     require('./lib/derivedDigest').diffDigests(first, afterConcurrency).derived);
 
+  // --- scenario: protocol identity survives a user label (S1.8) -------------
+  // Last-section scenarios add rows the earlier digest comparisons never had.
+  const { rows: [etherDelta] } = await q(
+    "SELECT address FROM eth_address_labels WHERE user_id IS NULL AND source = 'builtin-etherdelta' LIMIT 1"
+  );
+  await ingest(walletA, WALLET_A, 1, {
+    normal: [normal(tx('e'), WALLET_A, etherDelta.address, ETH(0.2), '2021-01-11', { block: 110 })],
+  });
+  const edActivity = async () => (await q(
+    `SELECT category, protocol_interpretation->>'protocol' AS protocol, counterparty_name
+       FROM eth_activity WHERE wallet_id = $1 AND tx_hash = $2`, [walletA, tx('e')]
+  )).rows[0];
+  const relabel = async (kind, name) => {
+    await q(
+      `INSERT INTO eth_address_labels (user_id, address, name, kind, source) VALUES (1, $1, $2, $3, 'user')
+       ON CONFLICT (user_id, address) WHERE user_id IS NOT NULL DO UPDATE SET name = EXCLUDED.name, kind = EXCLUDED.kind`,
+      [etherDelta.address, name, kind]
+    );
+    await EthDerivedPipeline.runForUser(1, { reclassify: true, revalue: false, context: 'harness relabel' });
+    return edActivity();
+  };
+  await EthDerivedPipeline.runForUser(1, { reclassify: true, context: 'harness etherdelta' });
+  const unlabeled = await edActivity();
+  ok('builtin EtherDelta custody: exchange_deposit with the protocol explanation',
+    unlabeled?.category === 'exchange_deposit' && unlabeled?.protocol === 'EtherDelta', unlabeled);
+  const renamed = await relabel('external', 'Old DEX custody');
+  ok('a rename keeps the custody verdict, the explanation, and the user\'s name',
+    renamed?.category === 'exchange_deposit' && renamed?.protocol === 'EtherDelta' && renamed?.counterparty_name === 'Old DEX custody', renamed);
+  const owned = await relabel('own', 'Actually mine');
+  ok("an 'own' verdict removes protocol identity", owned?.category === 'self_transfer' && owned?.protocol == null, owned);
+  await q('DELETE FROM eth_address_labels WHERE user_id = 1 AND address = $1', [etherDelta.address]);
+
   // --- scenario: the ignore toggle refreshes holdings from the database ------
   // Last: it adds token holdings the earlier digest comparisons never had.
   let balanceCalls = 0;

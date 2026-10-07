@@ -96,3 +96,46 @@ test('selectors and decoded method names never create a protocol interpretation'
     legs: [],
   }), null);
 });
+
+// Protocol identity on curated builtin addresses survives a user label that
+// only renames or re-describes the address (S1.8). The user's 'own' verdict is
+// the one statement that removes it.
+const {
+  identityHolds, verdictHolds, identityLabel,
+} = require('../src/crypto/interpretation/protocolIdentity');
+
+const polymarketBuiltin = { source: 'builtin-polymarket', kind: 'external', name: 'Polymarket: CTF Exchange', confidence: 'high' };
+const etherDeltaBuiltin = { source: 'builtin-etherdelta', kind: 'external', name: 'EtherDelta', confidence: 'high' };
+const userRow = (kind, name = 'My name for it') => ({ source: 'user', kind, name, confidence: null });
+
+test('a renamed curated protocol address keeps its explanation', () => {
+  const pair = { builtin: polymarketBuiltin, user: userRow('service') };
+  assert.equal(identityHolds(pair), true);
+  const interpreted = interpretProtocolActivity(
+    { category: 'receive', legs: [CTF_IN] },
+    pair.user,
+    identityLabel(pair)
+  );
+  assert.equal(interpreted.protocol, 'Polymarket');
+  assert.equal(interpreted.confidence, 'high');
+  // Without the builtin, the shadowing user row alone explains nothing -- the
+  // regression this rule fixes.
+  assert.equal(interpretProtocolActivity({ category: 'receive', legs: [CTF_IN] }, pair.user), null);
+});
+
+test("only an 'own' verdict removes protocol identity", () => {
+  assert.equal(identityHolds({ builtin: polymarketBuiltin, user: null }), true);
+  assert.equal(identityHolds({ builtin: polymarketBuiltin, user: userRow('exchange') }), true);
+  assert.equal(identityHolds({ builtin: polymarketBuiltin, user: userRow('own') }), false);
+  assert.equal(identityLabel({ builtin: polymarketBuiltin, user: userRow('own') }), null);
+  assert.equal(identityHolds({ builtin: null, user: userRow('external') }), false);
+});
+
+test('verdict-affecting behavior needs no user row or the same kind as the builtin', () => {
+  assert.equal(verdictHolds({ builtin: etherDeltaBuiltin, user: null }), true);
+  assert.equal(verdictHolds({ builtin: etherDeltaBuiltin, user: userRow('external', 'ED custody') }), true,
+    'a rename keeps the custody rung');
+  assert.equal(verdictHolds({ builtin: etherDeltaBuiltin, user: userRow('exchange') }), false,
+    'a re-voted kind turns it off');
+  assert.equal(verdictHolds({ builtin: etherDeltaBuiltin, user: userRow('own') }), false);
+});

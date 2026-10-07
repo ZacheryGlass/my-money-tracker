@@ -52,7 +52,12 @@ function interpretation(protocol, action, summary, label, evidence, limitations 
   };
 }
 
-function interpretProtocolActivity(row, label = null) {
+// `builtin` is the curated builtin row whose protocol identity applies to the
+// counterparty (crypto/interpretation/protocolIdentity), even when a user row
+// shadows it for display. It names the protocol and sets the confidence; the
+// shadowing label still supplies the display name upstream.
+function interpretProtocolActivity(row, displayLabel = null, builtin = null) {
+  const label = builtin || displayLabel;
   const legs = Array.isArray(row?.legs) ? row.legs : [];
   const fungible = legs.filter((leg) => !NFT_STANDARDS.has(leg.token_standard));
   const nfts = legs.filter((leg) => NFT_STANDARDS.has(leg.token_standard));

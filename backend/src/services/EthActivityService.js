@@ -10,6 +10,8 @@ const pool = require('../config/database');
 const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const EthActivity = require('../models/EthActivity');
+const EthAddressLabel = require('../models/EthAddressLabel');
+const { verdictHolds, identityLabel } = require('../crypto/interpretation/protocolIdentity');
 const { buildActivityRows } = require('./ethActivity/rows');
 const { interpretProtocolActivity } = require('./ethActivity/protocolInterpretation');
 
@@ -139,10 +141,12 @@ class EthActivityService {
       transactions: transactionsResult.rows,
     });
     const labels = await this._nameCounterparties(wallet.user_id, rows);
+    const identities = await this._protocolIdentities(wallet.user_id, rows);
     for (const row of rows) {
       row.protocol_interpretation = interpretProtocolActivity(
         row,
-        row.counterparty_address ? labels.get(row.counterparty_address) || null : null
+        row.counterparty_address ? labels.get(row.counterparty_address) || null : null,
+        row.counterparty_address ? identities.get(row.counterparty_address) || null : null
       );
     }
     const written = await EthActivity.replaceForWallet(walletId, rows);
@@ -207,18 +211,14 @@ class EthActivityService {
     return this._addressesOfKindForUser(userId, 'service');
   }
 
+  // The EtherDelta custody rung changes the verdict, so it follows the
+  // protocol VERDICT rule: the builtin applies unless the user re-voted the
+  // address's kind (a rename keeps it).
   static async _custodyAddressesForUser(userId) {
-    const { rows } = await pool.query(
-      `SELECT address FROM (
-         SELECT DISTINCT ON (address) address, source
-         FROM eth_address_labels
-         WHERE user_id = $1 OR user_id IS NULL
-         ORDER BY address, user_id NULLS LAST
-       ) labels
-       WHERE source = 'builtin-etherdelta'`,
-      [userId]
-    );
-    return new Set(rows.map((row) => row.address));
+    const pairs = await EthAddressLabel.protocolLabelsForUser(userId);
+    return new Set([...pairs.entries()]
+      .filter(([, pair]) => pair.builtin.source === 'builtin-etherdelta' && verdictHolds(pair))
+      .map(([address]) => address));
   }
 
   // Fills counterparty_name for display from the owner's labels, resolved with
@@ -245,6 +245,15 @@ class EthActivityService {
       }
     }
     return labels;
+  }
+
+  // Builtin protocol identity per counterparty, independent of shadowing: a
+  // user renaming a curated protocol address keeps its explanation.
+  static async _protocolIdentities(userId, rows) {
+    const addresses = [...new Set(rows.map((row) => row.counterparty_address).filter(Boolean))];
+    if (!addresses.length) return new Map();
+    const pairs = await EthAddressLabel.protocolLabelsForUser(userId, addresses);
+    return new Map([...pairs.entries()].map(([address, pair]) => [address, identityLabel(pair)]));
   }
 }
 
