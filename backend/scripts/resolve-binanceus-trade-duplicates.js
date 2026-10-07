@@ -19,6 +19,7 @@
 // dedupe_provenance gains the API row's source snapshot. The dedupe audit row
 // is what keeps every later API replay of that external id a plain duplicate
 // instead of re-inserting the fill. Dry run unless --apply is explicit.
+const { referencingColumns, dependencyCounts } = require('./lib/exchangeRecordDependencies');
 require('dotenv').config();
 const pool = require('../src/config/database');
 const ExchangeReconciliationService = require('../src/services/ExchangeReconciliationService');
@@ -56,9 +57,6 @@ function normalizeDecimal(value) {
   return negative && normalized !== '0' ? `-${normalized}` : normalized;
 }
 
-function quoteIdent(name) {
-  return `"${String(name).replace(/"/g, '""')}"`;
-}
 
 // Scope and pair rule live in one place so planning and the per-pair
 // revalidation under lock cannot drift apart. $1 is always the account id.
@@ -312,50 +310,6 @@ function planPairs(candidateRows, dependencies = new Map()) {
     });
   }
   return { pairs, ambiguous, refused };
-}
-
-// Discovered from the catalog rather than hardcoded: any table that can point
-// at an exchange record is a reason not to delete it, including ones added
-// after this script was written. Every one of them is ON DELETE CASCADE, so a
-// missed reference would be silently destroyed, not merely orphaned.
-async function referencingColumns(client) {
-  const result = await client.query(
-    `SELECT c.conrelid::regclass::text AS table_name,
-            a.attname AS column_name,
-            array_length(c.conkey, 1) AS width
-     FROM pg_constraint c
-     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
-     WHERE c.contype = 'f' AND c.confrelid = 'exchange_records'::regclass
-     ORDER BY 1, 2`
-  );
-  if (!result.rows.length) {
-    throw new Error('No foreign keys reference exchange_records; refusing to trust an empty dependency check');
-  }
-  for (const row of result.rows) {
-    if (Number(row.width) !== 1) {
-      throw new Error(`${row.table_name} references exchange_records through a multi-column key; extend the dependency check first`);
-    }
-  }
-  return result.rows;
-}
-
-async function dependencyCounts(client, references, recordIds) {
-  if (!recordIds.length) return new Map();
-  const counts = references.map((reference, index) => (
-    `(SELECT COUNT(*) FROM ${reference.table_name} WHERE ${quoteIdent(reference.column_name)} = r.id) AS d${index}`
-  ));
-  const result = await client.query(
-    `SELECT r.id::text AS id, ${counts.join(', ')}
-     FROM unnest($1::bigint[]) AS r(id)`,
-    [recordIds]
-  );
-  return new Map(result.rows.map((row) => [
-    String(row.id),
-    Object.fromEntries(references.map((reference, index) => [
-      `${reference.table_name}.${reference.column_name}`,
-      Number(row[`d${index}`]) || 0,
-    ])),
-  ]));
 }
 
 async function loadAccount(client, accountId, userId, { lock }) {

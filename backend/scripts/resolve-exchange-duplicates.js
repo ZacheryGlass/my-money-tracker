@@ -2,6 +2,7 @@
 
 'use strict';
 
+const { recordDependencies, dependencyTotal } = require('./lib/exchangeRecordDependencies');
 require('dotenv').config();
 const fs = require('fs');
 const pool = require('../src/config/database');
@@ -40,16 +41,9 @@ function mergeProvenance(survivor, duplicate) {
   return [...prior, sourceSnapshot(duplicate)];
 }
 
+// Catalog-driven: every table that references an exchange record counts.
 async function dependentCount(client, recordId) {
-  const result = await client.query(
-    `SELECT
-       (SELECT COUNT(*) FROM exchange_matches WHERE exchange_record_id = $1 OR counter_record_id = $1)
-       + (SELECT COUNT(*) FROM exchange_match_verdicts WHERE exchange_record_id = $1 OR counter_record_id = $1)
-       + (SELECT COUNT(*) FROM exchange_match_events WHERE exchange_record_id = $1 OR counter_record_id = $1)
-       AS count`,
-    [recordId]
-  );
-  return Number(result.rows[0].count);
+  return dependencyTotal(await recordDependencies(client, recordId));
 }
 
 async function resolveGroup(client, group, userId) {

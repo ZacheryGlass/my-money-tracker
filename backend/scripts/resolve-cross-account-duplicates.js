@@ -7,6 +7,7 @@
 // API/CSV resolver: an account boundary is meaningful, so this path requires
 // explicit survivor and duplicate account ids and refuses every non-exact or
 // dependent row before it can write anything.
+const { recordDependencies, dependencyTotal } = require('./lib/exchangeRecordDependencies');
 require('dotenv').config();
 const pool = require('../src/config/database');
 const ExchangeMatchService = require('../src/services/ExchangeMatchService');
@@ -94,23 +95,10 @@ function appendProvenance(record, snapshot) {
   return [...prior, snapshot];
 }
 
-async function dependentCounts(client, recordId) {
-  const result = await client.query(
-    `SELECT
-       (SELECT COUNT(*) FROM exchange_matches WHERE exchange_record_id = $1 OR counter_record_id = $1) AS matches,
-       (SELECT COUNT(*) FROM exchange_match_verdicts WHERE exchange_record_id = $1 OR counter_record_id = $1) AS verdicts,
-       (SELECT COUNT(*) FROM exchange_match_events WHERE exchange_record_id = $1 OR counter_record_id = $1) AS events,
-       (SELECT COUNT(*) FROM exchange_match_suggestions WHERE exchange_record_id = $1 OR counter_record_id = $1) AS suggestions,
-       (SELECT COUNT(*) FROM exchange_fiat_matches WHERE exchange_record_id = $1) AS fiat_matches,
-       (SELECT COUNT(*) FROM exchange_record_dedupe_events WHERE survivor_record_id = $1) AS dedupe_events`,
-    [recordId]
-  );
-  const row = result.rows[0] || {};
-  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value) || 0]));
-}
-
-function dependencyTotal(counts) {
-  return Object.values(counts).reduce((total, value) => total + value, 0);
+// Catalog-driven: every table that references an exchange record counts,
+// keyed 'table.column'.
+function dependentCounts(client, recordId) {
+  return recordDependencies(client, recordId);
 }
 
 async function loadAccounts(client, sourceAccountId, duplicateAccountId, userId) {
