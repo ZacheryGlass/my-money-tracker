@@ -22,6 +22,11 @@ const secretCrypto = require('../utils/secretCrypto');
 const { toCsv, deformula } = require('../utils/csv');
 const { cleanAmount, compareAmounts } = require('../services/exchangeImport/shared');
 const logger = require('../config/logger');
+const { venueErrorCodes } = require('../crypto/registry/venues');
+
+const VENUE_AUTH_CODES = venueErrorCodes('AUTH_FAILED');
+const VENUE_RATE_LIMIT_CODES = venueErrorCodes('RATE_LIMITED');
+const VENUE_API_ERROR_CODES = venueErrorCodes('API_ERROR');
 
 const router = express.Router();
 
@@ -68,13 +73,13 @@ function respondToSyncError(res, error, fallback) {
   }
   // The provider's own refusal is the only thing that tells the user which
   // permission they forgot to tick, so it survives to the client verbatim.
-  if (['KRAKEN_AUTH_FAILED', 'COINBASE_AUTH_FAILED', 'COINBASE_KEY_FORMAT', 'BINANCE_US_AUTH_FAILED'].includes(error.code)) {
+  if (VENUE_AUTH_CODES.has(error.code)) {
     return res.status(400).json({ error: error.message, code: error.code });
   }
-  if (['KRAKEN_RATE_LIMITED', 'COINBASE_RATE_LIMITED', 'BINANCE_US_RATE_LIMITED'].includes(error.code)) {
+  if (VENUE_RATE_LIMIT_CODES.has(error.code)) {
     return res.status(429).json({ error: error.message, code: error.code });
   }
-  if (['KRAKEN_API_ERROR', 'COINBASE_API_ERROR', 'BINANCE_US_API_ERROR'].includes(error.code)) {
+  if (VENUE_API_ERROR_CODES.has(error.code)) {
     return res.status(502).json({ error: error.message, code: error.code });
   }
   logger.error({ err: error }, fallback);

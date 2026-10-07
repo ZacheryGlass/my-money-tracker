@@ -19,11 +19,7 @@ const logger = require('../config/logger');
 const inFlightAccounts = new Set();
 const SYNC_LOCK_LEASE_MS = 10 * 60 * 1000;
 const SYNC_LOCK_HEARTBEAT_MS = 3 * 60 * 1000;
-const RATE_LIMIT_CODES = new Set([
-  'KRAKEN_RATE_LIMITED',
-  'COINBASE_RATE_LIMITED',
-  'BINANCE_US_RATE_LIMITED',
-]);
+const RATE_LIMIT_CODES = require('../crypto/registry/venues').venueErrorCodes('RATE_LIMITED');
 
 function notConfigured(message) {
   const error = new Error(message);

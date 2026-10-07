@@ -3,7 +3,7 @@
 const { canonicalAsset } = require('./exchangeImport/canonicalFingerprint');
 const { addAmounts } = require('./exchangeImport/shared');
 
-const VENUES = { coinbase: 'Coinbase', kraken: 'Kraken', binance_us: 'Binance.US' };
+const { venue } = require('../crypto/registry/venues');
 const FIAT = new Set(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'CHF', 'JPY', 'NZD', 'SEK', 'NOK', 'DKK', 'BRL', 'ARS', 'MXN', 'TRY', 'PLN']);
 
 function snapshotHoldings(account, snapshot) {
@@ -50,7 +50,7 @@ class ExchangeHoldingsService {
          SET exchange_balance_as_of = EXCLUDED.exchange_balance_as_of
        WHERE accounts.user_id = EXCLUDED.user_id
        RETURNING id`,
-      [account.user_id, `${VENUES[account.exchange] || account.exchange} exchange ${account.id}`,
+      [account.user_id, `${venue(account.exchange)?.label || account.exchange} exchange ${account.id}`,
         account.name.slice(0, 100), account.id, snapshot.observed_at]
     );
     const accountId = result.rows[0]?.id;

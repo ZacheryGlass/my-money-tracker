@@ -1,25 +1,56 @@
 'use strict';
 
 // Exchange venue facts, one entry per venue id (the exchange_accounts CHECK
-// values). Grows into the full venue registry in S5; today it carries the
-// bank-statement descriptors the fiat matcher looks for, because a venue's
-// legal or payment name on a bank line is rarely its account id
-// ('binance_us' never appears on a statement; 'BAM Trading' does).
+// values). Each venue's code lists (error codes, bank descriptors, labels)
+// derive from here instead of being retyped in services and routes.
 //
-// Descriptors are lowercase substrings matched against a bank transaction's
-// name and merchant_name.
+//   label          display name; also the managed holdings account prefix
+//   errorPrefix    the venue client's error-code prefix: <PREFIX>_RATE_LIMITED,
+//                  <PREFIX>_API_ERROR, <PREFIX>_AUTH_FAILED (plus extraAuthCodes)
+//   apiSync        whether a read-only API connector exists ('other' is CSV-only)
+//   bankDescriptors lowercase substrings that identify the venue on a bank
+//                  statement line ('binance_us' never appears on one; 'BAM
+//                  Trading' does) -- read by the fiat matcher
 
 const VENUES = Object.freeze({
-  coinbase: Object.freeze({ id: 'coinbase', label: 'Coinbase', bankDescriptors: Object.freeze(['coinbase']) }),
-  kraken: Object.freeze({ id: 'kraken', label: 'Kraken', bankDescriptors: Object.freeze(['kraken', 'payward']) }),
-  binance_us: Object.freeze({
-    id: 'binance_us', label: 'Binance.US', bankDescriptors: Object.freeze(['binance', 'bam trading']),
+  coinbase: Object.freeze({
+    id: 'coinbase', label: 'Coinbase', errorPrefix: 'COINBASE', apiSync: true,
+    extraAuthCodes: Object.freeze(['COINBASE_KEY_FORMAT']),
+    bankDescriptors: Object.freeze(['coinbase']),
   }),
-  other: Object.freeze({ id: 'other', label: 'Other', bankDescriptors: Object.freeze([]) }),
+  kraken: Object.freeze({
+    id: 'kraken', label: 'Kraken', errorPrefix: 'KRAKEN', apiSync: true,
+    extraAuthCodes: Object.freeze([]),
+    bankDescriptors: Object.freeze(['kraken', 'payward']),
+  }),
+  binance_us: Object.freeze({
+    id: 'binance_us', label: 'Binance.US', errorPrefix: 'BINANCE_US', apiSync: true,
+    extraAuthCodes: Object.freeze([]),
+    bankDescriptors: Object.freeze(['binance', 'bam trading']),
+  }),
+  other: Object.freeze({
+    id: 'other', label: 'Other', errorPrefix: null, apiSync: false,
+    extraAuthCodes: Object.freeze([]),
+    bankDescriptors: Object.freeze([]),
+  }),
 });
+
+const VENUE_IDS = Object.freeze(Object.keys(VENUES));
 
 function venue(id) {
   return VENUES[id] || null;
+}
+
+// Every API venue's code of one kind: 'RATE_LIMITED', 'API_ERROR' or
+// 'AUTH_FAILED' (the last also includes each venue's extra auth codes).
+function venueErrorCodes(kind) {
+  const codes = Object.values(VENUES)
+    .filter((entry) => entry.errorPrefix)
+    .flatMap((entry) => [
+      `${entry.errorPrefix}_${kind}`,
+      ...(kind === 'AUTH_FAILED' ? entry.extraAuthCodes : []),
+    ]);
+  return new Set(codes);
 }
 
 // Parallel arrays (venue id, descriptor) for a SQL unnest().
@@ -35,4 +66,4 @@ function bankDescriptorPairs() {
   return { exchanges, descriptors };
 }
 
-module.exports = { VENUES, venue, bankDescriptorPairs };
+module.exports = { VENUES, VENUE_IDS, venue, venueErrorCodes, bankDescriptorPairs };

@@ -11,7 +11,8 @@ function requireUserId(method, userId) {
   }
 }
 
-const EXCHANGES = new Set(['coinbase', 'kraken', 'binance_us', 'other']);
+// Venue ids come from the venue registry (crypto/registry/venues.js).
+const EXCHANGES = new Set(require('../crypto/registry/venues').VENUE_IDS);
 // Which venues the API sync can talk to is NOT a model concern: the single
 // source of truth is CONNECTORS in services/exchangeSync/index.js, which the
 // routes and ExchangeSyncService both consult via connectorFor().

@@ -7,20 +7,14 @@ const { connectorFor } = require('./exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
 const logger = require('../config/logger');
 
-const RATE_LIMIT_CODES = new Set([
-  'KRAKEN_RATE_LIMITED',
-  'COINBASE_RATE_LIMITED',
-  'BINANCE_US_RATE_LIMITED',
-]);
+const { venueErrorCodes } = require('../crypto/registry/venues');
+
+const RATE_LIMIT_CODES = venueErrorCodes('RATE_LIMITED');
 const MAX_BACKOFF_MS = 15 * 60 * 1000;
 const BASE_BACKOFF_MS = 5000;
 const PUMP_DELAY_MS = 250;
 const TRANSIENT_RETRY_LIMIT = 5;
-const TRANSIENT_CODES = new Set([
-  'KRAKEN_API_ERROR',
-  'COINBASE_API_ERROR',
-  'BINANCE_US_API_ERROR',
-]);
+const TRANSIENT_CODES = venueErrorCodes('API_ERROR');
 const TRANSPORT_CODES = new Set([
   'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN', 'ECONNREFUSED',
   'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EPIPE', 'ERR_NETWORK',
