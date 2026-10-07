@@ -448,7 +448,10 @@ class ExchangeMatch {
         -- stored on it; without this a verdict carrying a foreign wallet_id
         -- would resolve to that user's activity row and match against it.
         AND EXISTS (SELECT 1 FROM eth_wallets w WHERE w.id = a.wallet_id AND w.user_id = $1)
-       WHERE ea.user_id = $1`,
+       WHERE ea.user_id = $1
+         -- A verdict detached by a keep-data disconnect (no wallet, no
+         -- counter record) waits for its wallet to be re-added.
+         AND (v.counter_record_id IS NOT NULL OR v.wallet_id IS NOT NULL)`,
       [userId]
     );
     return result.rows;
@@ -1125,6 +1128,7 @@ class ExchangeMatch {
        JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
        WHERE ea.user_id = $1
          AND v.verdict = 'confirmed'
+         AND (v.counter_record_id IS NOT NULL OR v.wallet_id IS NOT NULL)
          AND (v.exchange_record_id = ANY($2::bigint[]) OR v.counter_record_id = ANY($2::bigint[]))
          AND NOT (v.exchange_record_id = $3
                   AND v.counter_record_id IS NOT DISTINCT FROM $4

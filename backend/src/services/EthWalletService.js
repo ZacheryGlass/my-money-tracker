@@ -1697,6 +1697,10 @@ class EthWalletService {
         );
         account = accountResult.rows[0];
       }
+      // Decisions a keep-data disconnect detached (migration 101) come back
+      // with the address: overrides, adjustments and verdicts re-attach to the
+      // new wallet row in the same transaction.
+      await EthWallet.relinkDetachedDecisions(client, { walletId: wallet.id, userId, address: normalized });
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');

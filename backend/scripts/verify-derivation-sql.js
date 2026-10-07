@@ -399,6 +399,40 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
   ok('ledger holdings keep a held token and drop the ignored one',
     tokenHoldings.some((h) => /USDC/.test(h.name)) && !tokenHoldings.some((h) => /SCAM/.test(h.name)), tokenHoldings);
 
+  // --- scenario: decisions survive a keep-data disconnect (S1.12) ----------
+  // Destructive for wallet A, so it runs after everything that reads it.
+  const { rows: [venueRecord] } = await q("SELECT id FROM exchange_records WHERE external_id = 'cb:harness-1'");
+  await q(
+    `INSERT INTO exchange_match_verdicts (exchange_record_id, wallet_id, chain_id, tx_hash, verdict, note)
+     VALUES ($1, $2, 1, $3, 'confirmed', 'harness')`, [venueRecord.id, walletA, tx('1')]
+  );
+  await q(
+    "INSERT INTO eth_reconciliation_adjustments (wallet_id, chain_id, asset_key, amount_wei, note) VALUES ($1, 1, 'ETH', -5, 'harness')",
+    [walletA]
+  );
+  const decisionCounts = async (walletId) => (await q(
+    `SELECT (SELECT COUNT(*) FROM eth_activity_overrides WHERE wallet_id IS NOT DISTINCT FROM $1 AND wallet_address = $2)::int AS overrides,
+            (SELECT COUNT(*) FROM eth_reconciliation_adjustments WHERE wallet_id IS NOT DISTINCT FROM $1 AND wallet_address = $2)::int AS adjustments,
+            (SELECT COUNT(*) FROM exchange_match_verdicts WHERE wallet_id IS NOT DISTINCT FROM $1 AND wallet_address = $2)::int AS match_verdicts,
+            (SELECT COUNT(*) FROM eth_bridge_verdicts WHERE out_wallet_id IS NOT DISTINCT FROM $1 AND out_wallet_address = $2)::int AS bridge_verdicts`,
+    [walletId, WALLET_A]
+  )).rows[0];
+  const attached = await decisionCounts(walletA);
+  ok('decisions record their wallet address on write', Object.values(attached).every((n) => n === 1), attached);
+  SecretsService.getUserKey = async () => 'harness-key';
+  await EthWalletService.removeWallet(walletA, { removeData: false });
+  const detached = await decisionCounts(null);
+  ok('a keep-data disconnect detaches every decision instead of deleting it',
+    Object.values(detached).every((n) => n === 1), detached);
+  const { wallet: readded } = await EthWalletService.addWallet(1, WALLET_A, 'Main again');
+  const relinked = await decisionCounts(readded.id);
+  ok('re-adding the address re-attaches overrides, adjustments and both verdict kinds',
+    Object.values(relinked).every((n) => n === 1) && Object.values(await decisionCounts(null)).every((n) => n === 0), relinked);
+  await EthWalletService.removeWallet(readded.id, { removeData: true });
+  const removed = await decisionCounts(null);
+  ok('a remove-data disconnect deletes the decisions', Object.values(removed).every((n) => n === 0), removed);
+  SecretsService.getUserKey = async () => null;
+
   // LEDGER_DUMP=<path> writes the unified ledger's page, summary and export
   // rows for user 1, so two versions of CryptoLedger can be diffed byte for byte.
   if (process.env.LEDGER_DUMP) {

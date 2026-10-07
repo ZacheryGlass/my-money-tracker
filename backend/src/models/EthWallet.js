@@ -83,6 +83,36 @@ class EthWallet {
     return result.rows[0];
   }
 
+  // Re-attach decisions a keep-data disconnect detached, by owner and address.
+  // Runs inside the caller's transaction (addWallet).
+  static async relinkDetachedDecisions(client, { walletId, userId, address }) {
+    const params = [walletId, userId, String(address).toLowerCase()];
+    await client.query(
+      `UPDATE eth_activity_overrides SET wallet_id = $1
+        WHERE wallet_id IS NULL AND user_id = $2 AND wallet_address = $3`, params
+    );
+    await client.query(
+      `UPDATE eth_reconciliation_adjustments SET wallet_id = $1
+        WHERE wallet_id IS NULL AND user_id = $2 AND wallet_address = $3`, params
+    );
+    // A match verdict's owner is its exchange record's account owner.
+    await client.query(
+      `UPDATE exchange_match_verdicts v SET wallet_id = $1
+         FROM exchange_records er
+         JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+        WHERE er.id = v.exchange_record_id AND ea.user_id = $2
+          AND v.wallet_id IS NULL AND v.counter_record_id IS NULL AND v.wallet_address = $3`, params
+    );
+    await client.query(
+      `UPDATE eth_bridge_verdicts SET out_wallet_id = $1
+        WHERE out_wallet_id IS NULL AND user_id = $2 AND out_wallet_address = $3`, params
+    );
+    await client.query(
+      `UPDATE eth_bridge_verdicts SET in_wallet_id = $1
+        WHERE in_wallet_id IS NULL AND user_id = $2 AND in_wallet_address = $3`, params
+    );
+  }
+
   static async delete(id, { removeData = false } = {}) {
     const client = await pool.connect();
     try {
@@ -109,8 +139,19 @@ class EthWallet {
           [id]
         );
       }
+      if (removeData) {
+        // Remove-data deletes the user's decisions about this wallet's history
+        // too; keep-data leaves them for ON DELETE SET NULL to detach (101).
+        await client.query('DELETE FROM eth_activity_overrides WHERE wallet_id = $1', [id]);
+        await client.query('DELETE FROM eth_reconciliation_adjustments WHERE wallet_id = $1', [id]);
+        await client.query('DELETE FROM exchange_match_verdicts WHERE wallet_id = $1', [id]);
+        await client.query(
+          'DELETE FROM eth_bridge_verdicts WHERE out_wallet_id = $1 OR in_wallet_id = $1', [id]
+        );
+      }
       // Keep-data path: ON DELETE SET NULL on accounts.eth_wallet_id detaches
-      // the account; eth_transfers rows go away either way via CASCADE.
+      // the account, and on the decision tables detaches overrides, verdicts and
+      // adjustments; eth_transfers rows go away either way via CASCADE.
       const result = await client.query(
         'DELETE FROM eth_wallets WHERE id = $1 RETURNING *',
         [id]

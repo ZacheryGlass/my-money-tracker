@@ -104,7 +104,11 @@ function projectionAmounts(outActivity, inActivity, outMember = null, inMember =
 class EthBridgeMovement {
   static async findVerdictsForUser(userId, client = pool) {
     const { rows } = await client.query(
-      `SELECT * FROM eth_bridge_verdicts WHERE user_id = $1 ORDER BY id`,
+      // Both sides must name a wallet: a side detached by a keep-data
+      // disconnect re-attaches when its address is re-added.
+      `SELECT * FROM eth_bridge_verdicts
+        WHERE user_id = $1 AND out_wallet_id IS NOT NULL AND in_wallet_id IS NOT NULL
+        ORDER BY id`,
       [userId]
     );
     return rows;
