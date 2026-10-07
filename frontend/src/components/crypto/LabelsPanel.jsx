@@ -9,7 +9,6 @@ import {
 } from '../../utils/dataLabels';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-const BUILTIN_LABEL_SOURCES = new Set(['builtin', 'builtin-bridge', 'builtin-polymarket', 'builtin-etherdelta']);
 
 function AddressNoteEditor({ address, initialNote = '', onChanged, onError, showSuccess }) {
   const [note, setNote] = useState(initialNote);
@@ -242,7 +241,9 @@ function LabelsPanel({
               <p className="mt-1 text-[10px] leading-relaxed text-tertiary">{label.note}</p>
             )}
           </div>
-          {!BUILTIN_LABEL_SOURCES.has(label.source) && (
+          {/* Shared builtin rows cannot be removed (the API answers 409); the
+              server says which rows those are. */}
+          {!label.builtin && (
             <button
               onClick={() => handleUnlabelAddress(label.address)}
               disabled={updatingLabels}

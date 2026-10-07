@@ -69,7 +69,7 @@ const openLabelsTab = async (labels = []) => {
 describe('Crypto -> Labels tab', () => {
   it('renders builtin labels without a remove button and user labels with one', async () => {
     await openLabelsTab([
-      { address: '0x1111111111111111111111111111111111111111', name: 'Coinbase', source: 'builtin', note: 'Etherscan tag: Coinbase 1' },
+      { address: '0x1111111111111111111111111111111111111111', name: 'Coinbase', source: 'builtin', builtin: true, note: 'Etherscan tag: Coinbase 1' },
       { address: '0x2222222222222222222222222222222222222222', name: 'My Deposit', source: 'user', note: null },
     ]);
 
@@ -199,6 +199,7 @@ describe('Crypto -> Labels tab', () => {
           name: 'Arbitrum: Delayed Inbox',
           kind: 'bridge',
           source: 'builtin-bridge',
+          builtin: true,
         },
       ]);
       expect(await screen.findByText('Arbitrum: Delayed Inbox')).toBeInTheDocument();
@@ -212,6 +213,7 @@ describe('Crypto -> Labels tab', () => {
           name: 'Polymarket: CTF Exchange V1',
           kind: 'external',
           source: 'builtin-polymarket',
+          builtin: true,
         },
       ]);
       fireEvent.click(screen.getByRole('button', { name: /1 reviewed as outside parties/i }));

@@ -30,7 +30,9 @@ class EthAddressLabel {
   // in reclassifyCounterparties, and the next predicate may not be so harmless.
   static async findAllForUser(userId) {
     const result = await pool.query(
-      `SELECT * FROM (
+      // `builtin` (a shared row, not the user's) is what the UI keys its
+      // Remove button on, so the client never keeps its own list of sources.
+      `SELECT labels.*, (labels.user_id IS NULL) AS builtin FROM (
          SELECT DISTINCT ON (address) *
          FROM eth_address_labels
          WHERE user_id = $1 OR user_id IS NULL

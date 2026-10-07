@@ -105,13 +105,11 @@ test('the EVM audit names every registry chain', () => {
   );
 });
 
-test('LabelsPanel builtin sources match the backend builtin packs', { todo: 'fixed in S1 step 1.9' }, () => {
-  const panel = read('frontend/src/components/crypto/LabelsPanel.jsx')
-    .match(/const BUILTIN_LABEL_SOURCES = new Set\(\[([^\]]*)\]\)/)[1];
-  const backend = read('backend/src/models/EthAddressLabel.js')
-    .match(/source IN \(([^)]*)\)/)[1];
-  const values = (text) => sorted([...text.matchAll(/'([a-z-]+)'/g)].map((match) => match[1]));
-  assert.deepEqual(values(panel), values(backend));
+test('LabelsPanel keys removal on the server builtin flag, not a copied source list', () => {
+  const panel = read('frontend/src/components/crypto/LabelsPanel.jsx');
+  assert.doesNotMatch(panel, /BUILTIN_LABEL_SOURCES/);
+  assert.match(panel, /!label\.builtin &&/);
+  assert.match(read('backend/src/models/EthAddressLabel.js'), /\(labels\.user_id IS NULL\) AS builtin/);
 });
 
 // Boot order is filename order, so two files sharing a numeric prefix run in
