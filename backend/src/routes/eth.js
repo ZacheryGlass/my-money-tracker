@@ -23,7 +23,8 @@ const EthDerivedPipeline = require('../services/EthDerivedPipeline');
 const EthDiscoveryService = require('../services/EthDiscoveryService');
 const ExchangeAccount = require('../models/ExchangeAccount');
 const SecretsService = require('../services/SecretsService');
-const { CATEGORIES } = require('../utils/ethActivityVocabulary');
+const vocabulary = require('../crypto/registry/vocabulary');
+const { CATEGORIES } = vocabulary;
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
 
@@ -67,13 +68,13 @@ function walletSyncJobPayload(job) {
 // deposit address: value sent there was DISPOSED OF, and what came back is not
 // on this chain to find. Classified exchange_trade, not an internal transfer --
 // which is exactly why it cannot just be labeled 'exchange'.
-const LABEL_KINDS = new Set(['exchange', 'external', 'own', 'bridge', 'service']);
+const LABEL_KINDS = new Set(vocabulary.LABEL_KINDS);
 
 // The kinds whose NAME never reaches a classification decision, so a typed name
 // is optional and a short address will do. An 'exchange' name is different in
 // kind: it becomes counterparty_exchange, the text in the ledger AND the
 // assertion that rewrites spending as an internal transfer.
-const NAME_OPTIONAL_KINDS = new Set(['external', 'own', 'bridge', 'service']);
+const NAME_OPTIONAL_KINDS = new Set(vocabulary.NAME_OPTIONAL_LABEL_KINDS);
 
 // The activity layer's category vocabulary, single-sourced from the shared
 // module so the route and the CHECK constraint in 038 can never drift apart.
@@ -140,11 +141,11 @@ router.post('/discovery/:id/decision', async (req, res) => {
 // that IS the quarantine -- and 'only' is the Spam filter. Fail-closed like
 // every other filter here: `?spam=hide` silently returning the default feed
 // would read as "nothing was quarantined".
-const SPAM_FILTERS = new Set(['exclude', 'only', 'all']);
+const SPAM_FILTERS = new Set(vocabulary.SPAM_FILTERS);
 
 // The stored verdicts of the balance audit, as the reconciliation route filters
 // them. 'match'/'dust' are the two "nothing to do here" verdicts.
-const RECONCILIATION_STATUSES = new Set(['match', 'dust', 'mismatch', 'skipped', 'unavailable']);
+const RECONCILIATION_STATUSES = new Set(vocabulary.RECONCILIATION_STATUSES);
 
 // One wallet's audit, shaped for the wallet card.
 //

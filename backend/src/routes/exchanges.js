@@ -278,7 +278,7 @@ router.patch('/balance-exceptions/:exceptionId', async (req, res) => {
 // be read as an account id. It cannot be today (no route is a bare GET '/:id'),
 // and this ordering is what keeps that true when one is added.
 
-const VERDICTS = new Set(['confirmed', 'rejected']);
+const VERDICTS = new Set(require('../crypto/registry/vocabulary').MATCH_VERDICTS);
 // One pattern per family, owned by the family codec.
 const { TX_ID_RE: TX_HASH_RE } = require('../crypto/chains/families/evm/codec');
 

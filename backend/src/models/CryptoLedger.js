@@ -2,7 +2,10 @@
 
 const pool = require('../config/database');
 const chains = require('../config/chains');
-const { CATEGORIES: ACTIVITY_CATEGORIES } = require('../utils/ethActivityVocabulary');
+const {
+  CATEGORIES: ACTIVITY_CATEGORIES,
+  EXCHANGE_ONLY_CATEGORIES,
+} = require('../crypto/registry/vocabulary');
 
 // The unified crypto ledger (#63): one chronological stream over the two places
 // crypto activity is recorded -- eth_activity (on-chain, per transaction per
@@ -802,7 +805,6 @@ const UNION_SOURCE = '(SELECT * FROM onchain UNION ALL SELECT * FROM exch) r';
 // the client's filter list cannot drift from what the query can actually
 // return -- an unknown ?category= is a 400, so a client offering a value the
 // server does not know is a broken filter, not a wider feed.
-const EXCHANGE_ONLY_CATEGORIES = ['fee', 'exchange_transfer'];
 const LEDGER_CATEGORIES = [...ACTIVITY_CATEGORIES, ...EXCHANGE_ONLY_CATEGORIES];
 const LEDGER_SOURCES = ['onchain', 'exchange'];
 

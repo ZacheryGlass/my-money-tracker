@@ -70,13 +70,25 @@ test('frontend spam reason labels cover every backend spam code', () => {
   assert.deepEqual(sorted(frontend), sorted(Object.values(SPAM_REASONS)));
 });
 
-test('label kinds agree across the route, the frontend verdicts and the CHECK', () => {
-  const route = read('backend/src/routes/eth.js').match(/const LABEL_KINDS = new Set\(\[([^\]]*)\]\)/)[1];
-  const routeKinds = [...route.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+test('label kinds agree across the vocabulary, the frontend verdicts and the CHECK', () => {
+  const { LABEL_KINDS } = require('../src/crypto/registry/vocabulary');
   const options = read('frontend/src/utils/dataLabels.js').match(/export const LABEL_VERDICT_OPTIONS = \[([\s\S]*?)\n\];/)[1];
-  const frontendKinds = [...options.matchAll(/value: '([a-z_]+)'/g)].map((match) => match[1]);
-  assert.deepEqual(sorted(routeKinds), sorted(frontendKinds));
-  assert.deepEqual(sorted(lastCheckValues('eth_address_labels_kind_check')), sorted(routeKinds));
+  const frontendKinds = [...options.matchAll(/value: '([a-z_]+)'/g)].map((match) => match[1]).filter((kind) => kind !== 'keep');
+  assert.deepEqual(sorted(frontendKinds), sorted(LABEL_KINDS));
+  assert.deepEqual(sorted(lastCheckValues('eth_address_labels_kind_check')), sorted(LABEL_KINDS));
+  assert.doesNotMatch(read('backend/src/routes/eth.js'), /const LABEL_KINDS = new Set\(\[/);
+});
+
+test('the vocabulary shim is the registry module itself', () => {
+  assert.equal(require('../src/utils/ethActivityVocabulary'), require('../src/crypto/registry/vocabulary'));
+});
+
+test('ledger category labels cover exactly the ledger categories', () => {
+  const vocabulary = require('../src/crypto/registry/vocabulary');
+  assert.deepEqual(
+    sorted(vocabulary.LEDGER_CATEGORY_DEFINITIONS.map((entry) => entry.value)),
+    sorted([...vocabulary.CATEGORIES, ...vocabulary.EXCHANGE_ONLY_CATEGORIES])
+  );
 });
 
 test('venue ids match the exchange_accounts CHECK', () => {
