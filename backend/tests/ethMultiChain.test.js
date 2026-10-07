@@ -3077,6 +3077,13 @@ test('the transactions mirror carries chain_id through', async (t) => {
     if (/FROM eth_transfers WHERE wallet_id/.test(text)) return { rows: transfers };
     return { rows: [] };
   };
+  // The replace runs on one transaction client.
+  const originalConnect = require('../src/config/database').connect;
+  restore.push([require('../src/config/database'), 'connect', originalConnect]);
+  require('../src/config/database').connect = async () => ({
+    query: (text, params) => require('../src/config/database').query(text, params),
+    release() {},
+  });
 
   queries.length = 0;
   await MirrorService.rebuildForWallet(7);

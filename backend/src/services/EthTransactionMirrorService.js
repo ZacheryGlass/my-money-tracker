@@ -244,26 +244,38 @@ class EthTransactionMirrorService {
       });
     }
 
-    await pool.query(
-      'DELETE FROM transactions WHERE account_id = $1 AND eth_transfer_id IS NOT NULL',
-      [account.id]
-    );
-
-    const CHUNK = 500;
-    for (let start = 0; start < rows.length; start += CHUNK) {
-      const chunk = rows.slice(start, start + CHUNK);
-      const values = [];
-      const placeholders = chunk.map((row, i) => {
-        const base = i * 6;
-        values.push(row.eth_transfer_id, row.date, row.name, row.amount, row.category, row.chain_id);
-        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, ${account.id}, 'USD', FALSE)`;
-      });
-      await pool.query(
-        `INSERT INTO transactions (eth_transfer_id, date, name, amount, category, chain_id, account_id, currency_code, pending)
-         VALUES ${placeholders.join(', ')}
-         ON CONFLICT (eth_transfer_id) WHERE eth_transfer_id IS NOT NULL DO NOTHING`,
-        values
+    // ONE transaction: a reader never sees this account's mirror half
+    // replaced, and a failed insert keeps the previous rows.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'DELETE FROM transactions WHERE account_id = $1 AND eth_transfer_id IS NOT NULL',
+        [account.id]
       );
+
+      const CHUNK = 500;
+      for (let start = 0; start < rows.length; start += CHUNK) {
+        const chunk = rows.slice(start, start + CHUNK);
+        const values = [];
+        const placeholders = chunk.map((row, i) => {
+          const base = i * 6;
+          values.push(row.eth_transfer_id, row.date, row.name, row.amount, row.category, row.chain_id);
+          return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, ${account.id}, 'USD', FALSE)`;
+        });
+        await client.query(
+          `INSERT INTO transactions (eth_transfer_id, date, name, amount, category, chain_id, account_id, currency_code, pending)
+           VALUES ${placeholders.join(', ')}
+           ON CONFLICT (eth_transfer_id) WHERE eth_transfer_id IS NOT NULL DO NOTHING`,
+          values
+        );
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (rollbackError) { void rollbackError; }
+      throw error;
+    } finally {
+      client.release();
     }
 
     logger.info({ walletId, mirrored: rows.length, unpricedSkipped }, 'ETH transaction mirror rebuilt');

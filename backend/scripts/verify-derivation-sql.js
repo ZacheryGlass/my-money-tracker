@@ -76,6 +76,25 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
     throw error;
   };
 
+  // A hang is a failure with evidence: after the budget, print what every
+  // backend is waiting on and exit nonzero instead of stalling CI.
+  const watchdog = setTimeout(async () => {
+    const { Client } = require('pg');
+    const probe = new Client({ connectionString: cluster.url });
+    try {
+      await probe.connect();
+      const { rows } = await probe.query(
+        `SELECT pid, state, wait_event_type, wait_event, LEFT(query, 160) AS query
+           FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()`
+      );
+      console.error('WATCHDOG: harness exceeded its time budget; backends:', rows);
+    } finally {
+      cluster.stop();
+      process.exit(1);
+    }
+  }, Number(process.env.HARNESS_TIMEOUT_MS || 240000));
+  watchdog.unref();
+
   const q = (sql, params) => pool.query(sql, params);
   await q("INSERT INTO users (id, username) VALUES (1, 'verify'), (2, 'other') ON CONFLICT (id) DO NOTHING");
 
@@ -233,6 +252,55 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
     first.derived.eth_activity.rows >= 9 && first.derived.eth_activity_links.rows === 1, first.derived);
 
   console.log(`receipt fetch attempts across two rebuilds: ${receiptCalls.length}`);
+
+  // --- scenario: a replace that fails mid-write keeps the previous rows -----
+  const EthActivity = require('../src/models/EthActivity');
+  const EthTransactionMirrorService = require('../src/services/EthTransactionMirrorService');
+  const countActivity = async () => Number((await q('SELECT COUNT(*) AS n FROM eth_activity WHERE wallet_id = $1', [walletA])).rows[0].n);
+  const countMirror = async () => Number((await q(
+    `SELECT COUNT(*) AS n FROM transactions t JOIN accounts a ON a.id = t.account_id
+      WHERE a.eth_wallet_id = $1 AND t.eth_transfer_id IS NOT NULL`, [walletA]
+  )).rows[0].n);
+  const activityBefore = await countActivity();
+  const mirrorBefore = await countMirror();
+  const goodRow = { chain_id: 1, tx_hash: tx('1'), block_number: 1, block_time: new Date(), category: 'receive', legs: [] };
+  let activityFailed = false;
+  try {
+    // The second row violates eth_activity's category CHECK after the DELETE
+    // and the first insert chunk have run inside the transaction.
+    await EthActivity.replaceForWallet(walletA, [goodRow, ...Array.from({ length: 250 }, (_, i) => ({
+      ...goodRow, tx_hash: `0x${i.toString(16).padStart(64, '0')}`, category: i === 249 ? 'not_a_category' : 'receive',
+    }))]);
+  } catch {
+    activityFailed = true;
+  }
+  ok('a failed activity replace keeps every previous row',
+    activityFailed && (await countActivity()) === activityBefore, { activityFailed, before: activityBefore, after: await countActivity() });
+
+  const realConnect = pool.connect.bind(pool);
+  // pool.query() checks out clients through the callback form; only the
+  // promise form (an explicit transaction client) gets the failing insert.
+  pool.connect = async (callback) => {
+    if (typeof callback === 'function') return realConnect(callback);
+    const client = await realConnect();
+    const realQuery = client.query.bind(client);
+    client.query = (text, params) => (/INSERT INTO transactions/.test(String(text))
+      ? Promise.reject(new Error('injected mirror insert failure')) : realQuery(text, params));
+    const realRelease = client.release.bind(client);
+    client.release = (...args) => { client.query = realQuery; return realRelease(...args); };
+    return client;
+  };
+  let mirrorFailed = false;
+  try {
+    await EthTransactionMirrorService.rebuildForWallet(walletA, { includeBridgeLinks: true });
+  } catch {
+    mirrorFailed = true;
+  } finally {
+    pool.connect = realConnect;
+  }
+  ok('a failed mirror replace keeps every previous row',
+    mirrorFailed && (await countMirror()) === mirrorBefore && mirrorBefore > 0, { mirrorFailed, before: mirrorBefore, after: await countMirror() });
+  ok('failed replaces leave the derived digest unchanged', (await snapshot(1)).derived_sha256 === second.derived_sha256);
 
   // --- scenario: concurrent rebuilds and match passes, production locking ---
   // Session lane lock + transaction EXM1/BRID locks, as production takes them.

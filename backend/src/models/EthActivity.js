@@ -193,8 +193,30 @@ class EthActivity {
   // Delete-then-insert, like the ledger mirror. Scoped to eth_activity ONLY:
   // eth_activity_overrides is never touched here, which is what makes a manual
   // correction survive every resync and every relabel.
-  static async replaceForWallet(walletId, rows) {
-    await pool.query('DELETE FROM eth_activity WHERE wallet_id = $1', [walletId]);
+  //
+  // ONE transaction: readers never see a wallet with its activity half
+  // replaced, and a failure mid-insert keeps the previous rows. Links still
+  // cascade away with the old rows and are re-projected by the user-wide tail.
+  static async replaceForWallet(walletId, rows, { client: outerClient = null } = {}) {
+    const ownsTransaction = !outerClient;
+    const client = outerClient || await pool.connect();
+    try {
+      if (ownsTransaction) await client.query('BEGIN');
+      const inserted = await this._replaceForWallet(client, walletId, rows);
+      if (ownsTransaction) await client.query('COMMIT');
+      return inserted;
+    } catch (error) {
+      if (ownsTransaction) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) { void rollbackError; }
+      }
+      throw error;
+    } finally {
+      if (ownsTransaction) client.release();
+    }
+  }
+
+  static async _replaceForWallet(client, walletId, rows) {
+    await client.query('DELETE FROM eth_activity WHERE wallet_id = $1', [walletId]);
     if (!rows.length) return 0;
 
     const CHUNK = 200;
@@ -241,7 +263,7 @@ class EthActivity {
             : `$${base + j + 1}`
         )).join(', ')})`;
       });
-      const result = await pool.query(
+      const result = await client.query(
         `INSERT INTO eth_activity (${INSERT_COLUMNS.join(', ')})
          VALUES ${placeholders.join(', ')}
          ON CONFLICT (wallet_id, chain_id, tx_hash) DO NOTHING`,
