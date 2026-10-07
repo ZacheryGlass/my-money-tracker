@@ -98,3 +98,17 @@ describe('formatExactUnits', () => {
     expect(formatExactUnits('not a number', 18)).toBe(null);
   });
 });
+
+describe('formatDecimalAmount', () => {
+  it('keeps every digit of an exact decimal string, grouped and truncated', async () => {
+    const { formatDecimalAmount } = await import('./format');
+    expect(formatDecimalAmount('1234567.123456789123')).toBe('1,234,567.12345678');
+    expect(formatDecimalAmount('-0.50000000')).toBe('-0.5');
+    expect(formatDecimalAmount('90071992547409931.5')).toBe('90,071,992,547,409,931.5');
+    expect(formatDecimalAmount('0.000000001')).toBe('0');
+    expect(formatDecimalAmount('-0.000000001')).toBe('0');
+    expect(formatDecimalAmount('12')).toBe('12');
+    expect(formatDecimalAmount(null)).toBe(null);
+    expect(formatDecimalAmount('n/a')).toBe('n/a');
+  });
+});

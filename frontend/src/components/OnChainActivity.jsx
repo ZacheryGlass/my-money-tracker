@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../utils/api';
-import { formatDateDisplay, formatUsdAtTime, shortEthAddress } from '../utils/format';
+import { formatDateDisplay, formatTokenUnits, formatUsdAtTime, shortEthAddress } from '../utils/format';
 import { explorerTxUrl, nativeSymbol } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
@@ -71,18 +71,20 @@ const formatTransferQuantity = (transfer) => {
   // 1e18 divide below would render every one of them as 0. ERC-721 is always
   // one unit; ERC-1155 can move several copies of an id.
   if (NFT_TRANSFER_TYPES.has(transfer.transfer_type)) {
-    const units = Number(transfer.value_wei);
+    const units = formatTokenUnits(transfer.value_wei, 0) ?? String(transfer.value_wei);
     const label = `${transfer.token_symbol || 'NFT'}${transfer.token_id != null ? ` #${shortTokenId(transfer.token_id)}` : ''}`;
-    return units > 1 ? `${units} × ${label}` : label;
+    return /^\d/.test(units) && units !== '1' && units !== '0' ? `${units} × ${label}` : label;
   }
   const decimals = transfer.transfer_type === 'token'
     ? (transfer.token_decimals != null ? Number(transfer.token_decimals) : 18)
     : 18;
-  const quantity = Number(transfer.value_wei) / 10 ** decimals;
+  // BigInt end to end (shared formatter): value_wei is a uint256 string, and a
+  // Number divide rounds real amounts and corrupts anything past 2^53.
+  const quantity = formatTokenUnits(transfer.value_wei, decimals) ?? '—';
   const symbol = transfer.transfer_type === 'token'
     ? (transfer.token_symbol || 'TOKEN')
     : nativeSymbol(transfer.chain_id);
-  return `${quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${symbol}`;
+  return `${quantity} ${symbol}`;
 };
 
 // What the row was worth ON ITS OWN DATE (#73). The three-state rule lives in

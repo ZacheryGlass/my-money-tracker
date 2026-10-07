@@ -5,7 +5,7 @@ import {
   RefreshCw, Save, ShieldCheck, Trash2, Unlink, Upload, X,
 } from 'lucide-react';
 import { exchanges as exchangesAPI } from '../../utils/api';
-import { formatDateDisplay, formatRelativeTime, shortEthAddress } from '../../utils/format';
+import { formatDateDisplay, formatDecimalAmount, formatRelativeTime, shortEthAddress } from '../../utils/format';
 import {
   describeExchangeMatchEvidence,
   describeExchangeSuggestionReason,
@@ -57,12 +57,10 @@ const exchangeReviewReason = (record) => {
   return sourceType ? `unrecognized row type "${sourceType}"` : 'flagged while importing';
 };
 
-const exchangeRecordAmount = (record) => {
-  if (record?.base_amount === null || record?.base_amount === undefined) return '—';
-  const amount = Number(record.base_amount);
-  if (!Number.isFinite(amount)) return record.base_amount;
-  return amount.toLocaleString(undefined, { maximumFractionDigits: 8 });
-};
+// NUMERIC string from the API, formatted without passing through Number.
+const exchangeRecordAmount = (record) => (
+  formatDecimalAmount(record?.base_amount, { maxFractionDigits: 8 }) ?? '—'
+);
 
 const suggestionTargetText = (suggestion) => {
   if (suggestion?.counter_record_id != null) {

@@ -78,6 +78,23 @@ export const formatTokenUnits = (units, decimals = 18, { maxFractionDigits = 6 }
   return `${negative ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}`;
 };
 
+// An exact decimal STRING (a NUMERIC column, e.g. an exchange record's
+// base_amount) rendered without passing through Number, so an 18-decimal
+// quantity or a whole part past 2^53 keeps every digit it is shown with.
+// Truncated like formatTokenUnits; a non-numeric value comes back as given.
+export const formatDecimalAmount = (value, { maxFractionDigits = 8 } = {}) => {
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim();
+  const match = text.match(/^(-?)(\d*)(?:\.(\d*))?$/);
+  if (!match || (!match[2] && !match[3])) return text;
+  const [, sign, wholeDigits, fractionDigits = ''] = match;
+  const whole = (wholeDigits || '0').replace(/^0+(?=\d)/, '');
+  const fraction = fractionDigits.slice(0, maxFractionDigits).replace(/0+$/, '');
+  const negative = sign === '-' && (/[1-9]/.test(whole) || /[1-9]/.test(fraction));
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${negative ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}`;
+};
+
 // The same rendering at FULL precision: every digit the asset's decimals allow,
 // so truncation is impossible. This is what the balance audit's deltas use.
 // formatTokenUnits' six-digit default renders a sub-microether drift as '0',
