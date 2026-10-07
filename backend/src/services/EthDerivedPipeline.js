@@ -28,6 +28,7 @@
 // LAZILY inside the holdings step for the same reason plus a require cycle --
 // EthWalletService requires this module at load time.
 
+const { AsyncLocalStorage } = require('node:async_hooks');
 const logger = require('../config/logger');
 const advisoryLocks = require('../config/advisoryLocks');
 const EthTransfer = require('../models/EthTransfer');
@@ -114,8 +115,29 @@ function serializedOn(key, fn) {
   return run;
 }
 
+// The lane is RE-ENTRANT: work already running inside a user's lane may call
+// serializedForUser for the same user again (a route that holds the lane and
+// calls a service that also takes it) and runs directly, instead of queueing
+// behind itself forever. Entering a DIFFERENT user's lane from inside one is a
+// programming error -- it would hold two users' locks in an order no other
+// caller agrees on -- and is refused.
+const laneStorage = new AsyncLocalStorage();
+
 function serializedForUser(userId, fn) {
-  return serializedOn(`user:${userId}`, () => withProductionUserLock(userId, fn));
+  const current = laneStorage.getStore();
+  if (current) {
+    if (current.userId === userId) return Promise.resolve().then(fn);
+    return Promise.reject(new Error(
+      `serializedForUser(${userId}) called inside user ${current.userId}'s lane`
+    ));
+  }
+  return serializedOn(`user:${userId}`,
+    () => withProductionUserLock(userId, () => laneStorage.run({ userId }, fn)));
+}
+
+// The user whose lane the caller is running in, or null outside every lane.
+function currentLaneUser() {
+  return laneStorage.getStore()?.userId ?? null;
 }
 
 // Test introspection: how many lanes still hold work.
@@ -302,6 +324,7 @@ module.exports = {
   finishUser,
   runForUser,
   serializedForUser,
+  currentLaneUser,
   pendingQueueCount,
   ETH_USER_LOCK_NAMESPACE,
 };

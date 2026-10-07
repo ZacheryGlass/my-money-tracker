@@ -409,6 +409,52 @@ test('production lanes hold the same PostgreSQL advisory lock across the full us
   ]);
 });
 
+test('the lane is re-entrant for its own user: nested work runs directly, under one lock', async () => {
+  const originalConnect = advisoryLocks.connect;
+  const originalEnv = process.env.NODE_ENV;
+  const events = [];
+  const client = {
+    async query(sql, params) {
+      events.push([/unlock/.test(sql) ? 'unlock' : 'lock', ...params]);
+      return { rows: [{ released: true }] };
+    },
+    release() { events.push(['release']); },
+  };
+  advisoryLocks.connect = async () => client;
+  process.env.NODE_ENV = 'production';
+  let result;
+  try {
+    result = await EthDerivedPipeline.serializedForUser(18, async () => {
+      events.push(['outer', EthDerivedPipeline.currentLaneUser()]);
+      const inner = await EthDerivedPipeline.serializedForUser(18, async () => {
+        events.push(['inner', EthDerivedPipeline.currentLaneUser()]);
+        return 'inner-done';
+      });
+      return `${inner}+outer-done`;
+    });
+  } finally {
+    advisoryLocks.connect = originalConnect;
+    process.env.NODE_ENV = originalEnv;
+  }
+  assert.equal(result, 'inner-done+outer-done');
+  assert.deepEqual(events, [
+    ['lock', 0x45544831, 18],
+    ['outer', 18],
+    ['inner', 18],
+    ['unlock', 0x45544831, 18],
+    ['release'],
+  ]);
+  assert.equal(EthDerivedPipeline.currentLaneUser(), null, 'the lane context ends with the task');
+});
+
+test('entering another user\'s lane from inside one is refused', async () => {
+  await assert.rejects(
+    EthDerivedPipeline.serializedForUser(1, () => EthDerivedPipeline.serializedForUser(2, async () => 'never')),
+    /serializedForUser\(2\) called inside user 1's lane/
+  );
+  assert.equal(await EthDerivedPipeline.serializedForUser(2, async () => 'ok'), 'ok', 'both lanes stay usable');
+});
+
 // ---------------------------------------------------------------------------
 // Late binding -- the contract every harness in this suite depends on
 // ---------------------------------------------------------------------------
