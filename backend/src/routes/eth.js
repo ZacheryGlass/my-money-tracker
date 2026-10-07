@@ -79,7 +79,8 @@ const NAME_OPTIONAL_KINDS = new Set(['external', 'own', 'bridge', 'service']);
 // module so the route and the CHECK constraint in 038 can never drift apart.
 const ACTIVITY_CATEGORIES = new Set(CATEGORIES);
 
-const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
+// One pattern per family, owned by the family codec.
+const { TX_ID_RE: TX_HASH_RE } = require('../crypto/chains/families/evm/codec');
 
 router.get('/discovery/candidates', async (req, res) => {
   try {

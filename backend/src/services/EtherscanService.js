@@ -20,7 +20,8 @@ const PAGE_SIZE = 1000;
 // nightly job.
 const MAX_ACCOUNT_PAGES = 200;
 
-const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
+// One pattern per family, owned by the family codec.
+const { TX_ID_RE: TX_HASH_RE } = require('../crypto/chains/families/evm/codec');
 
 function apiError(message) {
   const error = new Error(message);

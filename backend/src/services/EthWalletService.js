@@ -17,7 +17,8 @@ const chains = require('../config/chains');
 const logger = require('../config/logger');
 const { shortAddress } = require('../utils/ethAddress');
 
-const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
+// One pattern per family, owned by the family codec.
+const { ADDRESS_RE } = require('../crypto/chains/families/evm/codec');
 
 // The Etherscan feeds, each with the cursor it resumes from and the
 // transfer_types it owns. `normal` owns two: gas rows are synthesized from

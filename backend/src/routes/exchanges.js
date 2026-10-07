@@ -279,7 +279,8 @@ router.patch('/balance-exceptions/:exceptionId', async (req, res) => {
 // and this ordering is what keeps that true when one is added.
 
 const VERDICTS = new Set(['confirmed', 'rejected']);
-const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
+// One pattern per family, owned by the family codec.
+const { TX_ID_RE: TX_HASH_RE } = require('../crypto/chains/families/evm/codec');
 
 // A verdict names exactly one pair, in one of the two shapes 041 allows: an
 // on-chain match (wallet + chain + hash) or an exchange-to-exchange pair (the
