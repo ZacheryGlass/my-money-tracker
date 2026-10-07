@@ -256,6 +256,18 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
   ok('a sync tail acquires receipts for unsettled bridge candidates', receiptCalls.length === 2, receiptCalls);
   ok('a sync tail over the same inputs keeps the digest', (await snapshot(1)).derived_sha256 === first.derived_sha256);
 
+  // --- scenario: the EVM audit derives tokens like the ledger does ---------
+  const EvmAudit = require('../src/models/EvmAudit');
+  const { rows: [subject] } = await q(
+    'INSERT INTO evm_subjects (user_id, address) VALUES (1, $1) RETURNING id', [WALLET_A]
+  );
+  const auditTokens = await EvmAudit.tokenDerivedAt(1, subject.id, 1, 1000000);
+  ok('audit token derivation keeps held ERC-20s and leaves ignored tokens out',
+    auditTokens.some((row) => row.token_contract === USDC && row.balance_units === '150000000')
+      && !auditTokens.some((row) => row.token_contract === SPAM), auditTokens);
+  const observed = await EvmAudit.observedErc20Contracts(1, 0, subject.id, 1, 1000000);
+  ok('audit observed-token query runs against the real schema', Array.isArray(observed));
+
   // --- scenario: an unchanged reclassify writes nothing ----------------------
   // xmin moves on every row an UPDATE rewrites, even to the same value.
   const xmins = async () => (await q('SELECT id, xmin::text AS x FROM eth_transfers ORDER BY id')).rows.map((r) => `${r.id}:${r.x}`).join(',');

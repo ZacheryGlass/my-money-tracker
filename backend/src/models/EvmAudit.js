@@ -1514,7 +1514,14 @@ class EvmAudit {
          JOIN eth_transfers t ON t.wallet_id = w.id
         WHERE s.id = $2 AND s.user_id = $1 AND t.chain_id = $3
           AND t.block_number <= $4 AND t.transfer_type = 'token'
+          -- The same guards as EthTransfer.tokenBalanceDeltas, so the audit
+          -- compares the chain against the balance the ledger actually
+          -- derives: ERC-20 only, and an ignored token is out of both.
+          AND t.token_standard = 'erc20'
           AND t.token_contract IS NOT NULL
+          AND t.token_contract NOT IN (
+            SELECT i.contract_address FROM eth_ignored_tokens i WHERE i.user_id = s.user_id
+          )
         GROUP BY t.token_contract
         ORDER BY t.token_contract`,
       [userId, subjectId, chainId, throughBlock]
@@ -1567,6 +1574,12 @@ class EvmAudit {
        SELECT token_contract
          FROM candidates
         WHERE token_contract ~ '^0x[0-9a-f]{40}$'
+          -- An ignored token is outside the audited universe, matching the
+          -- derived side above; otherwise its derived zero would be compared
+          -- with the airdropped live balance as a mismatch.
+          AND token_contract NOT IN (
+            SELECT i.contract_address FROM eth_ignored_tokens i WHERE i.user_id = $1
+          )
         GROUP BY token_contract
         ORDER BY token_contract`,
       [userId, jobId, subjectId, chainId, throughBlock]
