@@ -57,6 +57,7 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
 
   const calls = [];
   const mirrorOptions = [];
+  const bridgeOptions = [];
   const maybeFail = (name, scope) => {
     const failure = failures[name];
     if (failure === true || (failure != null && failure === scope)) {
@@ -79,6 +80,10 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
     calls.push(['holdings', walletId]); maybeFail('holdings', walletId);
     return { liveWeiByChain: {} };
   });
+  stub(EthWalletService, 'refreshTokenHoldingsFromLedger', async (walletId) => {
+    calls.push(['ledgerHoldings', walletId]); maybeFail('ledgerHoldings', walletId);
+    return { tokens: 0 };
+  });
   stub(EthActivityService, 'rebuildForWallet', async (walletId) => {
     calls.push(['activity', walletId]); maybeFail('activity', walletId);
     return { activity: 1 };
@@ -87,8 +92,9 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
     calls.push(['matches', userId, context]); maybeFail('matches', userId);
     return { matched: 0 };
   });
-  stub(BridgeMatchingService, 'rebuildForUser', async (userId) => {
+  stub(BridgeMatchingService, 'rebuildForUser', async (userId, options) => {
     calls.push(['bridge', userId]); maybeFail('bridge', userId);
+    bridgeOptions.push(options);
     return { matched: 0, unmatched: 0 };
   });
   stub(MirrorService, 'rebuildForUser', async (userId, options) => {
@@ -106,7 +112,7 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
   });
   stub(EthWallet, 'findAllByUser', async () => wallets);
 
-  return { calls, mirrorOptions, stub };
+  return { calls, mirrorOptions, bridgeOptions, stub };
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +313,25 @@ test('runForUser: a reclassify failure propagates before any wallet is touched',
     /reclassify failed/
   );
   assert.deepEqual(calls, [['reclassify', 1]]);
+});
+
+test('a label refresh skips re-valuation and acquires no bridge receipts', async (t) => {
+  const { calls, bridgeOptions } = harness(t, { wallets: [{ id: 7 }] });
+  await EthDerivedPipeline.runForUser(1, { reclassify: true, revalue: false, context: 'classification refresh' });
+  assert.deepEqual(calls.map(([name]) => name), ['reclassify', 'activity', 'matches', 'bridge', 'mirror', 'backfill']);
+  assert.deepEqual(bridgeOptions, [{ acquireReceipts: false }]);
+});
+
+test("the ignore toggle's holdings refresh is the database-only ledger path", async (t) => {
+  const { calls } = harness(t, { wallets: [{ id: 7 }] });
+  await EthDerivedPipeline.runForUser(1, { holdings: 'ledger', context: 'derived-data refresh' });
+  assert.deepEqual(calls.map(([name]) => name), ['value', 'ledgerHoldings', 'activity', 'matches', 'bridge', 'mirror', 'backfill']);
+});
+
+test('the sync tail acquires bridge receipts by default', async (t) => {
+  const { bridgeOptions } = harness(t, { wallets: [{ id: 7 }] });
+  await EthDerivedPipeline.finishUser(1, { walletId: 7 });
+  assert.deepEqual(bridgeOptions, [{ acquireReceipts: true }]);
 });
 
 // ---------------------------------------------------------------------------

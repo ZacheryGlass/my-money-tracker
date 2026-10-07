@@ -1957,6 +1957,93 @@ class EthWalletService {
     };
   }
 
+  // The ignore toggle's holdings refresh: database only. Native rows keep the
+  // live balance the last sync read; token rows are re-derived from the ledger
+  // (which is all a token holding ever was) with the dollar value the last
+  // sync priced. A token that becomes visible again (un-ignored) has no stored
+  // value and stays unvalued until the next sync prices it.
+  static async refreshTokenHoldingsFromLedger(walletId) {
+    const wallet = await EthWallet.findById(walletId);
+    if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
+    const account = await EthWallet.getAccountForWallet(walletId);
+    if (!account) return { skipped: true };
+
+    const existingResult = await pool.query(
+      'SELECT id, name, ticker, quantity, manual_value, chain_id FROM holdings WHERE account_id = $1',
+      [account.id]
+    );
+    const existingByName = new Map(existingResult.rows.map((row) => [row.name, row]));
+    const unreadable = new Set((await EthWalletChain.findForWallet(walletId))
+      .filter((state) => state.error_code === 'CHAIN_UNAVAILABLE')
+      .map((state) => Number(state.chain_id)));
+    const chainIds = (await EthWalletChain.enabledChainsForWallet(walletId))
+      .map((chain) => chain.id)
+      .filter((chainId) => !unreadable.has(chainId));
+    const derivable = new Set(chainIds);
+
+    const desired = (await EthTransfer.tokenBalanceDeltas(walletId))
+      .filter((d) => BigInt(d.balance_units) > 0n && derivable.has(Number(d.chain_id)))
+      .map((delta) => {
+        const chainId = Number(delta.chain_id);
+        const decimals = delta.token_decimals != null ? Number(delta.token_decimals) : 18;
+        const name = tokenHoldingName(delta.token_symbol, delta.token_contract, chainId);
+        return {
+          chain_id: chainId,
+          name,
+          quantity: unitsToDecimalString(delta.balance_units, decimals),
+          manual_value: existingByName.get(name)?.manual_value ?? null,
+        };
+      });
+
+    let written = 0;
+    for (const holding of desired) {
+      const existing = existingByName.get(holding.name);
+      if (existing) {
+        if (existing.ticker === null && String(existing.quantity) === holding.quantity
+            && Number(existing.chain_id) === holding.chain_id) continue;
+        await pool.query(
+          `UPDATE holdings SET ticker = NULL, quantity = $1, chain_id = $2, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`,
+          [holding.quantity, holding.chain_id, existing.id]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO holdings (account_id, ticker, name, quantity, manual_value, chain_id)
+           VALUES ($1, NULL, $2, $3, $4, $5)`,
+          [account.id, holding.name, holding.quantity, holding.manual_value, holding.chain_id]
+        );
+      }
+      written += 1;
+    }
+
+    // Token rows only (ticker IS NULL): native rows belong to the live
+    // balance read and are left exactly as the last sync wrote them.
+    const removed = await pool.query(
+      `DELETE FROM holdings
+       WHERE account_id = $1
+         AND ticker IS NULL
+         AND COALESCE(chain_id, $2) = ANY($3::int[])
+         AND name <> ALL($4::text[])`,
+      [account.id, chains.DEFAULT_CHAIN_ID, chainIds, desired.map((h) => h.name)]
+    );
+    // Ignored tokens leave holdings on every chain, as in refreshHoldings.
+    const ignoredNames = (await EthTransfer.ignoredTokenKeys(walletId))
+      .map((row) => tokenHoldingName(row.token_symbol, row.token_contract, Number(row.chain_id)));
+    let ignoredRemoved = 0;
+    if (ignoredNames.length) {
+      const result = await pool.query(
+        `DELETE FROM holdings
+         WHERE account_id = $1
+           AND ticker IS NULL
+           AND name = ANY($2::text[])
+           AND name <> ALL($3::text[])`,
+        [account.id, ignoredNames, desired.map((h) => h.name)]
+      );
+      ignoredRemoved = result.rowCount || 0;
+    }
+    return { tokens: desired.length, written, removed: (removed.rowCount || 0) + ignoredRemoved, chains: chainIds };
+  }
+
   static async removeWallet(walletId, { removeData = false } = {}) {
     const wallet = await EthWallet.findById(walletId);
     if (!wallet) throw new Error(`EthWallet ${walletId} not found`);
@@ -1985,6 +2072,9 @@ class EthWalletService {
   static refreshClassificationsForUser(userId) {
     return EthDerivedPipeline.serializedForUser(userId, () => EthDerivedPipeline.runForUser(userId, {
       reclassify: true,
+      // A label changes classification, never dollars: the valuation inputs
+      // (transfers and the dated price series) are untouched.
+      revalue: false,
       context: 'classification refresh',
       matchReason: 'classification-refresh',
     }));
@@ -1994,9 +2084,12 @@ class EthWalletService {
   // Fanning out over every wallet would spend other owners' Etherscan and
   // CoinGecko quota (refreshHoldings resolves the wallet owner's key) and
   // rewrite their holdings rows on an edit they never made.
+  //
+  // Database only: holdings come from the ledger ('ledger'), not a live
+  // balance and price read, so the toggle answers without a provider call.
   static refreshDerivedForUser(userId) {
     return EthDerivedPipeline.serializedForUser(userId, () => EthDerivedPipeline.runForUser(userId, {
-      holdings: true,
+      holdings: 'ledger',
       context: 'derived-data refresh',
       matchReason: 'derived-refresh',
     }));

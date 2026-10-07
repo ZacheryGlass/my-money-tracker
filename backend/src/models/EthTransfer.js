@@ -599,12 +599,14 @@ class EthTransfer {
   // already only ever consults the wallet owner's own addresses and labels, so
   // scoping changes no result -- it just stops one user's wallet or label edit
   // from rewriting every other user's rows.
+  //
+  // Each UPDATE writes only rows whose value actually changes (IS DISTINCT
+  // FROM the same expression), so a label write that reclassifies nothing
+  // rewrites nothing -- no dead tuples, no index churn, no WAL.
   static async reclassifyCounterparties(userId = null) {
     const params = userId == null ? [] : [userId];
     const ownerFilter = userId == null ? '' : ' AND w.user_id = $1';
-    await pool.query(
-      `UPDATE eth_transfers t SET counterparty_is_own =
-         COALESCE(
+    const isOwn = `COALESCE(
            (CASE WHEN t.from_address = w.address THEN t.to_address ELSE t.from_address END)
              IN (
                SELECT w2.address FROM eth_wallets w2 WHERE w2.user_id = w.user_id
@@ -617,14 +619,16 @@ class EthTransfer {
                WHERE l.user_id = w.user_id AND l.kind = 'own'
              ),
            FALSE
-         )
+         )`;
+    await pool.query(
+      `UPDATE eth_transfers t SET counterparty_is_own =
+         ${isOwn}
        FROM eth_wallets w
-       WHERE t.wallet_id = w.id${ownerFilter}`,
+       WHERE t.wallet_id = w.id${ownerFilter}
+         AND t.counterparty_is_own IS DISTINCT FROM ${isOwn}`,
       params
     );
-    await pool.query(
-      `UPDATE eth_transfers t SET counterparty_exchange =
-         CASE WHEN t.counterparty_is_own THEN NULL
+    const exchangeName = `CASE WHEN t.counterparty_is_own THEN NULL
               ELSE (
                 -- Resolve the winning label row FIRST (a user row shadows a
                 -- builtin via ORDER BY user_id NULLS LAST), THEN ask whether
@@ -641,9 +645,13 @@ class EthTransfer {
                 ORDER BY l.user_id NULLS LAST
                 LIMIT 1
               )
-         END
+         END`;
+    await pool.query(
+      `UPDATE eth_transfers t SET counterparty_exchange =
+         ${exchangeName}
        FROM eth_wallets w
-       WHERE t.wallet_id = w.id${ownerFilter}`,
+       WHERE t.wallet_id = w.id${ownerFilter}
+         AND t.counterparty_exchange IS DISTINCT FROM ${exchangeName}`,
       params
     );
   }

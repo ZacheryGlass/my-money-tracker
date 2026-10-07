@@ -163,6 +163,9 @@ async function rebuildWallet(walletId, {
   isolateSteps = false,
   context = null,
   timings = null,
+  // false skips the SQL re-valuation for refreshes that cannot change any
+  // valuation input (a label write).
+  revalue = true,
 } = {}) {
   const results = { priced: null, valued: null, holdings: null, mirror: null, activity: null };
 
@@ -201,14 +204,19 @@ async function rebuildWallet(walletId, {
   }
   // The SQL re-valuation runs every time: it touches no network, and skipping
   // it would strand the mirror on yesterday's prices.
-  results.valued = await runStep('Re-valuation', () => AssetPriceHistory.applyToWallet(walletId));
+  if (revalue) {
+    results.valued = await runStep('Re-valuation', () => AssetPriceHistory.applyToWallet(walletId));
+  }
 
+  // `holdings: true` reads live balances and prices (sync); 'ledger' re-derives
+  // token rows from the database only (the ignore toggle).
   if (holdings) {
     // Lazy require: EthWalletService requires this module at load time, and the
     // multichain harness stubs refreshHoldings on the class object -- both need
     // the property lookup to happen here, at call time.
-    results.holdings = await runStep('Holdings refresh',
-      () => require('./EthWalletService').refreshHoldings(walletId));
+    results.holdings = await runStep('Holdings refresh', () => (holdings === 'ledger'
+      ? require('./EthWalletService').refreshTokenHoldingsFromLedger(walletId)
+      : require('./EthWalletService').refreshHoldings(walletId)));
   }
 
   results.activity = await runStep('Activity rebuild',
@@ -294,16 +302,17 @@ async function runForUser(userId, {
   holdings = false,
   context = null,
   matchReason = null,
+  revalue = true,
 } = {}) {
   // Always inside the user's lane: the lane is re-entrant, so the callers that
   // already hold it run directly, and a caller that forgot cannot race a
   // rebuild or a match pass for the same user.
   return serializedForUser(userId, () => runForUserInLane(userId, {
-    reclassify, holdings, context, matchReason,
+    reclassify, holdings, context, matchReason, revalue,
   }));
 }
 
-async function runForUserInLane(userId, { reclassify, holdings, context, matchReason }) {
+async function runForUserInLane(userId, { reclassify, holdings, context, matchReason, revalue }) {
   const timings = {};
   const started = Date.now();
   const { result, calls } = await providerCalls.measure(async () => {
@@ -315,7 +324,7 @@ async function runForUserInLane(userId, { reclassify, holdings, context, matchRe
     const wallets = await EthWallet.findAllByUser(userId);
     for (const wallet of wallets) {
       await rebuildWallet(wallet.id, {
-        holdings, isolateSteps: true, context, timings,
+        holdings, isolateSteps: true, context, timings, revalue,
       });
     }
     return finishUser(userId, {

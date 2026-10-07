@@ -256,6 +256,13 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
   ok('a sync tail acquires receipts for unsettled bridge candidates', receiptCalls.length === 2, receiptCalls);
   ok('a sync tail over the same inputs keeps the digest', (await snapshot(1)).derived_sha256 === first.derived_sha256);
 
+  // --- scenario: an unchanged reclassify writes nothing ----------------------
+  // xmin moves on every row an UPDATE rewrites, even to the same value.
+  const xmins = async () => (await q('SELECT id, xmin::text AS x FROM eth_transfers ORDER BY id')).rows.map((r) => `${r.id}:${r.x}`).join(',');
+  const xminBefore = await xmins();
+  await EthTransfer.reclassifyCounterparties(1);
+  ok('a reclassify that changes no verdict rewrites no transfer row', (await xmins()) === xminBefore);
+
   // --- scenario: a replace that fails mid-write keeps the previous rows -----
   const EthActivity = require('../src/models/EthActivity');
   const EthTransactionMirrorService = require('../src/services/EthTransactionMirrorService');
@@ -329,6 +336,24 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
   ok('concurrent rebuilds land on the sequential answer',
     afterConcurrency.derived_sha256 === first.derived_sha256,
     require('./lib/derivedDigest').diffDigests(first, afterConcurrency).derived);
+
+  // --- scenario: the ignore toggle refreshes holdings from the database ------
+  // Last: it adds token holdings the earlier digest comparisons never had.
+  let balanceCalls = 0;
+  const realBalance = EtherscanService.getEthBalance;
+  EtherscanService.getEthBalance = async () => { balanceCalls += 1; throw new Error('no network in the ignore path'); };
+  try {
+    await EthWalletService.refreshDerivedForUser(1);
+  } finally {
+    EtherscanService.getEthBalance = realBalance;
+  }
+  const tokenHoldings = (await q(
+    `SELECT h.name, h.manual_value FROM holdings h JOIN accounts a ON a.id = h.account_id
+      WHERE a.eth_wallet_id = $1 AND h.ticker IS NULL ORDER BY h.name`, [walletA]
+  )).rows;
+  ok('the ignore toggle reads no live balance', balanceCalls === 0, balanceCalls);
+  ok('ledger holdings keep a held token and drop the ignored one',
+    tokenHoldings.some((h) => /USDC/.test(h.name)) && !tokenHoldings.some((h) => /SCAM/.test(h.name)), tokenHoldings);
 
   await pool.end();
   await advisoryLocks.end();
