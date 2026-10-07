@@ -1321,3 +1321,24 @@ test('a second user cannot write a verdict on the first user pair', async () => 
   assert.equal(response.status, 404);
   assert.equal(db.verdicts.size, 0);
 });
+
+test('the match export quotes formula-leading text cells and leaves amounts numeric', async (t) => {
+  const original = ExchangeMatch.findForUser;
+  t.after(() => { ExchangeMatch.findForUser = original; });
+  ExchangeMatch.findForUser = async () => ({
+    matches: [{
+      id: 1, exchange_record_id: 500, match_method: 'manual', verdict: 'confirmed',
+      verdict_note: '=HYPERLINK("http://evil")', exchange_account_name: '@account',
+      base_asset: '+SCAM', base_amount: '-1.5', counter_base_amount: '-2',
+    }],
+    total: 1,
+  });
+  const res = await request(app).get('/api/exchanges/matches/export');
+  assert.equal(res.status, 200);
+  const [, line] = res.text.trim().split('\n');
+  assert.match(line, /"'=HYPERLINK\(""http:\/\/evil""\)"/);
+  assert.match(line, /'@account/);
+  assert.match(line, /'\+SCAM/);
+  assert.match(line, /,-1\.5,/, 'amounts are not quoted off');
+  assert.doesNotMatch(line, /'-1\.5/);
+});

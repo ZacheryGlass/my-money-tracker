@@ -12,7 +12,7 @@ const EthDerivedPipeline = require('../services/EthDerivedPipeline');
 const pool = require('../config/database');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
-const { toCsv } = require('../utils/csv');
+const { toCsv, deformula } = require('../utils/csv');
 const { shortAddress } = require('../utils/ethAddress');
 
 const router = express.Router();
@@ -251,16 +251,8 @@ const EXPORT_COLUMNS = [
   ['note', 'note'],
 ];
 
-// Token symbols, NFT names and label names are attacker-authored: anyone can
-// deploy a contract with symbol `=cmd|'/c calc'!A1`, and the builtin label pack
-// is scraped. A cell that OPENS with a formula character is evaluated by Excel
-// and Sheets on open, so the leading character is quoted off.
-//
-// '-' is in the set: Excel evaluates `-1+1` too. It costs nothing here because
-// this is applied ONLY to the text columns -- the numeric ones never pass
-// through it, so a negative amount stays a number to a spreadsheet.
-const FORMULA_LEAD = /^[=+\-@\t\r]/;
-const deformula = (text) => (FORMULA_LEAD.test(text) ? `'${text}` : text);
+// Text cells go through the shared formula guard (utils/csv.js deformula);
+// numeric cells never do, so a negative amount stays a number.
 
 function legsText(legs, direction) {
   return (legs || [])

@@ -83,4 +83,20 @@ function toCsv(rows, headers) {
   return `${lines.join('\n')}\n`;
 }
 
-module.exports = { parseCsv, isBlankRow, toCsv };
+// Spreadsheet formula injection guard for TEXT cells. Token symbols, NFT names,
+// label names, notes and venue account names are attacker- or user-authored:
+// anyone can deploy a contract with symbol `=cmd|'/c calc'!A1`, and the builtin
+// label pack is scraped. A cell that OPENS with a formula character is
+// evaluated by Excel and Sheets on open, so the leading character is quoted off.
+//
+// '-' is in the set: Excel evaluates `-1+1` too. Apply this ONLY to text
+// columns -- numeric ones never pass through it, so a negative amount stays a
+// number to a spreadsheet.
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+function deformula(value) {
+  if (value === null || value === undefined) return value;
+  const text = String(value);
+  return FORMULA_LEAD.test(text) ? `'${text}` : text;
+}
+
+module.exports = { parseCsv, isBlankRow, toCsv, deformula };

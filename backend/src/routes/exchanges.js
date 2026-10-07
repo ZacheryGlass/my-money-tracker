@@ -19,7 +19,7 @@ const chains = require('../config/chains');
 const { ImportFormatError, FORMATS } = require('../services/exchangeImport');
 const { CREDENTIAL_FIELDS, connectorFor } = require('../services/exchangeSync');
 const secretCrypto = require('../utils/secretCrypto');
-const { toCsv } = require('../utils/csv');
+const { toCsv, deformula } = require('../utils/csv');
 const { cleanAmount, compareAmounts } = require('../services/exchangeImport/shared');
 const logger = require('../config/logger');
 
@@ -414,10 +414,24 @@ router.get('/matches/export', async (req, res) => {
       ['block_time', 'on_chain_block_time'],
       ['category', 'on_chain_category'],
     ];
+    // Text cells carry user- and provider-authored strings (notes, account
+    // names, asset codes, addresses), so they go through the formula guard.
+    // Amounts, ids and times never do.
+    const TEXT_COLUMNS = [
+      'match_method', 'confidence', 'rule_version', 'comparison_kind', 'verdict', 'verdict_note',
+      'record_type', 'base_asset', 'record_tx_hash', 'record_address', 'record_network',
+      'exchange_account_name', 'counter_record_type', 'counter_base_asset', 'counter_account_name',
+      'tx_hash', 'category',
+    ];
+    const safe = matches.map((row) => {
+      const out = { ...row };
+      for (const column of TEXT_COLUMNS) out[column] = deformula(row[column]);
+      return out;
+    });
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="exchange-match-audit.csv"');
     res.setHeader('X-Match-Count', String(matches.length));
-    return res.status(200).send(toCsv(matches, headers));
+    return res.status(200).send(toCsv(safe, headers));
   } catch (error) {
     logger.error({ err: error }, 'Export exchange matches error');
     return res.status(500).json({ error: 'Failed to export exchange matches' });
