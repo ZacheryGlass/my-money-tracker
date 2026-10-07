@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('../config/database');
+const { bankDescriptorPairs } = require('../crypto/registry/venues');
 
 function requireUserId(userId) {
   if (!userId) throw new Error('ExchangeFiatMatch requires a userId');
@@ -22,19 +23,20 @@ class ExchangeFiatMatch {
            AND er.exchange_account_id = ea.id AND ea.user_id = $1`,
         [userId]
       );
-      const inserted = await client.query(
-        `WITH candidates AS (
-           SELECT er.id AS exchange_record_id, t.id AS transaction_id,
+      // A link is drawn only when it is the ONLY plausible pairing on both
+      // sides: the record has exactly one candidate bank transaction and that
+      // transaction has exactly one candidate record. Anything else (two bank
+      // lines for one transfer, or one bank line for two transfers) links
+      // nothing and stays visible as unmatched, the same ambiguity rule the
+      // exchange/on-chain matcher follows. Nearest-day is never a tiebreak.
+      const { exchanges, descriptors } = bankDescriptorPairs();
+      const { rows: [outcome] } = await client.query(
+        `WITH descriptors AS (
+           SELECT * FROM unnest($2::text[], $3::text[]) AS d(exchange, descriptor)
+         ), candidates AS (
+           SELECT DISTINCT er.id AS exchange_record_id, t.id AS transaction_id,
                   ABS(er.base_amount) AS amount,
-                  ABS((er.occurred_at::date - t.date::date))::int AS day_delta,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY er.id
-                    ORDER BY ABS((er.occurred_at::date - t.date::date)), t.id
-                  ) AS record_rank,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY t.id
-                    ORDER BY ABS((er.occurred_at::date - t.date::date)), er.id
-                  ) AS transaction_rank
+                  ABS((er.occurred_at::date - t.date::date))::int AS day_delta
            FROM exchange_records er
            JOIN exchange_accounts ea ON ea.id = er.exchange_account_id AND ea.user_id = $1
            JOIN transactions t
@@ -56,34 +58,36 @@ class ExchangeFiatMatch {
              AND (
                LOWER(COALESCE(t.merchant_name, '')) LIKE '%' || LOWER(ea.name) || '%'
                OR LOWER(COALESCE(t.name, '')) LIKE '%' || LOWER(ea.name) || '%'
-               OR LOWER(COALESCE(t.merchant_name, '')) LIKE '%' || LOWER(ea.exchange) || '%'
-               OR LOWER(COALESCE(t.name, '')) LIKE '%' || LOWER(ea.exchange) || '%'
+               OR EXISTS (
+                 SELECT 1 FROM descriptors d
+                  WHERE d.exchange = ea.exchange
+                    AND (LOWER(COALESCE(t.merchant_name, '')) LIKE '%' || d.descriptor || '%'
+                      OR LOWER(COALESCE(t.name, '')) LIKE '%' || d.descriptor || '%')
+               )
              )
              AND ((er.record_type = 'deposit' AND t.amount > 0)
                OR (er.record_type = 'withdrawal' AND t.amount < 0))
+         ), counted AS (
+           SELECT c.*,
+                  COUNT(*) OVER (PARTITION BY c.exchange_record_id) AS record_candidates,
+                  COUNT(*) OVER (PARTITION BY c.transaction_id) AS transaction_candidates
+           FROM candidates c
+         ), inserted AS (
+           INSERT INTO exchange_fiat_matches
+             (exchange_record_id, transaction_id, amount, day_delta)
+           SELECT exchange_record_id, transaction_id, amount, day_delta
+           FROM counted
+           WHERE record_candidates = 1 AND transaction_candidates = 1
+           ON CONFLICT DO NOTHING
+           RETURNING id
          )
-         , unique_candidates AS (
-           SELECT DISTINCT ON (exchange_record_id)
-                  exchange_record_id, transaction_id, amount, day_delta
-           FROM candidates
-           WHERE record_rank = 1
-           ORDER BY exchange_record_id, day_delta, transaction_id
-         ), assigned AS (
-           SELECT DISTINCT ON (transaction_id)
-                  exchange_record_id, transaction_id, amount, day_delta
-           FROM unique_candidates
-           ORDER BY transaction_id, day_delta, exchange_record_id
-         )
-         INSERT INTO exchange_fiat_matches
-           (exchange_record_id, transaction_id, amount, day_delta)
-         SELECT exchange_record_id, transaction_id, amount, day_delta
-         FROM assigned
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [userId]
+         SELECT (SELECT COUNT(*) FROM inserted)::int AS matched,
+                (SELECT COUNT(DISTINCT exchange_record_id) FROM counted
+                  WHERE record_candidates > 1 OR transaction_candidates > 1)::int AS ambiguous`,
+        [userId, exchanges, descriptors]
       );
       if (ownsTransaction) await client.query('COMMIT');
-      return { matched: inserted.rowCount || 0 };
+      return { matched: outcome?.matched || 0, ambiguous: outcome?.ambiguous || 0 };
     } catch (error) {
       if (ownsTransaction) {
         try { await client.query('ROLLBACK'); } catch (rollbackError) { void rollbackError; }

@@ -184,6 +184,48 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
     fiatResult.matched === 1 && fiatLink.rows.length === 1
       && String(fiatLink.rows[0].exchange_record_id) === String(fiatRecord.rows[0].id)
       && fiatReview.rows[0]?.needs_review === true);
+
+  // Ambiguity links nothing: a second same-amount Kraken bank line in the
+  // window means neither line is proven to be this transfer.
+  await pool.query(
+    `INSERT INTO transactions
+       (account_id, plaid_transaction_id, date, name, merchant_name, amount, category)
+     VALUES ($1, 'verify-plaid-2', '2026-02-21', 'Kraken transfer', 'Kraken', 1.25, 'TRANSFER_OUT')`,
+    [bankAccount.rows[0].id]
+  );
+  const ambiguousResult = await ExchangeFiatMatch.rebuildForUser(1);
+  const ambiguousLinks = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM exchange_fiat_matches efm
+       JOIN transactions t ON t.id = efm.transaction_id
+      WHERE t.plaid_transaction_id IN ('verify-plaid-1', 'verify-plaid-2')`
+  );
+  ok('two plausible bank lines for one fiat transfer link neither (no nearest-day tiebreak)',
+    ambiguousResult.matched === 0 && ambiguousResult.ambiguous === 1 && ambiguousLinks.rows[0].n === 0);
+
+  // A venue whose bank descriptor is not its id: Binance.US settles as
+  // BAM Trading, and the account here is named something else entirely.
+  const binanceAccount = await pool.query(
+    "INSERT INTO exchange_accounts (user_id, name, exchange) VALUES (1, 'Main BUS', 'binance_us') RETURNING id"
+  );
+  const binanceFiat = await pool.query(
+    `INSERT INTO exchange_records
+       (exchange_account_id, record_type, occurred_at, base_asset, base_amount, external_id, needs_review, source)
+     VALUES ($1, 'deposit', '2026-03-10 15:00', 'USD', 500, 'BUS-FIAT-1', false, 'api') RETURNING id`,
+    [binanceAccount.rows[0].id]
+  );
+  await pool.query(
+    `INSERT INTO transactions
+       (account_id, plaid_transaction_id, date, name, merchant_name, amount, category)
+     VALUES ($1, 'verify-plaid-bus', '2026-03-10', 'BAM TRADING SERVICES ACH', NULL, 500, 'TRANSFER_OUT')`,
+    [bankAccount.rows[0].id]
+  );
+  await ExchangeFiatMatch.rebuildForUser(1);
+  const binanceLink = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM exchange_fiat_matches WHERE exchange_record_id = $1', [binanceFiat.rows[0].id]
+  );
+  ok('a Binance.US fiat deposit links to its BAM Trading bank line', binanceLink.rows[0].n === 1);
+  await pool.query('DELETE FROM exchange_accounts WHERE id = $1', [binanceAccount.rows[0].id]);
+
   await pool.query('DELETE FROM accounts WHERE id = $1', [bankAccount.rows[0].id]);
   await pool.query('DELETE FROM exchange_records WHERE id = $1', [fiatRecord.rows[0].id]);
 

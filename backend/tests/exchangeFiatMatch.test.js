@@ -21,7 +21,7 @@ require.cache[pgModulePath] = {
             const sql = String(text).replace(/\s+/g, ' ').trim();
             statements.push(sql);
             if (/^INSERT INTO exchange_fiat_matches/.test(sql)
-                || /^WITH candidates AS/.test(sql)) {
+                || /^WITH descriptors AS/.test(sql)) {
               return { rows: [], rowCount: 0 };
             }
             return { rows: [], rowCount: 0 };
@@ -42,8 +42,8 @@ test('rebuilding derived fiat links does not rewrite the importer review queue',
 
   const result = await ExchangeFiatMatch.rebuildForUser(1);
 
-  assert.deepEqual(result, { matched: 0 });
+  assert.deepEqual(result, { matched: 0, ambiguous: 0 });
   assert.ok(statements.some((sql) => /^DELETE FROM exchange_fiat_matches/.test(sql)));
-  assert.ok(statements.some((sql) => /^WITH candidates AS/.test(sql)));
+  assert.ok(statements.some((sql) => /^WITH descriptors AS/.test(sql)));
   assert.ok(!statements.some((sql) => /^UPDATE exchange_records/.test(sql)));
 });
