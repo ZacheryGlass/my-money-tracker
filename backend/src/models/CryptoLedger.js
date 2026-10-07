@@ -395,7 +395,31 @@ const ONCHAIN_RAW_CTE = `
 // rather than leaving a spam row invisible beside a rendered twin. It cannot go
 // the other way either: a group can never be hidden while one of its members
 // says it is real.
+// The host is rank 1 of its (chain_id, tx_hash) group; every other member of
+// the group folds into it. Ranked ONCE here so the fold below can be a single
+// grouped pass over ranks > 1 instead of a correlated scan per host row
+// (which was quadratic in the number of activity rows).
 const ONCHAIN_CTE = `
+  onchain_ranked AS (
+    SELECT q.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY q.chain_id, q.tx_hash
+        ORDER BY q.has_out_leg DESC, q.fee_wei DESC NULLS LAST, q.wallet_id
+      ) AS rn,
+      BOOL_OR(q.needs_review) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_needs_review,
+      -- BOOL_AND, not BOOL_OR: a self-transfer between two of the user's own
+      -- wallets is ONE row here, and it may only be quarantined if EVERY
+      -- wallet's view of it was.
+      --
+      -- THE UNIT DIFFERS FROM SETTINGS, deliberately: Settings' quarantine
+      -- panel reads /api/eth/activity?spam=only, which counts one row per
+      -- WALLET-transaction, so a transfer touching two wallets is two. The
+      -- ledger counts collapsed movements. Both are honest counts of
+      -- different things, and Settings' copy says which it is -- do not
+      -- "reconcile" one to the other by switching this to BOOL_OR.
+      BOOL_AND(q.spam) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_spam
+    FROM onchain_raw q
+  ),
   onchain_collapsed AS (
     SELECT
       r.source, r.row_id, r.occurred_at, r.category,
@@ -434,28 +458,10 @@ const ONCHAIN_CTE = `
              ORDER BY r.occurred_at, r.row_id
            )
       END AS bridge_group_rank
-    FROM (
-      SELECT q.*,
-        ROW_NUMBER() OVER (
-          PARTITION BY q.chain_id, q.tx_hash
-          ORDER BY q.has_out_leg DESC, q.fee_wei DESC NULLS LAST, q.wallet_id
-        ) AS rn,
-        BOOL_OR(q.needs_review) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_needs_review,
-        -- BOOL_AND, not BOOL_OR: a self-transfer between two of the user's own
-        -- wallets is ONE row here, and it may only be quarantined if EVERY
-        -- wallet's view of it was.
-        --
-        -- THE UNIT DIFFERS FROM SETTINGS, deliberately: Settings' quarantine
-        -- panel reads /api/eth/activity?spam=only, which counts one row per
-        -- WALLET-transaction, so a transfer touching two wallets is two. The
-        -- ledger counts collapsed movements. Both are honest counts of
-        -- different things, and Settings' copy says which it is -- do not
-        -- "reconcile" one to the other by switching this to BOOL_OR.
-        BOOL_AND(q.spam) OVER (PARTITION BY q.chain_id, q.tx_hash) AS group_spam
-      FROM onchain_raw q
-    ) r
-    LEFT JOIN LATERAL (
+    FROM onchain_ranked r
+    LEFT JOIN (
       SELECT
+        f.chain_id, f.tx_hash,
         jsonb_agg(jsonb_build_object(
           'wallet_id', f.wallet_id,
           'wallet_label', f.wallet_label,
@@ -465,11 +471,10 @@ const ONCHAIN_CTE = `
           'legs', f.legs
         ) ORDER BY f.wallet_id) AS wallets,
         array_agg(f.wallet_id ORDER BY f.wallet_id) AS wallet_ids
-      FROM onchain_raw f
-      WHERE f.chain_id = r.chain_id
-        AND f.tx_hash = r.tx_hash
-        AND f.row_id <> r.row_id
-    ) fold ON TRUE
+      FROM onchain_ranked f
+      WHERE f.rn > 1
+      GROUP BY f.chain_id, f.tx_hash
+    ) fold ON fold.chain_id = r.chain_id AND fold.tx_hash = r.tx_hash
     WHERE r.rn = 1
   )`;
 

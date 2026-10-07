@@ -355,6 +355,20 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
   ok('ledger holdings keep a held token and drop the ignored one',
     tokenHoldings.some((h) => /USDC/.test(h.name)) && !tokenHoldings.some((h) => /SCAM/.test(h.name)), tokenHoldings);
 
+  // LEDGER_DUMP=<path> writes the unified ledger's page, summary and export
+  // rows for user 1, so two versions of CryptoLedger can be diffed byte for byte.
+  if (process.env.LEDGER_DUMP) {
+    const CryptoLedger = require('../src/models/CryptoLedger');
+    const dump = {};
+    for (const spam of ['exclude', 'all']) {
+      dump[`page:${spam}`] = await CryptoLedger.findForUser(1, { spam, limit: 500, offset: 0 });
+      dump[`summary:${spam}`] = await CryptoLedger.summaryForUser(1, { spam });
+      dump[`export:${spam}`] = await CryptoLedger.findAllForUser(1, { spam });
+      dump[`wallet-b:${spam}`] = await CryptoLedger.findForUser(1, { spam, walletId: walletB, limit: 500, offset: 0 });
+    }
+    require('fs').writeFileSync(process.env.LEDGER_DUMP, JSON.stringify(dump, null, 1));
+  }
+
   await pool.end();
   await advisoryLocks.end();
 
