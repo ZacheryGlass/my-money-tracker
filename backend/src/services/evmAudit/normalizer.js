@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const chains = require('../../config/chains');
 
 const TX_HASH_RE = /^0x[0-9a-f]{64}$/;
 const BLOCK_HASH_RE = /^0x[0-9a-f]{64}$/;
@@ -380,7 +381,9 @@ function transactionFromRpc(context, transaction, receipt, selectedObservationId
   const sender = address(transaction.from);
   if (!sender) throw new Error('Consensus RPC returned a transaction without a valid sender');
   const type = transaction.type == null ? null : BigInt(transaction.type).toString();
-  const protocolSystem = context.chainId === 10 && type === '126';
+  // Type 126 (0x7e) is an OP Stack deposit: a protocol system transaction on
+  // any network whose registry entry declares opStackDeposits.
+  const protocolSystem = Boolean(chains.getChain(context.chainId)?.opStackDeposits) && type === '126';
   return {
     subjectId: context.subjectId,
     chainId: context.chainId,

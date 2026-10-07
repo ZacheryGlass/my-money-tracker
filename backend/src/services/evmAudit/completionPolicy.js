@@ -45,32 +45,20 @@ const AUDIT_PROGRESS_CONTRACT = Object.freeze({
   archive_statuses: Object.freeze(['available', 'mismatch', 'unavailable']),
 });
 
-const EXCLUDED_BASE_CHAIN_ID = 8453;
-
-// Canonical first-party Base L1 deployments. This single registry drives both
+// Base is a retired network (crypto/registry/networks/base.js). Its id, the
+// spellings a decoded identity may use for it, and its canonical first-party
+// L1 deployments come from that one file. This single list drives both
 // movement production and completion validation; a merely well-formed address
 // or URL is not evidence that a transaction crossed the excluded Base scope.
-const BASE_EXCLUSION_ENDPOINTS = Object.freeze([
-  Object.freeze({
-    address: '0x3154cf16ccdb4c6d922629664174b904d80f2c35',
-    name: 'Base: L1 Standard Bridge', role: 'standard_bridge',
-    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
-  }),
-  Object.freeze({
-    address: '0x49048044d57e1c92a77f79988d21fa8faf74e97e',
-    name: 'Base: Portal', role: 'portal',
-    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
-  }),
-  Object.freeze({
-    address: '0x866e82a600a1414e583f7f13623f1ac5d58b0afa',
-    name: 'Base: L1 Cross Domain Messenger', role: 'cross_domain_messenger',
-    source_url: 'https://docs.base.org/specifications/reference/base-contracts',
-  }),
-]);
+const BASE_NETWORK = require('../../crypto/registry/networks').retired.find((network) => network.name === 'Base');
+const EXCLUDED_BASE_CHAIN_ID = BASE_NETWORK.id;
+const BASE_EXCLUSION_ENDPOINTS = Object.freeze(
+  BASE_NETWORK.exclusionEndpoints.map((endpoint) => Object.freeze({ ...endpoint }))
+);
 const BASE_EXCLUSION_BY_ADDRESS = new Map(
   BASE_EXCLUSION_ENDPOINTS.map((endpoint) => [endpoint.address, endpoint])
 );
-const BASE_CHAIN_TEXT_VALUES = Object.freeze(['8453', '0x2105']);
+const BASE_CHAIN_TEXT_VALUES = Object.freeze([...BASE_NETWORK.chainTextValues]);
 
 function nonemptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;

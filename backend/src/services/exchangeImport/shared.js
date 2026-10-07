@@ -268,29 +268,13 @@ function trimTo(value, max) {
 const HEX_ADDRESS = /^(0x)?[0-9a-fA-F]{40}$/;
 
 // Provider spellings observed in Coinbase's documented network_name field and
-// Kraken's funding-status network field. The original string is stored beside
-// this normalized id, so an unfamiliar value stays visible instead of being
-// coerced to Ethereum.
-const EVM_NETWORK_CHAIN_IDS = new Map([
-  ['ethereum', 1],
-  ['ethereum mainnet', 1],
-  ['mainnet', 1],
-  ['erc20', 1],
-  ['optimism', 10],
-  ['op mainnet', 10],
-  ['gnosis', 100],
-  ['xdai', 100],
-  ['gnosis chain', 100],
-  ['polygon', 137],
-  ['polygon pos', 137],
-  ['matic', 137],
-  ['zksync era', 324],
-  ['zksync', 324],
-  ['arbitrum', 42161],
-  ['arbitrum one', 42161],
-  ['arbitrum nova', 42170],
-  ['linea', 59144],
-]);
+// Kraken's funding-status network field, declared per network
+// (`exchangeAliases` in crypto/registry/networks). The original string is
+// stored beside this normalized id, so an unfamiliar value stays visible
+// instead of being coerced to Ethereum.
+const EVM_NETWORK_CHAIN_IDS = new Map(chains.allChains().flatMap((chain) => (
+  (chain.exchangeAliases || []).map((alias) => [alias, chain.id])
+)));
 
 function normalizeNetwork(value) {
   return trimTo(value, 80);

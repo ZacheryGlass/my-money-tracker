@@ -21,27 +21,30 @@ const AUDIT_CAPABILITIES = [
   'erc721', 'erc1155', 'native_credit', 'nonce', 'native_balance',
   'token_balance', 'bridge', 'indexed_token_logs', 'receipt_verification',
 ];
-const AUDIT_CHAINS = new Map([
-  [1, { auditProvider: chains.accountApiHistoryProvider(1) }],
-  [10, { auditProvider: chains.accountApiHistoryProvider(10) }],
-  [100, {
-    moralis: 'gnosis', fallbackProvider: chains.accountApiHistoryProvider(100),
-    activeIds: new Set(['0x64', '100', 'gnosis']),
-  }],
-  [137, { auditProvider: chains.accountApiHistoryProvider(137) }],
-  [324, {
-    auditProvider: chains.accountApiHistoryProvider(324),
-    errorDetail: 'Moralis does not enumerate zkSync Era; the official ZKsync Explorer provides finite native/internal history and Blockscout provides finite token/NFT history, while consensus RPC verifies mined transactions and effects.',
-  }],
-  [42161, { auditProvider: chains.accountApiHistoryProvider(42161) }],
-  [42170, { auditProvider: chains.accountApiHistoryProvider(42170) }],
-  [59144, { auditProvider: chains.accountApiHistoryProvider(59144) }],
-  [32401, {
-    unsupported: true,
-    errorCode: 'NON_EVM_CHAIN',
-    errorDetail: 'zkSync Lite is a legacy non-EVM history source and is outside the EVM audit contract.',
-  }],
-]);
+// Per-chain audit routing, derived from each network file's `audit` block: an
+// unsupported family, the optional Moralis enumeration (with its literal
+// chain spellings) over the explorer fallback, or the explorer history itself.
+// Enumeration order is part of the audit's contract: supported chains by id,
+// then unsupported ones.
+const AUDIT_CHAINS = new Map([...chains.allChains()].sort((a, b) => (
+  Number(Boolean(a.audit?.unsupported)) - Number(Boolean(b.audit?.unsupported)) || a.id - b.id
+)).map((chain) => {
+  const audit = chain.audit || {};
+  if (audit.unsupported) {
+    return [chain.id, { unsupported: true, errorCode: audit.errorCode, errorDetail: audit.errorDetail }];
+  }
+  if (audit.moralis) {
+    return [chain.id, {
+      moralis: audit.moralis,
+      fallbackProvider: chains.accountApiHistoryProvider(chain.id),
+      activeIds: new Set(audit.moralisActiveIds || []),
+    }];
+  }
+  return [chain.id, {
+    auditProvider: chains.accountApiHistoryProvider(chain.id),
+    ...(audit.errorDetail ? { errorDetail: audit.errorDetail } : {}),
+  }];
+}));
 const OVERLAP_BLOCKS = 64;
 // Historical ERC-20 state reads are a bounded supplement to the native
 // archive probe. A provider or a wallet with a very large token universe must

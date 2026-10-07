@@ -54,308 +54,36 @@ function configuredRpcUrl(name, fallback) {
   return value && value.trim() ? value.trim() : fallback;
 }
 
-const REGISTRY = [
-  {
-    id: 1,
-    name: 'Ethereum',
-    // Suffix used in holding names. Mainnet has none: its holdings must keep
-    // the exact names they already have (see ethHoldingName).
-    shortName: 'Ethereum',
-    nativeAsset: 'ETH',
-    // CoinGecko asset-platform slug, confirmed live against
-    // /api/v3/asset_platforms by chain_identifier. A token contract looked up
-    // on the wrong platform returns nothing, which reads as "unpriced" rather
-    // than as an error -- so these are verified, not guessed.
-    coingeckoPlatform: 'ethereum',
-    enabledByDefault: true,
-    consensusRpcUrl: configuredRpcUrl(
-      'ETHEREUM_RPC_URL', 'https://ethereum-rpc.publicnode.com'
-    ),
-    // Optional parity-style trace endpoint. Keep this separate from the
-    // consensus endpoint: many public RPCs expose balances and receipts but
-    // reject trace_filter, and silently treating that as an exhaustive source
-    // would hide internal-value gaps.
-    traceRpcUrl: configuredRpcUrl('ETHEREUM_TRACE_RPC_URL', null),
-  },
-  {
-    id: 42161,
-    name: 'Arbitrum One',
-    shortName: 'Arbitrum',
-    nativeAsset: 'ETH',
-    coingeckoPlatform: 'arbitrum-one',
-    enabledByDefault: true,
-    consensusRpcUrl: configuredRpcUrl('ARBITRUM_RPC_URL', 'https://arb1.arbitrum.io/rpc'),
-    traceRpcUrl: configuredRpcUrl('ARBITRUM_TRACE_RPC_URL', null),
-    // Classic-era (pre-Nitro) L1->L2 ETH deposits, which Etherscan's txlist
-    // serves BACKWARDS. The chain's pre-Nitro history was migrated into Nitro,
-    // and the migrated retryable-ticket deposit comes back as an OUTBOUND row:
-    // from = the wallet, to = the ArbRetryableTx precompile, methodId =
-    // createRetryableTicket, gasUsed = 0 and gasPrice = 0 -- when what actually
-    // happened is the wallet was CREDITED the deposit. Ingested as-is that row
-    // books a phantom native debit, so the derived balance drifts by exactly
-    // twice the deposit (the credit missed plus the debit invented).
-    //
-    // Declared here and NOWHERE ELSE, exactly like Polygon's stateSyncDeposits:
-    // a per-chain fact the txlist ingest reads off the chain object, never a
-    // chain-id branch in the sync. normalizeFeeds reshapes a matching row --
-    // and ONLY one whose calldata destination (createRetryableTicket's first
-    // word) is the wallet itself -- into one inbound native credit from the
-    // precompile. Nitro-era deposits (type 0x64 system txs) already ingest
-    // correctly and never match this shape.
-    //
-    // All three constants are public and verified against first-party source:
-    //   * arbRetryableTx -- "Precompile address: 0x...006E" on
-    //     https://docs.arbitrum.io/build-decentralized-apps/precompiles/reference
-    //   * lastClassicBlock -- ARB1_NITRO_GENESIS_L2_BLOCK = 22207817 in
-    //     OffchainLabs/arbitrum-sdk packages/sdk/src/lib/dataEntities/constants.ts
-    //   * depositMethodId -- createRetryableTicket(address,uint256,uint256,
-    //     address,address,uint256,uint256,bytes), selector 0x679b6ded
-    classicRetryableDeposits: {
-      arbRetryableTx: '0x000000000000000000000000000000000000006e',
-      lastClassicBlock: 22207817,
-      depositMethodId: '0x679b6ded',
-    },
-  },
-  {
-    id: 42170,
-    name: 'Arbitrum Nova',
-    shortName: 'Arbitrum Nova',
-    nativeAsset: 'ETH',
-    coingeckoPlatform: 'arbitrum-nova',
-    enabledByDefault: true,
-    // Live-probed 2026-09-05 with non-user positive controls: balance,
-    // txlist, txlistinternal, tokentx, tokennfttx and token1155tx all returned
-    // the documented Etherscan-compatible shapes. This keyless index is what
-    // turns the exact Hop destination into a complete account-history walk.
-    accountApi: {
-      provider: 'Blockscout',
-      baseUrl: 'https://arbitrum-nova.blockscout.com/api',
-      v2BaseUrl: 'https://arbitrum-nova.blockscout.com/api/v2/',
-      v2NormalTransactions: true,
-      requiresApiKey: false,
-    },
-    consensusRpcUrl: configuredRpcUrl(
-      'ARBITRUM_NOVA_RPC_URL', 'https://arbitrum-nova-rpc.publicnode.com'
-    ),
-    traceRpcUrl: configuredRpcUrl('ARBITRUM_NOVA_TRACE_RPC_URL', null),
-  },
-  {
-    id: 59144,
-    name: 'Linea',
-    shortName: 'Linea',
-    nativeAsset: 'ETH',
-    coingeckoPlatform: 'linea',
-    enabledByDefault: true,
-    consensusRpcUrl: configuredRpcUrl('LINEA_RPC_URL', 'https://rpc.linea.build'),
-    traceRpcUrl: configuredRpcUrl('LINEA_TRACE_RPC_URL', null),
-  },
-  {
-    id: 324,
-    name: 'ZKsync Era',
-    shortName: 'zkSync Era',
-    nativeAsset: 'ETH',
-    coingeckoPlatform: 'zksync',
-    enabledByDefault: true,
-    accountApi: {
-      // Keep Blockscout for token/NFT feeds: Matter Labs' official explorer
-      // does not publish the same complete token1155tx contract. Native
-      // account history is routed separately through the official explorer.
-      provider: 'Blockscout',
-      baseUrl: 'https://zksync.blockscout.com/api',
-      requiresApiKey: false,
-      nativeHistoryApi: {
-        // Its indexed-block endpoint matched the public RPC head, an inactive
-        // wallet canary exhausted both native feeds from genesis, and a recent
-        // internal-value positive control matched debug_traceTransaction on
-        // 2026-09-19. Its documented page maximum is 100 rows.
-        provider: 'ZKsync Explorer',
-        baseUrl: 'https://block-explorer-api.mainnet.zksync.io/api',
-        requiresApiKey: false,
-        pageSize: 100,
-        blockPageSize: 100,
-        normalFeeField: 'fee',
-        verifyRpcIndexedHead: true,
-        // This public host throttles sustained multi-wallet history walks at
-        // the generic Etherscan pace. Keep a provider-specific floor while
-        // still allowing a stricter operator override.
-        requestSpacingMs: 2000,
-      },
-    },
-    consensusRpcUrl: configuredRpcUrl(
-      'ZKSYNC_ERA_RPC_URL', 'https://mainnet.era.zksync.io'
-    ),
-    traceRpcUrl: configuredRpcUrl('ZKSYNC_ERA_TRACE_RPC_URL', null),
-  },
-  {
-    // App-internal identity. zkSync Lite was not EVM and had no EIP-155 id;
-    // 324 is reserved for Era, so Lite must never reuse it.
-    id: 32401,
-    name: 'zkSync Lite (legacy)',
-    shortName: 'zkSync Lite',
-    nativeAsset: 'ETH',
-    // Lite's fungible token ids resolve to their canonical Ethereum contracts.
-    coingeckoPlatform: 'ethereum',
-    enabledByDefault: true,
-    historyProvider: 'zksync-lite',
-    requiresApiKey: false,
-  },
-  {
-    id: 137,
-    name: 'Polygon',
-    shortName: 'Polygon',
-    // NOT ETH. Every price, holding ticker and reconciliation key on this chain
-    // follows this symbol -- see NATIVE_ASSETS for how it is priced.
-    nativeAsset: 'POL',
-    coingeckoPlatform: 'polygon-pos',
-    enabledByDefault: true,
-    consensusRpcUrl: configuredRpcUrl('POLYGON_RPC_URL', 'https://polygon.drpc.org'),
-    traceRpcUrl: configuredRpcUrl('POLYGON_TRACE_RPC_URL', null),
-    // A SIXTH per-(wallet, chain) feed, declared here and NOWHERE ELSE (#76).
-    // Polygon credits bridged-in native POL through the Bor STATE SYNC, which
-    // is a system transaction present in NONE of the five Etherscan account
-    // feeds -- so txlist/txlistinternal never see it and the derived balance
-    // drifts below what the chain reports. The credit IS on-chain as a `Deposit`
-    // event on the MRC20 precompile, fetched via module=logs action=getLogs.
-    //
-    // Consumed exactly like `nativeAsset`: a per-chain fact the sync reads off
-    // the chain object, never a chain-id branch in the sync code. A chain that
-    // does not declare `stateSyncDeposits` simply never runs the feed.
-    //   * contract -- the MRC20 precompile 0x...1010 (Polygon's own Matic/POL
-    //     token contract, verified byte-for-byte against maticnetwork/static).
-    //     Deposits log FROM here, so it is the from_address of every ingested
-    //     row and the counterparty a `bridge` label classifies on (rung 3).
-    //   * topic0 -- keccak256 of Deposit(address,address,uint256,uint256,uint256).
-    //     The user is topic2 and the amount is the first 32 bytes of data. The
-    //     same transaction also emits LogTransfer (a DIFFERENT topic0); filtering
-    //     on this one alone is what keeps the credit from being counted twice.
-    stateSyncDeposits: {
-      contract: '0x0000000000000000000000000000000000001010',
-      topic0: '0x4e2ca0515ed1aef1395f66b5303bb5d6f1bf9d61a353fa53f73f8ac9973fa9f6',
-    },
-  },
-  {
-    id: 100,
-    name: 'Gnosis Chain',
-    shortName: 'Gnosis',
-    // Gnosis' fee token is xDAI, minted 1:1 when DAI/USDS crosses the canonical
-    // bridge. Keep the identity distinct from ERC-20 DAI: it is a native
-    // balance with its own CoinGecko series and reconciliation key.
-    nativeAsset: 'XDAI',
-    coingeckoPlatform: 'xdai',
-    enabledByDefault: true,
-    // Gnosis' own documentation names this Blockscout instance as an execution
-    // explorer. The legacy API remains healthy for the ordinary account feeds,
-    // but its txlistinternal route reports old ranges as incompletely indexed.
-    // Blockscout V2 passed two independent history canaries on 2026-09-19: an
-    // inactive address returned an exhausted empty history, while an active
-    // address returned every independently recovered trace plus a previously
-    // unseen trace. The adapter still requires V2's global block and internal
-    // indexing ratios to be 100% before it accepts any page as complete.
-    accountApi: {
-      provider: 'Blockscout',
-      baseUrl: 'https://gnosisscan.io/api',
-      v2BaseUrl: 'https://gnosisscan.io/api/v2/',
-      v2NormalTransactions: true,
-      v2InternalTransactions: true,
-      requiresApiKey: false,
-    },
-    // Blockscout's indexed account balance may be stale while it refreshes in
-    // the background. Reconciliation needs the chain head, so native and token
-    // balance reads use Gnosis' public JSON-RPC endpoint instead.
-    consensusRpcUrl: configuredRpcUrl('GNOSIS_RPC_URL', 'https://rpc.gnosischain.com'),
-    traceRpcUrl: configuredRpcUrl('GNOSIS_TRACE_RPC_URL', null),
-    // Gnosis mints bridged xDAI through consensus. No account feed contains the
-    // credit; the Block Reward contract's AddedReceiver log is the on-chain
-    // record. This reuses the sixth native-credit feed/cursor introduced for
-    // Polygon. The legacy config name is retained because it is persisted as
-    // last_block_statesync, but `userTopicIndex` makes the log shape generic.
-    stateSyncDeposits: {
-      contract: '0x481c034c6d9441db23ea48de68bcae812c5d39ba',
-      topic0: '0x3c798bbcf33115b42c728b8504cff11dd58736e9fa789f1cda2738db7d696b2a',
-      userTopicIndex: 1,
-    },
-  },
-  {
-    id: 10,
-    name: 'OP Mainnet',
-    shortName: 'Optimism',
-    nativeAsset: 'ETH',
-    coingeckoPlatform: 'optimistic-ethereum',
-    enabledByDefault: true,
-    accountApi: {
-      provider: 'Blockscout',
-      baseUrl: 'https://explorer.optimism.io/api',
-      v2BaseUrl: 'https://explorer.optimism.io/api/v2/',
-      v2NormalTransactions: true,
-      // The V2 adapter exhausted all three legacy-unsupported production
-      // histories on 2026-09-20 with complete indexing and valid empty tails.
-      v2InternalTransactions: true,
-      requiresApiKey: false,
-    },
-    consensusRpcUrl: configuredRpcUrl('OPTIMISM_RPC_URL', 'https://mainnet.optimism.io'),
-    traceRpcUrl: configuredRpcUrl('OPTIMISM_TRACE_RPC_URL', null),
-    // Bump when stored feed rows must be rebuilt under new normalization.
-    // Existing chain rows below this version reset all feed cursors once;
-    // newly-created rows start current and do not pay a redundant backfill.
-    ingestVersion: 1,
-    // OP deposit transactions are unsigned L2 transactions whose independent
-    // mint funds execution. Blockscout's legacy txlist omits type=0x7e,
-    // sourceHash and mint, so fetchNormalTxs enriches zero-gas candidates from
-    // JSON-RPC before `opStackDepositEffects` accounts for both balance effects.
-    opStackDeposits: {
-      creditSource: '0x4200000000000000000000000000000000000010',
-    },
-    // Standard-bridge ETH deposits emit this event after crediting `to`
-    // (topic2); amount is data word 0. The same predeploy is used by OP and
-    // OP Stack's standard bridge also covers third-party frontends that settle
-    // through the canonical StandardBridge.
-    stateSyncDeposits: {
-      contract: '0x4200000000000000000000000000000000000010',
-      topic0: '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d',
-      userTopicIndex: 2,
-    },
-  },
-];
+// The registry is the network files in crypto/registry/networks/ (one file per
+// network); this module is the facade every caller reads through. Each entry
+// keeps the shape callers have always seen -- the network file minus its
+// registry-only fields, with RPC endpoints resolved from the environment.
+const networks = require('../crypto/registry/networks');
+
+function registryEntry(network) {
+  const { order, rpc, nativeAssetPricing, ...entry } = network;
+  void order; void nativeAssetPricing;
+  const copy = JSON.parse(JSON.stringify(entry));
+  if (rpc) {
+    copy.consensusRpcUrl = configuredRpcUrl(rpc.consensus.env, rpc.consensus.default);
+    copy.traceRpcUrl = configuredRpcUrl(rpc.trace.env, rpc.trace.default);
+  }
+  return copy;
+}
+
+const REGISTRY = networks.active.map(registryEntry);
 
 // How each native asset is PRICED, keyed by the symbol chains carry in
-// `nativeAsset`. Keyed by symbol rather than by chain because the asset is the
-// thing being priced: ETH is one asset whether it moved on mainnet, Arbitrum or
-// Linea, and pricing it per chain would fetch the same series four times and
-// store four copies of it under four keys.
+// `nativeAsset` (declared once per symbol in the network files). Keyed by
+// symbol rather than by chain because the asset is the thing being priced:
+// ETH is one asset whether it moved on mainnet, Arbitrum or Linea, and pricing
+// it per chain would fetch the same series four times and store four copies
+// of it under four keys.
 //
 // The symbol IS the asset_price_history key (see utils/assetPriceKey.js), which
 // is what makes adding a chain free of any data migration: every stored 'ETH'
 // row stays correct, and a new symbol simply has no rows yet.
-//
-// `historyStart` is the earliest date the FALLBACK provider serves, not the
-// asset's launch date -- it exists so the price job does not spend a run
-// requesting a decade Coinbase will never return and then permanently mark the
-// asset range_limited. Both were probed live against the candles endpoint.
-const NATIVE_ASSETS = {
-  ETH: {
-    coingeckoId: 'ethereum',
-    coinbaseProduct: 'ETH-USD',
-    historyStart: '2016-05-18',
-  },
-  POL: {
-    coingeckoId: 'polygon-ecosystem-token',
-    coinbaseProduct: 'POL-USD',
-    // Coinbase's first POL-USD daily candle. MATIC-USD history before the 2024
-    // rename is a DIFFERENT product and is deliberately not stitched on: the
-    // two are the same money, but a stitched series would be indistinguishable
-    // from a real one while resting on an assumption nothing here verifies.
-    historyStart: '2024-09-04',
-  },
-  XDAI: {
-    coingeckoId: 'xdai',
-    // xDAI is minted and redeemed 1:1 against DAI/USDS by the canonical
-    // bridge. Coinbase has no XDAI market; DAI-USD is the declared fallback,
-    // never an accidental symbol match.
-    coinbaseProduct: 'DAI-USD',
-    // First DAI-USD daily candle observed on Coinbase Exchange.
-    historyStart: '2020-04-30',
-  },
-};
+const NATIVE_ASSETS = networks.nativeAssets;
 
 // Mainnet. The default for every chain-aware call, so that a caller which has
 // no chain to pass keeps behaving exactly as it did before #58.
@@ -364,7 +92,7 @@ const DEFAULT_CHAIN_ID = 1;
 // Chains this app once supported and has retired (082 removed Base). A retired
 // id must never be re-attached to new data: imports store the provider's
 // network text but no normalized chain id for it.
-const RETIRED_CHAIN_IDS = Object.freeze([8453]);
+const RETIRED_CHAIN_IDS = Object.freeze(networks.retired.map((network) => network.id));
 function isRetiredChain(chainId) {
   return RETIRED_CHAIN_IDS.includes(Number(chainId));
 }

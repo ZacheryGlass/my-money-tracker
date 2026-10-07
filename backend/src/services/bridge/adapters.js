@@ -7,6 +7,7 @@
 
 const { keccak_256 } = require('@noble/hashes/sha3.js');
 const { bytesToHex, concatBytes, hexToBytes } = require('@noble/hashes/utils.js');
+const chains = require('../../config/chains');
 
 const RULE_VERSION = 'bridge-match-v1';
 const HASH_RE = /^0x[0-9a-f]{64}$/;
@@ -354,7 +355,10 @@ function opSourceHash(blockHash, index) {
 
 function decodeOpStack(envelope) {
   const events = [];
-  const destinationProtocol = Number(envelope.chain_id) === 10 ? 'optimism' : null;
+  // The canonical bridge settling deposits into this network, from its
+  // registry entry (bridge.opStackDestination).
+  const destination = chains.getChain(Number(envelope.chain_id))?.bridge?.opStackDestination || null;
+  const destinationProtocol = destination?.protocol || null;
   const sourceHash = bytes32(envelope.transaction?.sourceHash);
   const txType = lower(envelope.transaction?.type);
   const outcome = receiptStatus(envelope.receipt);
@@ -362,7 +366,7 @@ function decodeOpStack(envelope) {
       && envelope.category === 'bridge_in'
       && sourceHash && outcome != null && (txType === '0x7e' || txType === '126')) {
     events.push(evidence(envelope, null, {
-      protocol: destinationProtocol, family_version: 'bedrock',
+      protocol: destinationProtocol, family_version: destination.familyVersion,
       role: 'destination_execution', direction: 'in',
       correlation_key: `op-deposit:${sourceHash}`,
       status: outcome === 0n ? 'failed' : 'protocol_verified',

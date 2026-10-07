@@ -375,10 +375,10 @@ test('unsupported audit chains become explicit amber scopes without a provider r
 });
 
 test('zkSync Era uses bounded split-explorer audit coverage instead of unsupported status', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/EvmAuditService.js'), 'utf8');
   assert.equal(chains.accountApiHistoryProvider(324), 'explorer-composite');
-  assert.match(source, /\[324, \{/);
-  assert.doesNotMatch(source, /\[324, \{\s*unsupported:/);
+  const era = require('../src/services/EvmAuditService')._AUDIT_CHAINS.get(324);
+  assert.equal(era.auditProvider, 'explorer-composite');
+  assert.equal(era.unsupported, undefined);
 });
 
 test('stable evidence hashes ignore object key order but not payload changes', () => {

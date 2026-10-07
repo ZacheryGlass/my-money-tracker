@@ -2,33 +2,61 @@
   "registry": [
     {
       "id": 1,
+      "caip2": "eip155:1",
+      "family": "evm",
       "name": "Ethereum",
       "shortName": "Ethereum",
       "nativeAsset": "ETH",
       "coingeckoPlatform": "ethereum",
       "enabledByDefault": true,
+      "explorer": {
+        "baseUrl": "https://etherscan.io",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      },
+      "exchangeAliases": [
+        "ethereum",
+        "ethereum mainnet",
+        "mainnet",
+        "erc20"
+      ],
+      "audit": {},
       "consensusRpcUrl": "https://ethereum-rpc.publicnode.com",
       "traceRpcUrl": null,
       "enabled": true
     },
     {
       "id": 42161,
+      "caip2": "eip155:42161",
+      "family": "evm",
       "name": "Arbitrum One",
       "shortName": "Arbitrum",
       "nativeAsset": "ETH",
       "coingeckoPlatform": "arbitrum-one",
       "enabledByDefault": true,
-      "consensusRpcUrl": "https://arb1.arbitrum.io/rpc",
-      "traceRpcUrl": null,
       "classicRetryableDeposits": {
         "arbRetryableTx": "0x000000000000000000000000000000000000006e",
         "lastClassicBlock": 22207817,
         "depositMethodId": "0x679b6ded"
       },
+      "explorer": {
+        "baseUrl": "https://arbiscan.io",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      },
+      "exchangeAliases": [
+        "arbitrum",
+        "arbitrum one"
+      ],
+      "audit": {},
+      "consensusRpcUrl": "https://arb1.arbitrum.io/rpc",
+      "traceRpcUrl": null,
       "enabled": true
     },
     {
       "id": 42170,
+      "caip2": "eip155:42170",
+      "family": "evm",
       "name": "Arbitrum Nova",
       "shortName": "Arbitrum Nova",
       "nativeAsset": "ETH",
@@ -41,23 +69,45 @@
         "v2NormalTransactions": true,
         "requiresApiKey": false
       },
+      "explorer": {
+        "baseUrl": "https://arbitrum-nova.blockscout.com",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      },
+      "exchangeAliases": [
+        "arbitrum nova"
+      ],
+      "audit": {},
       "consensusRpcUrl": "https://arbitrum-nova-rpc.publicnode.com",
       "traceRpcUrl": null,
       "enabled": true
     },
     {
       "id": 59144,
+      "caip2": "eip155:59144",
+      "family": "evm",
       "name": "Linea",
       "shortName": "Linea",
       "nativeAsset": "ETH",
       "coingeckoPlatform": "linea",
       "enabledByDefault": true,
+      "explorer": {
+        "baseUrl": "https://lineascan.build",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      },
+      "exchangeAliases": [
+        "linea"
+      ],
+      "audit": {},
       "consensusRpcUrl": "https://rpc.linea.build",
       "traceRpcUrl": null,
       "enabled": true
     },
     {
       "id": 324,
+      "caip2": "eip155:324",
+      "family": "evm",
       "name": "ZKsync Era",
       "shortName": "zkSync Era",
       "nativeAsset": "ETH",
@@ -78,12 +128,26 @@
           "requestSpacingMs": 2000
         }
       },
+      "explorer": {
+        "baseUrl": "https://zksync.blockscout.com",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      },
+      "exchangeAliases": [
+        "zksync era",
+        "zksync"
+      ],
+      "audit": {
+        "errorDetail": "Moralis does not enumerate zkSync Era; the official ZKsync Explorer provides finite native/internal history and Blockscout provides finite token/NFT history, while consensus RPC verifies mined transactions and effects."
+      },
       "consensusRpcUrl": "https://mainnet.era.zksync.io",
       "traceRpcUrl": null,
       "enabled": true
     },
     {
       "id": 32401,
+      "caip2": null,
+      "family": "zksync-lite",
       "name": "zkSync Lite (legacy)",
       "shortName": "zkSync Lite",
       "nativeAsset": "ETH",
@@ -91,25 +155,51 @@
       "enabledByDefault": true,
       "historyProvider": "zksync-lite",
       "requiresApiKey": false,
+      "explorer": {
+        "baseUrl": "https://zkscan.io",
+        "txPath": "/explorer/transactions/{hash}",
+        "addressPath": "/explorer/accounts/{address}"
+      },
+      "exchangeAliases": [],
+      "audit": {
+        "unsupported": true,
+        "errorCode": "NON_EVM_CHAIN",
+        "errorDetail": "zkSync Lite is a legacy non-EVM history source and is outside the EVM audit contract."
+      },
       "enabled": true
     },
     {
       "id": 137,
+      "caip2": "eip155:137",
+      "family": "evm",
       "name": "Polygon",
       "shortName": "Polygon",
       "nativeAsset": "POL",
       "coingeckoPlatform": "polygon-pos",
       "enabledByDefault": true,
-      "consensusRpcUrl": "https://polygon.drpc.org",
-      "traceRpcUrl": null,
       "stateSyncDeposits": {
         "contract": "0x0000000000000000000000000000000000001010",
         "topic0": "0x4e2ca0515ed1aef1395f66b5303bb5d6f1bf9d61a353fa53f73f8ac9973fa9f6"
       },
+      "explorer": {
+        "baseUrl": "https://polygonscan.com",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      },
+      "exchangeAliases": [
+        "polygon",
+        "polygon pos",
+        "matic"
+      ],
+      "audit": {},
+      "consensusRpcUrl": "https://polygon.drpc.org",
+      "traceRpcUrl": null,
       "enabled": true
     },
     {
       "id": 100,
+      "caip2": "eip155:100",
+      "family": "evm",
       "name": "Gnosis Chain",
       "shortName": "Gnosis",
       "nativeAsset": "XDAI",
@@ -123,17 +213,37 @@
         "v2InternalTransactions": true,
         "requiresApiKey": false
       },
-      "consensusRpcUrl": "https://rpc.gnosischain.com",
-      "traceRpcUrl": null,
       "stateSyncDeposits": {
         "contract": "0x481c034c6d9441db23ea48de68bcae812c5d39ba",
         "topic0": "0x3c798bbcf33115b42c728b8504cff11dd58736e9fa789f1cda2738db7d696b2a",
         "userTopicIndex": 1
       },
+      "explorer": {
+        "baseUrl": "https://gnosis.blockscout.com",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      },
+      "exchangeAliases": [
+        "gnosis",
+        "xdai",
+        "gnosis chain"
+      ],
+      "audit": {
+        "moralis": "gnosis",
+        "moralisActiveIds": [
+          "0x64",
+          "100",
+          "gnosis"
+        ]
+      },
+      "consensusRpcUrl": "https://rpc.gnosischain.com",
+      "traceRpcUrl": null,
       "enabled": true
     },
     {
       "id": 10,
+      "caip2": "eip155:10",
+      "family": "evm",
       "name": "OP Mainnet",
       "shortName": "Optimism",
       "nativeAsset": "ETH",
@@ -147,8 +257,6 @@
         "v2InternalTransactions": true,
         "requiresApiKey": false
       },
-      "consensusRpcUrl": "https://mainnet.optimism.io",
-      "traceRpcUrl": null,
       "ingestVersion": 1,
       "opStackDeposits": {
         "creditSource": "0x4200000000000000000000000000000000000010"
@@ -158,6 +266,24 @@
         "topic0": "0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d",
         "userTopicIndex": 2
       },
+      "bridge": {
+        "opStackDestination": {
+          "protocol": "optimism",
+          "familyVersion": "bedrock"
+        }
+      },
+      "explorer": {
+        "baseUrl": "https://explorer.optimism.io",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      },
+      "exchangeAliases": [
+        "optimism",
+        "op mainnet"
+      ],
+      "audit": {},
+      "consensusRpcUrl": "https://mainnet.optimism.io",
+      "traceRpcUrl": null,
       "enabled": true
     }
   ],
