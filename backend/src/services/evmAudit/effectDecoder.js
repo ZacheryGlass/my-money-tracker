@@ -1,39 +1,15 @@
 'use strict';
 
-const { keccak_256 } = require('@noble/hashes/sha3.js');
-const { bytesToHex } = require('@noble/hashes/utils.js');
-
-function eventTopic(signature) {
-  return `0x${bytesToHex(keccak_256(new TextEncoder().encode(signature)))}`;
-}
+// ABI/hex primitives: crypto/infra/evm.js, shared with the bridge decoders.
+const {
+  eventTopic, normalizedAddress, topicAddress, words, wordInteger, quantity,
+} = require('../../crypto/infra/evm');
 
 const TOPICS = {
   transfer: eventTopic('Transfer(address,address,uint256)'),
   transferSingle: eventTopic('TransferSingle(address,address,address,uint256,uint256)'),
   transferBatch: eventTopic('TransferBatch(address,address,address,uint256[],uint256[])'),
 };
-
-function normalizedAddress(value) {
-  const text = String(value || '').toLowerCase();
-  return /^0x[0-9a-f]{40}$/.test(text) ? text : null;
-}
-
-function topicAddress(value) {
-  const text = String(value || '').toLowerCase();
-  if (!/^0x[0-9a-f]{64}$/.test(text)) return null;
-  return normalizedAddress(`0x${text.slice(-40)}`);
-}
-
-function words(data) {
-  const text = String(data || '').toLowerCase();
-  if (!/^0x(?:[0-9a-f]{64})*$/.test(text)) return null;
-  return text.slice(2).match(/.{64}/g) || [];
-}
-
-function wordInteger(value) {
-  if (!/^[0-9a-f]{64}$/.test(String(value || ''))) return null;
-  try { return BigInt(`0x${value}`); } catch { return null; }
-}
 
 function direction(wallet, from, to) {
   if (from === wallet && to === wallet) return 'self';
@@ -42,11 +18,6 @@ function direction(wallet, from, to) {
   return null;
 }
 
-function quantity(value) {
-  const text = String(value ?? '');
-  if (!/^(?:0x[0-9a-f]+|\d+)$/i.test(text)) return null;
-  try { return BigInt(text); } catch { return null; }
-}
 
 function baseEffect(context, data) {
   return {

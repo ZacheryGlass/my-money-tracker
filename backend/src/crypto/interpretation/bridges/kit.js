@@ -5,77 +5,13 @@
 // every adapter emits. Pure: adapters receive only independently fetched
 // transaction/receipt data and chain-scoped endpoint rows.
 
-const { keccak_256 } = require('@noble/hashes/sha3.js');
-const { bytesToHex } = require('@noble/hashes/utils.js');
+// The ABI/hex primitives are crypto/infra/evm.js, shared with the audit.
+const {
+  HASH_RE, ADDRESS_RE, lower, eventTopic, functionSelector, bytes32, nonZeroBytes32, logIndex,
+  dataWord, dataWordCount, uintWord, receiptStatus, addressWord,
+} = require('../../infra/evm');
 
 const RULE_VERSION = 'bridge-match-v1';
-
-const HASH_RE = /^0x[0-9a-f]{64}$/;
-
-const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
-
-const lower = (value) => String(value || '').toLowerCase();
-
-function eventTopic(signature) {
-  return `0x${bytesToHex(keccak_256(new TextEncoder().encode(signature)))}`;
-}
-
-function functionSelector(signature) {
-  return `0x${bytesToHex(keccak_256(new TextEncoder().encode(signature))).slice(0, 8)}`;
-}
-
-function bytes32(value) {
-  const normalized = lower(value);
-  return HASH_RE.test(normalized) ? normalized : null;
-}
-
-function nonZeroBytes32(value) {
-  const normalized = bytes32(value);
-  return normalized && !/^0x0{64}$/.test(normalized) ? normalized : null;
-}
-
-function logIndex(log) {
-  const raw = log?.logIndex;
-  const parsed = typeof raw === 'string' && /^0x[0-9a-f]+$/i.test(raw)
-    ? Number.parseInt(raw, 16)
-    : Number(raw);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function dataWord(data, index) {
-  const normalized = lower(data);
-  if (!/^0x(?:[0-9a-f]{64})*$/.test(normalized)) return null;
-  const start = 2 + index * 64;
-  return normalized.length >= start + 64 ? `0x${normalized.slice(start, start + 64)}` : null;
-}
-
-function dataWordCount(data) {
-  const normalized = lower(data);
-  if (!/^0x(?:[0-9a-f]{64})*$/.test(normalized)) return null;
-  return (normalized.length - 2) / 64;
-}
-
-function uintWord(value) {
-  const normalized = bytes32(value);
-  if (!normalized) return null;
-  try { return BigInt(normalized); } catch { return null; }
-}
-
-function receiptStatus(receipt) {
-  const raw = receipt?.status;
-  try {
-    const parsed = typeof raw === 'number' ? BigInt(raw) : BigInt(String(raw));
-    return parsed === 0n || parsed === 1n ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function addressWord(value) {
-  const normalized = bytes32(value);
-  if (!normalized || !/^0x0{24}[0-9a-f]{40}$/.test(normalized)) return null;
-  return `0x${normalized.slice(-40)}`;
-}
 
 function endpointMetadata(endpoint) {
   if (endpoint?.metadata && typeof endpoint.metadata === 'object'
