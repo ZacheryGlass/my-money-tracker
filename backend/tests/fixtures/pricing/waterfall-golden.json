@@ -1,0 +1,4932 @@
+[
+  {
+    "name": "native 2017-06-01 cg=ok cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=ok cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=ok cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=ok cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=ok cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=ok cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=empty cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned an empty series",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=empty cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: no candles",
+      "status": "empty",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=empty cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=empty cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=empty cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=empty cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned an empty series",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": "coingecko",
+      "detail": "CoinGecko returned an empty series",
+      "status": "empty",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=offshape cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned no prices array",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=offshape cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned no prices array; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=offshape cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned no prices array; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=offshape cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned no prices array; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=offshape cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned no prices array; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=offshape cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned no prices array",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko returned no prices array",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=unlisted cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko has no series for this asset",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=unlisted cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=unlisted cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=unlisted cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=unlisted cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=unlisted cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko has no series for this asset",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset",
+      "status": "unlisted",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=badKey cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko HTTP 401: Request failed with status code 401",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=badKey cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=badKey cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=badKey cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=badKey cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=badKey cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko HTTP 401: Request failed with status code 401",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=badKey",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=limited cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko rate limited: Request failed with status code 429",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=limited cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=limited cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase returned a non-array candle response",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=limited cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase has no ETH-USD product",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=limited cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=limited cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko rate limited: Request failed with status code 429",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=limited",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=down cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko HTTP 500: Request failed with status code 500",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=down cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=down cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=down cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=down cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=down cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko HTTP 500: Request failed with status code 500",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: no candles",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase returned a non-array candle response",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase has no ETH-USD product",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=range",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+ok cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range+ok cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: no candles; served from 2025-10-08",
+      "status": "range_limited",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range+ok cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase returned a non-array candle response; served from 2025-10-08",
+      "status": "range_limited",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range+ok cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase has no ETH-USD product; served from 2025-10-08",
+      "status": "range_limited",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range+ok cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase HTTP 500: Request failed with status code 500; served from 2025-10-08",
+      "status": "range_limited",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range+ok cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=range+ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": "coingecko",
+      "detail": "CoinGecko plan serves only the last 365 days; served from 2025-10-08",
+      "status": "range_limited",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range+empty cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range+empty cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: no candles",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+empty cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase returned a non-array candle response",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+empty cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase has no ETH-USD product",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+empty cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+empty cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=range+empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+limited cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-06-14",
+      "upserted": 12
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-01-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2019-11-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2020-09-13",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2021-07-10",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2022-05-06",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-03-02",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2023-12-27",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2024-10-22",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-08-18",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-06-14",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2017-06-01 cg=range+limited cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-11-18T00:00:00Z&end=2020-09-12T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2020-09-13T00:00:00Z&end=2021-07-09T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2021-07-10T00:00:00Z&end=2022-05-05T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2022-05-06T00:00:00Z&end=2023-03-01T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-03-02T00:00:00Z&end=2023-12-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2023-12-27T00:00:00Z&end=2024-10-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2024-10-22T00:00:00Z&end=2025-08-17T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2025-08-18T00:00:00Z&end=2026-06-13T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-14T00:00:00Z&end=2026-10-07T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: no candles",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+limited cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase returned a non-array candle response",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+limited cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase has no ETH-USD product",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+limited cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2017-06-01 cg=range+limited cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2017-06-01T00:00:00Z&end=2018-03-27T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2018-03-28T00:00:00Z&end=2019-01-21T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2019-01-22T00:00:00Z&end=2019-11-17T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "range_limited",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2018-03-28",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2018-03-28",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2017-06-01 cg=range+limited",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1496275200&to=1791417599",
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1759881600&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "polygon native 2017-06-01",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/polygon-ecosystem-token/market_chart/range?vs_currency=usd&from=1725408000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/POL-USD/candles?granularity=86400&start=2024-09-04T00:00:00Z&end=2025-06-30T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/POL-USD/candles?granularity=86400&start=2025-07-01T00:00:00Z&end=2026-04-26T00:00:00Z",
+      "https://api.exchange.coinbase.com/products/POL-USD/candles?granularity=86400&start=2026-04-27T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "POL",
+      "assetSymbol": "POL",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "covered",
+      "earliestDate": "2024-09-04",
+      "latestDate": "2026-04-27",
+      "upserted": 3
+    },
+    "stored": [
+      [
+        "2024-09-04",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2025-07-01",
+        "1.5",
+        "coinbase-exchange"
+      ],
+      [
+        "2026-04-27",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=ok cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=ok cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=ok cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=ok cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=ok cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=ok cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-06-01",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-06-01",
+        "250",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=empty cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned an empty series",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=empty cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: no candles",
+      "status": "empty",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=empty cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=empty cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=empty cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=empty cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned an empty series",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": "coingecko",
+      "detail": "CoinGecko returned an empty series",
+      "status": "empty",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=offshape cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned no prices array",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=offshape cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned no prices array; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=offshape cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned no prices array; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=offshape cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned no prices array; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=offshape cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned no prices array; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=offshape cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned no prices array",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko returned no prices array",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=unlisted cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko has no series for this asset",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=unlisted cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=unlisted cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=unlisted cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=unlisted cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=unlisted cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko has no series for this asset",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko has no series for this asset",
+      "status": "unlisted",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=badKey cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko HTTP 401: Request failed with status code 401",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=badKey cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=badKey cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=badKey cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=badKey cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=badKey cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko HTTP 401: Request failed with status code 401",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=badKey",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko HTTP 401: Request failed with status code 401",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=limited cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko rate limited: Request failed with status code 429",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=limited cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=limited cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase returned a non-array candle response",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=limited cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase has no ETH-USD product",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=limited cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=limited cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko rate limited: Request failed with status code 429",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=limited",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=down cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko HTTP 500: Request failed with status code 500",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=down cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=down cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=down cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=down cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=down cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko HTTP 500: Request failed with status code 500",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: no candles",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase returned a non-array candle response",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase has no ETH-USD product",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko plan serves only the last 365 days",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=range",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko plan serves only the last 365 days",
+      "status": "range_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+ok cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range+ok cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range+ok cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range+ok cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range+ok cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range+ok cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=range+ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range+empty cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned an empty series",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range+empty cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: no candles",
+      "status": "empty",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+empty cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase returned a non-array candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+empty cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase has no ETH-USD product",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+empty cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko returned an empty series; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+empty cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko returned an empty series",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=range+empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": "coingecko",
+      "detail": "CoinGecko returned an empty series",
+      "status": "empty",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+limited cb=ok",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko rate limited: Request failed with status code 429",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "native 2026-06-01 cg=range+limited cb=empty",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: no candles",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+limited cb=offshape",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase returned a non-array candle response",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+limited cb=unlisted",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase has no ETH-USD product",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+limited cb=down",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429; Coinbase: Coinbase HTTP 500: Request failed with status code 500",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "native 2026-06-01 cg=range+limited cb=partial",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599",
+      "https://api.exchange.coinbase.com/products/ETH-USD/candles?granularity=86400&start=2026-06-01T00:00:00Z&end=2026-10-07T00:00:00Z"
+    ],
+    "entry": {
+      "assetKey": "ETH",
+      "assetSymbol": "ETH",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coinbase-exchange",
+      "detail": "CoinGecko fell through: CoinGecko rate limited: Request failed with status code 429",
+      "status": "covered",
+      "earliestDate": "2026-06-01",
+      "latestDate": "2026-06-01",
+      "upserted": 1
+    },
+    "stored": [
+      [
+        "2026-06-01",
+        "1.5",
+        "coinbase-exchange"
+      ]
+    ]
+  },
+  {
+    "name": "token 2026-06-01 cg=range+limited",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "USDC",
+      "chainId": 1,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "CoinGecko rate limited: Request failed with status code 429",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "polygon native 2026-06-01",
+    "requests": [
+      "https://api.coingecko.com/api/v3/coins/polygon-ecosystem-token/market_chart/range?vs_currency=usd&from=1780272000&to=1791417599"
+    ],
+    "entry": {
+      "assetKey": "POL",
+      "assetSymbol": "POL",
+      "chainId": null,
+      "contractAddress": null,
+      "provider": "coingecko",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2025-10-08",
+      "latestDate": "2026-10-06",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2025-10-08",
+        "2000",
+        "coingecko"
+      ],
+      [
+        "2026-10-06",
+        "2500",
+        "coingecko"
+      ]
+    ]
+  },
+  {
+    "name": "token on a chain with no platform",
+    "requests": [],
+    "entry": {
+      "assetKey": "erc20:999999:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "assetSymbol": "X",
+      "chainId": 999999,
+      "contractAddress": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "provider": null,
+      "detail": "Chain 999999 has no CoinGecko asset platform in the registry",
+      "status": "unlisted",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "native with no registry entry",
+    "requests": [],
+    "entry": {
+      "assetKey": "NOPE",
+      "status": "unlisted",
+      "detail": "Unrecognized asset key form"
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2017-06-01 bfx=ok",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": "bitfinex",
+      "detail": "Bitfinex tEOSUSD series starts 2017-07-01",
+      "status": "range_limited",
+      "earliestDate": "2017-07-01",
+      "latestDate": "2018-01-01",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-07-01",
+        "2",
+        "bitfinex"
+      ],
+      [
+        "2018-01-01",
+        "9",
+        "bitfinex"
+      ]
+    ]
+  },
+  {
+    "name": "alias 2017-06-01 bfx=empty",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex answered no tEOSUSD candles despite the declared series start 2017-07-01 being in the window",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2017-06-01 bfx=errorArray",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex returned a non-candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2017-06-01 bfx=limited",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex rate limited: Request failed with status code 429",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2017-06-01 bfx=down",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2017-07-01 bfx=ok",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": "bitfinex",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-07-01",
+      "latestDate": "2018-01-01",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-07-01",
+        "2",
+        "bitfinex"
+      ],
+      [
+        "2018-01-01",
+        "9",
+        "bitfinex"
+      ]
+    ]
+  },
+  {
+    "name": "alias 2017-07-01 bfx=empty",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex answered no tEOSUSD candles despite the declared series start 2017-07-01 being in the window",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2017-07-01 bfx=errorArray",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex returned a non-candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2017-07-01 bfx=limited",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex rate limited: Request failed with status code 429",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2017-07-01 bfx=down",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1498867200000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2018-03-01 bfx=ok",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1519862400000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": "bitfinex",
+      "detail": null,
+      "status": "covered",
+      "earliestDate": "2017-07-01",
+      "latestDate": "2018-01-01",
+      "upserted": 2
+    },
+    "stored": [
+      [
+        "2017-07-01",
+        "2",
+        "bitfinex"
+      ],
+      [
+        "2018-01-01",
+        "9",
+        "bitfinex"
+      ]
+    ]
+  },
+  {
+    "name": "alias 2018-03-01 bfx=empty",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1519862400000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": "bitfinex",
+      "detail": "Bitfinex answered no tEOSUSD candles for the window",
+      "status": "empty",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2018-03-01 bfx=errorArray",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1519862400000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex returned a non-candle response",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2018-03-01 bfx=limited",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1519862400000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex rate limited: Request failed with status code 429",
+      "status": "rate_limited",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": true
+    },
+    "stored": []
+  },
+  {
+    "name": "alias 2018-03-01 bfx=down",
+    "requests": [
+      "https://api-pub.bitfinex.com/v2/candles/trade:1D:tEOSUSD/hist?start=1519862400000&end=1791417599999&sort=1&limit=10000"
+    ],
+    "entry": {
+      "assetKey": "erc20:1:0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "assetSymbol": "EOS",
+      "chainId": 1,
+      "contractAddress": "0x86fa049857e0209aa7d9e616f7eb3b3b78ecfdb0",
+      "provider": null,
+      "detail": "Bitfinex HTTP 500: Request failed with status code 500",
+      "status": "error",
+      "earliestDate": null,
+      "latestDate": null,
+      "upserted": 0,
+      "skipCoverage": false
+    },
+    "stored": []
+  }
+]
