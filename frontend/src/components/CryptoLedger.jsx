@@ -1141,7 +1141,7 @@ const CryptoLedger = ({
                 {unpriced.length} {unpriced.length === 1 ? 'asset has' : 'assets have'} no
                 price for the dates they moved ({unpriced.slice(0, 4).map((a) => a.asset_symbol || a.asset_key).join(', ')}
                 {unpriced.length > 4 ? `, +${unpriced.length - 4} more` : ''}) — their rows read
-                &quot;No price&quot;, which is not the same as $0.
+                &quot;No USD value&quot;, which is not the same as $0.
               </span>
             </span>
           )}
@@ -1229,7 +1229,13 @@ const CryptoLedger = ({
             const entry = row.original;
             const open = expandedId === entry.id;
             return (
-              <div key={row.id} className="bg-surface p-4" onClick={() => toggleRow(entry)}>
+              <div key={row.id} className="bg-surface p-4">
+                <button
+                  type="button"
+                  onClick={() => toggleRow(entry)}
+                  aria-expanded={open}
+                  className="block w-full text-left"
+                >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-money text-sm font-semibold text-primary">{entry.description}</p>
@@ -1253,8 +1259,9 @@ const CryptoLedger = ({
                 {entry.needs_review && (
                   <p className="mt-2 text-[10px] uppercase tracking-wider text-orange-400">Needs review</p>
                 )}
+                </button>
                 {open && isMobile && (
-                  <div onClick={(event) => event.stopPropagation()}>
+                  <div>
                     <LedgerRowDetail
                       key={entry.id}
                       row={entry}
@@ -1417,7 +1424,7 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
                 )}
               </>
             : <span title={USD_BASIS_NOTE[row.usd_basis] || undefined}>
-                {row.usd_basis === 'not_applicable' ? 'Not applicable' : 'No price for this date'}
+                {row.usd_basis === 'not_applicable' ? 'Not applicable' : 'No USD value for this date'}
               </span>}
         </DetailField>
         {row.method_name && (

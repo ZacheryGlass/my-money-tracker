@@ -1019,12 +1019,17 @@ function WalletsPanel({
             const status = walletStatus(wallet, { syncing: syncingIds.has(wallet.id) });
             const open = expandedId === wallet.id;
             return (
-              <div key={row.id} className="bg-surface p-3" onClick={() => toggleRow(wallet)}>
+              <div key={row.id} className="bg-surface p-3">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => toggleRow(wallet)}
+                    aria-expanded={open}
+                    className="min-w-0 flex-1 text-left"
+                  >
                     <p className="truncate text-body-sm font-semibold text-primary">{walletName(wallet)}</p>
                     <p className="truncate font-mono text-[10px] text-tertiary">{shortEthAddress(wallet.address)}</p>
-                  </div>
+                  </button>
                   <div className="shrink-0 text-right">
                     {wallet.eth_quantity != null && (
                       <p className="font-money text-body-sm text-secondary">
@@ -1040,9 +1045,7 @@ function WalletsPanel({
                   </span>
                   {rowActions(wallet)}
                 </div>
-                {open && isMobile && (
-                  <div onClick={(event) => event.stopPropagation()}>{walletDetail(wallet)}</div>
-                )}
+                {open && isMobile && <div>{walletDetail(wallet)}</div>}
               </div>
             );
           }}

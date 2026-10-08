@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, RefreshCw, Undo2 } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import {
-  formatCompactCurrency, formatDateDisplay, formatRelativeTime,
+  formatDateDisplay, formatDecimalAmount, formatRelativeTime, formatUsdAtTime,
   shortEthAddress as shortEthAddressOrUnknown,
 } from '../../utils/format';
 import { explorerAddressUrl, explorerTxUrl, networkName } from '../../utils/chains';
@@ -136,7 +136,7 @@ export function CounterpartyRow({
             {/* Unpriced is not the same as worthless -- never render this as $0. */}
             <span className="font-mono">
               {Number(counterparty.usd_volume) > 0
-                ? formatCompactCurrency(Number(counterparty.usd_volume))
+                ? formatUsdAtTime(counterparty.usd_volume, 'exact')
                 : 'No USD value'}
             </span>
             {counterparty.token_symbols?.length > 0 && (
@@ -583,7 +583,7 @@ function ReviewPanel({
                               transaction and a deleted one. */}
                           {(row.legs || []).length > 0 && (
                             <p className="mt-1 font-mono text-[10px] text-tertiary">
-                              {row.legs.map((legRow) => `${legRow.direction === 'out' ? '-' : '+'}${legRow.amount} ${legRow.asset}`).join(', ')}
+                              {row.legs.map((legRow) => `${legRow.direction === 'out' ? '−' : '+'}${formatDecimalAmount(legRow.amount, { maxFractionDigits: 18 }) ?? legRow.amount} ${legRow.asset}`).join(', ')}
                             </p>
                           )}
                         </div>

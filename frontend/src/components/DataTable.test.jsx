@@ -29,6 +29,20 @@ function Harness({ rowCount, onRowClick }) {
 }
 
 describe('DataTable', () => {
+  it('opens a clickable row from the keyboard', () => {
+    const onRowClick = vi.fn();
+    render(<Harness rowCount={2} onRowClick={onRowClick} />);
+    const row = screen.getByText('Row 1').closest('tr');
+
+    expect(row).toHaveAttribute('tabindex', '0');
+    fireEvent.keyDown(row, { key: 'Enter' });
+    fireEvent.keyDown(row, { key: ' ' });
+    fireEvent.keyDown(row, { key: 'a' });
+
+    expect(onRowClick).toHaveBeenCalledTimes(2);
+    expect(onRowClick).toHaveBeenCalledWith({ id: 1, name: 'Row 1' });
+  });
+
   it('pages rows and shows controls when rows exceed the page size', () => {
     render(<Harness rowCount={30} />);
 

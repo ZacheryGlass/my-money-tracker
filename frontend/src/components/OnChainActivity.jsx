@@ -371,7 +371,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
                 : 'Valued at the price on the transaction date'}
             >
               {row.original.usdAtTime}
-              {row.original.usdCarried && <span className="ml-0.5">*</span>}
+              {row.original.usdCarried && <span className="ml-0.5">~</span>}
             </span>
           )}
         </div>
@@ -568,7 +568,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
                     </div>
                     {transfer.usdAtTime && (
                       <div className="font-money text-[10px] text-tertiary">
-                        {transfer.usdAtTime}{transfer.usdCarried && '*'}
+                        {transfer.usdAtTime}{transfer.usdCarried && '~'}
                       </div>
                     )}
                   </div>

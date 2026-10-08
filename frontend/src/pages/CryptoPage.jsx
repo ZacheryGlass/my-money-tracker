@@ -639,12 +639,12 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       </div>
 
       {successMessage && (
-        <div className="mb-4 border border-gain/20 bg-gain-bg p-3 text-body-sm text-gain">
+        <div role="status" className="mb-4 border border-gain/20 bg-gain-bg p-3 text-body-sm text-gain">
           {successMessage}
         </div>
       )}
       {noticeMessage && (
-        <div className="mb-4 border border-amber-500/30 bg-amber-500/10 p-3 text-body-sm text-amber-300">
+        <div role="status" className="mb-4 border border-amber-500/30 bg-amber-500/10 p-3 text-body-sm text-amber-300">
           {noticeMessage}
         </div>
       )}
@@ -752,11 +752,14 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                 mobile="rows"
                 renderMobileRow={(row) => {
                   const holding = row.original;
+                  // A real button where the row edits; a plain block where a
+                  // sync owns the holding and there is nothing to open.
+                  const Row = isSyncManaged(holding) ? 'div' : 'button';
                   return (
-                    <div
+                    <Row
                       key={row.id}
-                      className={`p-3 ${isSyncManaged(holding) ? '' : 'cursor-pointer hover:bg-surface-2'}`}
-                      onClick={() => handleEdit(holding)}
+                      {...(isSyncManaged(holding) ? {} : { type: 'button', onClick: () => handleEdit(holding) })}
+                      className={`block w-full p-3 text-left ${isSyncManaged(holding) ? '' : 'cursor-pointer hover:bg-surface-2'}`}
                     >
                       <div className="flex items-start justify-between">
                         <div className="min-w-0 flex-1">
@@ -768,7 +771,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                         </div>
                         <p className="value-emphasis shrink-0 pl-3">{formatCurrency(getHoldingValue(holding))}</p>
                       </div>
-                    </div>
+                    </Row>
                   );
                 }}
               />

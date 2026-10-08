@@ -104,10 +104,21 @@ const DataTable = ({
                 return (
                   <React.Fragment key={row.id}>
                     <tr
-                      className={`transition-colors hover:bg-surface-2 ${
+                      className={`transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent ${
                         rowClassName ? rowClassName(row.original) : onRowClick ? 'cursor-pointer' : ''
                       }`}
                       onClick={() => onRowClick?.(row.original)}
+                      // A clickable row is reachable and operable from the
+                      // keyboard too; keys pressed on a control inside the row
+                      // stay that control's.
+                      tabIndex={onRowClick ? 0 : undefined}
+                      aria-expanded={onRowClick && renderRowDetail ? Boolean(detail) : undefined}
+                      onKeyDown={onRowClick ? (event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        onRowClick(row.original);
+                      } : undefined}
                     >
                       {row.getVisibleCells().map((cell) => {
                         const meta = cell.column.columnDef.meta || {};
