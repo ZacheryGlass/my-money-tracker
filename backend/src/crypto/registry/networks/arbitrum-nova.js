@@ -18,9 +18,12 @@ module.exports = {
     provider: 'Blockscout',
     baseUrl: 'https://arbitrum-nova.blockscout.com/api',
     v2BaseUrl: 'https://arbitrum-nova.blockscout.com/api/v2/',
-    v2NormalTransactions: true,
     requiresApiKey: false,
   },
+  // Account-history adapter per feed (crypto/chains/providers); a feed not
+  // listed uses the Etherscan-compatible accountApi. Changing one is a provider
+  // swap: only that feed's provenance changes, so only it replays.
+  routes: { normal: 'blockscout-v2' },
   rpc: {
     consensus: { env: 'ARBITRUM_NOVA_RPC_URL', default: 'https://arbitrum-nova-rpc.publicnode.com' },
     trace: { env: 'ARBITRUM_NOVA_TRACE_RPC_URL', default: null },

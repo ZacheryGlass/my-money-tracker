@@ -59,6 +59,7 @@ function configuredRpcUrl(name, fallback) {
 // keeps the shape callers have always seen -- the network file minus its
 // registry-only fields, with RPC endpoints resolved from the environment.
 const networks = require('../crypto/registry/networks');
+const providerAdapters = require('../crypto/chains/providers');
 
 function registryEntry(network) {
   const { order, rpc, nativeAssetPricing, ...entry } = network;
@@ -68,6 +69,10 @@ function registryEntry(network) {
     copy.consensusRpcUrl = configuredRpcUrl(rpc.consensus.env, rpc.consensus.default);
     copy.traceRpcUrl = configuredRpcUrl(rpc.trace.env, rpc.trace.default);
   }
+  // The accountApi V2 flags callers (and provenance strings) have always read,
+  // derived from the network's declared routes.
+  if (copy.accountApi && copy.routes?.normal === 'blockscout-v2') copy.accountApi.v2NormalTransactions = true;
+  if (copy.accountApi && copy.routes?.internal === 'blockscout-v2') copy.accountApi.v2InternalTransactions = true;
   return copy;
 }
 
@@ -241,6 +246,17 @@ function accountApiRequiresKey(chainId) {
   );
 }
 
+// The account-history adapter (crypto/chains/providers) serving one action on
+// one chain: the network's declared route for that feed, else the
+// Etherscan-compatible default.
+const ACTION_FEED = Object.freeze({
+  txlist: 'normal', txlistinternal: 'internal', tokentx: 'token', tokennfttx: 'nft', token1155tx: 'nft1155',
+});
+function accountFeedRoute(chainId, action) {
+  const feed = ACTION_FEED[action];
+  return (feed && getChain(chainId)?.routes?.[feed]) || providerAdapters.DEFAULT_ADAPTER;
+}
+
 // Exact provenance string persisted in eth_feed_coverage. Keep sync writers
 // and completion readers on one formatter so a provider route change cannot
 // leave old evidence looking current.
@@ -250,6 +266,10 @@ function accountHistoryProviderName(chainId, feed = null) {
   if (chain.historyProvider === 'zksync-lite') {
     return 'Matter Labs zkSync Lite archive';
   }
+  // An adapter may own its provenance string; the built-in ones keep the
+  // strings below, which existing coverage rows are keyed on.
+  const routed = feed && chain.routes?.[feed] ? providerAdapters.adapter(chain.routes[feed]) : null;
+  if (routed?.routeKey) return routed.routeKey(chain, feed);
   const accountApi = accountApiForFeed(chainId, feed);
   if (accountApi) {
     const accountUrl = accountApiEndpointForFeed(chainId, feed);
@@ -336,6 +356,7 @@ module.exports = {
   accountApiProviders,
   accountApiRoutes,
   accountApiRequiresKey,
+  accountFeedRoute,
   accountHistoryProviderName,
   allChains,
   getChain,

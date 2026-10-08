@@ -14,12 +14,14 @@ module.exports = {
     provider: 'Blockscout',
     baseUrl: 'https://explorer.optimism.io/api',
     v2BaseUrl: 'https://explorer.optimism.io/api/v2/',
-    v2NormalTransactions: true,
-    // The V2 adapter exhausted all three legacy-unsupported production
-    // histories on 2026-09-20 with complete indexing and valid empty tails.
-    v2InternalTransactions: true,
     requiresApiKey: false,
   },
+  // Account-history adapter per feed (crypto/chains/providers); a feed not
+  // listed uses the Etherscan-compatible accountApi. Changing one is a provider
+  // swap: only that feed's provenance changes, so only it replays. The V2
+  // internal route exhausted all three legacy-unsupported production histories
+  // on 2026-09-20 with complete indexing and valid empty tails.
+  routes: { normal: 'blockscout-v2', internal: 'blockscout-v2' },
   rpc: {
     consensus: { env: 'OPTIMISM_RPC_URL', default: 'https://mainnet.optimism.io' },
     trace: { env: 'OPTIMISM_TRACE_RPC_URL', default: null },

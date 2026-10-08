@@ -1,6 +1,7 @@
 'use strict';
 
 const { withKind } = require('../crypto/infra/http/providerError');
+const providerAdapters = require('../crypto/chains/providers');
 
 const axios = require('axios');
 const crypto = require('node:crypto');
@@ -1250,95 +1251,32 @@ class EtherscanService {
   // so that block is refetched whole and its partial rows are dropped first.
   // Yield exact provider pages. Audits persist each page before requesting the
   // next; sync collects the same stream and replaces the overlapping last block.
+  // One account-history feed, page by page, from whichever provider adapter
+  // the network routes this feed to (crypto/chains/providers). The adapters
+  // call back into this service (_request, _blockscoutV2Request, ...), so the
+  // transport, throttling and test seams stay here.
   static async *accountFeedPages(
     action, address, startBlock, apiKey,
     chainId = etherscan.CHAIN_ID, scannedThroughBlock = null
   ) {
-    let cursor = startBlock;
     const endBlock = scannedThroughBlock ?? 999999999;
-    if (endBlock < cursor) {
-      throw apiError(`account provider head ${endBlock} is behind requested block ${cursor}; cursor frozen`);
+    if (endBlock < startBlock) {
+      throw apiError(`account provider head ${endBlock} is behind requested block ${startBlock}; cursor frozen`);
     }
-    const accountApi = this._accountApi(chainId, action);
-    if (action === 'txlist' && accountApi?.v2NormalTransactions) {
-      yield* this._blockscoutV2AddressHistoryPages(
-        'normal', address, cursor, endBlock, apiKey, chainId, accountApi
-      );
-      return;
-    }
-    if (action === 'txlistinternal' && accountApi?.v2InternalTransactions) {
-      yield* this._blockscoutV2AddressHistoryPages(
-        'internal', address, cursor, endBlock, apiKey, chainId, accountApi
-      );
-      return;
-    }
-    const pageSize = Number(accountApi?.pageSize) || PAGE_SIZE;
-    const blockPageSize = Number(accountApi?.blockPageSize) || 10000;
-    if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > PAGE_SIZE
-        || !Number.isSafeInteger(blockPageSize) || blockPageSize < pageSize
-        || blockPageSize > 10000) {
-      throw apiError(`Chain ${chainId} account provider has invalid page-size configuration`);
-    }
-    const readPage = async (throughBlock, offset) => {
-      const { result, evidence } = await this._request({
-        module: 'account', action, address, startblock: cursor,
-        endblock: throughBlock, page: 1, offset, sort: 'asc',
-      }, { apiKey, chainId, captureEvidence: true });
-      if (!Array.isArray(result) || !evidence) {
-        throw apiError(`${action} returned a non-array page or missing evidence; cursor frozen`);
-      }
-      for (const row of result) {
-        const block = Number(row?.blockNumber);
-        if (!Number.isSafeInteger(block) || block < cursor || block > throughBlock) {
-          throw apiError(`${action} returned block ${JSON.stringify(row?.blockNumber)} outside requested range ${cursor}-${throughBlock}; cursor frozen`);
-        }
-      }
-      // Sort a copy so retained responseJson remains the provider's exact page.
-      const rows = result.slice().sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber))
-        .map((row) => action === 'txlistinternal' && !row.hash && row.transactionHash
-          ? { ...row, hash: row.transactionHash } : row)
-        .map((row) => {
-          if (action !== 'txlist' || !accountApi?.normalFeeField) return row;
-          const fee = row?.[accountApi.normalFeeField];
-          if (typeof fee !== 'string' || !/^\d+$/.test(fee)) {
-            throw apiError(
-              `${accountApi.provider || 'account provider'} returned an invalid exact fee`
-            );
-          }
-          return { ...row, feeWei: fee };
-        });
-      return { ...evidence, rows, cursorIn: String(cursor), itemCount: rows.length };
-    };
-    const hydrate = async (page) => ({
-      ...page,
-      rows: action === 'txlist' ? await this._hydrateOpStackDeposits(page.rows, chainId) : page.rows,
+    const route = chains.accountFeedRoute(chainId, action);
+    const adapter = providerAdapters.adapter(route);
+    if (!adapter) throw apiError(`Chain ${chainId} routes ${action} to unknown provider adapter ${route}; cursor frozen`);
+    yield* adapter.pages({
+      service: this,
+      internals: { apiError, PAGE_SIZE, MAX_ACCOUNT_PAGES },
+      action,
+      address,
+      startBlock,
+      endBlock,
+      apiKey,
+      chainId,
+      accountApi: this._accountApi(chainId, action),
     });
-    for (let count = 0; cursor <= endBlock; count += 1) {
-      if (count >= MAX_ACCOUNT_PAGES) {
-        throw apiError(`${action} account walk exceeded ${MAX_ACCOUNT_PAGES} pages without completing; cursor frozen`);
-      }
-      const page = await readPage(endBlock, pageSize);
-      const lastBlock = Number(page.rows.at(-1)?.blockNumber);
-      const full = page.rows.length >= pageSize;
-      page.cursorOut = full ? String(lastBlock) : null;
-      yield await hydrate(page);
-      if (!full) break;
-      if (lastBlock === cursor) {
-        // Re-read a crowded block at the provider maximum. A full maximum
-        // window cannot prove exhaustion, so never step past that unknown tail.
-        const blockPage = await readPage(cursor, blockPageSize);
-        if (blockPage.rows.length >= blockPageSize) {
-          throw apiError(
-            `${action} block ${cursor} reached the ${blockPageSize}-row provider limit; cursor frozen`
-          );
-        }
-        blockPage.cursorOut = String(cursor + 1);
-        yield await hydrate(blockPage);
-        cursor += 1;
-      } else {
-        cursor = lastBlock;
-      }
-    }
   }
 
   static async _blockscoutV2Request(
@@ -1481,149 +1419,6 @@ class EtherscanService {
       nonce: String(row.nonce ?? ''),
       transactionIndex: String(row.position ?? ''),
       isError: row.status === 'error' ? '1' : '0',
-    };
-  }
-
-  // Blockscout V2 uses the same exhaustive, newest-first cursor contract for
-  // normal and internal address history. Keep that proof walk in one place so
-  // both feeds reject malformed pages, repeated rows/cursors and incomplete
-  // global indexes identically. Feed-specific normalization and trace status
-  // hydration stay explicit in this small definition.
-  static async *_blockscoutV2AddressHistoryPages(
-    kind, address, startBlock, endBlock, apiKey, chainId, accountApi
-  ) {
-    const config = kind === 'internal'
-      ? {
-        path: 'internal-transactions',
-        normalize: (row) => this._normalizeBlockscoutV2Internal(row),
-        rowKey: (row) => `${row.hash}:${row.traceId}`,
-        repeated: 'internal trace',
-        requiredRatio: 'indexed_internal_transactions_ratio',
-        incomplete: 'internal index',
-        hydrate: (rows) => this._hydrateBlockscoutV2InternalStatus(rows, chainId),
-      }
-      : {
-        path: 'transactions',
-        normalize: (row) => this._normalizeBlockscoutV2Normal(row),
-        rowKey: (row) => row.hash,
-        repeated: 'transaction',
-        requiredRatio: null,
-        incomplete: 'block index',
-        hydrate: null,
-      };
-    if (!/^0x[0-9a-f]{40}$/i.test(String(address))) {
-      throw apiError(`Blockscout V2 ${kind} history requires a valid address; cursor frozen`);
-    }
-    const baseUrl = accountApi.v2BaseUrl;
-    if (!baseUrl) {
-      throw apiError(`Blockscout V2 ${kind} history has no endpoint; cursor frozen`);
-    }
-    const statusResponse = await this._blockscoutV2Request(
-      chainId, apiKey, baseUrl, 'main-page/indexing-status'
-    );
-    const status = statusResponse.payload;
-    const complete = status.finished_indexing === true
-      && status.finished_indexing_blocks === true
-      && Number(status.indexed_blocks_ratio) === 1
-      && (!config.requiredRatio || Number(status[config.requiredRatio]) === 1);
-    if (!complete) {
-      throw apiError(`Blockscout V2 ${config.incomplete} is incomplete; cursor frozen`);
-    }
-
-    const normalizedAddress = String(address).toLowerCase();
-    const path = `addresses/${encodeURIComponent(normalizedAddress)}/${config.path}`;
-    const sourcePages = [];
-    const rows = [];
-    const rowKeys = new Set();
-    const cursorKeys = new Set();
-    let next = {};
-    let exhausted = false;
-    // V2 pages newest-first. While every item so far has arrived in
-    // non-increasing block order, a page reaching below startBlock proves
-    // every later page is older still, so the walk can stop there instead of
-    // re-reading the wallet's whole history on every sync. Any out-of-order
-    // item disables the shortcut and the walk runs to the provider's end.
-    let lastBlockSeen = Infinity;
-    let monotonic = true;
-    for (let count = 0; count < MAX_ACCOUNT_PAGES; count += 1) {
-      const page = await this._blockscoutV2Request(chainId, apiKey, baseUrl, path, next);
-      const items = page.payload.items;
-      if (!Array.isArray(items)) {
-        throw apiError(`Blockscout V2 ${kind} history returned no items array; cursor frozen`);
-      }
-      sourcePages.push(page);
-      for (const item of items) {
-        const normalized = config.normalize(item);
-        const key = config.rowKey(normalized);
-        if (rowKeys.has(key)) {
-          throw apiError(`Blockscout V2 repeated ${config.repeated} ${key}; cursor frozen`);
-        }
-        rowKeys.add(key);
-        const block = Number(normalized.blockNumber);
-        if (!(block <= lastBlockSeen)) monotonic = false;
-        lastBlockSeen = block;
-        if (block >= startBlock && block <= endBlock) rows.push(normalized);
-      }
-      const nextParams = page.payload.next_page_params;
-      if (nextParams == null) {
-        exhausted = true;
-        break;
-      }
-      if (monotonic && items.length > 0 && lastBlockSeen < startBlock) {
-        exhausted = true;
-        break;
-      }
-      if (typeof nextParams !== 'object' || Array.isArray(nextParams)
-          || Object.keys(nextParams).length === 0
-          || Object.values(nextParams).some((value) => !['string', 'number'].includes(typeof value))) {
-        throw apiError('Blockscout V2 returned an invalid pagination cursor; cursor frozen');
-      }
-      const cursorKey = JSON.stringify(
-        Object.entries(nextParams).sort(([a], [b]) => a.localeCompare(b))
-      );
-      if (cursorKeys.has(cursorKey)) {
-        throw apiError('Blockscout V2 repeated its pagination cursor; cursor frozen');
-      }
-      cursorKeys.add(cursorKey);
-      next = nextParams;
-    }
-    if (!exhausted) {
-      throw apiError(`Blockscout V2 ${kind} walk exceeded ${MAX_ACCOUNT_PAGES} pages; cursor frozen`);
-    }
-
-    const outputRows = config.hydrate ? await config.hydrate(rows) : rows;
-    outputRows.sort((a, b) => Number(a.blockNumber) - Number(b.blockNumber)
-      || a.hash.localeCompare(b.hash)
-      || (a.blockscoutTraceIndex ?? 0) - (b.blockscoutTraceIndex ?? 0));
-
-    // Retain the exact raw body of every provider response inside one evidence
-    // envelope. The sync path consumes only rows, while the audit path can
-    // persist and hash this bounded, complete proof as one logical page.
-    const responseJson = {
-      indexing_status: statusResponse.payload,
-      pages: sourcePages.map((page) => page.payload),
-    };
-    const rawText = JSON.stringify({
-      indexing_status: statusResponse.evidence.rawText,
-      pages: sourcePages.map((page) => page.evidence.rawText),
-    });
-    yield {
-      provider: 'Blockscout V2',
-      endpoint: new URL(path, `${String(baseUrl).replace(/\/$/, '')}/`).toString(),
-      requestParams: {
-        address: normalizedAddress,
-        startblock: startBlock,
-        endblock: endBlock,
-        page_count: sourcePages.length,
-      },
-      rawText,
-      responseJson,
-      responseSha256: crypto.createHash('sha256').update(rawText).digest('hex'),
-      requestId: null,
-      rows: outputRows,
-      cursorIn: String(startBlock),
-      cursorOut: null,
-      itemCount: outputRows.length,
     };
   }
 

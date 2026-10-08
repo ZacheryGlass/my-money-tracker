@@ -66,8 +66,11 @@
         "provider": "Blockscout",
         "baseUrl": "https://arbitrum-nova.blockscout.com/api",
         "v2BaseUrl": "https://arbitrum-nova.blockscout.com/api/v2/",
-        "v2NormalTransactions": true,
-        "requiresApiKey": false
+        "requiresApiKey": false,
+        "v2NormalTransactions": true
+      },
+      "routes": {
+        "normal": "blockscout-v2"
       },
       "explorer": {
         "baseUrl": "https://arbitrum-nova.blockscout.com",
@@ -209,9 +212,13 @@
         "provider": "Blockscout",
         "baseUrl": "https://gnosisscan.io/api",
         "v2BaseUrl": "https://gnosisscan.io/api/v2/",
+        "requiresApiKey": false,
         "v2NormalTransactions": true,
-        "v2InternalTransactions": true,
-        "requiresApiKey": false
+        "v2InternalTransactions": true
+      },
+      "routes": {
+        "normal": "blockscout-v2",
+        "internal": "blockscout-v2"
       },
       "stateSyncDeposits": {
         "contract": "0x481c034c6d9441db23ea48de68bcae812c5d39ba",
@@ -253,9 +260,13 @@
         "provider": "Blockscout",
         "baseUrl": "https://explorer.optimism.io/api",
         "v2BaseUrl": "https://explorer.optimism.io/api/v2/",
+        "requiresApiKey": false,
         "v2NormalTransactions": true,
-        "v2InternalTransactions": true,
-        "requiresApiKey": false
+        "v2InternalTransactions": true
+      },
+      "routes": {
+        "normal": "blockscout-v2",
+        "internal": "blockscout-v2"
       },
       "ingestVersion": 1,
       "opStackDeposits": {

@@ -34,13 +34,15 @@ module.exports = {
     provider: 'Blockscout',
     baseUrl: 'https://gnosisscan.io/api',
     v2BaseUrl: 'https://gnosisscan.io/api/v2/',
-    v2NormalTransactions: true,
-    v2InternalTransactions: true,
     requiresApiKey: false,
   },
   // Blockscout's indexed account balance may be stale while it refreshes in
   // the background. Reconciliation needs the chain head, so native and token
   // balance reads use Gnosis' public JSON-RPC endpoint instead.
+  // Account-history adapter per feed (crypto/chains/providers); a feed not
+  // listed uses the Etherscan-compatible accountApi. Changing one is a provider
+  // swap: only that feed's provenance changes, so only it replays.
+  routes: { normal: 'blockscout-v2', internal: 'blockscout-v2' },
   rpc: {
     consensus: { env: 'GNOSIS_RPC_URL', default: 'https://rpc.gnosischain.com' },
     trace: { env: 'GNOSIS_TRACE_RPC_URL', default: null },
