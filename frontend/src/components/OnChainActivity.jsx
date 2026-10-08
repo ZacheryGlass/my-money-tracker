@@ -4,16 +4,11 @@ import { Activity, X, ExternalLink, EyeOff, RefreshCw, Tag, Wallet } from 'lucid
 import { eth as ethAPI } from '../utils/api';
 import { formatDateDisplay, formatTokenUnits, formatUsdAtTime, shortEthAddress } from '../utils/format';
 import { explorerTxUrl, nativeSymbol } from '../utils/chains';
-import {
-  LABEL_VERDICT_KEEP,
-  labelVerdictOptions,
-  labelVerdictKind,
-  labelVerdictNeedsName,
-} from '../utils/dataLabels';
 import DataTable from './DataTable';
 import SegmentedControl from './SegmentedControl';
 import LoadingState from './LoadingState';
 import { ConfirmDialog } from './Modal';
+import CounterpartyVerdictForm from '../features/crypto/CounterpartyVerdictForm';
 
 export const EthWalletBadge = () => (
   <span
@@ -113,10 +108,8 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
   const [error, setError] = useState(null);
   const [ignoringContract, setIgnoringContract] = useState(null);
   const [labelingId, setLabelingId] = useState(null);
-  const [labelName, setLabelName] = useState('');
   // null = follow the default ("keep") -- the server resolves the address's
   // current verdict, hidden pack rows included. Set once the user picks.
-  const [labelVerdictChoice, setLabelVerdictChoice] = useState(null);
   const [savingLabel, setSavingLabel] = useState(false);
   const [labelNames, setLabelNames] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -221,20 +214,13 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
   // it) -- and to 'exchange' only for an address nobody has judged.
   // Defaulting from what this page can see re-voted hidden pack 'external'
   // gateways to 'exchange' on a plain rename.
-  const handleLabelAddress = async (event, counterparty) => {
-    event.preventDefault();
-    const verdict = labelVerdictChoice || LABEL_VERDICT_KEEP;
-    const name = labelName.trim();
-    // External/own names never reach classification, so the server fills in a
-    // short address; only an exchange name has to be typed.
-    if (savingLabel || (!name && labelVerdictNeedsName(verdict))) return;
+  const handleLabelAddress = async (counterparty, { name, kind }) => {
+    if (savingLabel) return;
     setSavingLabel(true);
     setError(null);
     try {
-      await ethAPI.labelAddress(counterparty, name || null, { kind: labelVerdictKind(verdict) });
+      await ethAPI.labelAddress(counterparty, name || null, { kind });
       setLabelingId(null);
-      setLabelName('');
-      setLabelVerdictChoice(null);
       setRefreshKey((key) => key + 1);
       onDataChanged?.();
     } catch (err) {
@@ -384,63 +370,24 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       cell: ({ row }) => {
         const transfer = row.original;
         if (labelingId === transfer.id) {
-          // The verdict is the point of this form, not a detail: without it
-          // every label written here votes 'exchange', and an address the pack
-          // got wrong could never be corrected from the screen that shows the
-          // wrong transfer. Stacked rather than inline -- the cell is 13rem.
-          const verdict = labelVerdictChoice || LABEL_VERDICT_KEEP;
-          const nameRequired = labelVerdictNeedsName(verdict);
+          // Stacked rather than inline -- the cell is 13rem.
           return (
-            <form
-              onSubmit={(event) => handleLabelAddress(event, transfer.counterparty)}
-              className="flex flex-col items-stretch gap-1.5"
-            >
-              <input
-                type="text"
-                value={labelName}
-                onChange={(event) => setLabelName(event.target.value)}
-                list="eth-label-names"
-                maxLength={64}
-                placeholder={nameRequired ? 'e.g. Coinbase' : 'Name (optional)'}
-                autoFocus
-                aria-label="Label name"
-                className="h-7 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
-              />
-              <select
-                value={verdict}
-                onChange={(event) => setLabelVerdictChoice(event.target.value)}
-                aria-label="Counterparty verdict"
-                className="h-7 w-full min-w-0 rounded border border-input-border bg-surface-2 px-1 text-[11px] text-primary outline-none focus:ring-1 focus:ring-accent"
-              >
-                {labelVerdictOptions().map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-              <div className="flex items-center justify-end gap-1.5">
-                <button
-                  type="submit"
-                  disabled={savingLabel || (nameRequired && !labelName.trim())}
-                  className="inline-flex h-7 items-center gap-1 rounded border border-teal-500/30 bg-teal-500/10 px-2 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
-                >
-                  {savingLabel && <RefreshCw size={10} className="animate-spin" />}
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setLabelingId(null); setLabelName(''); setLabelVerdictChoice(null); }}
-                  className="inline-flex h-7 items-center rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary"
-                >
-                  <X size={10} />
-                </button>
-              </div>
-            </form>
+            <CounterpartyVerdictForm
+              stacked
+              initialName={transfer.exchangeName || ''}
+              nameOptions={labelNames}
+              busy={savingLabel}
+              submitLabel="Save"
+              onSubmit={(values) => handleLabelAddress(transfer.counterparty, values)}
+              onCancel={() => setLabelingId(null)}
+            />
           );
         }
         return (
           <div className="flex items-center justify-end gap-1.5">
             {transfer.labelable && (
               <button
-                onClick={() => { setLabelingId(transfer.id); setLabelName(transfer.exchangeName || ''); setLabelVerdictChoice(null); }}
+                onClick={() => setLabelingId(transfer.id)}
                 title={transfer.exchangeName
                   ? 'Correct or rename this label (exchange, outside party, or yours)'
                   : 'Label this address and say how to treat it (exchange, outside party, or yours)'}
@@ -468,7 +415,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
       },
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [showWalletColumn, labelingId, labelName, labelVerdictChoice, savingLabel, ignoringContract]);
+  ], [showWalletColumn, labelingId, labelNames, savingLabel, ignoringContract]);
 
   const table = useReactTable({
     data: enrichedRows,
@@ -498,9 +445,6 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
         value={typeFilter}
         onChange={setTypeFilter}
       />
-      <datalist id="eth-label-names">
-        {labelNames.map((name) => <option key={name} value={name} />)}
-      </datalist>
 
       {error && (
         <div className="mb-3 flex items-center gap-2 border border-loss/20 bg-loss-bg p-2 text-body-sm text-loss">
