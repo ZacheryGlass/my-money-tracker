@@ -1,7 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { ConfirmDialog } from './Modal';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 
 const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, title }) => {
+  // A deleted holding takes its history with it; one stray tap must not.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const confirmDelete = async () => {
+    setDeleting(true);
+    try {
+      await onDelete(holding.id);
+    } finally {
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
+  };
   const isManaged = Boolean(holding?.is_plaid_managed || holding?.account_eth_wallet_id || holding?.account_exchange_account_id);
   const [formData, setFormData] = useState({
     account_id: '',
@@ -246,7 +259,7 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
               {holding && !isManaged && onDelete && (
                 <button
                   type="button"
-                  onClick={() => onDelete(holding.id)}
+                  onClick={() => setConfirmingDelete(true)}
                   disabled={isSubmitting}
                   className="px-3 py-1.5 text-loss hover:bg-loss-bg rounded text-button disabled:opacity-50 sm:mr-auto"
                 >
@@ -273,6 +286,18 @@ const HoldingForm = ({ isOpen, onClose, onSave, onDelete, holding, accounts, tit
           </form>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmingDelete}
+        title="Delete this holding?"
+        confirmLabel="Delete holding"
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirmingDelete(false)}
+      >
+        <p>
+          {holding?.name || holding?.ticker || 'This holding'} is removed from the account. This cannot be undone.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 };

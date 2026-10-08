@@ -300,6 +300,9 @@ describe('CryptoPage', () => {
     const callsBefore = apiMocks.holdings.getAll.mock.calls.length;
 
     fireEvent.click(screen.getByTitle(/ignore/i));
+    // User-wide, so it asks first.
+    expect(apiMocks.eth.ignoreToken).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: 'Ignore token' }));
 
     await vi.waitFor(() => {
       expect(apiMocks.eth.ignoreToken).toHaveBeenCalledWith('0xbad0000000000000000000000000000000000bad', 'SCAM');

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ChevronDown, EyeOff, RefreshCw, Tag, Undo2 } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import LoadFailed from '../../features/crypto/LoadFailed';
+import { ConfirmDialog } from '../Modal';
 import {
   LABEL_VERDICT_KEEP,
   labelVerdictOptions,
@@ -159,36 +160,51 @@ function LabelsPanel({
     }
   };
 
-  const handleUnlabelAddress = async (address) => {
+  // Both of these rewrite history (a removed label reclassifies every past
+  // transfer with that address; an ignored token leaves every wallet's
+  // holdings and activity), so each asks first, naming what it touches.
+  const [pendingUnlabel, setPendingUnlabel] = useState(null);
+  const [pendingIgnore, setPendingIgnore] = useState(null);
+
+  const handleUnlabelAddress = async () => {
+    const { address } = pendingUnlabel;
     setUpdatingLabels(true);
     onError(null);
     try {
       await ethAPI.unlabelAddress(address);
       showSuccess('Address label removed');
+      setPendingUnlabel(null);
       await onChanged();
     } catch (err) {
+      setPendingUnlabel(null);
       onError(err.response?.data?.error || 'Failed to remove address label');
     } finally {
       setUpdatingLabels(false);
     }
   };
 
-  const handleIgnoreToken = async (event) => {
+  const handleIgnoreToken = (event) => {
     event.preventDefault();
     const contract = ignoreContract.trim();
     if (!ETH_ADDRESS_RE.test(contract)) {
       onError('Enter the token contract address (0x followed by 40 hex characters)');
       return;
     }
+    setPendingIgnore({ contract, symbol: ignoreSymbol.trim() || undefined });
+  };
+
+  const confirmIgnoreToken = async () => {
     setUpdatingIgnoreList(true);
     onError(null);
     try {
-      await ethAPI.ignoreToken(contract, ignoreSymbol.trim() || undefined);
+      await ethAPI.ignoreToken(pendingIgnore.contract, pendingIgnore.symbol);
       showSuccess('Token ignored');
       setIgnoreContract('');
       setIgnoreSymbol('');
+      setPendingIgnore(null);
       await onChanged();
     } catch (err) {
+      setPendingIgnore(null);
       onError(err.response?.data?.error || 'Failed to ignore token');
     } finally {
       setUpdatingIgnoreList(false);
@@ -249,7 +265,7 @@ function LabelsPanel({
               server says which rows those are. */}
           {!label.builtin && (
             <button
-              onClick={() => handleUnlabelAddress(label.address)}
+              onClick={() => setPendingUnlabel(label)}
               disabled={updatingLabels}
               className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
             >
@@ -493,6 +509,38 @@ function LabelsPanel({
           )}
         </div>
       </section>
+
+      <ConfirmDialog
+        open={Boolean(pendingUnlabel)}
+        title="Remove this label?"
+        confirmLabel="Remove label"
+        busy={updatingLabels}
+        onConfirm={handleUnlabelAddress}
+        onCancel={() => setPendingUnlabel(null)}
+      >
+        {pendingUnlabel && (
+          <p>
+            {pendingUnlabel.name ? `${pendingUnlabel.name} (${pendingUnlabel.address})` : pendingUnlabel.address} goes
+            back to Needs Review, and every past transfer with it is reclassified. This takes about 15 seconds.
+          </p>
+        )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={Boolean(pendingIgnore)}
+        title="Ignore this token?"
+        confirmLabel="Ignore token"
+        busy={updatingIgnoreList}
+        onConfirm={confirmIgnoreToken}
+        onCancel={() => setPendingIgnore(null)}
+      >
+        {pendingIgnore && (
+          <p>
+            {pendingIgnore.symbol || pendingIgnore.contract} is removed from holdings and activity in every
+            wallet. You can undo this from the ignored tokens list below.
+          </p>
+        )}
+      </ConfirmDialog>
     </>
   );
 }

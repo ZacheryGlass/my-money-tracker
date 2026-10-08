@@ -4,6 +4,7 @@ import { eth as ethAPI } from '../../utils/api';
 import { shortEthAddress } from '../../utils/format';
 import LoadingState from '../LoadingState';
 import LoadFailed from '../../features/crypto/LoadFailed';
+import { ConfirmDialog } from '../Modal';
 
 const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
   const [candidates, setCandidates] = useState([]);
@@ -43,13 +44,23 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
     }
   };
 
+  // One decision at a time, and no double-click: each one writes durable state
+  // (a tracked wallet, an `own` label that reclassifies history, or a dismissal
+  // a later seed never overturns).
+  const [deciding, setDeciding] = useState(null);
+  const [pending, setPending] = useState(null);
   const decide = async (candidate, decision) => {
+    setDeciding(candidate.id);
     try {
       await ethAPI.decideDiscovery(candidate.id, decision);
       showSuccess?.(decision === 'external' ? 'Candidate dismissed' : 'Ownership decision saved');
+      setPending(null);
       await Promise.all([load(), onChanged?.()]);
     } catch (error) {
+      setPending(null);
       onError?.(error.response?.data?.error || 'Failed to save discovery decision');
+    } finally {
+      setDeciding(null);
     }
   };
 
@@ -83,9 +94,9 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
                 </p>
               </div>
               <div className="flex gap-2">
-                <button type="button" onClick={() => decide(candidate, 'track')} className="inline-flex items-center gap-1 rounded border border-gain/30 bg-gain/10 px-2.5 py-1.5 text-xs font-semibold text-gain"><Check size={12} /> Mine, track</button>
-                <button type="button" onClick={() => decide(candidate, 'own')} className="rounded border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold text-accent">Mine, don&apos;t track</button>
-                <button type="button" onClick={() => decide(candidate, 'external')} className="inline-flex items-center gap-1 rounded border border-border px-2.5 py-1.5 text-xs font-semibold text-secondary"><X size={12} /> Not mine</button>
+                <button type="button" disabled={deciding != null} onClick={() => decide(candidate, 'track')} className="inline-flex items-center gap-1 rounded border border-gain/30 bg-gain/10 px-2.5 py-1.5 text-xs font-semibold text-gain disabled:opacity-40"><Check size={12} /> Mine, track</button>
+                <button type="button" disabled={deciding != null} onClick={() => setPending({ candidate, decision: 'own' })} className="rounded border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold text-accent disabled:opacity-40">Mine, don&apos;t track</button>
+                <button type="button" disabled={deciding != null} onClick={() => setPending({ candidate, decision: 'external' })} className="inline-flex items-center gap-1 rounded border border-border px-2.5 py-1.5 text-xs font-semibold text-secondary disabled:opacity-40"><X size={12} /> Not mine</button>
               </div>
             </div>
             <details className="mt-3 text-xs text-secondary">
@@ -116,6 +127,24 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
           </div>
         </details>
       )}
+
+      <ConfirmDialog
+        open={Boolean(pending)}
+        title={pending?.decision === 'own' ? 'Mark this address as yours?' : 'Dismiss this candidate?'}
+        confirmLabel={pending?.decision === 'own' ? 'Mark as mine' : 'Not mine'}
+        tone={pending?.decision === 'own' ? 'primary' : 'danger'}
+        busy={deciding != null}
+        onConfirm={() => decide(pending.candidate, pending.decision)}
+        onCancel={() => setPending(null)}
+      >
+        {pending && (
+          <p>
+            {pending.decision === 'own'
+              ? `Transfers with ${shortEthAddress(pending.candidate.address)} become transfers between your own addresses, and past activity is reclassified. It is not synced as a wallet.`
+              : `${shortEthAddress(pending.candidate.address)} is labeled an outside party and dismissed for good: later discovery runs will not suggest it again.`}
+          </p>
+        )}
+      </ConfirmDialog>
     </section>
   );
 };

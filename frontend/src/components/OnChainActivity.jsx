@@ -13,6 +13,7 @@ import {
 import DataTable from './DataTable';
 import SegmentedControl from './SegmentedControl';
 import LoadingState from './LoadingState';
+import { ConfirmDialog } from './Modal';
 
 export const EthWalletBadge = () => (
   <span
@@ -168,14 +169,20 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
     }
   };
 
-  const handleIgnoreToken = async (transfer) => {
+  // The ignore list is user-wide: one click here drops the token from every
+  // wallet's holdings and activity, so it asks first.
+  const [pendingIgnore, setPendingIgnore] = useState(null);
+  const handleIgnoreToken = async () => {
+    const transfer = pendingIgnore;
     setIgnoringContract(transfer.token_contract);
     setError(null);
     try {
       await ethAPI.ignoreToken(transfer.token_contract, transfer.token_symbol || undefined);
+      setPendingIgnore(null);
       setRefreshKey((key) => key + 1);
       onDataChanged?.();
     } catch (err) {
+      setPendingIgnore(null);
       setError(err.response?.data?.error || 'Failed to ignore token');
     } finally {
       setIgnoringContract(null);
@@ -445,7 +452,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
             )}
             {transfer.token_contract && (
               <button
-                onClick={() => handleIgnoreToken(transfer)}
+                onClick={() => setPendingIgnore(transfer)}
                 disabled={ignoringContract === transfer.token_contract}
                 title="Ignore this token everywhere"
                 className="inline-flex h-7 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-loss/30 hover:text-loss disabled:opacity-40"
@@ -574,6 +581,22 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={Boolean(pendingIgnore)}
+        title="Ignore this token?"
+        confirmLabel="Ignore token"
+        busy={Boolean(ignoringContract)}
+        onConfirm={handleIgnoreToken}
+        onCancel={() => setPendingIgnore(null)}
+      >
+        {pendingIgnore && (
+          <p>
+            {pendingIgnore.token_symbol || pendingIgnore.token_contract} is removed from holdings and activity
+            in every wallet. You can undo this under Labels &amp; Rules.
+          </p>
+        )}
+      </ConfirmDialog>
     </section>
   );
 };

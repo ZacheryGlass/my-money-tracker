@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import CryptoPage from './CryptoPage';
 
@@ -123,6 +123,41 @@ describe('Crypto -> Wallets tab', () => {
   // The on-chain balance audit as the user meets it (#62). Sync starts at
   // block 0, so a nonzero ETH delta can only mean a movement was never
   // recorded.
+  it('defaults a disconnect to keeping the data, and waits for the request before closing', async () => {
+    let finish;
+    apiMocks.eth.removeWallet.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    await openEthereumTab([wallet(report())]);
+
+    await openWalletMenu();
+    fireEvent.click((await screen.findAllByRole('menuitem', { name: /disconnect main/i }))[0]);
+    const dialog = await screen.findByRole('dialog', { name: 'Disconnect wallet' });
+    expect(within(dialog).getByRole('radio', { name: /keep the account/i })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect, keep data' }));
+
+    await waitFor(() => expect(apiMocks.eth.removeWallet).toHaveBeenCalledWith(1, { removeData: false }));
+    expect(screen.getByRole('dialog', { name: 'Disconnect wallet' })).toBeInTheDocument();
+    finish({});
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Disconnect wallet' })).toBeNull());
+  });
+
+  it('asks before dismissing a discovery candidate, and blocks a double decision', async () => {
+    apiMocks.eth.getDiscoveryCandidates.mockResolvedValue({
+      candidates: [{ id: 5, address: '0x4444444444444444444444444444444444444444', source: 'exchange_withdrawal', chain_id: 1, evidence: {} }],
+    });
+    let finish;
+    apiMocks.eth.decideDiscovery.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    await openEthereumTab([wallet(report())]);
+
+    fireEvent.click(await screen.findByRole('button', { name: /not mine/i }));
+    expect(apiMocks.eth.decideDiscovery).not.toHaveBeenCalled();
+    const confirm = await screen.findByRole('dialog', { name: 'Dismiss this candidate?' });
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Not mine' }));
+
+    await waitFor(() => expect(apiMocks.eth.decideDiscovery).toHaveBeenCalledWith(5, 'external'));
+    expect(screen.getByRole('button', { name: /mine, track/i })).toBeDisabled();
+    finish({});
+  });
+
   it('says the wallet list failed to load instead of claiming none are tracked', async () => {
     apiMocks.eth.getWallets.mockRejectedValue(new Error('boom'));
     render(<CryptoPage tab="crypto-wallets" onTabChange={vi.fn()} />);
@@ -326,6 +361,9 @@ describe('Crypto -> Wallets tab', () => {
       expect(screen.getByText(/Classic-era L2 fees Etherscan does not report/)).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+      // Its required note goes with it, so it asks first.
+      expect(apiMocks.eth.removeReconciliationAdjustment).not.toHaveBeenCalled();
+      fireEvent.click(await screen.findByRole('button', { name: 'Remove adjustment' }));
       await waitFor(() => expect(apiMocks.eth.removeReconciliationAdjustment).toHaveBeenCalledWith(3));
       await waitFor(() => expect(apiMocks.eth.getWallets.mock.calls.length).toBeGreaterThan(1));
     });

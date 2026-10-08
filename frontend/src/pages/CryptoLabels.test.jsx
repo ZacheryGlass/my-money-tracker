@@ -67,6 +67,22 @@ const openLabelsTab = async (labels = []) => {
 };
 
 describe('Crypto -> Labels tab', () => {
+  it('asks before removing a label, since it reclassifies past transfers', async () => {
+    apiMocks.eth.unlabelAddress.mockResolvedValue({});
+    await openLabelsTab([{
+      address: '0x3333333333333333333333333333333333333333', name: 'My Coinbase', kind: 'exchange', source: 'user', builtin: false,
+    }]);
+
+    fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+    const confirm = await screen.findByRole('dialog', { name: 'Remove this label?' });
+    expect(apiMocks.eth.unlabelAddress).not.toHaveBeenCalled();
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Remove label' }));
+
+    await waitFor(() => {
+      expect(apiMocks.eth.unlabelAddress).toHaveBeenCalledWith('0x3333333333333333333333333333333333333333');
+    });
+  });
+
   it('says the labels failed to load instead of claiming none exist', async () => {
     apiMocks.eth.getAddressLabels.mockRejectedValue(new Error('boom'));
     render(<CryptoPage tab="crypto-labels" onTabChange={vi.fn()} />);
@@ -265,6 +281,11 @@ describe('Crypto -> Labels tab', () => {
     });
     fireEvent.change(form.getByPlaceholderText('SCAM'), { target: { value: 'SCAM' } });
     fireEvent.click(form.getByRole('button', { name: /ignore token/i }));
+    // Ignoring rewrites every wallet's holdings, so it asks first.
+    const confirm = await screen.findByRole('dialog', { name: 'Ignore this token?' });
+    expect(apiMocks.eth.ignoreToken).not.toHaveBeenCalled();
+    expect(within(confirm).getByText(/removed from holdings and activity in every wallet/)).toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Ignore token' }));
 
     await waitFor(() => {
       expect(apiMocks.eth.ignoreToken).toHaveBeenCalledWith('0x6b175474e89094c44da98b954eedeac495271d0f', 'SCAM');

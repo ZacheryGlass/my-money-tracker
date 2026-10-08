@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useReactTable, getCoreRowModel, getSortedRowModel } from '@tanstack/react-table';
 import { AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileCheck2, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
@@ -10,6 +9,7 @@ import { DEFERRED_SYNC_CODES, LIMITED_SYNC_CODES } from '../../utils/walletSync'
 import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import LoadFailed from '../../features/crypto/LoadFailed';
+import Modal, { ConfirmDialog } from '../Modal';
 import RowMenu from '../../features/crypto/RowMenu';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -72,6 +72,9 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
   const [adjustAmount, setAdjustAmount] = useState('');
   const [adjustNote, setAdjustNote] = useState('');
   const [savingAdjustment, setSavingAdjustment] = useState(false);
+  // Removing an adjustment deletes its required note with it, so it asks.
+  const [pendingRemoval, setPendingRemoval] = useState(null);
+  const [removingAdjustment, setRemovingAdjustment] = useState(false);
   if (!report) return null;
   const chainName = (chainId) => chainNames?.get(Number(chainId)) || `Chain ${chainId}`;
   const { nativeDrift, tokenDrift, unchecked } = splitAuditIssues(report);
@@ -144,12 +147,17 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
     }
   };
 
-  const removeAdjustment = async (adjustment) => {
+  const removeAdjustment = async () => {
+    setRemovingAdjustment(true);
     try {
-      await ethAPI.removeReconciliationAdjustment(adjustment.id);
+      await ethAPI.removeReconciliationAdjustment(pendingRemoval.id);
+      setPendingRemoval(null);
       await onChanged();
     } catch (err) {
+      setPendingRemoval(null);
       onError?.(err.response?.data?.error || 'Failed to remove the adjustment');
+    } finally {
+      setRemovingAdjustment(false);
     }
   };
 
@@ -294,7 +302,7 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
                 {canAdjust && (
                   <button
                     type="button"
-                    onClick={() => removeAdjustment(adjustment)}
+                    onClick={() => setPendingRemoval(adjustment)}
                     className="ml-2 rounded border border-border px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase tracking-wide text-tertiary hover:border-loss/40 hover:text-loss"
                   >
                     Remove
@@ -319,6 +327,22 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
           {report.truncated ? '. More assets are listed in the audit API.' : ''}
         </p>
       )}
+
+      <ConfirmDialog
+        open={Boolean(pendingRemoval)}
+        title="Remove this adjustment?"
+        confirmLabel="Remove adjustment"
+        busy={removingAdjustment}
+        onConfirm={removeAdjustment}
+        onCancel={() => setPendingRemoval(null)}
+      >
+        {pendingRemoval && (
+          <p>
+            {chainName(pendingRemoval.chain_id)}: {adjustmentAmount(pendingRemoval)}. Its note
+            (&ldquo;{pendingRemoval.note}&rdquo;) is deleted with it, and the balance check is recomputed.
+          </p>
+        )}
+      </ConfirmDialog>
     </div>
   );
 }
@@ -410,7 +434,8 @@ function WalletsPanel({
   const [coverageReport, setCoverageReport] = useState(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [disconnecting, setDisconnecting] = useState(null);
-  const [removeData, setRemoveData] = useState(true);
+  const [removeData, setRemoveData] = useState(false);
+  const [disconnectBusy, setDisconnectBusy] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [sorting, setSorting] = useState([{ id: 'eth', desc: true }]);
   const isMobile = useIsMobile();
@@ -625,18 +650,24 @@ function WalletsPanel({
     URL.revokeObjectURL(url);
   };
 
+  // The dialog stays open until the request lands: closing first left the
+  // user with no sign that a disconnect was still running, or had failed.
   const handleDisconnectConfirm = async () => {
     const id = disconnecting.id;
     const purge = removeData;
-    setDisconnecting(null);
+    setDisconnectBusy(true);
     try {
       await ethAPI.removeWallet(id, { removeData: purge });
       showSuccess(purge
         ? 'Wallet disconnected and data removed.'
         : 'Wallet disconnected. The account and its holdings were kept.');
+      setDisconnecting(null);
       await onChanged();
     } catch (err) {
+      setDisconnecting(null);
       onError(err.response?.data?.error || 'Failed to disconnect wallet');
+    } finally {
+      setDisconnectBusy(false);
     }
   };
 
@@ -702,7 +733,7 @@ function WalletsPanel({
               ariaLabel: `Disconnect ${walletName(wallet)}`,
               icon: Unlink,
               danger: true,
-              onSelect: () => { setRemoveData(true); setDisconnecting(wallet); },
+              onSelect: () => { setRemoveData(false); setDisconnecting(wallet); },
             },
           ]}
         />
@@ -994,274 +1025,258 @@ function WalletsPanel({
         />
       )}
 
-      <AnimatePresence>
+      <Modal
+        open={Boolean(coverageReport)}
+        onClose={() => setCoverageReport(null)}
+        title="EVM source coverage"
+        description={coverageReport ? `Generated ${new Date(coverageReport.generated_at).toLocaleString()}` : undefined}
+        size="lg"
+        sheet={false}
+      >
         {coverageReport && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setCoverageReport(null)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} role="dialog" aria-modal="true" aria-labelledby="coverage-report-title" className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded border border-border bg-surface p-6 shadow-2xl">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 id="coverage-report-title" className="text-2xl font-bold tracking-tight text-primary">EVM source coverage</h2>
-                  <p className="mt-1 text-xs text-tertiary">
-                    Generated {new Date(coverageReport.generated_at).toLocaleString()}
+          <div className="px-5 pb-5 sm:px-6 sm:pb-6">
+            <div className="mt-3 flex justify-end">
+              <button type="button" onClick={downloadCoverageReport} className={ROW_ACTION_CLASS}>
+                <Download size={11} />
+                Download JSON
+              </button>
+            </div>
+        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
+          {[
+            ['Complete', coverageReport.summary.complete],
+            ['Failed', coverageReport.summary.failed],
+            ['Deferred', coverageReport.summary.deferred],
+            ['Unsupported', coverageReport.summary.unsupported],
+            ['Unverified', coverageReport.summary.unverified],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded border border-border bg-surface-2 p-3">
+              <p className={`text-[10px] font-bold uppercase tracking-wider ${['Deferred', 'Unsupported'].includes(label) ? 'text-amber-400' : label === 'Complete' ? 'text-tertiary' : 'text-loss'}`}>{label}</p>
+              <p className="mt-1 font-money text-xl text-primary">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-secondary">
+            Enabled-feed gaps
+          </h3>
+          {coverageReport.coverage.filter((row) => (
+            row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)
+          )).length === 0 ? (
+            <p className="mt-2 rounded border border-gain/20 bg-gain/5 p-3 text-sm text-gain">
+              Every enabled feed has a verified boundary.
+            </p>
+          ) : (
+            <div className="mt-2 divide-y divide-border overflow-hidden rounded border border-border">
+              {coverageReport.coverage.filter((row) => (
+                row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)
+              )).map((row) => (
+                <div key={`${row.wallet_id}:${row.chain_id}:${row.feed}`} className="bg-surface-2 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="text-sm font-semibold text-primary">
+                      {row.wallet_label || shortEthAddress(row.wallet_address)} · {row.chain_name} · {row.feed}
+                    </p>
+                    <span className={`text-[10px] font-bold uppercase tracking-wider ${['deferred', 'unsupported'].includes(row.status) ? 'text-amber-400' : 'text-loss'}`}>{row.status}</span>
+                  </div>
+                  <p className="mt-1 break-words text-xs text-secondary">
+                    {row.error_message || 'A pre-report cursor exists, but this feed has not completed a post-report sync yet.'}
+                  </p>
+                  <p className="mt-1 text-[10px] text-tertiary">
+                    Provider: {row.provider}
+                    {row.covered_through_block != null ? ` · last proven block ${row.covered_through_block}` : ''}
+                    {row.retry_after_at ? ` · retry after ${new Date(row.retry_after_at).toLocaleString()}` : ''}
                   </p>
                 </div>
-                <button type="button" onClick={downloadCoverageReport} className={ROW_ACTION_CLASS}>
-                  <Download size={11} />
-                  Download JSON
-                </button>
-              </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                {[
-                  ['Complete', coverageReport.summary.complete],
-                  ['Failed', coverageReport.summary.failed],
-                  ['Deferred', coverageReport.summary.deferred],
-                  ['Unsupported', coverageReport.summary.unsupported],
-                  ['Unverified', coverageReport.summary.unverified],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded border border-border bg-surface-2 p-3">
-                    <p className={`text-[10px] font-bold uppercase tracking-wider ${['Deferred', 'Unsupported'].includes(label) ? 'text-amber-400' : label === 'Complete' ? 'text-tertiary' : 'text-loss'}`}>{label}</p>
-                    <p className="mt-1 font-money text-xl text-primary">{value}</p>
-                  </div>
+            <div className="mt-5 flex justify-end">
+              <button type="button" onClick={() => setCoverageReport(null)} className="rounded border border-border px-4 py-2 text-sm font-semibold text-secondary hover:text-primary">
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Add wallet"
+        description="Paste an EVM address to track its balances and transfer history on every network. Paste several, one per line, to add them all at once."
+      >
+        <form onSubmit={handleAdd}>
+          <div className="space-y-4 p-5 sm:p-6">
+            {/* A 42-character address on one line is what makes a pasted
+                list scannable, so the type steps down from the form
+                default and wrapping is off outright: at a larger text
+                scale it would wrap again, and half an address on the
+                next line reads as another entry. */}
+            <label className="block text-caption text-tertiary">
+              {addressCount > 1 ? `Addresses (${addressCount})` : 'Address'}
+              <textarea
+                value={walletAddress}
+                onChange={(event) => setWalletAddress(event.target.value)}
+                placeholder="0x…&#10;0x… (one per line)"
+                spellCheck={false}
+                autoComplete="off"
+                autoFocus
+                rows={addressCount > 1 ? 6 : 3}
+                wrap="off"
+                className="mt-1 block w-full min-w-0 resize-y overflow-x-auto rounded border border-input-border bg-surface-2 px-3 py-2 font-mono text-caption text-primary outline-none focus:ring-1 focus:ring-accent"
+                disabled={adding}
+              />
+            </label>
+            {/* A label names ONE wallet, so it is disabled for a pasted
+                batch rather than applied to every address in it. */}
+            <label className="block text-caption text-tertiary">
+              Label (optional)
+              <input
+                type="text"
+                value={walletLabel}
+                onChange={(event) => setWalletLabel(event.target.value)}
+                maxLength={100}
+                placeholder={addressCount > 1 ? 'Not used when adding several addresses' : 'Cold storage'}
+                className="mt-1 block h-11 w-full min-w-0 rounded border border-input-border bg-surface-2 px-3 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent disabled:opacity-40"
+                disabled={adding || addressCount > 1}
+              />
+            </label>
+
+            {formError && (
+              <div role="alert" className="flex items-start gap-2 rounded border border-loss/20 bg-loss/5 p-3 text-caption text-loss">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+
+            {bulkResults?.length > 0 && (
+              <div role="alert" className="space-y-1 rounded border border-border bg-surface-2 p-3 text-caption text-tertiary">
+                <p className="text-secondary">These addresses were not added:</p>
+                {bulkResults.map((result) => (
+                  <p key={result.address} className="flex flex-wrap items-baseline gap-2">
+                    <span className="font-mono text-primary">{result.address}</span>
+                    <span>{result.error}</span>
+                  </p>
                 ))}
               </div>
+            )}
 
-              <div className="mt-5">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-secondary">
-                  Enabled-feed gaps
-                </h3>
-                {coverageReport.coverage.filter((row) => (
-                  row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)
-                )).length === 0 ? (
-                  <p className="mt-2 rounded border border-gain/20 bg-gain/5 p-3 text-sm text-gain">
-                    Every enabled feed has a verified boundary.
-                  </p>
-                ) : (
-                  <div className="mt-2 divide-y divide-border overflow-hidden rounded border border-border">
-                    {coverageReport.coverage.filter((row) => (
-                      row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)
-                    )).map((row) => (
-                      <div key={`${row.wallet_id}:${row.chain_id}:${row.feed}`} className="bg-surface-2 p-3">
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <p className="text-sm font-semibold text-primary">
-                            {row.wallet_label || shortEthAddress(row.wallet_address)} · {row.chain_name} · {row.feed}
-                          </p>
-                          <span className={`text-[10px] font-bold uppercase tracking-wider ${['deferred', 'unsupported'].includes(row.status) ? 'text-amber-400' : 'text-loss'}`}>{row.status}</span>
-                        </div>
-                        <p className="mt-1 break-words text-xs text-secondary">
-                          {row.error_message || 'A pre-report cursor exists, but this feed has not completed a post-report sync yet.'}
-                        </p>
-                        <p className="mt-1 text-[10px] text-tertiary">
-                          Provider: {row.provider}
-                          {row.covered_through_block != null ? ` · last proven block ${row.covered_through_block}` : ''}
-                          {row.retry_after_at ? ` · retry after ${new Date(row.retry_after_at).toLocaleString()}` : ''}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-5 flex justify-end">
-                <button type="button" onClick={() => setCoverageReport(null)} className="rounded border border-border px-4 py-2 text-sm font-semibold text-secondary hover:text-primary">
-                  Close
-                </button>
-              </div>
-            </Motion.div>
+            <p className="text-caption text-tertiary">
+              The first sync runs in the background; a busy wallet can take a few minutes to appear complete. Use Sync on the wallet card to refresh.
+            </p>
           </div>
-        )}
-      </AnimatePresence>
 
-      {/* Connect Crypto Modal */}
-      <AnimatePresence>
-        {addOpen && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setAddOpen(false)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} role="dialog" aria-modal="true" aria-labelledby="crypto-modal-title" className="relative max-h-[100dvh] w-full max-w-lg overflow-y-auto border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
-              <form onSubmit={handleAdd}>
-                <div className="p-5 pb-3 text-center sm:p-8 sm:pb-4">
-                  <div className="w-16 h-16 bg-crypto-bg text-crypto rounded-full flex items-center justify-center mx-auto mb-6">
-                    <Wallet size={28} />
-                  </div>
-                  <h2 id="crypto-modal-title" className="text-2xl font-bold text-primary mb-2 tracking-tight">Connect Crypto Wallet</h2>
-                  <p className="text-sm text-secondary leading-relaxed">
-                    Paste an EVM address to track its balances and transfer history across configured chains. Paste several, one per line, to add them all at once.
-                  </p>
-                </div>
-
-                <div className="space-y-4 p-5 sm:p-8 sm:pt-2">
-                  {/* A 42-character address on one line is what makes a pasted
-                      list scannable, so the type steps down from the form
-                      default and wrapping is off outright: at a larger text
-                      scale it would wrap again, and half an address on the
-                      next line reads as another entry. */}
-                  <label className="block text-caption text-tertiary">
-                    {addressCount > 1 ? `Addresses (${addressCount})` : 'Address'}
-                    <textarea
-                      value={walletAddress}
-                      onChange={(event) => setWalletAddress(event.target.value)}
-                      placeholder="0x…&#10;0x… (one per line)"
-                      spellCheck={false}
-                      autoComplete="off"
-                      autoFocus
-                      rows={addressCount > 1 ? 6 : 3}
-                      wrap="off"
-                      className="mt-1 block w-full min-w-0 resize-y overflow-x-auto rounded border border-input-border bg-surface-2 px-3 py-2 font-mono text-caption text-primary outline-none focus:ring-1 focus:ring-accent"
-                      disabled={adding}
-                    />
-                  </label>
-                  {/* A label names ONE wallet, so it is disabled for a pasted
-                      batch rather than applied to every address in it. */}
-                  <label className="block text-caption text-tertiary">
-                    Label (optional)
-                    <input
-                      type="text"
-                      value={walletLabel}
-                      onChange={(event) => setWalletLabel(event.target.value)}
-                      maxLength={100}
-                      placeholder={addressCount > 1 ? 'Not used when adding several addresses' : 'Cold storage'}
-                      className="mt-1 block h-11 w-full min-w-0 rounded border border-input-border bg-surface-2 px-3 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent disabled:opacity-40"
-                      disabled={adding || addressCount > 1}
-                    />
-                  </label>
-
-                  {formError && (
-                    <div role="alert" className="flex items-start gap-2 rounded border border-loss/20 bg-loss/5 p-3 text-caption text-loss">
-                      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                      <span>{formError}</span>
-                    </div>
-                  )}
-
-                  {bulkResults?.length > 0 && (
-                    <div role="alert" className="space-y-1 rounded border border-border bg-surface-2 p-3 text-caption text-tertiary">
-                      <p className="text-secondary">These addresses were not added:</p>
-                      {bulkResults.map((result) => (
-                        <p key={result.address} className="flex flex-wrap items-baseline gap-2">
-                          <span className="font-mono text-primary">{result.address}</span>
-                          <span>{result.error}</span>
-                        </p>
-                      ))}
-                    </div>
-                  )}
-
-                  <p className="text-caption text-tertiary">
-                    The first sync runs in the background; a busy wallet can take a few minutes to appear complete. Use Sync on the wallet card to refresh.
-                  </p>
-                </div>
-
-                <div className="sticky bottom-0 flex gap-3 bg-surface p-5 pt-0 sm:static sm:p-8 sm:pt-0">
-                  <button
-                    type="button"
-                    onClick={() => setAddOpen(false)}
-                    className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={adding}
-                    className="flex-1 inline-flex items-center justify-center gap-2 py-4 bg-crypto-bg-hover text-crypto border border-crypto-border rounded text-xs font-bold uppercase tracking-wider hover:bg-crypto-bg-strong hover:text-crypto-hover transition-all disabled:opacity-40"
-                  >
-                    {adding ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
-                    {addressCount > 1 ? `Track ${addressCount} Wallets` : 'Track Wallet'}
-                  </button>
-                </div>
-              </form>
-            </Motion.div>
+          <div className="sticky bottom-0 flex gap-3 bg-surface p-5 pt-0 sm:static sm:p-6 sm:pt-0">
+            <button
+              type="button"
+              onClick={() => setAddOpen(false)}
+              className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={adding}
+              className="flex-1 inline-flex items-center justify-center gap-2 py-4 bg-crypto-bg-hover text-crypto border border-crypto-border rounded text-xs font-bold uppercase tracking-wider hover:bg-crypto-bg-strong hover:text-crypto-hover transition-all disabled:opacity-40"
+            >
+              {adding ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+              {addressCount > 1 ? `Track ${addressCount} Wallets` : 'Track Wallet'}
+            </button>
           </div>
-        )}
-      </AnimatePresence>
+        </form>
+      </Modal>
 
-      {/* Wallet Disconnect Confirm Modal */}
-      <AnimatePresence>
-        {disconnecting && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setDisconnecting(null)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative max-h-[100dvh] w-full max-w-lg overflow-y-auto border border-border bg-surface shadow-2xl sm:max-h-[92vh] sm:rounded-3xl">
-              <div className="p-5 pb-3 text-center sm:p-8 sm:pb-4">
-                <div className="w-16 h-16 bg-loss/10 text-loss rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Unlink size={28} />
-                </div>
-                <h2 className="text-2xl font-bold text-primary mb-2 tracking-tight">Disconnect Wallet</h2>
-                <p className="text-sm text-secondary leading-relaxed">
-                  You are about to stop tracking <span className="font-mono text-primary font-bold">{shortEthAddress(disconnecting.address)}</span>. How should we handle existing data?
-                </p>
-              </div>
-
-              <div className="space-y-3 p-5 sm:p-8">
-                <button
-                  onClick={() => setRemoveData(true)}
-                  className={`w-full flex items-start gap-4 p-4 rounded border text-left transition-all ${removeData ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
-                >
-                  <div className={`mt-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${removeData ? 'border-accent' : 'border-tertiary'}`}>
-                    {removeData && <div className="w-2 h-2 rounded-full bg-accent" />}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-primary">Full Purge (Recommended)</p>
-                    <p className="text-[11px] text-secondary mt-0.5">Delete the account, holdings, transfer history, and historical data for this wallet.</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setRemoveData(false)}
-                  className={`w-full flex items-start gap-4 p-4 rounded border text-left transition-all ${!removeData ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border hover:border-border-hover bg-surface-2'}`}
-                >
-                  <div className={`mt-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${!removeData ? 'border-accent' : 'border-tertiary'}`}>
-                    {!removeData && <div className="w-2 h-2 rounded-full bg-accent" />}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-primary">Unlink &amp; Keep Data</p>
-                    <p className="text-[11px] text-secondary mt-0.5">Stop syncing. The account and its current holdings become manual entries; on-chain transfer history is removed.</p>
-                  </div>
-                </button>
-              </div>
-
-              <div className="sticky bottom-0 flex gap-3 bg-surface p-5 pt-0 sm:static sm:p-8 sm:pt-0">
-                <button
-                  onClick={() => setDisconnecting(null)}
-                  className="flex-1 py-4 bg-surface-3 text-secondary hover:text-primary rounded text-xs font-bold uppercase tracking-wider transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDisconnectConfirm}
-                  className="flex-1 py-4 bg-loss text-white rounded text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all"
-                >
-                  Confirm Disconnect
-                </button>
-              </div>
-            </Motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* Keep data is the default: it is the reversible choice. Re-adding the
+          address re-links the decisions a keep-data disconnect detached. */}
+      <Modal
+        open={Boolean(disconnecting)}
+        onClose={disconnectBusy ? undefined : () => setDisconnecting(null)}
+        dismissible={!disconnectBusy}
+        title="Disconnect wallet"
+        description={disconnecting ? `Stop tracking ${walletName(disconnecting)} (${shortEthAddress(disconnecting.address)}). What should happen to its data?` : undefined}
+      >
+        <div role="radiogroup" aria-label="What to keep" className="space-y-3 p-5 sm:p-6">
+          {[
+            {
+              value: false,
+              title: 'Keep the account (recommended)',
+              detail: 'Stop syncing. The account, its holdings and its value history stay as a manual account. Your notes and decisions about its transactions are kept and come back if you add the address again. The fetched transfer history is removed; adding it again fetches it anew.',
+            },
+            {
+              value: true,
+              title: 'Remove everything',
+              detail: 'Delete the account, holdings, value history, transfer history and your decisions about this wallet. This cannot be undone.',
+            },
+          ].map((option) => {
+            const checked = removeData === option.value;
+            return (
+              <button
+                key={String(option.value)}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                onClick={() => setRemoveData(option.value)}
+                className={`flex w-full items-start gap-4 rounded border p-4 text-left transition-all ${checked ? 'border-accent bg-accent/5 ring-1 ring-accent/20' : 'border-border bg-surface-2 hover:border-border-hover'}`}
+              >
+                <span className={`mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${checked ? 'border-accent' : 'border-tertiary'}`}>
+                  {checked && <span className="h-2 w-2 rounded-full bg-accent" />}
+                </span>
+                <span>
+                  <span className={`block text-sm font-bold ${option.value ? 'text-loss' : 'text-primary'}`}>{option.title}</span>
+                  <span className="mt-0.5 block text-[11px] text-secondary">{option.detail}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="sticky bottom-0 flex gap-3 bg-surface p-5 pt-0 sm:static sm:p-6 sm:pt-0">
+          <button
+            type="button"
+            onClick={() => setDisconnecting(null)}
+            disabled={disconnectBusy}
+            className="flex-1 rounded bg-surface-3 py-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleDisconnectConfirm}
+            disabled={disconnectBusy}
+            className="flex flex-1 items-center justify-center gap-2 rounded bg-loss py-3 text-xs font-bold uppercase tracking-wider text-white transition-all hover:opacity-90 disabled:opacity-50"
+          >
+            {disconnectBusy && <RefreshCw size={12} className="animate-spin" />}
+            {removeData ? 'Remove everything' : 'Disconnect, keep data'}
+          </button>
+        </div>
+      </Modal>
 
       {/* Full-history replay is safe for annotations but expensive enough to
           require a deliberate second click. It resets no wallet row and
           deletes no source evidence until a replacement feed has succeeded. */}
-      <AnimatePresence>
+      <ConfirmDialog
+        open={Boolean(recapturing)}
+        title="Recapture full history?"
+        confirmLabel="Start recapture"
+        tone="primary"
+        onConfirm={handleRecaptureConfirm}
+        onCancel={() => setRecapturing(null)}
+      >
         {recapturing && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <Motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70" onClick={() => setRecapturing(null)} />
-            <Motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} className="relative w-full max-w-lg rounded border border-border bg-surface p-6 shadow-2xl">
-              <h2 className="mb-2 text-2xl font-bold tracking-tight text-primary">Recapture full history?</h2>
-              <p className="mb-5 text-sm text-secondary">
-                Every enabled chain for {walletName(recapturing)} will be re-fetched from genesis.
-                Transaction notes, address notes, labels, category overrides, spam decisions, and
-                reconciliation adjustments are preserved.
-              </p>
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setRecapturing(null)} className="rounded border border-border px-4 py-2 text-sm font-semibold text-secondary hover:text-primary">
-                  Cancel
-                </button>
-                <button type="button" onClick={handleRecaptureConfirm} className="rounded bg-accent px-4 py-2 text-sm font-bold text-white hover:bg-accent-hover">
-                  Start recapture
-                </button>
-              </div>
-            </Motion.div>
-          </div>
+          <>
+            <p>
+              Every network for {walletName(recapturing)} is fetched again from the start. Transaction
+              notes, address notes, labels, category overrides, spam decisions, and reconciliation
+              adjustments are preserved.
+            </p>
+            <p className="text-tertiary">
+              It runs in the background and can take several minutes on a busy wallet. Until it
+              finishes, this wallet&apos;s activity may look incomplete.
+            </p>
+          </>
         )}
-      </AnimatePresence>
+      </ConfirmDialog>
     </section>
   );
 }
