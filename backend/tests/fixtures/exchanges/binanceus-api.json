@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Synthetic by rule -- a real Binance.US history is personal and this repo is public.",
+    "Shapes follow https://docs.binance.us/ : myTrades, capital deposit/withdraw history,",
+    "asset distribution history, staking rewards history, dust log and fiat history."
+  ],
+  "symbols": [{ "symbol": "ETHUSD", "baseAsset": "ETH", "quoteAsset": "USD" }],
+  "trades": [
+    { "symbol": "ETHUSD", "id": 101, "orderId": 9001, "price": "2000.00", "qty": "0.5", "quoteQty": "1000.00",
+      "commission": "0.0005", "commissionAsset": "ETH", "time": 1700000000000, "isBuyer": true }
+  ],
+  "deposits": [
+    { "id": "dep-1", "coin": "ETH", "amount": "1.25", "network": "ETH", "status": 1, "address": "0x1111111111111111111111111111111111111111",
+      "txId": "0x2222222222222222222222222222222222222222222222222222222222222222", "insertTime": 1700000100000 }
+  ],
+  "withdrawals": [
+    { "id": "wd-1", "coin": "ETH", "amount": "0.4", "transactionFee": "0.001", "network": "ARBITRUM", "status": 6,
+      "address": "0x3333333333333333333333333333333333333333",
+      "txId": "0x4444444444444444444444444444444444444444444444444444444444444444", "applyTime": "2023-11-15 01:00:00" }
+  ],
+  "distributions": [
+    { "tranId": 501, "asset": "ETH", "amount": "0.0021", "divTime": 1700000200000, "category": "ETH Staking" },
+    { "tranId": 502, "asset": "POL", "amount": "10", "divTime": 1700000300000, "category": "MATIC Migration to POL" },
+    { "tranId": 503, "asset": "XYZ", "amount": "5", "divTime": 1700000400000, "category": "Airdrop" }
+  ],
+  "fiat": [
+    { "orderNo": "fiat-1", "fiatCurrency": "USD", "amount": "500.00", "totalFee": "0", "status": "Successful", "createTime": 1700000500000 }
+  ]
+}

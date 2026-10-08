@@ -1,0 +1,2115 @@
+{
+  "csv": {
+    "binance-us.csv": {
+      "format": "binance_us",
+      "records": [
+        {
+          "external_id": "binanceus:deposit:100000001",
+          "record_type": "deposit",
+          "occurred_at": "2026-07-31T23:39:01.000Z",
+          "base": [
+            "ETH",
+            "1.25"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "8c00ec58280936083b3c2872425f9673391b0b2175d691bab0ea0efe923a92db",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "binanceus:trade:SOLUSD:100000002",
+          "record_type": "trade",
+          "occurred_at": "2026-07-31T23:39:02.000Z",
+          "base": [
+            "SOL",
+            "2.5"
+          ],
+          "quote": [
+            "USD",
+            "-350"
+          ],
+          "fee": [
+            "SOL",
+            "0.002"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "65be882fd50e8296b1e92ef917dcef2da962108e18d283ff7d3da06acde93902",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "binanceus:trade:SOLUSD:100000003",
+          "record_type": "trade",
+          "occurred_at": "2026-07-31T23:39:03.000Z",
+          "base": [
+            "SOL",
+            "-1.5"
+          ],
+          "quote": [
+            "USD",
+            "225"
+          ],
+          "fee": [
+            "USD",
+            "0.5"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "82e6cad000cee036d1f0b39f7711683c52ff1eb188adfc1764988686328ed904",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "binanceus:distribution:100000004",
+          "record_type": "reward",
+          "occurred_at": "2026-07-31T23:39:04.000Z",
+          "base": [
+            "ETH",
+            "0.01"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "090ea3f1fe457b2a6adcdf115a2ac33fbf983f5cf807f43d52956febf4dbb8ca",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "binanceus:withdrawal:100000005",
+          "record_type": "withdrawal",
+          "occurred_at": "2026-07-31T23:39:05.000Z",
+          "base": [
+            "ETH",
+            "-0.75"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            "ETH",
+            "0.001"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "d341ef504896f66c3a587f88a188e43405ad692ea685355317b12a22b909c511",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "binanceus:csv:100000006",
+          "record_type": "transfer",
+          "occurred_at": "2026-07-31T23:39:06.000Z",
+          "base": [
+            "USDT",
+            "10"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "7a4e41c73c9a4a83b79d943dcab84e43c62f7ecf96ea6642d6ce98ca522406bc",
+          "fingerprint_version": 1
+        }
+      ]
+    },
+    "coinbase-pro-crypto-pair.csv": {
+      "format": "coinbase_pro",
+      "records": [
+        {
+          "external_id": "cbp:trade:55555555-5555-5555-5555-555555555555:900004",
+          "record_type": "trade",
+          "occurred_at": "2024-02-02T12:00:00.000Z",
+          "base": [
+            "ETH",
+            "0.2500000000000000"
+          ],
+          "quote": [
+            "BTC",
+            "-0.0100000000000000"
+          ],
+          "fee": [
+            "BTC",
+            "0.0000500000000000"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "fb8cee7bce97e9a5d775c03cce9c9b9e0c7d54ab986b464d03aa8853fa703a47",
+          "fingerprint_version": 1
+        }
+      ]
+    },
+    "coinbase-pro.csv": {
+      "format": "coinbase_pro",
+      "records": [
+        {
+          "external_id": "cbp:transfer:11111111-1111-1111-1111-111111111111",
+          "record_type": "deposit",
+          "occurred_at": "2024-02-01T10:00:00.000Z",
+          "base": [
+            "USD",
+            "1000.0000000000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "e8e46f4e2c80958a758adf45841410c4bc905311684f835f0d38a7ca6a61f620",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cbp:trade:22222222-2222-2222-2222-222222222222:900001",
+          "record_type": "trade",
+          "occurred_at": "2024-02-02T12:00:00.000Z",
+          "base": [
+            "ETH",
+            "0.2500000000000000"
+          ],
+          "quote": [
+            "USD",
+            "-500.0000000000000000"
+          ],
+          "fee": [
+            "USD",
+            "2.5000000000000000"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "c0d6c83716572c9bc9d9afe320fd3b54ccde742c00c9e4463c7fe7d331965a6c",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cbp:trade:33333333-3333-3333-3333-333333333333:900002",
+          "record_type": "trade",
+          "occurred_at": "2024-02-03T13:00:00.000Z",
+          "base": [
+            "ETH",
+            "-0.1000000000000000"
+          ],
+          "quote": [
+            "USD",
+            "220.0000000000000000"
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "e66315056c858061c2dc17f1ea3e4b507d0b0b376b074ac5c67ede97a724cad3",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cbp:h:3a7c6aaaa527f0ba71df9c7dd7bfdab5d1580881",
+          "record_type": "conversion",
+          "occurred_at": "2024-02-04T14:00:00.000Z",
+          "base": [
+            "USDC",
+            "-100.0000000000000000"
+          ],
+          "quote": [
+            "USD",
+            "100.0000000000000000"
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "a1981cc1e90b5a31db82c45d40e4cc2defe519f27a015f6790f59efc996a1929",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cbp:transfer:44444444-4444-4444-4444-444444444444",
+          "record_type": "withdrawal",
+          "occurred_at": "2024-02-05T15:00:00.000Z",
+          "base": [
+            "USD",
+            "-317.5000000000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "80783f13a9e37b0f81df161f9890f73bd00d5ce1e53c811850af872fe3cdfa98",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cbp:h:a52fea79a6b30423877bd89e18801b923e980f34",
+          "record_type": "reward",
+          "occurred_at": "2024-02-06T16:00:00.000Z",
+          "base": [
+            "USD",
+            "0.7500000000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "63bba260e4e926a93cac913c548b6f70304f0f7c452a211f569273e24256bd04",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cbp:h:2adb318fa9d1fe94dcb8b6af0a47848575a48db4",
+          "record_type": "transfer",
+          "occurred_at": "2024-02-07T17:00:00.000Z",
+          "base": [
+            "ETH",
+            "-0.0100000000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "7e9bdee95b70447af261863be5239f5929cf8b52bfe4906c2da149b94ae6b64e",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cbp:trade:default:900003",
+          "record_type": "fee",
+          "occurred_at": "2024-02-08T18:00:00.000Z",
+          "base": [
+            "USD",
+            "-0.5000000000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            "USD",
+            "0.5000000000000000"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "bf52615cd7e8e97d290c2d449a0c17afa6936bf757d02482877f21ffb101a125",
+          "fingerprint_version": 1
+        }
+      ]
+    },
+    "coinbase-retail-api-parity.csv": {
+      "format": "coinbase_retail",
+      "records": [
+        {
+          "external_id": "cb:aaaaaaaa-0000-0000-0000-00000000000a",
+          "record_type": "trade",
+          "occurred_at": "2024-03-02T10:00:00.000Z",
+          "base": [
+            "BTC",
+            "0.005"
+          ],
+          "quote": [
+            "USD",
+            "-310.00"
+          ],
+          "fee": [
+            "USD",
+            "1.55"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "617a853bba8b821db619eb27b8cdf78e21b78e1ae127571cb4771acc6784c976",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:cccccccc-0000-0000-0000-00000000000c",
+          "record_type": "reward",
+          "occurred_at": "2024-03-04T12:00:00.000Z",
+          "base": [
+            "BTC",
+            "0.0001"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "5c62981fccae4609901b8df7dd3fbab0f3d8f034169ccf0eb007571619af36d6",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:dddddddd-0000-0000-0000-00000000000d",
+          "record_type": "conversion",
+          "occurred_at": "2024-03-07T15:00:00.000Z",
+          "base": [
+            "USD",
+            "-100"
+          ],
+          "quote": [
+            "BTC",
+            "0.0016"
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "09e3e82e2dcc2031425f2948b1f9c06b21761487b5e82d3d5f6009cb46d05f06",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:bbbbbbbb-0000-0000-0000-00000000000b",
+          "record_type": "withdrawal",
+          "occurred_at": "2024-03-08T16:00:00.000Z",
+          "base": [
+            "BTC",
+            "-0.01"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": "0x00000000000000000000000000000000000000cc",
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "a5ff01bb76ad20907eab5488331f45157fc1408890dfbbee3a16e1d3d12b61b1",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:ffffffff-0000-0000-0000-00000000000f",
+          "record_type": "transfer",
+          "occurred_at": "2024-03-09T17:00:00.000Z",
+          "base": [
+            "DOGE",
+            "1"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "326d8bfd936b5438c708d32338fcb92ae411187413f9ee0c5855b552cd298620",
+          "fingerprint_version": 1
+        }
+      ]
+    },
+    "coinbase-retail.csv": {
+      "format": "coinbase_retail",
+      "records": [
+        {
+          "external_id": "cb:aaaa000000000000000000f1",
+          "record_type": "reward",
+          "occurred_at": "2024-01-02T10:00:00.000Z",
+          "base": [
+            "ETH",
+            "0.005"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "586f9821d1e87b5f1cc26c837e8d0046fdf62e5d4afd5ccedd18aa94ca325e11",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f2",
+          "record_type": "reward",
+          "occurred_at": "2024-01-03T11:00:00.000Z",
+          "base": [
+            "USDC",
+            "0.5"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "99c8179bf69ff87d3a36bc7a10b38ec4f0356508e0990d8904a9673e7d9185fa",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f3",
+          "record_type": "trade",
+          "occurred_at": "2024-01-04T12:00:00.000Z",
+          "base": [
+            "BTC",
+            "0.01"
+          ],
+          "quote": [
+            "USD",
+            "-400.00"
+          ],
+          "fee": [
+            "USD",
+            "10.00"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "c8e56e6f061bfa952e3d1697dbd1bb0751231df2b0a8a7bcdeeaef206561b6bc",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f3:funding",
+          "record_type": "deposit",
+          "occurred_at": "2024-01-04T12:00:00.000Z",
+          "base": [
+            "USD",
+            "410"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "0c32ebf78d319d0b2a578d017f43ba8bba4923f0685f91d3f0916e0daa2f1b09",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f4",
+          "record_type": "trade",
+          "occurred_at": "2024-01-05T13:00:00.000Z",
+          "base": [
+            "ETH",
+            "-0.25"
+          ],
+          "quote": [
+            "USD",
+            "625"
+          ],
+          "fee": [
+            "USD",
+            "5.00"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "7efbdff3599b2b267c9ee96b1cfafffaf8f1a968ec9ed75737ded1513ed6771e",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f5",
+          "record_type": "trade",
+          "occurred_at": "2024-01-06T14:00:00.000Z",
+          "base": [
+            "USDC",
+            "-100"
+          ],
+          "quote": [
+            "USD",
+            "100.00"
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "39afe726505c941a250885fbbbdb3bac746c832986574015e5a13ae1982d75bc",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f6",
+          "record_type": "conversion",
+          "occurred_at": "2024-01-07T15:00:00.000Z",
+          "base": [
+            "ETH",
+            "-1.5"
+          ],
+          "quote": [
+            "ETH",
+            "1.5"
+          ],
+          "fee": [
+            "USD",
+            "0.25"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "38cc023ce62155c561e9f05849f5ae99157a2e53011b76f0c5a0241980c2ef09",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f7",
+          "record_type": "withdrawal",
+          "occurred_at": "2024-01-08T16:00:00.000Z",
+          "base": [
+            "ETH",
+            "-2"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": "0x00000000000000000000000000000000000000ff",
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "96ce6cfd83fe1b5c03c941acd0aac9809be9ae32bc5a66cd4b438609de4d244a",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f8",
+          "record_type": "deposit",
+          "occurred_at": "2024-01-09T17:00:00.000Z",
+          "base": [
+            "ETH",
+            "3"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": "0x00000000000000000000000000000000000000ee",
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "22bdcba3010937d6e4497798644c2e4f5b87bbf5abc0aac6f63a2eab7f84dbd4",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000f9",
+          "record_type": "withdrawal",
+          "occurred_at": "2024-01-10T18:00:00.000Z",
+          "base": [
+            "USD",
+            "-250"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "f26501c2649d348de6bbe27ed483856b5de04f1f12339fe4f909cfe118877b93",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000fa",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-11T19:00:00.000Z",
+          "base": [
+            "EOS",
+            "0.5"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "3c5eb80b53568be4c4f7e027754826b67fc890673fc98865f8b3edd4997dcc06",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000fb",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-12T20:00:00.000Z",
+          "base": [
+            "USD",
+            "120"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "3f9ea5a4cbd0eabc37133a3423793a6abf61b64a73ea47243fbc34898a7f4d89",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000fc",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-13T21:00:00.000Z",
+          "base": [
+            "BTC",
+            "0.02"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": "BTC Vault",
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "bc28d7f6e23d3a9c477c2457e9033f15fc90f7833d28ec3b2ac10e792f1234e0",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000fd",
+          "record_type": "deposit",
+          "occurred_at": "2024-01-14T22:00:00.000Z",
+          "base": [
+            "USD",
+            "500"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "7980f9afc2f76b673b935fe4611e50f94e8ce4c5f761fc17db4f6dcecdf97b1d",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000fe",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-15T23:00:00.000Z",
+          "base": [
+            "BTC",
+            "-0.03"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "a100fe0c3896a49a4518a13d3fe30a74dc23a75c93b32872465a8663500a7860",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa000000000000000000ff",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-16T09:30:00.000Z",
+          "base": [
+            "USD",
+            "-300"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": "GDAX",
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "41d69da5ba9b193ed63e7ea1217a68ecfd47e45b28bbcec5dbb271a958fd5e2e",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa00000000000000000101",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-17T10:15:00.000Z",
+          "base": [
+            "ETH",
+            "4"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "1388a4c74d4f03ba92d96c862404ce5025cd5e189868a69ddf3f8836e08c0748",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa00000000000000000102",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-18T10:20:00.000Z",
+          "base": [
+            "ETH",
+            "-4"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "ed80d5b23247c975bcc95620c81a590bc931e0340dce63115667978525b41c7a",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa00000000000000000103",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-19T10:25:00.000Z",
+          "base": [
+            "BTC",
+            "0.001"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "6d446c98486247b980542d8dd6c3eeae2b4508f5909b5ac690c537cd86925f99",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa00000000000000000104",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-20T10:30:00.000Z",
+          "base": [
+            "ETH",
+            "0.000001"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "0edfda9eb74bf6dd61cc0c986aec6e05313be0f6a35c3cb60e94fe2b84bfef13",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa00000000000000000105",
+          "record_type": "transfer",
+          "occurred_at": "2024-01-21T10:35:00.000Z",
+          "base": [
+            "ZZZ",
+            "12.5"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "c922cb076d0304ccf6cf4fb21b4e6ce5681129689ebff6fbc201a61dad7d1064",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa00000000000000000106",
+          "record_type": "conversion",
+          "occurred_at": "2024-01-22T11:00:00.000Z",
+          "base": [
+            "SOL",
+            "-2"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "0a08f62cad3fb874053ba6b9394c542aeac5abd6e009c543ad19f5a5205aee40",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa00000000000000000107",
+          "record_type": "reward",
+          "occurred_at": "2024-01-23T11:05:00.000Z",
+          "base": [
+            "ETH",
+            "0.000000015"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "89deb08a8ba41f2fdc7c2457f974deb9ba0b77cf787b0abeff60aeba37b44d5f",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "cb:aaaa00000000000000000108",
+          "record_type": "deposit",
+          "occurred_at": "2024-01-24T11:10:00.000Z",
+          "base": [
+            "USD",
+            null
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": null,
+          "fingerprint_version": null
+        }
+      ]
+    },
+    "generic.csv": {
+      "format": "generic",
+      "records": [
+        {
+          "external_id": "gen:gen-0001",
+          "record_type": "deposit",
+          "occurred_at": "2024-04-01T00:00:00.000Z",
+          "base": [
+            "BTC",
+            "0.5"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            "BTC",
+            "0.0001"
+          ],
+          "tx_hash": "0x00000000000000000000000000000000000000000000000000000000000000ab",
+          "address": "bc1qsyntheticfixtureaddress",
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "96d5a11133a611e8ddab71e84e7c3eceb799e08c5bcf99b0b5ef1905242d14ee",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "gen:gen-0002",
+          "record_type": "reward",
+          "occurred_at": "2024-04-02T00:00:00.000Z",
+          "base": [
+            "ETH",
+            "0.01"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "bb2684cfd749283c3e4fee2796a8d58e415e152cbd86a07516a49cb93554f700",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "gen:gen-0003",
+          "record_type": "trade",
+          "occurred_at": "2024-04-03T00:00:00.000Z",
+          "base": [
+            "ETH",
+            "-1"
+          ],
+          "quote": [
+            "USD",
+            "2500"
+          ],
+          "fee": [
+            "USD",
+            "2.5"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "65ad087224c3d9c265c1dd7d8df8cd7ca9ac585c520cff6e721eac85d71c75ee",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "gen:gen-0004",
+          "record_type": "withdrawal",
+          "occurred_at": "2024-04-04T00:00:00.000Z",
+          "base": [
+            "BTC",
+            "-0.25"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            "BTC",
+            "0.0005"
+          ],
+          "tx_hash": "0x00000000000000000000000000000000000000000000000000000000000000cd",
+          "address": "bc1qothersyntheticaddress",
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "769880129f2dbdecfefa6fe2f869c234d403ae2b4c806665c7da393d376bc8e1",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "gen:gen-0005",
+          "record_type": "transfer",
+          "occurred_at": "2024-04-05T00:00:00.000Z",
+          "base": [
+            "ZZZ",
+            "42"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "bbbefbc4c8a8eca8d0e3bf85bd4a54d5207ffbd83d92a26d48468659d9afc9db",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "gen:h:7ecaa570feafcd4abdeb09f39f14d37a0cce609d",
+          "record_type": "deposit",
+          "occurred_at": "2024-04-06T00:00:00.000Z",
+          "base": [
+            "BTC",
+            "0.125"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "34105c4ad480772752d5353f01535f626c054731e8484e00fa70ac0d379db2b5",
+          "fingerprint_version": 1
+        }
+      ]
+    },
+    "kraken-ledgers.csv": {
+      "format": "kraken",
+      "records": [
+        {
+          "external_id": "kraken:LAAAAA-11111-AAAAAA",
+          "record_type": "deposit",
+          "occurred_at": "2024-03-01T09:00:00.000Z",
+          "base": [
+            "USD",
+            "1000.0000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "7b64fdb39c3f81961edd058ba2aa9366e2f46e33346563707daaa6a80eb9d3f5",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:TTRD00-11111-TTTTTT",
+          "record_type": "trade",
+          "occurred_at": "2024-03-02T10:00:00.000Z",
+          "base": [
+            "ETH",
+            "0.2000000000"
+          ],
+          "quote": [
+            "USD",
+            "-500.0000"
+          ],
+          "fee": [
+            "USD",
+            "1.2500"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "22a71860ac4d1afb3e138056788eed34fa55945335ef35be5ab44bf874a3a5b1",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:TTRD00-11111-TTTTTT:fee:ETH",
+          "record_type": "fee",
+          "occurred_at": "2024-03-02T10:00:00.000Z",
+          "base": [
+            "ETH",
+            "0"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            "ETH",
+            "0.0000000001"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "8304a6f684e3d937922b55331f10ec494a4d5b58c7ce617043813855b9b76665",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:LDDDDD-44444-DDDDDD",
+          "record_type": "reward",
+          "occurred_at": "2024-03-03T11:00:00.000Z",
+          "base": [
+            "ETH",
+            "0.0100000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "efbcda120e40b60995f772eb162968779abcd50b43d84ed0c0b9731306e493c3",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:LEEEEE-55555-EEEEEE",
+          "record_type": "reward",
+          "occurred_at": "2024-03-04T12:00:00.000Z",
+          "base": [
+            "ADA",
+            "1.5000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "d0f19748e15036ebb9e97d52db8580f480fd70b7b1cf20e30bee1a9cddf0095e",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:LFFFFF-66666-FFFFFF",
+          "record_type": "transfer",
+          "occurred_at": "2024-03-05T13:00:00.000Z",
+          "base": [
+            "SOL",
+            "-10.0000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "3a401c9411030305f452d0715364fddde3998ea728b3c63e97f8fe7082d3824a",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:LGGGGG-77777-GGGGGG",
+          "record_type": "transfer",
+          "occurred_at": "2024-03-05T13:00:00.000Z",
+          "base": [
+            "SOL",
+            "10.0000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "b30dd1f6b9adf10373c82eaca66053f9b35d74ffaee826b184cf79a4ef713fde",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:LHHHHH-88888-HHHHHH",
+          "record_type": "transfer",
+          "occurred_at": "2024-03-06T14:00:00.000Z",
+          "base": [
+            "BTC",
+            "-0.0100000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "b11b6f4fc9a81097ace15c2ad4261adbf901932fa9448ed844cccaf5ce857872",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:TCNV00-55555-CCCCCC",
+          "record_type": "conversion",
+          "occurred_at": "2024-03-07T15:00:00.000Z",
+          "base": [
+            "SOL",
+            "-5.0000000000"
+          ],
+          "quote": [
+            "USD",
+            "500.0000"
+          ],
+          "fee": [
+            "USD",
+            "1.5000"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "cbb5560b12baeea7e9a77c7f8774b817b17790cdd2c211f9147076e0fb32fa63",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:LKKKKK-11111-KKKKKK",
+          "record_type": "withdrawal",
+          "occurred_at": "2024-03-08T16:00:00.000Z",
+          "base": [
+            "BTC",
+            "-0.0050000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            "BTC",
+            "0.0001000000"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": false,
+          "fingerprint": "6bf42fee830919d3f57be00a807ef09caa326ac15b92c52dfcfb1c9f49a2924b",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:LLLLLL-22222-LLLLLL",
+          "record_type": "transfer",
+          "occurred_at": "2024-03-09T17:00:00.000Z",
+          "base": [
+            "DOGE",
+            "25.0000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            null,
+            null
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "0b06b6b0a39e9b774776f4adf741a919898746457f81b0b80c1c6482a4332b7f",
+          "fingerprint_version": 1
+        },
+        {
+          "external_id": "kraken:TTRD99-99999-WWWWWW",
+          "record_type": "trade",
+          "occurred_at": "2024-03-10T18:00:00.000Z",
+          "base": [
+            "SOL",
+            "-2.0000000000"
+          ],
+          "quote": [
+            null,
+            null
+          ],
+          "fee": [
+            "SOL",
+            "0.5000"
+          ],
+          "tx_hash": null,
+          "address": null,
+          "network": null,
+          "chain_id": null,
+          "needs_review": true,
+          "fingerprint": "8ccc568dcd39f1bf4d0e8c657ad30e0286ad104495337ebe604f46b4f7d6309c",
+          "fingerprint_version": 1
+        }
+      ]
+    },
+    "unrecognized.csv": {
+      "error": "ImportFormatError",
+      "message": "Unrecognized CSV layout: no occurred_at or base_amount column found. Header was: Ledger Note, Counterparty, Memo. Supply an explicit column mapping to import this file. Timestamps without a time zone are read as UTC."
+    }
+  },
+  "api": {
+    "kraken-ledgers-api.json": [
+      {
+        "external_id": "kraken:h:20ae9b731917562c242151ab771f55cff79bd42d",
+        "record_type": "deposit",
+        "occurred_at": "2024-03-01T09:00:00.000Z",
+        "base": [
+          "USD",
+          "1000.0000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "network": "Ethereum",
+        "chain_id": 1,
+        "needs_review": false,
+        "fingerprint": "7b64fdb39c3f81961edd058ba2aa9366e2f46e33346563707daaa6a80eb9d3f5",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:TTRD00-11111-TTTTTT",
+        "record_type": "trade",
+        "occurred_at": "2024-03-02T10:00:00.000Z",
+        "base": [
+          "ETH",
+          "0.2000000000"
+        ],
+        "quote": [
+          "USD",
+          "-500.0000"
+        ],
+        "fee": [
+          "USD",
+          "1.2500"
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "22a71860ac4d1afb3e138056788eed34fa55945335ef35be5ab44bf874a3a5b1",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:TTRD00-11111-TTTTTT:fee:ETH",
+        "record_type": "fee",
+        "occurred_at": "2024-03-02T10:00:00.000Z",
+        "base": [
+          "ETH",
+          "0"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          "ETH",
+          "0.0000000001"
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "8304a6f684e3d937922b55331f10ec494a4d5b58c7ce617043813855b9b76665",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:h:9427178b24add30f1d24041366144215be472920",
+        "record_type": "reward",
+        "occurred_at": "2024-03-03T11:00:00.000Z",
+        "base": [
+          "ETH",
+          "0.0100000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "efbcda120e40b60995f772eb162968779abcd50b43d84ed0c0b9731306e493c3",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:h:38e0ee7bbe8dad8467ac875eb92d5425f4ea55e4",
+        "record_type": "reward",
+        "occurred_at": "2024-03-04T12:00:00.000Z",
+        "base": [
+          "ADA",
+          "1.5000000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "d0f19748e15036ebb9e97d52db8580f480fd70b7b1cf20e30bee1a9cddf0095e",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:h:c5e41e586bf27541df9da3f0c62cae7dd9de60c4",
+        "record_type": "transfer",
+        "occurred_at": "2024-03-05T13:00:00.000Z",
+        "base": [
+          "SOL",
+          "-10.0000000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "3a401c9411030305f452d0715364fddde3998ea728b3c63e97f8fe7082d3824a",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:h:3a8665e5ff37de2cea33eb406d791cf52dbb917f",
+        "record_type": "transfer",
+        "occurred_at": "2024-03-05T13:00:00.000Z",
+        "base": [
+          "SOL",
+          "10.0000000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "b30dd1f6b9adf10373c82eaca66053f9b35d74ffaee826b184cf79a4ef713fde",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:h:e6b04a3bc24b9fe578b41196dc6aab2baf5fbced",
+        "record_type": "transfer",
+        "occurred_at": "2024-03-06T14:00:00.000Z",
+        "base": [
+          "BTC",
+          "-0.0100000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "b11b6f4fc9a81097ace15c2ad4261adbf901932fa9448ed844cccaf5ce857872",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:TCNV00-55555-CCCCCC",
+        "record_type": "conversion",
+        "occurred_at": "2024-03-07T15:00:00.000Z",
+        "base": [
+          "SOL",
+          "-5.0000000000"
+        ],
+        "quote": [
+          "USD",
+          "500.0000"
+        ],
+        "fee": [
+          "USD",
+          "1.5000"
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "cbb5560b12baeea7e9a77c7f8774b817b17790cdd2c211f9147076e0fb32fa63",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:h:b715724b3cbb13bfbeb2353f323c3e436f10c7f9",
+        "record_type": "withdrawal",
+        "occurred_at": "2024-03-08T16:00:00.000Z",
+        "base": [
+          "BTC",
+          "-0.0050000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          "BTC",
+          "0.0001000000"
+        ],
+        "tx_hash": "b7a1c3d5e7f90123456789abcdef0123456789abcdef0123456789abcdef0123",
+        "address": "bc1qsynthetic0000000000000000000000000test",
+        "network": "Bitcoin",
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "6bf42fee830919d3f57be00a807ef09caa326ac15b92c52dfcfb1c9f49a2924b",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:h:b0a1512c916fc88e43dd1406f340c7f12e21d414",
+        "record_type": "transfer",
+        "occurred_at": "2024-03-09T17:00:00.000Z",
+        "base": [
+          "DOGE",
+          "25.0000000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": true,
+        "fingerprint": "0b06b6b0a39e9b774776f4adf741a919898746457f81b0b80c1c6482a4332b7f",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "kraken:TTRD99-99999-WWWWWW",
+        "record_type": "trade",
+        "occurred_at": "2024-03-10T18:00:00.000Z",
+        "base": [
+          "SOL",
+          "-2.0000000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          "SOL",
+          "0.5000000000"
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": true,
+        "fingerprint": "8ccc568dcd39f1bf4d0e8c657ad30e0286ad104495337ebe604f46b4f7d6309c",
+        "fingerprint_version": 1
+      }
+    ],
+    "coinbase-api.json": [
+      {
+        "external_id": "cb:dddddddd-0000-0000-0000-00000000000d",
+        "record_type": "conversion",
+        "occurred_at": "2024-03-07T15:00:00.000Z",
+        "base": [
+          "USD",
+          "-100.00"
+        ],
+        "quote": [
+          "BTC",
+          "0.00160000"
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "09e3e82e2dcc2031425f2948b1f9c06b21761487b5e82d3d5f6009cb46d05f06",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "cb:aaaaaaaa-0000-0000-0000-00000000000a",
+        "record_type": "trade",
+        "occurred_at": "2024-03-02T10:00:00.000Z",
+        "base": [
+          "BTC",
+          "0.00500000"
+        ],
+        "quote": [
+          "USD",
+          "-310"
+        ],
+        "fee": [
+          "USD",
+          "1.55"
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "617a853bba8b821db619eb27b8cdf78e21b78e1ae127571cb4771acc6784c976",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "cb:bbbbbbbb-0000-0000-0000-00000000000b",
+        "record_type": "withdrawal",
+        "occurred_at": "2024-03-08T16:00:00.000Z",
+        "base": [
+          "BTC",
+          "-0.01000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "address": "0xcccccccccccccccccccccccccccccccccccccccc",
+        "network": "ethereum",
+        "chain_id": 1,
+        "needs_review": false,
+        "fingerprint": "a5ff01bb76ad20907eab5488331f45157fc1408890dfbbee3a16e1d3d12b61b1",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "cb:cccccccc-0000-0000-0000-00000000000c",
+        "record_type": "reward",
+        "occurred_at": "2024-03-04T12:00:00.000Z",
+        "base": [
+          "BTC",
+          "0.00010000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "5c62981fccae4609901b8df7dd3fbab0f3d8f034169ccf0eb007571619af36d6",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "cb:ffffffff-0000-0000-0000-00000000000f",
+        "record_type": "transfer",
+        "occurred_at": "2024-03-09T17:00:00.000Z",
+        "base": [
+          "DOGE",
+          "1.00000000"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": true,
+        "fingerprint": "326d8bfd936b5438c708d32338fcb92ae411187413f9ee0c5855b552cd298620",
+        "fingerprint_version": 1
+      }
+    ],
+    "binanceus-api.json": [
+      {
+        "external_id": "binanceus:trade:ETHUSD:101",
+        "record_type": "trade",
+        "occurred_at": "2023-11-14T22:13:20.000Z",
+        "base": [
+          "ETH",
+          "0.5"
+        ],
+        "quote": [
+          "USD",
+          "-1000.00"
+        ],
+        "fee": [
+          "ETH",
+          "0.0005"
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "df96e4d050dfbd7ac349c328bc4ada30ea16561ea1477a61b32ac1dd6e67e4c1",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "binanceus:deposit:dep-1",
+        "record_type": "deposit",
+        "occurred_at": "2023-11-14T22:15:00.000Z",
+        "base": [
+          "ETH",
+          "1.25"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "address": "0x1111111111111111111111111111111111111111",
+        "network": "ETH",
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "3b19126bd0d84bea6eea7a9102ce0d5683fbd0c045fb2092b15020338a976af6",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "binanceus:withdrawal:wd-1",
+        "record_type": "withdrawal",
+        "occurred_at": "2023-11-15T01:00:00.000Z",
+        "base": [
+          "ETH",
+          "-0.4"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          "ETH",
+          "0.001"
+        ],
+        "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "address": "0x3333333333333333333333333333333333333333",
+        "network": "ARBITRUM",
+        "chain_id": 42161,
+        "needs_review": false,
+        "fingerprint": "a63e04555033bd7b1ca359bca9567788b079c7d68a6a98c6143b131ec22adf9a",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "binanceus:distribution:501",
+        "record_type": "reward",
+        "occurred_at": "2023-11-14T22:16:40.000Z",
+        "base": [
+          "ETH",
+          "0.0021"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "2fcf0801c9c1f1330231a6d16858806e795c7d4f916e6ff7b0a94f0cc94d96b0",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "binanceus:distribution:502",
+        "record_type": "conversion",
+        "occurred_at": "2023-11-14T22:18:20.000Z",
+        "base": [
+          "MATIC",
+          "-10"
+        ],
+        "quote": [
+          "POL",
+          "10"
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "89646d0fb9a0ad4b8a98f89f7967f2157c00ad5ce15d944aafd815abf31f54d5",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "binanceus:distribution:503",
+        "record_type": "transfer",
+        "occurred_at": "2023-11-14T22:20:00.000Z",
+        "base": [
+          "XYZ",
+          "5"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": true,
+        "fingerprint": "eaf1e85a220b4459c5b93cb7d474831c02a6d2f4389e186ea2cd0279b1aeffcf",
+        "fingerprint_version": 1
+      },
+      {
+        "external_id": "binanceus:fiat_deposit:binanceus:fiat_deposit:h:5b23b6e017304219685f1d3ecd140068acf54a66",
+        "record_type": "deposit",
+        "occurred_at": "2023-11-14T22:21:40.000Z",
+        "base": [
+          "USD",
+          "500.00"
+        ],
+        "quote": [
+          null,
+          null
+        ],
+        "fee": [
+          null,
+          null
+        ],
+        "tx_hash": null,
+        "address": null,
+        "network": null,
+        "chain_id": null,
+        "needs_review": false,
+        "fingerprint": "422aa639e5830f2909f43b6c8e4e13b4cd21513f16ab33d70f91b627bad9aa9a",
+        "fingerprint_version": 1
+      }
+    ]
+  }
+}
