@@ -7,7 +7,7 @@ import NotFound from './pages/NotFound';
 import Sidebar from './components/Sidebar';
 import LoadingState from './components/LoadingState';
 import { isWalletSyncFailure } from './utils/walletSync';
-import { loadCryptoMeta, useCryptoMeta } from './features/crypto/meta';
+import { keepLoadingCryptoMeta, useCryptoMeta } from './features/crypto/meta';
 import { fetchCryptoMeta } from './features/crypto/api';
 import { Menu } from 'lucide-react';
 
@@ -105,12 +105,11 @@ function App() {
   }, []);
 
   // Network, explorer and vocabulary facts every crypto view renders from,
-  // loaded once. Subscribing here re-renders the shell (and so every page)
-  // when they arrive; until then links and pickers render empty, never wrong.
+  // loaded once and retried with backoff until they land. Subscribing here
+  // re-renders the shell (and so every page) when they arrive; until then
+  // links and pickers render empty, never wrong.
   useCryptoMeta();
-  useEffect(() => {
-    loadCryptoMeta(fetchCryptoMeta).catch(() => {});
-  }, []);
+  useEffect(() => keepLoadingCryptoMeta(fetchCryptoMeta), []);
 
   // The sidebar's Crypto badge: the "something needs my attention" signal,
   // visible from anywhere without entering the page. Fetched once at boot for
