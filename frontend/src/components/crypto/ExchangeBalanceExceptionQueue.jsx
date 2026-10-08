@@ -6,7 +6,7 @@ import { getCryptoMeta } from '../../features/crypto/meta';
 
 // The reviewable explanations, from the server's reconciliation policy (crypto
 // meta store), as [value, label] pairs.
-export const exceptionCategories = () => (getCryptoMeta()?.vocabulary?.exchangeExceptionCategories || [])
+const exceptionCategories = () => (getCryptoMeta()?.vocabulary?.exchangeExceptionCategories || [])
   .map(({ value, label }) => [value, label]);
 
 const categoryLabel = (value) => exceptionCategories().find(([key]) => key === value)?.[1] || value || 'Unclassified';
