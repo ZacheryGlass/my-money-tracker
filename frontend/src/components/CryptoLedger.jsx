@@ -175,6 +175,9 @@ const CryptoLedger = ({
   // transactions"); cleared by the chip it shows.
   counterparty = null,
   onClearCounterparty,
+  // { category, nonce }: open on a category chosen elsewhere (the Overview's
+  // "See every reward"); the nonce makes asking twice work.
+  categoryRequest = null,
   onNavigate,
   refreshKey = 0,
   onDataChanged,
@@ -200,6 +203,12 @@ const CryptoLedger = ({
     const handle = setTimeout(() => setSearch(searchText.trim()), 350);
     return () => clearTimeout(handle);
   }, [searchText]);
+  useEffect(() => {
+    if (!categoryRequest) return;
+    setCategory(categoryRequest.category);
+    setStatus('');
+    setSpam('');
+  }, [categoryRequest]);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(true);

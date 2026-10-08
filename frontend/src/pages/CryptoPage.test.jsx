@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import CryptoPage from './CryptoPage';
 
@@ -22,6 +22,7 @@ const apiMocks = vi.hoisted(() => ({
   crypto: {
     getLedger: vi.fn(), getLedgerSummary: vi.fn(), ledgerExportUrl: vi.fn(),
     getBridgeAudit: vi.fn(), setBridgeVerdict: vi.fn(), clearBridgeVerdict: vi.fn(),
+    getStakingIncome: vi.fn(),
   },
   exchanges: {
     getAll: vi.fn(), resolveRecord: vi.fn(), setMatchVerdict: vi.fn(), clearMatchVerdict: vi.fn(),
@@ -172,6 +173,28 @@ describe('CryptoPage', () => {
 
     expect(screen.getByRole('button', { name: 'All crypto activity' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'ETH running balance' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('lists what needs attention on the Overview, each line a way to its page', async () => {
+    const manual = { id: 11, name: 'Crypto', effective_name: 'Crypto', type: 'crypto' };
+    const venue = { id: 12, name: 'Coinbase', effective_name: 'Coinbase', type: 'crypto', exchange_account_id: 5 };
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT, manual, venue] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', account: CRYPTO_ACCOUNT, eth_quantity: '1' }],
+    });
+    apiMocks.holdings.getAll.mockResolvedValue({ holdings: [
+      { id: 1, account_id: 11, account_type: 'crypto', ticker: 'ICP', name: 'Internet Computer', quantity: '7.8106', current_value: '25' },
+      { id: 2, account_id: 12, account_type: 'crypto', account_exchange_account_id: 5, ticker: 'ICP', name: 'ICP', quantity: '7.8106', current_value: '25' },
+    ] });
+    apiMocks.crypto.getLedgerSummary.mockResolvedValue({ summary: { total: 3, needs_review_count: 2, unpriced_count: 0 } });
+    const onTabChange = vi.fn();
+    render(<CryptoPage tab="crypto" onTabChange={onTabChange} />);
+
+    const attention = await screen.findByRole('region', { name: 'Needs attention' });
+    expect(within(attention).getByText(/transactions need review/)).toBeInTheDocument();
+    fireEvent.click(within(attention).getByText(/manual holdings may duplicate a synced balance/));
+    expect(onTabChange).toHaveBeenCalledWith('crypto-holdings');
+    expect(screen.getByRole('region', { name: 'Where it is held' })).toBeInTheDocument();
   });
 
   it('renders Activity as a standalone Crypto page without a local tab strip', async () => {

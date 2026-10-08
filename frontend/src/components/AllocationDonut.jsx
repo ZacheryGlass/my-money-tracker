@@ -17,6 +17,7 @@ const AllocationDonut = ({
   mobileBar = false,
   selectedName = null,
   onSelect = null,
+  title = null,
 }) => {
   const isMobile = useIsMobile();
   const { slices, total } = useMemo(() => {
@@ -128,7 +129,7 @@ const AllocationDonut = ({
     <div className={`${compact ? 'p-3 gap-3' : 'p-4 gap-4'} flex flex-col ${className}`}>
       <div className="flex items-center justify-between">
         <h3 className="text-caption text-tertiary uppercase tracking-wide">
-          {groupBy === 'assetClass' ? 'By Asset Class' : 'By Account'}
+          {title || (groupBy === 'assetClass' ? 'By Asset Class' : 'By Account')}
         </h3>
         <span className="text-caption text-accent px-1.5 py-0.5 bg-accent-muted">
           {slices.length} GROUPS

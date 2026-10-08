@@ -5,7 +5,7 @@ import {
   getSortedRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Activity, AlertTriangle, Coins, Layers, Plus, RefreshCw, Wallet } from 'lucide-react';
+import { Activity, AlertTriangle, Coins, Plus, RefreshCw, Wallet } from 'lucide-react';
 import {
   accounts as accountsAPI,
   holdings as holdingsAPI,
@@ -14,11 +14,18 @@ import {
   exchanges as exchangesAPI,
   crypto as cryptoAPI,
 } from '../utils/api';
-import { formatCurrency, formatRelativeTime, shortEthAddress } from '../utils/format';
+import { formatCurrency, formatDateDisplay, formatPercent, formatRelativeTime, shortEthAddress } from '../utils/format';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import { totalSeries } from '../features/crypto/history';
+import {
+  changeOverDays, groupHoldingsByAsset, possibleDuplicates, valueBySource,
+} from '../features/crypto/holdings';
+import AttentionList from '../features/crypto/overview/AttentionList';
+import HeldWhere from '../features/crypto/overview/HeldWhere';
+import StakingIncomeCard from '../features/crypto/overview/StakingIncomeCard';
+import AllocationDonut from '../components/AllocationDonut';
 import CryptoLedger from '../components/CryptoLedger';
 import EthLedger from '../components/EthLedger';
 import SegmentedControl from '../components/SegmentedControl';
@@ -29,7 +36,6 @@ import LoadFailed from '../features/crypto/LoadFailed';
 import TransactionQueue from '../features/crypto/review/TransactionQueue';
 import BridgeEvidencePanel from '../features/crypto/review/BridgeEvidencePanel';
 import FilterTabs from '../components/FilterTabs';
-import MetricCard from '../components/MetricCard';
 import OnChainActivity, { EthWalletBadge } from '../components/OnChainActivity';
 import SummaryStats from '../components/SummaryStats';
 import WalletsPanel from '../components/crypto/WalletsPanel';
@@ -124,6 +130,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [selectedExchangeAccountId, setSelectedExchangeAccountId] = useState(null);
   // One address's transactions, opened from Review's "View transactions".
   const [ledgerCounterparty, setLedgerCounterparty] = useState(null);
+  // A category to open Activity on (the Overview's "See every reward").
+  const [ledgerCategoryRequest, setLedgerCategoryRequest] = useState(null);
   const [pickerExchangeAccounts, setPickerExchangeAccounts] = useState([]);
   const [syncingWalletId, setSyncingWalletId] = useState(null);
   const [sorting, setSorting] = useState([{ id: 'value', desc: true }]);
@@ -317,6 +325,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     [historyRows, cryptoAccountIds]
   );
   const cryptoTotalHistory = useMemo(() => totalSeries(cryptoHistory), [cryptoHistory]);
+  const thirtyDayChange = useMemo(() => changeOverDays(cryptoTotalHistory, 30), [cryptoTotalHistory]);
 
   const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
   const displayAccountName = (account) =>
@@ -333,10 +342,6 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     () => cryptoHoldings
       .filter((holding) => holding.ticker === 'ETH')
       .reduce((sum, holding) => sum + (parseFloat(holding.quantity) || 0), 0),
-    [cryptoHoldings]
-  );
-  const otherPositions = useMemo(
-    () => cryptoHoldings.filter((holding) => holding.ticker !== 'ETH').length,
     [cryptoHoldings]
   );
   const lastSyncedAt = useMemo(() => {
@@ -366,6 +371,16 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   );
 
   const erroredWallets = useMemo(() => wallets.filter(isWalletSyncFailure), [wallets]);
+  const duplicateHints = useMemo(() => possibleDuplicates(cryptoHoldings), [cryptoHoldings]);
+  const assetGroups = useMemo(() => groupHoldingsByAsset(cryptoHoldings), [cryptoHoldings]);
+  // The donut's slices: the seven largest assets and one "Other".
+  const allocationItems = useMemo(() => {
+    const top = assetGroups.slice(0, 7).map((group) => ({
+      account_id: group.key, account: group.ticker || group.display, value: group.value,
+    }));
+    const rest = assetGroups.slice(7).reduce((sum, group) => sum + group.value, 0);
+    return rest > 0 ? [...top, { account_id: 'other', account: 'Other', value: rest }] : top;
+  }, [assetGroups]);
   const deferredWallets = useMemo(
     () => wallets.filter((wallet) => wallet.error_code === 'SYNC_DEFERRED'),
     [wallets]
@@ -385,6 +400,25 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     { id: 'bridges', label: 'Bridges', count: bridgeSuggestionCount, quiet: true },
     { id: 'spam', label: 'Spam', count: manageLoaded && spamActivity ? (spamActivity.summary?.spam_count || 0) : null, quiet: true },
   ];
+  // The Overview's "Needs attention": each line routes to where it is fixed.
+  const staleExchangeAccounts = new Set(cryptoHoldings
+    .filter((holding) => holding.account_exchange_account_id && holding.exchange_balance_stale)
+    .map((holding) => holding.account_exchange_account_id));
+  const attentionItems = [
+    { key: 'review', count: ledgerSummary?.needs_review_count || 0, text: 'transactions need review', page: REVIEW_TAB },
+    { key: 'failed', count: erroredWallets.length, text: 'wallets failed their last sync', tone: 'loss', page: WALLETS_TAB },
+    {
+      key: 'drift',
+      count: wallets.filter((wallet) => wallet.reconciliation?.needs_review).length,
+      text: "wallets' history does not add up to their blockchain balance",
+      tone: 'loss',
+      page: WALLETS_TAB,
+    },
+    { key: 'stale', count: staleExchangeAccounts.size, text: 'exchange balances are out of date', page: EXCHANGES_TAB },
+    { key: 'unpriced', count: ledgerSummary?.unpriced_count || 0, text: 'wallet transactions have no USD value', page: TRANSACTIONS_TAB },
+    { key: 'duplicates', count: duplicateHints.size, text: 'manual holdings may duplicate a synced balance', page: HOLDINGS_TAB },
+  ];
+
   // Opens on the first queue with something in it, once the counts are known;
   // after that the user's choice stands.
   const firstNonEmptyQueue = reviewQueues.find((queue) => !queue.quiet && queue.count > 0)?.id;
@@ -653,6 +687,13 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             <h1 className="font-money text-display-lg text-primary">
               {formatCurrency(totalCryptoValue)}
             </h1>
+            {thirtyDayChange && (
+              <p className={`font-money text-body-sm font-semibold ${thirtyDayChange.change >= 0 ? 'text-gain' : 'text-loss'}`}
+                title={`From the nightly snapshot of ${formatDateDisplay(thirtyDayChange.since)}`}>
+                {thirtyDayChange.change >= 0 ? '+' : '−'}{formatCurrency(Math.abs(thirtyDayChange.change))}
+                {' '}({formatPercent(thirtyDayChange.percent, 1)}) in 30 days
+              </p>
+            )}
             <p className="text-body-sm text-tertiary">
               Across {wallets.length} {wallets.length === 1 ? 'wallet' : 'wallets'} · {cryptoAccounts.length} {cryptoAccounts.length === 1 ? 'account' : 'accounts'}
               {wallets.length > 0 && (lastSyncedAt ? ` · Synced ${formatRelativeTime(lastSyncedAt)}` : ' · Never synced')}
@@ -721,17 +762,23 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 gap-px bg-border sm:grid-cols-2 xl:grid-cols-4">
-                <MetricCard compact label="Total Value" value={formatCurrency(totalCryptoValue)} valueColor="accent" icon={Coins} />
-                <MetricCard compact label="ETH Held" value={formatEthQuantity(ethQuantity)} icon={Wallet} />
-                <MetricCard
-                  compact
-                  label="Wallets"
-                  value={wallets.length}
-                  caption={lastSyncedAt ? `Synced ${formatRelativeTime(lastSyncedAt)}` : 'Never synced'}
-                  icon={Activity}
+              <div className="grid gap-4 lg:grid-cols-2">
+                <AttentionList items={attentionItems} onNavigate={goToTab} />
+                <HeldWhere totals={valueBySource(cryptoHoldings)} />
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="card">
+                  <AllocationDonut items={allocationItems} title="By asset" compact mobileBar />
+                </div>
+                <StakingIncomeCard
+                  refreshKey={syncNonce}
+                  onOpenActivity={() => {
+                    setLedgerCategoryRequest({ category: 'staking_reward', nonce: Date.now() });
+                    setTxView(LEDGER_VIEW);
+                    goToTab(TRANSACTIONS_TAB);
+                  }}
                 />
-                <MetricCard compact label="Other Positions" value={otherPositions} icon={Layers} />
               </div>
 
               {cryptoHistory.length > 0 ? (
@@ -927,6 +974,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   exchangeAccountId={selectedExchangeAccountId}
                   counterparty={ledgerCounterparty}
                   onClearCounterparty={() => setLedgerCounterparty(null)}
+                  categoryRequest={ledgerCategoryRequest}
                   onNavigate={goToTab}
                   refreshKey={syncNonce}
                   addressNotes={addressNotes}
