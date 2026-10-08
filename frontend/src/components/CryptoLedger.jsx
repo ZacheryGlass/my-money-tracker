@@ -313,10 +313,17 @@ const CryptoLedger = ({
     refresh();
     await onDataChanged?.();
   }, [onDataChanged, refresh]);
+  // The parent answers a review action by bumping `refreshKey`, which reloads
+  // this SAME feed a second time; that reload must be just as quiet, or it
+  // undoes the silent one above. Only a new feed (a filter change) or a first
+  // load shows the loading state.
+  const loadedFiltersRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
-    const silent = silentRef.current;
+    const sameFeed = loadedFiltersRef.current === filters && loadedRef.current > 0;
+    loadedFiltersRef.current = filters;
+    const silent = silentRef.current || sameFeed;
     silentRef.current = false;
     const load = async () => {
       if (!silent) setLoading(true);

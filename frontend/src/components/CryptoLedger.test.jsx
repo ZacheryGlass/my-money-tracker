@@ -422,6 +422,26 @@ describe('CryptoLedger', () => {
     });
   });
 
+  it('keeps the open row through the parent refresh that follows an action', async () => {
+    // A review action reloads the feed quietly, then the page bumps refreshKey;
+    // that second reload once flipped the table to its loading state, which
+    // unmounted the row the user was still working in.
+    setLedger([onchain({ category: 'send', needs_review: true })]);
+    const { rerender } = render(<CryptoLedger refreshKey={0} />);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USDC'))[0]);
+    await screen.findAllByLabelText('Set category');
+    const callsBefore = apiMocks.crypto.getLedger.mock.calls.length;
+    // Held open, so the assertion below runs while the reload is in flight.
+    apiMocks.crypto.getLedger.mockReturnValue(new Promise(() => {}));
+
+    rerender(<CryptoLedger refreshKey={1} />);
+
+    await waitFor(() => {
+      expect(apiMocks.crypto.getLedger.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+    expect(screen.getAllByLabelText('Set category').length).toBeGreaterThan(0);
+  });
+
   it('corrects a flagged on-chain row into eth_activity_overrides', async () => {
     setLedger([onchain({
       id: `onchain:42161:${TX2}:1`,
