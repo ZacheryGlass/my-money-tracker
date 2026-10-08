@@ -118,6 +118,28 @@ describe('CryptoPage', () => {
     expect(screen.queryByText('Vanguard Total Market')).toBeNull();
   });
 
+  it('charts the crypto total, not the first account, as the Overview ending value', async () => {
+    const second = { ...CRYPTO_ACCOUNT, id: 10, name: 'Cold', effective_name: 'Cold', eth_wallet_id: 2 };
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT, second] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', account: CRYPTO_ACCOUNT, eth_quantity: '1' }],
+    });
+    apiMocks.history.getAccounts.mockResolvedValue({
+      data: [
+        { snapshot_date: '2026-10-07', account_id: 9, total_value: '0' },
+        { snapshot_date: '2026-10-08', account_id: 9, total_value: '0' },
+        { snapshot_date: '2026-10-07', account_id: 10, total_value: '100' },
+        { snapshot_date: '2026-10-08', account_id: 10, total_value: '120' },
+      ],
+    });
+
+    render(<CryptoPage tab="crypto" onTabChange={vi.fn()} />);
+
+    const label = await screen.findByText('Ending value');
+    expect(label.nextSibling).toHaveTextContent('$120');
+    expect(apiMocks.history.getAccounts).toHaveBeenCalledWith(expect.objectContaining({ type: 'crypto' }));
+  });
+
   it('renders Activity as a standalone Crypto page without a local tab strip', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
     apiMocks.eth.getWallets.mockResolvedValue({

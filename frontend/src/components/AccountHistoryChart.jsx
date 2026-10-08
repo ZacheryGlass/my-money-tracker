@@ -70,10 +70,18 @@ const AccountHistoryChart = ({
   loading,
   error,
   singleColumn = false,
+  portfolioLabel = 'Total Portfolio',
+  portfolioSummaryLabel = 'Portfolio Ending Value',
+  defaultMode = 'change',
+  // Start with only the total drawn; each account line is one click away in
+  // the series list. Twenty overlapping lines read as noise, not history.
+  hideAccountsInitially = false,
 }) => {
   const isMobile = useIsMobile();
-  const [hiddenSeries, setHiddenSeries] = useState([]);
-  const [chartMode, setChartMode] = useState('change');
+  const [hiddenSeries, setHiddenSeries] = useState(() => (
+    hideAccountsInitially ? selectedAccounts.map((id) => `account_${id}`) : []
+  ));
+  const [chartMode, setChartMode] = useState(defaultMode);
 
   const {
     chartData,
@@ -101,7 +109,7 @@ const AccountHistoryChart = ({
       ...(showPortfolio
         ? [{
           key: 'portfolio',
-          name: 'Total Portfolio',
+          name: portfolioLabel,
           color: PORTFOLIO_COLOR,
           isPortfolio: true,
         }]
@@ -169,7 +177,7 @@ const AccountHistoryChart = ({
       bestMover: sortedMovers[0] || null,
       worstMover: sortedMovers[sortedMovers.length - 1] || null,
     };
-  }, [accountData, portfolioData, accounts, selectedAccounts, showPortfolio, chartMode]);
+  }, [accountData, portfolioData, accounts, selectedAccounts, showPortfolio, chartMode, portfolioLabel]);
 
   useEffect(() => {
     const validKeys = new Set(seriesSummaries.map((series) => series.key));
@@ -317,7 +325,7 @@ const AccountHistoryChart = ({
           <h3 className="text-caption-upper uppercase text-primary">Period Summary</h3>
           <div className="mt-4 space-y-4">
             <SummaryRow
-              label={mainSummary?.isPortfolio ? 'Portfolio Ending Value' : 'Ending Value'}
+              label={mainSummary?.isPortfolio ? portfolioSummaryLabel : 'Ending Value'}
               value={mainSummary ? formatCurrency(mainSummary.last) : '--'}
               change={mainSummary ? `${formatCurrency(mainSummary.change)} (${formatPercent(mainSummary.percent, 1)})` : '--'}
               positive={mainSummary ? mainSummary.change >= 0 : true}

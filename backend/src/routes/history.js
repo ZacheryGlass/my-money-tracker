@@ -152,6 +152,7 @@ router.get('/accounts', async (req, res) => {
   try {
     const {
       account_id,
+      type,
       startDate,
       endDate,
       limit = 30,
@@ -183,6 +184,18 @@ router.get('/accounts', async (req, res) => {
       }
       conditions.push(`acs.account_id = $${paramIndex}`);
       params.push(parsedAccountId);
+      paramIndex++;
+    }
+
+    // Narrowing by account type keeps a one-type chart from paging through
+    // every other account's snapshots: the undated read returns the NEWEST
+    // rows, so a shared limit truncates the oldest history of the type asked for.
+    if (type !== undefined && type !== '') {
+      if (!/^[a-z_]{1,32}$/.test(String(type))) {
+        return res.status(400).json({ error: 'Invalid type parameter.' });
+      }
+      conditions.push(`a.type = $${paramIndex}`);
+      params.push(String(type));
       paramIndex++;
     }
 

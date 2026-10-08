@@ -225,6 +225,7 @@ export const history = {
   getAccounts: async (params = {}) => {
     const queryParams = new URLSearchParams();
     if (params.account_id) queryParams.append('account_id', params.account_id);
+    if (params.type) queryParams.append('type', params.type);
     if (params.startDate) queryParams.append('startDate', params.startDate);
     if (params.endDate) queryParams.append('endDate', params.endDate);
     if (params.limit) queryParams.append('limit', params.limit);

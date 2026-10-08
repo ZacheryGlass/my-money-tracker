@@ -18,6 +18,7 @@ import { formatCurrency, formatRelativeTime, shortEthAddress } from '../utils/fo
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
 import { formatCategoryLabel } from '../utils/dataLabels';
 import AccountHistoryChart from '../components/AccountHistoryChart';
+import { totalSeries } from '../features/crypto/history';
 import CryptoLedger from '../components/CryptoLedger';
 import EthLedger from '../components/EthLedger';
 import SegmentedControl from '../components/SegmentedControl';
@@ -177,7 +178,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         ethAPI.getWallets().catch(() => null),
         holdingsAPI.getAll(),
         accountsAPI.getAll(),
-        historyApi.getAccounts({ limit: 10000, withCount: false }),
+        historyApi.getAccounts({ type: 'crypto', limit: 10000, withCount: false }),
         ethAPI.getAddressNotes().catch(() => null),
       ]);
       setWallets(walletsData?.wallets || []);
@@ -291,6 +292,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     () => historyRows.filter((row) => cryptoAccountIds.has(row.account_id)),
     [historyRows, cryptoAccountIds]
   );
+  const cryptoTotalHistory = useMemo(() => totalSeries(cryptoHistory), [cryptoHistory]);
 
   const accountDisplayNames = useMemo(() => buildAccountDisplayNameMap(accounts), [accounts]);
   const displayAccountName = (account) =>
@@ -680,10 +682,14 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   </div>
                   <AccountHistoryChart
                     accountData={cryptoHistory}
-                    portfolioData={null}
+                    portfolioData={cryptoTotalHistory}
                     accounts={cryptoAccounts}
                     selectedAccounts={[...cryptoAccountIds]}
-                    showPortfolio={false}
+                    showPortfolio
+                    portfolioLabel="All crypto"
+                    portfolioSummaryLabel="Ending value"
+                    defaultMode="value"
+                    hideAccountsInitially
                     loading={false}
                     error={null}
                     singleColumn
