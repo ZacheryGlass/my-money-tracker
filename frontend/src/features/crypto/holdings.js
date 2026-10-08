@@ -2,6 +2,11 @@ import { getCryptoMeta } from './meta';
 
 export const holdingValue = (holding) => parseFloat(holding.current_value ?? holding.manual_value ?? 0) || 0;
 
+// A holding with no price is unknown, not small: "Hide under $1" must never
+// fold a 3 BTC position away because nothing priced it.
+export const isPriced = (holding) => holding.current_value != null || holding.manual_value != null;
+export const isDust = (holding) => isPriced(holding) && holdingValue(holding) < 1;
+
 // Wallet syncs and exchange snapshots rebuild these rows; a manual edit would
 // be silently clobbered.
 export const isSyncManaged = (holding) => Boolean(

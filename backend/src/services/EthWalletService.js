@@ -2116,10 +2116,10 @@ class EthWalletService {
   static refreshClassificationsForAddresses(userId, addresses, { kinds = [] } = {}) {
     if (kinds.includes('own')) return this.refreshClassificationsForUser(userId);
     return EthDerivedPipeline.serializedForUser(userId, async () => {
-      const walletIds = new Set();
-      for (const address of addresses) {
-        for (const id of await EthTransfer.walletIdsTouchingAddress(userId, address)) walletIds.add(id);
-      }
+      // One address keeps its own lookup; a batch reads the union in one query.
+      const walletIds = addresses.length === 1
+        ? await EthTransfer.walletIdsTouchingAddress(userId, addresses[0])
+        : await EthTransfer.walletIdsTouchingAddresses(userId, addresses);
       return EthDerivedPipeline.runForUser(userId, {
         reclassify: true,
         revalue: false,

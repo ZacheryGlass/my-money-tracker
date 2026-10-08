@@ -9,14 +9,18 @@ import { eth as ethAPI, exchanges as exchangesAPI } from '../../../utils/api';
 // had no override (and no note) before, since clearing an override also
 // deletes its note and any spam verdict.
 export async function markRowReviewed(row) {
-  if (row.exchange_match?.needs_review && row.exchange_match.exchange_record_id != null) {
+  // A resolved record cannot be put back, so a row that resolved one offers no
+  // undo at all: undoing only its on-chain half would claim a return to the
+  // queue that half a decision cannot make.
+  const resolvesRecord = Boolean(row.exchange_match?.needs_review && row.exchange_match.exchange_record_id != null);
+  if (resolvesRecord) {
     await exchangesAPI.resolveRecord(row.exchange_match.exchange_account_id, row.exchange_match.exchange_record_id);
   }
   if (row.source === 'onchain') {
     await ethAPI.setActivityOverride({
       walletId: row.wallet_id, txHash: row.tx_hash, chainId: row.chain_id, category: row.category,
     });
-    return !row.is_overridden && !row.override_note
+    return !resolvesRecord && !row.is_overridden && !row.override_note
       ? { walletId: row.wallet_id, txHash: row.tx_hash, chainId: row.chain_id }
       : null;
   }

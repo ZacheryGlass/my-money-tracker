@@ -455,6 +455,11 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   const byHash = await CryptoLedger.findForUser(1, { q: DEPOSIT_TX.toUpperCase(), limit: 100, offset: 0 });
   ok('q finds a transaction by hash, case-insensitively',
     byHash.total === 1 && byHash.rows[0].tx_hash === DEPOSIT_TX);
+  const byBareHash = await CryptoLedger.findForUser(1, { q: DEPOSIT_TX.slice(2), limit: 100, offset: 0 });
+  ok('q finds a transaction by hash without its 0x prefix', byBareHash.total === 1 && byBareHash.rows[0].tx_hash === DEPOSIT_TX);
+  const accountSummary = await CryptoLedger.summaryForUser(1, { exchangeAccountId: accountId });
+  ok('the summary narrows to an exchange account, matching that feed',
+    accountSummary.total === byAccount.total, { summary: accountSummary.total, feed: byAccount.total });
   const withParty = all.rows.find((row) => row.counterparty_address);
   const byParty = await CryptoLedger.findForUser(1, { counterparty: withParty.counterparty_address, limit: 100, offset: 0 });
   ok('counterparty narrows to that address',

@@ -394,6 +394,9 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
     walletB: await EthTransfer.walletIdsTouchingAddress(1, WALLET_B),
     otherUser: await EthTransfer.walletIdsTouchingAddress(2, STRANGER),
   };
+  const union = await EthTransfer.walletIdsTouchingAddresses(1, [STRANGER, WALLET_B, STRANGER.toUpperCase()]);
+  ok('the batch lookup returns the union of the single lookups',
+    same(union, [...new Set([...touched.stranger, ...touched.walletB])].sort((x, y) => x - y)), union);
   ok('touched wallets: a counterparty, a tracked wallet, and nothing across users',
     same(touched, { stranger: [walletA], walletB: [walletA, walletB].sort((x, y) => x - y), otherUser: [] }), touched);
   const { rows: [{ links: foldsOnA }] } = await q(

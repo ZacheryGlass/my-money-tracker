@@ -259,6 +259,25 @@ test('POST /api/eth/address-labels/batch labels every address and refreshes once
   assert.deepEqual(refreshes[0][2], { kinds: ['external', undefined, 'own'] });
 });
 
+test('POST /api/eth/address-labels/batch keeps an exchange label\'s account link', async (t) => {
+  const EthAddressLabel = require('../src/models/EthAddressLabel');
+  const EthWalletService = require('../src/services/EthWalletService');
+  const saved = ['findByAddress', 'upsert'].map((key) => [EthAddressLabel, key, EthAddressLabel[key]]);
+  saved.push([EthWalletService, 'refreshClassificationsForAddresses', EthWalletService.refreshClassificationsForAddresses]);
+  t.after(() => { for (const [obj, key, fn] of saved) obj[key] = fn; });
+  const links = [];
+  EthAddressLabel.findByAddress = async () => ({ kind: 'exchange', user_id: 1, exchange_account_id: 7 });
+  EthAddressLabel.upsert = async (userId, address, name, note, kind, accountId) => { links.push(accountId); return { address }; };
+  EthWalletService.refreshClassificationsForAddresses = async () => {};
+
+  const response = await request(app).post('/api/eth/address-labels/batch')
+    .send({ kind: 'exchange', name: 'Old desk', addresses: ['0xaaaa111111111111111111111111111111111111'] })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 201);
+  assert.deepEqual(links, [7]);
+});
+
 test('POST /api/eth/address-labels/batch refuses a missing kind, a bad address, or an unnamed exchange', async (t) => {
   const EthAddressLabel = require('../src/models/EthAddressLabel');
   const saved = [[EthAddressLabel, 'upsert', EthAddressLabel.upsert]];

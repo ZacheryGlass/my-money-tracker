@@ -353,6 +353,16 @@ describe('CryptoLedger', () => {
     }, { timeout: 2000 });
   });
 
+  it('applies a category request once and hands it back', async () => {
+    const onApplied = vi.fn();
+    render(<CryptoLedger categoryRequest={{ category: 'staking_reward', nonce: 1 }} onCategoryRequestApplied={onApplied} />);
+
+    await vi.waitFor(() => expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'staking_reward' })
+    ));
+    expect(onApplied).toHaveBeenCalledTimes(1);
+  });
+
   it('narrows to one address handed in from outside, and says so', async () => {
     const onClear = vi.fn();
     render(<CryptoLedger counterparty={COUNTERPARTY} onClearCounterparty={onClear} />);
@@ -393,6 +403,13 @@ describe('CryptoLedger', () => {
 
     await vi.waitFor(() => {
       expect(apiMocks.crypto.getLedgerSummary).toHaveBeenCalledWith({ walletId: 4 });
+    });
+  });
+
+  it('counts the header on the exchange account the feed is narrowed to', async () => {
+    render(<CryptoLedger exchangeAccountId={7} />);
+    await waitFor(() => {
+      expect(apiMocks.crypto.getLedgerSummary).toHaveBeenCalledWith({ exchangeAccountId: 7 });
     });
   });
 

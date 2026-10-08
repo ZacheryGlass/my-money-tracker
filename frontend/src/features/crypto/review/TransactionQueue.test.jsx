@@ -6,6 +6,7 @@ const apiMocks = vi.hoisted(() => ({
   crypto: { getLedger: vi.fn() },
   eth: {
     setActivityOverride: vi.fn(),
+    setActivityNote: vi.fn(),
     clearActivityOverride: vi.fn(),
     labelAddress: vi.fn(),
     getTransfers: vi.fn(),
@@ -56,6 +57,7 @@ describe('TransactionQueue', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMocks.eth.setActivityOverride.mockResolvedValue({ override: {} });
+    apiMocks.eth.setActivityNote.mockResolvedValue({});
     apiMocks.eth.clearActivityOverride.mockResolvedValue({});
     apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
     apiMocks.eth.getTransfers.mockResolvedValue({ data: [] });
@@ -106,6 +108,36 @@ describe('TransactionQueue', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Label and explain 2' }));
 
     await waitFor(() => expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(address, null, { kind: 'external' }));
+  });
+
+  it('keeps a row open across the reload a save triggers, though the rebuild renumbers it', async () => {
+    setQueue([deposit(1)]);
+    render(<TransactionQueue />);
+    fireEvent.click(await screen.findByRole('button', { name: /− 1 ETH/ }));
+    await screen.findAllByLabelText('Set category');
+
+    // The same transaction after a rebuild: same composite id, new row_id.
+    setQueue([deposit(1, { row_id: 999 })]);
+    fireEvent.change(screen.getAllByPlaceholderText(/what this transaction did/i)[0], { target: { value: 'checked' } });
+    fireEvent.click(screen.getAllByRole('button', { name: /save note/i })[0]);
+
+    await waitFor(() => expect(apiMocks.crypto.getLedger.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.getAllByLabelText('Set category').length).toBeGreaterThan(0);
+  });
+
+  it('offers no undo once marking a group resolved an exchange record', async () => {
+    setQueue([deposit(1, { exchange_match: { needs_review: true, exchange_record_id: 55, exchange_account_id: 3 } })]);
+    apiMocks.exchanges.resolveRecord.mockResolvedValue({});
+    render(<TransactionQueue />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark reviewed' }));
+    expect(await screen.findByText(/cannot be put back in the queue/)).toBeInTheDocument();
+    setQueue([]);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Mark reviewed' }));
+
+    await waitFor(() => expect(apiMocks.exchanges.resolveRecord).toHaveBeenCalledWith(3, 55));
+    expect(await screen.findByText('Marked 1 reviewed.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /undo/i })).toBeNull();
   });
 
   it('says so when nothing is left', async () => {

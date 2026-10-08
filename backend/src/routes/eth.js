@@ -1399,8 +1399,12 @@ router.post('/address-labels/batch', async (req, res) => {
       for (const address of normalized) {
         const previous = await EthAddressLabel.findByAddress(req.user.id, address);
         kinds.push(previous?.kind);
+        // The user's own exchange label keeps its exchange-account link: an
+        // explicit kind rewrites that column, and a batch names no account.
+        const keepLink = kind === 'exchange' && previous?.kind === 'exchange' && previous.user_id != null
+          ? previous.exchange_account_id ?? null : null;
         written.push(await EthAddressLabel.upsert(
-          req.user.id, address, trimmedName || shortAddress(address), undefined, kind, null
+          req.user.id, address, trimmedName || shortAddress(address), undefined, kind, keepLink
         ));
       }
     } catch (error) {

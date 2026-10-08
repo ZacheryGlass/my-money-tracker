@@ -67,4 +67,19 @@ describe('ConfirmDialog', () => {
     expect(onCancel).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Working…' })).toBeDisabled();
   });
+
+  it('keeps focus inside while it turns busy, rather than bouncing it to the opener', () => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    const props = { title: 'Delete?', confirmLabel: 'Delete', onConfirm: () => {}, onCancel: () => {} };
+    const { rerender } = render(<ConfirmDialog open {...props}><p>Gone for good.</p></ConfirmDialog>);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    rerender(<ConfirmDialog open busy {...props}><p>Gone for good.</p></ConfirmDialog>);
+
+    expect(document.activeElement).not.toBe(opener);
+    opener.remove();
+  });
 });

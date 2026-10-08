@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  changeOverDays, groupHoldingsByAsset, possibleDuplicates, splitNetworkSuffix, valueBySource,
+  changeOverDays, groupHoldingsByAsset, isDust, possibleDuplicates, splitNetworkSuffix, valueBySource,
 } from './holdings';
 
 const h = (overrides) => ({ id: overrides.id, quantity: '1', current_value: '10', ...overrides });
@@ -58,5 +58,13 @@ describe('valueBySource and changeOverDays', () => {
     ];
     expect(changeOverDays(series, 30)).toEqual({ change: 100, percent: 50, since: '2026-09-07' });
     expect(changeOverDays([{ snapshot_date: '2026-10-08', total_value: 1 }], 30)).toBeNull();
+  });
+});
+
+describe('isDust', () => {
+  it('treats a priced cent as dust and an unpriced position as not', () => {
+    expect(isDust({ current_value: '0.2' })).toBe(true);
+    expect(isDust({ manual_value: '5' })).toBe(false);
+    expect(isDust({ ticker: 'BTC', quantity: '3', current_value: null, manual_value: null })).toBe(false);
   });
 });

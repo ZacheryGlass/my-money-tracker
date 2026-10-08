@@ -19,7 +19,10 @@ const UNDO_MS = 15_000;
 // Small groups open by default: two rows are faster to read than to expand.
 const AUTO_OPEN_SIZE = 3;
 
-const rowKey = (row) => `${row.source}:${row.row_id}`;
+// The ledger's composite id: an on-chain row_id is eth_activity.id, which a
+// rebuild (every label write and sync) renumbers -- keying on it closed the
+// open row after every save.
+const rowKey = (row) => row.id || `${row.source}:${row.row_id}`;
 
 // The Review page's transaction queue: every unexplained ledger row, grouped
 // so a run of identical problems is one decision rather than sixteen. Each
@@ -30,7 +33,8 @@ export default function TransactionQueue({
   addressNotes = [],
   exchangeNameOptions = [],
   onDataChanged,
-  onError,
+  // The row detail calls this unguarded, so it always has to be a function.
+  onError = () => {},
   showSuccess,
   onOpenExchanges,
   onOpenBridges,
@@ -316,7 +320,9 @@ export default function TransactionQueue({
             Each keeps its category ({formatLedgerCategory(confirmGroup.category)}) and leaves the queue.
             {confirmGroup.source === 'exchange'
               ? ' Exchange records cannot be put back in the queue afterwards.'
-              : ' You can undo this for a few seconds afterwards, or revert any one of them from Activity.'}
+              : confirmGroup.rows.some((row) => row.exchange_match?.needs_review)
+                ? ' Some include an exchange record, which cannot be put back in the queue afterwards.'
+                : ' You can undo this for a few seconds afterwards, or revert any one of them from Activity.'}
           </p>
         )}
       </ConfirmDialog>

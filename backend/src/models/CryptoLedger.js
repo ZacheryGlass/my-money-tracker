@@ -1099,9 +1099,12 @@ function buildFilters({
   // user's wallets), or else an asset symbol or a name.
   if (q) {
     const text = String(q).trim();
-    if (/^0x[0-9a-f]{64}$/i.test(text)) {
-      params.push(text.toLowerCase());
-      clauses.push(`(LOWER(r.tx_hash) = $${params.length} OR LOWER(r.bridge_match->>'tx_hash') = $${params.length})`);
+    if (/^(0x)?[0-9a-f]{64}$/i.test(text)) {
+      // Case and the 0x prefix are spelling, not identity: a venue keeps the
+      // provider's form ("abcd..." with no prefix), and a pasted hash may too.
+      params.push(text.toLowerCase().replace(/^0x/, ''));
+      clauses.push(`(LOWER(REGEXP_REPLACE(r.tx_hash, '^0x', '', 'i')) = $${params.length}
+        OR LOWER(REGEXP_REPLACE(r.bridge_match->>'tx_hash', '^0x', '', 'i')) = $${params.length})`);
     } else if (/^0x[0-9a-f]{40}$/i.test(text)) {
       params.push(text.toLowerCase());
       clauses.push(`(LOWER(r.counterparty_address) = $${params.length}
@@ -1328,7 +1331,11 @@ class CryptoLedger {
     const params = [userId];
     // spam: 'all' -- every counter below does its own `NOT r.spam` FILTER, and
     // spam_count needs the quarantined rows present to count them.
-    const where = buildFilters({ walletId: filters.walletId ?? null, spam: 'all' }, params);
+    const where = buildFilters({
+      walletId: filters.walletId ?? null,
+      exchangeAccountId: filters.exchangeAccountId ?? null,
+      spam: 'all',
+    }, params);
     const result = await pool.query(
       `${LEDGER_CTE}
        SELECT

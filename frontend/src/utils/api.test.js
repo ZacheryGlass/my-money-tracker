@@ -16,7 +16,7 @@ vi.mock('axios', () => ({
   },
 }));
 
-import { eth, shareInFlight } from './api';
+import { eth, noteWrite, shareInFlight } from './api';
 
 const runningJob = (id = 41) => ({
   id,
@@ -156,6 +156,18 @@ describe('shareInFlight', () => {
 
     await shareInFlight('k', run);
     expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('never joins a read that started before a write', async () => {
+    let finish;
+    const before = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const first = shareInFlight('w', before);
+    noteWrite();
+    const after = vi.fn(async () => 'after the write');
+
+    await expect(shareInFlight('w', after)).resolves.toBe('after the write');
+    finish('before the write');
+    await expect(first).resolves.toBe('before the write');
   });
 
   it('never joins a read that has been in flight longer than the window', async () => {

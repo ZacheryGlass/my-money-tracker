@@ -247,7 +247,12 @@ function LabelsPanel({
     setUpdatingLabels(true);
     onError(null);
     try {
-      await ethAPI.labelAddress(label.address, name || null, { kind });
+      // An explicit verdict rewrites the label's exchange-account link, so an
+      // exchange label kept as an exchange carries its link through the edit.
+      await ethAPI.labelAddress(label.address, name || null, {
+        kind,
+        ...(kind === 'exchange' && label.exchange_account_id ? { exchange_account_id: label.exchange_account_id } : {}),
+      });
       showSuccess(label.builtin ? 'Built-in label overridden; past transfers were reclassified' : 'Label updated');
       setEditingLabel(null);
       await onChanged();

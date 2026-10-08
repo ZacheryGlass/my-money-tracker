@@ -21,14 +21,21 @@ const api = axios.create({
 // shared, so a refetch after a write never joins a read that began before it.
 const SHARE_WINDOW_MS = 1500;
 const sharedReads = new Map();
+// Bumped by every request that can change data. A read joins another only
+// when no write has been sent since that one started -- a refetch after a
+// quick write must see the write, however recent the read in flight is.
+let writeGeneration = 0;
+export const noteWrite = () => { writeGeneration += 1; };
 export const shareInFlight = (key, run) => {
   const now = Date.now();
   const existing = sharedReads.get(key);
-  if (existing && now - existing.startedAt < SHARE_WINDOW_MS) return existing.promise;
+  if (existing && existing.generation === writeGeneration && now - existing.startedAt < SHARE_WINDOW_MS) {
+    return existing.promise;
+  }
   const promise = Promise.resolve().then(run).finally(() => {
     if (sharedReads.get(key)?.promise === promise) sharedReads.delete(key);
   });
-  sharedReads.set(key, { promise, startedAt: now });
+  sharedReads.set(key, { promise, startedAt: now, generation: writeGeneration });
   return promise;
 };
 
@@ -36,6 +43,11 @@ const ETH_SYNC_POLL_INTERVAL_MS = 10_000;
 const ETH_SYNC_POLL_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const ETH_SYNC_JOB_STATUSES = new Set(['running', 'completed', 'failed']);
 const ETH_SYNC_RESULT_STATUSES = new Set(['complete', 'deferred', 'unsupported', 'failed']);
+
+api.interceptors.request?.use?.((config) => {
+  if (String(config.method || 'get').toLowerCase() !== 'get') noteWrite();
+  return config;
+});
 
 // Handle auth errors and retry on 5xx / network errors (1 retry, 500ms backoff)
 api.interceptors.response.use(
@@ -661,12 +673,19 @@ export const crypto = {
   // rows currently on screen would read zero the moment they were filtered out.
   // Takes the same wallet narrowing as the feed (and nothing else), so the
   // header counts describe the rows actually on screen.
-  getLedgerSummary: ({ walletId } = {}) => shareInFlight(`crypto/ledger/summary:${walletId ?? 'all'}`, async () => {
-    const response = await api.get('/api/crypto/ledger/summary', {
-      params: walletId != null ? { wallet_id: walletId } : undefined,
-    });
-    return response.data;
-  }),
+  getLedgerSummary: ({ walletId, exchangeAccountId } = {}) => shareInFlight(
+    `crypto/ledger/summary:${walletId ?? 'all'}:${exchangeAccountId ?? 'all'}`,
+    async () => {
+      const params = {
+        ...(walletId != null ? { wallet_id: walletId } : {}),
+        ...(exchangeAccountId != null ? { exchange_account_id: exchangeAccountId } : {}),
+      };
+      const response = await api.get('/api/crypto/ledger/summary', {
+        params: Object.keys(params).length ? params : undefined,
+      });
+      return response.data;
+    }
+  ),
   // Staking income per asset over a window; the server defaults to the last year.
   getStakingIncome: async ({ from, to } = {}) => {
     const response = await api.get('/api/crypto/ledger/income', { params: { from, to } });

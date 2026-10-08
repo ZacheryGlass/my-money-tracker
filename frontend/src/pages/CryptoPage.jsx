@@ -19,7 +19,7 @@ import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/acco
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import { totalSeries } from '../features/crypto/history';
 import {
-  changeOverDays, groupHoldingsByAsset, possibleDuplicates, splitNetworkSuffix, valueBySource,
+  changeOverDays, groupHoldingsByAsset, isDust, possibleDuplicates, splitNetworkSuffix, valueBySource,
 } from '../features/crypto/holdings';
 import AttentionList from '../features/crypto/overview/AttentionList';
 import HeldWhere from '../features/crypto/overview/HeldWhere';
@@ -132,6 +132,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [ledgerCounterparty, setLedgerCounterparty] = useState(null);
   // A category to open Activity on (the Overview's "See every reward").
   const [ledgerCategoryRequest, setLedgerCategoryRequest] = useState(null);
+  const clearLedgerCategoryRequest = useCallback(() => setLedgerCategoryRequest(null), []);
   const [pickerExchangeAccounts, setPickerExchangeAccounts] = useState([]);
   const [syncingWalletId, setSyncingWalletId] = useState(null);
   const [sorting, setSorting] = useState([{ id: 'value', desc: true }]);
@@ -395,7 +396,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [holdingsView, setHoldingsView] = useState('asset');
   const [hideDust, setHideDust] = useState(true);
   const visibleHoldings = useMemo(
-    () => (hideDust ? cryptoHoldings.filter((holding) => getHoldingValue(holding) >= 1) : cryptoHoldings),
+    () => (hideDust ? cryptoHoldings.filter((holding) => !isDust(holding)) : cryptoHoldings),
     [cryptoHoldings, hideDust]
   );
   const assetGroups = useMemo(() => groupHoldingsByAsset(cryptoHoldings), [cryptoHoldings]);
@@ -908,7 +909,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
               {holdingsView === 'asset' ? (
                 <HoldingsByAsset
-                  groups={hideDust ? assetGroups.filter((group) => group.value >= 1) : assetGroups}
+                  groups={hideDust ? assetGroups.filter((group) => !group.holdings.every(isDust)) : assetGroups}
                   accountName={(holding) => displayAccountName(accountsMap.get(holding.account_id))}
                   renderHoldingChips={holdingChips}
                   onOpenHolding={openHolding}
@@ -1058,6 +1059,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   counterparty={ledgerCounterparty}
                   onClearCounterparty={() => setLedgerCounterparty(null)}
                   categoryRequest={ledgerCategoryRequest}
+                  onCategoryRequestApplied={clearLedgerCategoryRequest}
                   onNavigate={goToTab}
                   refreshKey={syncNonce}
                   addressNotes={addressNotes}

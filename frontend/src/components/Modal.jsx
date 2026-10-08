@@ -33,6 +33,10 @@ export default function Modal({
   const descriptionId = useId();
   const closeRef = useRef(onClose);
   useEffect(() => { closeRef.current = onClose; }, [onClose]);
+  // Read through a ref: a busy confirm flips dismissible, and re-running the
+  // focus effect for that sent focus out to the opener and back.
+  const dismissibleRef = useRef(dismissible);
+  useEffect(() => { dismissibleRef.current = dismissible; }, [dismissible]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -46,7 +50,7 @@ export default function Modal({
     }
     const onKey = (event) => {
       if (stack[stack.length - 1] !== token) return;
-      if (event.key === 'Escape' && dismissible) {
+      if (event.key === 'Escape' && dismissibleRef.current) {
         event.stopPropagation();
         closeRef.current?.();
         return;
@@ -65,7 +69,7 @@ export default function Modal({
       stack.splice(stack.indexOf(token), 1);
       if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus();
     };
-  }, [open, dismissible]);
+  }, [open]);
 
   return (
     <AnimatePresence>

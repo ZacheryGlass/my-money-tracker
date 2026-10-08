@@ -178,6 +178,7 @@ const CryptoLedger = ({
   // { category, nonce }: open on a category chosen elsewhere (the Overview's
   // "See every reward"); the nonce makes asking twice work.
   categoryRequest = null,
+  onCategoryRequestApplied,
   onNavigate,
   refreshKey = 0,
   onDataChanged,
@@ -203,12 +204,15 @@ const CryptoLedger = ({
     const handle = setTimeout(() => setSearch(searchText.trim()), 350);
     return () => clearTimeout(handle);
   }, [searchText]);
+  // Applied once and handed back: the ledger remounts when its view toggles,
+  // and a request still standing would re-filter it every time.
   useEffect(() => {
     if (!categoryRequest) return;
     setCategory(categoryRequest.category);
     setStatus('');
     setSpam('');
-  }, [categoryRequest]);
+    onCategoryRequestApplied?.();
+  }, [categoryRequest, onCategoryRequestApplied]);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(true);
@@ -311,11 +315,16 @@ const CryptoLedger = ({
   // header sentence sits directly above the rows it is describing.
   useEffect(() => {
     let cancelled = false;
-    cryptoAPI.getLedgerSummary(walletId != null ? { walletId } : {})
+    // The scope that picks which ledger is on screen -- a wallet or an
+    // exchange account -- narrows the header and the counts with it.
+    cryptoAPI.getLedgerSummary({
+      ...(walletId != null ? { walletId } : {}),
+      ...(exchangeAccountId != null ? { exchangeAccountId } : {}),
+    })
       .then((result) => { if (!cancelled) setSummary(result.summary || null); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [reload, refreshKey, walletId]);
+  }, [reload, refreshKey, walletId, exchangeAccountId]);
 
   // Completeness signals. A ledger that claims to be the whole history has to
   // say when it is NOT -- otherwise "everything is explained" and "everything

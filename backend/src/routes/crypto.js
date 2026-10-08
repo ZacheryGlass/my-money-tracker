@@ -251,8 +251,11 @@ router.get('/ledger/summary', async (req, res) => {
     const parsed = await parseFilters(req);
     if (parsed.error) return res.status(parsed.error.status).json(parsed.error.body);
 
+    // Narrowed by the same scope that picks which ledger is on screen (a
+    // wallet or an exchange account), never by the view filters.
     const summary = await CryptoLedger.summaryForUser(req.user.id, {
       walletId: parsed.filters.walletId,
+      exchangeAccountId: parsed.filters.exchangeAccountId,
     });
     return res.status(200).json({ summary });
   } catch (error) {

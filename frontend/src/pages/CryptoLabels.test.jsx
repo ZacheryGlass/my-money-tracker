@@ -134,6 +134,21 @@ describe('Crypto -> Labels tab', () => {
     ));
   });
 
+  it('keeps an exchange label linked to its exchange account through an edit', async () => {
+    apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
+    await openLabelsTab([
+      { address: '0x6666666666666666666666666666666666666666', name: 'Old desk', source: 'user', kind: 'exchange', exchange_account_id: 7 },
+    ]);
+    const row = (await screen.findByText('Old desk')).closest('.px-4');
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }));
+    fireEvent.change(within(row).getByLabelText('Label name'), { target: { value: 'Old exchange desk' } });
+    fireEvent.click(within(row).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
+      '0x6666666666666666666666666666666666666666', 'Old exchange desk', { kind: 'exchange', exchange_account_id: 7 }
+    ));
+  });
+
   it('keeps own labels in the main list and collapses outside parties', async () => {
     await openLabelsTab([
       { address: '0x4444444444444444444444444444444444444444', name: 'Ledger', source: 'user', kind: 'own' },

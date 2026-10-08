@@ -387,12 +387,13 @@ test('a label write rebuilds the wallets touching its address; an own verdict re
 
 test('a batch label write rebuilds the union of touched wallets once', async (t) => {
   const { calls, stub } = harness(t, { wallets: [{ id: 7 }, { id: 8 }, { id: 9 }] });
-  const touching = { '0xa': [9, 7], '0xb': [7], '0xc': [] };
-  stub(EthTransfer, 'walletIdsTouchingAddress', async (userId, address) => touching[address]);
+  let asked;
+  stub(EthTransfer, 'walletIdsTouchingAddresses', async (userId, addresses) => { asked = addresses; return [7, 9]; });
   const rebuilt = () => calls.filter(([name]) => name === 'activity').map(([, id]) => id);
 
   await EthWalletService.refreshClassificationsForAddresses(1, ['0xa', '0xb', '0xc'], { kinds: ['external', null] });
 
+  assert.deepEqual(asked, ['0xa', '0xb', '0xc'], 'one union lookup, not one per address');
   assert.deepEqual(rebuilt(), [7, 9]);
   assert.equal(calls.filter(([name]) => name === 'reclassify').length, 1, 'one rebuild, not one per address');
 });
