@@ -51,6 +51,11 @@ require.cache[secretsPath] = {
 };
 
 const PriceService = require('../src/services/PriceService');
+// CoinGecko calls share the backfill's process-wide queue (2.1 s apart on the
+// demo tier); against a fake axios the gap buys nothing.
+const { PROVIDER_SPACING_MS } = require('../src/crypto/pricing/limiter');
+PROVIDER_SPACING_MS.coingecko = 0;
+PROVIDER_SPACING_MS.coingeckoPro = 0;
 
 beforeEach(() => {
   coinListFetches = 0;

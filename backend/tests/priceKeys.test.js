@@ -46,6 +46,11 @@ require.cache[secretsPath] = {
 };
 
 const PriceService = require('../src/services/PriceService');
+// CoinGecko calls share the backfill's process-wide queue (2.1 s apart on the
+// demo tier); against a fake axios the gap buys nothing.
+const { PROVIDER_SPACING_MS } = require('../src/crypto/pricing/limiter');
+PROVIDER_SPACING_MS.coingecko = 0;
+PROVIDER_SPACING_MS.coingeckoPro = 0;
 
 beforeEach(() => {
   calls.length = 0;
@@ -117,4 +122,15 @@ test('CoinGecko omits the auth header when no key is configured', async () => {
 
   assert.equal(price, 7);
   assert.equal(calls[0].config.headers['x-cg-demo-api-key'], undefined);
+});
+
+test('spot CoinGecko lookups share the historical backfill queue', async () => {
+  // The demo tier's 30 calls/min belong to the key. A spot lookup that
+  // bypassed the queue could spend the minute the nightly backfill is pacing.
+  const providerCalls = require('../src/crypto/infra/providerCalls');
+  axiosResponse = { status: 200, data: { bitcoin: { usd: 7 } } };
+
+  const { calls: counted } = await providerCalls.measure(() => PriceService.getCoinGeckoPrice('BTC', { BTC: 'bitcoin' }));
+
+  assert.deepEqual(counted.byKey, { 'price:coingecko': 1 });
 });

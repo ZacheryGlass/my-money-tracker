@@ -5,7 +5,7 @@ const YahooFinance = require('yahoo-finance2').default;
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const PriceCache = require('../models/PriceCache');
 const SecretsService = require('./SecretsService');
-const coingecko = require('../utils/coingecko');
+const coingecko = require('../crypto/pricing/providers/coingecko');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 
@@ -36,28 +36,15 @@ class PriceService {
     }
   }
 
-  // Helper to fetch from CoinGecko API
+  // CoinGecko through the same provider client the historical backfill uses:
+  // one key header and host per plan (utils/coingecko -- a key under a header
+  // the host does not read is silently ignored), and one process-wide queue,
+  // because the demo tier's 30 calls/min belong to the key, not to a caller.
+  // The URLs in this file are demo-host literals; the client moves them onto
+  // the pro host when CG_API_PLAN says so.
   static async fetchCoinGeckoJson(url) {
     try {
-      const config = {
-        method: 'get',
-        timeout: 5000,
-        headers: {
-          accept: 'application/json'
-        }
-      };
-
-      // 'x-cg-api-key' is not a header CoinGecko reads on either tier, so the
-      // key was being sent and ignored and every call here ran anonymous. The
-      // header name and the host both depend on the plan -- see
-      // utils/coingecko; the URLs in this file are demo-host literals, so they
-      // are moved onto the pro host when CG_API_PLAN says so.
-      const apiKey = await SecretsService.getAppSetting('cg_api_key');
-      if (apiKey) {
-        config.headers[coingecko.keyHeader()] = apiKey;
-      }
-
-      const response = await axios(coingecko.withPlanHost(url), config);
+      const response = await coingecko.fetchJson(url, { timeout: 5000 });
       if (response.status !== 200) {
         logger.warn({ status: response.status }, 'CoinGecko non-200 response');
         throw new Error(`CoinGecko HTTP ${response.status}`);

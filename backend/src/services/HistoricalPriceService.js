@@ -1,94 +1,29 @@
 'use strict';
 
-const axios = require('axios');
 const AssetPriceHistory = require('../models/AssetPriceHistory');
-const SecretsService = require('./SecretsService');
 const chains = require('../config/chains');
 const { parseAssetKey } = require('../utils/assetPriceKey');
-const {
-  baseUrl: coinGeckoBase, keyHeader: coinGeckoKeyHeader, isPro: coinGeckoIsPro,
-} = require('../utils/coingecko');
 const { aliasForAssetKey } = require('../config/tokenPriceAliases');
 const logger = require('../config/logger');
-const providerCalls = require('../crypto/infra/providerCalls');
+const pricing = require('../crypto/pricing');
+const { PROVIDER_SPACING_MS } = require('../crypto/pricing/limiter');
+const {
+  toDateString, addDays, todayUtc, maxDate, foldToDailyClose,
+} = require('../crypto/pricing/daily');
 
 // =============================================================================
 // PRICE SOURCES -- chosen after probing every candidate live on 2026-07-26,
 // not from documentation alone. The probes and their verbatim answers are in
-// migrations/043_historical_prices.sql; the operational limits are here.
+// migrations/043_historical_prices.sql. Each provider's endpoint, limits and
+// failure verdicts live in its own file under crypto/pricing/providers/, the
+// order they are asked in is crypto/pricing/order.js, and the per-provider
+// throttle is crypto/pricing/limiter.js. This file owns the window, the
+// coverage verdict and the run budget.
 // =============================================================================
-//
-// 1. CoinGecko /coins/{id}/market_chart/range          (native asset: ETH)
-//    https://docs.coingecko.com/reference/coins-id-market-chart-range
-//    - Granularity is automatic and NOT requestable on a free key: 5-minutely
-//      for the current day, hourly for a 2-90 day span, DAILY above 90 days.
-//      A backfill window is years wide, so it answers daily, which is exactly
-//      the resolution this table stores. One call per asset per window.
-//    - PUBLIC AND DEMO KEYS ARE CAPPED AT 365 DAYS OF HISTORY. A January 2017
-//      request answers HTTP 401 with error_code 10012 ("Public API users are
-//      limited to querying historical data within the past 365 days"). That is
-//      a plan entitlement: a paid key serves the whole history from this one
-//      endpoint, which is why it stays first in the ladder.
-//    - Demo plan: 30 calls/min, 10,000 calls/month.
-//
-// 2. Coinbase Exchange GET /products/{product_id}/candles    (native asset)
-//    https://docs.cdp.coinbase.com/exchange/reference/exchangerestapi_getproductcandles
-//    - Keyless and public. granularity=86400 is a one-day candle; the response
-//      is [time, low, high, open, close, volume] with time = bucket start.
-//    - MAX 300 CANDLES PER REQUEST (confirmed live: a 517-day request answers
-//      "Count of aggregations requested exceeds 300"), so a decade of history
-//      is walked in 300-day pages.
-//    - ETH-USD goes back to 2016-05-18. THIS is what makes 2017 dollars
-//      reachable on a free deployment, and it is why the fallback exists at all.
-//    - Public market-data rate limit is ~10 req/s; the throttle below spaces
-//      calls far under that.
-//
-// 3. CoinGecko /coins/{platform}/contract/{contract}/market_chart/range
-//    https://docs.coingecko.com/reference/contract-address-market-chart-range
-//    (tokens -- the ONLY option, because a token's identity is a contract on a
-//    chain and no fiat-pair venue has a notion of one). The platform slug comes
-//    from config/chains.js coingeckoPlatform, per chain: the SAME address is a
-//    different asset on each chain, and looking one up on the wrong platform
-//    answers HTTP 404 "coin not found" -- which this code records as `unlisted`
-//    for THAT (chain, contract) pair only, never as a global verdict.
-//
-// 4. Bitfinex GET /v2/candles/trade:1D:{symbol}/hist    (ALIASED tokens only)
-//    https://docs.bitfinex.com/reference/rest-public-candles
-//    - Keyless and public. sort=1 answers oldest-first; each candle is
-//      [MTS, OPEN, CLOSE, HIGH, LOW, VOLUME] with MTS = the candle START in
-//      MILLISECONDS. Documented cap of 10,000 candles per request -- ~27 years
-//      of dailies, so any real window is one call.
-//    - Reached ONLY through config/tokenPriceAliases.js, the hand-declared
-//      escape hatch for a token source 3 can never price (probes documented
-//      there). tEOSUSD's dailies start 2017-07-01, which is what makes the
-//      2017-18 EOS ERC-20 legs priceable on a free deployment.
 //
 // Anything no provider will serve stays ABSENT from asset_price_history. A
 // missing row reads as `unpriced`, which is the entire point: never $0, and
 // never today's price.
-
-// Host and key header come from utils/coingecko: demo and pro are two different
-// hosts with two different header names, and pairing them wrong is ignored
-// rather than rejected -- which would leave a paid key silently capped at the
-// 365 days it was bought to escape. See that file.
-const COINBASE_EXCHANGE_BASE = 'https://api.exchange.coinbase.com';
-const BITFINEX_BASE = 'https://api-pub.bitfinex.com';
-
-// CoinGecko's 365-day refusal. HTTP 401 + this code, distinct from a bad key.
-const COINGECKO_RANGE_LIMIT_CODE = 10012;
-// One day inside the documented 365, so a request that straddles midnight UTC
-// while the clock ticks over cannot land one day outside the cap.
-const COINGECKO_FREE_HISTORY_DAYS = 364;
-
-// Coinbase's documented per-request cap. Pages are sized one candle under it so
-// an inclusive-boundary off-by-one cannot trip the limit.
-const COINBASE_MAX_CANDLES = 300;
-const COINBASE_PAGE_DAYS = COINBASE_MAX_CANDLES - 1;
-
-// Bitfinex's documented per-request cap: 10,000 candles, ~27 years of dailies.
-// The page walk below exists for correctness, not because any real window
-// needs a second page.
-const BITFINEX_MAX_CANDLES = 10000;
 
 // Earliest date any provider here can answer for ETH (Coinbase's ETH-USD
 // listing). Requesting older only burns calls to be told nothing, and a
@@ -96,400 +31,6 @@ const BITFINEX_MAX_CANDLES = 10000;
 // may have listed a decade after ether did -- chains.NATIVE_ASSETS carries each
 // symbol's floor and this is the ETH default for a symbol with no entry.
 const NATIVE_HISTORY_START = '2016-05-18';
-
-const REQUEST_TIMEOUT_MS = 15000;
-
-// One throttle PER PROVIDER, process-wide across every caller -- the same shape
-// and for the same reason as config/etherscan.js (the nightly job walks tens of
-// assets and a user-triggered sync can land on top of it, so the spacing has to
-// be a property of the process rather than of one loop), but NOT one shared
-// spacing: the two providers' limits differ by an order of magnitude.
-//
-//   * CoinGecko demo: 30 calls/min. A single 250 ms queue is 240 calls/min --
-//     eight times the limit -- so with a 200-asset budget the first thirty
-//     assets would succeed and every one after them would 429, night after
-//     night, always the same thirty. 2100 ms is 28 calls/min, just under.
-//   * CoinGecko pro: the paid tiers start at 500 calls/min, so a pro key drops
-//     to the same 250 ms as everything else -- otherwise paying for the plan
-//     would buy a 7-minute walk of a 200-asset budget.
-//   * Coinbase Exchange: ~10 req/s public. 250 ms is far under it.
-//   * Bitfinex public: the venue documents ~30 req/min on the candles route,
-//     the SAME budget as CoinGecko's demo tier -- so it gets the same 2100 ms
-//     (28/min), not 250 ms, which is 240/min: eight times the limit. The alias
-//     map being hand-sized makes the gap cheap, not the rate legal.
-//
-// Mutable and exported so the test suite can zero the spacing: the fake axios
-// makes the calls free, and a real 2.1 s gap between them would add minutes to
-// the suite for no coverage.
-const PROVIDER_SPACING_MS = {
-  coingecko: 2100,
-  coingeckoPro: 250,
-  coinbase: 250,
-  bitfinex: 2100,
-};
-
-function spacingFor(provider) {
-  if (provider === 'coingecko') {
-    return coinGeckoIsPro() ? PROVIDER_SPACING_MS.coingeckoPro : PROVIDER_SPACING_MS.coingecko;
-  }
-  return PROVIDER_SPACING_MS[provider] ?? PROVIDER_SPACING_MS.coinbase;
-}
-
-const queues = {
-  coingecko: Promise.resolve(),
-  coinbase: Promise.resolve(),
-  bitfinex: Promise.resolve(),
-};
-
-function throttled(provider, fn) {
-  const run = queues[provider].then(() => {
-    providerCalls.record(`price:${provider}`);
-    return fn();
-  });
-  queues[provider] = run
-    .catch(() => {})
-    .then(() => new Promise((resolve) => setTimeout(resolve, spacingFor(provider))));
-  return run;
-}
-
-// A 429 is a verdict on the RUN, not on the asset.
-//
-// The asset is fine; the key is out of budget for the minute, and every call
-// after it would be refused too. Recording that as `error` per asset would
-// write a provider verdict the provider never gave, and -- worse -- it would
-// mark each asset as checked, so a run that got rate-limited at asset 31 would
-// look exactly like one that examined all 200. So the CoinGecko queue is shut
-// for the rest of the run (later calls short-circuit, spending no network and
-// no wall clock) and the affected assets keep their PREVIOUS coverage row, which
-// leaves them due again next run.
-let coinGeckoPaused = false;
-// Same rule for the alias venue: its candles route budget is CoinGecko-demo
-// sized, and an alias asset that 429'd was never examined either.
-let bitfinexPaused = false;
-
-function resetProviderPauses() {
-  coinGeckoPaused = false;
-  bitfinexPaused = false;
-}
-
-// --- date helpers ----------------------------------------------------------
-//
-// Everything here is UTC and date-only. A price row is keyed by a DATE, so a
-// local-timezone Date.toISOString() slice would silently shift a whole series
-// by a day for anyone west of Greenwich.
-
-function toDateString(value) {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  return String(value).slice(0, 10);
-}
-
-function dateToUnix(dateString) {
-  return Math.floor(Date.parse(`${toDateString(dateString)}T00:00:00Z`) / 1000);
-}
-
-function addDays(dateString, days) {
-  const at = Date.parse(`${toDateString(dateString)}T00:00:00Z`) + days * 86400000;
-  return new Date(at).toISOString().slice(0, 10);
-}
-
-function todayUtc() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function maxDate(a, b) {
-  return toDateString(a) >= toDateString(b) ? toDateString(a) : toDateString(b);
-}
-
-// THE DAILY CONVENTION, in one function.
-//
-// The stored price for date D is the LAST observation the provider reported
-// with a timestamp inside D (UTC). Uniform across providers and granularities:
-//
-//   * CoinGecko above a 90-day span emits one point per day stamped 00:00:00
-//     UTC, so D's stored price is that snapshot -- CoinGecko's own convention,
-//     the same one its /coins/{id}/history?date= endpoint uses.
-//   * CoinGecko inside 90 days emits hourly points, so D's stored price is the
-//     23:00 observation -- a true daily close.
-//   * Coinbase emits one candle per day whose `close` IS D's close.
-//   * Bitfinex emits one candle per day whose MTS is the UTC-midnight bucket
-//     START (in milliseconds) and whose index 2 is that day's close --
-//     verified live, so the fold's "last observation inside D" lands each
-//     close on the day it belongs to.
-//
-// The spread between those readings is one day's intraday movement on a series
-// whose whole resolution is one day. Each row records its `source`, so a
-// provider switch mid-series is visible rather than inferred.
-function foldToDailyClose(observations) {
-  const byDate = new Map();
-  for (const [timestampMs, price] of observations) {
-    // null and '' both coerce to 0 through Number(), which would store a
-    // fabricated $0 close for a gap the provider reported as "no data" -- the
-    // exact silent-zero this feature exists to remove. Reject them by identity
-    // before any coercion.
-    if (price === null || price === undefined || price === '') continue;
-    const value = Number(price);
-    if (!Number.isFinite(value) || value < 0) continue;
-    if (!Number.isFinite(Number(timestampMs))) continue;
-    const date = new Date(Number(timestampMs)).toISOString().slice(0, 10);
-    const existing = byDate.get(date);
-    if (!existing || Number(timestampMs) >= existing.at) {
-      byDate.set(date, { at: Number(timestampMs), price: value });
-    }
-  }
-  return [...byDate.entries()]
-    .map(([date, entry]) => ({ date, price: entry.price }))
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
-}
-
-// --- providers -------------------------------------------------------------
-
-// Non-throwing CoinGecko GET. The BODY is the interesting part of a failure
-// here -- a 401 carrying error_code 10012 is "your plan stops at 365 days",
-// which is a coverage verdict, while a 401 without it is a bad key and a 404 is
-// an asset that does not exist. Throwing would flatten all three into "error"
-// and the job would re-probe a permanently unlistable token every night.
-async function getCoinGecko(url) {
-  // The queue is shut for this run: answer without calling, so the remaining
-  // assets cost nothing and are recorded as "not asked" rather than "failed".
-  if (coinGeckoPaused) {
-    return {
-      ok: false,
-      status: 429,
-      rateLimited: true,
-      message: 'CoinGecko rate limit reached earlier in this run',
-    };
-  }
-
-  const headers = { accept: 'application/json' };
-  const apiKey = await SecretsService.getAppSetting('cg_api_key');
-  if (apiKey) headers[coinGeckoKeyHeader()] = apiKey;
-
-  try {
-    const response = await throttled('coingecko', () => axios.get(url, { timeout: REQUEST_TIMEOUT_MS, headers }));
-    return { ok: true, status: response.status, data: response.data };
-  } catch (error) {
-    const status = error.response?.status ?? null;
-    const body = error.response?.data ?? null;
-    const errorCode = body?.status?.error_code ?? body?.error?.status?.error_code ?? null;
-    if (status === 429) {
-      coinGeckoPaused = true;
-      logger.warn({ url }, 'CoinGecko rate limit hit; pausing its queue for the rest of this run');
-      return { ok: false, status, errorCode, rateLimited: true, data: body, message: error.message };
-    }
-    return { ok: false, status, errorCode, data: body, message: error.message };
-  }
-}
-
-async function getCoinbase(url) {
-  try {
-    const response = await throttled('coinbase', () => axios.get(url, {
-      timeout: REQUEST_TIMEOUT_MS,
-      // Coinbase rejects requests with no User-Agent from some networks; naming
-      // the client is also simple courtesy on a keyless public endpoint.
-      headers: { accept: 'application/json', 'User-Agent': 'my-money-tracker' },
-    }));
-    return { ok: true, status: response.status, data: response.data };
-  } catch (error) {
-    return {
-      ok: false,
-      status: error.response?.status ?? null,
-      data: error.response?.data ?? null,
-      message: error.message,
-    };
-  }
-}
-
-// CoinGecko range for the native asset or for a token contract. Returns a
-// verdict, never a throw:
-//   { points }                     -- observations, possibly empty
-//   { rangeLimited: true }         -- the plan will not serve dates this old
-//   { rateLimited: true }          -- the KEY is out of budget; not this asset's
-//                                     problem, and no coverage row is written
-//   { unlisted: true }             -- the provider has no such asset
-//   { error }                      -- transient; retried next run
-async function coinGeckoRange(pathSegment, from, to) {
-  const url = `${coinGeckoBase()}/${pathSegment}/market_chart/range`
-    + `?vs_currency=usd&from=${dateToUnix(from)}&to=${dateToUnix(to) + 86399}`;
-  const result = await getCoinGecko(url);
-
-  if (result.ok) {
-    const prices = Array.isArray(result.data?.prices) ? result.data.prices : null;
-    // An off-shape 200 is a transport failure, never an empty series -- the
-    // same rule the method-signature cache applies to Sourcify. Storing "no
-    // prices" for a healthy asset would freeze it unpriced until someone
-    // noticed.
-    if (!prices) return { error: 'CoinGecko returned no prices array' };
-    return { points: prices };
-  }
-  if (result.rateLimited) {
-    return { rateLimited: true, detail: `CoinGecko rate limited: ${result.message}` };
-  }
-  if (result.errorCode === COINGECKO_RANGE_LIMIT_CODE) {
-    return { rangeLimited: true, detail: 'CoinGecko plan serves only the last 365 days' };
-  }
-  if (result.status === 404) {
-    return { unlisted: true, detail: 'CoinGecko has no series for this asset' };
-  }
-  return { error: `CoinGecko HTTP ${result.status ?? '?'}: ${result.message}` };
-}
-
-// The 365-day cap is a property of the WINDOW, not of the asset: the same call
-// that is refused for 2017 succeeds for the last year. Retrying narrowed is
-// what makes the difference between "this token has NO prices at all" and
-// "this token has the prices the plan will serve, and the years before them are
-// honestly unpriced" -- and tokens have no second provider to fall back to, so
-// without this a free-tier key leaves every token leg at $0.00 forever.
-//
-// Returned with rangeLimited still set, so coverage records `range_limited`
-// rather than a clean `covered` over a series that is missing its whole tail.
-async function coinGeckoRangeBounded(pathSegment, from, to) {
-  const first = await coinGeckoRange(pathSegment, from, to);
-  if (!first.rangeLimited) return first;
-
-  const narrowed = maxDate(from, addDays(todayUtc(), -COINGECKO_FREE_HISTORY_DAYS));
-  // Already inside the cap and still refused: narrowing changes nothing, and a
-  // second guaranteed refusal per asset per night is pure waste.
-  if (narrowed <= from || narrowed > to) return first;
-
-  const second = await coinGeckoRange(pathSegment, narrowed, to);
-  if (second.points && second.points.length) {
-    return { ...second, rangeLimited: true, detail: `${first.detail}; served from ${narrowed}` };
-  }
-  return first;
-}
-
-// Coinbase daily candles, walked in 300-candle pages from `from` to `to`.
-// Newest-page-first is irrelevant here (each page is an explicit window), but
-// the cap is not: exceeding it answers an error, not a truncated page.
-async function coinbaseDailyCandles(productId, from, to) {
-  const points = [];
-  let windowStart = toDateString(from);
-  const windowEnd = toDateString(to);
-
-  while (windowStart <= windowEnd) {
-    const pageLimit = addDays(windowStart, COINBASE_PAGE_DAYS);
-    const pageEnd = pageLimit < windowEnd ? pageLimit : windowEnd;
-    const url = `${COINBASE_EXCHANGE_BASE}/products/${encodeURIComponent(productId)}/candles`
-      + `?granularity=86400&start=${windowStart}T00:00:00Z&end=${pageEnd}T00:00:00Z`;
-    const result = await getCoinbase(url);
-
-    if (!result.ok) {
-      if (result.status === 404) return { unlisted: true, detail: `Coinbase has no ${productId} product` };
-      // A partial walk is still worth storing: the pages that landed are real
-      // closes, and the next run resumes from the gap.
-      return points.length
-        ? { points, partial: true, detail: `Coinbase HTTP ${result.status ?? '?'}: ${result.message}` }
-        : { error: `Coinbase HTTP ${result.status ?? '?'}: ${result.message}` };
-    }
-    if (!Array.isArray(result.data)) return { error: 'Coinbase returned a non-array candle response' };
-
-    for (const candle of result.data) {
-      if (!Array.isArray(candle) || candle.length < 5) continue;
-      // [time, low, high, open, close, volume]; time is the bucket START in
-      // SECONDS, and `close` is that day's close.
-      points.push([Number(candle[0]) * 1000, candle[4]]);
-    }
-
-    if (pageEnd >= windowEnd) break;
-    windowStart = addDays(pageEnd, 1);
-  }
-  return { points };
-}
-
-async function getBitfinex(url) {
-  // Shut for this run, exactly like the CoinGecko queue: answer without
-  // calling, so later aliased assets spend no network and no wall clock.
-  if (bitfinexPaused) {
-    return {
-      ok: false,
-      status: 429,
-      rateLimited: true,
-      message: 'Bitfinex rate limit reached earlier in this run',
-    };
-  }
-  try {
-    const response = await throttled('bitfinex', () => axios.get(url, {
-      timeout: REQUEST_TIMEOUT_MS,
-      headers: { accept: 'application/json', 'User-Agent': 'my-money-tracker' },
-    }));
-    return { ok: true, status: response.status, data: response.data };
-  } catch (error) {
-    const status = error.response?.status ?? null;
-    if (status === 429) {
-      // A verdict on the RUN, not the asset -- see coinGeckoPaused. Writing
-      // `error` would invent a verdict AND refresh checked_at, rotating the
-      // asset to the back of the staleness order having learned nothing.
-      bitfinexPaused = true;
-      logger.warn({ url }, 'Bitfinex rate limit hit; pausing its queue for the rest of this run');
-      return { ok: false, status, rateLimited: true, data: error.response?.data ?? null, message: error.message };
-    }
-    return {
-      ok: false,
-      status,
-      data: error.response?.data ?? null,
-      message: error.message,
-    };
-  }
-}
-
-// Bitfinex daily candles for one trading pair, oldest-first. The venue quotes
-// in its own quote currency and the close is stored as USD outright: exactly
-// true for a USD pair like tEOSUSD, and a DECLARED approximation for any
-// stablecoin-quoted alias someone adds later (a USDT close treated as USD) --
-// the alias registry is where that call is made, visibly, per entry.
-async function bitfinexDailyCandles(symbol, from, to) {
-  const points = [];
-  let startMs = dateToUnix(from) * 1000;
-  // Inclusive of all of `to` (UTC): MTS is the candle START, so `to`'s own
-  // candle sits at exactly 00:00:00Z of `to`.
-  const endMs = dateToUnix(to) * 1000 + 86399999;
-
-  while (startMs <= endMs) {
-    const url = `${BITFINEX_BASE}/v2/candles/trade:1D:${encodeURIComponent(symbol)}/hist`
-      + `?start=${startMs}&end=${endMs}&sort=1&limit=${BITFINEX_MAX_CANDLES}`;
-    const result = await getBitfinex(url);
-
-    if (!result.ok) {
-      // Out of budget for the minute: not this asset's problem, and no
-      // partial-store either -- any real window is one page, and the caller
-      // must see rateLimited so NO coverage row is written and the asset
-      // stays exactly as due as it was.
-      if (result.rateLimited) {
-        return { rateLimited: true, detail: `Bitfinex rate limited: ${result.message}` };
-      }
-      // A partial walk is still worth storing, same as the Coinbase walk: the
-      // pages that landed are real closes, and the next run resumes the gap.
-      return points.length
-        ? { points, partial: true, detail: `Bitfinex HTTP ${result.status ?? '?'}: ${result.message}` }
-        : { error: `Bitfinex HTTP ${result.status ?? '?'}: ${result.message}` };
-    }
-    // An off-shape 200 is a transport failure, never an empty series -- the
-    // same rule as CoinGecko above. Bitfinex's own error payload is an ARRAY
-    // (["error", code, message]), so a non-array ELEMENT is off-shape too:
-    // reading that page as "no candles" would cache an `empty` verdict off a
-    // maintenance response.
-    if (!Array.isArray(result.data) || result.data.some((candle) => !Array.isArray(candle))) {
-      return { error: 'Bitfinex returned a non-candle response' };
-    }
-
-    let lastMts = null;
-    for (const candle of result.data) {
-      if (candle.length < 3) continue;
-      // [MTS, OPEN, CLOSE, HIGH, LOW, VOLUME]; MTS is the candle START in
-      // MILLISECONDS and CLOSE is that day's close -- the daily convention.
-      points.push([Number(candle[0]), candle[2]]);
-      lastMts = Number(candle[0]);
-    }
-
-    // A short page is the end of the series inside the window.
-    if (result.data.length < BITFINEX_MAX_CANDLES) break;
-    // A full page that cannot advance the cursor would loop forever; stopping
-    // keeps what landed and the covered-range check reports any shortfall.
-    if (!Number.isFinite(lastMts) || lastMts + 1 <= startMs) break;
-    startMs = lastMts + 1;
-  }
-  return { points };
-}
 
 // --- the service -----------------------------------------------------------
 
@@ -552,15 +93,21 @@ class HistoricalPriceService {
       providerFloor: coverage?.status === 'range_limited' ? coverage.earliest_date : null,
     });
 
-    // A declared alias outranks the token path outright: it exists only for a
-    // (chain, contract) the CoinGecko contract endpoint can never serve, so
-    // asking there first would spend a guaranteed refusal per asset per run.
+    // The route (crypto/pricing/order.js) picks the providers; a declared
+    // alias outranks the token route outright.
     const alias = parsed.kind === 'erc20' ? aliasForAssetKey(asset.asset_key) : null;
-    const outcome = parsed.kind === 'native'
-      ? await this._fetchNative(parsed, window)
-      : alias
-        ? await this._fetchAliased(alias, window)
-        : await this._fetchToken(parsed, window);
+    const native = parsed.kind === 'native' ? chains.nativeAssetInfo(parsed.symbol) : null;
+    // Both native provider ids come from the registry: a symbol with no entry
+    // has no way to be priced, and saying so is the only honest answer --
+    // fetching ether's series for it would price the asset wrongly and look
+    // completely healthy doing it.
+    const outcome = parsed.kind === 'native' && !native
+      ? {
+        status: 'unlisted',
+        provider: null,
+        detail: `Native asset ${parsed.symbol} has no price source in the registry`,
+      }
+      : await pricing.fetchDaily({ parsed, native, alias }, window);
 
     const base = {
       assetKey: asset.asset_key,
@@ -604,204 +151,6 @@ class HistoricalPriceService {
       earliestDate: range.earliest,
       latestDate: range.latest,
       upserted,
-    };
-  }
-
-  // A native asset (ETH, POL). CoinGecko first (the issue's stated source, and
-  // one call covers any window on a paid key), Coinbase Exchange when the plan
-  // refuses the dates -- which on a free key is every date older than a year,
-  // i.e. exactly the history this feature exists to value.
-  //
-  // Both provider ids come from the registry rather than being hardcoded: a
-  // symbol with no entry has no way to be priced, and saying so is the only
-  // honest answer -- fetching ether's series for it would price the asset
-  // wrongly and look completely healthy doing it.
-  static async _fetchNative(parsed, window) {
-    const info = chains.nativeAssetInfo(parsed.symbol);
-    if (!info) {
-      return {
-        status: 'unlisted',
-        provider: null,
-        detail: `Native asset ${parsed.symbol} has no price source in the registry`,
-      };
-    }
-    const coinGeckoPath = `coins/${info.coingeckoId}`;
-
-    const cg = await coinGeckoRange(coinGeckoPath, window.from, window.to);
-    if (cg.points && cg.points.length) return { ...cg, provider: 'coingecko' };
-
-    const reason = cg.rangeLimited
-      ? cg.detail
-      : cg.error || cg.detail || 'CoinGecko returned an empty series';
-
-    // Coinbase before a narrowed CoinGecko retry, deliberately: it covers the
-    // WHOLE window back to 2016, so the series stays on one source and one
-    // convention instead of splicing a year of CoinGecko onto a decade of
-    // Coinbase at an invisible seam.
-    const cb = await coinbaseDailyCandles(info.coinbaseProduct, window.from, window.to);
-    if (cb.points && cb.points.length) {
-      return {
-        ...cb,
-        provider: 'coinbase-exchange',
-        // A page walk that died partway carries `partial`, and it has to carry a
-        // status too: the pages that landed are real closes, but the window is
-        // not covered and ensureAsset must not tick it as such.
-        status: cb.partial ? 'range_limited' : undefined,
-        detail: `CoinGecko fell through: ${reason}`,
-      };
-    }
-
-    // Both refused. A narrowed CoinGecko window is the last resort: a year of
-    // ETH prices beats none, and it is recorded as range_limited so the older
-    // rows stay honestly unpriced rather than looking covered.
-    if (cg.rangeLimited) {
-      const narrowed = maxDate(window.from, addDays(todayUtc(), -COINGECKO_FREE_HISTORY_DAYS));
-      if (narrowed > window.from && narrowed <= window.to) {
-        const retry = await coinGeckoRange(coinGeckoPath, narrowed, window.to);
-        if (retry.points && retry.points.length) {
-          return {
-            ...retry,
-            provider: 'coingecko',
-            status: 'range_limited',
-            detail: `${reason}; Coinbase: ${cb.error || cb.detail || 'no candles'}; served from ${narrowed}`,
-          };
-        }
-      }
-    }
-
-    // Both providers answered cleanly and neither had a single close: an EMPTY
-    // series, which is a coverage verdict rather than a transport failure and
-    // must not be re-probed nightly forever. `rate_limited` is neither -- the
-    // key ran out of budget, so nothing was learned about the asset at all.
-    const answeredEmpty = Array.isArray(cg.points) && Array.isArray(cb.points);
-    const status = cg.rangeLimited ? 'range_limited'
-      : (cg.rateLimited && !Array.isArray(cb.points)) ? 'rate_limited'
-        : answeredEmpty ? 'empty'
-          : 'error';
-
-    return {
-      status,
-      provider: null,
-      detail: `${reason}; Coinbase: ${cb.error || cb.detail || 'no candles'}`,
-    };
-  }
-
-  // An ALIASED token (config/tokenPriceAliases.js): the keyless Bitfinex
-  // series, under the same asset key the normal path would have written.
-  //
-  // The window clamps to the venue's first candle, mirroring the native
-  // floor's shape but NOT its semantics: neededFrom stays the ledger's own
-  // earliest date, so a ledger that reaches back before the series gets an
-  // honest `range_limited` (the pre-listing rows stay unpriced) instead of
-  // the clamped-to-covered green tick the native path deliberately gives ETH.
-  static async _fetchAliased(alias, window) {
-    const seriesStart = toDateString(alias.historyStart);
-    const from = maxDate(window.from, seriesStart);
-    if (from > toDateString(window.to)) {
-      // The whole window predates the series. Nothing to fetch, and nothing
-      // to fabricate: the verdict is the plan-cap verdict, not `empty`.
-      return {
-        status: 'range_limited',
-        provider: 'bitfinex',
-        detail: `Bitfinex ${alias.bitfinexSymbol} series starts ${seriesStart}`,
-      };
-    }
-
-    const result = await bitfinexDailyCandles(alias.bitfinexSymbol, from, window.to);
-    // Out of budget for the minute: not an asset verdict, and no coverage row
-    // -- the same run-level pause the CoinGecko queue gets.
-    if (result.rateLimited) {
-      return { status: 'rate_limited', provider: null, detail: result.detail };
-    }
-    if (result.points && result.points.length) {
-      const clamped = from > toDateString(window.from);
-      return {
-        ...result,
-        provider: 'bitfinex',
-        // A clamped start or a dead page walk both leave ledger dates
-        // uncovered; ensureAsset's reached-back check would catch them too,
-        // but saying it here keeps the detail naming the actual reason.
-        status: clamped || result.partial ? 'range_limited' : undefined,
-        detail: clamped
-          ? `Bitfinex ${alias.bitfinexSymbol} series starts ${seriesStart}`
-          : result.detail,
-      };
-    }
-    if (Array.isArray(result.points)) {
-      // Zero candles over a window that INCLUDES the declared historyStart is
-      // a contradiction, never `empty`: the registry asserts a candle exists
-      // at that date (probed live), and the live venue answers HTTP 200 []
-      // for an UNKNOWN symbol -- while `empty` feeds asset_price_coverage's
-      // unlisted/empty set, exactly the spam quarantine's "provider says no
-      // market" evidence. A typo'd symbol must not make real inbound
-      // transfers quarantine-eligible, so the verdict is a transient `error`
-      // that stays due.
-      if (from === seriesStart) {
-        logger.warn({ symbol: alias.bitfinexSymbol, from, to: toDateString(window.to) },
-          'Bitfinex answered zero candles over a window including the declared series start; '
-          + 'recording a transient error, not an empty series');
-        return {
-          status: 'error',
-          provider: null,
-          detail: `Bitfinex answered no ${alias.bitfinexSymbol} candles despite the declared`
-            + ` series start ${seriesStart} being in the window`,
-        };
-      }
-      return {
-        status: 'empty',
-        provider: 'bitfinex',
-        detail: `Bitfinex answered no ${alias.bitfinexSymbol} candles for the window`,
-      };
-    }
-    return {
-      status: 'error',
-      provider: null,
-      detail: result.error || 'Bitfinex returned an empty series',
-    };
-  }
-
-  // A token, against ITS CHAIN's CoinGecko asset platform. Never a pooled
-  // lookup: the same contract address is a different asset per chain (039), and
-  // asking the wrong platform answers 404 -- which would be recorded as a
-  // permanent `unlisted` verdict against a perfectly listed token.
-  static async _fetchToken(parsed, window) {
-    const platform = chains.getChain(parsed.chainId)?.coingeckoPlatform;
-    if (!platform) {
-      return {
-        status: 'unlisted',
-        provider: null,
-        detail: `Chain ${parsed.chainId} has no CoinGecko asset platform in the registry`,
-      };
-    }
-    // Bounded, not plain: a token has no fiat-pair fallback, so a plan cap
-    // refusing the full window would otherwise leave it with no prices at all.
-    const result = await coinGeckoRangeBounded(
-      `coins/${platform}/contract/${parsed.contract}`, window.from, window.to
-    );
-    if (result.points && result.points.length) {
-      return {
-        ...result,
-        provider: 'coingecko',
-        // The tail is genuinely missing; saying `covered` would claim otherwise.
-        status: result.rangeLimited ? 'range_limited' : undefined,
-      };
-    }
-    if (result.unlisted) return { status: 'unlisted', provider: null, detail: result.detail };
-    if (result.rangeLimited) return { status: 'range_limited', provider: null, detail: result.detail };
-    // Out of budget for the minute: not an asset verdict, and no coverage row.
-    if (result.rateLimited) return { status: 'rate_limited', provider: null, detail: result.detail };
-    // A well-formed 200 carrying an empty prices array. NOT an error: the
-    // provider answered, and it answered "nothing". Recording it as `error`
-    // re-probed the same dead contract every single night, which is precisely
-    // what the coverage table exists to stop -- so it gets `empty`, rechecked
-    // on the same slow cadence as `unlisted` (a series can appear later).
-    if (Array.isArray(result.points)) {
-      return { status: 'empty', provider: 'coingecko', detail: 'CoinGecko returned an empty series' };
-    }
-    return {
-      status: 'error',
-      provider: null,
-      detail: result.error || 'CoinGecko returned an empty series',
     };
   }
 
@@ -860,7 +209,7 @@ class HistoricalPriceService {
   }
 
   static async _fill(assets, maxAssets) {
-    resetProviderPauses();
+    pricing.resetRun();
     const coverage = await AssetPriceHistory.coverageFor(assets.map((asset) => asset.asset_key));
 
     const due = assets.filter((asset) => this.shouldFetch(coverage.get(asset.asset_key)));
@@ -933,12 +282,12 @@ module.exports = HistoricalPriceService;
 module.exports.foldToDailyClose = foldToDailyClose;
 // Exported for the same reason foldToDailyClose is: the pure fetch half of
 // the alias path, exercisable without a database.
-module.exports.bitfinexDailyCandles = bitfinexDailyCandles;
-// Mutable on purpose: the suite zeroes the spacing (see the constant's comment).
+module.exports.bitfinexDailyCandles = pricing.provider('bitfinex').dailyCandles;
+// Mutable on purpose: the suite zeroes the spacing (see the limiter's comment).
 module.exports.PROVIDER_SPACING_MS = PROVIDER_SPACING_MS;
 // The pause is per RUN and _fill clears it, so nothing in production needs
 // this; a test that calls ensureAsset directly is its own run and does.
-module.exports.resetProviderPauses = resetProviderPauses;
+module.exports.resetProviderPauses = pricing.resetRun;
 module.exports.NATIVE_HISTORY_START = NATIVE_HISTORY_START;
-module.exports.COINBASE_PAGE_DAYS = COINBASE_PAGE_DAYS;
-module.exports.COINGECKO_RANGE_LIMIT_CODE = COINGECKO_RANGE_LIMIT_CODE;
+module.exports.COINBASE_PAGE_DAYS = pricing.provider('coinbase-exchange').PAGE_DAYS;
+module.exports.COINGECKO_RANGE_LIMIT_CODE = pricing.provider('coingecko').RANGE_LIMIT_CODE;
