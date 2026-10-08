@@ -11,6 +11,7 @@ const logger = require('../config/logger');
 const EthWallet = require('../models/EthWallet');
 const EthActivity = require('../models/EthActivity');
 const EthAddressLabel = require('../models/EthAddressLabel');
+const { CUSTODY_PROTOCOL_SOURCES } = require('../crypto/registry/protocols');
 const { verdictHolds, identityLabel } = require('../crypto/interpretation/protocolIdentity');
 const { buildActivityRows } = require('./ethActivity/rows');
 const { interpretProtocolActivity } = require('./ethActivity/protocolInterpretation');
@@ -217,7 +218,7 @@ class EthActivityService {
   static async _custodyAddressesForUser(userId) {
     const pairs = await EthAddressLabel.protocolLabelsForUser(userId);
     return new Set([...pairs.entries()]
-      .filter(([, pair]) => pair.builtin.source === 'builtin-etherdelta' && verdictHolds(pair))
+      .filter(([, pair]) => CUSTODY_PROTOCOL_SOURCES.includes(pair.builtin.source) && verdictHolds(pair))
       .map(([address]) => address));
   }
 

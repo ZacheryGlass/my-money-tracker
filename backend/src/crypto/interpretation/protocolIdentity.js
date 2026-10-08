@@ -18,11 +18,8 @@
 //
 // The scraped 'eth-labels' pack is not curated and keeps label-row semantics.
 
-const CURATED_PROTOCOL_SOURCES = Object.freeze([
-  'builtin-etherdelta',
-  'builtin-opensea',
-  'builtin-polymarket',
-]);
+// One curated pack per protocol module that ships one (registry/protocols.js).
+const { CURATED_PROTOCOL_SOURCES } = require('../registry/protocols');
 
 function identityHolds(pair) {
   return Boolean(pair?.builtin) && pair.user?.kind !== 'own';
