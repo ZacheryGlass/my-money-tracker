@@ -375,6 +375,32 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('an unrecognized venue row maps to exchange_transfer',
     all.rows.some((r) => r.external_id === 'UNK-1' && r.category === 'exchange_transfer'));
 
+  // Venue records in a native asset are valued from 043's dated series: exact
+  // on the close's own day, carried from up to 7 days earlier, and never for
+  // an asset that series does not cover -- even when a row exists for it.
+  await pool.query(
+    `INSERT INTO asset_price_history (asset_key, price_date, price_usd, source)
+     VALUES ('ETH', '2025-09-28', 2000, 'verify'), ('ETH', '2026-01-10', 3000, 'verify'),
+            ('ETH', '2026-02-25', 9999, 'verify'), ('SOL', '2025-10-02', 150, 'verify')`
+  );
+  const solRecord = await pool.query(
+    `INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at, base_asset, base_amount,
+       external_id, needs_review, source)
+     VALUES ($1, 'transfer', '2025-10-02 08:00', 'SOL', 2, 'SOL-1', false, 'api') RETURNING id`,
+    [accountId]
+  );
+  const priced = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
+  const venue = (externalId) => priced.rows.find((r) => r.external_id === externalId);
+  ok('a venue ETH row is valued from the dated close, carried across a gap',
+    venue('UNK-1')?.usd_value === '200' && venue('UNK-1')?.usd_basis === 'carried', venue('UNK-1'));
+  ok('and exact on the close\'s own day', venue('CB-WD-1')?.usd_value === '2250' && venue('CB-WD-1')?.usd_basis === 'exact',
+    venue('CB-WD-1'));
+  ok('a venue dollar quote still wins over the series', venue('TRD-1')?.usd_value === '1832.4');
+  ok('a non-native asset stays unpriced even with a series row',
+    venue('SOL-1')?.usd_value === null && venue('SOL-1')?.usd_basis === 'unpriced');
+  await pool.query('DELETE FROM exchange_records WHERE id = $1', [solRecord.rows[0].id]);
+  await pool.query("DELETE FROM asset_price_history WHERE source = 'verify'");
+
   // A folded record is suppressed from its own branch, so each filter has to
   // find it through its host -- and the venue files a "deposit" for what the
   // wallet files as an exchange_deposit, so the mismatching name matters too.
@@ -394,6 +420,27 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('the wallet filter keeps the folded pair and drops loose venue rows', byWallet.total === 3);
   const flagged = await CryptoLedger.findForUser(1, { needsReview: true, limit: 100, offset: 0 });
   ok('needs_review narrows the union', flagged.total === 3);
+
+  // Search and date filters run in the database over both branches, so the
+  // expected answers are read off the unfiltered union rather than restated.
+  const day = (row) => row.occurred_at.toISOString().slice(0, 10);
+  const oneDay = day(all.rows[all.rows.length - 1]);
+  const byDay = await CryptoLedger.findForUser(1, { from: oneDay, to: oneDay, limit: 100, offset: 0 });
+  ok('a from/to window keeps exactly that day, both ends inclusive',
+    byDay.total === all.rows.filter((row) => day(row) === oneDay).length && byDay.total > 0, { oneDay, got: byDay.total });
+  const ethRows = all.rows.filter((row) => (row.legs || []).some((leg) => String(leg.asset).toUpperCase() === 'ETH'));
+  const byAsset = await CryptoLedger.findForUser(1, { q: 'eth', limit: 100, offset: 0 });
+  ok('q matches an asset symbol across on-chain legs and venue records',
+    byAsset.total === ethRows.length && byAsset.total > 0, { expected: ethRows.length, got: byAsset.total });
+  const byHash = await CryptoLedger.findForUser(1, { q: DEPOSIT_TX.toUpperCase(), limit: 100, offset: 0 });
+  ok('q finds a transaction by hash, case-insensitively',
+    byHash.total === 1 && byHash.rows[0].tx_hash === DEPOSIT_TX);
+  const withParty = all.rows.find((row) => row.counterparty_address);
+  const byParty = await CryptoLedger.findForUser(1, { counterparty: withParty.counterparty_address, limit: 100, offset: 0 });
+  ok('counterparty narrows to that address',
+    byParty.total === all.rows.filter((row) => row.counterparty_address === withParty.counterparty_address).length);
+  const nothing = await CryptoLedger.findForUser(1, { q: '100%_match', limit: 100, offset: 0 });
+  ok('a search with LIKE metacharacters matches literally, not everything', nothing.total === 0);
 
   // A flagged half must raise its host, or it leaves the queue while still
   // being unexplained.

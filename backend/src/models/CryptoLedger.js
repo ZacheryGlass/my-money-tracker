@@ -2,6 +2,7 @@
 
 const pool = require('../config/database');
 const chains = require('../config/chains');
+const { MAX_CARRY_DAYS } = require('./AssetPriceHistory');
 const {
   CATEGORIES: ACTIVITY_CATEGORIES,
   EXCHANGE_ONLY_CATEGORIES,
@@ -660,6 +661,34 @@ const FIAT_VALUE_SQL = `
              THEN ABS(er.base_amount)::text
       END`;
 
+// A venue record the venue did NOT quote in dollars is valued from the same
+// dated series 043 keeps for on-chain native legs -- but only for the assets
+// that series covers (each network's native asset; MATIC is POL's pre-2024
+// ticker on venues). Every other asset stays honestly unpriced. Generated from
+// the registry so a new native asset prices venue rows without an edit here.
+const VENUE_PRICE_ALIASES = { MATIC: 'POL' };
+const venueAssetKeySql = (column) => {
+  const keys = Object.keys(chains.NATIVE_ASSETS).map((symbol) => [symbol, symbol]);
+  const pairs = [...keys, ...Object.entries(VENUE_PRICE_ALIASES)]
+    .filter(([, key]) => chains.NATIVE_ASSETS[key]);
+  return `CASE UPPER(${column}) ${pairs.map(([symbol, key]) => `WHEN '${symbol}' THEN '${key}'`).join(' ')} END`;
+};
+// The newest close at or before the record's day, within 043's carry window,
+// exactly as the on-chain valuation reads it.
+const venuePriceLateral = (alias, column) => `
+    LEFT JOIN LATERAL (
+      SELECT p.price_usd, p.price_date
+      FROM asset_price_history p
+      WHERE p.asset_key = ${venueAssetKeySql(column)}
+        AND p.price_date <= er.occurred_at::date
+        AND p.price_date >= er.occurred_at::date - ${MAX_CARRY_DAYS}
+      ORDER BY p.price_date DESC
+      LIMIT 1
+    ) ${alias} ON TRUE`;
+const SERIES_VALUE_SQL = `
+      CASE WHEN bpx.price_usd IS NOT NULL AND er.base_amount IS NOT NULL
+           THEN ROUND(ABS(er.base_amount) * bpx.price_usd, 2)::text END`;
+
 // The venue branch: every record no other row already accounts for.
 //
 // A record that is the PRIMARY of a venue-to-venue pair keeps its row and folds
@@ -691,14 +720,15 @@ const EXCHANGE_CTE = `
       '[]'::jsonb AS legs,
       NULL::numeric AS fee_wei,
       NULL::text AS confidence,
-      -- exchange_records carry no dated valuation: 043 values the on-chain
-      -- ledger, and a venue row is only in dollars when the venue itself quoted
-      -- it in dollars. That case is EXACT -- the venue wrote the number -- and
-      -- every other case is honestly unpriced rather than silently zero.
-      ${FIAT_VALUE_SQL} AS usd_value,
+      -- A venue row's dollars: the venue's own dollar figure when it quoted
+      -- one (EXACT -- the venue wrote the number), else 043's dated close for
+      -- a native asset (ETH, POL), else honestly unpriced rather than zero.
+      COALESCE(${FIAT_VALUE_SQL}, ${SERIES_VALUE_SQL}) AS usd_value,
       CASE WHEN UPPER(er.fee_asset) IN ${FIAT_ASSETS}
              AND er.fee_amount IS NOT NULL
            THEN ABS(er.fee_amount)::text
+           WHEN fpx.price_usd IS NOT NULL AND er.fee_amount IS NOT NULL
+           THEN ROUND(ABS(er.fee_amount) * fpx.price_usd, 2)::text
       END AS usd_fee,
       -- Derived from whether the VALUE resolved, not from the asset alone: an
       -- import can write base_asset='USD' with a NULL base_amount (a cell it
@@ -706,7 +736,12 @@ const EXCHANGE_CTE = `
       -- empty dollar column is a blank in a summed column labelled as a real
       -- figure -- exactly the gap-versus-zero confusion the basis exists to
       -- resolve.
-      CASE WHEN ${FIAT_VALUE_SQL} IS NOT NULL THEN 'exact' ELSE 'unpriced' END AS usd_basis,
+      -- A venue's own dollar figure is exact; a dated close is exact on its
+      -- own day and carried from an earlier one, as on the on-chain side.
+      CASE WHEN ${FIAT_VALUE_SQL} IS NOT NULL THEN 'exact'
+           WHEN ${SERIES_VALUE_SQL} IS NOT NULL
+             THEN CASE WHEN bpx.price_date = er.occurred_at::date THEN 'exact' ELSE 'carried' END
+           ELSE 'unpriced' END AS usd_basis,
       NULL::text AS derived_category,
       NULL::text AS override_category,
       NULL::text AS override_note,
@@ -766,6 +801,8 @@ const EXCHANGE_CTE = `
       NULL::text AS bridge_category
     FROM exchange_records er
     JOIN exchange_accounts ea ON ea.id = er.exchange_account_id
+    ${venuePriceLateral('bpx', 'er.base_asset')}
+    ${venuePriceLateral('fpx', 'er.fee_asset')}
     -- The venue-to-venue pair this record is the primary of, if any.
     LEFT JOIN exchange_matches cem
       ON cem.exchange_record_id = er.id AND cem.counter_record_id IS NOT NULL
@@ -1037,8 +1074,55 @@ function toLedgerRow(row) {
 // narrowing to it, which is the exact failure "no transaction unexplained"
 // exists to prevent. It is also the normal case, not a corner one: the venue
 // files a "withdrawal" for the transaction the wallet files as a deposit.
-function buildFilters({ category, needsReview, source, walletId, exchangeAccountId, spam = 'exclude' }, params) {
+function buildFilters({
+  category, needsReview, source, walletId, exchangeAccountId, spam = 'exclude',
+  from = null, to = null, counterparty = null, q = null,
+}, params) {
   const clauses = [];
+  // A calendar-day window, both ends inclusive.
+  if (from) {
+    params.push(from);
+    clauses.push(`r.occurred_at >= $${params.length}::date`);
+  }
+  if (to) {
+    params.push(to);
+    clauses.push(`r.occurred_at < ($${params.length}::date + 1)`);
+  }
+  // Every transaction with one address: the on-chain counterparty, or the
+  // destination an exchange recorded for a withdrawal.
+  if (counterparty) {
+    params.push(String(counterparty).toLowerCase());
+    clauses.push(`(LOWER(r.counterparty_address) = $${params.length} OR LOWER(r.record_address) = $${params.length})`);
+  }
+  // Free search, read by shape: a transaction hash (either end of a folded
+  // bridge), an address (counterparty, recorded destination, or one of the
+  // user's wallets), or else an asset symbol or a name.
+  if (q) {
+    const text = String(q).trim();
+    if (/^0x[0-9a-f]{64}$/i.test(text)) {
+      params.push(text.toLowerCase());
+      clauses.push(`(LOWER(r.tx_hash) = $${params.length} OR LOWER(r.bridge_match->>'tx_hash') = $${params.length})`);
+    } else if (/^0x[0-9a-f]{40}$/i.test(text)) {
+      params.push(text.toLowerCase());
+      clauses.push(`(LOWER(r.counterparty_address) = $${params.length}
+        OR LOWER(r.record_address) = $${params.length}
+        OR LOWER(r.wallet_address) = $${params.length})`);
+    } else {
+      params.push(text.toUpperCase());
+      const symbol = params.length;
+      params.push(`%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+      const pattern = params.length;
+      clauses.push(`(
+        EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(r.legs, '[]'::jsonb)) leg
+                 WHERE UPPER(leg->>'asset') = $${symbol})
+        OR UPPER(r.base_asset) = $${symbol}
+        OR UPPER(r.quote_asset) = $${symbol}
+        OR r.counterparty_name ILIKE $${pattern}
+        OR r.account_name ILIKE $${pattern}
+        OR r.wallet_label ILIKE $${pattern}
+      )`);
+    }
+  }
   // The quarantine (#74), mirroring GET /api/eth/activity's contract exactly:
   // 'exclude' (the default) is what a quarantine IS, 'only' is the Spam view,
   // 'all' is the full history. Hiding by default is only honest because the

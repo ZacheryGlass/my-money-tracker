@@ -53,6 +53,7 @@ function parseId(raw) {
 async function parseFilters(req) {
   const filters = {
     category: null, needsReview: null, source: null, walletId: null, exchangeAccountId: null,
+    from: null, to: null, counterparty: null, q: null,
     // Quarantined spam (#74) is hidden by default -- that IS the quarantine --
     // and reachable with ?spam=only. The ledger is the flagship "no transaction
     // unexplained" screen, so rendering the noise 045 removed as ordinary
@@ -66,6 +67,37 @@ async function parseFilters(req) {
       return { error: { status: 400, body: { error: `spam must be one of: ${[...SPAM_FILTERS].join(', ')}` } } };
     }
     filters.spam = spam;
+  }
+
+  // Dates are calendar days (YYYY-MM-DD), checked as real dates: '2026-02-31'
+  // is a 400, not a silently rolled-over March 3rd.
+  for (const key of ['from', 'to']) {
+    if (req.query[key] === undefined || req.query[key] === '') continue;
+    const value = String(req.query[key]).trim();
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00Z`) : null;
+    if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+      return { error: { status: 400, body: { error: `${key} must be a date (YYYY-MM-DD)` } } };
+    }
+    filters[key] = value;
+  }
+  if (filters.from && filters.to && filters.from > filters.to) {
+    return { error: { status: 400, body: { error: 'from must not be after to' } } };
+  }
+
+  if (req.query.counterparty !== undefined && req.query.counterparty !== '') {
+    const counterparty = String(req.query.counterparty).trim();
+    if (!/^0x[0-9a-f]{40}$/i.test(counterparty)) {
+      return { error: { status: 400, body: { error: 'counterparty must be a 0x-prefixed 40-hex-character address' } } };
+    }
+    filters.counterparty = counterparty.toLowerCase();
+  }
+
+  if (req.query.q !== undefined && String(req.query.q).trim() !== '') {
+    const q = String(req.query.q).trim();
+    if (q.length > 100) {
+      return { error: { status: 400, body: { error: 'q must be 100 characters or fewer' } } };
+    }
+    filters.q = q;
   }
 
   if (req.query.category !== undefined && req.query.category !== '') {

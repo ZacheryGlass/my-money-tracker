@@ -240,6 +240,35 @@ test("needs_review only accepts 'true' or 'false'", async () => {
   assert.match(response.body.error, /needs_review/);
 });
 
+test('date, counterparty and search filters are validated before the query runs', async () => {
+  for (const query of [
+    'from=2026-02-31', 'to=yesterday', 'from=2026-03-02&to=2026-03-01',
+    'counterparty=0x123', `q=${'x'.repeat(101)}`,
+  ]) {
+    const response = await request(app).get(`/api/crypto/ledger?${query}`);
+    assert.equal(response.status, 400, query);
+  }
+  assert.equal(lastLedgerQuery(), undefined, 'no rejected filter reaches the database');
+});
+
+test('date, counterparty and search filters reach the query as parameters, export included', async () => {
+  const counterparty = '0xBBBB000000000000000000000000000000000002';
+  const query = `from=2026-01-01&to=2026-03-31&counterparty=${counterparty}&q=usdc`;
+  assert.equal((await request(app).get(`/api/crypto/ledger?${query}`)).status, 200);
+  const feed = lastLedgerQuery();
+  assert.match(feed.sql, /r\.occurred_at >= \$\d+::date/);
+  assert.match(feed.sql, /r\.occurred_at < \(\$\d+::date \+ 1\)/);
+  assert.match(feed.sql, /LOWER\(r\.counterparty_address\) = \$\d+/);
+  assert.match(feed.sql, /jsonb_array_elements/);
+  assert.ok(feed.params.includes('2026-01-01') && feed.params.includes('2026-03-31'));
+  assert.ok(feed.params.includes(counterparty.toLowerCase()));
+  assert.ok(feed.params.includes('USDC') && feed.params.includes('%usdc%'));
+
+  queries.length = 0;
+  assert.equal((await request(app).get(`/api/crypto/ledger/export?${query}`)).status, 200);
+  assert.ok(lastLedgerQuery().params.includes('USDC'), 'the CSV carries the same search');
+});
+
 // Every category the client can offer has to be one the server accepts, or the
 // picker holds a dead option that 400s the whole feed.
 test('every advertised category is accepted', async () => {
