@@ -203,12 +203,12 @@ describe('Crypto -> Exchanges tab', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Match audit/i }));
 
     expect(await screen.findAllByText(/fee-adjusted amounts agree|Fee-adjusted exact match/)).toHaveLength(2);
-    expect(screen.getByText('automatic')).toBeInTheDocument();
+    expect(screen.getByText('Automatic')).toBeInTheDocument();
     expect(screen.getByText(/address corroborated/)).toBeInTheDocument();
     expect(screen.getByText(/Address and amount corroborated/)).toBeInTheDocument();
-    expect(screen.getByText(/Possible on-chain side:.*wallet 0xaaaa…aaaa.*chain 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Possible wallet side:.*wallet 0xaaaa…aaaa.*Ethereum/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Same movement/i })).toBeInTheDocument();
-    expect(screen.getByText('Automatically invalidated')).toBeInTheDocument();
+    expect(screen.getByText('Matches undone by the current rules')).toBeInTheDocument();
     expect(screen.getByText(/no longer eligible for automatic matching/i)).toBeInTheDocument();
     expect(exchangesAPI.getMatches).toHaveBeenCalledWith({ limit: 500 });
     expect(exchangesAPI.getMatchEvents).toHaveBeenCalledWith({ limit: 100 });
@@ -330,7 +330,7 @@ describe('Crypto -> Exchanges tab', () => {
     expect(screen.getByText(/2 possible duplicates sent to review/)).toBeInTheDocument();
     expect(screen.getByText(/1 flagged for review/)).toBeInTheDocument();
     expect(screen.getByText(/Kraken ledgers export/)).toBeInTheDocument();
-    expect(screen.getByText(/No complete provider balance snapshot is available/)).toBeInTheDocument();
+    expect(screen.getByText(/hasn.t reported full balances for this account/)).toBeInTheDocument();
   });
 
   it('reports records an earlier partial export could only half describe', async () => {
@@ -458,7 +458,7 @@ describe('Crypto -> Exchanges tab', () => {
     await screen.findByText('Kraken Spot');
     fireEvent.click(screen.getByLabelText('Connect Kraken Spot with an API key'));
 
-    expect(await screen.findByText(/missing SECRETS_ENCRYPTION_KEY/)).toBeInTheDocument();
+    expect(await screen.findByText(/isn.t set up to store API keys securely/)).toBeInTheDocument();
     // Learning this from a failed request after pasting a secret is worse than
     // being told before.
     expect(screen.getByRole('button', { name: /Save Key/i })).toBeDisabled();
@@ -495,7 +495,7 @@ describe('Crypto -> Exchanges tab', () => {
     });
     await renderSettings();
 
-    expect(await screen.findByText(/Reconciliation is stale/)).toBeInTheDocument();
+    expect(await screen.findByText(/The balance check is out of date/)).toBeInTheDocument();
     expect(screen.getAllByText(/Older fiat orders require a CSV export/)).toHaveLength(1);
   });
 
@@ -705,7 +705,7 @@ describe('Crypto -> Exchanges tab', () => {
     });
     await renderSettings();
 
-    expect(await screen.findByText(/derived balances disagree with the exchange/)).toBeInTheDocument();
+    expect(await screen.findByText(/Balances don.t match for/)).toBeInTheDocument();
   });
 
   it('renders one mismatch notice when the account and latest job carry the same audit', async () => {
@@ -736,7 +736,7 @@ describe('Crypto -> Exchanges tab', () => {
     await renderSettings();
 
     await waitFor(() => {
-      expect(screen.getAllByText(/derived balances disagree with the exchange/)).toHaveLength(1);
+      expect(screen.getAllByText(/Balances don.t match for/)).toHaveLength(1);
     });
   });
 
@@ -758,7 +758,7 @@ describe('Crypto -> Exchanges tab', () => {
     });
     await renderSettings();
 
-    expect(await screen.findByText(/documented balance exceptions/)).toBeInTheDocument();
+    expect(await screen.findByText(/Balances match once the explained differences below are counted/)).toBeInTheDocument();
   });
 
   it('shows a mismatch found by the nightly job without anything being pressed', async () => {
@@ -769,7 +769,7 @@ describe('Crypto -> Exchanges tab', () => {
     }]));
     await renderSettings();
 
-    expect(await screen.findByText(/derived balances disagree with the exchange for ETH/)).toBeInTheDocument();
+    expect(await screen.findByText(/Balances don.t match for ETH/)).toBeInTheDocument();
   });
 
   it('passes the provider\'s own refusal through when a key is rejected', async () => {

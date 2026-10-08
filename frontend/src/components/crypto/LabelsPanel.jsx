@@ -3,6 +3,7 @@ import { ChevronDown, EyeOff, RefreshCw, Tag, Undo2 } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import LoadFailed from '../../features/crypto/LoadFailed';
 import { ConfirmDialog } from '../Modal';
+import HowThisWorks from '../../features/crypto/HowThisWorks';
 import {
   LABEL_VERDICT_KEEP,
   labelVerdictOptions,
@@ -291,7 +292,13 @@ function LabelsPanel({
       <section aria-labelledby="eth-labeled-addresses-heading">
         <div className="mb-3 px-2">
           <h2 id="eth-labeled-addresses-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Labeled Addresses</h2>
-          <p className="mt-1 text-xs text-secondary">Transfers to or from an exchange address, or one marked as yours, count as internal movements instead of external activity. Major exchanges&apos; shared hot wallets are recognized automatically; a deposit address the exchange assigned you has to be labeled by hand. If a recognized address is wrong &mdash; a shop or payment processor treated as an exchange, say &mdash; label it here with the right verdict: yours always wins over the built-in one, and past transfers are reclassified. Removing a label puts the address back in Needs Review.</p>
+          <p className="mt-1 text-xs text-secondary">Say what an address is. Transfers with an exchange or with one of your own addresses count as moving your money, not spending it.</p>
+          <HowThisWorks>
+            Major exchanges&apos; shared wallets are recognized automatically; a deposit address an exchange
+            assigned you has to be labeled by hand. If a recognized address is wrong (a shop or payment
+            processor treated as an exchange, say), label it here: your label always wins over the built-in
+            one, and past transfers are reclassified. Removing a label puts the address back in Needs Review.
+          </HowThisWorks>
         </div>
 
         <div className="card overflow-hidden">
@@ -341,7 +348,7 @@ function LabelsPanel({
               </label>
               {labelVerdictKind(labelVerdict) === 'exchange' && (
                 <label className="min-w-0 text-caption text-tertiary">
-                  Unrecoverable account (optional)
+                  Exchange account with no records (optional)
                   <select
                     value={exchangeAccountIdInput}
                     onChange={(event) => setExchangeAccountIdInput(event.target.value)}
@@ -391,7 +398,7 @@ function LabelsPanel({
             <div className="border-t border-border">
               <div className="bg-surface-2 px-4 py-2">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
-                  Notes awaiting a verdict
+                  Notes on addresses with no label yet
                 </p>
               </div>
               <div className="divide-y divide-border">

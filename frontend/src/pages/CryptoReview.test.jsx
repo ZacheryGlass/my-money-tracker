@@ -312,7 +312,7 @@ describe('quarantined spam', () => {
   const openReviewTab = async (spamResult) => {
     if (spamResult !== undefined) apiMocks.eth.getActivity.mockResolvedValue(spamResult);
     renderReview();
-    await screen.findByText(/^Quarantined wallet transactions$/);
+    await screen.findByText(/^Hidden as spam$/);
   };
 
   it('says nothing was quarantined when nothing was', async () => {
@@ -394,7 +394,7 @@ describe('quarantined spam', () => {
     apiMocks.eth.getActivity.mockRejectedValue(new Error('boom'));
     renderReview();
 
-    await screen.findByText(/^Quarantined wallet transactions$/);
+    await screen.findByText(/^Hidden as spam$/);
     expect(screen.queryByText(/nothing has been quarantined/i)).toBeNull();
     expect(screen.getByText(/couldn't load the quarantine/i)).toBeInTheDocument();
     expect(screen.queryByText(/failed to load/i)).toBeNull();

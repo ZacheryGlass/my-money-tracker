@@ -10,7 +10,7 @@ import {
   formatDateDisplay, formatExactUnits, formatTokenUnits, formatUsdAtTime, shortEthAddress,
 } from '../utils/format';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
+import { explorerTxUrl, networkName, explorerAddressUrl } from '../utils/chains';
 import { describeExchangeMatchEvidence } from '../utils/exchangeMatchEvidence';
 import {
   ledgerCategories,
@@ -25,6 +25,7 @@ import {
 import DataTable from './DataTable';
 import LoadingState from './LoadingState';
 import SegmentedControl from './SegmentedControl';
+import { MATCH_METHOD_TEXT, humanize } from '../features/crypto/plainText';
 
 const PAGE_SIZE = 100;
 // GET /api/crypto/ledger clamps `limit` to 500, and asking past it is a 400.
@@ -201,12 +202,7 @@ const describeBridgeSource = (member) => {
 // How #61 decided this pairing, in the user's words. The evidence IS the reason
 // to trust or reject it, so it is shown rather than hidden behind a confidence
 // score nobody can interpret.
-const MATCH_METHOD_NOTE = {
-  tx_hash: 'Both sides recorded the same transaction hash',
-  address_amount: 'You confirmed the address and fee-adjusted amount',
-  amount_window: 'You confirmed the amount and settlement time',
-  manual: 'You confirmed this pairing',
-};
+const MATCH_METHOD_NOTE = MATCH_METHOD_TEXT;
 
 // A folded venue record outranks the bare address: it is PROOF of which venue
 // the transaction was with, where an unlabeled 0xbbbb…bbbb is only a hex string
@@ -820,14 +816,21 @@ const CryptoLedger = ({
     <section>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Unified Ledger</h2>
-          <p className="mt-0.5 text-caption text-tertiary">
+          <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">All activity</h2>
+          <p
+            className="mt-0.5 text-caption text-tertiary"
+            // Why the parts do not add up to the whole: a movement both sides
+            // recorded (an exchange deposit and its wallet transaction, or a
+            // bridge's two ends) is one event, shown once.
+            title={summary && (summary.matched_count || summary.bridge_matched_count)
+              ? `${(summary.matched_count || 0).toLocaleString()} exchange and wallet pairs and ${(summary.bridge_matched_count || 0).toLocaleString()} bridge transfers are each shown once`
+              : undefined}
+          >
             {summary
-              // "exchange records", not "exchange": the count is RECORDS the
-              // venues wrote, folded halves included, so it deliberately does
-              // not add up with the event total beside it -- it is the number
-              // that reconciles with the Exchanges tab's per-account record_count.
-              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} on-chain · ${summary.exchange_count.toLocaleString()} exchange records${summary.matched_count ? ` · ${summary.matched_count.toLocaleString()} matched pairs shown once` : ''}${summary.bridge_matched_count ? ` · ${summary.bridge_matched_count.toLocaleString()} bridged pairs shown once` : ''}${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} unpriced` : ''}`
+              // "records", not "events", on the exchange side: the count is
+              // RECORDS the venues wrote, folded halves included, so it is the
+              // number that reconciles with each account's record count.
+              ? `${summary.total.toLocaleString()} events · ${summary.onchain_count.toLocaleString()} from wallets · ${summary.exchange_count.toLocaleString()} exchange records${summary.unpriced_count ? ` · ${summary.unpriced_count.toLocaleString()} without a price` : ''}`
               : 'Loading…'}
             {rangeText ? ` · ${rangeText}` : ''}
             {/* The quarantine says how much it swallowed, always: hiding rows
@@ -865,7 +868,7 @@ const CryptoLedger = ({
                 <ShieldAlert size={9} />
                 {spam === 'only'
                   ? 'Back to the ledger'
-                  : `${(summary?.spam_count ?? 0).toLocaleString()} quarantined · view`}
+                  : `${(summary?.spam_count ?? 0).toLocaleString()} hidden as spam · view`}
               </button>
             )}
           </p>
@@ -894,12 +897,12 @@ const CryptoLedger = ({
         <div className="mb-3 border border-border bg-surface">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
             <div>
-              <p className="text-[9px] font-bold uppercase tracking-wide text-secondary">Bridge evidence</p>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-secondary">Bridge transfers</p>
               <p className="mt-0.5 text-caption text-tertiary">
-                {(bridgeAudit.summary?.protocol_verified || 0).toLocaleString()} protocol verified · {(bridgeAudit.summary?.user_confirmed || 0).toLocaleString()} user confirmed · {(bridgeAudit.summary?.suggestions || 0).toLocaleString()} need confirmation · {(bridgeAudit.summary?.receipt_failures || 0).toLocaleString()} receipt failures
+                {(bridgeAudit.summary?.protocol_verified || 0).toLocaleString()} proven by the bridge · {(bridgeAudit.summary?.user_confirmed || 0).toLocaleString()} confirmed by you · {(bridgeAudit.summary?.suggestions || 0).toLocaleString()} waiting for you · {(bridgeAudit.summary?.receipt_failures || 0).toLocaleString()} lookups failed
               </p>
             </div>
-            <span className="text-caption text-tertiary">Amounts and timing never fold automatically.</span>
+            <span className="text-caption text-tertiary">Matching amounts alone never pair two transfers.</span>
           </div>
           {(bridgeAudit.suggestions || []).length > 0 && (
             <ul className="divide-y divide-border">
@@ -907,10 +910,10 @@ const CryptoLedger = ({
                 <li key={suggestion.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
                   <div className="min-w-0 text-caption text-secondary">
                     <p>
-                      {suggestion.protocol || 'Possible bridge'} · chain {suggestion.out_chain_id} {shortEthAddress(suggestion.out_tx_hash)} → chain {suggestion.in_chain_id} {shortEthAddress(suggestion.in_tx_hash)}
+                      {suggestion.protocol ? humanize(suggestion.protocol) : 'Possible bridge'} · {networkName(suggestion.out_chain_id)} {shortEthAddress(suggestion.out_tx_hash)} → {networkName(suggestion.in_chain_id)} {shortEthAddress(suggestion.in_tx_hash)}
                     </p>
                     <p className="mt-0.5 text-tertiary">
-                      {suggestion.ambiguous ? 'Ambiguous — review every alternative' : suggestion.suggestion_reason.replaceAll('_', ' ')} · confirmation required
+                      {suggestion.ambiguous ? 'More than one transfer could be the other side; check each' : humanize(suggestion.suggestion_reason)} · needs your confirmation
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -962,15 +965,15 @@ const CryptoLedger = ({
               )).map((movement) => (
                 <li key={`movement:${movement.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
                   <div className="min-w-0 text-caption text-secondary">
-                    <p>{movement.protocol} {movement.family_version}</p>
+                    <p title={movement.family_version || undefined}>{humanize(movement.protocol)}</p>
                     <p className="mt-0.5 text-tertiary">
                       {(movement.members || []).map((member) => (
-                        `chain ${member.chain_id} ${shortEthAddress(member.tx_hash)}`
-                      )).join(' → ') || 'No complete destination evidence'}
+                        `${networkName(member.chain_id)} ${shortEthAddress(member.tx_hash)}`
+                      )).join(' → ') || 'The arriving side has not been found'}
                     </p>
                     {movement.evidence?.ambiguity === 'awaiting_chain_finality' && (
                       <p className="mt-0.5 text-tertiary">
-                        Exact protocol identity found; waiting for finalized receipt boundaries.
+                        Both sides found; waiting for the networks to finalize them.
                       </p>
                     )}
                     {movement.protocol === 'hop' && movement.evidence?.hop_pair && (
@@ -980,7 +983,7 @@ const CryptoLedger = ({
                     )}
                     {movement.evidence?.ambiguity && movement.evidence.ambiguity !== 'awaiting_chain_finality' && (
                       <p className="mt-0.5 text-tertiary">
-                        Evidence state: {movement.evidence.ambiguity.replaceAll('_', ' ')}.
+                        {humanize(movement.evidence.ambiguity)}.
                       </p>
                     )}
                   </div>
@@ -997,10 +1000,10 @@ const CryptoLedger = ({
                 <li key={`receipt:${failure.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
                   <div className="min-w-0 text-caption text-secondary">
                     <p>
-                      Receipt evidence unavailable · chain {failure.chain_id} {shortEthAddress(failure.tx_hash)}
+                      Couldn&apos;t look up this transfer · {networkName(failure.chain_id)} {shortEthAddress(failure.tx_hash)}
                     </p>
-                    <p className="mt-0.5 text-tertiary">
-                      {failure.provider} · {failure.error_code || 'provider boundary not proven'}
+                    <p className="mt-0.5 text-tertiary" title={failure.error_code || undefined}>
+                      {failure.provider} · retried at the next sync
                     </p>
                   </div>
                   <Chip className={failure.status === 'failed' ? TONE_STYLES.failed : TONE_STYLES.neutral}>
@@ -1016,9 +1019,9 @@ const CryptoLedger = ({
                 <li key={`verdict:${verdict.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
                   <div className="min-w-0 text-caption text-secondary">
                     <p>
-                      {verdict.verdict === 'confirmed' ? 'User confirmed' : 'User rejected'} · chain {verdict.out_chain_id} {shortEthAddress(verdict.out_tx_hash)} → chain {verdict.in_chain_id} {shortEthAddress(verdict.in_tx_hash)}
+                      {verdict.verdict === 'confirmed' ? 'You confirmed' : 'You rejected'} · {networkName(verdict.out_chain_id)} {shortEthAddress(verdict.out_tx_hash)} → {networkName(verdict.in_chain_id)} {shortEthAddress(verdict.in_tx_hash)}
                     </p>
-                    <p className="mt-0.5 text-tertiary">Durable verdict · amounts and timing were not treated as proof</p>
+                    <p className="mt-0.5 text-tertiary">Kept through every sync until you undo it</p>
                   </div>
                   <button
                     type="button"
@@ -1027,7 +1030,7 @@ const CryptoLedger = ({
                     className="inline-flex h-7 items-center gap-1 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-secondary disabled:opacity-40"
                   >
                     {bridgeJudging === `clear:${verdict.id}` ? <RefreshCw size={10} className="animate-spin" /> : <Undo2 size={10} />}
-                    Undo verdict
+                    Undo
                   </button>
                 </li>
               ))}
@@ -1103,10 +1106,10 @@ const CryptoLedger = ({
           <button
             type="button"
             onClick={onShowTransferLegs}
-            title="The raw per-leg feed behind these events — the place to ignore a token in context"
+            title="Each transfer as the blockchain recorded it; ignore spam tokens from here"
             className="ml-auto shrink-0 text-caption text-tertiary underline underline-offset-2 transition-colors hover:text-accent"
           >
-            Raw transfer legs →
+            Individual transfers →
           </button>
         )}
       </div>
@@ -1409,7 +1412,9 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
           {row.usd_value != null
             ? <>
                 {formatUsdAtTime(row.usd_value, row.usd_basis)}
-                <span className="ml-1 text-tertiary">({row.usd_basis})</span>
+                {row.usd_basis === 'carried' && (
+                  <span className="ml-1 text-tertiary">(nearest earlier daily price)</span>
+                )}
               </>
             : <span title={USD_BASIS_NOTE[row.usd_basis] || undefined}>
                 {row.usd_basis === 'not_applicable' ? 'Not applicable' : 'No price for this date'}
@@ -1429,7 +1434,7 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
         {row.protocol_interpretation && (
           <div className="col-span-full border border-accent/20 bg-accent/5 p-2">
             <p className="text-[9px] font-bold uppercase tracking-wide text-accent">
-              {row.protocol_interpretation.protocol} · {row.protocol_interpretation.action?.replaceAll('_', ' ')}
+              {humanize(row.protocol_interpretation.protocol)} · {humanize(row.protocol_interpretation.action).toLowerCase()}
             </p>
             <p className="mt-1 text-body-sm text-secondary">{row.protocol_interpretation.summary}</p>
             {row.protocol_interpretation.limitations?.length > 0 && (
@@ -1729,7 +1734,7 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
                 type="button"
                 onClick={revertOverride}
                 disabled={saving != null}
-                title="Uncover the derived verdict again"
+                title="Go back to the category the app worked out"
                 className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-2.5 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary disabled:opacity-40"
               >
                 {saving === 'revert' ? <RefreshCw size={10} className="animate-spin" /> : <Undo2 size={10} />}

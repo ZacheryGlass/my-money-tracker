@@ -40,8 +40,21 @@ describe('ExchangeBalanceExceptionQueue', () => {
 
     expect(screen.getByText('1.000000000000000001')).toBeInTheDocument();
     expect(screen.getByText('ETH2, XETH')).toBeInTheDocument();
+    expect(screen.getByText('Needs a decision')).toBeInTheDocument();
+    expect(screen.getByText('Records add up to')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Kraken Main' }));
     expect(onOpenAccount).toHaveBeenCalledWith(7);
+  });
+
+  it('will not accept without both a category and evidence', () => {
+    render(<ExchangeBalanceExceptionQueue data={{ data: [EXCEPTION] }} />);
+    const accept = screen.getByRole('button', { name: 'Accept' });
+    expect(accept).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'provider_migration' } });
+    expect(accept).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Evidence'), { target: { value: 'Venue migration notice' } });
+    expect(accept).not.toBeDisabled();
   });
 
   it('requires the form fields through the API payload and sends the row version', async () => {

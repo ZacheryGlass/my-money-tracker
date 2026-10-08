@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion as Motion } from 'framer-motion';
 import {
-  AlertTriangle, ArrowLeftRight, Check, ChevronDown, Clock, Link2, Pencil, Plus,
+  AlertTriangle, ArrowLeftRight, Check, ChevronDown, Clock, Download, Link2, Pencil, Plus,
   RefreshCw, Save, ShieldCheck, Trash2, Unlink, Upload, X,
 } from 'lucide-react';
 import { exchanges as exchangesAPI } from '../../utils/api';
@@ -13,6 +13,11 @@ import {
 import ExchangeBalanceExceptionQueue from './ExchangeBalanceExceptionQueue';
 import { getCryptoMeta } from '../../features/crypto/meta';
 import LoadFailed from '../../features/crypto/LoadFailed';
+import HowThisWorks from '../../features/crypto/HowThisWorks';
+import { MATCH_METHOD_TEXT, humanize } from '../../features/crypto/plainText';
+import { formatLedgerCategory } from '../../utils/dataLabels';
+import { networkName } from '../../utils/chains';
+import LoadingState from '../LoadingState';
 
 // The venues the backend accepts, from its venue registry (crypto meta store).
 // Coinbase covers both the retail export and a Coinbase Pro / Exchange
@@ -62,13 +67,14 @@ const exchangeRecordAmount = (record) => (
 
 const suggestionTargetText = (suggestion) => {
   if (suggestion?.counter_record_id != null) {
-    return `Possible other side: ${formatDateDisplay(suggestion.counter_occurred_at)} · ${suggestion.counter_account_name || 'Exchange'} · ${suggestion.counter_record_type || 'transfer'} · ${suggestion.counter_base_amount ?? '—'} ${suggestion.counter_base_asset || ''}`.trim();
+    return `Possible other side: ${formatDateDisplay(suggestion.counter_occurred_at)} · ${suggestion.counter_account_name || 'Exchange'} · ${humanize(suggestion.counter_record_type || 'transfer')} · ${formatDecimalAmount(suggestion.counter_base_amount) ?? '—'} ${suggestion.counter_base_asset || ''}`.trim();
   }
   const hash = suggestion?.tx_hash
     ? `${suggestion.tx_hash.slice(0, 10)}…${suggestion.tx_hash.slice(-8)}`
     : 'unknown transaction';
   const time = suggestion?.block_time ? formatDateDisplay(suggestion.block_time) : 'unknown time';
-  return `Possible on-chain side: ${time} · wallet ${shortEthAddress(suggestion?.wallet_address)} · chain ${suggestion?.chain_id ?? 'unknown'} · ${hash}`;
+  const network = suggestion?.chain_id != null ? networkName(suggestion.chain_id) : 'unknown network';
+  return `Possible wallet side: ${time} · wallet ${shortEthAddress(suggestion?.wallet_address)} · ${network} · ${hash}`;
 };
 
 // One account-level notice owns reconciliation messaging. Keeping mismatch,
@@ -84,29 +90,31 @@ function ReconciliationNotice({ status, report }) {
     return (
       <p className="mt-1 flex items-start gap-2 text-loss">
         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-        The last sync&apos;s derived balances disagree with the exchange for {assets || 'some assets'}.{' '}
-        {report?.mismatch_count || 0} asset(s) do not match the balance the exchange reports, so some activity is missing or misread.
+        Balances don&apos;t match for {assets || 'some assets'}: the exchange reports a different amount than its
+        records add up to, so some activity is missing or misread.
       </p>
     );
   }
 
   if (effectiveStatus === 'stale') {
-    const snapshot = report?.snapshot_at ? ` The last provider balance was observed ${formatRelativeTime(report.snapshot_at)}.` : '';
+    const snapshot = report?.snapshot_at ? ` The exchange last reported balances ${formatRelativeTime(report.snapshot_at)}.` : '';
     const limits = report?.coverage_limitations?.length > 0
-      ? ` Known coverage limits remain: ${report.coverage_limitations.join(' ')}` : '';
+      ? ` Known limits: ${report.coverage_limitations.join(' ')}` : '';
     return (
-      <p className="mt-1 flex items-start gap-2 text-loss">
+      <p className="mt-1 flex items-start gap-2 text-orange-400">
         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-        Reconciliation is stale; import the missing history or run a complete API sync before treating this account as complete.{snapshot}{limits}
+        The balance check is out of date: import the missing history or run a full sync to check again.{snapshot}{limits}
       </p>
     );
   }
 
   if (effectiveStatus === 'unknown') {
+    // A CSV-only account (a closed venue's archive) never has a balance report
+    // to compare against; that is a fact about the source, not an alarm.
     return (
-      <p className="mt-1 flex items-start gap-2 text-loss">
+      <p className="mt-1 flex items-start gap-2 text-tertiary">
         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-        No complete provider balance snapshot is available, so this account cannot yet be reconciled.{report?.last_known_mismatch_count > 0 ? ' The last known comparison also had mismatches.' : ''}
+        The exchange hasn&apos;t reported full balances for this account, so they can&apos;t be checked.{report?.last_known_mismatch_count > 0 ? ' The last check that ran found differences.' : ''}
       </p>
     );
   }
@@ -115,8 +123,7 @@ function ReconciliationNotice({ status, report }) {
     return (
       <p className="mt-1 flex items-start gap-2 text-orange-400">
         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-        The audit found documented balance exceptions. Review the Balance audit section;
-        accepted explanations affect reconciliation only.
+        Balances match once the explained differences below are counted. See Balance check.
       </p>
     );
   }
@@ -697,47 +704,51 @@ function ExchangesPanel({
               href={exchangesAPI.matchesExportUrl()}
               className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent"
             >
-              <Upload size={11} /> Export pairings
+              <Download size={11} /> Export pairings
             </a>
           </div>
         </div>
         <p className="mt-1 text-xs text-secondary">
-          Trades, moves between exchanges and fiat on and off ramps never touch a tracked wallet, so no
-          on-chain source can show them. Connect a <span className="font-semibold text-primary">read-only
-          API key</span> to a live Kraken or Coinbase account and it stays current on its own; upload a
-          CSV export for anything else — a closed account, an unsupported exchange, or history that
-          predates the key. Coinbase, Coinbase Pro and Kraken exports are read directly; other files are
-          matched by column name, and a timestamp with no time zone in it is read as UTC. The two sources
-          mix freely: records are keyed by the event the exchange recorded, so nothing lands twice, and a
-          trade an earlier date-limited export could only half describe is completed rather than
-          duplicated.
+          Trades and transfers inside an exchange never touch your wallets, so they come from the exchange:
+          a <span className="font-semibold text-primary">read-only API key</span> keeps a live account current,
+          and a CSV export covers closed accounts and older history.
         </p>
+        <HowThisWorks>
+          Kraken, Coinbase and Binance.US keys sync on their own every night. Coinbase, Coinbase Pro and Kraken
+          exports are read directly; other files are matched by column name, and a timestamp with no time zone
+          is read as UTC. Keys and exports mix freely: each record is keyed by the event the exchange recorded,
+          so nothing is counted twice, and a fuller export completes a trade an earlier one only half described.
+        </HowThisWorks>
       </div>
 
       {matchAudit && (
         <div className="card mb-4 overflow-hidden border-border">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <div>
-              <h3 className="text-sm font-bold uppercase tracking-tight text-primary">Exchange match audit</h3>
-              <p className="mt-1 text-xs text-secondary">Only matching transaction hashes and pairings you confirmed are automatic. Address or timing evidence stays separate until you decide.</p>
+              <h3 className="text-sm font-bold uppercase tracking-tight text-primary">Exchange and wallet matches</h3>
+              <p className="mt-1 text-xs text-secondary">A deposit or withdrawal is paired with its wallet transaction automatically only when both record the same transaction hash, or when you confirmed the pair. Other likely pairs wait for you below.</p>
             </div>
             <button type="button" onClick={() => setMatchAudit(null)} className="rounded border border-transparent p-1.5 text-tertiary hover:text-primary" aria-label="Close match audit"><X size={15} /></button>
           </div>
           <div className="grid grid-cols-2 gap-3 border-b border-border px-5 py-4 text-xs md:grid-cols-6">
             <div><p className="text-tertiary">Matched</p><p className="mt-1 font-mono font-semibold text-primary">{(matchAudit.summary?.matched || 0).toLocaleString()}</p></div>
             <div><p className="text-tertiary">Suggestions</p><p className="mt-1 font-mono font-semibold text-accent">{(matchAudit.summary?.suggested || 0).toLocaleString()}</p></div>
-            <div><p className="text-tertiary">Unmatched exchange</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.summary?.unmatchedRecords || 0).toLocaleString()}</p></div>
-            <div><p className="text-tertiary">Unmatched on-chain</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.summary?.unmatchedActivities || 0).toLocaleString()}</p></div>
+            <div><p className="text-tertiary">Exchange only</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.summary?.unmatchedRecords || 0).toLocaleString()}</p></div>
+            <div><p className="text-tertiary">Wallet only</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.summary?.unmatchedActivities || 0).toLocaleString()}</p></div>
             <div><p className="text-tertiary">Shown below</p><p className="mt-1 font-mono font-semibold text-primary">{(matchAudit.data || []).length.toLocaleString()}</p></div>
-            <div><p className="text-tertiary">Invalidated</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.eventTotal ?? (matchAudit.events || []).length).toLocaleString()}</p></div>
+            <div><p className="text-tertiary">Undone by rules</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.eventTotal ?? (matchAudit.events || []).length).toLocaleString()}</p></div>
           </div>
           {(matchAudit.data || []).length > 0 ? (
             <ul className="divide-y divide-border">
               {matchAudit.data.map((match) => (
                 <li key={match.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-xs">
                   <div className="min-w-0">
-                    <p className="text-primary">{formatDateDisplay(match.occurred_at)} · {match.exchange_account_name} · {match.record_type} · {match.base_amount} {match.base_asset}</p>
-                    <p className="mt-0.5 text-caption text-tertiary">{match.match_method} · {match.confidence} · {match.category || 'venue-only movement'}</p>
+                    <p className="text-primary">{formatDateDisplay(match.occurred_at)} · {match.exchange_account_name} · {humanize(match.record_type)} · {formatDecimalAmount(match.base_amount)} {match.base_asset}</p>
+                    <p className="mt-0.5 text-caption text-tertiary">
+                      {MATCH_METHOD_TEXT[match.match_method] || humanize(match.match_method)}
+                      {match.confidence ? ` · ${match.confidence} confidence` : ''}
+                      {' · '}{match.category ? formatLedgerCategory(match.category) : 'exchange-only movement'}
+                    </p>
                     {(match.comparison_kind === 'amount' || match.match_method === 'tx_hash') && (
                       <p className="mt-1 text-caption text-secondary">
                         {describeExchangeMatchEvidence(match)}
@@ -745,22 +756,22 @@ function ExchangesPanel({
                       </p>
                     )}
                   </div>
-                  <span className={`rounded px-2 py-1 text-[9px] font-bold uppercase tracking-wide ${match.verdict === 'confirmed' ? 'bg-gain/10 text-gain' : match.verdict === 'rejected' ? 'bg-loss/10 text-loss' : 'bg-surface-3 text-tertiary'}`}>{match.verdict || (match.match_method === 'tx_hash' ? 'automatic' : 'unreviewed')}</span>
+                  <span className={`rounded px-2 py-1 text-[9px] font-bold uppercase tracking-wide ${match.verdict === 'confirmed' ? 'bg-gain/10 text-gain' : match.verdict === 'rejected' ? 'bg-loss/10 text-loss' : 'bg-surface-3 text-tertiary'}`}>{match.verdict ? humanize(match.verdict) : (match.match_method === 'tx_hash' ? 'Automatic' : 'Not reviewed')}</span>
                 </li>
               ))}
             </ul>
-          ) : <p className="px-5 py-4 text-xs text-secondary">No derived pairings yet. The unmatched counts above are the current gaps.</p>}
+          ) : <p className="px-5 py-4 text-xs text-secondary">No matches yet. The counts above show what is still unmatched.</p>}
           {(matchAudit.suggestions || []).length > 0 && (
             <div className="border-t border-border">
               <div className="px-5 py-3">
                 <h4 className="text-xs font-bold uppercase tracking-wide text-accent">Needs your confirmation</h4>
-                <p className="mt-1 text-caption text-secondary">These alternatives do not fold or suppress any ledger rows unless you confirm one.</p>
+                <p className="mt-1 text-caption text-secondary">Nothing changes in Activity until you confirm one.</p>
               </div>
               <ul className="divide-y divide-border">
                 {matchAudit.suggestions.map((suggestion) => (
                   <li key={suggestion.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-xs">
                     <div className="min-w-0">
-                      <p className="text-primary">{formatDateDisplay(suggestion.occurred_at)} · {suggestion.exchange_account_name} · {suggestion.record_type} · {suggestion.base_amount} {suggestion.base_asset}</p>
+                      <p className="text-primary">{formatDateDisplay(suggestion.occurred_at)} · {suggestion.exchange_account_name} · {humanize(suggestion.record_type)} · {formatDecimalAmount(suggestion.base_amount)} {suggestion.base_asset}</p>
                       <p className="mt-0.5 text-caption text-secondary">{suggestionTargetText(suggestion)}</p>
                       <p className="mt-0.5 text-caption text-accent">{describeExchangeSuggestionReason(suggestion)}</p>
                       <p className="mt-1 text-caption text-secondary">
@@ -796,14 +807,17 @@ function ExchangesPanel({
           {(matchAudit.events || []).length > 0 && (
             <div className="border-t border-border">
               <div className="px-5 py-3">
-                <h4 className="text-xs font-bold uppercase tracking-wide text-loss">Automatically invalidated</h4>
-                <p className="mt-1 text-caption text-secondary">These derived matches failed the current rule set during rebuild. Explicit confirmations and rejections are preserved.</p>
+                <h4 className="text-xs font-bold uppercase tracking-wide text-loss">Matches undone by the current rules</h4>
+                <p className="mt-1 text-caption text-secondary">These automatic matches no longer meet the matching rules, so they were undone. Pairs you confirmed or rejected are kept.</p>
               </div>
               <ul className="divide-y divide-border">
                 {matchAudit.events.map((event) => (
                   <li key={event.id} className="px-5 py-3 text-xs">
-                    <p className="text-primary">{formatDateDisplay(event.created_at)} · {event.exchange_account_name} · record #{event.exchange_record_id}</p>
-                    <p className="mt-0.5 text-caption text-secondary">{event.reason} · prior {event.prior_match_method} ({event.prior_confidence})</p>
+                    <p className="text-primary">{formatDateDisplay(event.created_at)} · {event.exchange_account_name}</p>
+                    <p className="mt-0.5 text-caption text-secondary">
+                      {humanize(event.reason)} · was {(MATCH_METHOD_TEXT[event.prior_match_method] || humanize(event.prior_match_method)).toLowerCase()}
+                      {event.prior_confidence ? ` (${event.prior_confidence} confidence)` : ''}
+                    </p>
                     {event.comparison_kind === 'amount' && (
                       <p className="mt-1 text-caption text-tertiary">{describeExchangeMatchEvidence(event)}</p>
                     )}
@@ -1012,7 +1026,7 @@ function ExchangesPanel({
                         className="rounded border border-border px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary transition-all hover:border-accent hover:text-accent"
                         title="Declare that this venue's historical records cannot be recovered"
                       >
-                        {account.records_unavailable ? 'Records unavailable' : 'Mark records unavailable'}
+                        {account.records_unavailable ? 'Records marked unavailable · undo' : 'Mark records unavailable'}
                       </button>
                       {renamingId === account.id ? (
                         <form
@@ -1173,7 +1187,7 @@ function ExchangesPanel({
                         // learning that from a failed request is worse.
                         <p className="mt-3 flex items-start gap-2 text-body-sm text-loss">
                           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                          The server is missing SECRETS_ENCRYPTION_KEY, so API keys cannot be stored yet.
+                          This server isn&apos;t set up to store API keys securely yet, so keys can&apos;t be saved.
                           CSV import still works.
                         </p>
                       )}
@@ -1327,14 +1341,14 @@ function ExchangesPanel({
                     className="flex w-full items-center justify-between gap-2 px-5 py-3 text-caption text-tertiary transition-colors hover:text-primary md:px-6"
                   >
                     <span>
-                      Balance audit
+                      Balance check
                       {account.balance_exception_count > 0 && (
                         <span className="ml-2 font-bold text-loss">
                           {account.balance_exception_count} exception{account.balance_exception_count === 1 ? '' : 's'}
                         </span>
                       )}
                       {account.balance_audit_status === 'legacy_unclassified' && (
-                        <span className="ml-2 text-orange-400">legacy mismatch needs a new complete audit</span>
+                        <span className="ml-2 text-orange-400">an older difference needs a fresh full sync to recheck</span>
                       )}
                     </span>
                     <ChevronDown size={14} className={balanceAudit?.open ? 'rotate-180 transition-transform' : 'transition-transform'} />
@@ -1352,10 +1366,10 @@ function ExchangesPanel({
                         }}
                         onError={onError}
                         showSuccess={showSuccess}
-                        title="Balance audit details"
+                        title="Balance check"
                         description={account.balance_audit_status === 'coverage_limited'
-                          ? 'The latest comparison was coverage-limited and did not change this queue. Complete the API backfill before treating a mismatch as authoritative.'
-                          : 'Review the exact derived and provider values. Accepting an explanation records evidence and affects reconciliation only.'}
+                          ? 'The last check could not see the full history, so it changed nothing here. Let the history download finish before trusting a difference.'
+                          : 'Each difference shows what the records add up to beside what the exchange reports. Explaining one records your evidence; it changes this check only.'}
                       />
                     </div>
                   )}
@@ -1383,7 +1397,7 @@ function ExchangesPanel({
                     {openReviewAccountId === account.id && (
                       <div className="border-t border-border">
                         {reviewQueue?.loading ? (
-                          <div className="p-4 text-body-sm text-secondary">Loading flagged records…</div>
+                          <LoadingState label="Loading flagged records" className="min-h-[96px]" />
                         ) : reviewQueue?.error ? (
                           <div className="flex items-center gap-2 p-4 text-body-sm text-loss">
                             <AlertTriangle size={14} /> {reviewQueue.error}
@@ -1398,7 +1412,7 @@ function ExchangesPanel({
                                   <p className="text-body-sm text-primary">
                                     <span className="text-tertiary">{formatDateDisplay(record.occurred_at)}</span>
                                     {' · '}
-                                    <span className="uppercase tracking-wide">{record.record_type}</span>
+                                    <span>{humanize(record.record_type)}</span>
                                     {' · '}
                                     <span className="font-money">{exchangeRecordAmount(record)}</span>
                                     {record.base_asset ? ` ${record.base_asset}` : ''}

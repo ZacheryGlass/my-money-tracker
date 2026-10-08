@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Check, RefreshCw } from 'lucide-react';
 import { exchanges as exchangesAPI } from '../../utils/api';
-import { formatDateDisplay } from '../../utils/format';
+import { formatDateDisplay, formatDecimalAmount } from '../../utils/format';
+import LoadingState from '../LoadingState';
 import { getCryptoMeta } from '../../features/crypto/meta';
 
 // The reviewable explanations, from the server's reconciliation policy (crypto
@@ -10,6 +11,12 @@ const exceptionCategories = () => (getCryptoMeta()?.vocabulary?.exchangeExceptio
   .map(({ value, label }) => [value, label]);
 
 const categoryLabel = (value) => exceptionCategories().find(([key]) => key === value)?.[1] || value || 'Unclassified';
+
+const STATUS_LABELS = { open: 'Needs a decision', accepted: 'Explained' };
+
+// Every digit: these are the figures the decision is about, and a rounded
+// pair that prints identically beside a nonzero difference says nothing.
+const exact = (value) => formatDecimalAmount(value, { maxFractionDigits: 18 }) ?? '—';
 
 function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError, showSuccess }) {
   const [category, setCategory] = useState(exception.category || '');
@@ -44,7 +51,7 @@ function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError,
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-body-sm font-semibold text-primary">{exception.canonical_asset}</span>
             <span className={`inline-flex items-center border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${exception.status === 'open' ? 'border-loss/20 bg-loss/10 text-loss' : 'border-orange-500/30 bg-orange-500/10 text-orange-400'}`}>
-              {exception.status}
+              {STATUS_LABELS[exception.status] || exception.status}
             </span>
             {exception.category && <span className="text-[10px] uppercase tracking-wider text-tertiary">{categoryLabel(exception.category)}</span>}
             {showAccount && (
@@ -58,24 +65,26 @@ function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError,
             )}
           </div>
           <p className="mt-1 text-caption text-tertiary">
-            Provider code{(exception.provider_asset_codes || []).length === 1 ? '' : 's'}:{' '}
-            <span>{(exception.provider_asset_codes || []).join(', ') || 'not returned'}</span>
-            {' · '}{formatDateDisplay(exception.calculated_at)}
+            The exchange calls it{' '}
+            <span>{(exception.provider_asset_codes || []).join(', ') || 'by no code it returned'}</span>
+            {' · '}checked {formatDateDisplay(exception.calculated_at)}
           </p>
         </div>
-        <div className="text-right font-mono text-[10px] text-secondary">
-          <div>derived <span>{exception.derived_balance}</span></div>
-          <div>live <span>{exception.live_balance}</span></div>
-          <div className="text-loss">delta <span>{exception.delta}</span></div>
-          {exception.adjustment !== '0' && <div className="text-accent">adjusted {exception.adjusted_delta}</div>}
-        </div>
+        <dl className="grid grid-cols-[auto_auto] gap-x-3 text-right font-mono text-[10px] text-secondary">
+          <dt className="font-sans text-tertiary">Records add up to</dt><dd>{exact(exception.derived_balance)}</dd>
+          <dt className="font-sans text-tertiary">Exchange reports</dt><dd>{exact(exception.live_balance)}</dd>
+          <dt className="font-sans text-loss">Difference</dt><dd className="text-loss">{exact(exception.delta)}</dd>
+          {exception.adjustment !== '0' && (
+            <><dt className="font-sans text-accent">After adjustment</dt><dd className="text-accent">{exact(exception.adjusted_delta)}</dd></>
+          )}
+        </dl>
       </div>
 
       {exception.evidence && (
         <p className="rounded border border-border bg-surface-2 px-3 py-2 text-caption text-secondary">{exception.evidence}</p>
       )}
 
-      <div className="grid gap-2 md:grid-cols-[11rem_1fr_10rem_auto]">
+      <div className="grid items-end gap-2 md:grid-cols-[11rem_1fr_10rem_auto]">
         <label className="sr-only" htmlFor={`exception-category-${exception.id}`}>Category</label>
         <select
           id={`exception-category-${exception.id}`}
@@ -83,7 +92,7 @@ function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError,
           onChange={(event) => setCategory(event.target.value)}
           className="h-9 rounded border border-border bg-surface-3 px-2 text-xs text-primary"
         >
-          <option value="">Choose category</option>
+          <option value="">What explains it?</option>
           {exceptionCategories().map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
         <label className="sr-only" htmlFor={`exception-evidence-${exception.id}`}>Evidence</label>
@@ -91,7 +100,7 @@ function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError,
           id={`exception-evidence-${exception.id}`}
           value={evidence}
           onChange={(event) => setEvidence(event.target.value)}
-          placeholder="Evidence or review note"
+          placeholder="How you know (required to accept)"
           className="h-9 rounded border border-border bg-surface-3 px-2 text-xs text-primary placeholder:text-tertiary"
         />
         <label className="sr-only" htmlFor={`exception-adjustment-${exception.id}`}>Adjustment</label>
@@ -100,7 +109,8 @@ function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError,
           value={adjustment}
           onChange={(event) => setAdjustment(event.target.value)}
           inputMode="decimal"
-          placeholder="0"
+          placeholder="Adjustment (0)"
+          title="Optional: an amount that closes the difference in this balance check only"
           className="h-9 rounded border border-border bg-surface-3 px-2 font-mono text-xs text-primary placeholder:text-tertiary"
         />
         {exception.status === 'accepted' ? (
@@ -117,7 +127,10 @@ function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError,
           <button
             type="button"
             onClick={() => save('accepted')}
-            disabled={busy}
+            // The copy has always said "accept only with a category and
+            // evidence"; the button now holds it to that.
+            disabled={busy || !category || !evidence.trim()}
+            title={!category || !evidence.trim() ? 'Choose what explains it and say how you know' : undefined}
             className="inline-flex h-9 items-center justify-center gap-1.5 rounded border border-accent/40 bg-accent/10 px-3 text-[9px] font-bold uppercase tracking-wide text-accent hover:bg-accent/20 disabled:opacity-40"
           >
             {busy ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
@@ -125,7 +138,7 @@ function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError,
           </button>
         )}
       </div>
-      <p className="text-[10px] text-tertiary">Adjustments change reconciliation only; they never change holdings, records, or raw evidence.</p>
+      <p className="text-[10px] text-tertiary">An adjustment only changes this balance check; holdings and records stay as they are.</p>
     </li>
   );
 }
@@ -152,14 +165,14 @@ export default function ExchangeBalanceExceptionQueue({
       </div>
       <div className="card overflow-hidden">
         {loading ? (
-          <div className="p-5 text-sm text-secondary">Loading balance audit…</div>
+          <LoadingState label="Loading balance checks" className="min-h-[120px]" />
         ) : error ? (
           <div className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-secondary">
             <span className="flex items-center gap-2 text-loss"><AlertTriangle size={14} /> {error}</span>
             <button type="button" onClick={onRetry} className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary hover:border-accent hover:text-accent"><RefreshCw size={10} /> Retry</button>
           </div>
         ) : rows.length === 0 ? (
-          <div className="p-6 text-center text-sm text-secondary">No current exchange balance exceptions.</div>
+          <div className="p-6 text-center text-sm text-secondary">Every exchange balance matches its records.</div>
         ) : (
           <ul className="divide-y divide-border">
             {rows.map((exception) => (

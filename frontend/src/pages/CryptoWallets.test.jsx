@@ -169,10 +169,10 @@ describe('Crypto -> Wallets tab', () => {
   it('states plainly when the ledger reproduces the chain', async () => {
     await openEthereumTab([wallet(report())]);
     // The row's own verdict, before anything is opened.
-    expect(screen.getAllByText('Matches chain').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Balances match').length).toBeGreaterThan(0);
 
     await expandWallet();
-    expect(await screen.findByText(/ledger matches the chain across 2 of 2 assets/i)).toBeInTheDocument();
+    expect(await screen.findByText(/history matches the blockchain for 2 of 2 assets/i)).toBeInTheDocument();
   });
 
   it('raises an alert when the derived ETH balance is short', async () => {
@@ -194,7 +194,7 @@ describe('Crypto -> Wallets tab', () => {
 
     await expandWallet();
     // The chain and the size of the hole, not just "something is wrong".
-    expect(await screen.findByText(/Ethereum: ledger is -1 ETH off/)).toBeInTheDocument();
+    expect(await screen.findByText(/Ethereum: history is -1 ETH off/)).toBeInTheDocument();
   });
 
   it('reports a drifting wallet to the Wallets sidebar badge', async () => {
@@ -223,7 +223,7 @@ describe('Crypto -> Wallets tab', () => {
       }],
     }))]);
 
-    expect(screen.getAllByText('Token drift').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Token balance differs').length).toBeGreaterThan(0);
 
     await expandWallet();
     expect(await screen.findByText(/Token balances that do not add up/i)).toBeInTheDocument();
@@ -269,8 +269,8 @@ describe('Crypto -> Wallets tab', () => {
     // The positive line still appears, but it reports 1 of 2 rather than a
     // clean bill of health -- a partial audit must count itself honestly, and
     // both numbers being on screen is what makes the gap legible.
-    expect(screen.getByText(/ledger matches the chain across/i).textContent.replace(/\s+/g, ' '))
-      .toMatch(/across 1 of 2 assets/);
+    expect(screen.getByText(/history matches the blockchain for/i).textContent.replace(/\s+/g, ' '))
+      .toMatch(/for 1 of 2 assets/);
   });
 
   // Reconciliation adjustments (048): documented audit-side corrections. The
@@ -297,8 +297,9 @@ describe('Crypto -> Wallets tab', () => {
       fireEvent.click(await screen.findByRole('button', { name: /^adjust$/i }));
       // Prefilled with the negated delta: saving as-is is exactly what absorbs
       // the drift, so the one thing left to type is the explanation.
-      const amount = await screen.findByLabelText(/amount \(base units/i);
-      expect(amount.value).toBe(`-${DRIFT}`);
+      // In whole coins; the API still receives exact base units.
+      const amount = await screen.findByLabelText(/amount in eth/i);
+      expect(amount.value).toBe('-0.000000000123456789');
       // The prefill is labeled as absorbing the ENTIRE remaining drift, so a
       // large real loss is never one unlabeled click from being absorbed.
       expect(screen.getByText(/absorbs the entire remaining drift/i)).toBeInTheDocument();
@@ -340,8 +341,8 @@ describe('Crypto -> Wallets tab', () => {
       // adjustment, so printing it beside the RAW derived/live pair visibly
       // failed to add up.
       const line = await screen.findByText((content, element) =>
-        element?.tagName === 'LI' && /with adjustments 1\.000000000023456789/.test(element.textContent));
-      expect(line.textContent).toMatch(/derived 1\.000000000123456789/);
+        element?.tagName === 'LI' && /1\.000000000023456789 with adjustments/.test(element.textContent));
+      expect(line.textContent).toMatch(/adds up to 1\.000000000123456789/);
     });
 
     it('shows each adjustment with its note beside the audit, and removes one on demand', async () => {
@@ -357,7 +358,7 @@ describe('Crypto -> Wallets tab', () => {
       }))]);
       await expandWallet();
 
-      expect(await screen.findByText(/audit adjustments/i)).toBeInTheDocument();
+      expect(await screen.findByText(/balance check adjustments/i)).toBeInTheDocument();
       expect(screen.getByText(/Classic-era L2 fees Etherscan does not report/)).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
@@ -373,7 +374,7 @@ describe('Crypto -> Wallets tab', () => {
     // Never audited and audited-clean are different claims; a wallet added
     // moments ago must not appear to have passed.
     await openEthereumTab([wallet(null)]);
-    expect(screen.getAllByText('Not audited').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Not checked yet').length).toBeGreaterThan(0);
 
     await expandWallet();
     expect(await screen.findByText(/No balance audit yet/i)).toBeInTheDocument();
@@ -406,7 +407,7 @@ describe('Crypto -> Wallets tab', () => {
     expect(await screen.findByText('Arbitrum One')).toBeInTheDocument();
     // The gap is named, not just flagged: "no internal" is what tells the user
     // (and #62) which derived numbers may drift.
-    expect(screen.getByText('no internal')).toBeInTheDocument();
+    expect(screen.getByText('no internal transfers')).toBeInTheDocument();
     // Chain-level coverage detail alone does not inflate the Wallets badge.
     expect(screen.getAllByText('Limited coverage').length).toBeGreaterThan(0);
     expect(screen.queryByText('Sync failed')).toBeNull();
@@ -478,7 +479,7 @@ describe('Crypto -> Wallets tab', () => {
 
     fireEvent.click((await screen.findAllByRole('button', { name: /sync main/i }))[0]);
 
-    expect(await screen.findByText(/wallet sync deferred while the explorer cools down/i)).toBeInTheDocument();
+    expect(await screen.findByText(/sync paused: the blockchain data provider is limiting requests/i)).toBeInTheDocument();
     expect(screen.queryByText('Failed to sync wallet')).toBeNull();
   });
 
@@ -494,7 +495,7 @@ describe('Crypto -> Wallets tab', () => {
     await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1, { mode: 'full' }));
     expect(apiMocks.eth.syncWallet).not.toHaveBeenCalled();
     await expandWallet();
-    expect(await screen.findByText(/History audit: queued/i)).toBeInTheDocument();
+    expect(await screen.findByText(/History audit: waiting to start/i)).toBeInTheDocument();
   });
 
   it('surfaces the persisted reason when an audit remains deferred', async () => {
@@ -541,7 +542,7 @@ describe('Crypto -> Wallets tab', () => {
       },
     }]);
     await expandWallet();
-    const status = await screen.findByText(/History audit: complete with gaps/i);
+    const status = await screen.findByText(/History audit: complete, with known gaps/i);
     expect(status.closest('div')).toHaveClass('text-amber-300');
     expect(screen.queryByText(/History audit: failed/i)).toBeNull();
   });
@@ -559,7 +560,7 @@ describe('Crypto -> Wallets tab', () => {
     }]);
 
     await expandWallet();
-    expect(await screen.findByText('no internal')).toBeInTheDocument();
+    expect(await screen.findByText('no internal transfers')).toBeInTheDocument();
   });
 
   it('stays quiet for a single healthy chain', async () => {
@@ -617,8 +618,8 @@ describe('Crypto -> Wallets tab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /coverage report/i }));
 
-    expect(await screen.findByRole('dialog', { name: /evm source coverage/i })).toBeInTheDocument();
-    expect(screen.getByText(/main · gnosis chain · internal/i)).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: /data coverage/i })).toBeInTheDocument();
+    expect(screen.getByText(/main · gnosis chain · internal transfers/i)).toBeInTheDocument();
     expect(screen.getByText(/internal traces unavailable for blocks 0-123/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download json/i })).toBeInTheDocument();
   });

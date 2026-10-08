@@ -8,6 +8,7 @@ import {
 import { explorerAddressUrl, explorerTxUrl, networkName } from '../../utils/chains';
 import { spamReasonLabel } from '../../utils/dataLabels';
 import ExchangeBalanceExceptionQueue from './ExchangeBalanceExceptionQueue';
+import HowThisWorks from '../../features/crypto/HowThisWorks';
 
 const shortEthAddress = (address) => shortEthAddressOrUnknown(address, '');
 
@@ -388,8 +389,8 @@ function ReviewPanel({
       onError={onError}
       showSuccess={showSuccess}
       showAccount
-      title="Exchange balance review"
-      description="These exceptions preserve the exact provider response and derived ledger value. Accept only with a category and evidence; adjustments affect reconciliation only."
+      title="Exchange balance differences"
+      description="Where an exchange reports a different balance than its records add up to. Say what explains each one, with evidence."
     />
   );
 
@@ -411,12 +412,14 @@ function ReviewPanel({
         <div className="mb-3 px-2">
           <h2 id="eth-review-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Needs Review</h2>
           <p className="mt-1 text-xs text-secondary">
-            Addresses you have transacted with but never given a verdict on. Until you do, their transfers
-            count as external activity — so a hot wallet an exchange rotated to, or one of your own
-            addresses, quietly reads as real spending. Marking an address as an exchange or as yours takes
-            its transfers out of spending, which is only right if that money is still counted somewhere
-            else: a linked account, or a wallet tracked here.
+            Addresses you have sent to or received from, but not yet said what they are.
           </p>
+          <HowThisWorks>
+            Until you decide, transfers with an address count as outside activity, so an exchange&apos;s new
+            deposit address, or one of your own addresses, reads as real spending. Marking it as an exchange
+            or as yours takes its transfers out of spending, which is only right if that money is still
+            counted somewhere else: a linked account, or a wallet tracked here.
+          </HowThisWorks>
         </div>
 
         <datalist id="crypto-eth-label-names">
@@ -499,18 +502,16 @@ function ReviewPanel({
 
       <section aria-labelledby="eth-spam-heading">
         <div className="mb-3 px-2">
-          <h2 id="eth-spam-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Quarantined wallet transactions</h2>
+          <h2 id="eth-spam-heading" className="text-lg font-bold uppercase tracking-tight text-primary">Hidden as spam</h2>
           <p className="mt-1 text-xs text-secondary">
-            Address-poisoning attempts, dust and scam airdrops, recognized automatically and kept out of
-            Needs Review — a queue that fills with junk faster than anyone can drain it is a queue that gets
-            ignored. Nothing is deleted: these transactions keep their amounts and still count toward the
-            balance checks, they are just out of the way. If one of them is real, restore it in a click and
-            the choice sticks through every future sync.
+            Scam airdrops, dust and look-alike address tricks, set aside automatically. If one is real, restore it.
           </p>
-          <p className="mt-1 text-xs text-tertiary">
-            Counted per wallet transaction: a transfer that touched two of your wallets is listed once for
-            each. The Ledger folds those into single movements, so its quarantine count can be lower.
-          </p>
+          <HowThisWorks>
+            Nothing is deleted: these transactions keep their amounts and still count toward the balance checks;
+            they are just kept out of Needs Review. Restoring one sticks through every future sync. This list
+            counts each wallet&apos;s copy of a transfer between two of your wallets, so it can be a little longer
+            than the count in Activity, which shows such a transfer once.
+          </HowThisWorks>
         </div>
 
         <div className="card overflow-hidden">

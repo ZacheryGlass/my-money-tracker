@@ -1,10 +1,21 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Play, X } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
-import { shortEthAddress } from '../../utils/format';
+import { formatDateDisplay, shortEthAddress } from '../../utils/format';
+import { explorerTxUrl, networkName } from '../../utils/chains';
+import { humanize } from '../../features/crypto/plainText';
 import LoadingState from '../LoadingState';
 import LoadFailed from '../../features/crypto/LoadFailed';
 import { ConfirmDialog } from '../Modal';
+
+const DISCOVERY_RECEIPT_TEXT = {
+  complete: 'Checked',
+  contract: 'A contract, not a wallet',
+  high_traffic: 'Too busy to be a personal wallet',
+  dust: 'Only dust',
+  truncated: 'Stopped early; run again',
+  failed: 'Failed',
+};
 
 const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
   const [candidates, setCandidates] = useState([]);
@@ -68,10 +79,10 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-primary">Forgotten-wallet discovery</h2>
-          <p className="text-body-sm text-tertiary">
-            Evidence-backed candidates from known-wallet paths and exchange withdrawals.
-            Nothing is added to your inventory until you decide.
+          <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Find forgotten wallets</h2>
+          <p className="mt-1 text-xs text-secondary">
+            Addresses that may be yours, found by following where your wallets and exchange withdrawals sent
+            money. Nothing is added until you decide.
           </p>
         </div>
         <button type="button" onClick={run} disabled={running} className="inline-flex items-center gap-2 rounded border border-accent/30 bg-accent/10 px-3 py-2 text-xs font-semibold text-accent">
@@ -87,10 +98,14 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="font-mono text-sm text-primary">{shortEthAddress(candidate.address)}</p>
-                <p className="text-caption uppercase tracking-wide text-tertiary">
-                  {candidate.source === 'exchange_withdrawal' ? 'Exchange withdrawal' : 'One-hop value path'}
-                  {candidate.chain_id ? ` · chain ${candidate.chain_id}` : ' · chain not identified'}
-                  {candidate.score != null ? ` · ${(Number(candidate.score) * 100).toFixed(0)}% score` : ''}
+                <p className="text-caption text-tertiary">
+                  {candidate.source === 'exchange_withdrawal' ? 'You withdrew to it from an exchange' : 'One of your wallets sent to it'}
+                  {Number(candidate.chain_id) > 0 ? ` · ${networkName(candidate.chain_id)}` : ' · network unknown'}
+                  {candidate.score != null && (
+                    <span title="How strongly the evidence suggests this address is yours">
+                      {` · ${(Number(candidate.score) * 100).toFixed(0)}% likely`}
+                    </span>
+                  )}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -100,8 +115,26 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
               </div>
             </div>
             <details className="mt-3 text-xs text-secondary">
-              <summary className="cursor-pointer text-tertiary">Show evidence</summary>
-              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-surface-1 p-2 font-mono text-[10px]">{JSON.stringify(candidate.evidence, null, 2)}</pre>
+              <summary className="cursor-pointer text-tertiary">Why it was suggested</summary>
+              <ul className="mt-2 space-y-1">
+                {(Array.isArray(candidate.evidence) ? candidate.evidence : [candidate.evidence]).filter(Boolean).map((item, index) => {
+                  const href = item.tx_hash && Number(candidate.chain_id) > 0 ? explorerTxUrl(item.tx_hash, candidate.chain_id) : null;
+                  return (
+                    // Evidence is an ordered path with no ids of its own.
+                    <li key={`${item.tx_hash || item.type || 'evidence'}:${index}`} className="flex flex-wrap items-baseline gap-x-2 font-mono text-[11px]">
+                      {item.block_time && <span className="font-sans text-tertiary">{formatDateDisplay(item.block_time)}</span>}
+                      {item.from_address && <span>{shortEthAddress(item.from_address)} → {shortEthAddress(item.to_address)}</span>}
+                      {item.token_symbol && <span className="font-sans">{item.token_symbol}</span>}
+                      {!item.from_address && <span className="font-sans">{humanize(item.type || item.source || 'evidence')}</span>}
+                      {href && <a href={href} target="_blank" rel="noreferrer" className="font-sans text-accent hover:underline">transaction ↗</a>}
+                    </li>
+                  );
+                })}
+              </ul>
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[10px] text-tertiary">Raw evidence</summary>
+                <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-surface-1 p-2 font-mono text-[10px]">{JSON.stringify(candidate.evidence, null, 2)}</pre>
+              </details>
             </details>
           </article>
         ))}
@@ -109,17 +142,19 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
       {receipts.length > 0 && (
         <details className="rounded border border-border bg-surface-2 p-4">
           <summary className="cursor-pointer text-sm font-semibold text-primary">
-            Provider receipts ({receipts.length})
+            Check results ({receipts.length})
           </summary>
           <p className="mt-1 text-xs text-tertiary">
-            These durable outcomes explain which bounded checks completed, were skipped, or need a retry.
+            What each address check found, and which ones need a retry.
           </p>
           <div className="mt-3 space-y-2">
             {receipts.map((receipt) => (
               <div key={receipt.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 text-xs">
-                <span className="font-mono text-secondary">{shortEthAddress(receipt.address)} · chain {receipt.chain_id} · depth {receipt.depth}</span>
+                <span className="font-mono text-secondary">
+                  {shortEthAddress(receipt.address)} · {networkName(receipt.chain_id)} · {receipt.depth} {Number(receipt.depth) === 1 ? 'step' : 'steps'} from your wallets
+                </span>
                 <span className={`font-semibold uppercase tracking-wide ${receipt.status === 'failed' ? 'text-loss' : receipt.status === 'complete' ? 'text-gain' : 'text-accent'}`}>
-                  {receipt.status.replace('_', ' ')}{receipt.rows_fetched != null ? ` · ${receipt.rows_fetched} rows` : ''}
+                  {DISCOVERY_RECEIPT_TEXT[receipt.status] || humanize(receipt.status)}{receipt.rows_fetched != null ? ` · ${receipt.rows_fetched} transactions read` : ''}
                 </span>
                 {receipt.error_message && <span className="basis-full text-tertiary">{receipt.error_message}</span>}
               </div>

@@ -239,13 +239,13 @@ describe('CryptoLedger', () => {
 
     render(<CryptoLedger />);
 
-    expect(await screen.findByText('Amounts and timing never fold automatically.')).toBeInTheDocument();
-    expect(screen.getByText(/Ambiguous — review every alternative/)).toBeInTheDocument();
+    expect(await screen.findByText('Matching amounts alone never pair two transfers.')).toBeInTheDocument();
+    expect(screen.getByText(/More than one transfer could be the other side/)).toBeInTheDocument();
     expect(screen.getByText('Pending')).toBeInTheDocument();
-    expect(screen.getByText(/Exact protocol identity found; waiting for finalized/)).toBeInTheDocument();
-    expect(screen.getByText(/Receipt evidence unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/Both sides found; waiting for the networks to finalize/)).toBeInTheDocument();
+    expect(screen.getByText(/Couldn.t look up this transfer/)).toBeInTheDocument();
     expect(screen.getAllByText('Failed').length).toBeGreaterThan(0);
-    expect(screen.getByText(/User rejected/)).toBeInTheDocument();
+    expect(screen.getByText(/You rejected/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(apiMocks.crypto.setBridgeVerdict).toHaveBeenCalledWith(
@@ -282,7 +282,7 @@ describe('CryptoLedger', () => {
     await waitFor(() => expect(apiMocks.crypto.getBridgeAudit).toHaveBeenLastCalledWith({
       suggestion_limit: 1, suggestion_offset: 1, suggestion_generation: '2:2', limit: 1,
     }));
-    expect(await screen.findByText(/arbitrum · chain 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/Arbitrum · Ethereum/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Show more alternatives' })).not.toBeInTheDocument());
   });
 
@@ -311,7 +311,7 @@ describe('CryptoLedger', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Show more alternatives' }));
 
     expect(await screen.findByText(/Bridge evidence changed during review/)).toBeInTheDocument();
-    expect(await screen.findByText(/linea · chain 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/Linea · Ethereum/)).toBeInTheDocument();
     expect(apiMocks.crypto.getBridgeAudit).toHaveBeenCalledTimes(3);
   });
 
@@ -1043,7 +1043,7 @@ describe('CryptoLedger', () => {
 
     // The way in is the count itself: the summary states how many rows the
     // quarantine is hiding, and clicking that number is what shows them.
-    fireEvent.click(await screen.findByRole('button', { name: /5 quarantined/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /5 hidden as spam/i }));
     await vi.waitFor(() => {
       expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
         expect.objectContaining({ spam: 'only', offset: 0 })
@@ -1078,7 +1078,7 @@ describe('CryptoLedger', () => {
 
     render(<CryptoLedger />);
 
-    expect(await screen.findByText(/37 quarantined/)).toBeInTheDocument();
+    expect(await screen.findByText(/37 hidden as spam/)).toBeInTheDocument();
   });
 
   it('names the reason a row was quarantined and rescues it in one click', async () => {

@@ -40,7 +40,7 @@ vi.mock('../utils/api', () => ({
 // The Transactions tab now opens onto the unified ledger; the raw per-leg feed
 // is the second view behind this button.
 const showTransferLegs = async () => {
-  fireEvent.click(await screen.findByRole('button', { name: /transfer legs/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /individual transfers/i }));
 };
 
 const CRYPTO_ACCOUNT = {

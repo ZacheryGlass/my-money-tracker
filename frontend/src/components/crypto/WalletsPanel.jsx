@@ -4,7 +4,8 @@ import { AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileC
 import { eth as ethAPI } from '../../utils/api';
 import { formatExactUnits, formatRelativeTime, shortEthAddress as shortEthAddressOrUnknown } from '../../utils/format';
 import { getAccountDisplayName } from '../../utils/accountDisplay';
-import { explorerAddressUrl } from '../../utils/chains';
+import { explorerAddressUrl, networkName } from '../../utils/chains';
+import { auditStageLabel, auditStatusLabel, coverageStatusLabel, feedLabel } from '../../features/crypto/plainText';
 import { DEFERRED_SYNC_CODES, LIMITED_SYNC_CODES } from '../../utils/walletSync';
 import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
@@ -65,6 +66,28 @@ const negateUnits = (units) => {
   return text.startsWith('-') ? text.slice(1) : `-${text}`;
 };
 
+// Native audit rows are 18-decimal on every chain (ETH, POL, xDAI). The form
+// speaks whole coins; the API keeps base units. Both directions are string and
+// BigInt arithmetic, so no digit is lost to Number.
+const NATIVE_DECIMALS = 18;
+const unitsToCoins = (units) => {
+  const text = String(units ?? '').trim();
+  if (!/^-?\d+$/.test(text)) return '';
+  const negative = text.startsWith('-');
+  const digits = (negative ? text.slice(1) : text).padStart(NATIVE_DECIMALS + 1, '0');
+  const whole = digits.slice(0, -NATIVE_DECIMALS).replace(/^0+(?=\d)/, '');
+  const fraction = digits.slice(-NATIVE_DECIMALS).replace(/0+$/, '');
+  return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
+};
+const coinsToUnits = (coins) => {
+  const match = String(coins ?? '').trim().match(/^(-?)(\d*)(?:\.(\d{0,18}))?$/);
+  if (!match || (!match[2] && !match[3])) return null;
+  const [, sign, whole, fraction = ''] = match;
+  const units = BigInt(`${whole || '0'}${fraction.padEnd(NATIVE_DECIMALS, '0')}`);
+  if (units === 0n) return null;
+  return `${sign}${units.toString()}`;
+};
+
 export function WalletReconciliation({ report, chainNames, walletId, onChanged, onError }) {
   // The adjustment form's state. Declared before the early return -- hooks
   // must run on every render.
@@ -99,7 +122,8 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
     : `${formatExactUnits(adj.amount_wei, 18)} ${adj.asset_key}`);
 
   const canAdjust = walletId != null && typeof onChanged === 'function';
-  const amountValid = /^-?\d+$/.test(adjustAmount.trim()) && !/^-?0+$/.test(adjustAmount.trim());
+  const adjustUnits = coinsToUnits(adjustAmount);
+  const amountValid = adjustUnits != null;
 
   // The server's delta already includes adjustments, but derived_units stays
   // the RAW ledger figure -- so once an adjustment exists, delta beside raw
@@ -122,7 +146,7 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
     setAdjusting(row);
     // Prefilled from the row's current delta: the adjustment that zeroes it is
     // the delta negated, so absorbing a known, explained drift is one note away.
-    setAdjustAmount(negateUnits(row.delta_units));
+    setAdjustAmount(unitsToCoins(negateUnits(row.delta_units)));
     setAdjustNote('');
   };
 
@@ -135,7 +159,7 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
         walletId,
         chainId: adjusting.chain_id,
         assetKey: adjusting.asset_key,
-        amountWei: adjustAmount.trim(),
+        amountWei: adjustUnits,
         note: adjustNote.trim(),
       });
       setAdjusting(null);
@@ -168,20 +192,20 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
           <div className="flex items-start gap-3">
             <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
             <div className="min-w-0">
-              <p className="font-bold uppercase tracking-wide">Balance audit: coins unaccounted for</p>
+              <p className="font-bold uppercase tracking-wide">Balance check: coins unaccounted for</p>
               <p className="mt-1">
-                Transfer history is synced from the first block, so the balance it adds up to should match
-                the chain exactly. It does not, which means a movement is missing from the ledger.
+                The transfer history is complete from the wallet&apos;s first transaction, so it should add up
+                to the balance on the blockchain exactly. It does not, so a transaction is missing.
               </p>
               <ul className="mt-2 space-y-1 font-mono text-[11px]">
                 {nativeDrift.map((row) => {
                   const adjusted = adjustedDerived(row);
                   return (
                   <li key={`${row.chain_id}-${row.asset_key}`}>
-                    {chainName(row.chain_id)}: ledger is {amount(row)} {symbolOf(row)} off
-                    {' '}(derived {formatExactUnits(row.derived_units, 18)}
-                    {adjusted != null ? `, with adjustments ${formatExactUnits(adjusted, 18)}` : ''}
-                    , chain {formatExactUnits(row.live_units, 18)})
+                    {chainName(row.chain_id)}: history is {amount(row)} {symbolOf(row)} off
+                    {' '}(history adds up to {formatExactUnits(row.derived_units, 18)}
+                    {adjusted != null ? `, ${formatExactUnits(adjusted, 18)} with adjustments` : ''}
+                    ; blockchain says {formatExactUnits(row.live_units, 18)})
                     {canAdjust && (
                       <button
                         type="button"
@@ -202,11 +226,11 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
                 // from fudging the audit until it stops talking.
                 <form onSubmit={submitAdjustment} className="mt-3 space-y-2 rounded border border-loss/20 bg-surface p-3 text-secondary">
                   <p className="text-[11px]">
-                    Absorb a known, explained drift on {chainName(adjusting.chain_id)} ({adjusting.asset_key}).
-                    This adjusts the balance audit only; holdings and spending are untouched.
+                    Record a known, explained difference on {chainName(adjusting.chain_id)} ({adjusting.asset_key}).
+                    This changes the balance check only; holdings and spending are untouched.
                   </p>
                   <label className="block text-[10px] uppercase tracking-wide text-tertiary">
-                    Amount (base units, signed)
+                    Amount in {adjusting.asset_key} (negative lowers the history&apos;s total)
                     <input
                       type="text"
                       value={adjustAmount}
@@ -279,7 +303,7 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
 
       {clean && report.assets_checked > 0 && (
         <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
-          Balance audit: ledger matches the chain across {report.matched + report.dust} of{' '}
+          Balance check: history matches the blockchain for {report.matched + report.dust} of{' '}
           {report.assets_checked} assets &middot; {formatRelativeTime(report.checked_at)}
         </p>
       )}
@@ -289,10 +313,10 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
         // matches because of a correction must show the correction and its
         // note beside it, or the audit reads as having simply passed.
         <div className="rounded border border-border bg-surface-3 p-4 text-xs leading-relaxed text-secondary">
-          <p className="font-bold uppercase tracking-wide text-primary">Audit adjustments</p>
+          <p className="font-bold uppercase tracking-wide text-primary">Balance check adjustments</p>
           <p className="mt-1">
-            Documented corrections summed into the audit&apos;s derived figure. They change the
-            balance audit only; holdings, the ledger and spending never read them.
+            Explained differences added to the history&apos;s total before it is compared with the
+            blockchain. They change the balance check only; holdings, activity and spending never use them.
           </p>
           <ul className="mt-2 space-y-1">
             {report.adjustments.map((adjustment) => (
@@ -324,7 +348,7 @@ export function WalletReconciliation({ report, chainNames, walletId, onChanged, 
             `${symbolOf(row)} on ${chainName(row.chain_id)} (${RECONCILIATION_SKIP_TEXT[row.skip_reason] || 'not compared'})`
           )).join('; ')}
           {unchecked.length > 4 ? ` and ${unchecked.length - 4} more` : ''}
-          {report.truncated ? '. More assets are listed in the audit API.' : ''}
+          {report.truncated ? '. Only the first of them are listed here.' : ''}
         </p>
       )}
 
@@ -366,7 +390,7 @@ const walletStatus = (wallet, { syncing = false } = {}) => {
   if (wallet.recapture_running) return { label: 'Recapturing history', tone: 'text-amber-400' };
   if (syncing || wallet.sync_running) return { label: 'Syncing', tone: 'text-amber-400' };
   if (DEFERRED_SYNC_CODES.has(wallet.error_code)) {
-    return { label: 'Sync deferred', tone: 'text-amber-400' };
+    return { label: 'Sync paused', tone: 'text-amber-400' };
   }
   if (LIMITED_SYNC_CODES.has(wallet.error_code)) {
     return { label: 'Limited coverage', tone: 'text-amber-400' };
@@ -376,20 +400,20 @@ const walletStatus = (wallet, { syncing = false } = {}) => {
     return { label: 'Sync failed', tone: 'text-loss' };
   }
   if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'deferred')) {
-    return { label: 'Sync deferred', tone: 'text-amber-400' };
+    return { label: 'Sync paused', tone: 'text-amber-400' };
   }
   if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'limited')) {
     return { label: 'Limited coverage', tone: 'text-amber-400' };
   }
   const report = wallet.reconciliation;
-  if (!report) return { label: 'Not audited', tone: 'text-tertiary' };
+  if (!report) return { label: 'Not checked yet', tone: 'text-tertiary' };
   const { nativeDrift, tokenDrift } = splitAuditIssues(report);
   // Sync starts at block 0, so an ETH gap can only mean a movement was never
   // recorded. Token drift is often a rebasing contract, hence the quieter tone.
   if (nativeDrift.length) return { label: 'ETH unaccounted for', tone: 'text-loss' };
-  if (tokenDrift.length) return { label: 'Token drift', tone: 'text-secondary' };
-  if (report.assets_checked > 0) return { label: 'Matches chain', tone: 'text-tertiary' };
-  return { label: 'Not audited', tone: 'text-tertiary' };
+  if (tokenDrift.length) return { label: 'Token balance differs', tone: 'text-secondary' };
+  if (report.assets_checked > 0) return { label: 'Balances match', tone: 'text-tertiary' };
+  return { label: 'Not checked yet', tone: 'text-tertiary' };
 };
 
 // A chain that is off keeps its history, so it is not counted as live here.
@@ -549,11 +573,11 @@ function WalletsPanel({
       const result = await ethAPI.syncWallet(id);
       await onChanged();
       if (result.sync?.status === 'failed') {
-        onError('Wallet sync completed with feed errors. Open the wallet for details.');
+        onError('Wallet sync finished, but some networks could not be read. Open the wallet for details.');
       } else if (result.sync?.status === 'deferred') {
-        showNotice('Wallet sync deferred while the explorer cools down. Retry after the time shown in Coverage; scheduled full scans also retry automatically.');
+        showNotice('Sync paused: the blockchain data provider is limiting requests. Try again later; the nightly sync also retries on its own.');
       } else if (result.sync?.status === 'unsupported') {
-        showNotice('Wallet synced with limited coverage on feeds the explorer does not support.');
+        showNotice('Wallet synced. Some networks are only partly covered by the data provider.');
       } else {
         showSuccess('Wallet synced successfully');
       }
@@ -841,11 +865,11 @@ function WalletsPanel({
             : amber ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
               : 'border-border bg-surface-2 text-secondary'}`}>
             <p className="font-bold uppercase tracking-wide">
-              History audit: {String(audit.status).replaceAll('_', ' ')}
+              History audit: {auditStatusLabel(audit.status)}
             </p>
             <p className="mt-1">
-              Stage {String(audit.stage || 'queued').replaceAll('_', ' ')}
-              {audit.progress?.current_chain ? ` · chain ${audit.progress.current_chain}` : ''}
+              {auditStageLabel(audit.stage || 'queued')}
+              {audit.progress?.current_chain ? ` · ${networkName(audit.progress.current_chain)}` : ''}
               {audit.progress?.boundary_block ? ` · through block ${audit.progress.boundary_block}` : ''}
             </p>
             {audit.error_detail && <p className="mt-1">{audit.error_detail}</p>}
@@ -888,7 +912,7 @@ function WalletsPanel({
               {!chain.enabled && <span className="font-normal normal-case">{chain.excluded ? 'excluded' : 'off'}</span>}
               {chain.unsupported_feeds?.length > 0 && (
                 <span className="font-normal normal-case">
-                  no {chain.unsupported_feeds.join(', ')}
+                  no {chain.unsupported_feeds.map(feedLabel).join(', ')}
                 </span>
               )}
             </Badge>
@@ -901,7 +925,7 @@ function WalletsPanel({
         <div className={`rounded p-3 text-xs leading-relaxed ${DEFERRED_SYNC_CODES.has(wallet.error_code) || LIMITED_SYNC_CODES.has(wallet.error_code) ? 'border border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border border-loss/20 bg-loss/5 text-loss'}`}>
           <div className="flex items-start gap-3">
             <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-            <p>{wallet.error_message || `Wallet sync reported an error: ${wallet.error_code}`}</p>
+            <p title={wallet.error_code || undefined}>{wallet.error_message || 'The last sync failed. Try Sync again; the nightly sync also retries.'}</p>
           </div>
         </div>
       )}
@@ -1028,77 +1052,76 @@ function WalletsPanel({
       <Modal
         open={Boolean(coverageReport)}
         onClose={() => setCoverageReport(null)}
-        title="EVM source coverage"
-        description={coverageReport ? `Generated ${new Date(coverageReport.generated_at).toLocaleString()}` : undefined}
+        title="Data coverage"
+        description={coverageReport
+          ? `Which parts of each wallet's history the data providers have confirmed complete. Generated ${new Date(coverageReport.generated_at).toLocaleString()}.`
+          : undefined}
         size="lg"
         sheet={false}
       >
-        {coverageReport && (
-          <div className="px-5 pb-5 sm:px-6 sm:pb-6">
-            <div className="mt-3 flex justify-end">
-              <button type="button" onClick={downloadCoverageReport} className={ROW_ACTION_CLASS}>
-                <Download size={11} />
-                Download JSON
-              </button>
-            </div>
-        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
-          {[
-            ['Complete', coverageReport.summary.complete],
-            ['Failed', coverageReport.summary.failed],
-            ['Deferred', coverageReport.summary.deferred],
-            ['Unsupported', coverageReport.summary.unsupported],
-            ['Unverified', coverageReport.summary.unverified],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded border border-border bg-surface-2 p-3">
-              <p className={`text-[10px] font-bold uppercase tracking-wider ${['Deferred', 'Unsupported'].includes(label) ? 'text-amber-400' : label === 'Complete' ? 'text-tertiary' : 'text-loss'}`}>{label}</p>
-              <p className="mt-1 font-money text-xl text-primary">{value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-5">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-secondary">
-            Enabled-feed gaps
-          </h3>
-          {coverageReport.coverage.filter((row) => (
+        {coverageReport && (() => {
+          const gaps = coverageReport.coverage.filter((row) => (
             row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)
-          )).length === 0 ? (
-            <p className="mt-2 rounded border border-gain/20 bg-gain/5 p-3 text-sm text-gain">
-              Every enabled feed has a verified boundary.
-            </p>
-          ) : (
-            <div className="mt-2 divide-y divide-border overflow-hidden rounded border border-border">
-              {coverageReport.coverage.filter((row) => (
-                row.enabled && ['failed', 'deferred', 'unsupported', 'unverified'].includes(row.status)
-              )).map((row) => (
-                <div key={`${row.wallet_id}:${row.chain_id}:${row.feed}`} className="bg-surface-2 p-3">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <p className="text-sm font-semibold text-primary">
-                      {row.wallet_label || shortEthAddress(row.wallet_address)} · {row.chain_name} · {row.feed}
+          ));
+          return (
+            <div className="px-5 pb-5 sm:px-6 sm:pb-6">
+              <div className="mt-3 flex justify-end">
+                <button type="button" onClick={downloadCoverageReport} className={ROW_ACTION_CLASS}>
+                  <Download size={11} />
+                  Download JSON
+                </button>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                {['complete', 'failed', 'deferred', 'unsupported', 'unverified'].map((status) => (
+                  <div key={status} className="rounded border border-border bg-surface-2 p-3">
+                    <p className={`text-[10px] font-bold uppercase tracking-wider ${['deferred', 'unsupported'].includes(status) ? 'text-amber-400' : status === 'complete' ? 'text-tertiary' : 'text-loss'}`}>
+                      {coverageStatusLabel(status)}
                     </p>
-                    <span className={`text-[10px] font-bold uppercase tracking-wider ${['deferred', 'unsupported'].includes(row.status) ? 'text-amber-400' : 'text-loss'}`}>{row.status}</span>
+                    <p className="mt-1 font-money text-xl text-primary">{coverageReport.summary[status]}</p>
                   </div>
-                  <p className="mt-1 break-words text-xs text-secondary">
-                    {row.error_message || 'A pre-report cursor exists, but this feed has not completed a post-report sync yet.'}
-                  </p>
-                  <p className="mt-1 text-[10px] text-tertiary">
-                    Provider: {row.provider}
-                    {row.covered_through_block != null ? ` · last proven block ${row.covered_through_block}` : ''}
-                    {row.retry_after_at ? ` · retry after ${new Date(row.retry_after_at).toLocaleString()}` : ''}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
 
-            <div className="mt-5 flex justify-end">
-              <button type="button" onClick={() => setCoverageReport(null)} className="rounded border border-border px-4 py-2 text-sm font-semibold text-secondary hover:text-primary">
-                Close
-              </button>
+              <div className="mt-5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-secondary">Gaps</h3>
+                {gaps.length === 0 ? (
+                  <p className="mt-2 rounded border border-gain/20 bg-gain/5 p-3 text-sm text-gain">
+                    Every network and data type in use is confirmed complete.
+                  </p>
+                ) : (
+                  <div className="mt-2 divide-y divide-border overflow-hidden rounded border border-border">
+                    {gaps.map((row) => (
+                      <div key={`${row.wallet_id}:${row.chain_id}:${row.feed}`} className="bg-surface-2 p-3">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <p className="text-sm font-semibold text-primary">
+                            {row.wallet_label || shortEthAddress(row.wallet_address)} · {row.chain_name} · {feedLabel(row.feed)}
+                          </p>
+                          <span className={`text-[10px] font-bold uppercase tracking-wider ${['deferred', 'unsupported'].includes(row.status) ? 'text-amber-400' : 'text-loss'}`}>
+                            {coverageStatusLabel(row.status)}
+                          </span>
+                        </div>
+                        <p className="mt-1 break-words text-xs text-secondary">
+                          {row.error_message || 'Not yet confirmed by a sync since coverage tracking began. The next sync confirms it.'}
+                        </p>
+                        <p className="mt-1 text-[10px] text-tertiary">
+                          Source: {row.provider}
+                          {row.covered_through_block != null ? ` · complete through block ${row.covered_through_block}` : ''}
+                          {row.retry_after_at ? ` · retry after ${new Date(row.retry_after_at).toLocaleString()}` : ''}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 flex justify-end">
+                <button type="button" onClick={() => setCoverageReport(null)} className="rounded border border-border px-4 py-2 text-sm font-semibold text-secondary hover:text-primary">
+                  Close
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </Modal>
 
       <Modal

@@ -62,27 +62,27 @@ const CRYPTO_TAB_IDS = [OVERVIEW_TAB, HOLDINGS_TAB, TRANSACTIONS_TAB, ...MANAGE_
 const PAGE_META = {
   [HOLDINGS_TAB]: {
     title: 'Holdings',
-    description: 'Inspect every crypto position and maintain holdings in manual accounts.',
+    description: 'Every crypto position you hold, across wallets, exchanges and manual accounts.',
   },
   [TRANSACTIONS_TAB]: {
     title: 'Activity',
-    description: 'Follow the unified event ledger across wallets, chains and exchange accounts.',
+    description: 'Every transaction across your wallets, networks and exchange accounts, newest first.',
   },
   [WALLETS_TAB]: {
     title: 'Wallets',
-    description: 'Connect EVM addresses, verify source coverage and recover forgotten wallets.',
+    description: 'Add wallet addresses, keep them synced, and find wallets you may have forgotten.',
   },
   [EXCHANGES_TAB]: {
     title: 'Exchanges',
-    description: 'Connect read-only venue APIs, import exports and monitor historical coverage.',
+    description: 'Connect exchanges with read-only keys or CSV exports, and check their balances.',
   },
   [REVIEW_TAB]: {
     title: 'Review',
-    description: 'Resolve unexplained activity, counterparties, matching evidence and balance exceptions.',
+    description: 'Explain what the app could not: unexplained transactions, unknown addresses and balance gaps.',
   },
   [LABELS_TAB]: {
     title: 'Labels & Rules',
-    description: 'Maintain the durable address classifications, notes and token exclusions that shape the ledger.',
+    description: 'Say what addresses are, keep notes on them, and hide tokens you do not want counted.',
   },
 };
 
@@ -422,11 +422,11 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       await fetchData();
       setSyncNonce((nonce) => nonce + 1);
       if (result.sync?.status === 'failed') {
-        setError('Wallet sync completed with feed errors. Open Wallets for details.');
+        setError('Wallet sync finished, but some networks could not be read. Open Wallets for details.');
       } else if (result.sync?.status === 'deferred') {
-        showNotice('Wallet sync deferred while the explorer cools down. Retry after the time shown in Coverage; scheduled full scans also retry automatically.');
+        showNotice('Sync paused: the blockchain data provider is limiting requests. Try again later; the nightly sync also retries on its own.');
       } else if (result.sync?.status === 'unsupported') {
-        showNotice('Wallet synced with limited explorer coverage.');
+        showNotice('Wallet synced. Some networks are only partly covered by the data provider.');
       } else {
         showSuccess('Wallet synced');
       }
@@ -464,9 +464,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     if (failed.length) {
       setError(`${failed.length} of ${wallets.length} wallets failed to sync: ${failed.join(', ')}`);
     } else if (deferred.length) {
-      showNotice(`${deferred.length} of ${wallets.length} wallets deferred while an explorer cools down. Retry after the time shown in Coverage; scheduled full scans also retry automatically.`);
+      showNotice(`${deferred.length} of ${wallets.length} wallets paused: the blockchain data provider is limiting requests. Try again later; the nightly sync also retries on its own.`);
     } else if (limited.length) {
-      showNotice(`Wallets synced; ${limited.length} have evidence-backed explorer coverage limits.`);
+      showNotice(`Wallets synced. ${limited.length} have networks the data provider only partly covers; see Coverage on the Wallets page.`);
     } else {
       showSuccess('Wallets synced');
     }
@@ -876,8 +876,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                 <>
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                     <p className="text-caption text-tertiary">
-                      Every per-leg transfer as the chain recorded it — the raw feed behind the
-                      ledger&apos;s events, and the place to ignore a token in context.
+                      Each individual transfer as the blockchain recorded it, behind the events in
+                      Activity. Spam tokens can be ignored from here.
                     </p>
                     <button
                       type="button"

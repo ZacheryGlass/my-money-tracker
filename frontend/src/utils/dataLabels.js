@@ -23,7 +23,7 @@ export const LABEL_VERDICT_KEEP = 'keep';
 // the crypto meta store (GET /api/crypto/meta), so a kind added on the server
 // appears here without a client edit.
 export const labelVerdictOptions = () => [
-  { value: LABEL_VERDICT_KEEP, label: 'Keep current verdict' },
+  { value: LABEL_VERDICT_KEEP, label: 'Keep current (new: Exchange)' },
   ...(getCryptoMeta()?.vocabulary?.labelKinds || []).map(({ value, label }) => ({ value, label })),
 ];
 
