@@ -398,6 +398,18 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('a venue dollar quote still wins over the series', venue('TRD-1')?.usd_value === '1832.4');
   ok('a non-native asset stays unpriced even with a series row',
     venue('SOL-1')?.usd_value === null && venue('SOL-1')?.usd_basis === 'unpriced');
+  // Not rounded to cents: a cent-rounded "0.00" renders as worthless, and the
+  // client's "< $0.01" needs the exact figure to tell dust from zero.
+  const dust = await pool.query(
+    `INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at, base_asset, base_amount,
+       external_id, needs_review, source)
+     VALUES ($1, 'transfer', '2026-01-10 08:00', 'ETH', 0.000000001, 'DUST-1', false, 'api') RETURNING id`,
+    [accountId]
+  );
+  const withDust = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
+  const dustRow = withDust.rows.find((r) => r.external_id === 'DUST-1');
+  ok('a sub-cent venue value stays exact instead of rounding to zero', dustRow?.usd_value === '0.000003', dustRow);
+  await pool.query('DELETE FROM exchange_records WHERE id = $1', [dust.rows[0].id]);
   // Staking income sums a window's reward events per asset, in exact units
   // and at-the-time dollars, counting a reward with no price as unpriced.
   const rewards = await pool.query(

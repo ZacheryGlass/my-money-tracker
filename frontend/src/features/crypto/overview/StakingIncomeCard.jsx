@@ -2,6 +2,23 @@ import React, { useEffect, useState } from 'react';
 import { crypto as cryptoAPI } from '../../../utils/api';
 import { formatDecimalAmount, formatUsdAtTime } from '../../../utils/format';
 
+// Dust rewards can be priced and still total under a cent, which is not the
+// same as having no price: only an asset none of whose rewards is priced says
+// so.
+function AssetValue({ entry }) {
+  const unpriced = Number(entry.unpriced) || 0;
+  if (unpriced >= entry.events) return <span className="text-tertiary">No USD value</span>;
+  const usd = Number(entry.usd) > 0 || Number(entry.quantity) === 0
+    ? formatUsdAtTime(entry.usd, 'exact')
+    : '< $0.01';
+  return (
+    <>
+      {usd}
+      {unpriced > 0 && <span className="text-tertiary"> + {unpriced.toLocaleString()} without a price</span>}
+    </>
+  );
+}
+
 // Staking rewards over the last year, per asset, in at-the-time dollars. A
 // reward with no price is counted and said, so the total reads as a floor.
 export default function StakingIncomeCard({ refreshKey = 0, onOpenActivity }) {
@@ -33,7 +50,7 @@ export default function StakingIncomeCard({ refreshKey = 0, onOpenActivity }) {
               <span className="ml-2 text-caption text-tertiary">{entry.events.toLocaleString()} rewards</span>
             </span>
             <span className="ml-auto font-money text-primary">
-              {Number(entry.usd) > 0 ? formatUsdAtTime(entry.usd, 'exact') : <span className="text-tertiary">No USD value</span>}
+              <AssetValue entry={entry} />
             </span>
           </li>
         ))}
