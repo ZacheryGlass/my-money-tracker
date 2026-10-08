@@ -231,6 +231,19 @@ describe('Crypto -> Exchanges tab', () => {
     });
   });
 
+  it('gives a CSV-only archive no balance check it could never run', async () => {
+    exchangesAPI.getAll.mockResolvedValue(listResponse([
+      { ...ACCOUNT, id: 4, name: 'Bittrex archive', exchange: 'other', reconciliation_status: 'unknown' },
+      { ...CONNECTED, reconciliation_status: 'unknown' },
+    ]));
+    await renderSettings();
+
+    expect(await screen.findByText('Bittrex archive')).toBeInTheDocument();
+    // Only the connected account keeps the notice and the disclosure.
+    expect(screen.getAllByText(/hasn.t reported full balances/)).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^Balance check/ })).toHaveLength(1);
+  });
+
   it('says an account has never been imported rather than showing nothing', async () => {
     exchangesAPI.getAll.mockResolvedValue(
       listResponse([{ ...ACCOUNT, last_import_at: null, record_count: 0, needs_review_count: 0 }])

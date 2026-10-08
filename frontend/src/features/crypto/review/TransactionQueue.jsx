@@ -10,7 +10,7 @@ import { LedgerRowDetail } from '../../../components/CryptoLedger';
 import { enrichLedgerRow } from '../ledgerRows';
 import LoadFailed from '../LoadFailed';
 import CounterpartyVerdictForm from '../CounterpartyVerdictForm';
-import { groupReviewRows, suggestedFix } from './grouping';
+import { fixStatesReason, groupReviewRows, suggestedFix } from './grouping';
 import { markRowReviewed, undoMarkReviewed } from './markReviewed';
 
 // The server caps a page at 500; a queue longer than that drains page by page.
@@ -189,7 +189,7 @@ export default function TransactionQueue({
                   {group.unpriced > 0 ? <span className="text-tertiary">{group.usdTotal > 0 ? ' + ' : ''}{group.unpriced} without a price</span> : null}
                 </span>
               </div>
-              {group.reason && <p className="text-caption text-tertiary">{group.reason}</p>}
+              {group.reason && !fixStatesReason(group) && <p className="text-caption text-tertiary">{group.reason}</p>}
               <p className="text-body-sm text-secondary">{suggestedFix(group)}</p>
 
               <div className="flex flex-wrap items-center gap-2 pt-1">

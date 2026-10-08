@@ -870,7 +870,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
           {tabBody(HOLDINGS_TAB, (
             <section>
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {/* Full width on a phone, where the control's equal parts would
+                    otherwise squeeze "By account" onto two lines. */}
+                <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 sm:w-auto">
                   <SegmentedControl
                     label="View"
                     value={holdingsView}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupReviewRows, suggestedFix } from './grouping';
+import { fixStatesReason, groupReviewRows, suggestedFix } from './grouping';
 
 const row = (overrides) => ({
   source: 'onchain', category: 'exchange_deposit', review_reason: 'No exchange record',
@@ -38,5 +38,12 @@ describe('groupReviewRows', () => {
   it('points an unmatched exchange flow at that exchange', () => {
     const [group] = groupReviewRows([row({})]);
     expect(suggestedFix(group)).toMatch(/No record from Binance covers this transfer/);
+    // Which already says what the reason line would.
+    expect(fixStatesReason(group)).toBe(true);
+  });
+
+  it('keeps the reason where the fix does not restate it', () => {
+    const [group] = groupReviewRows([row({ category: 'send', counterparty_name: null, counterparty_address: '0xaa' })]);
+    expect(fixStatesReason(group)).toBe(false);
   });
 });

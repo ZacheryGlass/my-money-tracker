@@ -269,7 +269,8 @@ function ReviewPanel({
 }) {
   const [triagingAddress, setTriagingAddress] = useState(null);
   const [showDust, setShowDust] = useState(false);
-  const [showSpam, setShowSpam] = useState(false);
+  // Open on the Spam tab, which exists only to show this list.
+  const [showSpam, setShowSpam] = useState(section === 'spam');
   const [unquarantiningTx, setUnquarantiningTx] = useState(null);
   const [loadingMoreSpam, setLoadingMoreSpam] = useState(false);
 

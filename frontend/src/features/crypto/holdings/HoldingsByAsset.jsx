@@ -90,7 +90,8 @@ export default function HoldingsByAsset({ groups, accountName, renderHoldingChip
               )}
             </span>
             {renderHoldingChips?.(holding)}
-            <span className="font-money text-tertiary">{quantityText(parseFloat(holding.quantity) || 0)}</span>
+            {/* A fixed column, or every source tag shifts with its quantity's width. */}
+            <span className="min-w-[7rem] text-right font-money text-tertiary">{quantityText(parseFloat(holding.quantity) || 0)}</span>
             <span className="w-24 text-right font-money text-primary">{formatCurrency(holdingValue(holding))}</span>
           </button>
         </li>

@@ -526,7 +526,7 @@ const CryptoLedger = ({
       id: 'where',
       accessorFn: (row) => row.source_label || '',
       header: 'Where',
-      meta: { width: '8rem' },
+      meta: { width: '10rem' },
       // Which wallet, then which network: the network alone ("Ethereum") does
       // not say whose money moved when thirty wallets share it.
       cell: ({ row }) => {
@@ -602,7 +602,8 @@ const CryptoLedger = ({
       accessorFn: (row) => row.fee_amount || '',
       header: 'Fee',
       meta: {
-        width: '7.5rem',
+        // Fits "0.00393539 ETH" and "< 0.000001 POL" whole.
+        width: '9rem',
         align: 'right',
         headerClassName: 'hidden text-right xl:table-cell',
         cellClassName: 'hidden truncate whitespace-nowrap text-right xl:table-cell',
@@ -744,12 +745,18 @@ const CryptoLedger = ({
           the quarantine view -- see the chip above for why. */}
       {spam !== 'only' && (
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 border border-border bg-surface p-2">
+        {/* Three segments carrying five-digit counts overflow a phone, so
+            there it is a dropdown whose options still say the counts. */}
         <SegmentedControl
           label="Show"
+          mobile="select"
           value={status}
           onChange={(next) => { setStatus(next); setExpandedId(null); }}
           options={STATUS_OPTIONS.map((option) => ({
             ...option,
+            selectLabel: statusCounts
+              ? `${option.label} (${Number(statusCounts[option.value]).toLocaleString()})`
+              : option.label,
             // Needs review is the queue, so its selected state runs the same
             // orange as the review chips; the count beside it stays orange
             // even unselected while it is nonzero.
@@ -792,7 +799,7 @@ const CryptoLedger = ({
           </select>
         </label>
 
-        <label className="flex min-w-0 flex-1 items-center gap-2 sm:min-w-[14rem]">
+        <label className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:min-w-[14rem]">
           <Search size={13} className="shrink-0 text-tertiary" />
           <input
             type="search"

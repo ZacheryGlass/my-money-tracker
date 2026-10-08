@@ -55,6 +55,14 @@ export function groupReviewRows(rows) {
 
 // What would explain this kind of flag, in one sentence. Advice, not a rule:
 // every group can still be opened row by row.
+// The fixes for an unrecorded exchange transfer and an unmatched bridge open by
+// saying what is missing, so the ladder's reason beside them would only repeat
+// it.
+export function fixStatesReason(group) {
+  if (group.source === 'exchange') return false;
+  return ['exchange_deposit', 'exchange_withdrawal', 'bridge_out', 'bridge_in'].includes(group.category);
+}
+
 export function suggestedFix(group) {
   const who = group.parties.length === 1 ? group.parties[0] : 'these exchanges';
   if (group.source === 'exchange') {

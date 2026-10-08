@@ -939,6 +939,12 @@ function ExchangesPanel({
               || (account.last_sync_status === 'balance_mismatch' ? 'mismatch'
                 : account.last_sync_status === 'coverage_limited' ? 'stale' : null)
               || (account.balance_report?.mismatch_count > 0 ? 'mismatch' : null);
+            // A CSV-only archive with no audit history has nothing to check its
+            // records against, ever: no notice and no Balance check, instead of
+            // a permanent "can't be checked" on every closed venue.
+            const nothingToCheck = !connected && persistedReconciliationStatus === 'unknown'
+              && !(account.balance_exception_count > 0)
+              && !(account.balance_report?.last_known_mismatch_count > 0);
             const testing = testingId === account.id;
             const balanceAudit = balanceAudits[account.id];
             return (
@@ -1221,9 +1227,13 @@ function ExchangesPanel({
                   )}
 
                   {visibleJob && (
+                    // A finished sync whose balance check failed is not good
+                    // news: green around a red mismatch says two things at once.
                     <div className={`mt-5 rounded border p-4 text-xs leading-relaxed ${
                       visibleJob.status === 'failed'
                         ? 'border-loss/20 bg-loss/5 text-loss'
+                        : visibleJob.status === 'completed' && durableReconciliationStatus(visibleJob.last_batch) === 'mismatch'
+                          ? 'border-border bg-surface-2 text-secondary'
                         : visibleJob.status === 'completed'
                           ? 'border-gain/20 bg-gain/5 text-gain'
                           : 'border-accent/20 bg-accent/5 text-secondary'
@@ -1304,7 +1314,7 @@ function ExchangesPanel({
 
                   {/* Persisted from the last run, so a mismatch found by the
                       nightly job is visible without pressing anything. */}
-                  {!syncResult && !result && !visibleReconciliation
+                  {!syncResult && !result && !visibleReconciliation && !nothingToCheck
                     && ['mismatch', 'stale', 'unknown'].includes(persistedReconciliationStatus) && (
                     // The box takes the notice's own weight: red for a real
                     // mismatch, quiet for "never had a balance report".
@@ -1366,6 +1376,7 @@ function ExchangesPanel({
                   )}
                 </div>
 
+                {!nothingToCheck && (
                 <div className="border-t border-border">
                   <button
                     type="button"
@@ -1407,6 +1418,7 @@ function ExchangesPanel({
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* The flagged rows themselves. Without somewhere to see and
                     clear them the count can only ever go up, and a badge that

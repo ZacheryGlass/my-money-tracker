@@ -368,7 +368,8 @@ describe('quarantined spam', () => {
 
     // The server's count, not the page's: the list is capped.
     expect(await screen.findByText(/^1 quarantined wallet transaction$/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /quarantined wallet transaction/i }));
+    // The Spam tab shows its list without a further click.
+    expect(screen.getByRole('button', { name: /quarantined wallet transaction/i })).toHaveAttribute('aria-expanded', 'true');
 
     expect(screen.getByText('Lookalike address')).toBeInTheDocument();
     // The security warning is the whole reason the server stores a reason
@@ -385,7 +386,7 @@ describe('quarantined spam', () => {
       summary: { spam_count: 1, needs_review_count: 0 },
       pagination: { total: 1 },
     });
-    fireEvent.click(await screen.findByRole('button', { name: /quarantined wallet transaction/i }));
+    await screen.findByRole('button', { name: /quarantined wallet transaction/i });
 
     fireEvent.click(screen.getByRole('button', { name: /not spam/i }));
     await waitFor(() => {
@@ -408,7 +409,7 @@ describe('quarantined spam', () => {
       summary: { spam_count: 4, needs_review_count: 0 },
       pagination: { total: 4 },
     });
-    fireEvent.click(await screen.findByRole('button', { name: /quarantined wallet transactions/i }));
+    await screen.findByRole('button', { name: /quarantined wallet transactions/i });
     expect(screen.getByText(/showing the 2 most recent of 4/i)).toBeInTheDocument();
 
     apiMocks.eth.getActivity.mockResolvedValue({

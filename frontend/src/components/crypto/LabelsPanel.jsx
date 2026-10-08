@@ -338,6 +338,7 @@ function LabelsPanel({
       : label.kind === 'service' ? 'Swap service'
       : label.kind === 'own' ? 'Yours'
       : label.kind === 'external' ? 'Outside party'
+      : label.kind === 'exchange' ? 'Exchange'
       : null;
     return (
       <div key={label.address} className="px-4 py-3">
