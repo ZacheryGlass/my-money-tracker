@@ -812,40 +812,6 @@ router.post('/:id/test', async (req, res) => {
   }
 });
 
-// Compatibility endpoint for clients that need one bounded pass and its
-// detailed receipt. The app uses the durable /sync/start contract below.
-router.post('/:id/sync', async (req, res) => {
-  try {
-    const account = await loadAccount(req, res);
-    if (!account) return undefined;
-    if (!connectorFor(account.exchange)) {
-      return res.status(400).json({
-        error: `There is no API sync for "${account.exchange}" accounts; use CSV import instead`,
-        code: 'EXCHANGE_NOT_SUPPORTED',
-      });
-    }
-
-    if (req.query.background === 'true') {
-      const job = await ExchangeBackfillService.enqueue(req.user.id, account.id);
-      return res.status(202).json({ job, account_id: account.id });
-    }
-
-    const result = await ExchangeSyncService.syncAccount(
-      req.user.id, account.id, { interactive: true }
-    );
-    const continuation = result.backfill_pending
-      ? await ExchangeBackfillService.enqueue(req.user.id, account.id)
-      : null;
-    return res.status(200).json({
-      ...result,
-      account_id: account.id,
-      ...(continuation ? { job: continuation } : {}),
-    });
-  } catch (error) {
-    return respondToSyncError(res, error, 'Failed to sync the exchange account');
-  }
-});
-
 // Sync Now queues durable work and returns immediately, so a years-long
 // history cannot be cut off by a proxy timeout.
 router.post('/:id/sync/start', async (req, res) => {

@@ -1828,15 +1828,12 @@ test('an unsupported venue is told to use CSV rather than offered a broken sync'
   assert.match(response.body.error, /CSV import/);
 });
 
-test('the bounded sync compatibility endpoint still returns its detailed receipt', async () => {
+test('the retired bounded sync endpoint is gone; Sync Now is /sync/start', async () => {
   connectAccount();
 
   const response = await request(app).post(`/api/exchanges/${OWNED_ACCOUNT_ID}/sync`);
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.account_id, OWNED_ACCOUNT_ID);
-  assert.equal(response.body.imported, 12, 'eleven economic events plus the second-asset fee');
-  assert.equal(response.body.backfill_pending, false);
+  assert.equal(response.status, 404);
 });
 
 // --- The dedupe contract ---------------------------------------------------

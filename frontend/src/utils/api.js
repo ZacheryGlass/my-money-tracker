@@ -17,7 +17,6 @@ const api = axios.create({
 // explorer sync is running.
 const ETH_SYNC_POLL_INTERVAL_MS = 10_000;
 const ETH_SYNC_POLL_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
-const ETH_SYNC_ROUTE_GRACE_MS = 5 * 60 * 1_000;
 const ETH_SYNC_JOB_STATUSES = new Set(['running', 'completed', 'failed']);
 const ETH_SYNC_RESULT_STATUSES = new Set(['complete', 'deferred', 'unsupported', 'failed']);
 
@@ -85,7 +84,6 @@ const waitForWalletSync = async (walletId, startPayload) => {
   const initial = validateWalletSyncJob(startPayload.job);
   const expectedJobId = initial.jobId;
   const deadline = Date.now() + ETH_SYNC_POLL_TIMEOUT_MS;
-  const routeGraceDeadline = Date.now() + ETH_SYNC_ROUTE_GRACE_MS;
   let job = initial.job;
 
   while (job.status === 'running') {
@@ -97,20 +95,9 @@ const waitForWalletSync = async (walletId, startPayload) => {
     await new Promise((resolve) => {
       setTimeout(resolve, Math.min(ETH_SYNC_POLL_INTERVAL_MS, remainingMs));
     });
-    let response;
-    try {
-      response = await api.get(
-        `/api/eth/wallets/${walletId}/sync-status?job_id=${encodeURIComponent(expectedJobId)}`
-      );
-    } catch (error) {
-      // A rolling deployment can briefly route a poll to an older instance
-      // after a newer instance accepted the background job. Give that missing
-      // route a bounded grace period; all other failures remain immediate.
-      if ([404, 405].includes(error?.response?.status) && Date.now() < routeGraceDeadline) {
-        continue;
-      }
-      throw error;
-    }
+    const response = await api.get(
+      `/api/eth/wallets/${walletId}/sync-status?job_id=${encodeURIComponent(expectedJobId)}`
+    );
     if (!isRecord(response?.data)) {
       throw walletSyncProtocolError('status response is malformed');
     }
@@ -445,19 +432,9 @@ export const eth = {
     return response.data;
   },
   syncWallet: async (id) => {
-    const response = await api.post(`/api/eth/wallets/${id}/sync?async=true`);
+    const response = await api.post(`/api/eth/wallets/${id}/sync`);
     const payload = response.data;
     if (!isRecord(payload)) throw walletSyncProtocolError('start response is malformed');
-
-    // Older servers kept the request open and returned the complete sync
-    // result directly. Preserve that contract during rolling deployments.
-    if (Object.prototype.hasOwnProperty.call(payload, 'sync')) {
-      if (!isRecord(payload.sync) || typeof payload.sync.status !== 'string' || !payload.sync.status) {
-        throw walletSyncProtocolError('legacy response has an invalid sync result');
-      }
-      return payload;
-    }
-
     return waitForWalletSync(id, payload);
   },
   setWalletChainExcluded: async (id, chainId, excluded) => {
@@ -706,10 +683,6 @@ export const crypto = {
 export const exchanges = {
   getAll: async () => {
     const response = await api.get('/api/exchanges');
-    return response.data;
-  },
-  getFiatMatches: async (params = {}) => {
-    const response = await api.get('/api/exchanges/fiat-matches', { params });
     return response.data;
   },
   getBalanceExceptions: async (params = {}) => {

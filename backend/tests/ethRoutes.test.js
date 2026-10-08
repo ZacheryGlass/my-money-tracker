@@ -325,7 +325,7 @@ test('POST /api/eth/wallets/bulk reports each address and adds the good ones', a
   }
 });
 
-test('wallet sync routes preserve the legacy response and opt into a scoped durable job', async () => {
+test('wallet sync always starts a scoped durable job', async () => {
   const EthWallet = require('../src/models/EthWallet');
   const EthWalletService = require('../src/services/EthWalletService');
   const originalFind = EthWallet.findByIdForUser;
@@ -338,7 +338,7 @@ test('wallet sync routes preserve the legacy response and opt into a scoped dura
     id === 7 ? { id, user_id: userId } : null
   );
   EthWallet.findById = async (id) => ({ id, user_id: 1, label: 'fixture' });
-  EthWalletService.syncWallet = async () => ({ status: 'complete', inserted: 0 });
+  EthWalletService.syncWallet = async () => { throw new Error('the route must not sync inside the request'); };
   EthWalletService.queueSyncWallet = async (id) => {
     queued.push(id);
     return {
@@ -371,12 +371,7 @@ test('wallet sync routes preserve the legacy response and opt into a scoped dura
     };
   };
   try {
-    const legacy = await request(app).post('/api/eth/wallets/7/sync');
-    assert.equal(legacy.status, 200);
-    assert.equal(legacy.body.sync.status, 'complete');
-    assert.deepEqual(queued, []);
-
-    const started = await request(app).post('/api/eth/wallets/7/sync?async=true');
+    const started = await request(app).post('/api/eth/wallets/7/sync');
     assert.equal(started.status, 202);
     assert.deepEqual(queued, [7]);
     assert.deepEqual(started.body, {

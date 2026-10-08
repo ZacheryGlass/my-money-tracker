@@ -1187,8 +1187,8 @@ class EtherscanService {
   }
 
   // Current balance in wei, as a string (values exceed Number precision).
-  // Per chain: the native asset is ETH on every chain in the registry, so this
-  // is the chain's ETH balance, not a share of one global figure.
+  // Per chain, in that chain's native asset (ETH, POL or XDAI per the
+  // registry), not a share of one global figure.
   static async getEthBalance(address, apiKey, chainId = etherscan.CHAIN_ID) {
     if (chains.getChain(chainId)?.historyProvider === 'zksync-lite') {
       return ZkSyncLiteService.getBalance(address);

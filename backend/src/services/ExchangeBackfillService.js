@@ -74,8 +74,6 @@ function batchStats(result) {
 class ExchangeBackfillService {
   static get RATE_LIMIT_CODES() { return RATE_LIMIT_CODES; }
 
-  static isRateLimited(error) { return isRateLimited(error); }
-
   static backoffDelay(attempt, retryAfterMs) {
     return backoffDelay(attempt, retryAfterMs);
   }

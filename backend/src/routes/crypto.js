@@ -135,11 +135,10 @@ function withBridgeLabel(row) {
   };
 }
 
-// GET /api/crypto/ledger
+// GET /api/crypto/eth-ledger
 //
-// The unified ledger: eth_activity and exchange_records interleaved by time,
-// with an exchange record that carries a matched on-chain hash folded into that
-// transaction's row rather than rendered a second time.
+// ETH balance entries per account scope (a wallet's chain or an exchange
+// account), from source entries rather than folded activity (models/EthLedger).
 router.get('/eth-ledger', async (req, res) => {
   try {
     const allowed = new Set(['wallet_id', 'scope', 'limit', 'offset']);
@@ -176,6 +175,11 @@ router.get('/eth-ledger', async (req, res) => {
   }
 });
 
+// GET /api/crypto/ledger
+//
+// The unified ledger: eth_activity and exchange_records interleaved by time,
+// with an exchange record that carries a matched on-chain hash folded into that
+// transaction's row rather than rendered a second time.
 router.get('/ledger', async (req, res) => {
   try {
     const parsed = await parseFilters(req);

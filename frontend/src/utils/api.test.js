@@ -38,18 +38,6 @@ describe('eth.syncWallet', () => {
     vi.useRealTimers();
   });
 
-  it('preserves a legacy synchronous sync response without polling', async () => {
-    const payload = {
-      wallet: { id: 7 },
-      sync: { status: 'complete', inserted: 12 },
-    };
-    axiosMocks.post.mockResolvedValue({ data: payload });
-
-    await expect(eth.syncWallet(7)).resolves.toBe(payload);
-    expect(axiosMocks.post).toHaveBeenCalledWith('/api/eth/wallets/7/sync?async=true');
-    expect(axiosMocks.get).not.toHaveBeenCalled();
-  });
-
   it('polls the durable job and maps its completed outcome to sync.status', async () => {
     const started = {
       started: true,
@@ -83,7 +71,7 @@ describe('eth.syncWallet', () => {
     expect(axiosMocks.get).toHaveBeenNthCalledWith(2, '/api/eth/wallets/7/sync-status?job_id=41');
   });
 
-  it('maps a terminal failed job to the legacy failed sync outcome', async () => {
+  it('maps a terminal failed job to a failed sync outcome', async () => {
     const failed = {
       ...runningJob(),
       status: 'failed',
@@ -97,33 +85,6 @@ describe('eth.syncWallet', () => {
       sync: { status: 'failed' },
     });
     expect(axiosMocks.get).not.toHaveBeenCalled();
-  });
-
-  it('tolerates a missing status route during a rolling deployment', async () => {
-    const routeMissing = new Error('not found on old instance');
-    routeMissing.response = { status: 404 };
-    const completed = {
-      ...runningJob(),
-      status: 'completed',
-      completed_at: '2026-09-19T12:00:20.000Z',
-      sync_status: 'complete',
-    };
-    axiosMocks.post.mockResolvedValue({
-      data: { started: true, job: runningJob(), message: 'Wallet sync started' },
-    });
-    axiosMocks.get
-      .mockRejectedValueOnce(routeMissing)
-      .mockResolvedValueOnce({ data: { job: completed } });
-
-    const pending = eth.syncWallet(7);
-    await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(20_000);
-
-    await expect(pending).resolves.toMatchObject({
-      job: completed,
-      sync: { status: 'complete' },
-    });
-    expect(axiosMocks.get).toHaveBeenCalledTimes(2);
   });
 
   it('fails closed when the start response has no durable job', async () => {

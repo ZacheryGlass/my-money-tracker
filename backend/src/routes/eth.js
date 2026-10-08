@@ -542,16 +542,9 @@ router.post('/wallets/:id/sync', async (req, res) => {
       return res.status(404).json({ error: 'Wallet not found' });
     }
 
-    // Keep the original synchronous contract for older browser bundles and API
-    // clients during a rolling deployment.  The current frontend opts into the
-    // durable background protocol explicitly so an old client can never mistake
-    // a 202 receipt for completed wallet data.
-    if (req.query.async !== 'true') {
-      const result = await EthWalletService.syncWallet(id);
-      const updated = await EthWallet.findById(id);
-      return res.status(200).json({ wallet: updated, sync: result });
-    }
-
+    // Always durable background work polled through sync-status: a full
+    // history walk outlives the proxy timeout. `?async=true` from older
+    // bundles is accepted and changes nothing.
     const { started, job } = await EthWalletService.queueSyncWallet(id);
     return res.status(202).json({
       started,
@@ -806,11 +799,9 @@ router.get('/activity', async (req, res) => {
 // Prices are global market data; WHICH assets a person holds is not, so this
 // reads through the user-scoped, fail-closed model entry point.
 //
-// NO UI CONSUMER YET. The unified ledger (#63) is the screen that surfaces
-// usd_value / usd_basis / the unpriced list together; until it lands this is
-// reachable only by hand. Deliberate, and stated here rather than implied: the
-// enumeration is what makes "unpriced, not $0" checkable today, and #63 is
-// where it becomes visible.
+// The unified ledger (CryptoLedger) renders it beside the feed as a
+// completeness signal: the enumeration is what makes "unpriced, not $0"
+// checkable.
 router.get('/prices/unpriced', async (req, res) => {
   try {
     const assets = await AssetPriceHistory.unpricedAssetsForUser(req.user.id);
