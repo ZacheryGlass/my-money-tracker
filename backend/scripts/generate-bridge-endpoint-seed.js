@@ -16,50 +16,22 @@ const END = '-- END GENERATED ENDPOINT SEED';
 
 const quote = (value) => `'${String(value).replace(/'/g, "''")}'`;
 
-function familyVersion(entry) {
-  if (entry.protocol === 'optimism') return 'bedrock';
-  if (entry.protocol === 'linea') return 'message-service-v1';
-  if (entry.protocol === 'across') return 'v2-v3';
-  if (entry.protocol === 'polygon') return 'pos-plasma';
-  if (entry.protocol === 'zksync-lite') return 'lite-v1';
-  if (entry.protocol === 'zksync') return 'era-bridgehub';
-  if (entry.protocol === 'gnosis') {
-    return /router|usds/i.test(entry.name) ? 'usds-router' : 'legacy-xdai';
+// Each pack row states its own bridge family, endpoint role and direction
+// (data/builtin-bridge-labels.json); nothing is inferred from its name.
+function required(entry, field) {
+  const value = entry[field];
+  if (typeof value !== 'string' || !value) {
+    throw new Error(`Bridge pack row ${entry.address} (${entry.name}) has no ${field}`);
   }
-  if (entry.protocol === 'arbitrum') {
-    return /arbsys|outbox/i.test(entry.name) ? 'nitro' : 'classic-or-nitro';
-  }
-  throw new Error(`No bridge family version for ${entry.protocol}`);
+  return value;
 }
 
-function role(entry) {
-  const name = entry.name.toLowerCase();
-  const roles = [
-    ['message passer', 'message_passer'], ['message service', 'message_service'],
-    ['spoke pool', 'spoke_pool'], ['standard bridge', 'standard_bridge'],
-    ['asset router', 'asset_router'], ['gateway router', 'gateway_router'],
-    ['erc20 gateway', 'token_gateway'], ['custom gateway', 'token_gateway'],
-    ['weth gateway', 'token_gateway'], ['delayed inbox', 'inbox'],
-    ['outbox', 'outbox'], ['arbsys', 'system_messenger'],
-    ['retryable', 'retryable_precompile'], ['portal', 'portal'],
-    ['cross domain messenger', 'cross_domain_messenger'],
-    ['bridgehub', 'bridgehub'], ['chain contract', 'chain_mailbox'],
-    ['base token', 'base_token_system'], ['token bridge', 'token_bridge'],
-    ['shared bridge', 'shared_bridge'], ['main contract', 'rollup_contract'],
-    ['rootchainmanager', 'root_chain_manager'], ['ether predicate', 'predicate'],
-    ['erc20 predicate', 'predicate'], ['deposit manager', 'deposit_manager'],
-    ['mrc20', 'state_sync_token'], ['block reward', 'block_reward'],
-    ['deposit contract', 'deposit_contract'], ['bridgerouter', 'bridge_router'],
-    ['bridge', 'bridge'],
-  ];
-  return roles.find(([needle]) => name.includes(needle))?.[1] || 'bridge_endpoint';
-}
-
+const familyVersion = (entry) => required(entry, 'family_version');
+const role = (entry) => required(entry, 'role');
 function direction(entry) {
-  const endpointRole = role(entry);
-  if (['inbox', 'deposit_manager', 'root_chain_manager', 'predicate'].includes(endpointRole)) return 'out';
-  if (['outbox', 'block_reward', 'state_sync_token'].includes(endpointRole)) return 'in';
-  return 'both';
+  const value = required(entry, 'direction');
+  if (!['in', 'out', 'both'].includes(value)) throw new Error(`Bridge pack row ${entry.address} has direction ${value}`);
+  return value;
 }
 
 function endpointRows(pack) {

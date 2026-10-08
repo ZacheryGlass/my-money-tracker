@@ -44,7 +44,10 @@
       "chain_id": 1,
       "protocol": "gnosis",
       "docs_name": "xDAI Bridge Contract",
-      "explorer_name_tag": "Gnosis: xDAI Bridge"
+      "explorer_name_tag": "Gnosis: xDAI Bridge",
+      "family_version": "legacy-xdai",
+      "role": "bridge",
+      "direction": "both"
     },
     {
       "address": "0x9a873656c19efecbfb4f9fab5b7acdeab466a0b0",
@@ -52,7 +55,10 @@
       "chain_id": 1,
       "protocol": "gnosis",
       "docs_name": "BridgeRouter Proxy",
-      "explorer_name_tag": "Gnosis: BridgeRouter"
+      "explorer_name_tag": "Gnosis: BridgeRouter",
+      "family_version": "usds-router",
+      "role": "bridge_router",
+      "direction": "both"
     },
     {
       "address": "0x7301cfa0e1756b71869e93d4e4dca5c7d0eb0aa6",
@@ -60,7 +66,10 @@
       "chain_id": 100,
       "protocol": "gnosis",
       "docs_name": "xDAI Bridge Contract",
-      "explorer_name_tag": "Gnosis: xDAI Bridge"
+      "explorer_name_tag": "Gnosis: xDAI Bridge",
+      "family_version": "legacy-xdai",
+      "role": "bridge",
+      "direction": "both"
     },
     {
       "address": "0x481c034c6d9441db23ea48de68bcae812c5d39ba",
@@ -68,7 +77,10 @@
       "chain_id": 100,
       "protocol": "gnosis",
       "docs_name": "Block Reward Contract",
-      "explorer_name_tag": "Gnosis: Block Reward"
+      "explorer_name_tag": "Gnosis: Block Reward",
+      "family_version": "legacy-xdai",
+      "role": "block_reward",
+      "direction": "in"
     },
     {
       "address": "0x5c183c8a49aba6e31049997a56d75600e27ff8c9",
@@ -76,7 +88,10 @@
       "chain_id": 100,
       "protocol": "gnosis",
       "docs_name": "USDSDepositContract",
-      "explorer_name_tag": "Gnosis: USDS Deposit Contract"
+      "explorer_name_tag": "Gnosis: USDS Deposit Contract",
+      "family_version": "usds-router",
+      "role": "deposit_contract",
+      "direction": "both"
     },
     {
       "address": "0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f",
@@ -84,7 +99,10 @@
       "chain_id": 1,
       "protocol": "arbitrum",
       "docs_name": "Delayed Inbox",
-      "explorer_name_tag": "Arbitrum: Delayed Inbox"
+      "explorer_name_tag": "Arbitrum: Delayed Inbox",
+      "family_version": "classic-or-nitro",
+      "role": "inbox",
+      "direction": "out"
     },
     {
       "address": "0x8315177ab297ba92a06054ce80a67ed4dbd7ed3a",
@@ -92,7 +110,10 @@
       "chain_id": 1,
       "protocol": "arbitrum",
       "docs_name": "Bridge",
-      "explorer_name_tag": "Arbitrum: Bridge"
+      "explorer_name_tag": "Arbitrum: Bridge",
+      "family_version": "classic-or-nitro",
+      "role": "bridge",
+      "direction": "both"
     },
     {
       "address": "0x0b9857ae2d4a3dbe74ffe1d7df045bb7f96e4840",
@@ -100,7 +121,10 @@
       "chain_id": 1,
       "protocol": "arbitrum",
       "docs_name": "Outbox",
-      "explorer_name_tag": "Arbitrum: Outbox 4"
+      "explorer_name_tag": "Arbitrum: Outbox 4",
+      "family_version": "nitro",
+      "role": "outbox",
+      "direction": "in"
     },
     {
       "address": "0x72ce9c846789fdb6fc1f34ac4ad25dd9ef7031ef",
@@ -108,7 +132,10 @@
       "chain_id": 1,
       "protocol": "arbitrum",
       "docs_name": "L1 Gateway Router",
-      "explorer_name_tag": "Arbitrum One: L1 Gateway Router"
+      "explorer_name_tag": "Arbitrum One: L1 Gateway Router",
+      "family_version": "classic-or-nitro",
+      "role": "gateway_router",
+      "direction": "both"
     },
     {
       "address": "0xa3a7b6f88361f48403514059f1f16c8e78d60eec",
@@ -116,7 +143,10 @@
       "chain_id": 1,
       "protocol": "arbitrum",
       "docs_name": "L1 ERC20 Gateway",
-      "explorer_name_tag": "Arbitrum One: L1 ERC20 Gateway"
+      "explorer_name_tag": "Arbitrum One: L1 ERC20 Gateway",
+      "family_version": "classic-or-nitro",
+      "role": "token_gateway",
+      "direction": "both"
     },
     {
       "address": "0xcee284f754e854890e311e3280b767f80797180d",
@@ -124,7 +154,10 @@
       "chain_id": 1,
       "protocol": "arbitrum",
       "docs_name": "L1 Arb-Custom Gateway",
-      "explorer_name_tag": "Arbitrum One: L1 Arb - Custom Gateway"
+      "explorer_name_tag": "Arbitrum One: L1 Arb - Custom Gateway",
+      "family_version": "classic-or-nitro",
+      "role": "token_gateway",
+      "direction": "both"
     },
     {
       "address": "0xd92023e9d9911199a6711321d1277285e6d4e2db",
@@ -132,7 +165,10 @@
       "chain_id": 1,
       "protocol": "arbitrum",
       "docs_name": "L1 Weth Gateway",
-      "explorer_name_tag": "Arbitrum One: Wrapped Ether Gateway"
+      "explorer_name_tag": "Arbitrum One: Wrapped Ether Gateway",
+      "family_version": "classic-or-nitro",
+      "role": "token_gateway",
+      "direction": "both"
     },
     {
       "address": "0x5288c571fd7ad117bea99bf60fe0846c4e84f933",
@@ -140,7 +176,10 @@
       "chain_id": 42161,
       "protocol": "arbitrum",
       "docs_name": "L2 Gateway Router",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "classic-or-nitro",
+      "role": "gateway_router",
+      "direction": "both"
     },
     {
       "address": "0x09e9222e96e7b4ae2a407b98d48e330053351eee",
@@ -148,7 +187,10 @@
       "chain_id": 42161,
       "protocol": "arbitrum",
       "docs_name": "L2 ERC20 Gateway",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "classic-or-nitro",
+      "role": "token_gateway",
+      "direction": "both"
     },
     {
       "address": "0x096760f208390250649e3e8763348e783aef5562",
@@ -156,7 +198,10 @@
       "chain_id": 42161,
       "protocol": "arbitrum",
       "docs_name": "L2 Arb-Custom Gateway",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "classic-or-nitro",
+      "role": "token_gateway",
+      "direction": "both"
     },
     {
       "address": "0x6c411ad3e74de3e7bd422b94a27770f5b86c623b",
@@ -164,7 +209,10 @@
       "chain_id": 42161,
       "protocol": "arbitrum",
       "docs_name": "L2 Weth Gateway",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "classic-or-nitro",
+      "role": "token_gateway",
+      "direction": "both"
     },
     {
       "address": "0x0000000000000000000000000000000000000064",
@@ -172,7 +220,10 @@
       "chain_id": 42161,
       "protocol": "arbitrum",
       "docs_name": "ArbSys (precompile)",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "nitro",
+      "role": "system_messenger",
+      "direction": "both"
     },
     {
       "address": "0x000000000000000000000000000000000000006e",
@@ -181,7 +232,10 @@
       "protocol": "arbitrum",
       "source_url": "https://docs.arbitrum.io/build-decentralized-apps/precompiles/reference",
       "docs_name": "ArbRetryableTx (precompile), 'Precompile address: 0x...006E' on the precompiles reference (source_url) -- the address lives there, not on the protocol's contract-addresses page. The counterparty of every reshaped classic-era L1->L2 ETH deposit (config/chains.js classicRetryableDeposits), so this label is what classifies those credits bridge_in and lets the matcher pair them with the L1 Delayed Inbox leg.",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "classic-or-nitro",
+      "role": "retryable_precompile",
+      "direction": "both"
     },
     {
       "address": "0xd19d4b5d358258f05d7b411e21a1460d11b0876f",
@@ -189,7 +243,10 @@
       "chain_id": 1,
       "protocol": "linea",
       "docs_name": "LineaRollup: Linea Rollup and L1 Message Service",
-      "explorer_name_tag": "Linea: L1 Message Service"
+      "explorer_name_tag": "Linea: L1 Message Service",
+      "family_version": "message-service-v1",
+      "role": "message_service",
+      "direction": "both"
     },
     {
       "address": "0x051f1d88f0af5763fb888ec4378b4d8b29ea3319",
@@ -197,7 +254,10 @@
       "chain_id": 1,
       "protocol": "linea",
       "docs_name": "L1 Token bridge",
-      "explorer_name_tag": "Linea: L1 Token bridge"
+      "explorer_name_tag": "Linea: L1 Token bridge",
+      "family_version": "message-service-v1",
+      "role": "token_bridge",
+      "direction": "both"
     },
     {
       "address": "0x508ca82df566dcd1b0de8296e70a96332cd644ec",
@@ -205,7 +265,10 @@
       "chain_id": 59144,
       "protocol": "linea",
       "docs_name": "L2 Message Service",
-      "explorer_name_tag": "Linea: L2 Message Service"
+      "explorer_name_tag": "Linea: L2 Message Service",
+      "family_version": "message-service-v1",
+      "role": "message_service",
+      "direction": "both"
     },
     {
       "address": "0x353012dc4a9a6cf55c941badc267f82004a8ceb9",
@@ -213,7 +276,10 @@
       "chain_id": 59144,
       "protocol": "linea",
       "docs_name": "L2 Token bridge",
-      "explorer_name_tag": "Linea: L2 Token bridge"
+      "explorer_name_tag": "Linea: L2 Token bridge",
+      "family_version": "message-service-v1",
+      "role": "token_bridge",
+      "direction": "both"
     },
     {
       "address": "0xabea9132b05a70803a4e85094fd0e1800777fbef",
@@ -221,7 +287,10 @@
       "chain_id": 1,
       "protocol": "zksync-lite",
       "docs_name": "zkSync mainnet contract",
-      "explorer_name_tag": "zkSync"
+      "explorer_name_tag": "zkSync",
+      "family_version": "lite-v1",
+      "role": "rollup_contract",
+      "direction": "both"
     },
     {
       "address": "0x303a465b659cbb0ab36ee643ea362c509eeb5213",
@@ -229,7 +298,10 @@
       "chain_id": 1,
       "protocol": "zksync",
       "docs_name": "Bridgehub",
-      "explorer_name_tag": "ZKsync: Bridgehub"
+      "explorer_name_tag": "ZKsync: Bridgehub",
+      "family_version": "era-bridgehub",
+      "role": "bridgehub",
+      "direction": "both"
     },
     {
       "address": "0xd7f9f54194c633f36ccd5f3da84ad4a1c38cb2cb",
@@ -237,7 +309,10 @@
       "chain_id": 1,
       "protocol": "zksync",
       "docs_name": "Shared Bridge",
-      "explorer_name_tag": "ZKsync: Shared Bridge"
+      "explorer_name_tag": "ZKsync: Shared Bridge",
+      "family_version": "era-bridgehub",
+      "role": "shared_bridge",
+      "direction": "both"
     },
     {
       "address": "0x8829ad80e425c646dab305381ff105169feece56",
@@ -245,7 +320,10 @@
       "chain_id": 1,
       "protocol": "zksync",
       "docs_name": "L1AssetRouter",
-      "explorer_name_tag": "ZKsync: L1 Asset Router"
+      "explorer_name_tag": "ZKsync: L1 Asset Router",
+      "family_version": "era-bridgehub",
+      "role": "asset_router",
+      "direction": "both"
     },
     {
       "address": "0x32400084c286cf3e17e7b677ea9583e60a000324",
@@ -253,7 +331,10 @@
       "chain_id": 1,
       "protocol": "zksync",
       "docs_name": "ZKsync Era chain contract",
-      "explorer_name_tag": "ZKsync Era: Diamond Proxy"
+      "explorer_name_tag": "ZKsync Era: Diamond Proxy",
+      "family_version": "era-bridgehub",
+      "role": "chain_mailbox",
+      "direction": "both"
     },
     {
       "address": "0x57891966931eb4bb6fb81430e6ce0a03aabde063",
@@ -262,7 +343,10 @@
       "protocol": "zksync",
       "source_url": "https://docs.zksync.io/zksync-protocol/api/zks-rpc",
       "docs_name": "l1Erc20DefaultBridge",
-      "explorer_name_tag": "ZKsync Era: L1 ERC20 Bridge"
+      "explorer_name_tag": "ZKsync Era: L1 ERC20 Bridge",
+      "family_version": "era-bridgehub",
+      "role": "bridge",
+      "direction": "both"
     },
     {
       "address": "0x11f943b2c77b743ab90f4a0ae7d5a4e7fca3e102",
@@ -271,7 +355,10 @@
       "protocol": "zksync",
       "source_url": "https://docs.zksync.io/zksync-protocol/api/zks-rpc",
       "docs_name": "l2Erc20DefaultBridge",
-      "explorer_name_tag": "ZKsync Era: L2 ERC20 Bridge"
+      "explorer_name_tag": "ZKsync Era: L2 ERC20 Bridge",
+      "family_version": "era-bridgehub",
+      "role": "bridge",
+      "direction": "both"
     },
     {
       "address": "0x000000000000000000000000000000000000800a",
@@ -280,7 +367,10 @@
       "protocol": "zksync",
       "source_url": "https://docs.zksync.io/zksync-protocol/era-vm/contracts/system-contracts",
       "docs_name": "L2BaseToken",
-      "explorer_name_tag": "L2 Base Token"
+      "explorer_name_tag": "L2 Base Token",
+      "family_version": "era-bridgehub",
+      "role": "base_token_system",
+      "direction": "both"
     },
     {
       "address": "0x99c9fc46f92e8a1c0dec1b1747d010903e884be1",
@@ -288,7 +378,10 @@
       "chain_id": 1,
       "protocol": "optimism",
       "docs_name": "L1StandardBridgeProxy",
-      "explorer_name_tag": "Optimism: Gateway"
+      "explorer_name_tag": "Optimism: Gateway",
+      "family_version": "bedrock",
+      "role": "standard_bridge",
+      "direction": "both"
     },
     {
       "address": "0xbeb5fc579115071764c7423a4f12edde41f106ed",
@@ -296,7 +389,10 @@
       "chain_id": 1,
       "protocol": "optimism",
       "docs_name": "OptimismPortalProxy",
-      "explorer_name_tag": "Optimism: Portal"
+      "explorer_name_tag": "Optimism: Portal",
+      "family_version": "bedrock",
+      "role": "portal",
+      "direction": "both"
     },
     {
       "address": "0x25ace71c97b33cc4729cf772ae268934f7ab5fa1",
@@ -304,7 +400,10 @@
       "chain_id": 1,
       "protocol": "optimism",
       "docs_name": "L1CrossDomainMessengerProxy",
-      "explorer_name_tag": "Optimism: Proxy OVM L1 Cross Domain Messenger"
+      "explorer_name_tag": "Optimism: Proxy OVM L1 Cross Domain Messenger",
+      "family_version": "bedrock",
+      "role": "cross_domain_messenger",
+      "direction": "both"
     },
     {
       "address": "0x4200000000000000000000000000000000000010",
@@ -312,7 +411,10 @@
       "chain_id": 10,
       "protocol": "optimism",
       "docs_name": "L2StandardBridge",
-      "explorer_name_tag": "Optimism: L2 Standard Bridge"
+      "explorer_name_tag": "Optimism: L2 Standard Bridge",
+      "family_version": "bedrock",
+      "role": "standard_bridge",
+      "direction": "both"
     },
     {
       "address": "0x4200000000000000000000000000000000000016",
@@ -320,7 +422,10 @@
       "chain_id": 10,
       "protocol": "optimism",
       "docs_name": "L2ToL1MessagePasser",
-      "explorer_name_tag": "Optimism: L2ToL1MessagePasser"
+      "explorer_name_tag": "Optimism: L2ToL1MessagePasser",
+      "family_version": "bedrock",
+      "role": "message_passer",
+      "direction": "both"
     },
     {
       "address": "0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5",
@@ -328,7 +433,10 @@
       "chain_id": 1,
       "protocol": "across",
       "docs_name": "SpokePool",
-      "explorer_name_tag": "Across Protocol: Ethereum Spoke Pool V2"
+      "explorer_name_tag": "Across Protocol: Ethereum Spoke Pool V2",
+      "family_version": "v2-v3",
+      "role": "spoke_pool",
+      "direction": "both"
     },
     {
       "address": "0xe35e9842fceaca96570b734083f4a58e8f7c5f2a",
@@ -336,7 +444,10 @@
       "chain_id": 42161,
       "protocol": "across",
       "docs_name": "SpokePool",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "v2-v3",
+      "role": "spoke_pool",
+      "direction": "both"
     },
     {
       "address": "0x6f26bf09b1c792e3228e5467807a900a503c0281",
@@ -344,7 +455,10 @@
       "chain_id": 10,
       "protocol": "across",
       "docs_name": "SpokePool",
-      "explorer_name_tag": "Across Protocol: Spoke Pool"
+      "explorer_name_tag": "Across Protocol: Spoke Pool",
+      "family_version": "v2-v3",
+      "role": "spoke_pool",
+      "direction": "both"
     },
     {
       "address": "0x7e63a5f1a8f0b4d0934b2f2327daed3f6bb2ee75",
@@ -352,7 +466,10 @@
       "chain_id": 59144,
       "protocol": "across",
       "docs_name": "SpokePool",
-      "explorer_name_tag": "Across Protocol: Linea Spoke Pool"
+      "explorer_name_tag": "Across Protocol: Linea Spoke Pool",
+      "family_version": "v2-v3",
+      "role": "spoke_pool",
+      "direction": "both"
     },
     {
       "address": "0xa0c68c638235ee32657e8f720a23cec1bfc77c77",
@@ -360,7 +477,10 @@
       "chain_id": 1,
       "protocol": "polygon",
       "docs_name": "RootChainManagerProxy",
-      "explorer_name_tag": "Polygon (Matic): Bridge"
+      "explorer_name_tag": "Polygon (Matic): Bridge",
+      "family_version": "pos-plasma",
+      "role": "root_chain_manager",
+      "direction": "out"
     },
     {
       "address": "0x8484ef722627bf18ca5ae6bcf031c23e6e922b30",
@@ -368,7 +488,10 @@
       "chain_id": 1,
       "protocol": "polygon",
       "docs_name": "EtherPredicateProxy",
-      "explorer_name_tag": "Polygon (Matic): Ether Bridge"
+      "explorer_name_tag": "Polygon (Matic): Ether Bridge",
+      "family_version": "pos-plasma",
+      "role": "predicate",
+      "direction": "out"
     },
     {
       "address": "0x40ec5b33f54e0e8a33a975908c5ba1c14e5bbbdf",
@@ -376,7 +499,10 @@
       "chain_id": 1,
       "protocol": "polygon",
       "docs_name": "ERC20PredicateProxy",
-      "explorer_name_tag": "Polygon (Matic): ERC20 Bridge"
+      "explorer_name_tag": "Polygon (Matic): ERC20 Bridge",
+      "family_version": "pos-plasma",
+      "role": "predicate",
+      "direction": "out"
     },
     {
       "address": "0x401f6c983ea34274ec46f84d70b31c151321188b",
@@ -384,7 +510,10 @@
       "chain_id": 1,
       "protocol": "polygon",
       "docs_name": "Main.Contracts.DepositManagerProxy",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "pos-plasma",
+      "role": "deposit_manager",
+      "direction": "out"
     },
     {
       "address": "0x0000000000000000000000000000000000001010",
@@ -392,7 +521,10 @@
       "chain_id": 137,
       "protocol": "polygon",
       "docs_name": "Matic.Contracts.Tokens.MaticToken (MRC20 precompile)",
-      "explorer_name_tag": null
+      "explorer_name_tag": null,
+      "family_version": "pos-plasma",
+      "role": "state_sync_token",
+      "direction": "in"
     }
   ]
 }
