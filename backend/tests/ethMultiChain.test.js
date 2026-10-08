@@ -3207,3 +3207,39 @@ test('address labels stay chain-agnostic', async () => {
     assert.ok(!/chain_id/.test(query.text), 'classification must not join on chain');
   }
 });
+
+test('Blockscout V2 history stops paging once a newest-first page passes the cursor', async (t) => {
+  const axios = require('axios');
+  const original = axios.get;
+  const originalSpacing = etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS;
+  etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS = 0;
+  const pages = [];
+  const tx = (block, digit) => ({
+    block_number: block, hash: `0x${digit.repeat(64)}`, timestamp: '2024-01-01T00:00:00.000000Z',
+    from: { hash: WALLET }, to: { hash: '0x1111111111111111111111111111111111111111' },
+    value: '1', fee: { value: '21000' }, status: 'ok', result: 'success', method: null,
+    position: 0, nonce: 1, gas_used: '21000', gas_price: '1', raw_input: '0x',
+  });
+  axios.get = async (url, config = {}) => {
+    if (url.endsWith('/main-page/indexing-status')) {
+      return { data: { finished_indexing: true, finished_indexing_blocks: true, indexed_blocks_ratio: '1.00' } };
+    }
+    pages.push(config.params || {});
+    if (!config.params?.block_number) {
+      return { data: { items: [tx(60, 'a'), tx(55, 'b')], next_page_params: { block_number: 55, index: 0 } } };
+    }
+    if (config.params.block_number === 55) {
+      // Reaches below the cursor (50): no further page may be requested.
+      return { data: { items: [tx(52, 'c'), tx(40, 'd')], next_page_params: { block_number: 40, index: 0 } } };
+    }
+    throw new Error(`walked past the cursor: ${JSON.stringify(config.params)}`);
+  };
+  t.after(() => {
+    axios.get = original;
+    etherscanConfig.BLOCKSCOUT_REQUEST_SPACING_MS = originalSpacing;
+  });
+  const pageList = [];
+  for await (const page of EtherscanService.accountFeedPages('txlist', WALLET, 50, null, 10, 100)) pageList.push(page);
+  assert.equal(pages.length, 2, 'stops after the page that crossed the cursor');
+  assert.deepEqual(pageList[0].rows.map((row) => row.blockNumber), ['52', '55', '60']);
+});

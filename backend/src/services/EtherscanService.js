@@ -1536,6 +1536,13 @@ class EtherscanService {
     const cursorKeys = new Set();
     let next = {};
     let exhausted = false;
+    // V2 pages newest-first. While every item so far has arrived in
+    // non-increasing block order, a page reaching below startBlock proves
+    // every later page is older still, so the walk can stop there instead of
+    // re-reading the wallet's whole history on every sync. Any out-of-order
+    // item disables the shortcut and the walk runs to the provider's end.
+    let lastBlockSeen = Infinity;
+    let monotonic = true;
     for (let count = 0; count < MAX_ACCOUNT_PAGES; count += 1) {
       const page = await this._blockscoutV2Request(chainId, apiKey, baseUrl, path, next);
       const items = page.payload.items;
@@ -1551,10 +1558,16 @@ class EtherscanService {
         }
         rowKeys.add(key);
         const block = Number(normalized.blockNumber);
+        if (!(block <= lastBlockSeen)) monotonic = false;
+        lastBlockSeen = block;
         if (block >= startBlock && block <= endBlock) rows.push(normalized);
       }
       const nextParams = page.payload.next_page_params;
       if (nextParams == null) {
+        exhausted = true;
+        break;
+      }
+      if (monotonic && items.length > 0 && lastBlockSeen < startBlock) {
         exhausted = true;
         break;
       }
