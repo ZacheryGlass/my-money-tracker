@@ -7,25 +7,24 @@ import {
 } from 'lucide-react';
 import { crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
 import {
-  formatDateDisplay, formatExactUnits, formatTokenUnits, formatUsdAtTime, shortEthAddress,
+  formatDateDisplay, formatTokenUnits, formatUsdAtTime, shortEthAddress,
 } from '../utils/format';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { explorerTxUrl, networkName, explorerAddressUrl } from '../utils/chains';
+import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
 import { describeExchangeMatchEvidence } from '../utils/exchangeMatchEvidence';
 import {
   ledgerCategories,
   onchainOverrideCategories,
-  LABEL_VERDICT_KEEP,
-  labelVerdictOptions,
   formatLedgerCategory,
-  labelVerdictKind,
-  labelVerdictNeedsName,
   spamReasonLabel,
 } from '../utils/dataLabels';
 import DataTable from './DataTable';
 import LoadingState from './LoadingState';
 import SegmentedControl from './SegmentedControl';
 import { MATCH_METHOD_TEXT, humanize } from '../features/crypto/plainText';
+import { describeHopPair, hopPairEvidence } from '../features/crypto/bridgeText';
+import CounterpartyVerdictForm from '../features/crypto/CounterpartyVerdictForm';
+import { describeLegs, enrichLedgerRow, formatCapped } from '../features/crypto/ledgerRows';
 
 const PAGE_SIZE = 100;
 // GET /api/crypto/ledger clamps `limit` to 500, and asking past it is a 400.
@@ -93,56 +92,6 @@ const bridgeVerificationLabel = (match) => {
   return 'Bridged';
 };
 
-const BRIDGE_STATUS_LABELS = {
-  protocol_verified: 'Protocol verified',
-  user_confirmed: 'User confirmed',
-  pending: 'Pending',
-  refunded: 'Refunded',
-  failed: 'Failed',
-  unsupported: 'Unsupported',
-  invalidated: 'Invalidated',
-};
-
-const bridgeStatusLabel = (status) => BRIDGE_STATUS_LABELS[status] || status || 'Unsupported';
-const bridgeSuggestionKey = (suggestion) => [
-  suggestion.out_wallet_id, suggestion.out_chain_id, suggestion.out_tx_hash,
-  suggestion.in_wallet_id, suggestion.in_chain_id, suggestion.in_tx_hash,
-  suggestion.suggestion_reason,
-].join(':');
-
-// A uint256 token id runs to 78 digits and would blow the column out.
-const shortTokenId = (id) => {
-  const text = String(id);
-  return text.length > 10 ? `${text.slice(0, 8)}…` : text;
-};
-
-// Base units through the SHARED formatter, which is BigInt end to end, at FULL
-// precision. Not the six-place default and not an eight-place cap either: the
-// server derives `decimals` from the amount's own significant digits, so there
-// is no padding to hide, and any cap turns the smallest legs -- a 1-wei dust
-// receipt, exactly the row a user has to explain -- into "0 ETH", which is the
-// one thing they are not.
-// Fiat is the exception: a venue quotes "141.7322484123 USD" to its internal
-// precision, but a dollar amount past the cent is noise, not evidence.
-const FIAT_ASSETS = new Set(['USD', 'ZUSD', 'EUR', 'GBP', 'CAD', 'AUD', 'CHF', 'JPY']);
-
-// Truncated to `digits`, but never to a bare "0": a nonzero amount that cuts
-// away entirely says how small it is instead of claiming nothing moved.
-const formatCapped = (units, decimals, digits) => {
-  const text = formatTokenUnits(units, decimals, { maxFractionDigits: digits });
-  if (text == null) return null;
-  const nonzero = /[1-9]/.test(String(units));
-  if (nonzero && !/[1-9]/.test(text)) return `< 0.${'0'.repeat(Math.max(digits - 1, 0))}1`;
-  return text;
-};
-
-const legText = (leg) => {
-  const id = leg.token_id != null ? ` #${shortTokenId(leg.token_id)}` : '';
-  const amount = (FIAT_ASSETS.has(String(leg.asset).toUpperCase())
-    ? formatCapped(leg.units, leg.decimals, 2)
-    : formatExactUnits(leg.units, leg.decimals)) ?? String(leg.amount ?? '');
-  return `${amount} ${leg.asset}${id}`;
-};
 
 // At-the-time dollars, or an explicit gap. A blank cell would read as $0, which
 // is the one thing an unpriced asset is NOT -- so an unpriced row says so, and
@@ -152,18 +101,6 @@ const USD_BASIS_NOTE = {
   carried: 'Priced from the nearest earlier close, not this exact date',
   unpriced: 'No price for this asset on this date — not zero',
   not_applicable: 'No dollar value applies to this row',
-};
-
-// "0.5 ETH -> 1,832.4 USDC". One description built from netted legs, for both
-// sources: an exchange trade's base/quote and an on-chain swap's netted legs
-// arrive in the same shape from the API precisely so this reads them once.
-const describeLegs = (legs) => {
-  const out = (legs || []).filter((leg) => leg.direction === 'out').map(legText);
-  const incoming = (legs || []).filter((leg) => leg.direction === 'in').map(legText);
-  if (out.length && incoming.length) return `${out.join(' + ')} → ${incoming.join(' + ')}`;
-  if (out.length) return `− ${out.join(' + ')}`;
-  if (incoming.length) return `+ ${incoming.join(' + ')}`;
-  return 'No net movement';
 };
 
 const describeBridgeFees = (match) => {
@@ -181,19 +118,6 @@ const describeBridgeFees = (match) => {
 // amount accepted from the destination receipt. Keep those raw units visible:
 // the bridge registry does not guess token decimals, and a rounded display
 // would make the identity audit less useful than the underlying evidence.
-const hopPairEvidence = (match) => match?.protocol === 'hop'
-  && match?.evidence?.hop_pair
-  ? match.evidence.hop_pair
-  : null;
-
-const describeHopPair = (match) => {
-  const pair = hopPairEvidence(match);
-  if (!pair) return null;
-  const transferId = pair.transfer_id ? shortEthAddress(pair.transfer_id) : 'unknown ID';
-  const route = pair.route?.route_key || 'registered route';
-  return `Hop v1 ${transferId} · ${route} · gross ${pair.gross_amount} − bonder fee ${pair.bonder_fee} = net ${pair.net_amount} base units`;
-};
-
 const describeBridgeSource = (member) => {
   const amount = member?.out_amount != null ? `${member.out_amount} ${member.asset || ''}`.trim() : null;
   return amount || member?.tx_hash || 'Source transaction';
@@ -203,25 +127,6 @@ const describeBridgeSource = (member) => {
 // to trust or reject it, so it is shown rather than hidden behind a confidence
 // score nobody can interpret.
 const MATCH_METHOD_NOTE = MATCH_METHOD_TEXT;
-
-// A folded venue record outranks the bare address: it is PROOF of which venue
-// the transaction was with, where an unlabeled 0xbbbb…bbbb is only a hex string
-// nobody has judged. A user's own label still beats both.
-const counterpartyText = (row) => {
-  if (row.counterparty_name) return row.counterparty_name;
-  if (row.exchange_match?.account_name) return row.exchange_match.account_name;
-  if (row.counterparty_address) return shortEthAddress(row.counterparty_address);
-  if (row.record_address) return row.record_address;
-  return '—';
-};
-
-// Rows whose counterparty can carry a verdict. Gas-only rows have none, a
-// zero-address mint/burn has no party to label, and an exchange record's
-// counterparty IS the venue.
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const isLabelable = (row) => row.source === 'onchain'
-  && Boolean(row.counterparty_address)
-  && row.counterparty_address !== ZERO_ADDRESS;
 
 // Most review reasons arrive as prose; a few are stored as codes the server
 // reads back (the unavailable-records marker is how the matcher finds its own
@@ -277,9 +182,6 @@ const CryptoLedger = ({
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
   const [reconciliation, setReconciliation] = useState(null);
   const [unpriced, setUnpriced] = useState([]);
-  const [bridgeAudit, setBridgeAudit] = useState(null);
-  const [bridgeJudging, setBridgeJudging] = useState(null);
-  const [bridgeSuggestionsLoading, setBridgeSuggestionsLoading] = useState(false);
   const [source, setSource] = useState('');
   const [status, setStatus] = useState(initialNeedsReview);
   const [category, setCategory] = useState('');
@@ -408,110 +310,6 @@ const CryptoLedger = ({
     return () => { cancelled = true; };
   }, [reload, refreshKey]);
 
-  useEffect(() => {
-    if (walletId != null) { setBridgeAudit(null); return undefined; }
-    let cancelled = false;
-    Promise.resolve(cryptoAPI.getBridgeAudit())
-      .then((result) => { if (!cancelled) setBridgeAudit(result); })
-      .catch(() => { if (!cancelled) setBridgeAudit(null); });
-    return () => { cancelled = true; };
-  }, [reload, refreshKey, walletId]);
-
-  const judgeBridgeSuggestion = async (suggestion, verdict) => {
-    const key = `${suggestion.id}:${verdict}`;
-    if (bridgeJudging) return;
-    setBridgeJudging(key);
-    setError(null);
-    try {
-      await cryptoAPI.setBridgeVerdict({
-        outWalletId: suggestion.out_wallet_id,
-        outChainId: suggestion.out_chain_id,
-        outTxHash: suggestion.out_tx_hash,
-        inWalletId: suggestion.in_wallet_id,
-        inChainId: suggestion.in_chain_id,
-        inTxHash: suggestion.in_tx_hash,
-        verdict,
-      });
-      refresh();
-      await onDataChanged?.();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save the bridge verdict');
-    } finally {
-      setBridgeJudging(null);
-    }
-  };
-
-  const loadMoreBridgeSuggestions = async () => {
-    const page = bridgeAudit?.pagination?.suggestions;
-    if (!page?.has_more || bridgeSuggestionsLoading) return;
-    setBridgeSuggestionsLoading(true);
-    setError(null);
-    try {
-      const result = await cryptoAPI.getBridgeAudit({
-        suggestion_limit: page.limit || 500,
-        suggestion_offset: (bridgeAudit.suggestions || []).length,
-        suggestion_generation: page.generation,
-        // The other collections have independent first-page controls and are
-        // ignored here; keep this continuation response small.
-        limit: 1,
-      });
-      setBridgeAudit((current) => {
-        if (!current) return result;
-        const seen = new Set((current.suggestions || []).map(bridgeSuggestionKey));
-        const additions = (result.suggestions || []).filter(
-          (suggestion) => !seen.has(bridgeSuggestionKey(suggestion))
-        );
-        return {
-          ...current,
-          suggestions: [...(current.suggestions || []), ...additions],
-          summary: result.summary || current.summary,
-          pagination: {
-            ...current.pagination,
-            suggestions: result.pagination?.suggestions || page,
-          },
-        };
-      });
-    } catch (err) {
-      if (err.response?.status === 409) {
-        try {
-          const fresh = await cryptoAPI.getBridgeAudit();
-          setBridgeAudit(fresh);
-          setError('Bridge evidence changed during review; alternatives restarted from a complete first page.');
-          return;
-        } catch (refreshError) {
-          setError(refreshError.response?.data?.error || 'Failed to restart changed bridge alternatives');
-          return;
-        }
-      }
-      setError(err.response?.data?.error || 'Failed to load every bridge alternative');
-    } finally {
-      setBridgeSuggestionsLoading(false);
-    }
-  };
-
-  const clearBridgeVerdict = async (verdict) => {
-    const key = `clear:${verdict.id}`;
-    if (bridgeJudging) return;
-    setBridgeJudging(key);
-    setError(null);
-    try {
-      await cryptoAPI.clearBridgeVerdict({
-        outWalletId: verdict.out_wallet_id,
-        outChainId: verdict.out_chain_id,
-        outTxHash: verdict.out_tx_hash,
-        inWalletId: verdict.in_wallet_id,
-        inChainId: verdict.in_chain_id,
-        inTxHash: verdict.in_tx_hash,
-      });
-      refresh();
-      await onDataChanged?.();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to clear the bridge verdict');
-    } finally {
-      setBridgeJudging(null);
-    }
-  };
-
   const incompleteAccounts = useMemo(() => exchangeAccounts.filter(
     (account) => ['mismatch', 'stale', 'unknown'].includes(account.reconciliation_status)
       || account.last_sync_status === 'balance_mismatch'
@@ -560,21 +358,7 @@ const CryptoLedger = ({
     wallet_id: walletId ?? undefined,
   });
 
-  const enriched = useMemo(() => rows.map((row) => {
-    // The folded half's legs are NOT merged in. #61 only ever pairs a deposit
-    // with a withdrawal, so the other side is the SAME money seen from the
-    // other end -- merging renders a 1.25 ETH deposit as "1.25 ETH → 1.25 ETH",
-    // which reads as a swap of an asset for itself. The pairing shows as the
-    // Matched chip and, in full, in the row detail.
-    const legs = row.legs || [];
-    return {
-      ...row,
-      allLegs: legs,
-      description: describeLegs(legs),
-      counterparty: counterpartyText(row),
-      labelable: isLabelable(row),
-    };
-  }), [rows]);
+  const enriched = useMemo(() => rows.map(enrichLedgerRow), [rows]);
 
   const columns = useMemo(() => [
     {
@@ -893,151 +677,6 @@ const CryptoLedger = ({
         </div>
       </div>
 
-      {bridgeAudit && (
-        <div className="mb-3 border border-border bg-surface">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
-            <div>
-              <p className="text-[9px] font-bold uppercase tracking-wide text-secondary">Bridge transfers</p>
-              <p className="mt-0.5 text-caption text-tertiary">
-                {(bridgeAudit.summary?.protocol_verified || 0).toLocaleString()} proven by the bridge · {(bridgeAudit.summary?.user_confirmed || 0).toLocaleString()} confirmed by you · {(bridgeAudit.summary?.suggestions || 0).toLocaleString()} waiting for you · {(bridgeAudit.summary?.receipt_failures || 0).toLocaleString()} lookups failed
-              </p>
-            </div>
-            <span className="text-caption text-tertiary">Matching amounts alone never pair two transfers.</span>
-          </div>
-          {(bridgeAudit.suggestions || []).length > 0 && (
-            <ul className="divide-y divide-border">
-              {bridgeAudit.suggestions.map((suggestion) => (
-                <li key={suggestion.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-                  <div className="min-w-0 text-caption text-secondary">
-                    <p>
-                      {suggestion.protocol ? humanize(suggestion.protocol) : 'Possible bridge'} · {networkName(suggestion.out_chain_id)} {shortEthAddress(suggestion.out_tx_hash)} → {networkName(suggestion.in_chain_id)} {shortEthAddress(suggestion.in_tx_hash)}
-                    </p>
-                    <p className="mt-0.5 text-tertiary">
-                      {suggestion.ambiguous ? 'More than one transfer could be the other side; check each' : humanize(suggestion.suggestion_reason)} · needs your confirmation
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={bridgeJudging != null}
-                      onClick={() => judgeBridgeSuggestion(suggestion, 'confirmed')}
-                      className="inline-flex h-7 items-center gap-1 rounded border border-gain/30 bg-gain/10 px-2 text-[9px] font-bold uppercase tracking-wide text-gain disabled:opacity-40"
-                    >
-                      {bridgeJudging === `${suggestion.id}:confirmed` ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />}
-                      Confirm
-                    </button>
-                    <button
-                      type="button"
-                      disabled={bridgeJudging != null}
-                      onClick={() => judgeBridgeSuggestion(suggestion, 'rejected')}
-                      className="inline-flex h-7 items-center gap-1 rounded border border-loss/30 bg-loss/10 px-2 text-[9px] font-bold uppercase tracking-wide text-loss disabled:opacity-40"
-                    >
-                      {bridgeJudging === `${suggestion.id}:rejected` ? <RefreshCw size={10} className="animate-spin" /> : <X size={10} />}
-                      Not the same
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-          {bridgeAudit.pagination?.suggestions?.has_more && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-orange-500/30 bg-orange-500/5 px-3 py-2 text-caption text-orange-400">
-              <span>
-                Showing {(bridgeAudit.suggestions || []).length.toLocaleString()} of {Number(bridgeAudit.pagination.suggestions.total || bridgeAudit.summary?.suggestions || 0).toLocaleString()} plausible alternatives. Hidden alternatives remain unmatched.
-              </span>
-              <button
-                type="button"
-                disabled={bridgeSuggestionsLoading}
-                onClick={loadMoreBridgeSuggestions}
-                className="inline-flex h-7 items-center gap-1 rounded border border-orange-500/30 bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-orange-400 disabled:opacity-40"
-              >
-                {bridgeSuggestionsLoading && <RefreshCw size={10} className="animate-spin" />}
-                Show more alternatives
-              </button>
-            </div>
-          )}
-          {(bridgeAudit.movements || []).some((movement) => (
-            !['protocol_verified', 'user_confirmed', 'invalidated'].includes(movement.status)
-          )) && (
-            <ul className="divide-y divide-border border-t border-border">
-              {bridgeAudit.movements.filter((movement) => (
-                !['protocol_verified', 'user_confirmed', 'invalidated'].includes(movement.status)
-              )).map((movement) => (
-                <li key={`movement:${movement.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-                  <div className="min-w-0 text-caption text-secondary">
-                    <p title={movement.family_version || undefined}>{humanize(movement.protocol)}</p>
-                    <p className="mt-0.5 text-tertiary">
-                      {(movement.members || []).map((member) => (
-                        `${networkName(member.chain_id)} ${shortEthAddress(member.tx_hash)}`
-                      )).join(' → ') || 'The arriving side has not been found'}
-                    </p>
-                    {movement.evidence?.ambiguity === 'awaiting_chain_finality' && (
-                      <p className="mt-0.5 text-tertiary">
-                        Both sides found; waiting for the networks to finalize them.
-                      </p>
-                    )}
-                    {movement.protocol === 'hop' && movement.evidence?.hop_pair && (
-                      <p className="mt-0.5 break-words text-tertiary" title={movement.evidence.hop_pair.transfer_id || undefined}>
-                        {describeHopPair({ protocol: 'hop', evidence: { hop_pair: movement.evidence.hop_pair } })}
-                      </p>
-                    )}
-                    {movement.evidence?.ambiguity && movement.evidence.ambiguity !== 'awaiting_chain_finality' && (
-                      <p className="mt-0.5 text-tertiary">
-                        {humanize(movement.evidence.ambiguity)}.
-                      </p>
-                    )}
-                  </div>
-                  <Chip className={movement.status === 'failed' ? TONE_STYLES.failed : TONE_STYLES.neutral}>
-                    {bridgeStatusLabel(movement.status)}
-                  </Chip>
-                </li>
-              ))}
-            </ul>
-          )}
-          {(bridgeAudit.receipt_failures || []).length > 0 && (
-            <ul className="divide-y divide-border border-t border-border">
-              {bridgeAudit.receipt_failures.map((failure) => (
-                <li key={`receipt:${failure.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-                  <div className="min-w-0 text-caption text-secondary">
-                    <p>
-                      Couldn&apos;t look up this transfer · {networkName(failure.chain_id)} {shortEthAddress(failure.tx_hash)}
-                    </p>
-                    <p className="mt-0.5 text-tertiary" title={failure.error_code || undefined}>
-                      {failure.provider} · retried at the next sync
-                    </p>
-                  </div>
-                  <Chip className={failure.status === 'failed' ? TONE_STYLES.failed : TONE_STYLES.neutral}>
-                    {bridgeStatusLabel(failure.status)}
-                  </Chip>
-                </li>
-              ))}
-            </ul>
-          )}
-          {(bridgeAudit.verdicts || []).length > 0 && (
-            <ul className="divide-y divide-border border-t border-border">
-              {bridgeAudit.verdicts.map((verdict) => (
-                <li key={`verdict:${verdict.id}`} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-                  <div className="min-w-0 text-caption text-secondary">
-                    <p>
-                      {verdict.verdict === 'confirmed' ? 'You confirmed' : 'You rejected'} · {networkName(verdict.out_chain_id)} {shortEthAddress(verdict.out_tx_hash)} → {networkName(verdict.in_chain_id)} {shortEthAddress(verdict.in_tx_hash)}
-                    </p>
-                    <p className="mt-0.5 text-tertiary">Kept through every sync until you undo it</p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={bridgeJudging != null}
-                    onClick={() => clearBridgeVerdict(verdict)}
-                    className="inline-flex h-7 items-center gap-1 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-secondary disabled:opacity-40"
-                  >
-                    {bridgeJudging === `clear:${verdict.id}` ? <RefreshCw size={10} className="animate-spin" /> : <Undo2 size={10} />}
-                    Undo
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
 
       {/* ONE labeled filter bar, not three unlabeled tab strips: underline
           tabs above this mean navigation, so everything here has to look like
@@ -1284,14 +923,12 @@ const CryptoLedger = ({
 // it. Every action calls an endpoint that already exists -- an override on the
 // on-chain side, a counterparty label (which reclassifies ALL history for that
 // address, so one label can drain many rows), and a resolve on the venue side.
-const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
+export const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
   const onChain = row.source === 'onchain';
   const [category, setCategory] = useState(row.category);
   const [note, setNote] = useState(row.override_note || '');
   const [saving, setSaving] = useState(null);
   const [labelOpen, setLabelOpen] = useState(false);
-  const [labelName, setLabelName] = useState(row.counterparty_name || '');
-  const [labelVerdict, setLabelVerdict] = useState(LABEL_VERDICT_KEEP);
   const [legs, setLegs] = useState(null);
 
   // The raw eth_transfers legs behind this transaction. Netted legs answer
@@ -1348,15 +985,10 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
     chainId: row.chain_id,
   }));
 
-  const saveLabel = (event) => {
-    event.preventDefault();
-    const name = labelName.trim();
-    if (!name && labelVerdictNeedsName(labelVerdict)) return;
-    run('label', async () => {
-      await ethAPI.labelAddress(row.counterparty_address, name || null, { kind: labelVerdictKind(labelVerdict) });
-      setLabelOpen(false);
-    });
-  };
+  const saveLabel = ({ name, kind }) => run('label', async () => {
+    await ethAPI.labelAddress(row.counterparty_address, name || null, { kind });
+    setLabelOpen(false);
+  });
 
   const resolveRecord = (accountId, recordId) => run(
     `resolve:${recordId}`,
@@ -1727,15 +1359,29 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
               {saving === 'note' && <RefreshCw size={10} className="animate-spin" />}
               Save note
             </button>
-            <button
-              type="button"
-              onClick={saveOverride}
-              disabled={saving != null}
-              className="inline-flex h-8 items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2.5 text-[9px] font-bold uppercase tracking-wide text-accent transition-all hover:bg-accent/20 disabled:opacity-40"
-            >
-              {saving === 'override' && <RefreshCw size={10} className="animate-spin" />}
-              Save correction
-            </button>
+            {/* Accepting the category as it stands is the commonest review,
+                and it used to need "Save correction" on an unchanged picker. */}
+            {row.needs_review && category === row.category ? (
+              <button
+                type="button"
+                onClick={saveOverride}
+                disabled={saving != null}
+                className="inline-flex h-8 items-center gap-1.5 rounded border border-gain/30 bg-gain/10 px-2.5 text-[9px] font-bold uppercase tracking-wide text-gain transition-all hover:bg-gain/20 disabled:opacity-40"
+              >
+                {saving === 'override' ? <RefreshCw size={10} className="animate-spin" /> : <Check size={10} />}
+                Looks right, mark reviewed
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={saveOverride}
+                disabled={saving != null || category === row.category}
+                className="inline-flex h-8 items-center gap-1.5 rounded border border-accent/30 bg-accent/10 px-2.5 text-[9px] font-bold uppercase tracking-wide text-accent transition-all hover:bg-accent/20 disabled:opacity-40"
+              >
+                {saving === 'override' && <RefreshCw size={10} className="animate-spin" />}
+                Save correction
+              </button>
+            )}
             {row.is_overridden && (
               <button
                 type="button"
@@ -1802,46 +1448,14 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
       </div>
 
       {labelOpen && (
-        <form onSubmit={saveLabel} className="flex flex-wrap items-end gap-2 border-t border-border pt-3">
-          <input
-            type="text"
-            value={labelName}
-            onChange={(event) => setLabelName(event.target.value)}
-            maxLength={64}
-            autoFocus
-            placeholder={labelVerdictNeedsName(labelVerdict) ? 'e.g. Coinbase' : 'Name (optional)'}
-            aria-label="Label name"
-            className="h-8 w-40 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
+        <div className="border-t border-border pt-3">
+          <CounterpartyVerdictForm
+            initialName={row.counterparty_name || ''}
+            busy={saving === 'label'}
+            onSubmit={saveLabel}
+            onCancel={() => setLabelOpen(false)}
           />
-          {/* The verdict is the point, not a detail: without it every label
-              written here votes 'exchange', and a wrong builtin could never be
-              corrected from the row that shows its effect. */}
-          <select
-            value={labelVerdict}
-            onChange={(event) => setLabelVerdict(event.target.value)}
-            aria-label="Counterparty verdict"
-            className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-[11px] text-primary outline-none focus:ring-1 focus:ring-accent"
-          >
-            {labelVerdictOptions().map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            disabled={saving != null || (labelVerdictNeedsName(labelVerdict) && !labelName.trim())}
-            className="inline-flex h-8 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-2.5 text-[9px] font-bold uppercase tracking-wide text-teal-400 transition-all hover:bg-teal-500/20 disabled:opacity-40"
-          >
-            {saving === 'label' && <RefreshCw size={10} className="animate-spin" />}
-            Save label
-          </button>
-          <button
-            type="button"
-            onClick={() => setLabelOpen(false)}
-            className="inline-flex h-8 items-center rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:text-primary"
-          >
-            <X size={10} />
-          </button>
-        </form>
+        </div>
       )}
     </div>
   );

@@ -17,7 +17,7 @@ const apiMocks = vi.hoisted(() => ({
   eth: {
     addWallet: vi.fn(), addWallets: vi.fn(), getWallets: vi.fn(), syncWallet: vi.fn(), removeWallet: vi.fn(),
     getTransfers: vi.fn(), getIgnoredTokens: vi.fn(), ignoreToken: vi.fn(), unignoreToken: vi.fn(),
-    getAddressLabels: vi.fn(), labelAddress: vi.fn(), unlabelAddress: vi.fn(),
+    getAddressLabels: vi.fn(), labelAddress: vi.fn(), labelAddresses: vi.fn(), unlabelAddress: vi.fn(),
     getAddressNotes: vi.fn(), saveAddressNote: vi.fn(), deleteAddressNote: vi.fn(),
     getUnreviewedCounterparties: vi.fn(), getActivity: vi.fn(), setActivitySpam: vi.fn(),
     getReconciliation: vi.fn(), getUnpricedAssets: vi.fn(),
@@ -86,6 +86,11 @@ beforeEach(() => {
 
 const renderReview = (props = {}) => render(<CryptoPage tab="crypto-review" onTabChange={vi.fn()} {...props} />);
 
+// The Review page shows one queue at a time behind a tab strip.
+const openQueue = async (name) => {
+  fireEvent.click(await screen.findByRole('tab', { name }));
+};
+
 it('keeps the filtered ledger visible when its summary request fails', async () => {
   apiMocks.crypto.getLedgerSummary.mockRejectedValue(new Error('summary unavailable'));
   apiMocks.crypto.getLedger.mockResolvedValue({
@@ -101,7 +106,7 @@ it('keeps the filtered ledger visible when its summary request fails', async () 
       expect.objectContaining({ needsReview: 'true' })
     );
   });
-  expect(screen.getByText('Transactions needing review')).toBeInTheDocument();
+  expect(await screen.findByText('Every transaction is explained.')).toBeInTheDocument();
 });
 
 it('reports all Review decision queues to the sidebar', async () => {
@@ -123,6 +128,7 @@ describe('unknown counterparty triage', () => {
   const openReviewTab = async (queue = { data: [MATERIAL], summary: { count: 1, dust_count: 0, usd_volume: 12403 } }) => {
     apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue(queue);
     renderReview();
+    await openQueue(/^Addresses/);
     await screen.findByText('Needs Review');
   };
 
@@ -230,8 +236,27 @@ describe('unknown counterparty triage', () => {
     });
     renderReview();
 
-    const summary = await screen.findByText('Decisions');
-    await waitFor(() => expect(within(summary.parentElement).getByText('1')).toBeInTheDocument());
+    const tab = await screen.findByRole('tab', { name: /^Addresses/ });
+    await waitFor(() => expect(within(tab).getByText('1')).toBeInTheDocument());
+  });
+
+  it('labels a whole selection of low-value counterparties in one write', async () => {
+    apiMocks.eth.labelAddresses.mockResolvedValue({ labels: [] });
+    await openReviewTab({
+      data: [MATERIAL, dust('4'), dust('5')],
+      summary: { count: 1, dust_count: 2, usd_volume: 12403 },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /2 low-value counterparties/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select all 2 shown' }));
+    expect(await screen.findByText('2 selected: give them all the same verdict')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Counterparty verdict'), { target: { value: 'external' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to 2' }));
+
+    await waitFor(() => expect(apiMocks.eth.labelAddresses).toHaveBeenCalledWith({
+      addresses: [dust('4').address, dust('5').address], kind: 'external', name: undefined,
+    }));
+    expect(apiMocks.eth.labelAddress).not.toHaveBeenCalled();
   });
 
   it('collapses low-value counterparties behind a disclosure', async () => {
@@ -274,6 +299,7 @@ describe('unknown counterparty triage', () => {
   it('shows a loading state, not a load failure, while the queues are still on their way', async () => {
     apiMocks.eth.getUnreviewedCounterparties.mockReturnValue(new Promise(() => {}));
     renderReview();
+    await openQueue(/^Addresses/);
 
     expect(await screen.findByText('Loading review queues')).toBeInTheDocument();
     expect(screen.queryByText(/couldn't load/i)).toBeNull();
@@ -282,6 +308,7 @@ describe('unknown counterparty triage', () => {
   it('shows a retry state when the queue fetch fails rather than claiming all clear', async () => {
     apiMocks.eth.getUnreviewedCounterparties.mockRejectedValue(new Error('boom'));
     renderReview();
+    await openQueue(/^Addresses/);
 
     await screen.findByText('Needs Review');
     // Rendering "every counterparty has been reviewed" here would be the same
@@ -312,6 +339,7 @@ describe('quarantined spam', () => {
   const openReviewTab = async (spamResult) => {
     if (spamResult !== undefined) apiMocks.eth.getActivity.mockResolvedValue(spamResult);
     renderReview();
+    await openQueue(/^Spam/);
     await screen.findByText(/^Hidden as spam$/);
   };
 
@@ -393,6 +421,7 @@ describe('quarantined spam', () => {
   it('shows a retry state when the quarantine fetch fails rather than claiming it hid nothing', async () => {
     apiMocks.eth.getActivity.mockRejectedValue(new Error('boom'));
     renderReview();
+    await openQueue(/^Spam/);
 
     await screen.findByText(/^Hidden as spam$/);
     expect(screen.queryByText(/nothing has been quarantined/i)).toBeNull();

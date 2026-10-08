@@ -44,6 +44,15 @@ vi.mock('../components/CryptoLedger', () => ({
   ),
 }));
 
+// The Review page's transaction queue, standing in for the ledger it reads.
+vi.mock('../features/crypto/review/TransactionQueue', () => ({
+  default: ({ refreshKey, onDataChanged }) => (
+    <button type="button" data-testid="ledger-review" onClick={() => onDataChanged?.()}>
+      revision:{refreshKey}
+    </button>
+  ),
+}));
+
 vi.mock('../components/crypto/ReviewPanel', () => ({
   default: () => <div>Review queues</div>,
   SPAM_PAGE_SIZE: 50,

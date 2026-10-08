@@ -26,6 +26,9 @@ import DataTable, { DataTablePagination } from '../components/DataTable';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
 import LoadFailed from '../features/crypto/LoadFailed';
+import TransactionQueue from '../features/crypto/review/TransactionQueue';
+import BridgeEvidencePanel from '../features/crypto/review/BridgeEvidencePanel';
+import FilterTabs from '../components/FilterTabs';
 import MetricCard from '../components/MetricCard';
 import OnChainActivity, { EthWalletBadge } from '../components/OnChainActivity';
 import SummaryStats from '../components/SummaryStats';
@@ -147,6 +150,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [spamActivity, setSpamActivity] = useState(null);
   const [exchangeAccounts, setExchangeAccounts] = useState([]);
   const [exchangeFocusAccountId, setExchangeFocusAccountId] = useState(null);
+  const [reviewQueue, setReviewQueue] = useState(null);
+  const [bridgeSuggestionCount, setBridgeSuggestionCount] = useState(null);
   // undefined = not loaded yet; null = the request failed; an object is a
   // successful read.
   const [exchangeExceptions, setExchangeExceptions] = useState(undefined);
@@ -228,7 +233,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const fetchManageData = useCallback(async () => {
     const exchangeExceptionsPromise = exchangesAPI.getBalanceExceptions({ limit: 50 })
       .catch(() => null);
-    const [ignoredResult, labelsResult, counterpartyResult, spamResult, exchangeResult, exchangeExceptionResult] = await Promise.all([
+    const [ignoredResult, labelsResult, counterpartyResult, spamResult, exchangeResult, exchangeExceptionResult, bridgeResult] = await Promise.all([
       ethAPI.getIgnoredTokens().catch(() => null),
       ethAPI.getAddressLabels().catch(() => null),
       ethAPI.getUnreviewedCounterparties().catch(() => null),
@@ -241,6 +246,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       }).catch(() => null),
       exchangesAPI.getAll().catch(() => null),
       exchangeExceptionsPromise,
+      // Only the count is read here; the Bridges tab loads the full audit.
+      Promise.resolve().then(() => cryptoAPI.getBridgeAudit({ limit: 1, suggestion_limit: 1 })).catch(() => null),
     ]);
     setIgnoredTokens(ignoredResult?.tokens || []);
     setIgnoredLoadFailed(!ignoredResult);
@@ -255,6 +262,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     // failed request must not read as "the server cannot store keys".
     setExchangeEncryptionConfigured(exchangeResult ? exchangeResult.encryption_configured !== false : true);
     setExchangeExceptions(exchangeExceptionResult);
+    setBridgeSuggestionCount(bridgeResult ? (bridgeResult.summary?.suggestions || 0) : null);
     const reviewDecisions = counterpartyResult && exchangeExceptionResult
       ? (counterpartyResult.summary?.count || 0) + (exchangeExceptionResult?.summary?.count || 0)
       : null;
@@ -354,10 +362,23 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // single airdrop wave parked 40 dust counterparties behind it -- teaches the
   // user to ignore the badge.
   const exchangeExceptionAttentionCount = exchangeExceptions?.summary?.count || 0;
-  const reviewAttentionCount = (counterpartyData?.summary?.count || 0) + exchangeExceptionAttentionCount;
-  const reviewAttentionUnknown = !manageLoaded
-    || counterpartyData === null
-    || exchangeExceptions === null;
+  // The Review page's queues. Spam and bridges are informational counts: the
+  // spam list is already handled, and a bridge waiting for a pairing is also a
+  // flagged transaction, so neither adds to the sidebar badge.
+  const reviewQueues = [
+    { id: 'transactions', label: 'Transactions', count: ledgerSummaryState === 'ready' ? (ledgerSummary?.needs_review_count || 0) : null },
+    { id: 'counterparties', label: 'Addresses', count: manageLoaded && counterpartyData ? (counterpartyData.summary?.count || 0) : null },
+    { id: 'exchange', label: 'Exchange balances', count: manageLoaded && exchangeExceptions ? exchangeExceptionAttentionCount : null },
+    { id: 'bridges', label: 'Bridges', count: bridgeSuggestionCount, quiet: true },
+    { id: 'spam', label: 'Spam', count: manageLoaded && spamActivity ? (spamActivity.summary?.spam_count || 0) : null, quiet: true },
+  ];
+  // Opens on the first queue with something in it, once the counts are known;
+  // after that the user's choice stands.
+  const firstNonEmptyQueue = reviewQueues.find((queue) => !queue.quiet && queue.count > 0)?.id;
+  const reviewCountsKnown = reviewQueues.filter((queue) => !queue.quiet).every((queue) => queue.count != null);
+  const activeReviewQueue = reviewQueue
+    || (reviewCountsKnown ? firstNonEmptyQueue || 'transactions' : 'transactions');
+
   // Typeahead for the triage form keeps every exchange name, builtins included.
   const exchangeNameOptions = useMemo(
     () => [...new Set(addressLabels.filter((l) => !l.kind || l.kind === 'exchange').map((l) => l.name))],
@@ -588,8 +609,6 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     return <LoadingState label="Loading Crypto" />;
   }
 
-  const needsReviewUnknown = ledgerSummaryState !== 'ready';
-  const needsReviewCount = ledgerSummary?.needs_review_count || 0;
   const pageMeta = PAGE_META[activeTab];
 
   // Body wrapper: mounted once visited, then hidden rather than unmounted.
@@ -631,12 +650,6 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
           <SummaryStats stats={[
             { label: 'Value', value: formatCurrency(totalCryptoValue), valueClassName: 'font-money font-semibold text-accent' },
             { label: 'Positions', value: cryptoHoldings.length },
-          ]} />
-        )}
-        {activeTab === REVIEW_TAB && (
-          <SummaryStats stats={[
-            { label: 'Events', value: needsReviewUnknown ? '?' : needsReviewCount },
-            { label: 'Decisions', value: reviewAttentionUnknown ? '?' : reviewAttentionCount },
           ]} />
         )}
       </div>
@@ -939,49 +952,74 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
           {tabBody(REVIEW_TAB, (
             <>
-              {(needsReviewUnknown || needsReviewCount > 0) && (
-                <section>
-                  <div className="mb-3 px-2">
-                    <h2 className="text-lg font-bold uppercase tracking-tight text-primary">Transactions needing review</h2>
-                    <p className="mt-1 text-xs text-secondary">
-                      Unexplained wallet and exchange events, with the same durable notes and corrections available in Activity.
-                    </p>
-                  </div>
-                  <CryptoLedger
-                    refreshKey={syncNonce}
-                    addressNotes={addressNotes}
-                    initialNeedsReview="true"
-                    onDataChanged={handleLedgerChanged}
-                  />
-                </section>
-              )}
-              {/* Waits for the wallet read too: hasWallets decides which queues exist. */}
-              {!manageLoaded || loading ? <LoadingState label="Loading review queues" className="min-h-[160px]" /> : (
-              <ReviewPanel
-                counterpartyData={counterpartyData && {
-                  ...counterpartyData,
-                  data: (counterpartyData.data || []).map((counterparty) => ({
-                    ...counterparty,
-                    note: addressNotes.find((item) => item.address === counterparty.address)?.note || '',
-                  })),
-                }}
-                spamActivity={spamActivity}
-                onSpamPageLoaded={(next) => { spamPagesRef.current += 1; setSpamActivity(next); }}
-                exchangeNameOptions={exchangeNameOptions}
-                hasWallets={wallets.length > 0}
-                onChanged={handleManageChanged}
-                onError={setError}
-                showSuccess={showSuccess}
-                onRetry={fetchManageData}
-                exchangeExceptions={exchangeExceptions}
-                exchangeExceptionsError={exchangeExceptions === null
-                  ? 'Couldn\'t load the exchange balance review queue.'
-                  : null}
-                onOpenExchanges={(accountId) => {
-                  setExchangeFocusAccountId(accountId);
-                  onTabChange?.(EXCHANGES_TAB);
-                }}
+              <FilterTabs
+                id="crypto-review-queue"
+                label="Review queue"
+                value={activeReviewQueue}
+                onChange={setReviewQueue}
+                options={reviewQueues.map((queue) => ({
+                  value: queue.id,
+                  label: queue.label,
+                  selectLabel: queue.count == null ? queue.label : `${queue.label} (${queue.count})`,
+                  badge: queue.count == null ? null : (
+                    <span className={`ml-2 rounded px-1.5 py-0.5 font-mono text-[10px] ${
+                      queue.count > 0 && !queue.quiet ? 'bg-orange-500/15 text-orange-400' : 'bg-surface-3 text-tertiary'
+                    }`}>
+                      {queue.count.toLocaleString()}
+                    </span>
+                  ),
+                }))}
               />
+              {activeReviewQueue === 'transactions' && (
+                <TransactionQueue
+                  refreshKey={syncNonce}
+                  addressNotes={addressNotes}
+                  exchangeNameOptions={exchangeNameOptions}
+                  onDataChanged={handleLedgerChanged}
+                  onError={setError}
+                  showSuccess={showSuccess}
+                  onOpenExchanges={() => onTabChange?.(EXCHANGES_TAB)}
+                  onOpenBridges={() => setReviewQueue('bridges')}
+                />
+              )}
+              {activeReviewQueue === 'bridges' && (
+                <BridgeEvidencePanel
+                  refreshKey={syncNonce}
+                  onChanged={handleLedgerChanged}
+                  onError={setError}
+                  onCountChange={setBridgeSuggestionCount}
+                />
+              )}
+              {['counterparties', 'exchange', 'spam'].includes(activeReviewQueue) && (
+                /* Waits for the wallet read too: hasWallets decides which queues exist. */
+                !manageLoaded || loading ? <LoadingState label="Loading review queues" className="min-h-[160px]" /> : (
+                  <ReviewPanel
+                    section={activeReviewQueue}
+                    counterpartyData={counterpartyData && {
+                      ...counterpartyData,
+                      data: (counterpartyData.data || []).map((counterparty) => ({
+                        ...counterparty,
+                        note: addressNotes.find((item) => item.address === counterparty.address)?.note || '',
+                      })),
+                    }}
+                    spamActivity={spamActivity}
+                    onSpamPageLoaded={(next) => { spamPagesRef.current += 1; setSpamActivity(next); }}
+                    exchangeNameOptions={exchangeNameOptions}
+                    hasWallets={wallets.length > 0}
+                    onChanged={handleManageChanged}
+                    onError={setError}
+                    showSuccess={showSuccess}
+                    onRetry={fetchManageData}
+                    exchangeExceptions={exchangeExceptions}
+                    exchangeExceptionsError={exchangeExceptions === null
+                      ? 'Couldn\'t load the exchange balance review queue.'
+                      : null}
+                    onOpenExchanges={(accountId) => {
+                      setExchangeFocusAccountId(accountId);
+                      onTabChange?.(EXCHANGES_TAB);
+                    }}
+                  />
+                )
               )}
             </>
           ))}
