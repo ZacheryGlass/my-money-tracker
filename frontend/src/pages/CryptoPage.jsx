@@ -120,6 +120,11 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [loadError, setLoadError] = useState(null);
   const [walletsLoadFailed, setWalletsLoadFailed] = useState(false);
   const [selectedWalletId, setSelectedWalletId] = useState(null);
+  // Activity narrows to a wallet OR an exchange account, never both.
+  const [selectedExchangeAccountId, setSelectedExchangeAccountId] = useState(null);
+  // One address's transactions, opened from Review's "View transactions".
+  const [ledgerCounterparty, setLedgerCounterparty] = useState(null);
+  const [pickerExchangeAccounts, setPickerExchangeAccounts] = useState([]);
   const [syncingWalletId, setSyncingWalletId] = useState(null);
   const [sorting, setSorting] = useState([{ id: 'value', desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
@@ -346,6 +351,14 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     return shortEthAddress(wallet.address);
   };
 
+  // Six "Metamask" wallets are one name six times in a picker; the short
+  // address tells them apart where a name is shared.
+  const pickerWalletLabel = (wallet) => {
+    const name = walletLabel(wallet);
+    const shared = wallets.filter((other) => walletLabel(other) === name).length > 1;
+    return shared ? `${name} · ${shortEthAddress(wallet.address)}` : name;
+  };
+
   const walletNames = useMemo(
     () => new Map(wallets.map((wallet) => [wallet.id, walletLabel(wallet)])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -411,6 +424,19 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // Set by cross-page actions such as the Overview empty state and the
   // failed-sync banner. Sidebar navigation itself is owned by App.
   const goToTab = (id) => onTabChange?.(id);
+
+  // The Activity picker lists exchange accounts too. Read once when Activity
+  // first opens (the ledger reads the same list, and the two share one
+  // request); once the management lists have loaded, theirs is the fresher.
+  const pickerRequestedRef = useRef(false);
+  useEffect(() => {
+    if (activeTab !== TRANSACTIONS_TAB || manageLoaded || pickerRequestedRef.current) return;
+    pickerRequestedRef.current = true;
+    Promise.resolve().then(() => exchangesAPI.getAll())
+      .then((result) => setPickerExchangeAccounts(result?.accounts || []))
+      .catch(() => {});
+  }, [activeTab, manageLoaded]);
+  const activityExchangeAccounts = manageLoaded ? exchangeAccounts : pickerExchangeAccounts;
 
   // Page bodies are hidden with CSS, never unmounted: unmounting OnChainActivity
   // would throw away its accumulated Load More pages, transfer-type filter and
@@ -810,20 +836,36 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   <label className="flex min-w-0 flex-1 items-center gap-2 sm:flex-initial">
                     <span className="shrink-0 text-caption font-semibold uppercase tracking-wide text-tertiary">Wallet</span>
                     <select
-                      value={selectedWalletId == null ? '' : String(selectedWalletId)}
-                      onChange={(event) => setSelectedWalletId(
-                        event.target.value === '' ? null : parseInt(event.target.value)
-                      )}
+                      value={selectedWalletId != null ? `w:${selectedWalletId}`
+                        : selectedExchangeAccountId != null ? `x:${selectedExchangeAccountId}` : ''}
+                      onChange={(event) => {
+                        const [kind, id] = event.target.value.split(':');
+                        setSelectedWalletId(kind === 'w' ? Number(id) : null);
+                        setSelectedExchangeAccountId(kind === 'x' ? Number(id) : null);
+                      }}
+                      aria-label="Wallet or exchange account"
                       className="h-9 w-full min-w-0 border border-border bg-surface px-2 text-body-sm text-primary sm:w-[280px]"
                     >
-                      <option value="">All wallets ({wallets.length})</option>
-                      {wallets.map((wallet) => (
-                        <option key={wallet.id} value={String(wallet.id)}>{walletLabel(wallet)}</option>
-                      ))}
+                      <option value="">
+                        All ({wallets.length} {wallets.length === 1 ? 'wallet' : 'wallets'}
+                        {activityExchangeAccounts.length ? `, ${activityExchangeAccounts.length} exchange accounts` : ''})
+                      </option>
+                      <optgroup label="Wallets">
+                        {wallets.map((wallet) => (
+                          <option key={wallet.id} value={`w:${wallet.id}`}>{pickerWalletLabel(wallet)}</option>
+                        ))}
+                      </optgroup>
+                      {activityExchangeAccounts.length > 0 && (
+                        <optgroup label="Exchange accounts">
+                          {activityExchangeAccounts.map((account) => (
+                            <option key={account.id} value={`x:${account.id}`}>{account.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                   </label>
                 )}
-                {wallets.length > 0 && (
+                {wallets.length > 0 && selectedExchangeAccountId == null && (
                   <button
                     onClick={handleSyncClick}
                     disabled={syncingWalletId != null}
@@ -882,6 +924,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
               ) : txView === LEDGER_VIEW ? (
                 <CryptoLedger
                   walletId={selectedWalletId}
+                  exchangeAccountId={selectedExchangeAccountId}
+                  counterparty={ledgerCounterparty}
+                  onClearCounterparty={() => setLedgerCounterparty(null)}
+                  onNavigate={goToTab}
                   refreshKey={syncNonce}
                   addressNotes={addressNotes}
                   onDataChanged={handleLedgerChanged}
@@ -1017,6 +1063,13 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                     onOpenExchanges={(accountId) => {
                       setExchangeFocusAccountId(accountId);
                       onTabChange?.(EXCHANGES_TAB);
+                    }}
+                    onViewTransactions={(address) => {
+                      setLedgerCounterparty(address);
+                      setSelectedWalletId(null);
+                      setSelectedExchangeAccountId(null);
+                      setTxView(LEDGER_VIEW);
+                      goToTab(TRANSACTIONS_TAB);
                     }}
                   />
                 )

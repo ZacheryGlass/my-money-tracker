@@ -240,6 +240,17 @@ describe('unknown counterparty triage', () => {
     await waitFor(() => expect(within(tab).getByText('1')).toBeInTheDocument());
   });
 
+  it('opens Activity on one counterparty from its row', async () => {
+    const onTabChange = vi.fn();
+    apiMocks.eth.getUnreviewedCounterparties.mockResolvedValue({ data: [MATERIAL], summary: { count: 1, dust_count: 0, usd_volume: 12403 } });
+    renderReview({ onTabChange });
+    await openQueue(/^Addresses/);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'View transactions' }));
+
+    expect(onTabChange).toHaveBeenCalledWith('crypto-transactions');
+  });
+
   it('labels a whole selection of low-value counterparties in one write', async () => {
     apiMocks.eth.labelAddresses.mockResolvedValue({ labels: [] });
     await openReviewTab({

@@ -75,6 +75,7 @@ export function CounterpartyRow({
   onSaveNote,
   selected = false,
   onToggleSelected,
+  onViewTransactions,
 }) {
   const [verdict, setVerdict] = useState('');
   const [name, setName] = useState('');
@@ -134,6 +135,15 @@ export function CounterpartyRow({
                 </a>
               ) : null;
             })}
+            {onViewTransactions && (
+              <button
+                type="button"
+                onClick={() => onViewTransactions(counterparty.address)}
+                className="text-[10px] text-accent hover:underline"
+              >
+                View transactions
+              </button>
+            )}
             {counterparty.sent_count > 0 && (
               // The single most decision-relevant fact on the row: you cannot
               // receive a scam airdrop that you sent.
@@ -255,6 +265,7 @@ function ReviewPanel({
   exchangeExceptionsError,
   onOpenExchanges,
   section = 'all',
+  onViewTransactions,
 }) {
   const [triagingAddress, setTriagingAddress] = useState(null);
   const [showDust, setShowDust] = useState(false);
@@ -441,6 +452,7 @@ function ReviewPanel({
   const rowSelection = (counterparty) => ({
     selected: selectedAddresses.has(counterparty.address),
     onToggleSelected: toggleSelected,
+    onViewTransactions,
   });
 
   const counterpartySection = (

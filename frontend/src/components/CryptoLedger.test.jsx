@@ -172,7 +172,7 @@ describe('CryptoLedger', () => {
     render(<CryptoLedger walletId={1} />);
     await screen.findAllByText('No ledger entries match these filters.');
 
-    expect(screen.queryByLabelText('Ledger source')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Source' })).toBeNull();
   });
 
   it('renders a real dust receipt rather than shrugging at it', async () => {
@@ -313,7 +313,7 @@ describe('CryptoLedger', () => {
     render(<CryptoLedger />);
     await screen.findAllByText('Arbitrum One');
 
-    fireEvent.change(screen.getByLabelText('Ledger source'), { target: { value: 'exchange' } });
+    fireEvent.click(within(screen.getByRole('group', { name: 'Source' })).getByRole('button', { name: 'Exchanges' }));
     await vi.waitFor(() => {
       expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'exchange', offset: 0 })
@@ -333,6 +333,47 @@ describe('CryptoLedger', () => {
         expect.objectContaining({ category: 'staking_reward' })
       );
     });
+  });
+
+  it('searches and narrows by date on the server, the export included', async () => {
+    render(<CryptoLedger />);
+    await screen.findAllByText('No ledger entries match these filters.');
+
+    fireEvent.change(screen.getByLabelText('Search activity'), { target: { value: ' usdc ' } });
+    fireEvent.change(screen.getByLabelText('From date'), { target: { value: '2026-01-01' } });
+    fireEvent.change(screen.getByLabelText('To date'), { target: { value: '2026-03-31' } });
+
+    await vi.waitFor(() => {
+      expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(expect.objectContaining({
+        q: 'usdc', from: '2026-01-01', to: '2026-03-31',
+      }));
+      expect(apiMocks.crypto.ledgerExportUrl).toHaveBeenLastCalledWith(expect.objectContaining({
+        q: 'usdc', from: '2026-01-01', to: '2026-03-31',
+      }));
+    }, { timeout: 2000 });
+  });
+
+  it('narrows to one address handed in from outside, and says so', async () => {
+    const onClear = vi.fn();
+    render(<CryptoLedger counterparty={COUNTERPARTY} onClearCounterparty={onClear} />);
+
+    await vi.waitFor(() => expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
+      expect.objectContaining({ counterparty: COUNTERPARTY })
+    ));
+    expect(screen.getByText(/^Only 0xbbbb/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show every address' }));
+    expect(onClear).toHaveBeenCalled();
+  });
+
+  it('does not count a CSV-only archive as an incomplete exchange forever', async () => {
+    apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [
+      { id: 1, name: 'Bittrex archive', reconciliation_status: 'unknown', credentials: { configured: false } },
+    ] });
+    render(<CryptoLedger />);
+    await screen.findAllByText('No ledger entries match these filters.');
+    await waitFor(() => expect(apiMocks.exchanges.getAll).toHaveBeenCalled());
+
+    expect(screen.queryByText(/not finished syncing/)).toBeNull();
   });
 
   it('narrows to one wallet without silently widening back', async () => {
@@ -845,8 +886,8 @@ describe('CryptoLedger', () => {
 
     render(<CryptoLedger />);
 
-    expect(await screen.findByText(/does not reproduce the coin balance/)).toBeInTheDocument();
-    expect(screen.getByText(/on 1 wallet\/chain/)).toBeInTheDocument();
+    expect(await screen.findByText(/does not add up to the balance on the blockchain/)).toBeInTheDocument();
+    expect(screen.getByText(/for 1 wallet and network/)).toBeInTheDocument();
   });
 
   it('counts a non-ether native drift, which an asset_key === ETH filter would drop', async () => {
@@ -862,8 +903,8 @@ describe('CryptoLedger', () => {
 
     render(<CryptoLedger />);
 
-    expect(await screen.findByText(/does not reproduce the coin balance/)).toBeInTheDocument();
-    expect(screen.getByText(/on 1 wallet\/chain/)).toBeInTheDocument();
+    expect(await screen.findByText(/does not add up to the balance on the blockchain/)).toBeInTheDocument();
+    expect(screen.getByText(/for 1 wallet and network/)).toBeInTheDocument();
   });
 
   it('names the assets it could not price, so a gap is not read as zero', async () => {
@@ -950,7 +991,7 @@ describe('CryptoLedger', () => {
     // entering the quarantine view resets EVERY narrowing filter rather than
     // intersecting with any of them.
     fireEvent.click(screen.getByRole('button', { name: /needs review/i }));
-    fireEvent.change(screen.getByLabelText('Ledger source'), { target: { value: 'exchange' } });
+    fireEvent.click(within(screen.getByRole('group', { name: 'Source' })).getByRole('button', { name: 'Exchanges' }));
 
     // The way in is the count itself: the summary states how many rows the
     // quarantine is hiding, and clicking that number is what shows them.
@@ -972,7 +1013,7 @@ describe('CryptoLedger', () => {
     // ledger, and every Show/Source/Category narrowing of the quarantine is
     // empty by construction.
     expect(screen.queryByRole('button', { name: /everything/i })).toBeNull();
-    expect(screen.queryByLabelText('Ledger source')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Source' })).toBeNull();
     // The same control is the way back out.
     expect(screen.getByRole('button', { name: /back to the ledger/i })).toBeInTheDocument();
   });
@@ -1147,7 +1188,7 @@ describe('CryptoLedger', () => {
     const { unmount } = render(<CryptoLedger />);
     await screen.findAllByText('Arbitrum One');
 
-    fireEvent.change(screen.getByLabelText('Ledger source'), { target: { value: 'exchange' } });
+    fireEvent.click(within(screen.getByRole('group', { name: 'Source' })).getByRole('button', { name: 'Exchanges' }));
 
     await vi.waitFor(() => {
       expect(apiMocks.crypto.ledgerExportUrl).toHaveBeenCalledWith(

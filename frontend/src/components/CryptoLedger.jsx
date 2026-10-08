@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, DollarSign, Download,
-  ExternalLink, Landmark, Link2, Pencil, RefreshCw, ShieldAlert, Tag, Undo2,
+  ExternalLink, Landmark, Link2, Pencil, RefreshCw, Search, ShieldAlert, Tag, Undo2,
   Wallet, X,
 } from 'lucide-react';
 import { crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '../utils/api';
@@ -42,9 +42,9 @@ const STATUS_OPTIONS = [
 ];
 
 const SOURCE_OPTIONS = [
-  { value: '', label: 'All sources' },
-  { value: 'onchain', label: 'On-chain' },
-  { value: 'exchange', label: 'Exchange' },
+  { value: '', label: 'All' },
+  { value: 'onchain', label: 'Wallets' },
+  { value: 'exchange', label: 'Exchanges' },
 ];
 
 // Tone by what the category MEANS for the portfolio, not one colour per value:
@@ -170,6 +170,12 @@ const DetailField = ({ label, children }) => (
 // not an equal way to read the ledger.
 const CryptoLedger = ({
   walletId = null,
+  exchangeAccountId = null,
+  // One address's transactions, set from outside (Review's "View
+  // transactions"); cleared by the chip it shows.
+  counterparty = null,
+  onClearCounterparty,
+  onNavigate,
   refreshKey = 0,
   onDataChanged,
   onShowTransferLegs,
@@ -186,6 +192,16 @@ const CryptoLedger = ({
   const [status, setStatus] = useState(initialNeedsReview);
   const [category, setCategory] = useState('');
   const [spam, setSpam] = useState('');
+  // The box holds what is typed; the feed follows it a beat later, so a hash
+  // being pasted or a symbol being typed is one request, not one per key.
+  const [searchText, setSearchText] = useState('');
+  const [search, setSearch] = useState('');
+  useEffect(() => {
+    const handle = setTimeout(() => setSearch(searchText.trim()), 350);
+    return () => clearTimeout(handle);
+  }, [searchText]);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
@@ -201,7 +217,7 @@ const CryptoLedger = ({
 
   // A source picked on the all-wallets ledger does not carry into one
   // wallet's, where the control is hidden and "exchange" can match nothing.
-  const effectiveSource = walletId == null ? source : '';
+  const effectiveSource = walletId == null && exchangeAccountId == null ? source : '';
   const filters = useMemo(() => ({
     ...(effectiveSource ? { source: effectiveSource } : {}),
     ...(category ? { category } : {}),
@@ -210,7 +226,12 @@ const CryptoLedger = ({
     // answers -- the client never has to restate it.
     ...(spam ? { spam } : {}),
     ...(walletId != null ? { walletId } : {}),
-  }), [effectiveSource, category, status, spam, walletId]);
+    ...(exchangeAccountId != null ? { exchangeAccountId } : {}),
+    ...(counterparty ? { counterparty } : {}),
+    ...(search ? { q: search } : {}),
+    ...(fromDate ? { from: fromDate } : {}),
+    ...(toDate ? { to: toDate } : {}),
+  }), [effectiveSource, category, status, spam, walletId, exchangeAccountId, counterparty, search, fromDate, toDate]);
 
   // Guards a Load More response that arrives after the filters moved on.
   const filtersRef = useRef(filters);
@@ -310,8 +331,12 @@ const CryptoLedger = ({
     return () => { cancelled = true; };
   }, [reload, refreshKey]);
 
+  // 'unknown' counts only where a key could have produced a balance report: a
+  // CSV-only archive of a closed venue never will, and flagging it forever
+  // would keep this strip up with nothing anyone can do about it.
   const incompleteAccounts = useMemo(() => exchangeAccounts.filter(
-    (account) => ['mismatch', 'stale', 'unknown'].includes(account.reconciliation_status)
+    (account) => ['mismatch', 'stale'].includes(account.reconciliation_status)
+      || (account.reconciliation_status === 'unknown' && account.credentials?.configured)
       || account.last_sync_status === 'balance_mismatch'
       || account.last_sync_status === 'error'
       || account.last_sync_status === 'coverage_limited'
@@ -356,6 +381,11 @@ const CryptoLedger = ({
     needs_review: status || undefined,
     spam: spam || undefined,
     wallet_id: walletId ?? undefined,
+    exchange_account_id: exchangeAccountId ?? undefined,
+    counterparty: counterparty || undefined,
+    q: search || undefined,
+    from: fromDate || undefined,
+    to: toDate || undefined,
   });
 
   const enriched = useMemo(() => rows.map(enrichLedgerRow), [rows]);
@@ -710,20 +740,13 @@ const CryptoLedger = ({
 
         {/* One wallet's ledger is on-chain by definition: offering
             "Exchange" there only leads to an empty table. */}
-        {walletId == null && (
-          <label className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">Source</span>
-            <select
-              value={source}
-              onChange={(event) => { setSource(event.target.value); setExpandedId(null); }}
-              aria-label="Ledger source"
-              className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
-            >
-              {SOURCE_OPTIONS.map((option) => (
-                <option key={option.value || 'all'} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
+        {walletId == null && exchangeAccountId == null && (
+          <SegmentedControl
+            label="Source"
+            value={source}
+            onChange={(next) => { setSource(next); setExpandedId(null); }}
+            options={SOURCE_OPTIONS}
+          />
         )}
 
         <label className="flex min-w-0 items-center gap-2">
@@ -740,6 +763,61 @@ const CryptoLedger = ({
             ))}
           </select>
         </label>
+
+        <label className="flex min-w-0 flex-1 items-center gap-2 sm:min-w-[14rem]">
+          <Search size={13} className="shrink-0 text-tertiary" />
+          <input
+            type="search"
+            value={searchText}
+            onChange={(event) => { setSearchText(event.target.value); setExpandedId(null); }}
+            placeholder="Hash, address, asset or name"
+            aria-label="Search activity"
+            maxLength={100}
+            className="h-8 w-full min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary placeholder:text-tertiary"
+          />
+        </label>
+
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">Dates</span>
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={(event) => { setFromDate(event.target.value); setExpandedId(null); }}
+            aria-label="From date"
+            className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-1.5 text-body-sm text-primary"
+          />
+          <span className="text-tertiary">–</span>
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={(event) => { setToDate(event.target.value); setExpandedId(null); }}
+            aria-label="To date"
+            className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-1.5 text-body-sm text-primary"
+          />
+          {(fromDate || toDate) && (
+            <button
+              type="button"
+              onClick={() => { setFromDate(''); setToDate(''); }}
+              aria-label="Clear dates"
+              className="rounded p-1 text-tertiary hover:text-primary"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+
+        {counterparty && (
+          <span className="inline-flex items-center gap-1 rounded border border-accent/30 bg-accent/10 px-2 py-1 text-caption text-accent">
+            Only {shortEthAddress(counterparty)}
+            {onClearCounterparty && (
+              <button type="button" onClick={onClearCounterparty} aria-label="Show every address" className="hover:text-primary">
+                <X size={11} />
+              </button>
+            )}
+          </span>
+        )}
 
         {onShowTransferLegs && (
           <button
@@ -767,9 +845,14 @@ const CryptoLedger = ({
             <span className="flex items-center gap-1.5 text-loss">
               <AlertTriangle size={13} className="shrink-0" />
               <span>
-                The stored ledger does not reproduce the coin balance the chain reports
-                on {nativeDrift.length} {nativeDrift.length === 1 ? 'wallet/chain' : 'wallet/chain pairs'} — a
-                transfer is missing here, so these totals are short.
+                The transaction history does not add up to the balance on the blockchain
+                for {nativeDrift.length} {nativeDrift.length === 1 ? 'wallet and network' : 'wallet and network pairs'} — a
+                transaction is missing, so these totals are short.
+                {onNavigate && (
+                  <button type="button" onClick={() => onNavigate('crypto-wallets')} className="ml-1.5 underline hover:text-primary">
+                    Open Wallets
+                  </button>
+                )}
               </span>
             </span>
           )}
@@ -788,8 +871,14 @@ const CryptoLedger = ({
             <span className="flex items-center gap-1.5 text-orange-400">
               <AlertTriangle size={13} className="shrink-0" />
               <span>
-                {incompleteAccounts.length} exchange {incompleteAccounts.length === 1 ? 'account has' : 'accounts have'} not
-                finished syncing, or did not reconcile with the venue&apos;s own balances — this ledger may be incomplete.
+                {incompleteAccounts.length === 1 ? incompleteAccounts[0].name : `${incompleteAccounts.length} exchange accounts`}{' '}
+                {incompleteAccounts.length === 1 ? 'has' : 'have'} not finished syncing, or {incompleteAccounts.length === 1 ? 'does' : 'do'} not
+                match the exchange&apos;s own balances — this list may be incomplete.
+                {onNavigate && (
+                  <button type="button" onClick={() => onNavigate('crypto-exchanges')} className="ml-1.5 underline hover:text-primary">
+                    Open Exchanges
+                  </button>
+                )}
               </span>
             </span>
           )}

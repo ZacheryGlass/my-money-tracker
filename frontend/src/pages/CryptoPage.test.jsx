@@ -140,6 +140,27 @@ describe('CryptoPage', () => {
     expect(apiMocks.history.getAccounts).toHaveBeenCalledWith(expect.objectContaining({ type: 'crypto' }));
   });
 
+  it('tells same-named wallets apart and narrows Activity to an exchange account', async () => {
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [
+        { id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Metamask', eth_quantity: '1' },
+        { id: 2, address: '0xbbbb000000000000000000000000000000000002', label: 'Metamask', eth_quantity: '1' },
+      ],
+    });
+    apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [{ id: 7, name: 'Kraken spot' }] });
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
+
+    const picker = await screen.findByLabelText('Wallet or exchange account');
+    expect(await screen.findByRole('option', { name: 'Metamask · 0xaaaa…0001' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Metamask · 0xbbbb…0002' })).toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: 'x:7' } });
+
+    await vi.waitFor(() => expect(apiMocks.crypto.getLedger).toHaveBeenCalledWith(
+      expect.objectContaining({ exchangeAccountId: 7 })
+    ));
+  });
+
   it('lights neither ledger option while the raw transfer legs are open', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
     apiMocks.eth.getWallets.mockResolvedValue({
