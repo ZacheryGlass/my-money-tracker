@@ -218,6 +218,67 @@ test('DELETE /api/eth/address-labels/:address refreshes by address with the remo
   assert.deepEqual(refreshes[0][2], { kinds: ['bridge'] });
 });
 
+// A batch is one verdict for many addresses and ONE rebuild, carrying every
+// previous verdict so a lost `own` still takes the full refresh.
+test('POST /api/eth/address-labels/batch labels every address and refreshes once', async (t) => {
+  const EthAddressLabel = require('../src/models/EthAddressLabel');
+  const EthWalletService = require('../src/services/EthWalletService');
+  const saved = ['findByAddress', 'upsert'].map((key) => [EthAddressLabel, key, EthAddressLabel[key]]);
+  saved.push([EthWalletService, 'refreshClassificationsForAddresses', EthWalletService.refreshClassificationsForAddresses]);
+  t.after(() => { for (const [obj, key, fn] of saved) obj[key] = fn; });
+  const upserts = [];
+  const refreshes = [];
+  EthAddressLabel.findByAddress = async (userId, address) => (address.startsWith('0xbbbb') ? { kind: 'own' } : null);
+  EthAddressLabel.upsert = async (userId, address, name, note, kind) => {
+    upserts.push({ userId, address, name, kind });
+    return { address, name, kind };
+  };
+  EthWalletService.refreshClassificationsForAddresses = async (...args) => { refreshes.push(args); };
+
+  const response = await request(app)
+    .post('/api/eth/address-labels/batch')
+    .send({
+      kind: 'external',
+      addresses: [
+        '0xAAAA111111111111111111111111111111111111',
+        '0xbbbb222222222222222222222222222222222222',
+        '0xaaaa111111111111111111111111111111111111',
+      ],
+    })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 201);
+  // Deduplicated, lowercased, and named by short address when no name is given.
+  assert.deepEqual(upserts.map((u) => u.address), [
+    '0xaaaa111111111111111111111111111111111111',
+    '0xbbbb222222222222222222222222222222222222',
+  ]);
+  assert.ok(upserts.every((u) => u.userId === 1 && u.kind === 'external' && u.name.startsWith('0x')));
+  assert.equal(refreshes.length, 1);
+  assert.deepEqual(refreshes[0][1], upserts.map((u) => u.address));
+  assert.deepEqual(refreshes[0][2], { kinds: ['external', undefined, 'own'] });
+});
+
+test('POST /api/eth/address-labels/batch refuses a missing kind, a bad address, or an unnamed exchange', async (t) => {
+  const EthAddressLabel = require('../src/models/EthAddressLabel');
+  const saved = [[EthAddressLabel, 'upsert', EthAddressLabel.upsert]];
+  t.after(() => { for (const [obj, key, fn] of saved) obj[key] = fn; });
+  let wrote = false;
+  EthAddressLabel.upsert = async () => { wrote = true; return {}; };
+  const good = '0xaaaa111111111111111111111111111111111111';
+  for (const body of [
+    { addresses: [good] },
+    { kind: 'external', addresses: [good, 'not-an-address'] },
+    { kind: 'exchange', addresses: [good] },
+    { kind: 'external', addresses: [] },
+    { kind: 'external', addresses: Array.from({ length: 201 }, () => good) },
+  ]) {
+    const response = await request(app).post('/api/eth/address-labels/batch').send(body).set('Content-Type', 'application/json');
+    assert.equal(response.status, 400, JSON.stringify(body).slice(0, 80));
+  }
+  assert.equal(wrote, false);
+});
+
 // The balance audit (#62). Its filter is fail-closed for the same reason the
 // activity route's category is: `?status=drift` silently returning every row,
 // matched ones included, reads as "nothing drifted" -- the exact opposite of

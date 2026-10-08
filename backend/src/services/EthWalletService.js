@@ -2106,14 +2106,28 @@ class EthWalletService {
   // owner's declared-address set, which address-poisoning detection reads on
   // every wallet, so it takes the full refresh.
   static refreshClassificationsForAddress(userId, address, { kinds = [] } = {}) {
+    return this.refreshClassificationsForAddresses(userId, [address], { kinds });
+  }
+
+  // Several label writes, one rebuild: the union of every address's touched
+  // wallets (and, through the pipeline, their bridge partners), or the full
+  // refresh when any of them gains or loses `own`. Forty counterparties
+  // labelled one at a time were forty rebuilds of mostly the same wallets.
+  static refreshClassificationsForAddresses(userId, addresses, { kinds = [] } = {}) {
     if (kinds.includes('own')) return this.refreshClassificationsForUser(userId);
-    return EthDerivedPipeline.serializedForUser(userId, async () => EthDerivedPipeline.runForUser(userId, {
-      reclassify: true,
-      revalue: false,
-      walletIds: await EthTransfer.walletIdsTouchingAddress(userId, address),
-      context: 'classification refresh',
-      matchReason: 'classification-refresh',
-    }));
+    return EthDerivedPipeline.serializedForUser(userId, async () => {
+      const walletIds = new Set();
+      for (const address of addresses) {
+        for (const id of await EthTransfer.walletIdsTouchingAddress(userId, address)) walletIds.add(id);
+      }
+      return EthDerivedPipeline.runForUser(userId, {
+        reclassify: true,
+        revalue: false,
+        walletIds: [...walletIds].sort((a, b) => a - b),
+        context: 'classification refresh',
+        matchReason: 'classification-refresh',
+      });
+    });
   }
 
   // Ignore lists are per-user, so this re-derives only the owner's wallets.

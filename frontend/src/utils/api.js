@@ -527,6 +527,12 @@ export const eth = {
     });
     return response.data;
   },
+  // One verdict for many addresses, one rebuild on the server. `kind` is
+  // required; `name` is shared and optional for the kinds that allow it.
+  labelAddresses: async ({ addresses, kind, name } = {}) => {
+    const response = await api.post('/api/eth/address-labels/batch', { addresses, kind, name });
+    return response.data;
+  },
   unlabelAddress: async (address) => {
     const response = await api.delete(`/api/eth/address-labels/${address}`);
     return response.data;

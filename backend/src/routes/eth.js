@@ -1364,6 +1364,63 @@ router.get('/counterparties/unreviewed', async (req, res) => {
   }
 });
 
+// One verdict for many addresses, with ONE rebuild behind it: triaging forty
+// low-value counterparties one label at a time cost forty rebuilds of mostly
+// the same wallets. A batch IS a verdict, so `kind` is required here (the
+// single route's keep-the-current-verdict default would make "apply to all"
+// mean different things per row), and one name covers every address.
+const MAX_BATCH_LABELS = 200;
+router.post('/address-labels/batch', async (req, res) => {
+  try {
+    const { addresses, name } = req.body || {};
+    if (!Array.isArray(addresses) || addresses.length === 0 || addresses.length > MAX_BATCH_LABELS) {
+      return res.status(400).json({ error: `addresses must be a list of 1-${MAX_BATCH_LABELS} addresses` });
+    }
+    const kind = typeof req.body?.kind === 'string' ? req.body.kind.trim().toLowerCase() : '';
+    if (!LABEL_KINDS.has(kind)) {
+      return res.status(400).json({ error: `kind must be one of: ${[...LABEL_KINDS].join(', ')}` });
+    }
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (trimmedName.length > 64) {
+      return res.status(400).json({ error: 'name must be 64 characters or fewer' });
+    }
+    if (!NAME_OPTIONAL_KINDS.has(kind) && !trimmedName) {
+      return res.status(400).json({ error: 'name is required (max 64 characters)' });
+    }
+    const bad = addresses.find((address) => typeof address !== 'string' || !/^0x[0-9a-f]{40}$/i.test(address.trim()));
+    if (bad !== undefined) {
+      return res.status(400).json({ error: `not a 0x-prefixed 40-hex-character address: ${String(bad).slice(0, 64)}` });
+    }
+    const normalized = [...new Set(addresses.map((address) => address.trim().toLowerCase()))];
+
+    const written = [];
+    const kinds = [kind];
+    try {
+      for (const address of normalized) {
+        const previous = await EthAddressLabel.findByAddress(req.user.id, address);
+        kinds.push(previous?.kind);
+        written.push(await EthAddressLabel.upsert(
+          req.user.id, address, trimmedName || shortAddress(address), undefined, kind, null
+        ));
+      }
+    } catch (error) {
+      // Whatever landed still has to be reflected in the derived rows, or the
+      // labels would say one thing and the ledger another until the next sync.
+      if (written.length) {
+        await EthWalletService.refreshClassificationsForAddresses(
+          req.user.id, written.map((label) => label.address), { kinds }
+        );
+      }
+      throw error;
+    }
+    await EthWalletService.refreshClassificationsForAddresses(req.user.id, normalized, { kinds });
+    return res.status(201).json({ labels: written });
+  } catch (error) {
+    logger.error({ err: error }, 'Batch label addresses error');
+    return res.status(500).json({ error: 'Failed to label addresses' });
+  }
+});
+
 router.delete('/address-labels/:address', async (req, res) => {
   try {
     const label = await EthAddressLabel.delete(req.user.id, req.params.address);

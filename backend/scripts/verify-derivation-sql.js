@@ -443,6 +443,25 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
       [walletA, walletB].sort((x, y) => x - y));
     await scopedVersusFull('removing the tracked-wallet label', WALLET_B, unlabelScoped(WALLET_B),
       [walletA, walletB].sort((x, y) => x - y));
+
+    // A batch of label writes takes ONE rebuild over the union of their
+    // touched wallets, and lands where the full refresh does.
+    rebuiltWallets.length = 0;
+    const batchKinds = [
+      ...(await relabelScoped(STRANGER, 'Batch desk', 'external')()),
+      ...(await relabelScoped(WALLET_B, 'Batch savings', 'external')()),
+    ];
+    await EthWalletService.refreshClassificationsForAddresses(1, [STRANGER, WALLET_B], { kinds: batchKinds });
+    const batchWallets = [...rebuiltWallets].sort((x, y) => x - y);
+    const batched = await snapshot(1);
+    await EthDerivedPipeline.runForUser(1, { reclassify: true, revalue: false, context: 'harness full refresh' });
+    const batchFull = await snapshot(1);
+    ok('a batch label write rebuilds the union once and equals the full refresh',
+      same(batchWallets, [walletA, walletB].sort((x, y) => x - y)) && batched.derived_sha256 === batchFull.derived_sha256,
+      { batchWallets, diff: require('./lib/derivedDigest').diffDigests(batched, batchFull).derived });
+    await unlabelScoped(STRANGER)();
+    await unlabelScoped(WALLET_B)();
+    await EthDerivedPipeline.runForUser(1, { reclassify: true, revalue: false, context: 'harness reset' });
   } finally {
     EthActivityService.rebuildForWallet = realActivityRebuild;
   }

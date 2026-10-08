@@ -385,6 +385,18 @@ test('a label write rebuilds the wallets touching its address; an own verdict re
   assert.equal(lookups.length, 1, 'the full refresh does not look up touched wallets');
 });
 
+test('a batch label write rebuilds the union of touched wallets once', async (t) => {
+  const { calls, stub } = harness(t, { wallets: [{ id: 7 }, { id: 8 }, { id: 9 }] });
+  const touching = { '0xa': [9, 7], '0xb': [7], '0xc': [] };
+  stub(EthTransfer, 'walletIdsTouchingAddress', async (userId, address) => touching[address]);
+  const rebuilt = () => calls.filter(([name]) => name === 'activity').map(([, id]) => id);
+
+  await EthWalletService.refreshClassificationsForAddresses(1, ['0xa', '0xb', '0xc'], { kinds: ['external', null] });
+
+  assert.deepEqual(rebuilt(), [7, 9]);
+  assert.equal(calls.filter(([name]) => name === 'reclassify').length, 1, 'one rebuild, not one per address');
+});
+
 test('the sync tail acquires bridge receipts by default', async (t) => {
   const { bridgeOptions } = harness(t, { wallets: [{ id: 7 }] });
   await EthDerivedPipeline.finishUser(1, { walletId: 7 });
