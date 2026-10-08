@@ -113,6 +113,14 @@
     --crypto-bg-strong: rgba(109, 40, 217, 0.26);
     --crypto-border: rgba(109, 40, 217, 0.30);
 
+    /* Warning text: Tailwind's amber/orange 300-400 suit the dark canvas and
+       read at under 2:1 on white (the wallet history-audit notice was yellow
+       on beige). Deepened here, once, for every text-amber/orange class. */
+    --color-amber-300: #B45309;
+    --color-amber-400: #B45309;
+    --color-orange-300: #C2410C;
+    --color-orange-400: #C2410C;
+
     /* Chart palette - deepened for contrast on white */
     --chart-1: #1F6E92;
     --chart-2: #2E9E5B;
