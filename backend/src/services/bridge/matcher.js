@@ -5,7 +5,7 @@ const {
   BRIDGE_DEPOSIT_WINDOW_MS, BRIDGE_WITHDRAWAL_WINDOW_MS,
 } = require('../ethActivity/bridge');
 const { DEFAULT_CHAIN_ID } = require('../../config/chains');
-const { RULE_VERSION, validateHopPair } = require('./adapters');
+const { RULE_VERSION, adapterFor } = require('./adapters');
 
 const DESTINATION_ROLES = new Set(['destination_execution', 'fill', 'finalization']);
 
@@ -77,8 +77,12 @@ function buildProtocolMovements(events) {
     const pairFinalized = [...initiations, ...destinations].every(
       (event) => event.evidence?.finality?.status === 'finalized'
     );
-    const hopPair = first.protocol === 'hop' && initiations.length === 1 && destinations.length === 1
-      ? validateHopPair(initiations[0], destinations[0]) : null;
+    // A protocol whose pairing rule is more than "different chains, compatible
+    // identity fields" declares validatePair on its adapter (Hop: transfer id,
+    // route and fee checks). Its verdict replaces the generic test.
+    const validatePair = adapterFor(first.protocol)?.validatePair;
+    const protocolPair = validatePair && initiations.length === 1 && destinations.length === 1
+      ? validatePair(initiations[0], destinations[0]) : null;
     let status = 'pending';
     let ambiguity = null;
 
@@ -90,22 +94,22 @@ function buildProtocolMovements(events) {
         || unsupportedEvents[0].evidence?.reason || 'unsupported_protocol_evidence';
     }
     else if (initiations.length === 1 && destinations.length === 1
-      && (hopPair ? hopPair.ok : initiations[0].chain_id !== destinations[0].chain_id
+      && (protocolPair ? protocolPair.ok : initiations[0].chain_id !== destinations[0].chain_id
         && compatibleIdentityFields(initiations[0], destinations[0]))
-      && (!hopPair || !hopPair.pending_reason)
+      && (!protocolPair || !protocolPair.pending_reason)
       && pairFinalized) {
       status = 'protocol_verified';
     } else if (initiations.length > 1 || destinations.length > 1) {
       status = 'unsupported';
       ambiguity = 'duplicate_protocol_members';
     } else if (initiations.length === 1 && destinations.length === 1) {
-      if (hopPair && !hopPair.ok) {
+      if (protocolPair && !protocolPair.ok) {
         status = 'unsupported';
-        ambiguity = hopPair.reason;
-      } else if (hopPair?.pending_reason) {
+        ambiguity = protocolPair.reason;
+      } else if (protocolPair?.pending_reason) {
         status = 'pending';
-        ambiguity = hopPair.pending_reason;
-      } else if (hopPair?.ok) {
+        ambiguity = protocolPair.pending_reason;
+      } else if (protocolPair?.ok) {
         status = 'pending';
         ambiguity = 'awaiting_chain_finality';
       } else if (initiations[0].chain_id === destinations[0].chain_id) {
@@ -138,7 +142,7 @@ function buildProtocolMovements(events) {
           log_index: event.log_index,
           evidence: event.evidence,
         })),
-        ...(hopPair?.ok ? { hop_pair: hopPair } : {}),
+        ...(protocolPair?.ok ? { hop_pair: protocolPair } : {}),
       },
       members: group.map(toMember),
     });
