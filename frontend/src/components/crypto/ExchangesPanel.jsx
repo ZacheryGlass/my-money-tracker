@@ -11,17 +11,14 @@ import {
   describeExchangeSuggestionReason,
 } from '../../utils/exchangeMatchEvidence';
 import ExchangeBalanceExceptionQueue from './ExchangeBalanceExceptionQueue';
+import { getCryptoMeta } from '../../features/crypto/meta';
 
-// The venues the backend accepts. Coinbase covers both the retail export and a
-// Coinbase Pro / Exchange statement -- the importer recognizes which is which
-// from the file's own header, so the user never has to say.
-const EXCHANGE_VENUES = [
-  { id: 'coinbase', label: 'Coinbase' },
-  { id: 'kraken', label: 'Kraken' },
-  { id: 'binance_us', label: 'Binance.US' },
-  { id: 'other', label: 'Other' },
-];
-const EXCHANGE_VENUE_LABELS = Object.fromEntries(EXCHANGE_VENUES.map((v) => [v.id, v.label]));
+// The venues the backend accepts, from its venue registry (crypto meta store).
+// Coinbase covers both the retail export and a Coinbase Pro / Exchange
+// statement -- the importer recognizes which is which from the file's own
+// header, so the user never has to say.
+const exchangeVenues = () => getCryptoMeta()?.venues || [];
+const venueLabel = (id) => exchangeVenues().find((venue) => venue.id === id)?.label || id;
 const IMPORT_FORMAT_LABELS = {
   coinbase_retail: 'Coinbase transactions export',
   coinbase_pro: 'Coinbase Pro account statement',
@@ -839,7 +836,7 @@ function ExchangesPanel({
               className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
               disabled={adding}
             >
-              {EXCHANGE_VENUES.map((option) => (
+              {exchangeVenues().map((option) => (
                 <option key={option.id} value={option.id}>{option.label}</option>
               ))}
             </select>
@@ -923,7 +920,7 @@ function ExchangesPanel({
                         <h3 className="truncate text-base font-bold leading-tight text-primary">{account.name}</h3>
                         <div className="mt-1 flex flex-wrap items-center gap-4">
                           <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">
-                            {EXCHANGE_VENUE_LABELS[account.exchange] || account.exchange}
+                            {venueLabel(account.exchange)}
                           </span>
                           <span className="font-mono text-[10px] font-bold text-secondary">
                             {(account.record_count ?? 0).toLocaleString()} records
