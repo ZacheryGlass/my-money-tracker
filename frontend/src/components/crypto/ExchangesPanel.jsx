@@ -18,6 +18,8 @@ import { MATCH_METHOD_TEXT, humanize } from '../../features/crypto/plainText';
 import { formatLedgerCategory } from '../../utils/dataLabels';
 import { networkName } from '../../utils/chains';
 import LoadingState from '../LoadingState';
+import RowMenu from '../../features/crypto/RowMenu';
+import { ConfirmDialog } from '../Modal';
 
 // The venues the backend accepts, from its venue registry (crypto meta store).
 // Coinbase covers both the retail export and a Coinbase Pro / Exchange
@@ -80,7 +82,7 @@ const suggestionTargetText = (suggestion) => {
 // One account-level notice owns reconciliation messaging. Keeping mismatch,
 // stale, and unknown in one component prevents a CSV import from showing the
 // same problem once in its receipt and again in the refreshed account card.
-function ReconciliationNotice({ status, report }) {
+function ReconciliationNotice({ status, report, onOpenBalanceCheck }) {
   const effectiveStatus = status
     || (report?.mismatch_count > 0 ? 'mismatch' : null);
   if (!effectiveStatus || effectiveStatus === 'current') return null;
@@ -90,8 +92,15 @@ function ReconciliationNotice({ status, report }) {
     return (
       <p className="mt-1 flex items-start gap-2 text-loss">
         <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-        Balances don&apos;t match for {assets || 'some assets'}: the exchange reports a different amount than its
-        records add up to, so some activity is missing or misread.
+        <span>
+          Balances don&apos;t match for {assets || 'some assets'}: the exchange reports a different amount than its
+          records add up to, so some activity is missing or misread.
+          {onOpenBalanceCheck && (
+            <button type="button" onClick={onOpenBalanceCheck} className="ml-1.5 underline hover:text-primary">
+              See the differences
+            </button>
+          )}
+        </span>
       </p>
     );
   }
@@ -212,6 +221,14 @@ function ExchangesPanel({
   const [openReviewAccountId, setOpenReviewAccountId] = useState(null);
   const [resolvingRecordId, setResolvingRecordId] = useState(null);
   const [matchAudit, setMatchAudit] = useState(null);
+  // Narrows the audit's matches and suggestions as typed: up to 500 rows is
+  // a list nobody scans by eye for one deposit.
+  const [matchSearch, setMatchSearch] = useState('');
+  const matchText = (row) => [
+    row.exchange_account_name, row.record_type, row.base_asset, row.base_amount,
+    row.occurred_at && formatDateDisplay(row.occurred_at), row.tx_hash, row.wallet_address,
+  ].filter(Boolean).join(' ').toLowerCase();
+  const matchFilter = (row) => !matchSearch.trim() || matchText(row).includes(matchSearch.trim().toLowerCase());
   const [loadingMatchAudit, setLoadingMatchAudit] = useState(false);
   const [judgingSuggestion, setJudgingSuggestion] = useState(null);
   const [balanceAudits, setBalanceAudits] = useState({});
@@ -738,9 +755,22 @@ function ExchangesPanel({
             <div><p className="text-tertiary">Shown below</p><p className="mt-1 font-mono font-semibold text-primary">{(matchAudit.data || []).length.toLocaleString()}</p></div>
             <div><p className="text-tertiary">Undone by rules</p><p className="mt-1 font-mono font-semibold text-loss">{(matchAudit.eventTotal ?? (matchAudit.events || []).length).toLocaleString()}</p></div>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-2">
+            <input
+              type="search"
+              value={matchSearch}
+              onChange={(event) => setMatchSearch(event.target.value)}
+              placeholder="Filter by account, asset, date or hash"
+              aria-label="Filter matches"
+              className="h-8 w-full max-w-sm rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary placeholder:text-tertiary"
+            />
+            <span className="text-caption text-tertiary">
+              Showing {(matchAudit.data || []).filter(matchFilter).length.toLocaleString()} of {(matchAudit.summary?.matched ?? (matchAudit.data || []).length).toLocaleString()} matches
+            </span>
+          </div>
           {(matchAudit.data || []).length > 0 ? (
             <ul className="divide-y divide-border">
-              {matchAudit.data.map((match) => (
+              {matchAudit.data.filter(matchFilter).map((match) => (
                 <li key={match.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-xs">
                   <div className="min-w-0">
                     <p className="text-primary">{formatDateDisplay(match.occurred_at)} · {match.exchange_account_name} · {humanize(match.record_type)} · {formatDecimalAmount(match.base_amount)} {match.base_asset}</p>
@@ -768,7 +798,7 @@ function ExchangesPanel({
                 <p className="mt-1 text-caption text-secondary">Nothing changes in Activity until you confirm one.</p>
               </div>
               <ul className="divide-y divide-border">
-                {matchAudit.suggestions.map((suggestion) => (
+                {matchAudit.suggestions.filter(matchFilter).map((suggestion) => (
                   <li key={suggestion.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-xs">
                     <div className="min-w-0">
                       <p className="text-primary">{formatDateDisplay(suggestion.occurred_at)} · {suggestion.exchange_account_name} · {humanize(suggestion.record_type)} · {formatDecimalAmount(suggestion.base_amount)} {suggestion.base_asset}</p>
@@ -973,29 +1003,20 @@ function ExchangesPanel({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                      {/* One primary action (sync, or connect a key), the CSV
+                          import, and everything rarer behind the menu: eight
+                          controls on one card buried the one that mattered. */}
                       {connected && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleSync(account)}
-                            disabled={syncing}
-                            aria-label={`Sync ${account.name} now`}
-                            className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
-                          >
-                            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-                            {syncing ? 'Syncing…' : 'Sync Now'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleTestConnection(account)}
-                            disabled={testing}
-                            aria-label={`Test connection for ${account.name}`}
-                            className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-tertiary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
-                          >
-                            <ShieldCheck size={14} />
-                            {testing ? 'Testing…' : 'Test'}
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          onClick={() => handleSync(account)}
+                          disabled={syncing}
+                          aria-label={`Sync ${account.name} now`}
+                          className="inline-flex items-center justify-center gap-2 rounded border border-border bg-surface-3 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:border-accent hover:text-accent disabled:opacity-40"
+                        >
+                          <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+                          {syncing ? 'Syncing…' : 'Sync Now'}
+                        </button>
                       )}
                       {canConnect && !connected && (
                         <button
@@ -1020,14 +1041,6 @@ function ExchangesPanel({
                           onChange={(event) => handleImport(account, event)}
                         />
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleRecordsUnavailable(account)}
-                        className="rounded border border-border px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-tertiary transition-all hover:border-accent hover:text-accent"
-                        title="Declare that this venue's historical records cannot be recovered"
-                      >
-                        {account.records_unavailable ? 'Records marked unavailable · undo' : 'Mark records unavailable'}
-                      </button>
                       {renamingId === account.id ? (
                         <form
                           onSubmit={(event) => { event.preventDefault(); handleRenameAccount(account); }}
@@ -1057,69 +1070,82 @@ function ExchangesPanel({
                             <X size={18} />
                           </button>
                         </form>
-                      ) : (
-                        <button
-                          onClick={() => { setRenamingId(account.id); setRenameValue(account.name); }}
-                          className="rounded border border-transparent p-2.5 text-tertiary transition-all hover:bg-surface-3 hover:text-primary"
-                          title="Rename exchange account"
-                        >
-                          <Pencil size={18} />
-                        </button>
-                      )}
-                      {connected && (disconnectingId === account.id ? (
-                        <>
-                          <button
-                            onClick={() => handleDisconnect(account)}
-                            disabled={syncing}
-                            className="rounded border border-loss/30 bg-loss/10 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-loss transition-all"
-                          >
-                            {/* Naming what survives is the point: the records
-                                are exactly the part no live connection can
-                                ever recover once the key is gone. */}
-                            Remove key, keep records
-                          </button>
-                          <button
-                            onClick={() => setDisconnectingId(null)}
-                            className="rounded border border-border bg-surface-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          onClick={() => setDisconnectingId(account.id)}
-                          className="rounded border border-transparent p-2.5 text-tertiary transition-all hover:bg-surface-3 hover:text-primary"
-                          title="Disconnect API key"
-                        >
-                          <Unlink size={18} />
-                        </button>
-                      ))}
-                      {deletingId === account.id ? (
-                        <>
-                          <button
-                            onClick={() => handleDeleteAccount(account)}
-                            className="rounded border border-loss/30 bg-loss/10 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-loss transition-all"
-                          >
-                            Delete {(account.record_count ?? 0).toLocaleString()} records
-                          </button>
-                          <button
-                            onClick={() => setDeletingId(null)}
-                            className="rounded border border-border bg-surface-3 px-3 py-2.5 text-xs font-bold uppercase tracking-wider text-secondary transition-all"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          onClick={() => setDeletingId(account.id)}
-                          className="rounded border border-transparent p-2.5 text-tertiary transition-all hover:bg-loss/10 hover:text-loss"
-                          title="Delete exchange account"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      )}
+                      ) : null}
+                      <RowMenu
+                        label={`More actions for ${account.name}`}
+                        items={[
+                          ...(connected ? [
+                            {
+                              key: 'test',
+                              label: testing ? 'Testing…' : 'Test connection',
+                              ariaLabel: `Test connection for ${account.name}`,
+                              icon: ShieldCheck,
+                              disabled: testing,
+                              onSelect: () => handleTestConnection(account),
+                            },
+                            {
+                              key: 'replace',
+                              label: 'Replace API key',
+                              icon: Link2,
+                              onSelect: () => openConnectForm(account),
+                            },
+                          ] : []),
+                          {
+                            key: 'rename',
+                            label: 'Rename',
+                            ariaLabel: 'Rename exchange account',
+                            icon: Pencil,
+                            onSelect: () => { setRenamingId(account.id); setRenameValue(account.name); },
+                          },
+                          {
+                            key: 'unavailable',
+                            label: account.records_unavailable ? 'Undo "records unavailable"' : 'Mark records unavailable',
+                            title: "Declare that this venue's historical records cannot be recovered",
+                            icon: Clock,
+                            onSelect: () => handleToggleRecordsUnavailable(account),
+                          },
+                          ...(connected ? [{
+                            key: 'disconnect',
+                            label: 'Remove API key',
+                            ariaLabel: 'Disconnect API key',
+                            icon: Unlink,
+                            disabled: syncing,
+                            danger: true,
+                            onSelect: () => setDisconnectingId(account.id),
+                          }] : []),
+                          {
+                            key: 'delete',
+                            label: 'Delete account',
+                            ariaLabel: 'Delete exchange account',
+                            icon: Trash2,
+                            danger: true,
+                            onSelect: () => setDeletingId(account.id),
+                          },
+                        ]}
+                      />
                     </div>
                   </div>
+
+                  <ConfirmDialog
+                    open={disconnectingId === account.id}
+                    title={`Remove the API key for ${account.name}?`}
+                    confirmLabel="Remove key, keep records"
+                    onConfirm={() => handleDisconnect(account)}
+                    onCancel={() => setDisconnectingId(null)}
+                  >
+                    {/* Naming what survives is the point: the records are
+                        exactly the part no live connection can recover. */}
+                    <p>The account stops syncing. Its {(account.record_count ?? 0).toLocaleString()} imported records are kept; you can connect a key again later.</p>
+                  </ConfirmDialog>
+                  <ConfirmDialog
+                    open={deletingId === account.id}
+                    title={`Delete ${account.name}?`}
+                    confirmLabel={`Delete ${(account.record_count ?? 0).toLocaleString()} records`}
+                    onConfirm={() => handleDeleteAccount(account)}
+                    onCancel={() => setDeletingId(null)}
+                  >
+                    <p>The account and every record imported into it are deleted, along with its exchange holdings. This cannot be undone; a CSV import can bring the records back.</p>
+                  </ConfirmDialog>
 
                   {connectingId === account.id && fields && (
                     <form
@@ -1284,6 +1310,7 @@ function ExchangesPanel({
                       <ReconciliationNotice
                         status={persistedReconciliationStatus}
                         report={account.balance_report}
+                        onOpenBalanceCheck={balanceAudit?.open ? undefined : () => handleToggleBalanceAudit(account)}
                       />
                     </div>
                   )}

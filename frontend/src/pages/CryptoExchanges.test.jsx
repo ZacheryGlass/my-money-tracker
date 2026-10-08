@@ -267,7 +267,8 @@ describe('Crypto -> Exchanges tab', () => {
     await renderSettings();
     await screen.findByText('Kraken Spot');
 
-    fireEvent.click(screen.getByTitle('Rename exchange account'));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Kraken Spot' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename exchange account' }));
     const input = screen.getByLabelText('New name for Kraken Spot');
     fireEvent.change(input, { target: { value: 'Kraken Main' } });
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
@@ -779,7 +780,8 @@ describe('Crypto -> Exchanges tab', () => {
     });
     await renderSettings();
 
-    fireEvent.click(await screen.findByLabelText('Test connection for Kraken Spot'));
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions for Kraken Spot' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Test connection for Kraken Spot' }));
 
     // "Connection failed" would not tell the user which permission they forgot.
     expect(await screen.findByText(/EGeneral:Permission denied/)).toBeInTheDocument();
@@ -790,7 +792,8 @@ describe('Crypto -> Exchanges tab', () => {
     exchangesAPI.clearCredentials.mockResolvedValue({});
     await renderSettings();
 
-    fireEvent.click(await screen.findByTitle('Disconnect API key'));
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions for Kraken Spot' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Disconnect API key' }));
     expect(exchangesAPI.clearCredentials).not.toHaveBeenCalled();
 
     // The records are exactly the part no live connection can recover.
@@ -812,7 +815,8 @@ describe('Crypto -> Exchanges tab', () => {
     exchangesAPI.remove.mockResolvedValue({});
     await renderSettings();
 
-    fireEvent.click(await screen.findByTitle('Delete exchange account'));
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions for Kraken Spot' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete exchange account' }));
     expect(exchangesAPI.remove).not.toHaveBeenCalled();
 
     // The confirm names the cost of the click.
