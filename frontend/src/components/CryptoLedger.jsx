@@ -602,8 +602,8 @@ const CryptoLedger = ({
       accessorFn: (row) => row.fee_amount || '',
       header: 'Fee',
       meta: {
-        // Fits "0.00393539 ETH" and "< 0.000001 POL" whole.
-        width: '9rem',
+        // Fits "< 0.00000001 POL" whole at the 14px root (9rem did not).
+        width: '10.5rem',
         align: 'right',
         headerClassName: 'hidden text-right xl:table-cell',
         cellClassName: 'hidden truncate whitespace-nowrap text-right xl:table-cell',
