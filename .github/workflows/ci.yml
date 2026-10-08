@@ -38,6 +38,7 @@ jobs:
           npm run verify:ledger --prefix backend -- --pg-bin "$PG_BIN"
           npm run verify:derivation --prefix backend -- --pg-bin "$PG_BIN"
           npm run verify:migrations --prefix backend -- --pg-bin "$PG_BIN"
+          npm run verify:exchanges --prefix backend -- --pg-bin "$PG_BIN"
 
       - name: Frontend lint
         run: npm run lint --prefix frontend
