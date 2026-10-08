@@ -2,7 +2,7 @@ import React from 'react';
 import { AlertTriangle, Check, ChevronRight } from 'lucide-react';
 
 // What needs the user, in one place, each line a way to the page that fixes
-// it. Items are { key, count, text, tone?: 'loss'|'review', page }.
+// it. Items are { key, count, text, singular?, tone?: 'loss'|'review', page }.
 export default function AttentionList({ items, onNavigate }) {
   const open = items.filter((item) => item.count > 0);
   return (
@@ -25,7 +25,10 @@ export default function AttentionList({ items, onNavigate }) {
               >
                 <span className={`flex items-center gap-2 ${item.tone === 'loss' ? 'text-loss' : 'text-orange-400'}`}>
                   <AlertTriangle size={13} className="shrink-0" />
-                  <span><span className="font-semibold">{item.count.toLocaleString()}</span> {item.text}</span>
+                  <span>
+                    <span className="font-semibold">{item.count.toLocaleString()}</span>{' '}
+                    {item.count === 1 && item.singular ? item.singular : item.text}
+                  </span>
                 </span>
                 <ChevronRight size={14} className="shrink-0 text-tertiary" />
               </button>

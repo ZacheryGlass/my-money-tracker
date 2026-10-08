@@ -1306,7 +1306,13 @@ function ExchangesPanel({
                       nightly job is visible without pressing anything. */}
                   {!syncResult && !result && !visibleReconciliation
                     && ['mismatch', 'stale', 'unknown'].includes(persistedReconciliationStatus) && (
-                    <div className="mt-5 rounded border border-loss/20 bg-loss/5 p-4 text-xs leading-relaxed text-loss">
+                    // The box takes the notice's own weight: red for a real
+                    // mismatch, quiet for "never had a balance report".
+                    <div className={`mt-5 rounded border p-4 text-xs leading-relaxed ${
+                      persistedReconciliationStatus === 'mismatch' ? 'border-loss/20 bg-loss/5 text-loss'
+                        : persistedReconciliationStatus === 'stale' ? 'border-orange-500/20 bg-orange-500/5 text-orange-400'
+                          : 'border-border bg-surface-2 text-tertiary'
+                    }`}>
                       <ReconciliationNotice
                         status={persistedReconciliationStatus}
                         report={account.balance_report}

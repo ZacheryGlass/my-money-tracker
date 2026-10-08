@@ -195,7 +195,7 @@ export default function TransactionQueue({
                     onClick={() => setLabelingGroup(group.key)}
                     className="inline-flex h-8 items-center gap-1.5 rounded border border-teal-500/30 bg-teal-500/10 px-3 text-[10px] font-bold uppercase tracking-wide text-teal-400 hover:bg-teal-500/20"
                   >
-                    <Tag size={11} /> Label {group.parties[0]}
+                    <Tag size={11} /> Label <span className="font-mono normal-case">{group.parties[0]}</span>
                   </button>
                 )}
                 {exchangeFlow && onOpenExchanges && (

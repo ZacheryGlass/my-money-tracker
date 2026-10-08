@@ -192,7 +192,7 @@ describe('CryptoPage', () => {
 
     const attention = await screen.findByRole('region', { name: 'Needs attention' });
     expect(within(attention).getByText(/transactions need review/)).toBeInTheDocument();
-    fireEvent.click(within(attention).getByText(/manual holdings may duplicate a synced balance/));
+    fireEvent.click(within(attention).getByText(/manual holding may duplicate a synced balance/));
     expect(onTabChange).toHaveBeenCalledWith('crypto-holdings');
     expect(screen.getByRole('region', { name: 'Where it is held' })).toBeInTheDocument();
   });

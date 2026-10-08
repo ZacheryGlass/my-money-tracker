@@ -557,7 +557,7 @@ const CryptoLedger = ({
       id: 'usd',
       accessorFn: (row) => row.usd_value || '',
       header: 'Value',
-      meta: { width: '7rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+      meta: { width: '8rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
       // Dollars AT THE TIME (#73), not today's price: a 2017 half-ETH send was
       // ~$150, and pricing it at today's ~$1,800 is a different transaction.
       // An unpriced row says so instead of showing a blank a reader would

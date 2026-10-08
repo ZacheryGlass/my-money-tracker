@@ -180,7 +180,10 @@ function LabelsPanel({
     for (const label of addressLabels) {
       (label.kind === 'external' ? external : primary).push(label);
     }
-    return [primary, external];
+    // The user's own labels first: forty built-in bridge endpoints listed
+    // above them put the ones the user wrote out of sight.
+    const userFirst = (a, b) => Number(Boolean(a.builtin)) - Number(Boolean(b.builtin));
+    return [primary.sort(userFirst), external.sort(userFirst)];
   }, [addressLabels]);
 
   // A filter or a search turns the grouped list into one flat list of matches.

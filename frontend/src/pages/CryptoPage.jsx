@@ -400,12 +400,15 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   );
   const assetGroups = useMemo(() => groupHoldingsByAsset(cryptoHoldings), [cryptoHoldings]);
   // The donut's slices: the seven largest assets and one "Other".
+  // Slices under 1% fold into Other too: a sliver that reads 0.0% is noise.
   const allocationItems = useMemo(() => {
-    const top = assetGroups.slice(0, 7).map((group) => ({
+    const total = assetGroups.reduce((sum, group) => sum + group.value, 0);
+    const shown = assetGroups.slice(0, 7).filter((group) => total > 0 && group.value / total >= 0.01);
+    const top = shown.map((group) => ({
       account_id: group.key, account: group.ticker || group.display, value: group.value,
     }));
-    const rest = assetGroups.slice(7).reduce((sum, group) => sum + group.value, 0);
-    return rest > 0 ? [...top, { account_id: 'other', account: 'Other', value: rest }] : top;
+    const rest = total - shown.reduce((sum, group) => sum + group.value, 0);
+    return rest > 0.005 ? [...top, { account_id: 'other', account: 'Other', value: rest }] : top;
   }, [assetGroups]);
   const deferredWallets = useMemo(
     () => wallets.filter((wallet) => wallet.error_code === 'SYNC_DEFERRED'),
@@ -431,18 +434,19 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     .filter((holding) => holding.account_exchange_account_id && holding.exchange_balance_stale)
     .map((holding) => holding.account_exchange_account_id));
   const attentionItems = [
-    { key: 'review', count: ledgerSummary?.needs_review_count || 0, text: 'transactions need review', page: REVIEW_TAB },
-    { key: 'failed', count: erroredWallets.length, text: 'wallets failed their last sync', tone: 'loss', page: WALLETS_TAB },
+    { key: 'review', count: ledgerSummary?.needs_review_count || 0, text: 'transactions need review', singular: 'transaction needs review', page: REVIEW_TAB },
+    { key: 'failed', count: erroredWallets.length, text: 'wallets failed their last sync', singular: 'wallet failed its last sync', tone: 'loss', page: WALLETS_TAB },
     {
       key: 'drift',
       count: wallets.filter((wallet) => wallet.reconciliation?.needs_review).length,
       text: "wallets' history does not add up to their blockchain balance",
+      singular: "wallet's history does not add up to its blockchain balance",
       tone: 'loss',
       page: WALLETS_TAB,
     },
-    { key: 'stale', count: staleExchangeAccounts.size, text: 'exchange balances are out of date', page: EXCHANGES_TAB },
-    { key: 'unpriced', count: ledgerSummary?.unpriced_count || 0, text: 'wallet transactions have no USD value', page: TRANSACTIONS_TAB },
-    { key: 'duplicates', count: duplicateHints.size, text: 'manual holdings may duplicate a synced balance', page: HOLDINGS_TAB },
+    { key: 'stale', count: staleExchangeAccounts.size, text: 'exchange balances are out of date', singular: 'exchange balance is out of date', page: EXCHANGES_TAB },
+    { key: 'unpriced', count: ledgerSummary?.unpriced_count || 0, text: 'wallet transactions have no USD value', singular: 'wallet transaction has no USD value', page: TRANSACTIONS_TAB },
+    { key: 'duplicates', count: duplicateHints.size, text: 'manual holdings may duplicate a synced balance', singular: 'manual holding may duplicate a synced balance', page: HOLDINGS_TAB },
   ];
 
   // Opens on the first queue with something in it, once the counts are known;

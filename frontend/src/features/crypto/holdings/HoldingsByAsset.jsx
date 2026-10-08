@@ -31,7 +31,10 @@ export default function HoldingsByAsset({ groups, accountName, renderHoldingChip
               ? <ChevronDown size={11} className="shrink-0 text-accent" />
               : <ChevronRight size={11} className="shrink-0 text-tertiary" />}
             {group.ticker && <span className="font-mono text-sm font-bold uppercase text-accent">{group.ticker}</span>}
-            <span className="truncate text-body-sm font-semibold text-primary">{base}</span>
+            {/* "ETH ETH" says nothing twice: the name shows only when it adds one. */}
+            {base.toUpperCase() !== group.ticker && (
+              <span className="truncate text-body-sm font-semibold text-primary">{base}</span>
+            )}
             {network && <NetworkChip name={network} />}
           </div>
         );
@@ -79,7 +82,13 @@ export default function HoldingsByAsset({ groups, accountName, renderHoldingChip
             onClick={() => onOpenHolding?.(holding)}
             className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1.5 text-left text-body-sm hover:bg-surface-3"
           >
-            <span className="min-w-0 flex-1 truncate text-secondary">{accountName(holding)}</span>
+            <span className="min-w-0 flex-1 truncate text-secondary">
+              {accountName(holding)}
+              {/* One account can hold the asset on two networks. */}
+              {splitNetworkSuffix(holding.name).network && (
+                <span className="ml-2"><NetworkChip name={splitNetworkSuffix(holding.name).network} /></span>
+              )}
+            </span>
             {renderHoldingChips?.(holding)}
             <span className="font-money text-tertiary">{quantityText(parseFloat(holding.quantity) || 0)}</span>
             <span className="w-24 text-right font-money text-primary">{formatCurrency(holdingValue(holding))}</span>
@@ -110,7 +119,9 @@ export default function HoldingsByAsset({ groups, accountName, renderHoldingChip
             >
               <span className="min-w-0">
                 <span className="block truncate text-body-sm font-semibold text-primary">
-                  {group.ticker ? `${group.ticker} · ` : ''}{splitNetworkSuffix(group.display).base}
+                  {[group.ticker, splitNetworkSuffix(group.display).base]
+                    .filter((part, index, parts) => part && (index === 0 || part.toUpperCase() !== parts[0]))
+                    .join(' · ')}
                 </span>
                 <span className="block text-caption text-tertiary">
                   {quantityText(group.quantity)} in {group.holdings.length} {group.holdings.length === 1 ? 'account' : 'accounts'}

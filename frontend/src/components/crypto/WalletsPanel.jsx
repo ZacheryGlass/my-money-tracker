@@ -1072,8 +1072,11 @@ function WalletsPanel({
                     <p className="truncate font-mono text-[10px] text-tertiary">{shortEthAddress(wallet.address)}</p>
                   </button>
                   <div className="shrink-0 text-right">
+                    {walletValues && wallet.account && (
+                      <p className="font-money text-body-sm text-primary">{formatCurrency(walletValues.get(wallet.account.id) || 0)}</p>
+                    )}
                     {wallet.eth_quantity != null && (
-                      <p className="font-money text-body-sm text-secondary">
+                      <p className="font-money text-caption text-secondary">
                         {parseFloat(wallet.eth_quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })} ETH
                       </p>
                     )}
@@ -1082,7 +1085,7 @@ function WalletsPanel({
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-2">
                   <span className="text-[10px] uppercase tracking-wider text-tertiary">
-                    {formatRelativeTime(wallet.last_synced_at)}
+                    {wallet.last_synced_at ? `Synced ${formatRelativeTime(wallet.last_synced_at)}` : 'Never synced'}
                   </span>
                   {rowActions(wallet)}
                 </div>
