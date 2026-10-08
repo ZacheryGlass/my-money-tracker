@@ -532,6 +532,26 @@ describe('CryptoPage', () => {
     // would mean it opened prefilled and would take the update branch.
     expect(screen.getByRole('heading', { name: 'Add New Holding' })).toBeInTheDocument();
   });
+  it('sums an asset across accounts, folds dust away, and opens to the accounts behind it', async () => {
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [
+      CRYPTO_ACCOUNT, { id: 91, name: 'Kraken', effective_name: 'Kraken', type: 'crypto', exchange_account_id: 81 },
+    ] });
+    apiMocks.holdings.getAll.mockResolvedValue({ holdings: [
+      { id: 1, account_id: 9, account_type: 'crypto', account_eth_wallet_id: 1, ticker: 'ETH', name: 'Ethereum', quantity: '2', current_value: '6000' },
+      { id: 2, account_id: 91, account_type: 'crypto', account_exchange_account_id: 81, ticker: 'ETH', name: 'ETH', quantity: '1', current_value: '3000' },
+      { id: 3, account_id: 9, account_type: 'crypto', account_eth_wallet_id: 1, ticker: null, name: 'SCAM 0xdead…beef', quantity: '1000', current_value: '0.2' },
+    ] });
+    render(<CryptoPage tab="crypto-holdings" onTabChange={vi.fn()} />);
+
+    const row = (await screen.findAllByText('2 accounts'))[0].closest('tr');
+    expect(within(row).getByText('$9,000')).toBeInTheDocument();
+    expect(screen.getByText('(1 hidden)')).toBeInTheDocument();
+    expect(screen.queryByText('SCAM 0xdead…beef')).toBeNull();
+
+    fireEvent.click(row);
+    expect(await screen.findByText('Kraken')).toBeInTheDocument();
+  });
+
   it('shows exchange holdings as managed, marks stale balances, and excludes them from manual accounts', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [
       { id: 91, name: 'Synthetic exchange', type: 'crypto', exchange_account_id: 81 },
@@ -541,10 +561,14 @@ describe('CryptoPage', () => {
         name: 'ETH', ticker: 'ETH', quantity: '3.25', current_value: '6500',
         exchange_balance_as_of: '2026-01-01T00:00:00Z', exchange_balance_stale: true },
     ] });
-    render(<CryptoPage tab="crypto-holdings" onTabChange={vi.fn()} />);
+    const onTabChange = vi.fn();
+    render(<CryptoPage tab="crypto-holdings" onTabChange={onTabChange} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'By account' }));
     expect(await screen.findByText('Exchange · stale')).toBeInTheDocument();
+    // A synced holding opens where it comes from, not the manual edit form.
     fireEvent.click(screen.getByText('Exchange · stale').closest('tr'));
     expect(screen.queryByRole('heading', { name: 'Edit Holding' })).toBeNull();
+    expect(onTabChange).toHaveBeenCalledWith('crypto-exchanges');
     const add = screen.queryByRole('button', { name: /add holding/i });
     if (add) expect(add).toBeDisabled();
   });

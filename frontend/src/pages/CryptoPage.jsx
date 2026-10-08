@@ -16,16 +16,16 @@ import {
 } from '../utils/api';
 import { formatCurrency, formatDateDisplay, formatPercent, formatRelativeTime, shortEthAddress } from '../utils/format';
 import { buildAccountDisplayNameMap, getAccountDisplayName } from '../utils/accountDisplay';
-import { formatCategoryLabel } from '../utils/dataLabels';
 import AccountHistoryChart from '../components/AccountHistoryChart';
 import { totalSeries } from '../features/crypto/history';
 import {
-  changeOverDays, groupHoldingsByAsset, possibleDuplicates, valueBySource,
+  changeOverDays, groupHoldingsByAsset, possibleDuplicates, splitNetworkSuffix, valueBySource,
 } from '../features/crypto/holdings';
 import AttentionList from '../features/crypto/overview/AttentionList';
 import HeldWhere from '../features/crypto/overview/HeldWhere';
 import StakingIncomeCard from '../features/crypto/overview/StakingIncomeCard';
 import AllocationDonut from '../components/AllocationDonut';
+import HoldingsByAsset, { NetworkChip } from '../features/crypto/holdings/HoldingsByAsset';
 import CryptoLedger from '../components/CryptoLedger';
 import EthLedger from '../components/EthLedger';
 import SegmentedControl from '../components/SegmentedControl';
@@ -372,6 +372,14 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
   const erroredWallets = useMemo(() => wallets.filter(isWalletSyncFailure), [wallets]);
   const duplicateHints = useMemo(() => possibleDuplicates(cryptoHoldings), [cryptoHoldings]);
+  // Dust off by default: a hundred-odd positions are mostly airdropped cents,
+  // and the hidden count says how many are folded away.
+  const [holdingsView, setHoldingsView] = useState('asset');
+  const [hideDust, setHideDust] = useState(true);
+  const visibleHoldings = useMemo(
+    () => (hideDust ? cryptoHoldings.filter((holding) => getHoldingValue(holding) >= 1) : cryptoHoldings),
+    [cryptoHoldings, hideDust]
+  );
   const assetGroups = useMemo(() => groupHoldingsByAsset(cryptoHoldings), [cryptoHoldings]);
   // The donut's slices: the seven largest assets and one "Other".
   const allocationItems = useMemo(() => {
@@ -563,6 +571,41 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     setIsFormOpen(true);
   };
 
+  // A synced holding opens where it comes from (its wallet, or its exchange
+  // account); only a manual one opens the edit form.
+  const openHolding = (holding) => {
+    if (holding.account_eth_wallet_id) { goToTab(WALLETS_TAB); return; }
+    if (holding.account_exchange_account_id) {
+      setExchangeFocusAccountId(holding.account_exchange_account_id);
+      goToTab(EXCHANGES_TAB);
+      return;
+    }
+    handleEdit(holding);
+  };
+
+  const holdingChips = (holding) => (
+    <>
+      {holding.account_eth_wallet_id && <EthWalletBadge />}
+      {holding.account_exchange_account_id && holding.current_value == null && holding.manual_value == null && (
+        <span className="text-caption text-tertiary">Unpriced</span>
+      )}
+      {holding.account_exchange_account_id && (
+        <span className={`text-caption ${holding.exchange_balance_stale ? 'text-loss' : 'text-tertiary'}`}
+          title={`Exchange balance observed ${formatRelativeTime(holding.exchange_balance_as_of)}`}>
+          {holding.exchange_balance_stale ? 'Exchange · stale' : 'Exchange'}
+        </span>
+      )}
+      {duplicateHints.has(holding.id) && (
+        <span
+          className="rounded border border-orange-500/30 bg-orange-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-orange-400"
+          title="The same quantity is already counted in a synced balance. If these are the same coins, remove this manual holding so they are not counted twice."
+        >
+          Same as {duplicateHints.get(holding.id).map((match) => displayAccountName(accountsMap.get(match.account_id))).join(', ')}
+        </span>
+      )}
+    </>
+  );
+
   const handleAdd = () => {
     setEditingHolding(null);
     setIsFormOpen(true);
@@ -601,21 +644,16 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       accessorKey: 'name',
       header: 'Name',
       meta: { cellClassName: 'min-w-0' },
-      cell: ({ row, getValue }) => (
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-body-sm font-semibold text-primary">{getValue()}</span>
-          {row.original.account_eth_wallet_id && <EthWalletBadge />}
-          {row.original.account_exchange_account_id && row.original.current_value == null && row.original.manual_value == null && (
-            <span className="text-caption text-tertiary">Unpriced</span>
-          )}
-          {row.original.account_exchange_account_id && (
-            <span className={`text-caption ${row.original.exchange_balance_stale ? 'text-loss' : 'text-tertiary'}`}
-              title={`Exchange balance observed ${formatRelativeTime(row.original.exchange_balance_as_of)}`}>
-              {row.original.exchange_balance_stale ? 'Exchange · stale' : 'Exchange'}
-            </span>
-          )}
-        </div>
-      ),
+      cell: ({ row, getValue }) => {
+        const { base, network } = splitNetworkSuffix(getValue());
+        return (
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-body-sm font-semibold text-primary" title={getValue()}>{base}</span>
+            {network && <NetworkChip name={network} />}
+            {holdingChips(row.original)}
+          </div>
+        );
+      },
     },
     {
       id: 'account',
@@ -642,17 +680,11 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       meta: { width: '9rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
       cell: ({ getValue }) => <span className="value-emphasis">{formatCurrency(getValue())}</span>,
     },
-    {
-      id: 'category',
-      accessorFn: (row) => formatCategoryLabel(row.category),
-      header: 'Category',
-      meta: { width: '9rem', cellClassName: 'truncate' },
-    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [accountsMap, accountDisplayNames]);
+  ], [accountsMap, accountDisplayNames, duplicateHints]);
 
   const table = useReactTable({
-    data: cryptoHoldings,
+    data: visibleHoldings,
     columns,
     state: { sorting, pagination },
     onSortingChange: setSorting,
@@ -812,16 +844,33 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
           {tabBody(HOLDINGS_TAB, (
             <section>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Coins className="text-accent w-4 h-4" />
-                  <h2 className="text-xs font-bold uppercase tracking-wide text-secondary">Holdings</h2>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <SegmentedControl
+                    label="View"
+                    value={holdingsView}
+                    onChange={setHoldingsView}
+                    options={[
+                      { value: 'asset', label: 'By asset' },
+                      { value: 'account', label: 'By account' },
+                    ]}
+                  />
+                  <label className="flex items-center gap-2 text-caption text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={hideDust}
+                      onChange={(event) => setHideDust(event.target.checked)}
+                      className="h-4 w-4 accent-accent"
+                    />
+                    Hide under $1
+                    {hideDust && cryptoHoldings.length > visibleHoldings.length && (
+                      <span className="text-tertiary">({(cryptoHoldings.length - visibleHoldings.length).toLocaleString()} hidden)</span>
+                    )}
+                  </label>
                 </div>
-                {/* The only route to holdingsAPI.create on this page: row
-                    clicks open the edit form and bail on sync-managed rows, and
-                    Balances no longer lists crypto accounts at all. Hidden when
-                    there is no manual crypto account to add to -- the form's
-                    account select would open empty. */}
+                {/* The only route to holdingsAPI.create on this page. Hidden
+                    when there is no manual crypto account to add to -- the
+                    form's account select would open empty. */}
                 {manualCryptoAccounts.length > 0 && (
                 <button
                   onClick={handleAdd}
@@ -833,38 +882,48 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                 )}
               </div>
 
-              <DataTable
-                table={table}
-                emptyMessage="No crypto holdings found."
-                onRowClick={handleEdit}
-                rowClassName={(holding) => (isSyncManaged(holding) ? '' : 'cursor-pointer')}
-                mobile="rows"
-                renderMobileRow={(row) => {
-                  const holding = row.original;
-                  // A real button where the row edits; a plain block where a
-                  // sync owns the holding and there is nothing to open.
-                  const Row = isSyncManaged(holding) ? 'div' : 'button';
-                  return (
-                    <Row
-                      key={row.id}
-                      {...(isSyncManaged(holding) ? {} : { type: 'button', onClick: () => handleEdit(holding) })}
-                      className={`block w-full p-3 text-left ${isSyncManaged(holding) ? '' : 'cursor-pointer hover:bg-surface-2'}`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-body-sm font-semibold text-primary">{holding.name}</p>
-                          <p className="truncate text-caption text-tertiary">
-                            {displayAccountName(accountsMap.get(holding.account_id))}
-                            {holding.ticker ? ` / ${holding.ticker}` : ''}
-                          </p>
-                        </div>
-                        <p className="value-emphasis shrink-0 pl-3">{formatCurrency(getHoldingValue(holding))}</p>
-                      </div>
-                    </Row>
-                  );
-                }}
-              />
-              <DataTablePagination table={table} total={cryptoHoldings.length} />
+              {holdingsView === 'asset' ? (
+                <HoldingsByAsset
+                  groups={hideDust ? assetGroups.filter((group) => group.value >= 1) : assetGroups}
+                  accountName={(holding) => displayAccountName(accountsMap.get(holding.account_id))}
+                  renderHoldingChips={holdingChips}
+                  onOpenHolding={openHolding}
+                />
+              ) : (
+                <>
+                  <DataTable
+                    table={table}
+                    emptyMessage="No crypto holdings found."
+                    onRowClick={openHolding}
+                    rowClassName={() => 'cursor-pointer'}
+                    mobile="rows"
+                    renderMobileRow={(row) => {
+                      const holding = row.original;
+                      return (
+                        <button
+                          key={row.id}
+                          type="button"
+                          onClick={() => openHolding(holding)}
+                          className="block w-full p-3 text-left hover:bg-surface-2"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-body-sm font-semibold text-primary">{splitNetworkSuffix(holding.name).base}</p>
+                              <p className="truncate text-caption text-tertiary">
+                                {displayAccountName(accountsMap.get(holding.account_id))}
+                                {holding.ticker ? ` / ${holding.ticker}` : ''}
+                                {splitNetworkSuffix(holding.name).network ? ` · ${splitNetworkSuffix(holding.name).network}` : ''}
+                              </p>
+                            </div>
+                            <p className="value-emphasis shrink-0 pl-3">{formatCurrency(getHoldingValue(holding))}</p>
+                          </div>
+                        </button>
+                      );
+                    }}
+                  />
+                  <DataTablePagination table={table} total={visibleHoldings.length} />
+                </>
+              )}
             </section>
           ))}
 
