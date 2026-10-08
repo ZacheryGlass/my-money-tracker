@@ -581,7 +581,10 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
     getPaginationRowModel: getPaginationRowModel(),
   });
 
-  if (loading) {
+  // Only the pages built from the portfolio read wait for it. Exchanges,
+  // Review and Labels have their own data and loading states, and holding them
+  // behind a page-wide spinner made the slowest read gate every page.
+  if (loading && [OVERVIEW_TAB, HOLDINGS_TAB].includes(activeTab)) {
     return <LoadingState label="Loading Crypto" />;
   }
 
@@ -779,7 +782,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             </section>
           ))}
 
-          {tabBody(TRANSACTIONS_TAB, (
+          {tabBody(TRANSACTIONS_TAB, loading ? <LoadingState label="Loading activity" /> : (
             <section>
               {/* A <select>, not a tab strip: these labels are notes-to-self
                   ("Use to store EOS ERC20 tokens before mainnet...") that no
@@ -901,7 +904,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             </section>
           ))}
 
-          {tabBody(WALLETS_TAB, (
+          {tabBody(WALLETS_TAB, loading ? <LoadingState label="Loading wallets" /> : (
             <>
               <WalletsPanel
                 wallets={wallets}
@@ -952,7 +955,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   />
                 </section>
               )}
-              {!manageLoaded ? <LoadingState label="Loading review queues" className="min-h-[160px]" /> : (
+              {/* Waits for the wallet read too: hasWallets decides which queues exist. */}
+              {!manageLoaded || loading ? <LoadingState label="Loading review queues" className="min-h-[160px]" /> : (
               <ReviewPanel
                 counterpartyData={counterpartyData && {
                   ...counterpartyData,

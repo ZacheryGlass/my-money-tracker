@@ -16,7 +16,7 @@ vi.mock('axios', () => ({
   },
 }));
 
-import { eth } from './api';
+import { eth, shareInFlight } from './api';
 
 const runningJob = (id = 41) => ({
   id,
@@ -142,5 +142,32 @@ describe('eth.syncWallet', () => {
 
     await rejected;
     expect(axiosMocks.get).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('shareInFlight', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('shares a read fired at the same moment, and starts a fresh one after it lands', async () => {
+    const run = vi.fn(async () => 'data');
+    const [a, b] = await Promise.all([shareInFlight('k', run), shareInFlight('k', run)]);
+    expect([a, b]).toEqual(['data', 'data']);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    await shareInFlight('k', run);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('never joins a read that has been in flight longer than the window', async () => {
+    vi.useFakeTimers();
+    let finish;
+    const slow = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const first = shareInFlight('slow', slow);
+    vi.advanceTimersByTime(2000);
+    const fresh = vi.fn(async () => 'fresh');
+
+    await expect(shareInFlight('slow', fresh)).resolves.toBe('fresh');
+    finish('stale');
+    await expect(first).resolves.toBe('stale');
   });
 });

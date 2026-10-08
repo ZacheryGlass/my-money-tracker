@@ -15,6 +15,23 @@ const api = axios.create({
 // At most 90 polls in the production 15-minute rate-limit window, leaving the
 // rest of the shared API allowance available for the app while a slow public
 // explorer sync is running.
+// Identical reads fired together share one request: App's badge fetch and the
+// Crypto page's own load land in the same moment, and two mounted ledgers ask
+// for the same summary. Only a read still in flight AND started moments ago is
+// shared, so a refetch after a write never joins a read that began before it.
+const SHARE_WINDOW_MS = 1500;
+const sharedReads = new Map();
+export const shareInFlight = (key, run) => {
+  const now = Date.now();
+  const existing = sharedReads.get(key);
+  if (existing && now - existing.startedAt < SHARE_WINDOW_MS) return existing.promise;
+  const promise = Promise.resolve().then(run).finally(() => {
+    if (sharedReads.get(key)?.promise === promise) sharedReads.delete(key);
+  });
+  sharedReads.set(key, { promise, startedAt: now });
+  return promise;
+};
+
 const ETH_SYNC_POLL_INTERVAL_MS = 10_000;
 const ETH_SYNC_POLL_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const ETH_SYNC_JOB_STATUSES = new Set(['running', 'completed', 'failed']);
@@ -404,10 +421,10 @@ export const eth = {
     const response = await api.post('/api/eth/wallets/bulk', { addresses });
     return response.data;
   },
-  getWallets: async () => {
+  getWallets: () => shareInFlight('eth/wallets', async () => {
     const response = await api.get('/api/eth/wallets');
     return response.data;
-  },
+  }),
   getCoverage: async () => {
     const response = await api.get('/api/eth/coverage');
     return response.data;
@@ -518,10 +535,10 @@ export const eth = {
   // Dust is fetched too and split client-side behind a disclosure -- the
   // attention badge reads summary.count, which stays material-only, so one
   // request serves both without a second round-trip when the user expands.
-  getUnreviewedCounterparties: async () => {
+  getUnreviewedCounterparties: () => shareInFlight('eth/counterparties/unreviewed', async () => {
     const response = await api.get('/api/eth/counterparties/unreviewed', { params: { include_dust: 'true' } });
     return response.data;
-  },
+  }),
   // The transaction-level activity feed. `spam` is three-valued: 'exclude'
   // (the default -- quarantined rows are hidden), 'only' (the Spam filter) and
   // 'all'. An unknown value is a 400, not a silently wider feed. Overrides are
@@ -638,12 +655,12 @@ export const crypto = {
   // rows currently on screen would read zero the moment they were filtered out.
   // Takes the same wallet narrowing as the feed (and nothing else), so the
   // header counts describe the rows actually on screen.
-  getLedgerSummary: async ({ walletId } = {}) => {
+  getLedgerSummary: ({ walletId } = {}) => shareInFlight(`crypto/ledger/summary:${walletId ?? 'all'}`, async () => {
     const response = await api.get('/api/crypto/ledger/summary', {
       params: walletId != null ? { wallet_id: walletId } : undefined,
     });
     return response.data;
-  },
+  }),
   getBridgeAudit: async (params = {}) => {
     const response = await api.get('/api/crypto/bridges', { params });
     return response.data;
@@ -682,10 +699,10 @@ export const crypto = {
 // Exchange accounts and their CSV imports (Settings -> Exchanges). On-exchange
 // activity never touches a tracked wallet, so it can only come from an export.
 export const exchanges = {
-  getAll: async () => {
+  getAll: () => shareInFlight('exchanges', async () => {
     const response = await api.get('/api/exchanges');
     return response.data;
-  },
+  }),
   getBalanceExceptions: async (params = {}) => {
     const response = await api.get('/api/exchanges/balance-exceptions', { params });
     return response.data;
