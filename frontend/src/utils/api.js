@@ -16,10 +16,12 @@ const api = axios.create({
 // rest of the shared API allowance available for the app while a slow public
 // explorer sync is running.
 // Identical reads fired together share one request: App's badge fetch and the
-// Crypto page's own load land in the same moment, and two mounted ledgers ask
-// for the same summary. Only a read still in flight AND started moments ago is
-// shared, so a refetch after a write never joins a read that began before it.
-const SHARE_WINDOW_MS = 1500;
+// Crypto page's own load land close together, and two mounted ledgers ask for
+// the same summary. The write generation below is what keeps a refetch after a
+// write from joining a read that began before it; the window only bounds how
+// old a joined read may be. It has to outlast a cold start, where the Crypto
+// page asked 3 s after App and the wallets read took 13 s.
+const SHARE_WINDOW_MS = 15_000;
 const sharedReads = new Map();
 // Bumped by every request that can change data. A read joins another only
 // when no write has been sent since that one started -- a refetch after a

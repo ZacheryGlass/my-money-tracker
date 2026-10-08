@@ -170,12 +170,25 @@ describe('shareInFlight', () => {
     await expect(first).resolves.toBe('before the write');
   });
 
+  it('joins a read still in flight that started seconds earlier', async () => {
+    vi.useFakeTimers();
+    let finish;
+    const slow = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const first = shareInFlight('cold', slow);
+    vi.advanceTimersByTime(3000);
+    const second = shareInFlight('cold', vi.fn(async () => 'second'));
+    await Promise.resolve();
+    finish('shared');
+    await expect(Promise.all([first, second])).resolves.toEqual(['shared', 'shared']);
+    expect(slow).toHaveBeenCalledTimes(1);
+  });
+
   it('never joins a read that has been in flight longer than the window', async () => {
     vi.useFakeTimers();
     let finish;
     const slow = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
     const first = shareInFlight('slow', slow);
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(16_000);
     const fresh = vi.fn(async () => 'fresh');
 
     await expect(shareInFlight('slow', fresh)).resolves.toBe('fresh');
