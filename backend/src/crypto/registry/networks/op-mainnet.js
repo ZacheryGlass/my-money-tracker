@@ -50,7 +50,11 @@ module.exports = {
   },
   // The canonical bridge that settles deposits INTO this chain. The OP Stack
   // decoder names a destination deposit with this protocol/family.
-  bridge: { opStackDestination: { protocol: 'optimism', familyVersion: 'bedrock' } },
+  bridge: {
+    settlementChain: 1,
+    protocols: { 'op-stack': 'l2' },
+    opStackDestination: { protocol: 'optimism', familyVersion: 'bedrock' },
+  },
   explorer: { baseUrl: 'https://explorer.optimism.io', txPath: '/tx/{hash}', addressPath: '/address/{address}' },
   exchangeAliases: ['optimism', 'op mainnet'],
   audit: {},

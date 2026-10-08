@@ -43,6 +43,9 @@ module.exports = {
     lastClassicBlock: 22207817,
     depositMethodId: '0x679b6ded',
   },
+  // Canonical bridge: this network is the L2 side of 'arbitrum', settling on
+  // Ethereum. Decoders ask the registry which side a chain is.
+  bridge: { settlementChain: 1, protocols: { arbitrum: 'l2' } },
   explorer: { baseUrl: 'https://arbiscan.io', txPath: '/tx/{hash}', addressPath: '/address/{address}' },
   exchangeAliases: ['arbitrum', 'arbitrum one'],
   audit: {},

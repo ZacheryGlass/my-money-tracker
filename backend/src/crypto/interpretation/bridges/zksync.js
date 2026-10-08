@@ -10,6 +10,7 @@ const {
   endpointProtocols,
   evidence,
   TOPICS,
+  bridgeSide,
 } = require('./kit');
 
 function decodeZkSyncEra(envelope) {
@@ -27,7 +28,7 @@ function decodeZkSyncEra(envelope) {
       details: { destination_chain_id: chainId.toString(), l2_tx_hash: l2TxHash },
     }));
   }
-  if (Number(envelope.chain_id) === 324 && envelope.category === 'bridge_in') {
+  if (bridgeSide(envelope.chain_id, 'zksync') === 'l2' && envelope.category === 'bridge_in') {
     events.push(evidence(envelope, null, {
       protocol: 'zksync', family_version: 'era-bridgehub',
       role: 'destination_execution', direction: 'in',

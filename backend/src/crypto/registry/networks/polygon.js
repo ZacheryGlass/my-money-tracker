@@ -47,6 +47,8 @@ module.exports = {
     contract: '0x0000000000000000000000000000000000001010',
     topic0: '0x4e2ca0515ed1aef1395f66b5303bb5d6f1bf9d61a353fa53f73f8ac9973fa9f6',
   },
+  // Canonical bridge: the L2 side of 'polygon' (PoS/Plasma), settling on Ethereum.
+  bridge: { settlementChain: 1, protocols: { polygon: 'l2' } },
   explorer: { baseUrl: 'https://polygonscan.com', txPath: '/tx/{hash}', addressPath: '/address/{address}' },
   exchangeAliases: ['polygon', 'polygon pos', 'matic'],
   audit: {},

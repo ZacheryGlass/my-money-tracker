@@ -39,6 +39,8 @@ module.exports = {
     consensus: { env: 'ZKSYNC_ERA_RPC_URL', default: 'https://mainnet.era.zksync.io' },
     trace: { env: 'ZKSYNC_ERA_TRACE_RPC_URL', default: null },
   },
+  // Canonical bridge: the L2 side of 'zksync', settling on Ethereum.
+  bridge: { settlementChain: 1, protocols: { zksync: 'l2' } },
   explorer: { baseUrl: 'https://zksync.blockscout.com', txPath: '/tx/{hash}', addressPath: '/address/{address}' },
   exchangeAliases: ['zksync era', 'zksync'],
   audit: {

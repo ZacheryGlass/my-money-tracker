@@ -16,6 +16,8 @@ module.exports = {
   enabledByDefault: true,
   historyProvider: 'zksync-lite',
   requiresApiKey: false,
+  // Canonical bridge: the L2 side of 'zksync-lite', settling on Ethereum.
+  bridge: { settlementChain: 1, protocols: { 'zksync-lite': 'l2' } },
   explorer: {
     baseUrl: 'https://zkscan.io',
     txPath: '/explorer/transactions/{hash}',

@@ -11,7 +11,21 @@ const {
   dataWord, dataWordCount, uintWord, receiptStatus, addressWord,
 } = require('../../infra/evm');
 
+const chains = require('../../../config/chains');
+
 const RULE_VERSION = 'bridge-match-v1';
+
+// Which side of a protocol's canonical bridge a chain is, from the network
+// registry: 'l2' when the network declares bridge.protocols[protocol], 'l1'
+// when it is the settlement chain of a network that does, else null. A new L2
+// on an existing protocol is a network file, not a decoder edit.
+function bridgeSide(chainId, protocol) {
+  const id = Number(chainId);
+  if (chains.getChain(id)?.bridge?.protocols?.[protocol] === 'l2') return 'l2';
+  const settles = chains.allChains().some((chain) => chain.bridge?.protocols?.[protocol] === 'l2'
+    && Number(chain.bridge.settlementChain) === id);
+  return settles ? 'l1' : null;
+}
 
 function endpointMetadata(endpoint) {
   if (endpoint?.metadata && typeof endpoint.metadata === 'object'
@@ -187,6 +201,7 @@ const TOPICS = Object.freeze({
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 module.exports = {
+  bridgeSide,
   RULE_VERSION,
   HASH_RE,
   ADDRESS_RE,

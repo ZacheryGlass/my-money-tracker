@@ -7,13 +7,14 @@ const {
   HASH_RE,
   lower,
   evidence,
+  bridgeSide,
 } = require('./kit');
 
 function decodeZkSyncLite(envelope) {
   const hash = lower(envelope.tx_hash);
   if (!HASH_RE.test(hash)) return [];
   const ethereumHash = lower(envelope.archive_source_tx_hash);
-  if (Number(envelope.chain_id) === 32401
+  if (bridgeSide(envelope.chain_id, 'zksync-lite') === 'l2'
       && envelope.category === 'bridge_in'
       && HASH_RE.test(ethereumHash)) {
     return [evidence(envelope, null, {
@@ -26,7 +27,7 @@ function decodeZkSyncLite(envelope) {
       },
     })];
   }
-  const recognized = Number(envelope.chain_id) === 1 && envelope.category === 'bridge_out'
+  const recognized = bridgeSide(envelope.chain_id, 'zksync-lite') === 'l1' && envelope.category === 'bridge_out'
     && (envelope.endpoints || []).some((endpoint) => endpoint.protocol === 'zksync-lite'
       && [lower(envelope.transaction?.to), lower(envelope.receipt?.to)].includes(lower(endpoint.address)));
   return recognized ? [evidence(envelope, null, {

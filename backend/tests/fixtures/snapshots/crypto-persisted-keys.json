@@ -39,6 +39,12 @@
         "lastClassicBlock": 22207817,
         "depositMethodId": "0x679b6ded"
       },
+      "bridge": {
+        "settlementChain": 1,
+        "protocols": {
+          "arbitrum": "l2"
+        }
+      },
       "explorer": {
         "baseUrl": "https://arbiscan.io",
         "txPath": "/tx/{hash}",
@@ -131,6 +137,12 @@
           "requestSpacingMs": 2000
         }
       },
+      "bridge": {
+        "settlementChain": 1,
+        "protocols": {
+          "zksync": "l2"
+        }
+      },
       "explorer": {
         "baseUrl": "https://zksync.blockscout.com",
         "txPath": "/tx/{hash}",
@@ -158,6 +170,12 @@
       "enabledByDefault": true,
       "historyProvider": "zksync-lite",
       "requiresApiKey": false,
+      "bridge": {
+        "settlementChain": 1,
+        "protocols": {
+          "zksync-lite": "l2"
+        }
+      },
       "explorer": {
         "baseUrl": "https://zkscan.io",
         "txPath": "/explorer/transactions/{hash}",
@@ -183,6 +201,12 @@
       "stateSyncDeposits": {
         "contract": "0x0000000000000000000000000000000000001010",
         "topic0": "0x4e2ca0515ed1aef1395f66b5303bb5d6f1bf9d61a353fa53f73f8ac9973fa9f6"
+      },
+      "bridge": {
+        "settlementChain": 1,
+        "protocols": {
+          "polygon": "l2"
+        }
       },
       "explorer": {
         "baseUrl": "https://polygonscan.com",
@@ -278,6 +302,10 @@
         "userTopicIndex": 2
       },
       "bridge": {
+        "settlementChain": 1,
+        "protocols": {
+          "op-stack": "l2"
+        },
         "opStackDestination": {
           "protocol": "optimism",
           "familyVersion": "bedrock"

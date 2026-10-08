@@ -19,6 +19,7 @@ const {
   parseErc20TransferLog,
   evidence,
   TOPICS,
+  bridgeSide,
 } = require('./kit');
 
 // Mainnet deployments: maticnetwork/static/network/mainnet/v1/index.json.
@@ -48,7 +49,7 @@ function polygonEndpoint(envelope, address, direction) {
 }
 
 function polygonEvidence(envelope, log, stateId, recipient, amount, assetId, details) {
-  const direction = Number(envelope.chain_id) === 1 ? 'out' : 'in';
+  const direction = bridgeSide(envelope.chain_id, 'polygon') === 'l1' ? 'out' : 'in';
   return evidence(envelope, log, {
     protocol: 'polygon', family_version: 'state-sync',
     role: direction === 'out' ? 'initiation' : 'destination_execution', direction,
@@ -74,7 +75,7 @@ function decodePolygon(envelope) {
   if (receiptStatus(envelope.receipt) !== 1n) return [];
   const logs = envelope.receipt?.logs || [];
   const events = [];
-  if (Number(envelope.chain_id) === 1 && envelope.category === 'bridge_out') {
+  if (bridgeSide(envelope.chain_id, 'polygon') === 'l1' && envelope.category === 'bridge_out') {
     for (const log of logs) {
       if (lower(log.address) !== POLYGON.stateSender || log.topics?.length !== 3
           || lower(log.topics[0]) !== TOPICS.polygonStateSynced) continue;
@@ -138,7 +139,7 @@ function decodePolygon(envelope) {
       }
       ));
     }
-  } else if (Number(envelope.chain_id) === 137 && envelope.category === 'bridge_in'
+  } else if (bridgeSide(envelope.chain_id, 'polygon') === 'l2' && envelope.category === 'bridge_in'
       && lower(envelope.transaction?.to) === POLYGON.zero
       && polygonEndpoint(envelope, POLYGON.nativeToken, 'in')
       && ADDRESS_RE.test(lower(envelope.wallet_address))) {

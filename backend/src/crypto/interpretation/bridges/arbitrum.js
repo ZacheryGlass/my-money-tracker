@@ -10,6 +10,7 @@ const {
   endpointProtocols,
   evidence,
   TOPICS,
+  bridgeSide,
 } = require('./kit');
 
 function decodeArbitrum(envelope) {
@@ -17,7 +18,7 @@ function decodeArbitrum(envelope) {
   for (const log of envelope.receipt?.logs || []) {
     if (!endpointProtocols(envelope, log).has('arbitrum')) continue;
     const topic0 = lower(log.topics?.[0]);
-    if (topic0 === TOPICS.arbL2ToL1Tx && Number(envelope.chain_id) === 42161
+    if (topic0 === TOPICS.arbL2ToL1Tx && bridgeSide(envelope.chain_id, 'arbitrum') === 'l2'
         && envelope.category === 'bridge_out') {
       const position = uintWord(log.topics?.[3]);
       if (position != null) events.push(evidence(envelope, log, {
@@ -25,7 +26,7 @@ function decodeArbitrum(envelope) {
         correlation_key: `arbitrum-nitro-withdrawal:42161:${position}`,
         details: { position: position.toString() },
       }));
-    } else if (topic0 === TOPICS.arbOutboxExecuted && Number(envelope.chain_id) === 1
+    } else if (topic0 === TOPICS.arbOutboxExecuted && bridgeSide(envelope.chain_id, 'arbitrum') === 'l1'
         && envelope.category === 'bridge_in') {
       // `zero` is indexed topic 3; the protocol identity is the non-indexed
       // transactionIndex emitted as data word 0.
