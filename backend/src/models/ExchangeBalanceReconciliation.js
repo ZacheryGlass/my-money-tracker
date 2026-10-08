@@ -2,10 +2,8 @@
 
 const pool = require('../config/database');
 
-const CATEGORIES = new Set([
-  'opening_balance_gap', 'provider_migration', 'rounding_dust',
-  'parser_defect', 'missing_activity',
-]);
+// The reviewable explanations, from crypto/exchanges/core/reconciliation.js.
+const { EXCEPTION_CATEGORIES: CATEGORIES } = require('../crypto/exchanges/core/reconciliation');
 
 function requireUserId(method, userId) {
   if (!userId) throw new Error(`ExchangeBalanceReconciliation.${method} requires a userId`);

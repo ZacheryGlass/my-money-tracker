@@ -3,21 +3,13 @@
 const ExchangeAccount = require('../models/ExchangeAccount');
 const ExchangeRecord = require('../models/ExchangeRecord');
 const { canonicalBalances } = require('./exchangeImport/canonicalFingerprint');
-const {
-  absAmount, subtractAmounts, compareAmounts, scaleByPowerOfTen,
-} = require('./exchangeImport/shared');
+const { absAmount, subtractAmounts } = require('./exchangeImport/shared');
 
-const ABSOLUTE_TOLERANCE = '0.00000001';
-const RELATIVE_TOLERANCE_EXPONENT = 6;
+// Tolerance and statuses: crypto/exchanges/core/reconciliation.js.
+const { STATUS, withinDustBand } = require('../crypto/exchanges/core/reconciliation');
+
 const MAX_REPORTED_MISMATCHES = 25;
 const FRESHNESS_MS = 24 * 60 * 60 * 1000;
-
-const STATUS = Object.freeze({
-  CURRENT: 'current',
-  MISMATCH: 'mismatch',
-  STALE: 'stale',
-  UNKNOWN: 'unknown',
-});
 
 function iso(value) {
   if (!value) return null;
@@ -63,9 +55,7 @@ function reconcile(derived = {}, live = {}) {
     const liveAmount = live[asset] ?? '0';
     const difference = subtractAmounts(derivedAmount, liveAmount);
     const magnitude = absAmount(difference) ?? '0';
-    if (compareAmounts(magnitude, ABSOLUTE_TOLERANCE) <= 0) continue;
-    const scaled = scaleByPowerOfTen(magnitude, RELATIVE_TOLERANCE_EXPONENT);
-    if (compareAmounts(scaled, absAmount(liveAmount) ?? '0') <= 0) continue;
+    if (withinDustBand(magnitude, liveAmount)) continue;
     mismatches.push({ asset, derived: derivedAmount, live: liveAmount, difference });
   }
 

@@ -2,16 +2,14 @@ import React, { useState } from 'react';
 import { AlertTriangle, Check, RefreshCw } from 'lucide-react';
 import { exchanges as exchangesAPI } from '../../utils/api';
 import { formatDateDisplay } from '../../utils/format';
+import { getCryptoMeta } from '../../features/crypto/meta';
 
-export const EXCEPTION_CATEGORIES = [
-  ['opening_balance_gap', 'Opening balance gap'],
-  ['provider_migration', 'Provider migration'],
-  ['rounding_dust', 'Rounding dust'],
-  ['parser_defect', 'Parser defect'],
-  ['missing_activity', 'Missing activity'],
-];
+// The reviewable explanations, from the server's reconciliation policy (crypto
+// meta store), as [value, label] pairs.
+export const exceptionCategories = () => (getCryptoMeta()?.vocabulary?.exchangeExceptionCategories || [])
+  .map(({ value, label }) => [value, label]);
 
-const categoryLabel = (value) => EXCEPTION_CATEGORIES.find(([key]) => key === value)?.[1] || value || 'Unclassified';
+const categoryLabel = (value) => exceptionCategories().find(([key]) => key === value)?.[1] || value || 'Unclassified';
 
 function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError, showSuccess }) {
   const [category, setCategory] = useState(exception.category || '');
@@ -86,7 +84,7 @@ function ExceptionRow({ exception, showAccount, onOpenAccount, onSaved, onError,
           className="h-9 rounded border border-border bg-surface-3 px-2 text-xs text-primary"
         >
           <option value="">Choose category</option>
-          {EXCEPTION_CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          {exceptionCategories().map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
         <label className="sr-only" htmlFor={`exception-evidence-${exception.id}`}>Evidence</label>
         <input

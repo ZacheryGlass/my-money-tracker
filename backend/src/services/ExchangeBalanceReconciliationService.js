@@ -2,17 +2,14 @@
 
 const ExchangeBalanceReconciliation = require('../models/ExchangeBalanceReconciliation');
 const pool = require('../config/database');
-const {
-  absAmount, addAmounts, compareAmounts, subtractAmounts, scaleByPowerOfTen,
-} = require('./exchangeImport/shared');
+const { addAmounts, compareAmounts } = require('./exchangeImport/shared');
 const logger = require('../config/logger');
 
-const ABSOLUTE_TOLERANCE = '0.00000001';
-const RELATIVE_TOLERANCE_EXPONENT = 6;
-const BLOCKING_CATEGORIES = new Set(['parser_defect', 'missing_activity']);
-const NON_BLOCKING_CATEGORIES = new Set([
-  'opening_balance_gap', 'provider_migration', 'rounding_dust',
-]);
+// Dust band, verdicts and blocking categories:
+// crypto/exchanges/core/reconciliation.js.
+const {
+  NON_BLOCKING_CATEGORIES, classify, isBlocking,
+} = require('../crypto/exchanges/core/reconciliation');
 
 function sameJson(left, right) {
   const normalize = (value) => {
@@ -23,22 +20,6 @@ function sameJson(left, right) {
     return value;
   };
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
-}
-
-function isDust(delta, live) {
-  const magnitude = absAmount(delta) || '0';
-  if (compareAmounts(magnitude, '0') === 0) return false;
-  if (compareAmounts(magnitude, ABSOLUTE_TOLERANCE) <= 0) return true;
-  return compareAmounts(
-    scaleByPowerOfTen(magnitude, RELATIVE_TOLERANCE_EXPONENT),
-    absAmount(live) || '0'
-  ) <= 0;
-}
-
-function classify(derived, live) {
-  const delta = subtractAmounts(derived ?? '0', live ?? '0');
-  if (compareAmounts(delta, '0') === 0) return { status: 'match', delta };
-  return { status: isDust(delta, live) ? 'dust' : 'mismatch', delta };
 }
 
 function detailsForAsset(asset, live, balanceDetails = {}) {
@@ -118,11 +99,6 @@ function currentState(previous, snapshot) {
     reviewerId: previous.reviewer_id,
     reviewedAt: previous.reviewed_at,
   };
-}
-
-function isBlocking(exception) {
-  if (exception.status === 'open') return true;
-  return exception.status === 'accepted' && BLOCKING_CATEGORIES.has(exception.category);
 }
 
 class ExchangeBalanceReconciliationService {

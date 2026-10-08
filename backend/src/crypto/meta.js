@@ -8,6 +8,7 @@ const chains = require('../config/chains');
 const networks = require('./registry/networks');
 const vocabulary = require('./registry/vocabulary');
 const { VENUES } = require('./registry/venues');
+const { EXCEPTION_CATEGORY_DEFINITIONS } = require('./exchanges/core/reconciliation');
 
 function buildCryptoMeta() {
   return {
@@ -30,6 +31,7 @@ function buildCryptoMeta() {
       labelKinds: vocabulary.LABEL_KIND_DEFINITIONS.map((entry) => ({ ...entry })),
       spamReasons: Object.values(vocabulary.SPAM_REASONS),
       spamFilters: [...vocabulary.SPAM_FILTERS],
+      exchangeExceptionCategories: EXCEPTION_CATEGORY_DEFINITIONS.map((entry) => ({ ...entry })),
     },
     venues: Object.values(VENUES).map((entry) => ({ id: entry.id, label: entry.label, apiSync: entry.apiSync })),
   };

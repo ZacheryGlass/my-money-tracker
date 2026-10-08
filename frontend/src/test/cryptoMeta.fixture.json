@@ -279,6 +279,33 @@
       "exclude",
       "only",
       "all"
+    ],
+    "exchangeExceptionCategories": [
+      {
+        "value": "opening_balance_gap",
+        "label": "Opening balance gap",
+        "blocking": false
+      },
+      {
+        "value": "provider_migration",
+        "label": "Provider migration",
+        "blocking": false
+      },
+      {
+        "value": "rounding_dust",
+        "label": "Rounding dust",
+        "blocking": false
+      },
+      {
+        "value": "parser_defect",
+        "label": "Parser defect",
+        "blocking": true
+      },
+      {
+        "value": "missing_activity",
+        "label": "Missing activity",
+        "blocking": true
+      }
     ]
   },
   "venues": [
