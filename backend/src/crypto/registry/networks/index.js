@@ -16,6 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { codecFor } = require('../../chains/families');
 
 function loadDir(dir) {
   return fs.readdirSync(dir)
@@ -32,6 +33,7 @@ function validate(entries) {
     if (byId.has(network.id)) throw new Error(`${file}: duplicate network id ${network.id} (also ${byId.get(network.id)})`);
     byId.set(network.id, file);
     if (!network.family) throw new Error(`${file}: family is required`);
+    if (!codecFor(network.family)) throw new Error(`${file}: family ${network.family} has no codec`);
     if (!network.name) throw new Error(`${file}: name is required`);
     if (network.retired) continue;
     for (const field of ['shortName', 'nativeAsset']) {

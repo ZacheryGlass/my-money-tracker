@@ -3,8 +3,7 @@
 // Address and transaction-id handling for the EVM family. EVM addresses and
 // hashes are case-insensitive hex, so the canonical stored form is lowercase
 // with the 0x prefix. Other families (base58, bech32) are case-SENSITIVE and
-// must ship their own codec: nothing outside a family's codec may lowercase an
-// address or a transaction id.
+// must ship their own codec rather than reuse this lowercasing.
 
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 const TX_ID_RE = /^0x[0-9a-f]{64}$/i;
