@@ -1090,3 +1090,12 @@ test('outbound NFT legs no longer make a counterparty permanently material', asy
   // The documented ordering trap stays intact.
   assert.match(sql, /ORDER BY r\.material DESC, r\.usd_volume DESC/);
 });
+
+test('the ladder is a declared sequence of named rules', () => {
+  const { LADDER } = require('../src/services/ethActivity/classify');
+  assert.deepEqual(LADDER.map((rule) => `${rule.rung}:${rule.name}`), [
+    'gate:failed_gate', '1:own_addresses', '2:exchange_label', '2c:custody_venue', '3:bridge_label',
+    '3b:swap_service', '4:nft_zero_address', '5:no_net_movement', '6:fungible_swap',
+    '7:nft_against_fungible', '8:one_way_unlabeled', 'fallback:unrecognized_shape',
+  ]);
+});
