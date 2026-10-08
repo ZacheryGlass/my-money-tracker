@@ -403,13 +403,16 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   const dust = await pool.query(
     `INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at, base_asset, base_amount,
        external_id, needs_review, source)
-     VALUES ($1, 'transfer', '2026-01-10 08:00', 'ETH', 0.000000001, 'DUST-1', false, 'api') RETURNING id`,
+     VALUES ($1, 'transfer', '2026-01-10 08:00', 'ETH', 0.000000001, 'DUST-1', false, 'api'),
+            ($1, 'transfer', '2026-01-10 09:00', 'ETH', 0.1234567, 'CENTS-1', false, 'api') RETURNING id`,
     [accountId]
   );
   const withDust = await CryptoLedger.findForUser(1, { limit: 100, offset: 0 });
   const dustRow = withDust.rows.find((r) => r.external_id === 'DUST-1');
+  const centsRow = withDust.rows.find((r) => r.external_id === 'CENTS-1');
   ok('a sub-cent venue value stays exact instead of rounding to zero', dustRow?.usd_value === '0.000003', dustRow);
-  await pool.query('DELETE FROM exchange_records WHERE id = $1', [dust.rows[0].id]);
+  ok('while a value of a cent or more is in cents', centsRow?.usd_value === '370.37', centsRow);
+  await pool.query('DELETE FROM exchange_records WHERE id = ANY($1::int[])', [dust.rows.map((r) => r.id)]);
   // Staking income sums a window's reward events per asset, in exact units
   // and at-the-time dollars, counting a reward with no price as unpriced.
   const rewards = await pool.query(

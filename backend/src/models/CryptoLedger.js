@@ -685,11 +685,13 @@ const venuePriceLateral = (alias, column) => `
       ORDER BY p.price_date DESC
       LIMIT 1
     ) ${alias} ON TRUE`;
-// Exact, not rounded to cents: a dust reward worth a fraction of a cent must
-// read "< $0.01", and a cent-rounded "0.00" reads as worthless.
+// Cents, like the on-chain side -- except under a cent, which stays exact: a
+// dust reward must read "< $0.01", and a cent-rounded "0.00" reads as
+// worthless.
+const centsOrDust = (expr) => `(CASE WHEN ${expr} < 0.01 THEN ${expr} ELSE ROUND(${expr}, 2) END)`;
 const SERIES_VALUE_SQL = `
       CASE WHEN bpx.price_usd IS NOT NULL AND er.base_amount IS NOT NULL
-           THEN (ABS(er.base_amount) * bpx.price_usd)::text END`;
+           THEN ${centsOrDust('ABS(er.base_amount) * bpx.price_usd')}::text END`;
 
 // The venue branch: every record no other row already accounts for.
 //
@@ -730,7 +732,7 @@ const EXCHANGE_CTE = `
              AND er.fee_amount IS NOT NULL
            THEN ABS(er.fee_amount)::text
            WHEN fpx.price_usd IS NOT NULL AND er.fee_amount IS NOT NULL
-           THEN (ABS(er.fee_amount) * fpx.price_usd)::text
+           THEN ${centsOrDust('ABS(er.fee_amount) * fpx.price_usd')}::text
       END AS usd_fee,
       -- Derived from whether the VALUE resolved, not from the asset alone: an
       -- import can write base_asset='USD' with a NULL base_amount (a cell it
