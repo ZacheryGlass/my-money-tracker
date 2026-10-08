@@ -12,6 +12,7 @@ import {
 } from '../../utils/exchangeMatchEvidence';
 import ExchangeBalanceExceptionQueue from './ExchangeBalanceExceptionQueue';
 import { getCryptoMeta } from '../../features/crypto/meta';
+import LoadFailed from '../../features/crypto/LoadFailed';
 
 // The venues the backend accepts, from its venue registry (crypto meta store).
 // Coinbase covers both the retail export and a Coinbase Pro / Exchange
@@ -857,19 +858,7 @@ function ExchangesPanel({
         // A failed request must not read as "you have no exchange accounts":
         // that invites adding a duplicate of one that already exists, and
         // hides every record already imported into it.
-        <div className="card flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-secondary">
-          <span className="flex items-center gap-2 text-loss">
-            <AlertTriangle size={14} />
-            Couldn&apos;t load your exchange accounts.
-          </span>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-3 text-[9px] font-bold uppercase tracking-wide text-tertiary transition-all hover:border-accent hover:text-accent"
-          >
-            <RefreshCw size={10} /> Retry
-          </button>
-        </div>
+        <LoadFailed message="Couldn't load your exchange accounts." onRetry={onRetry} />
       ) : accounts.length === 0 ? (
         <div className="card border-2 border-dashed border-border bg-transparent p-12 text-center">
           <ArrowLeftRight size={40} className="mx-auto mb-4 text-tertiary opacity-20" />

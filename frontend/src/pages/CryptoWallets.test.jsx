@@ -118,6 +118,14 @@ describe('Crypto -> Wallets tab', () => {
   // The on-chain balance audit as the user meets it (#62). Sync starts at
   // block 0, so a nonzero ETH delta can only mean a movement was never
   // recorded.
+  it('says the wallet list failed to load instead of claiming none are tracked', async () => {
+    apiMocks.eth.getWallets.mockRejectedValue(new Error('boom'));
+    render(<CryptoPage tab="crypto-wallets" onTabChange={vi.fn()} />);
+
+    expect(await screen.findByText("Couldn't load your wallets.")).toBeInTheDocument();
+    expect(screen.queryByText('No Wallets Tracked')).toBeNull();
+  });
+
   it('states plainly when the ledger reproduces the chain', async () => {
     await openEthereumTab([wallet(report())]);
     // The row's own verdict, before anything is opened.

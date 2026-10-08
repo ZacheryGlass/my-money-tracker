@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Play, X } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import { shortEthAddress } from '../../utils/format';
+import LoadingState from '../LoadingState';
+import LoadFailed from '../../features/crypto/LoadFailed';
 
 const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
   const [candidates, setCandidates] = useState([]);
   const [receipts, setReceipts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [running, setRunning] = useState(false);
 
   const load = useCallback(async () => {
@@ -17,12 +20,13 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
       ]);
       setCandidates(result.candidates || []);
       setReceipts(receiptResult.receipts || []);
-    } catch (error) {
-      onError?.(error.response?.data?.error || 'Failed to load wallet discovery candidates');
+      setLoadFailed(false);
+    } catch {
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
-  }, [onError]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -63,8 +67,9 @@ const DiscoveryPanel = ({ onChanged, onError, showSuccess }) => {
           <Play size={13} /> {running ? 'Running…' : 'Run checks'}
         </button>
       </div>
-      {loading ? <p className="text-body-sm text-tertiary">Loading candidates…</p> : null}
-      {!loading && candidates.length === 0 ? <p className="rounded border border-dashed border-border p-6 text-center text-body-sm text-tertiary">No pending candidates.</p> : null}
+      {loading ? <LoadingState label="Loading candidates" className="min-h-[120px]" /> : null}
+      {!loading && loadFailed ? <LoadFailed message="Couldn't load discovery candidates." onRetry={load} /> : null}
+      {!loading && !loadFailed && candidates.length === 0 ? <p className="rounded border border-dashed border-border p-6 text-center text-body-sm text-tertiary">No pending candidates.</p> : null}
       <div className="space-y-3">
         {candidates.map((candidate) => (
           <article key={candidate.id} className="rounded border border-border bg-surface-2 p-4">

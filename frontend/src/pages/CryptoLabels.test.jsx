@@ -67,6 +67,14 @@ const openLabelsTab = async (labels = []) => {
 };
 
 describe('Crypto -> Labels tab', () => {
+  it('says the labels failed to load instead of claiming none exist', async () => {
+    apiMocks.eth.getAddressLabels.mockRejectedValue(new Error('boom'));
+    render(<CryptoPage tab="crypto-labels" onTabChange={vi.fn()} />);
+
+    expect(await screen.findByText("Couldn't load your address labels.")).toBeInTheDocument();
+    expect(screen.queryByText('No addresses are labeled.')).toBeNull();
+  });
+
   it('renders builtin labels without a remove button and user labels with one', async () => {
     await openLabelsTab([
       { address: '0x1111111111111111111111111111111111111111', name: 'Coinbase', source: 'builtin', builtin: true, note: 'Etherscan tag: Coinbase 1' },

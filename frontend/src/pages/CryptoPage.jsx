@@ -25,6 +25,7 @@ import SegmentedControl from '../components/SegmentedControl';
 import DataTable, { DataTablePagination } from '../components/DataTable';
 import HoldingForm from '../components/HoldingForm';
 import LoadingState from '../components/LoadingState';
+import LoadFailed from '../features/crypto/LoadFailed';
 import MetricCard from '../components/MetricCard';
 import OnChainActivity, { EthWalletBadge } from '../components/OnChainActivity';
 import SummaryStats from '../components/SummaryStats';
@@ -110,6 +111,11 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   const [txView, setTxView] = useState(LEDGER_VIEW);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // The page's own read failing, kept apart from `error` (actions: sync,
+  // delete), which is cleared on every page change. A load failure has to
+  // stay on screen, or the next page reads as genuinely empty.
+  const [loadError, setLoadError] = useState(null);
+  const [walletsLoadFailed, setWalletsLoadFailed] = useState(false);
   const [selectedWalletId, setSelectedWalletId] = useState(null);
   const [syncingWalletId, setSyncingWalletId] = useState(null);
   const [sorting, setSorting] = useState([{ id: 'value', desc: true }]);
@@ -129,6 +135,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // landing would be paid by the users who never manage anything.
   const [ignoredTokens, setIgnoredTokens] = useState([]);
   const [addressLabels, setAddressLabels] = useState([]);
+  const [labelsLoadFailed, setLabelsLoadFailed] = useState(false);
+  const [ignoredLoadFailed, setIgnoredLoadFailed] = useState(false);
   const [addressNotes, setAddressNotes] = useState([]);
   // null = not loaded or the fetch failed; [] = loaded and genuinely empty.
   // The distinction matters: never claim "all clear" on a failed request.
@@ -182,6 +190,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         ethAPI.getAddressNotes().catch(() => null),
       ]);
       setWallets(walletsData?.wallets || []);
+      setWalletsLoadFailed(!walletsData);
       setHoldings(holdingsData.holdings || []);
       setAccounts(accountsData.accounts || []);
       setHistoryRows(historyData.data || []);
@@ -204,9 +213,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
           needsReview: ok ? (ledgerData?.summary?.needs_review_count || 0) : null,
         });
       });
-      setError(null);
+      setLoadError(null);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load crypto data');
+      setLoadError(err.response?.data?.error || 'Failed to load crypto data');
     } finally {
       setLoading(false);
     }
@@ -234,7 +243,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       exchangeExceptionsPromise,
     ]);
     setIgnoredTokens(ignoredResult?.tokens || []);
+    setIgnoredLoadFailed(!ignoredResult);
     setAddressLabels(labelsResult?.labels || []);
+    setLabelsLoadFailed(!labelsResult);
     setCounterpartyData(counterpartyResult || null);
     setSpamActivity(spamResult || null);
     setExchangeAccounts(exchangeResult?.accounts || []);
@@ -364,6 +375,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
   // empty page so a saved URL never opens with a different sidebar item active.
   const hasLedger = wallets.length > 0 || (ledgerSummary?.total || 0) > 0;
   const isEmpty = wallets.length === 0
+    && !walletsLoadFailed
+    && !loadError
     && cryptoAccounts.length === 0
     && !hasLedger
     && ledgerSummaryState !== 'error';
@@ -636,8 +649,13 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
         </div>
       )}
       {error && (
-        <div className="mb-4 border border-loss/30 bg-loss-bg p-3 text-body-sm text-loss">
+        <div role="alert" className="mb-4 border border-loss/30 bg-loss-bg p-3 text-body-sm text-loss">
           {error}
+        </div>
+      )}
+      {loadError && (
+        <div className="mb-4">
+          <LoadFailed message={loadError} onRetry={fetchData} />
         </div>
       )}
 
@@ -882,6 +900,8 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             <>
               <WalletsPanel
                 wallets={wallets}
+                loadFailed={walletsLoadFailed}
+                onRetry={fetchData}
                 onChanged={handleManageChanged}
                 onError={setError}
                 showSuccess={showSuccess}
@@ -895,7 +915,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
             </>
           ))}
 
-          {tabBody(EXCHANGES_TAB, (
+          {tabBody(EXCHANGES_TAB, !manageLoaded ? <LoadingState label="Loading exchanges" /> : (
             <ExchangesPanel
               accounts={exchangeAccounts}
               loadFailed={exchangeLoadFailed}
@@ -927,6 +947,7 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   />
                 </section>
               )}
+              {!manageLoaded ? <LoadingState label="Loading review queues" className="min-h-[160px]" /> : (
               <ReviewPanel
                 counterpartyData={counterpartyData && {
                   ...counterpartyData,
@@ -952,12 +973,16 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                   onTabChange?.(EXCHANGES_TAB);
                 }}
               />
+              )}
             </>
           ))}
 
-          {tabBody(LABELS_TAB, (
+          {tabBody(LABELS_TAB, !manageLoaded ? <LoadingState label="Loading labels" /> : (
             <LabelsPanel
               addressLabels={addressLabels}
+              labelsLoadFailed={labelsLoadFailed}
+              ignoredLoadFailed={ignoredLoadFailed}
+              onRetry={fetchManageData}
               addressNotes={addressNotes}
               exchangeAccounts={exchangeAccounts}
               ignoredTokens={ignoredTokens}

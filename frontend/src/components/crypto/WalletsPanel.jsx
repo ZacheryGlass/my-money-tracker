@@ -9,6 +9,7 @@ import { explorerAddressUrl } from '../../utils/chains';
 import { DEFERRED_SYNC_CODES, LIMITED_SYNC_CODES } from '../../utils/walletSync';
 import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
+import LoadFailed from '../../features/crypto/LoadFailed';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 // Deferred jobs are durable retry points, not active work. Poll them too so a
@@ -388,7 +389,9 @@ const ROW_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border bo
 // The tracked-wallet list and everything that changes it: add, sync, disconnect.
 // Moved off Settings with #75 -- a wallet is crypto data, not an app preference,
 // and the add form was three clicks from the feed it fills.
-function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = showSuccess }) {
+function WalletsPanel({
+  wallets, loadFailed = false, onRetry, onChanged, onError, showSuccess, showNotice = showSuccess,
+}) {
   const [addOpen, setAddOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
   const [walletLabel, setWalletLabel] = useState('');
@@ -923,7 +926,9 @@ function WalletsPanel({ wallets, onChanged, onError, showSuccess, showNotice = s
         )}
       </div>
 
-      {wallets.length === 0 ? (
+      {loadFailed ? (
+        <LoadFailed message="Couldn't load your wallets." onRetry={onRetry} />
+      ) : wallets.length === 0 ? (
         <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
           <Wallet size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
           <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Wallets Tracked</h3>

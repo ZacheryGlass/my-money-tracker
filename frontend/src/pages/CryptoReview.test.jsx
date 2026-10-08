@@ -264,6 +264,14 @@ describe('unknown counterparty triage', () => {
     expect(within(select).queryByText(/ignore/i)).toBeNull();
   });
 
+  it('shows a loading state, not a load failure, while the queues are still on their way', async () => {
+    apiMocks.eth.getUnreviewedCounterparties.mockReturnValue(new Promise(() => {}));
+    renderReview();
+
+    expect(await screen.findByText('Loading review queues')).toBeInTheDocument();
+    expect(screen.queryByText(/couldn't load/i)).toBeNull();
+  });
+
   it('shows a retry state when the queue fetch fails rather than claiming all clear', async () => {
     apiMocks.eth.getUnreviewedCounterparties.mockRejectedValue(new Error('boom'));
     renderReview();

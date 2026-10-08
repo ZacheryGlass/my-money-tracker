@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronDown, EyeOff, RefreshCw, Tag, Undo2 } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
+import LoadFailed from '../../features/crypto/LoadFailed';
 import {
   LABEL_VERDICT_KEEP,
   labelVerdictOptions,
@@ -60,6 +61,9 @@ function LabelsPanel({
   addressNotes = [],
   exchangeAccounts = [],
   ignoredTokens,
+  labelsLoadFailed = false,
+  ignoredLoadFailed = false,
+  onRetry,
   onChanged,
   onError,
   showSuccess,
@@ -357,7 +361,9 @@ function LabelsPanel({
             </label>
           </form>
 
-          {addressLabels.length === 0 ? (
+          {labelsLoadFailed ? (
+            <LoadFailed message="Couldn't load your address labels." onRetry={onRetry} />
+          ) : addressLabels.length === 0 ? (
             <div className="p-6 text-center text-sm text-secondary">No addresses are labeled.</div>
           ) : (
             <div className="divide-y divide-border">
@@ -459,7 +465,9 @@ function LabelsPanel({
             </div>
           </form>
 
-          {ignoredTokens.length === 0 ? (
+          {ignoredLoadFailed ? (
+            <LoadFailed message="Couldn't load your ignored tokens." onRetry={onRetry} />
+          ) : ignoredTokens.length === 0 ? (
             <div className="p-6 text-center text-sm text-secondary">No tokens are ignored.</div>
           ) : (
             <div className="divide-y divide-border">
