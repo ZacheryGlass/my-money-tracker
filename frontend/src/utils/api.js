@@ -667,6 +667,11 @@ export const crypto = {
     });
     return response.data;
   }),
+  // Staking income per asset over a window; the server defaults to the last year.
+  getStakingIncome: async ({ from, to } = {}) => {
+    const response = await api.get('/api/crypto/ledger/income', { params: { from, to } });
+    return response.data;
+  },
   getBridgeAudit: async (params = {}) => {
     const response = await api.get('/api/crypto/bridges', { params });
     return response.data;

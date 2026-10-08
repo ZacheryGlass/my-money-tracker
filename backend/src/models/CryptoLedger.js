@@ -1243,6 +1243,58 @@ class CryptoLedger {
     return result.rows.map(toLedgerRow);
   }
 
+  // Staking income in a window: every reward event the ledger renders (venue
+  // records, and any on-chain row whose category says so), summed per asset
+  // in exact base units and at-the-time dollars. A reward with no price is
+  // counted as such, never as $0 -- the total is a floor until it is priced.
+  static async incomeForUser(userId, { from, to } = {}) {
+    if (!userId) throw new Error('CryptoLedger.incomeForUser requires a userId');
+    const rows = await this.findAllForUser(userId, { category: 'staking_reward', from, to, limit: 50000 });
+    const SCALE = 18n;
+    const byAsset = new Map();
+    let totalCents = 0n;
+    for (const row of rows) {
+      const inbound = (row.legs || []).filter((leg) => leg.direction === 'in' && leg.units != null);
+      if (!inbound.length) continue;
+      const usdCents = row.usd_value != null && Number.isFinite(Number(row.usd_value))
+        ? BigInt(Math.round(Math.abs(Number(row.usd_value)) * 100)) : null;
+      inbound.forEach((leg, index) => {
+        const asset = String(leg.asset || 'UNKNOWN').toUpperCase();
+        const entry = byAsset.get(asset) || { asset, units: 0n, cents: 0n, events: 0, unpriced: 0 };
+        const decimals = BigInt(Number.isInteger(leg.decimals) ? Math.min(leg.decimals, 18) : 18);
+        entry.units += BigInt(leg.units) * 10n ** (SCALE - decimals);
+        // A row's dollars belong to its first arriving asset: rewards arrive
+        // one asset at a time, and splitting a single figure would invent a
+        // price per leg the valuation never computed.
+        if (index === 0) {
+          entry.events += 1;
+          if (usdCents == null) entry.unpriced += 1;
+          else entry.cents += usdCents;
+        }
+        byAsset.set(asset, entry);
+      });
+      if (usdCents != null) totalCents += usdCents;
+    }
+    const cents = (value) => `${value / 100n}.${String(value % 100n).padStart(2, '0')}`;
+    const assets = [...byAsset.values()]
+      .map((entry) => ({
+        asset: entry.asset,
+        quantity: weiToDecimalString(entry.units.toString(), 18),
+        usd: cents(entry.cents),
+        events: entry.events,
+        unpriced: entry.unpriced,
+      }))
+      .sort((a, b) => Number(b.usd) - Number(a.usd) || b.events - a.events);
+    return {
+      from: from || null,
+      to: to || null,
+      total_usd: cents(totalCents),
+      events: rows.length,
+      unpriced: assets.reduce((sum, entry) => sum + entry.unpriced, 0),
+      assets,
+    };
+  }
+
   // The badge. Counts the SAME rows the feed renders -- folded pairs once, with
   // the other half's flag ORed in -- so "needs review" in the badge and in the
   // filter can never disagree.

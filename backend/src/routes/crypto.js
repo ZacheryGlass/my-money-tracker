@@ -261,6 +261,24 @@ router.get('/ledger/summary', async (req, res) => {
   }
 });
 
+// Staking income per asset over a window (default: the last 365 days), for
+// the Overview. Takes only from/to; the window IS the question.
+router.get('/ledger/income', async (req, res) => {
+  try {
+    const parsed = await parseFilters(req);
+    if (parsed.error) return res.status(parsed.error.status).json(parsed.error.body);
+    const today = new Date();
+    const to = parsed.filters.to || today.toISOString().slice(0, 10);
+    const from = parsed.filters.from
+      || new Date(Date.UTC(today.getUTCFullYear() - 1, today.getUTCMonth(), today.getUTCDate() + 1)).toISOString().slice(0, 10);
+    const income = await CryptoLedger.incomeForUser(req.user.id, { from, to });
+    return res.status(200).json({ income });
+  } catch (error) {
+    logger.error({ err: error }, 'Get crypto staking income error');
+    return res.status(500).json({ error: 'Failed to retrieve staking income' });
+  }
+});
+
 // CSV export, honouring the same filters as the feed. Columns, not a rendered
 // sentence: this is the spreadsheet-shaped view of a spreadsheet-shaped thing,
 // and a "0.5 ETH -> 1,832.40 USDC" string cannot be summed. The assets in and

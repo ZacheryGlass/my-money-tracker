@@ -269,6 +269,18 @@ test('date, counterparty and search filters reach the query as parameters, expor
   assert.ok(lastLedgerQuery().params.includes('USDC'), 'the CSV carries the same search');
 });
 
+test('staking income defaults to the last year and reads only reward events', async () => {
+  const response = await request(app).get('/api/crypto/ledger/income');
+  assert.equal(response.status, 200);
+  assert.ok(response.body.income && Array.isArray(response.body.income.assets));
+  const feed = lastLedgerQuery();
+  assert.ok(feed.params.includes('staking_reward'));
+  const [from, to] = [response.body.income.from, response.body.income.to];
+  assert.match(from, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(new Date(to) - new Date(from) >= 364 * 86400000, `${from}..${to}`);
+  assert.equal((await request(app).get('/api/crypto/ledger/income?from=2026-13-01')).status, 400);
+});
+
 // Every category the client can offer has to be one the server accepts, or the
 // picker holds a dead option that 400s the whole feed.
 test('every advertised category is accepted', async () => {

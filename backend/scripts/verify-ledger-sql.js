@@ -398,6 +398,26 @@ const ok = (name, condition) => checks.push([name, Boolean(condition)]);
   ok('a venue dollar quote still wins over the series', venue('TRD-1')?.usd_value === '1832.4');
   ok('a non-native asset stays unpriced even with a series row',
     venue('SOL-1')?.usd_value === null && venue('SOL-1')?.usd_basis === 'unpriced');
+  // Staking income sums a window's reward events per asset, in exact units
+  // and at-the-time dollars, counting a reward with no price as unpriced.
+  const rewards = await pool.query(
+    `INSERT INTO exchange_records (exchange_account_id, record_type, occurred_at, base_asset, base_amount,
+       external_id, needs_review, source)
+     VALUES ($1, 'reward', '2026-01-10 06:00', 'ETH', 0.01, 'RWD-1', false, 'api'),
+            ($1, 'reward', '2026-01-12 06:00', 'ETH', 0.000000000000000001, 'RWD-2', false, 'api'),
+            ($1, 'reward', '2026-01-20 06:00', 'SOL', 0.5, 'RWD-3', false, 'api')
+     RETURNING id`,
+    [accountId]
+  );
+  const income = await CryptoLedger.incomeForUser(1, { from: '2026-01-01', to: '2026-01-31' });
+  const ethIncome = income.assets.find((entry) => entry.asset === 'ETH');
+  const solIncome = income.assets.find((entry) => entry.asset === 'SOL');
+  ok('staking income sums exact units and dated dollars per asset',
+    ethIncome?.quantity === '0.010000000000000001' && ethIncome?.usd === '30.00' && ethIncome?.events === 2, ethIncome);
+  ok('a reward with no price is counted as unpriced, not as $0',
+    solIncome?.unpriced === 1 && solIncome?.usd === '0.00' && income.total_usd === '30.00', { solIncome, total: income.total_usd });
+  await pool.query('DELETE FROM exchange_records WHERE id = ANY($1::int[])', [rewards.rows.map((r) => r.id)]);
+
   await pool.query('DELETE FROM exchange_records WHERE id = $1', [solRecord.rows[0].id]);
   await pool.query("DELETE FROM asset_price_history WHERE source = 'verify'");
 
