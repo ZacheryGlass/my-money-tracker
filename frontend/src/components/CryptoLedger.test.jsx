@@ -793,6 +793,8 @@ describe('CryptoLedger', () => {
     expect(screen.getAllByLabelText('Set category')).toHaveLength(1);
   });
 
+  // 150 rows, rendered twice (table and phone list): under a second here, past
+  // vitest's 5 s default on a slow CI runner.
   it('refetches the window the user has loaded, not just page one', async () => {
     // Reviewing is the core loop of this screen. Refetching offset 0 / limit
     // 100 after every action threw away every Load More page (and closed the
@@ -822,7 +824,7 @@ describe('CryptoLedger', () => {
         expect.objectContaining({ limit: 150, offset: 0 })
       );
     });
-  });
+  }, 20_000);
 
   it('does not offer to resolve a record that is already clear', async () => {
     // On a folded pair the row's needs_review can belong to the OTHER half.
