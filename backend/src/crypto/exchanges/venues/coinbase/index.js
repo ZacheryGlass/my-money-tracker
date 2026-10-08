@@ -27,4 +27,5 @@ module.exports = {
   },
   get csv() { return [require('./csvRetail'), require('./csvPro')]; },
   get connector() { return require('./connector'); },
+  get assets() { return require('./assets'); },
 };

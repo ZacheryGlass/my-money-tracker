@@ -139,3 +139,13 @@ test('Coinbase API and retail CSV transfer records share the fingerprint', () =>
     annotateRecord('coinbase', { ...csvRecord, source: 'csv' }).fingerprint,
   );
 });
+
+test('Kraken fingerprints, stored legs and balances share one asset normalizer', () => {
+  const { canonicalAsset } = require('../src/crypto/exchanges/core/fingerprint');
+  const { normalizeAsset } = require('../src/crypto/exchanges/venues/kraken/ledger');
+  for (const code of ['XETH', 'XXBT', 'ZUSD', 'ETH2.S', 'ETH.B', 'DOT.P', 'SOL03', 'SOL03.S', 'XLTC', 'ADA', 'XXDG', 'USDC.M']) {
+    assert.equal(canonicalAsset('kraken', code), normalizeAsset(code), code);
+  }
+  assert.equal(canonicalAsset('kraken', 'ETH.B'), 'ETH', 'any single-letter wallet suffix is stripped');
+  assert.equal(canonicalAsset('kraken', 'SOL03.S'), 'SOL');
+});

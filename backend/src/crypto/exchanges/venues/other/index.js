@@ -18,4 +18,12 @@ module.exports = {
   csvFallback: true,
   get csv() { return [require('./csv')]; },
   connector: null,
+  // Codes are kept as written (uppercased): a generic file names no venue
+  // whose aliases could apply.
+  assets: {
+    VERSION: 1,
+    canonical: (raw) => String(raw ?? '').trim().toUpperCase() || null,
+    stored: (raw) => raw,
+    STORED_ALIASES: {},
+  },
 };

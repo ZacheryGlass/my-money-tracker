@@ -1,5 +1,7 @@
 'use strict';
 
+const assets = require('./assets');
+
 const {
   UNKNOWN_RECORD_TYPE,
   cleanAmount,
@@ -29,36 +31,6 @@ const {
 // where `txid` is the LEDGER ENTRY id (the CSV's txid column; the map key in
 // the REST response) and `refid` is the parent transaction's id.
 
-// Kraken's legacy asset codes. ETH2 was the pre-merge staked-ETH ticker and is
-// the same asset today; leaving it distinct would split one ETH position in
-// two. Undocumented but empirically stable -- Kraken's own Balance example
-// (https://docs.kraken.com/api/docs/rest-api/get-account-balance) shows XETH,
-// ETH2 and ETH2.S side by side in one response.
-const ASSET_MAP = {
-  XETH: 'ETH',
-  XXBT: 'BTC',
-  XBT: 'BTC',
-  ZUSD: 'USD',
-  ETH2: 'ETH',
-  XXDG: 'DOGE',
-  XDG: 'DOGE',
-};
-
-// Explicitly verified economic aliases. This is intentionally separate from
-// ASSET_MAP: the legacy map rewrites provider spellings, while this map asserts
-// that two provider assets are the same position. Do not turn this into a
-// generic "strip digits" rule -- a future numbered ticker needs evidence first.
-const ECONOMIC_ASSET_MAP = {
-  SOL03: 'SOL',
-};
-
-// .S staked, .M opt-in rewards, .P parachain are documented
-// (https://support.kraken.com/articles/360039879471-what-is-asset-s-and-asset-m-);
-// .F (Kraken Rewards) and .B (bonded) are not, which is exactly why this
-// strips ANY single-letter suffix rather than an allowlist. A suffix Kraken
-// adds next year must not silently split a position in two.
-const SUFFIX = /\.[A-Z]$/;
-
 // 'allocation'/'autoallocation' move a balance between the spot and earn
 // wallets. They are NOT income: they are signed both ways and cancel out, so
 // counting them as rewards would inflate income by the whole allocated
@@ -75,20 +47,15 @@ const EARN_MOVEMENT_SUBTYPES = new Set(['allocation', 'autoallocation', 'dealloc
 // through to the single-row path and are flagged instead.
 const PAIRED_ROW_TYPES = new Set(['trade', 'spend', 'receive']);
 
+// One canonical code per Kraken asset, shared with fingerprints and balance
+// snapshots (./assets.js). `identityAsset` is the code before an economic alias.
 function normalizeAssetParts(raw) {
-  let asset = String(raw ?? '').trim().toUpperCase();
-  if (!asset) return { asset: null, identityAsset: null };
-  asset = asset.replace(SUFFIX, '');
-  if (ASSET_MAP[asset]) asset = ASSET_MAP[asset];
-  // Legacy four-character codes: X<crypto>, Z<fiat> (XLTC, ZEUR). Three-letter
-  // tickers are left alone, so ADA and DOT are untouched.
-  if (/^[XZ][A-Z]{3}$/.test(asset)) asset = asset.slice(1);
-  const identityAsset = asset;
-  return { asset: ECONOMIC_ASSET_MAP[asset] || asset, identityAsset };
+  const { asset, identity } = assets.parts(raw);
+  return { asset, identityAsset: identity };
 }
 
 function normalizeAsset(raw) {
-  return normalizeAssetParts(raw).asset;
+  return assets.canonical(raw);
 }
 
 // Row type -> record type for rows that stand alone. Paired rows (trade legs,
@@ -294,8 +261,9 @@ function buildRecords(parsedRows) {
 }
 
 module.exports = {
-  ASSET_MAP,
-  ECONOMIC_ASSET_MAP,
+  // The alias tables live in ./assets.js; kept here under their old names.
+  ASSET_MAP: assets.LEGACY_CODES,
+  ECONOMIC_ASSET_MAP: assets.ECONOMIC_ALIASES,
   EARN_MOVEMENT_SUBTYPES,
   PAIRED_ROW_TYPES,
   normalizeAssetParts,

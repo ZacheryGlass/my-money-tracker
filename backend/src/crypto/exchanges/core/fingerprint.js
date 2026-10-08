@@ -5,40 +5,29 @@ const { cleanAmount, addAmounts } = require('./shared');
 
 const FINGERPRINT_VERSION = 1;
 
-// These are deliberately explicit aliases. A ticker that merely looks similar
-// is not safe to collapse: the raw provider spelling remains in provenance.
-const ASSET_ALIASES = Object.freeze({
-  coinbase: Object.freeze({ ETH2: 'ETH', XBT: 'BTC' }),
-  // Binance.US's API reports the legacy USD market's quote and commission
-  // as USD4; the CSV export of the same fills (same order id) says USD.
-  // NANO was renamed XNO: 2021 fills say NANO, deposits and balances say XNO.
-  binance_us: Object.freeze({ XBT: 'BTC', USD4: 'USD', NANO: 'XNO' }),
-  kraken: Object.freeze({
-    XETH: 'ETH', XXBT: 'BTC', XBT: 'BTC', ZUSD: 'USD', ETH2: 'ETH',
-    XXDG: 'DOGE', XDG: 'DOGE',
-  }),
-  other: Object.freeze({}),
-});
+// Asset codes are canonicalized by each venue's own assets module
+// (crypto/exchanges/venues/<id>/assets.js) -- one function per venue for
+// stored legs, fingerprints and balance snapshots. A ticker that merely looks
+// similar is never collapsed: the raw provider spelling stays in provenance.
+// Lazy: the venue folders load their own code modules on demand.
+function venueAssets(exchange) {
+  const { venueModule } = require('../venues');
+  return venueModule(exchange)?.assets || venueModule('other').assets;
+}
 
-// Codes rewritten on the STORED legs, not only inside the fingerprint, so every
-// SQL reader sees one asset. The provider spelling stays in dedupe_provenance.
-const STORED_ALIASES = Object.freeze({
-  coinbase: Object.freeze({ ETH2: 'ETH' }),
-  binance_us: Object.freeze({ USD4: 'USD', NANO: 'XNO' }),
+// The fingerprint-time aliases per venue, as a plain table (introspection).
+const ASSET_ALIASES = new Proxy({}, {
+  get: (_, exchange) => (typeof exchange === 'string' ? (venueAssets(exchange).FINGERPRINT_ALIASES || {}) : undefined),
 });
-
-const KRAKEN_SUFFIX = /\.(?:S|M|F|P)$/;
 
 function canonicalAsset(exchange, value) {
-  let asset = String(value ?? '').trim().toUpperCase();
+  const asset = String(value ?? '').trim().toUpperCase();
   if (!asset) return null;
-  if (exchange === 'kraken') asset = asset.replace(KRAKEN_SUFFIX, '');
-  const aliases = ASSET_ALIASES[exchange] || ASSET_ALIASES.other;
-  if (aliases[asset]) return aliases[asset];
-  // Kraken's remaining legacy X/Z prefixes are provider syntax, not distinct
-  // assets. Do not apply this heuristic to other venues.
-  if (exchange === 'kraken' && /^[XZ][A-Z]{3}$/.test(asset)) return asset.slice(1);
-  return asset;
+  return venueAssets(exchange).canonical(asset) || null;
+}
+
+function storedAliases(exchange) {
+  return venueAssets(exchange).STORED_ALIASES || {};
 }
 
 // cleanAmount already rejects ambiguous locale formats. Remove insignificant
@@ -155,7 +144,7 @@ function annotateRecord(exchange, record) {
   // fingerprint, so all SQL readers agree. Source payloads and original asset
   // spellings stay available.
   const assets = {};
-  const stored = STORED_ALIASES[exchange] || {};
+  const stored = storedAliases(exchange);
   for (const field of ['base_asset', 'quote_asset', 'fee_asset']) {
     if (stored[record[field]]) assets[field] = stored[record[field]];
   }
@@ -178,7 +167,7 @@ function annotateRecord(exchange, record) {
 // Other venues and wrapped/staking receipt tokens retain their own identities.
 function canonicalBalances(exchange, balances = {}) {
   const result = { ...balances };
-  for (const [code, target] of Object.entries(STORED_ALIASES[exchange] || {})) {
+  for (const [code, target] of Object.entries(storedAliases(exchange))) {
     if (!Object.hasOwn(result, code)) continue;
     result[target] = addAmounts(String(result[target] ?? '0'), String(result[code]));
     delete result[code];
