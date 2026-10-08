@@ -1,15 +1,13 @@
 'use strict';
 
 const pool = require('../config/database');
+const { identityHooksFor } = require('../crypto/exchanges/venues');
 const logger = require('../config/logger');
 const {
   FINGERPRINT_VERSION,
-  canonicalAmount,
-  canonicalAsset,
-  fingerprintFor,
   conflictingDetails,
   sourceSnapshot,
-} = require('../services/exchangeImport/canonicalFingerprint');
+} = require('../crypto/exchanges/core/fingerprint');
 
 const COLUMNS = [
   'record_type', 'occurred_at', 'base_asset', 'base_amount', 'quote_asset', 'quote_amount',
@@ -178,26 +176,6 @@ function candidateRowsByExternalId(existingRows) {
   return new Map(existingRows.map((row) => [row.external_id, row]));
 }
 
-// Binance.US keys one fill differently per source: the CSV's Transaction ID
-// and the API's trade id are separate id spaces, the API rounds quoteQty and
-// reports milliseconds the CSV drops. Both carry the order id, so order id +
-// base leg + the second it filled identifies the fill across sources.
-function binanceOrderId(record) {
-  if (record?.raw?._format !== 'binance_us' || record.record_type !== 'trade') return null;
-  const orderId = record.raw['Order ID'] ?? record.raw.orderId;
-  return orderId === undefined || orderId === null || orderId === '' ? null : String(orderId);
-}
-
-function binanceFillKey(record) {
-  const orderId = binanceOrderId(record);
-  const amount = canonicalAmount(record?.base_amount);
-  const time = new Date(record?.occurred_at).getTime();
-  // Canonical, so a row stored before an alias (NANO before XNO) still pairs.
-  const asset = canonicalAsset('binance_us', record?.base_asset);
-  if (!orderId || amount === null || !asset || !Number.isFinite(time)) return null;
-  return `${orderId}|${asset}|${amount}|${Math.floor(time / 1000)}`;
-}
-
 // A provider can legitimately report the same economic shape more than once
 // in a day (recurring fills, equal withdrawals, and so on). Distinct native
 // ids at distinct full instants from the same source are evidence of distinct
@@ -292,6 +270,10 @@ class ExchangeRecord {
           [exchangeAccountId]
         );
       }
+      // Venue-specific identity rules (crypto/exchanges/venues/<id>/identity.js),
+      // chosen by the venue each record came from (its raw._format): the store
+      // applies them at fixed points and names no venue itself.
+      const identity = identityHooksFor(null, unique);
 
       const externalIds = unique.map((record) => record.external_id);
       const fingerprints = unique.map((record) => record.fingerprint).filter(Boolean);
@@ -306,22 +288,7 @@ class ExchangeRecord {
       );
       const existingById = candidateRowsByExternalId(existingResult.rows);
       const existingByFingerprint = candidateRowsByFingerprint(existingResult.rows);
-      for (const fee of unique) {
-        const parentId = fee.raw?._format === 'kraken' && fee.record_type === 'fee'
-          ? fee.raw.parent_external_id : null;
-        if (!parentId || existingById.has(fee.external_id)) continue;
-        const incomingParent = byId.get(parentId);
-        const storedParent = existingById.get(parentId);
-        // A manually accepted half trade cannot be upgraded. Adding its
-        // companion fee anyway could charge a fee already on that half twice.
-        if (!incomingParent || (storedParent
-          && !(storedParent.needs_review && !incomingParent.needs_review)
-          && fingerprintFor('kraken', storedParent) !== fingerprintFor('kraken', incomingParent))) {
-          const error = new Error('Kraken secondary fee requires its complete trade. Review the existing trade before importing this fee.');
-          error.code = 'EXCHANGE_FEE_PARENT_CONFLICT';
-          throw error;
-        }
-      }
+      identity.validateBatch({ unique, byId, existingById });
       const dedupeAuditResult = await database.query(
         `SELECT incoming_external_id
          FROM exchange_record_dedupe_events
@@ -332,53 +299,11 @@ class ExchangeRecord {
       const auditedIncomingIds = new Set(
         dedupeAuditResult.rows.map((row) => row.incoming_external_id)
       );
-      // Binance capital APIs expose submission time/hash-based IDs; CSVs may
-      // expose later credit time/different native IDs. Legacy CSVs may also
-      // predate fingerprints. An amount/time resemblance is NOT identity:
-      // refuse the batch rather than silently count both or auto-merge them.
-      const binanceCapital = unique.filter(record => record.source === 'api'
-        && record.raw?._format === 'binance_us'
-        && ['deposit', 'withdrawal'].includes(record.record_type)
-        && !existingById.has(record.external_id) && !auditedIncomingIds.has(record.external_id));
       // Pairs a person already called different events: they neither block
       // the batch nor come back as same-day duplicate candidates.
-      let rejectedPairs = new Set();
-      if (binanceCapital.length) {
-        const csv = await database.query(
-          `SELECT er.* FROM exchange_records er
-           WHERE er.exchange_account_id = $1
-             AND er.record_type IN ('deposit', 'withdrawal')
-             AND (er.source = 'csv' OR er.raw->>'_source' = 'csv')
-           FOR UPDATE`, [exchangeAccountId]
-        );
-        let overlaps = binanceCapital.flatMap(incoming => csv.rows.filter(existing =>
-          existing.record_type === incoming.record_type
-          && existing.base_asset === incoming.base_asset
-          && canonicalAmount(existing.base_amount) !== null
-          && canonicalAmount(existing.base_amount) === canonicalAmount(incoming.base_amount)
-          && Math.abs(new Date(existing.occurred_at) - new Date(incoming.occurred_at)) <= 86400000
-          && !(existing.tx_hash && incoming.tx_hash
-            && existing.tx_hash.toLowerCase() !== incoming.tx_hash.toLowerCase())
-        ).map(existing => ({ record_id: existing.id, incoming_external_id: incoming.external_id, incoming })));
-        if (overlaps.length) {
-          // A pair the user has said are different events must not block again.
-          const rejected = await database.query(
-            `SELECT record_id, incoming_external_id
-             FROM exchange_overlap_reviews
-             WHERE exchange_account_id = $1 AND status = 'rejected'
-               AND incoming_external_id = ANY($2::text[])`,
-            [exchangeAccountId, overlaps.map((overlap) => overlap.incoming_external_id)]
-          );
-          rejectedPairs = new Set((rejected.rows || []).map((row) => `${row.record_id}|${row.incoming_external_id}`));
-          overlaps = overlaps.filter((overlap) => !rejectedPairs.has(`${overlap.record_id}|${overlap.incoming_external_id}`));
-        }
-        if (overlaps.length) {
-          const error = new Error('Binance.US capital history overlaps existing CSV records. Review the possible duplicates before this batch can be imported.');
-          error.code = 'BINANCE_US_CAPITAL_OVERLAP';
-          error.candidates = overlaps;
-          throw error;
-        }
-      }
+      const rejectedPairs = await identity.reviewOverlaps({
+        database, exchangeAccountId, unique, existingById, auditedIncomingIds,
+      });
       const incomingByFingerprint = new Map();
       for (const record of unique) {
         if (!record.fingerprint) continue;
@@ -387,23 +312,16 @@ class ExchangeRecord {
         incomingByFingerprint.set(record.fingerprint, rows);
       }
 
-      const fillOrderIds = [...new Set(unique
-        .filter((record) => !existingById.has(record.external_id) && binanceFillKey(record))
-        .map(binanceOrderId))];
+      // Cross-source twins a venue can identify beyond the fingerprint (one
+      // Binance.US fill under different CSV and API ids).
+      const { twins } = identity;
+      const twinOrderIds = twins ? [...new Set(unique
+        .filter((record) => !existingById.has(record.external_id) && twins.key(record))
+        .map(twins.orderId))] : [];
       const existingByFill = new Map();
-      if (fillOrderIds.length) {
-        const fills = await database.query(
-          `SELECT er.*
-           FROM exchange_records er
-           WHERE er.exchange_account_id = $1
-             AND er.record_type = 'trade'
-             AND er.raw->>'_format' = 'binance_us'
-             AND COALESCE(er.raw->>'Order ID', er.raw->>'orderId') = ANY($2::text[])
-           FOR UPDATE`,
-          [exchangeAccountId, fillOrderIds]
-        );
-        for (const row of fills.rows || []) {
-          const key = binanceFillKey(row);
+      if (twinOrderIds.length) {
+        for (const row of await twins.loadExisting(database, exchangeAccountId, twinOrderIds)) {
+          const key = twins.key(row);
           if (!key) continue;
           existingByFill.set(key, [...(existingByFill.get(key) || []), row]);
         }
@@ -427,7 +345,7 @@ class ExchangeRecord {
           inserts.push(record);
           continue;
         }
-        const fillKey = binanceFillKey(record);
+        const fillKey = twins ? twins.key(record) : null;
         const fillTwins = fillKey ? (existingByFill.get(fillKey) || [])
           .filter((row) => row.external_id !== record.external_id
             && row.source && record.source && row.source !== record.source) : [];

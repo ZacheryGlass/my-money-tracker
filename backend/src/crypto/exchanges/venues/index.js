@@ -36,4 +36,32 @@ function venueModule(id) {
   return VENUE_MODULES.find((venue) => venue.id === id) || null;
 }
 
-module.exports = { VENUE_MODULES, venueModule };
+// The venue that produced a record, from its raw._format: a venue's API
+// records carry the venue id, its CSV records the reader's FORMAT.
+function venueForFormat(format) {
+  if (!format) return null;
+  return VENUE_MODULES.find((venue) => venue.id === format
+    || (venue.csv || []).some((reader) => reader.FORMAT === format)) || null;
+}
+
+// The identity hooks that apply to a batch: those of the account's venue and
+// of every venue whose records are in it (each hook still checks the record's
+// own format). twins comes from the first venue that declares it.
+function identityHooksFor(exchange, records) {
+  const ids = new Set([exchange, ...(records || []).map((record) => venueForFormat(record?.raw?._format)?.id)]);
+  const hooks = [...ids].filter(Boolean).map((id) => venueModule(id)?.identity).filter(Boolean);
+  return {
+    validateBatch: (ctx) => { for (const hook of hooks) hook.validateBatch?.(ctx); },
+    reviewOverlaps: async (ctx) => {
+      const rejected = new Set();
+      for (const hook of hooks) {
+        if (!hook.reviewOverlaps) continue;
+        for (const pair of await hook.reviewOverlaps(ctx)) rejected.add(pair);
+      }
+      return rejected;
+    },
+    twins: hooks.find((hook) => hook.twins)?.twins || null,
+  };
+}
+
+module.exports = { VENUE_MODULES, venueModule, venueForFormat, identityHooksFor };

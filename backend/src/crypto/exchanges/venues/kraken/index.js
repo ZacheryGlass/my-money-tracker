@@ -28,4 +28,5 @@ module.exports = {
   get csv() { return [require('./csv')]; },
   get connector() { return require('./connector'); },
   get assets() { return require('./assets'); },
+  get identity() { return require('./identity'); },
 };
