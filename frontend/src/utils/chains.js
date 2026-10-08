@@ -1,58 +1,43 @@
-// Block-explorer links per chain. Mirrors the chain set in
-// backend/src/config/chains.js -- keep the two in step when a chain is added.
-//
-// This lives on the client rather than riding along on every API row: a tx or
-// address link is pure presentation derived from an id the API already sends
-// (eth_transfers.chain_id, transactions.chain_id), so shipping a URL per row
-// would just repeat a constant thousands of times.
-const EXPLORERS = {
-  1: 'https://etherscan.io',
-  10: 'https://explorer.optimism.io',
-  100: 'https://gnosis.blockscout.com',
-  137: 'https://polygonscan.com',
-  324: 'https://zksync.blockscout.com',
-  32401: 'https://zkscan.io',
-  42161: 'https://arbiscan.io',
-  42170: 'https://arbitrum-nova.blockscout.com',
-  59144: 'https://lineascan.build',
-};
-
-// Chains whose gas and native balance are NOT ether. Only the exceptions are
-// listed: every other chain here is ETH-native, and defaulting keeps a row with
-// a NULL or unknown chain_id reading as ETH -- which is what every such row is.
-const NATIVE_ASSETS = {
-  100: 'XDAI',
-  137: 'POL',
-};
+// Network facts for rendering, read from the crypto meta store (the backend's
+// network registry, GET /api/crypto/meta). Nothing here lists networks: adding
+// a network on the server is all a new chain needs.
+import { networkById } from '../features/crypto/meta';
 
 // Mainnet. Rows ingested before multi-chain sync carry a NULL chain_id, and
-// every one of them is mainnet's -- so an unknown or missing id must resolve
-// here rather than produce a dead link.
+// every one of them is mainnet's -- so a missing id resolves here rather than
+// produce a dead link.
 export const DEFAULT_CHAIN_ID = 1;
+
+const networkFor = (chainId) => networkById(
+  chainId === null || chainId === undefined || chainId === '' ? DEFAULT_CHAIN_ID : chainId
+);
 
 // The native asset's symbol for a chain, for rows the API sends as raw amounts
 // (a transfer leg's value, a wallet's balance drift). Rows that already carry a
-// symbol from the server should render THAT rather than call this.
+// symbol from the server should render THAT rather than call this. An unknown
+// network reads as ETH, the native asset of every chain this app ever retired.
 export function nativeSymbol(chainId) {
-  return NATIVE_ASSETS[Number(chainId)] || 'ETH';
+  return networkFor(chainId)?.nativeAsset || 'ETH';
 }
 
+// An unknown network has no explorer: callers render the hash or address
+// without a link rather than send the user to the wrong chain's explorer.
 export function explorerBase(chainId) {
-  return EXPLORERS[Number(chainId)] || EXPLORERS[DEFAULT_CHAIN_ID];
+  return networkFor(chainId)?.explorer?.baseUrl || null;
+}
+
+function explorerLink(chainId, pathKey, placeholder, value) {
+  const explorer = networkFor(chainId)?.explorer;
+  if (!explorer?.baseUrl || !explorer[pathKey]) return null;
+  return `${explorer.baseUrl}${explorer[pathKey].replace(placeholder, value)}`;
 }
 
 export function explorerTxUrl(txHash, chainId) {
-  if (Number(chainId) === 32401) {
-    return `${explorerBase(chainId)}/explorer/transactions/${txHash}`;
-  }
-  return `${explorerBase(chainId)}/tx/${txHash}`;
+  return explorerLink(chainId, 'txPath', '{hash}', txHash);
 }
 
 // Addresses are chain-agnostic (the same EOA exists on every chain), so a
-// caller with no chain context can pass nothing and get Etherscan.
+// caller with no chain context can pass nothing and get mainnet's explorer.
 export function explorerAddressUrl(address, chainId) {
-  if (Number(chainId) === 32401) {
-    return `${explorerBase(chainId)}/explorer/accounts/${address}`;
-  }
-  return `${explorerBase(chainId)}/address/${address}`;
+  return explorerLink(chainId, 'addressPath', '{address}', address);
 }

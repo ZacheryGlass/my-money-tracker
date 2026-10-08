@@ -13,10 +13,10 @@ import { useIsMobile } from '../hooks/useMediaQuery';
 import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
 import { describeExchangeMatchEvidence } from '../utils/exchangeMatchEvidence';
 import {
-  LEDGER_CATEGORIES,
-  ONCHAIN_OVERRIDE_CATEGORIES,
+  ledgerCategories,
+  onchainOverrideCategories,
   LABEL_VERDICT_KEEP,
-  LABEL_VERDICT_OPTIONS,
+  labelVerdictOptions,
   formatLedgerCategory,
   labelVerdictKind,
   labelVerdictNeedsName,
@@ -1046,7 +1046,7 @@ const CryptoLedger = ({
             className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
           >
             <option value="">All categories</option>
-            {LEDGER_CATEGORIES.map(([value, label]) => (
+            {ledgerCategories().map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
@@ -1634,7 +1634,7 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
                 aria-label="Set category"
                 className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
               >
-                {ONCHAIN_OVERRIDE_CATEGORIES.map(([value, label]) => (
+                {onchainOverrideCategories().map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
               </select>
@@ -1751,7 +1751,7 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
             aria-label="Counterparty verdict"
             className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-[11px] text-primary outline-none focus:ring-1 focus:ring-accent"
           >
-            {LABEL_VERDICT_OPTIONS.map((option) => (
+            {labelVerdictOptions().map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>

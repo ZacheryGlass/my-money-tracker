@@ -3,7 +3,7 @@ import { ChevronDown, EyeOff, RefreshCw, Tag, Undo2 } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import {
   LABEL_VERDICT_KEEP,
-  LABEL_VERDICT_OPTIONS,
+  labelVerdictOptions,
   labelVerdictKind,
   labelVerdictNeedsName,
 } from '../../utils/dataLabels';
@@ -314,7 +314,7 @@ function LabelsPanel({
                   className="mt-1 block h-10 w-full min-w-0 border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
                   disabled={updatingLabels}
                 >
-                  {LABEL_VERDICT_OPTIONS.map((option) => (
+                  {labelVerdictOptions().map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>

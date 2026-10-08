@@ -1,3 +1,5 @@
+import { getCryptoMeta } from '../features/crypto/meta';
+
 export const UNCATEGORIZED_LABEL = 'Uncategorized';
 
 // Counterparty label verdicts, shared by the two places a label is written by
@@ -17,21 +19,12 @@ export const UNCATEGORIZED_LABEL = 'Uncategorized';
 // write triggers a full reclassification.
 export const LABEL_VERDICT_KEEP = 'keep';
 
-export const LABEL_VERDICT_OPTIONS = [
+// The verdict picker: "keep" plus every label kind the server knows, read from
+// the crypto meta store (GET /api/crypto/meta), so a kind added on the server
+// appears here without a client edit.
+export const labelVerdictOptions = () => [
   { value: LABEL_VERDICT_KEEP, label: 'Keep current verdict' },
-  { value: 'exchange', label: 'Exchange' },
-  { value: 'external', label: 'External (third party)' },
-  { value: 'own', label: 'My own address' },
-  // A cross-chain bridge contract: money sent here is the user's own money
-  // changing chains, not spending. Seeded for the canonical bridges of the
-  // chains this app syncs, but offered by hand because bridges redeploy far
-  // faster than a seed can follow.
-  { value: 'bridge', label: 'Bridge (cross-chain)' },
-  // An instant-swap service's deposit address (Changelly, ShapeShift and the
-  // like). Money sent there was SOLD, and what came back is not on this chain
-  // to find -- so it books as a trade rather than as an internal transfer,
-  // which is what labeling it Exchange would wrongly do.
-  { value: 'service', label: 'Swap service' },
+  ...(getCryptoMeta()?.vocabulary?.labelKinds || []).map(({ value, label }) => ({ value, label })),
 ];
 
 // undefined omits `kind` from the request body entirely; any other verdict is
@@ -40,11 +33,11 @@ export const labelVerdictKind = (verdict) => (verdict === LABEL_VERDICT_KEEP ? u
 
 // Mirrors the API rule: an exchange NAME is the text that appears in the ledger
 // AND the assertion that turns spending into a transfer, so it must be typed.
-// External/own/bridge/service names never reach classification and fall back to
-// a short address. KEEP is held to the exchange bar because that is what a
-// fresh row becomes.
-const NAME_OPTIONAL_VERDICTS = new Set(['external', 'own', 'bridge', 'service']);
-export const labelVerdictNeedsName = (verdict) => !NAME_OPTIONAL_VERDICTS.has(verdict);
+// Name-optional kinds never reach classification and fall back to a short
+// address. KEEP is held to the exchange bar because that is what a fresh row
+// becomes.
+export const labelVerdictNeedsName = (verdict) => !(getCryptoMeta()?.vocabulary?.labelKinds || [])
+  .some((kind) => kind.value === verdict && kind.nameOptional);
 
 // Why a transaction was quarantined as spam (#74). The server stores a REASON
 // CODE rather than prose precisely so this map can exist: the poisoning verdict
@@ -88,43 +81,22 @@ export const spamReasonLabel = (code) => SPAM_REASON_LABELS[code] || {
 // Ordered as the ladder reads, not alphabetically: the deterministic verdicts
 // first, the judgement calls last, so the picker on a flagged row puts the
 // likely answers where the eye lands.
-export const LEDGER_CATEGORIES = [
-  ['self_transfer', 'Self transfer'],
-  ['exchange_deposit', 'Exchange deposit'],
-  ['exchange_withdrawal', 'Exchange withdrawal'],
-  ['exchange_trade', 'Exchange trade'],
-  ['exchange_transfer', 'Exchange transfer'],
-  ['staking_reward', 'Staking reward'],
-  ['swap', 'Swap'],
-  ['bridge_out', 'Bridge out'],
-  ['bridge_in', 'Bridge in'],
-  ['nft_purchase', 'NFT purchase'],
-  ['nft_sale', 'NFT sale'],
-  ['nft_mint', 'NFT mint'],
-  ['nft_burn', 'NFT burn'],
-  ['airdrop', 'Airdrop'],
-  ['send', 'Send'],
-  ['receive', 'Receive'],
-  ['spend', 'Spend'],
-  ['approval', 'Approval'],
-  ['contract_interaction', 'Contract call'],
-  ['fee', 'Fee'],
-  ['failed', 'Failed'],
-];
+export const ledgerCategories = () => (getCryptoMeta()?.vocabulary?.ledgerCategories || [])
+  .map(({ value, label }) => [value, label]);
 
-const LEDGER_CATEGORY_LABELS = new Map(LEDGER_CATEGORIES);
-
-// Only 'fee' and 'exchange_transfer' are missing from eth_activity's CHECK
-// constraint, so they are the two an on-chain override cannot be set to. The
-// filter offers both (an exchange row really does land there); the override
-// picker subtracts them, or the user could save a category the server rejects.
-export const ONCHAIN_OVERRIDE_CATEGORIES = LEDGER_CATEGORIES.filter(
-  ([value]) => value !== 'fee' && value !== 'exchange_transfer'
-);
+// 'fee' and 'exchange_transfer' are missing from eth_activity's CHECK
+// constraint (the server marks them exchangeOnly), so they are the two an
+// on-chain override cannot be set to. The filter offers both (an exchange row
+// really does land there); the override picker subtracts them, or the user
+// could save a category the server rejects.
+export const onchainOverrideCategories = () => (getCryptoMeta()?.vocabulary?.ledgerCategories || [])
+  .filter((entry) => !entry.exchangeOnly)
+  .map(({ value, label }) => [value, label]);
 
 export function formatLedgerCategory(category) {
   if (!category) return UNCATEGORIZED_LABEL;
-  return LEDGER_CATEGORY_LABELS.get(category) || formatTransactionCategory(category);
+  const known = (getCryptoMeta()?.vocabulary?.ledgerCategories || []).find((entry) => entry.value === category);
+  return known?.label || formatTransactionCategory(category);
 }
 
 export function formatCategoryLabel(category, fallback = UNCATEGORIZED_LABEL) {

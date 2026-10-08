@@ -14,10 +14,17 @@ const chains = require('../config/chains');
 const logger = require('../config/logger');
 const { toCsv, deformula } = require('../utils/csv');
 const { shortAddress } = require('../utils/ethAddress');
+const { buildCryptoMeta } = require('../crypto/meta');
 
 const router = express.Router();
 
 router.use(requireUser);
+
+// Registry facts for the client (networks, explorers, vocabulary, venues),
+// fetched once per session into the frontend's crypto meta store.
+router.get('/meta', (req, res) => {
+  res.status(200).json(buildCryptoMeta());
+});
 
 const CATEGORIES = new Set(CryptoLedger.CATEGORIES);
 const SOURCES = new Set(CryptoLedger.SOURCES);

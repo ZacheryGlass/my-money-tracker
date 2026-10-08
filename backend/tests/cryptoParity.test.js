@@ -35,28 +35,26 @@ function objectKeys(source, constName) {
   return [...body.matchAll(/^  (\w+|'[^']+'):/gm)].map((match) => match[1].replace(/'/g, ''));
 }
 
-test('frontend explorer table covers every backend chain', () => {
-  const chains = require('../src/config/chains');
-  const explorers = objectKeys(read('frontend/src/utils/chains.js'), 'EXPLORERS');
-  assert.deepEqual(sorted(explorers.map(Number)), sorted(chains.allChains().map((chain) => chain.id)));
+// The frontend renders networks, explorers, ledger categories and label kinds
+// from GET /api/crypto/meta (cryptoMetaFixture.test.js pins its test copy), so
+// none of those lists may reappear as a client constant.
+test('the frontend keeps no copy of network, explorer, category or label-kind lists', () => {
+  const chainsSource = read('frontend/src/utils/chains.js');
+  assert.doesNotMatch(chainsSource, /const EXPLORERS = \{/);
+  assert.doesNotMatch(chainsSource, /const NATIVE_ASSETS = \{/);
+  assert.doesNotMatch(chainsSource, /https:\/\//);
+  const labelsSource = read('frontend/src/utils/dataLabels.js');
+  assert.doesNotMatch(labelsSource, /export const LEDGER_CATEGORIES = \[/);
+  assert.doesNotMatch(labelsSource, /value: 'exchange', label:/);
 });
 
-test('frontend native-asset exceptions match the backend registry', () => {
-  const chains = require('../src/config/chains');
-  const source = read('frontend/src/utils/chains.js');
-  const body = source.match(/const NATIVE_ASSETS = \{([\s\S]*?)\n\};/)[1];
-  const frontend = Object.fromEntries([...body.matchAll(/(\d+): '([A-Z]+)'/g)].map((m) => [Number(m[1]), m[2]]));
-  const backend = Object.fromEntries(chains.allChains()
-    .filter((chain) => chain.nativeAsset !== 'ETH').map((chain) => [chain.id, chain.nativeAsset]));
-  assert.deepEqual(frontend, backend);
-});
-
-test('frontend ledger categories match CryptoLedger.CATEGORIES', () => {
+test('ledger categories served to the client match CryptoLedger.CATEGORIES', () => {
   const CryptoLedger = require('../src/models/CryptoLedger');
-  const source = read('frontend/src/utils/dataLabels.js');
-  const body = source.match(/export const LEDGER_CATEGORIES = \[([\s\S]*?)\n\];/)[1];
-  const frontend = [...body.matchAll(/\['([a-z_]+)',/g)].map((match) => match[1]);
-  assert.deepEqual(sorted(frontend), sorted(CryptoLedger.CATEGORIES));
+  const { buildCryptoMeta } = require('../src/crypto/meta');
+  assert.deepEqual(
+    sorted(buildCryptoMeta().vocabulary.ledgerCategories.map((entry) => entry.value)),
+    sorted(CryptoLedger.CATEGORIES)
+  );
 });
 
 test('activity categories match the eth_activity CHECK', () => {
@@ -70,11 +68,8 @@ test('frontend spam reason labels cover every backend spam code', () => {
   assert.deepEqual(sorted(frontend), sorted(Object.values(SPAM_REASONS)));
 });
 
-test('label kinds agree across the vocabulary, the frontend verdicts and the CHECK', () => {
+test('label kinds agree between the vocabulary and the CHECK', () => {
   const { LABEL_KINDS } = require('../src/crypto/registry/vocabulary');
-  const options = read('frontend/src/utils/dataLabels.js').match(/export const LABEL_VERDICT_OPTIONS = \[([\s\S]*?)\n\];/)[1];
-  const frontendKinds = [...options.matchAll(/value: '([a-z_]+)'/g)].map((match) => match[1]).filter((kind) => kind !== 'keep');
-  assert.deepEqual(sorted(frontendKinds), sorted(LABEL_KINDS));
   assert.deepEqual(sorted(lastCheckValues('eth_address_labels_kind_check')), sorted(LABEL_KINDS));
   assert.doesNotMatch(read('backend/src/routes/eth.js'), /const LABEL_KINDS = new Set\(\[/);
 });

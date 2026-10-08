@@ -23,3 +23,11 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: () => false,
   }),
 });
+
+// The crypto registry facts the app loads once from GET /api/crypto/meta. The
+// fixture is the backend's own output (backend/tests/cryptoMetaFixture.test.js
+// fails when they diverge).
+import { setCryptoMeta } from '../features/crypto/meta';
+import cryptoMetaFixture from './cryptoMeta.fixture.json';
+
+setCryptoMeta(cryptoMetaFixture);

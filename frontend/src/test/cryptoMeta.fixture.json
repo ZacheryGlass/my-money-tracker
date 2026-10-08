@@ -1,0 +1,306 @@
+{
+  "defaultNetworkId": 1,
+  "networks": [
+    {
+      "id": 1,
+      "caip2": "eip155:1",
+      "family": "evm",
+      "name": "Ethereum",
+      "shortName": "Ethereum",
+      "nativeAsset": "ETH",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://etherscan.io",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      }
+    },
+    {
+      "id": 42161,
+      "caip2": "eip155:42161",
+      "family": "evm",
+      "name": "Arbitrum One",
+      "shortName": "Arbitrum",
+      "nativeAsset": "ETH",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://arbiscan.io",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      }
+    },
+    {
+      "id": 42170,
+      "caip2": "eip155:42170",
+      "family": "evm",
+      "name": "Arbitrum Nova",
+      "shortName": "Arbitrum Nova",
+      "nativeAsset": "ETH",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://arbitrum-nova.blockscout.com",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      }
+    },
+    {
+      "id": 59144,
+      "caip2": "eip155:59144",
+      "family": "evm",
+      "name": "Linea",
+      "shortName": "Linea",
+      "nativeAsset": "ETH",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://lineascan.build",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      }
+    },
+    {
+      "id": 324,
+      "caip2": "eip155:324",
+      "family": "evm",
+      "name": "ZKsync Era",
+      "shortName": "zkSync Era",
+      "nativeAsset": "ETH",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://zksync.blockscout.com",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      }
+    },
+    {
+      "id": 32401,
+      "caip2": null,
+      "family": "zksync-lite",
+      "name": "zkSync Lite (legacy)",
+      "shortName": "zkSync Lite",
+      "nativeAsset": "ETH",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://zkscan.io",
+        "txPath": "/explorer/transactions/{hash}",
+        "addressPath": "/explorer/accounts/{address}"
+      }
+    },
+    {
+      "id": 137,
+      "caip2": "eip155:137",
+      "family": "evm",
+      "name": "Polygon",
+      "shortName": "Polygon",
+      "nativeAsset": "POL",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://polygonscan.com",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      }
+    },
+    {
+      "id": 100,
+      "caip2": "eip155:100",
+      "family": "evm",
+      "name": "Gnosis Chain",
+      "shortName": "Gnosis",
+      "nativeAsset": "XDAI",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://gnosis.blockscout.com",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      }
+    },
+    {
+      "id": 10,
+      "caip2": "eip155:10",
+      "family": "evm",
+      "name": "OP Mainnet",
+      "shortName": "Optimism",
+      "nativeAsset": "ETH",
+      "enabled": true,
+      "explorer": {
+        "baseUrl": "https://explorer.optimism.io",
+        "txPath": "/tx/{hash}",
+        "addressPath": "/address/{address}"
+      }
+    }
+  ],
+  "retiredNetworks": [
+    {
+      "id": 8453,
+      "name": "Base"
+    }
+  ],
+  "vocabulary": {
+    "ledgerCategories": [
+      {
+        "value": "self_transfer",
+        "label": "Self transfer",
+        "exchangeOnly": false
+      },
+      {
+        "value": "exchange_deposit",
+        "label": "Exchange deposit",
+        "exchangeOnly": false
+      },
+      {
+        "value": "exchange_withdrawal",
+        "label": "Exchange withdrawal",
+        "exchangeOnly": false
+      },
+      {
+        "value": "exchange_trade",
+        "label": "Exchange trade",
+        "exchangeOnly": false
+      },
+      {
+        "value": "exchange_transfer",
+        "label": "Exchange transfer",
+        "exchangeOnly": true
+      },
+      {
+        "value": "staking_reward",
+        "label": "Staking reward",
+        "exchangeOnly": false
+      },
+      {
+        "value": "swap",
+        "label": "Swap",
+        "exchangeOnly": false
+      },
+      {
+        "value": "bridge_out",
+        "label": "Bridge out",
+        "exchangeOnly": false
+      },
+      {
+        "value": "bridge_in",
+        "label": "Bridge in",
+        "exchangeOnly": false
+      },
+      {
+        "value": "nft_purchase",
+        "label": "NFT purchase",
+        "exchangeOnly": false
+      },
+      {
+        "value": "nft_sale",
+        "label": "NFT sale",
+        "exchangeOnly": false
+      },
+      {
+        "value": "nft_mint",
+        "label": "NFT mint",
+        "exchangeOnly": false
+      },
+      {
+        "value": "nft_burn",
+        "label": "NFT burn",
+        "exchangeOnly": false
+      },
+      {
+        "value": "airdrop",
+        "label": "Airdrop",
+        "exchangeOnly": false
+      },
+      {
+        "value": "send",
+        "label": "Send",
+        "exchangeOnly": false
+      },
+      {
+        "value": "receive",
+        "label": "Receive",
+        "exchangeOnly": false
+      },
+      {
+        "value": "spend",
+        "label": "Spend",
+        "exchangeOnly": false
+      },
+      {
+        "value": "approval",
+        "label": "Approval",
+        "exchangeOnly": false
+      },
+      {
+        "value": "contract_interaction",
+        "label": "Contract call",
+        "exchangeOnly": false
+      },
+      {
+        "value": "fee",
+        "label": "Fee",
+        "exchangeOnly": true
+      },
+      {
+        "value": "failed",
+        "label": "Failed",
+        "exchangeOnly": false
+      }
+    ],
+    "labelKinds": [
+      {
+        "value": "exchange",
+        "label": "Exchange",
+        "nameOptional": false
+      },
+      {
+        "value": "external",
+        "label": "External (third party)",
+        "nameOptional": true
+      },
+      {
+        "value": "own",
+        "label": "My own address",
+        "nameOptional": true
+      },
+      {
+        "value": "bridge",
+        "label": "Bridge (cross-chain)",
+        "nameOptional": true
+      },
+      {
+        "value": "service",
+        "label": "Swap service",
+        "nameOptional": true
+      }
+    ],
+    "spamReasons": [
+      "address_poisoning",
+      "zero_value_transfer",
+      "unsolicited_token",
+      "unsolicited_nft"
+    ],
+    "spamFilters": [
+      "exclude",
+      "only",
+      "all"
+    ]
+  },
+  "venues": [
+    {
+      "id": "coinbase",
+      "label": "Coinbase",
+      "apiSync": true
+    },
+    {
+      "id": "kraken",
+      "label": "Kraken",
+      "apiSync": true
+    },
+    {
+      "id": "binance_us",
+      "label": "Binance.US",
+      "apiSync": true
+    },
+    {
+      "id": "other",
+      "label": "Other",
+      "apiSync": false
+    }
+  ]
+}

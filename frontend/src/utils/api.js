@@ -643,7 +643,8 @@ export const crypto = {
   },
   // filters: { category, source, needsReview, walletId, exchangeAccountId }.
   // An unknown category/source is a 400 server-side, so the client's filter
-  // values come from utils/dataLabels LEDGER_CATEGORIES rather than free text.
+  // values come from utils/dataLabels ledgerCategories() (the server's own
+  // vocabulary, via the crypto meta store) rather than free text.
   getLedger: async ({ needsReview, walletId, exchangeAccountId, ...params } = {}) => {
     const response = await api.get('/api/crypto/ledger', {
       params: {

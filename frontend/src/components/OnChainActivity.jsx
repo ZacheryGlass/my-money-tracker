@@ -6,7 +6,7 @@ import { formatDateDisplay, formatTokenUnits, formatUsdAtTime, shortEthAddress }
 import { explorerTxUrl, nativeSymbol } from '../utils/chains';
 import {
   LABEL_VERDICT_KEEP,
-  LABEL_VERDICT_OPTIONS,
+  labelVerdictOptions,
   labelVerdictKind,
   labelVerdictNeedsName,
 } from '../utils/dataLabels';
@@ -405,7 +405,7 @@ const OnChainActivity = ({ walletId = null, walletNames, onDataChanged }) => {
                 aria-label="Counterparty verdict"
                 className="h-7 w-full min-w-0 rounded border border-input-border bg-surface-2 px-1 text-[11px] text-primary outline-none focus:ring-1 focus:ring-accent"
               >
-                {LABEL_VERDICT_OPTIONS.map((option) => (
+                {labelVerdictOptions().map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>

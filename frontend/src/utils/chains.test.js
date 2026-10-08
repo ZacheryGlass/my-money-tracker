@@ -34,3 +34,17 @@ describe('Arbitrum Nova explorer routing', () => {
     expect(nativeSymbol(42170)).toBe('ETH');
   });
 });
+
+describe('registry-driven routing', () => {
+  it('renders no explorer link for a network the registry does not know', () => {
+    expect(explorerTxUrl('0xabc', 999999)).toBe(null);
+    expect(explorerAddressUrl('0xdef', 999999)).toBe(null);
+    expect(nativeSymbol(999999)).toBe('ETH');
+  });
+
+  it('treats a missing chain id as mainnet', () => {
+    expect(explorerTxUrl('0xabc', null)).toBe('https://etherscan.io/tx/0xabc');
+    expect(nativeSymbol(undefined)).toBe('ETH');
+    expect(nativeSymbol(137)).toBe('POL');
+  });
+});

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import CryptoLedger from './CryptoLedger';
-import { LEDGER_CATEGORIES } from '../utils/dataLabels';
+import { ledgerCategories } from '../utils/dataLabels';
 
 const apiMocks = vi.hoisted(() => ({
   crypto: {
@@ -360,11 +360,11 @@ describe('CryptoLedger', () => {
     // the server does not know is a dead option that breaks the whole feed.
     const select = await screen.findByLabelText('Ledger category');
     const options = within(select).getAllByRole('option').map((option) => option.textContent);
-    for (const [, label] of LEDGER_CATEGORIES) {
+    for (const [, label] of ledgerCategories()) {
       expect(options).toContain(label);
     }
     expect(options).toContain('All categories');
-    expect(options).toHaveLength(LEDGER_CATEGORIES.length + 1);
+    expect(options).toHaveLength(ledgerCategories().length + 1);
   });
 
   it('sends each filter to the API rather than filtering what it already has', async () => {
