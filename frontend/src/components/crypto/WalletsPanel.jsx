@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useReactTable, getCoreRowModel, getSortedRowModel } from '@tanstack/react-table';
-import { AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileCheck2, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileCheck2, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
-import { formatExactUnits, formatRelativeTime, shortEthAddress as shortEthAddressOrUnknown } from '../../utils/format';
+import { formatCurrency, formatExactUnits, formatRelativeTime, shortEthAddress as shortEthAddressOrUnknown } from '../../utils/format';
 import { getAccountDisplayName } from '../../utils/accountDisplay';
 import { explorerAddressUrl, networkName } from '../../utils/chains';
 import { auditStageLabel, auditStatusLabel, coverageStatusLabel, feedLabel } from '../../features/crypto/plainText';
@@ -440,6 +440,13 @@ const ROW_ACTION_CLASS = 'inline-flex h-7 items-center gap-1.5 rounded border bo
 // and the add form was three clicks from the feed it fills.
 function WalletsPanel({
   wallets, loadFailed = false, onRetry, onChanged, onError, showSuccess, showNotice = showSuccess,
+  // account_id -> dollar value of that wallet's holdings, from the page's own
+  // holdings read: the wallet list itself carries ETH only.
+  walletValues = null,
+  onViewActivity,
+  // Re-reads just the wallet list, for polling background work without
+  // refetching every holding and snapshot behind the page.
+  onRefreshWallets,
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
@@ -461,7 +468,26 @@ function WalletsPanel({
   const [removeData, setRemoveData] = useState(false);
   const [disconnectBusy, setDisconnectBusy] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
-  const [sorting, setSorting] = useState([{ id: 'eth', desc: true }]);
+  const [sorting, setSorting] = useState([{ id: walletValues ? 'value' : 'eth', desc: true }]);
+
+  // A sync or recapture runs in the background; while one does, re-read the
+  // wallet list every 15 s so its row says when it finishes, then refresh the
+  // page once so holdings and activity catch up.
+  const anyRunning = wallets.some((wallet) => wallet.sync_running || wallet.recapture_running);
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (anyRunning) {
+      wasRunning.current = true;
+      if (!onRefreshWallets) return undefined;
+      const timer = setInterval(() => { onRefreshWallets(); }, 15_000);
+      return () => clearInterval(timer);
+    }
+    if (wasRunning.current) {
+      wasRunning.current = false;
+      onChanged?.();
+    }
+    return undefined;
+  }, [anyRunning, onRefreshWallets, onChanged]);
   const isMobile = useIsMobile();
 
   const visibleAudits = useMemo(() => ({
@@ -723,6 +749,9 @@ function WalletsPanel({
           items={[
             // One address, several chains: the wallet has no single chain to
             // link against, and an address page exists on every explorer anyway.
+            ...(onViewActivity ? [{
+              key: 'activity', label: 'View activity', icon: Activity, onSelect: () => onViewActivity(wallet.id),
+            }] : []),
             { key: 'explorer', label: 'Open in explorer', icon: ExternalLink, href: explorerAddressUrl(wallet.address) },
             {
               key: 'audit',
@@ -803,6 +832,13 @@ function WalletsPanel({
         );
       },
     },
+    ...(walletValues ? [{
+      id: 'value',
+      accessorFn: (wallet) => (wallet.account ? walletValues.get(wallet.account.id) || 0 : 0),
+      header: 'Value',
+      meta: { width: '8rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+      cell: ({ getValue }) => <span className="font-money text-body-sm text-primary">{formatCurrency(getValue())}</span>,
+    }] : []),
     {
       id: 'eth',
       accessorFn: (wallet) => (wallet.eth_quantity != null ? parseFloat(wallet.eth_quantity) : null),
@@ -840,7 +876,7 @@ function WalletsPanel({
       cell: ({ row }) => rowActions(row.original),
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [auditStartingId, expandedId, syncingIds, recaptureStartingId, visibleAudits]);
+  ], [auditStartingId, expandedId, syncingIds, recaptureStartingId, visibleAudits, walletValues]);
 
   const table = useReactTable({
     data: wallets,
@@ -880,44 +916,49 @@ function WalletsPanel({
         );
       })()}
       {wallet.chains?.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          {wallet.chains.map((chain) => {
-            const Badge = chain.excludable ? 'button' : 'span';
-            const status = chain.error_message
-              || (chain.excluded ? 'Excluded for this wallet; stored history kept'
-                : chain.enabled ? `Last synced ${formatRelativeTime(chain.last_synced_at)}`
-                  : 'Chain turned off; stored history kept');
-            return (
-            <Badge
-              key={chain.chain_id}
-              {...(chain.excludable ? {
-                type: 'button',
-                onClick: () => handleChainExcluded(wallet, chain),
-                disabled: chainUpdating === `${wallet.id}:${chain.chain_id}`,
-                'aria-pressed': !chain.excluded,
-              } : {})}
-              title={chain.excludable
-                ? `${status}. Click to ${chain.excluded ? 'include' : 'exclude'} ${chain.name} for this wallet.`
-                : status}
-              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold uppercase tracking-wide ${
-                chain.excludable ? 'cursor-pointer hover:border-primary disabled:opacity-50 ' : ''}${
-                !chain.enabled ? 'bg-surface-3 border-border text-tertiary'
-                  : chainIssueTone(chain) === 'failed' ? 'bg-loss/5 border-loss/20 text-loss'
-                    : chainIssueTone(chain) !== 'neutral' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                  : 'bg-surface-3 border-border text-secondary'
-              }`}
-            >
-              {chain.enabled && chainIssueTone(chain) !== 'neutral' && <AlertTriangle size={10} />}
-              {chain.name}
-              {!chain.enabled && <span className="font-normal normal-case">{chain.excluded ? 'excluded' : 'off'}</span>}
-              {chain.unsupported_feeds?.length > 0 && (
-                <span className="font-normal normal-case">
-                  no {chain.unsupported_feeds.map(feedLabel).join(', ')}
-                </span>
-              )}
-            </Badge>
-            );
-          })}
+        // One line per network with its state in words, and an explicit
+        // Include/Exclude where the network can be switched off for this
+        // wallet -- clicking a badge to exclude it was discoverable only by
+        // its tooltip.
+        <div>
+          <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wide text-tertiary">Networks</p>
+          <ul className="grid gap-1.5 sm:grid-cols-2">
+            {wallet.chains.map((chain) => {
+              const status = chain.error_message
+                || (chain.excluded ? 'Excluded for this wallet; stored history kept'
+                  : chain.enabled ? `Synced ${formatRelativeTime(chain.last_synced_at)}`
+                    : 'Turned off; stored history kept');
+              const tone = !chain.enabled ? 'text-tertiary'
+                : chainIssueTone(chain) === 'failed' ? 'text-loss'
+                  : chainIssueTone(chain) !== 'neutral' ? 'text-amber-400' : 'text-secondary';
+              const updating = chainUpdating === `${wallet.id}:${chain.chain_id}`;
+              return (
+                <li key={chain.chain_id} className="flex items-start justify-between gap-2 rounded border border-border bg-surface-3 px-2 py-1.5">
+                  <span className={`min-w-0 text-caption ${tone}`}>
+                    <span className="flex items-center gap-1.5 font-semibold">
+                      {chain.enabled && chainIssueTone(chain) !== 'neutral' && <AlertTriangle size={10} className="shrink-0" />}
+                      {chain.name}
+                    </span>
+                    <span className="block break-words text-[10px] text-tertiary">
+                      {status}
+                      {chain.unsupported_feeds?.length > 0 && ` · no ${chain.unsupported_feeds.map(feedLabel).join(', ')}`}
+                    </span>
+                  </span>
+                  {chain.excludable && (
+                    <button
+                      type="button"
+                      onClick={() => handleChainExcluded(wallet, chain)}
+                      disabled={updating}
+                      aria-label={`${chain.excluded ? 'Include' : 'Exclude'} ${chain.name} for ${walletName(wallet)}`}
+                      className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-tertiary hover:border-accent hover:text-accent disabled:opacity-40"
+                    >
+                      {updating ? '…' : chain.excluded ? 'Include' : 'Exclude'}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
 

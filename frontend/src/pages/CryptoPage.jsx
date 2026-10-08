@@ -241,6 +241,17 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Just the wallet list: what the Wallets page polls while a sync or a
+  // recapture runs in the background.
+  const refreshWallets = useCallback(async () => {
+    try {
+      const result = await ethAPI.getWallets();
+      setWallets(result?.wallets || []);
+    } catch {
+      // A missed poll is harmless; the next one, or the next action, retries.
+    }
+  }, []);
+
   // Each list degrades on its own: a failed labels request must not blank the
   // exchange accounts beside it, and the two nullable ones say so themselves.
   const fetchManageData = useCallback(async () => {
@@ -372,6 +383,13 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
 
   const erroredWallets = useMemo(() => wallets.filter(isWalletSyncFailure), [wallets]);
   const duplicateHints = useMemo(() => possibleDuplicates(cryptoHoldings), [cryptoHoldings]);
+  const walletValues = useMemo(() => {
+    const totals = new Map();
+    for (const holding of cryptoHoldings) {
+      totals.set(holding.account_id, (totals.get(holding.account_id) || 0) + getHoldingValue(holding));
+    }
+    return totals;
+  }, [cryptoHoldings]);
   // Dust off by default: a hundred-odd positions are mostly airdropped cents,
   // and the hidden count says how many are folded away.
   const [holdingsView, setHoldingsView] = useState('asset');
@@ -1076,6 +1094,15 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
                 wallets={wallets}
                 loadFailed={walletsLoadFailed}
                 onRetry={fetchData}
+                walletValues={walletValues}
+                onRefreshWallets={refreshWallets}
+                onViewActivity={(walletId) => {
+                  setSelectedWalletId(walletId);
+                  setSelectedExchangeAccountId(null);
+                  setLedgerCounterparty(null);
+                  setTxView(LEDGER_VIEW);
+                  goToTab(TRANSACTIONS_TAB);
+                }}
                 onChanged={handleManageChanged}
                 onError={setError}
                 showSuccess={showSuccess}

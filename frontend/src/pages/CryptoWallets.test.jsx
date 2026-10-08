@@ -25,6 +25,7 @@ const apiMocks = vi.hoisted(() => ({
     getActivity: vi.fn(), setActivitySpam: vi.fn(),
     getDiscoveryCandidates: vi.fn(), getDiscoveryReceipts: vi.fn(), runDiscovery: vi.fn(), decideDiscovery: vi.fn(),
     addReconciliationAdjustment: vi.fn(), removeReconciliationAdjustment: vi.fn(),
+    setWalletChainExcluded: vi.fn(),
   },
   exchanges: {
     getAll: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(),
@@ -407,7 +408,7 @@ describe('Crypto -> Wallets tab', () => {
     expect(await screen.findByText('Arbitrum One')).toBeInTheDocument();
     // The gap is named, not just flagged: "no internal" is what tells the user
     // (and #62) which derived numbers may drift.
-    expect(screen.getByText('no internal transfers')).toBeInTheDocument();
+    expect(screen.getByText(/no internal transfers/)).toBeInTheDocument();
     // Chain-level coverage detail alone does not inflate the Wallets badge.
     expect(screen.getAllByText('Limited coverage').length).toBeGreaterThan(0);
     expect(screen.queryByText('Sync failed')).toBeNull();
@@ -560,7 +561,39 @@ describe('Crypto -> Wallets tab', () => {
     }]);
 
     await expandWallet();
-    expect(await screen.findByText('no internal transfers')).toBeInTheDocument();
+    expect(await screen.findByText(/no internal transfers/)).toBeInTheDocument();
+  });
+
+  it('excludes a network for one wallet from an explicit control', async () => {
+    apiMocks.eth.setWalletChainExcluded.mockResolvedValue({ chain: {} });
+    await openEthereumTab([{
+      ...wallet(report()),
+      chains: [
+        { chain_id: 1, name: 'Ethereum', enabled: true, excludable: false, last_synced_at: new Date().toISOString() },
+        { chain_id: 42161, name: 'Arbitrum One', enabled: true, excludable: true, excluded: false, last_synced_at: new Date().toISOString() },
+      ],
+    }]);
+    await expandWallet();
+
+    expect(screen.queryByRole('button', { name: /exclude ethereum for main/i })).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: /exclude arbitrum one for main/i }));
+    await waitFor(() => expect(apiMocks.eth.setWalletChainExcluded).toHaveBeenCalledWith(1, 42161, true));
+  });
+
+  it('re-reads the wallet list while a background sync runs, and refreshes once it ends', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await openEthereumTab([{ ...wallet(report()), sync_running: true }]);
+      const reads = apiMocks.eth.getWallets.mock.calls.length;
+      apiMocks.eth.getWallets.mockResolvedValue({ wallets: [wallet(report())] });
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await waitFor(() => expect(apiMocks.eth.getWallets.mock.calls.length).toBeGreaterThan(reads));
+      // Finished: one full refresh, so holdings and activity catch up too.
+      await waitFor(() => expect(apiMocks.holdings.getAll.mock.calls.length).toBeGreaterThan(1));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('stays quiet for a single healthy chain', async () => {
