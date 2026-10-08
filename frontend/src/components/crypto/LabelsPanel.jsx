@@ -2,6 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { ChevronDown, EyeOff, RefreshCw, Tag, Undo2 } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import LoadFailed from '../../features/crypto/LoadFailed';
+import CounterpartyVerdictForm from '../../features/crypto/CounterpartyVerdictForm';
+import SegmentedControl from '../SegmentedControl';
+import { networkName } from '../../utils/chains';
 import { ConfirmDialog } from '../Modal';
 import HowThisWorks from '../../features/crypto/HowThisWorks';
 import {
@@ -13,7 +16,11 @@ import {
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
+// A note is read far more than it is written, so it shows as text with an
+// Edit button; the textarea opens only on request. Forty open textareas made
+// the label list a form to scroll through rather than a list to read.
 function AddressNoteEditor({ address, initialNote = '', onChanged, onError, showSuccess }) {
+  const [editing, setEditing] = useState(false);
   const [note, setNote] = useState(initialNote);
   const [saving, setSaving] = useState(false);
 
@@ -24,6 +31,7 @@ function AddressNoteEditor({ address, initialNote = '', onChanged, onError, show
       if (note.trim()) await ethAPI.saveAddressNote(address, note.trim());
       else if (initialNote) await ethAPI.deleteAddressNote(address);
       showSuccess(note.trim() ? 'Address note saved' : 'Address note removed');
+      setEditing(false);
       await onChanged();
     } catch (err) {
       onError(err.response?.data?.error || 'Failed to save address note');
@@ -32,28 +40,84 @@ function AddressNoteEditor({ address, initialNote = '', onChanged, onError, show
     }
   };
 
+  if (!editing) {
+    return (
+      <div className="mt-1.5 flex min-w-0 items-start gap-2">
+        {initialNote && <p className="min-w-0 flex-1 whitespace-pre-wrap text-body-sm text-secondary">{initialNote}</p>}
+        <button
+          type="button"
+          onClick={() => { setNote(initialNote); setEditing(true); }}
+          aria-label={`${initialNote ? 'Edit' : 'Add a'} note for ${address}`}
+          className="shrink-0 text-caption text-accent hover:underline"
+        >
+          {initialNote ? 'Edit note' : 'Add note'}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="mt-2 flex min-w-0 items-center gap-2">
       <textarea
         value={note}
         onChange={(event) => setNote(event.target.value)}
         rows={2}
+        autoFocus
         placeholder="What this address is and how you know"
         aria-label={`Note for ${address}`}
         className="min-h-12 flex-1 resize-y rounded border border-input-border bg-surface-2 px-2 py-1.5 text-body-sm text-primary outline-none focus:ring-1 focus:ring-accent"
       />
-      <button
-        type="button"
-        onClick={save}
-        disabled={saving || note === initialNote}
-        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:text-primary disabled:opacity-40"
-      >
-        {saving && <RefreshCw size={10} className="animate-spin" />}
-        Save note
-      </button>
+      <div className="flex shrink-0 flex-col gap-1">
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || note === initialNote}
+          className="inline-flex h-8 items-center gap-1.5 rounded border border-border bg-surface-3 px-2 text-[9px] font-bold uppercase tracking-wide text-secondary transition-all hover:text-primary disabled:opacity-40"
+        >
+          {saving && <RefreshCw size={10} className="animate-spin" />}
+          Save note
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          disabled={saving}
+          className="text-[10px] text-tertiary hover:text-primary"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
+
+// A built-in label's note is provenance ("Cross-chain bridge on chain 59144.
+// Source: https://..."): the network by name, and the source as a link.
+function LabelNote({ text }) {
+  const parts = String(text).replace(/\bchain (\d+)\b/g, (match, id) => networkName(Number(id))).split(/(https?:\/\/\S+)/);
+  return (
+    <p className="mt-1 text-[10px] leading-relaxed text-tertiary">
+      {parts.map((part, index) => (/^https?:\/\//.test(part)
+        ? <a key={index} href={part.replace(/[.,)]$/, '')} target="_blank" rel="noreferrer" className="text-accent hover:underline">{part.replace(/[.,)]$/, '')}</a>
+        : <React.Fragment key={index}>{part}</React.Fragment>))}
+    </p>
+  );
+}
+
+const LABEL_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'own', label: 'Yours' },
+  { value: 'exchange', label: 'Exchanges' },
+  { value: 'bridge', label: 'Bridges' },
+  { value: 'service', label: 'Services' },
+  { value: 'external', label: 'Outside' },
+  { value: 'builtin', label: 'Built-in' },
+];
+// Rows from before migration 031 have no kind and meant "exchange".
+const labelMatchesFilter = (label, filter) => {
+  if (filter === 'all') return true;
+  if (filter === 'builtin') return Boolean(label.builtin);
+  return (label.kind || 'exchange') === filter;
+};
 
 // The two reference lists a user maintains by hand: who an address is, and
 // which tokens to pretend do not exist. Both change how every past transfer is
@@ -79,6 +143,8 @@ function LabelsPanel({
   const [exchangeAccountIdInput, setExchangeAccountIdInput] = useState('');
   const [updatingLabels, setUpdatingLabels] = useState(false);
   const [showExternalLabels, setShowExternalLabels] = useState(false);
+  const [labelFilter, setLabelFilter] = useState('all');
+  const [labelSearch, setLabelSearch] = useState('');
   const [ignoreContract, setIgnoreContract] = useState('');
   const [ignoreSymbol, setIgnoreSymbol] = useState('');
   const [updatingIgnoreList, setUpdatingIgnoreList] = useState(false);
@@ -116,6 +182,12 @@ function LabelsPanel({
     }
     return [primary, external];
   }, [addressLabels]);
+
+  // A filter or a search turns the grouped list into one flat list of matches.
+  const searchText = labelSearch.trim().toLowerCase();
+  const narrowed = labelFilter !== 'all' || Boolean(searchText);
+  const narrowedLabels = useMemo(() => addressLabels.filter((label) => labelMatchesFilter(label, labelFilter)
+    && (!searchText || `${label.name} ${label.address}`.toLowerCase().includes(searchText))), [addressLabels, labelFilter, searchText]);
 
   const handleLabelAddress = async (event) => {
     event.preventDefault();
@@ -166,6 +238,22 @@ function LabelsPanel({
   // holdings and activity), so each asks first, naming what it touches.
   const [pendingUnlabel, setPendingUnlabel] = useState(null);
   const [pendingIgnore, setPendingIgnore] = useState(null);
+  const [editingLabel, setEditingLabel] = useState(null);
+
+  const handleEditLabel = async (label, { name, kind }) => {
+    setUpdatingLabels(true);
+    onError(null);
+    try {
+      await ethAPI.labelAddress(label.address, name || null, { kind });
+      showSuccess(label.builtin ? 'Built-in label overridden; past transfers were reclassified' : 'Label updated');
+      setEditingLabel(null);
+      await onChanged();
+    } catch (err) {
+      onError(err.response?.data?.error || 'Failed to update the label');
+    } finally {
+      setUpdatingLabels(false);
+    }
+  };
 
   const handleUnlabelAddress = async () => {
     const { address } = pendingUnlabel;
@@ -258,23 +346,46 @@ function LabelsPanel({
           <span className="block truncate font-mono text-[10px] text-tertiary" title={label.address}>
             {label.address}
           </span>
-            {label.note && (
-              <p className="mt-1 text-[10px] leading-relaxed text-tertiary">{label.note}</p>
+            {label.note && <LabelNote text={label.note} />}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {/* A built-in label cannot be changed in place, only overridden:
+                the override is a row of the user's own, which then wins. */}
+            <button
+              type="button"
+              onClick={() => setEditingLabel(editingLabel === label.address ? null : label.address)}
+              disabled={updatingLabels}
+              className="inline-flex h-9 items-center justify-center rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+            >
+              {label.builtin ? 'Override' : 'Edit'}
+            </button>
+            {/* Shared builtin rows cannot be removed (the API answers 409); the
+                server says which rows those are. */}
+            {!label.builtin && (
+              <button
+                onClick={() => setPendingUnlabel(label)}
+                disabled={updatingLabels}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
+              >
+                <Undo2 size={14} />
+                Remove
+              </button>
             )}
           </div>
-          {/* Shared builtin rows cannot be removed (the API answers 409); the
-              server says which rows those are. */}
-          {!label.builtin && (
-            <button
-              onClick={() => setPendingUnlabel(label)}
-              disabled={updatingLabels}
-              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded border border-border bg-surface-3 px-3 text-xs font-bold uppercase tracking-wider text-secondary transition-all hover:text-primary disabled:opacity-40"
-            >
-              <Undo2 size={14} />
-              Remove
-            </button>
-          )}
         </div>
+        {editingLabel === label.address && (
+          <div className="mt-2 border-t border-border pt-2">
+            <CounterpartyVerdictForm
+              initialName={label.name}
+              initialVerdict={label.kind || 'exchange'}
+              allowKeep={false}
+              busy={updatingLabels}
+              submitLabel={label.builtin ? 'Save override' : 'Save'}
+              onSubmit={(values) => handleEditLabel(label, values)}
+              onCancel={() => setEditingLabel(null)}
+            />
+          </div>
+        )}
         <AddressNoteEditor
           key={`${label.address}:${notesByAddress.get(label.address) || ''}`}
           address={label.address}
@@ -384,17 +495,44 @@ function LabelsPanel({
             </label>
           </form>
 
+          {addressLabels.length > 0 && !labelsLoadFailed && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-surface-2 px-4 py-2">
+              <SegmentedControl
+                label="Show"
+                value={labelFilter}
+                onChange={setLabelFilter}
+                options={LABEL_FILTERS}
+                mobile="select"
+              />
+              <input
+                type="search"
+                value={labelSearch}
+                onChange={(event) => setLabelSearch(event.target.value)}
+                placeholder="Name or address"
+                aria-label="Search labels"
+                className="h-8 w-full min-w-0 rounded border border-input-border bg-surface px-2 text-body-sm text-primary placeholder:text-tertiary sm:w-56"
+              />
+            </div>
+          )}
           {labelsLoadFailed ? (
             <LoadFailed message="Couldn't load your address labels." onRetry={onRetry} />
           ) : addressLabels.length === 0 ? (
             <div className="p-6 text-center text-sm text-secondary">No addresses are labeled.</div>
+          ) : narrowed ? (
+            narrowedLabels.length === 0 ? (
+              <div className="p-6 text-center text-sm text-secondary">No labels match.</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {narrowedLabels.map(renderAddressLabelRow)}
+              </div>
+            )
           ) : (
             <div className="divide-y divide-border">
               {primaryLabels.map(renderAddressLabelRow)}
             </div>
           )}
 
-          {noteOnlyAddresses.length > 0 && (
+          {!narrowed && noteOnlyAddresses.length > 0 && (
             <div className="border-t border-border">
               <div className="bg-surface-2 px-4 py-2">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-tertiary">
@@ -419,7 +557,7 @@ function LabelsPanel({
             </div>
           )}
 
-          {externalLabels.length > 0 && (
+          {!narrowed && externalLabels.length > 0 && (
             // Every dismissal is a permanent row, so one airdrop wave would
             // otherwise bury the handful of exchanges the user actually cares
             // about under dozens of "not an exchange" entries.

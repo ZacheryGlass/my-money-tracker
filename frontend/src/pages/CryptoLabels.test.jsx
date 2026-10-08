@@ -97,12 +97,41 @@ describe('Crypto -> Labels tab', () => {
       { address: '0x2222222222222222222222222222222222222222', name: 'My Deposit', source: 'user', note: null },
     ]);
 
-    expect(await screen.findByText('Built-in')).toBeInTheDocument();
+    // The pill on the row (the filter strip also has a Built-in segment).
+    const builtinRow = (await screen.findByText('Coinbase')).closest('.px-4');
+    expect(within(builtinRow).getByText('Built-in')).toBeInTheDocument();
+    expect(within(builtinRow).getByRole('button', { name: 'Override' })).toBeInTheDocument();
     // Exactly one Remove button: the user row's. The builtin row has none.
     // Scoped to this section so a button added elsewhere on the tab can't trip it.
     const labeled = within(screen.getByRole('region', { name: /labeled addresses/i }));
     expect(labeled.getAllByRole('button', { name: /remove/i })).toHaveLength(1);
     expect(screen.getByText('My Deposit')).toBeInTheDocument();
+  });
+
+  it('narrows the list by verdict and by search, and edits a label in place', async () => {
+    apiMocks.eth.labelAddress.mockResolvedValue({ label: {} });
+    await openLabelsTab([
+      { address: '0x4444444444444444444444444444444444444444', name: 'Ledger', source: 'user', kind: 'own' },
+      { address: '0x6666666666666666666666666666666666666666', name: 'Kraken deposit', source: 'user', kind: 'exchange' },
+      { address: '0x5555555555555555555555555555555555555555', name: 'Some stranger', source: 'user', kind: 'external' },
+    ]);
+
+    fireEvent.click(within(screen.getByRole('group', { name: 'Show' })).getByRole('button', { name: 'Exchanges' }));
+    expect(screen.getByText('Kraken deposit')).toBeInTheDocument();
+    expect(screen.queryByText('Ledger')).toBeNull();
+
+    fireEvent.click(within(screen.getByRole('group', { name: 'Show' })).getByRole('button', { name: 'All' }));
+    fireEvent.change(screen.getByLabelText('Search labels'), { target: { value: 'stranger' } });
+    expect(screen.getByText('Some stranger')).toBeInTheDocument();
+    expect(screen.queryByText('Kraken deposit')).toBeNull();
+
+    const row = screen.getByText('Some stranger').closest('.px-4');
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }));
+    fireEvent.change(within(row).getByLabelText('Counterparty verdict'), { target: { value: 'own' } });
+    fireEvent.click(within(row).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(apiMocks.eth.labelAddress).toHaveBeenCalledWith(
+      '0x5555555555555555555555555555555555555555', 'Some stranger', { kind: 'own' }
+    ));
   });
 
   it('keeps own labels in the main list and collapses outside parties', async () => {
@@ -111,8 +140,8 @@ describe('Crypto -> Labels tab', () => {
       { address: '0x5555555555555555555555555555555555555555', name: 'Some stranger', source: 'user', kind: 'external' },
     ]);
 
-    expect(await screen.findByText('Ledger')).toBeInTheDocument();
-    expect(screen.getByText('Yours')).toBeInTheDocument();
+    const ledgerRow = (await screen.findByText('Ledger')).closest('.px-4');
+    expect(within(ledgerRow).getByText('Yours')).toBeInTheDocument();
     expect(screen.queryByText('Some stranger')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /1 reviewed as outside parties/i }));
     expect(screen.getByText('Some stranger')).toBeInTheDocument();
