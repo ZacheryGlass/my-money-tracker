@@ -37,3 +37,20 @@ test('the shared provider queue records each dispatched request under its key', 
   });
   assert.deepEqual(calls, { total: 3, byKey: { 'host-a': 2, 'host-b': 1 } });
 });
+
+test('the audit RPC client and the sync side share one queue per RPC origin', async () => {
+  process.env.ETH_CHAINS = '1';
+  const chains = require('../src/config/chains');
+  const RpcClient = require('../src/services/evmAudit/RpcClient');
+  const jsonRpc = require('../src/utils/jsonRpc');
+  const original = jsonRpc.request;
+  jsonRpc.request = async () => ({ rawText: '{"result":"0x1"}', responseJson: { jsonrpc: '2.0', id: 1, result: '0x1' }, httpStatus: 200 });
+  try {
+    const client = new RpcClient(1, { spacingMs: 0 });
+    const { calls } = await providerCalls.measure(() => client.requestWithEvidence('eth_blockNumber', []));
+    const origin = new URL(chains.getChain(1).consensusRpcUrl).origin;
+    assert.deepEqual(calls.byKey, { [`rpc:${origin}`]: 1 });
+  } finally {
+    jsonRpc.request = original;
+  }
+});

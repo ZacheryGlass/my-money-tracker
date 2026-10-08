@@ -4,18 +4,13 @@ const chains = require('../../config/chains');
 const jsonRpc = require('../../utils/jsonRpc');
 const { sha256, stableJson } = require('./normalizer');
 const { TOPICS } = require('./effectDecoder');
-
-const hostQueues = new Map();
+const etherscan = require('../../config/etherscan');
 
 function rpcError(message, code, extra = {}) {
   const error = new Error(message);
   error.code = code;
   Object.assign(error, extra);
   return error;
-}
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function quantity(value, label) {
@@ -286,17 +281,14 @@ class RpcClient {
     this.label = endpoint === 'trace' ? 'Trace RPC' : 'Consensus RPC';
   }
 
+  // The same process-wide queue the sync side uses for this RPC origin
+  // (config/etherscan.js, key rpc:<origin>): one provider budget, one 429
+  // pause, whichever path is calling.
   async _scheduled(task) {
-    const previous = hostQueues.get(this.host) || Promise.resolve();
-    const run = previous.catch(() => {}).then(async () => {
-      await wait(this.spacingMs);
-      return task();
+    return etherscan.throttled(task, {
+      key: `rpc:${new URL(this.url).origin}`,
+      spacingMs: this.spacingMs,
     });
-    const queued = run.catch(() => {}).finally(() => {
-      if (hostQueues.get(this.host) === queued) hostQueues.delete(this.host);
-    });
-    hostQueues.set(this.host, queued);
-    return run;
   }
 
   async requestWithEvidence(method, params) {
