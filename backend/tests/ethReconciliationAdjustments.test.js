@@ -56,6 +56,7 @@ const EthReconciliationAdjustment = require('../src/models/EthReconciliationAdju
 const EthTransfer = require('../src/models/EthTransfer');
 const EthWallet = require('../src/models/EthWallet');
 const EthWalletChain = require('../src/models/EthWalletChain');
+const JobLog = require('../src/models/JobLog');
 
 const WALLET = { id: 7, user_id: 1, address: '0x1111111111111111111111111111111111111111' };
 const ONE_ETH = 1000000000000000000n;
@@ -516,6 +517,37 @@ test('a wallet never audited still surfaces its adjustments through a summary sh
   // remain different claims, and the panel says which.
   const bare = response.body.wallets.find((w) => w.id === 8);
   assert.equal(bare.reconciliation, null);
+});
+
+test('the wallets API says which wallets have a live sync in flight', async (t) => {
+  const restore = [];
+  const stub = (obj, key, fn) => { restore.push([obj, key, obj[key]]); obj[key] = fn; };
+  t.after(() => { for (const [o, k, v] of restore.reverse()) o[k] = v; });
+
+  stub(EthWallet, 'findAllByUser', async () => [
+    { id: 7, address: '0x1111111111111111111111111111111111111111', label: 'Main' },
+    { id: 8, address: '0x2222222222222222222222222222222222222222', label: 'Cold' },
+  ]);
+  stub(EthWalletChain, 'findAllForWallets', async () => []);
+  stub(EthWallet, 'getAccountForWallet', async () => null);
+  stub(EthWallet, 'getEthQuantity', async () => 0);
+  stub(EthReconciliation, 'summaryForWallets', async () => new Map());
+  stub(EthReconciliation, 'openIssuesForWallets', async () => new Map());
+  stub(EthReconciliationAdjustment, 'findForUser', async () => []);
+  let asked;
+  stub(JobLog, 'liveRunningNames', async (names, staleMs) => {
+    asked = { names, staleMs };
+    return new Set(['eth-wallet-sync:1:7']);
+  });
+
+  const response = await request(app).get('/api/eth/wallets');
+  assert.equal(response.status, 200);
+  assert.deepEqual(asked.names, ['eth-wallet-sync:1:7', 'eth-wallet-sync:1:8']);
+  assert.ok(asked.staleMs > 0);
+  const byId = new Map(response.body.wallets.map((w) => [w.id, w]));
+  assert.equal(byId.get(7).sync_running, true);
+  assert.equal(byId.get(8).sync_running, false);
+  assert.equal(byId.get(7).recapture_running, false);
 });
 
 // ---------------------------------------------------------------------------

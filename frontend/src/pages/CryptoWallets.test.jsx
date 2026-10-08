@@ -110,6 +110,11 @@ describe('Crypto -> Wallets tab', () => {
   // The list is a table now: the row states the verdict and the expanded panel
   // carries the evidence. DataTable renders the desktop table and the mobile
   // list together (CSS hides one), so [0] is always the desktop row.
+  // Everything but Sync sits behind the row's "More actions" menu.
+  const openWalletMenu = async (name = 'Main') => {
+    fireEvent.click((await screen.findAllByRole('button', { name: new RegExp(`more actions for ${name}`, 'i') }))[0]);
+  };
+
   const expandWallet = async (name = 'Main') => {
     const cells = await screen.findAllByText(name);
     fireEvent.click(cells[0]);
@@ -422,6 +427,13 @@ describe('Crypto -> Wallets tab', () => {
       .not.toBeDisabled());
   });
 
+  it('says a wallet is syncing when its background sync is still live after a reload', async () => {
+    await openEthereumTab([{ ...wallet(report()), sync_running: true }]);
+
+    expect((await screen.findAllByText('Syncing')).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: /sync main/i })[0]).toBeDisabled();
+  });
+
   it('reports a deferred Sync click without a red failure banner', async () => {
     apiMocks.eth.syncWallet.mockResolvedValue({ sync: { status: 'deferred' } });
     await openEthereumTab([wallet(report())]);
@@ -439,7 +451,8 @@ describe('Crypto -> Wallets tab', () => {
     });
     await openEthereumTab([wallet(report())]);
 
-    fireEvent.click((await screen.findAllByRole('button', { name: /audit mined history for main/i }))[0]);
+    await openWalletMenu();
+    fireEvent.click((await screen.findAllByRole('menuitem', { name: /audit mined history for main/i }))[0]);
     await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1, { mode: 'full' }));
     expect(apiMocks.eth.syncWallet).not.toHaveBeenCalled();
     await expandWallet();
@@ -461,7 +474,8 @@ describe('Crypto -> Wallets tab', () => {
     });
     await openEthereumTab([wallet(report())]);
 
-    fireEvent.click((await screen.findAllByRole('button', { name: /audit mined history for main/i }))[0]);
+    await openWalletMenu();
+    fireEvent.click((await screen.findAllByRole('menuitem', { name: /audit mined history for main/i }))[0]);
 
     expect(await screen.findByText(/Moralis daily plan quota is exhausted/i)).toBeInTheDocument();
     expect(screen.getByText(/Retry after/)).toBeInTheDocument();
@@ -474,7 +488,8 @@ describe('Crypto -> Wallets tab', () => {
     });
     await openEthereumTab([wallet(report())]);
 
-    fireEvent.click((await screen.findAllByRole('button', { name: /incrementally verify main/i }))[0]);
+    await openWalletMenu();
+    fireEvent.click((await screen.findAllByRole('menuitem', { name: /incrementally verify main/i }))[0]);
     await waitFor(() => expect(apiMocks.eth.startHistoryAudit).toHaveBeenCalledWith(1, { mode: 'incremental' }));
     expect(apiMocks.eth.syncWallet).not.toHaveBeenCalled();
   });
@@ -528,7 +543,8 @@ describe('Crypto -> Wallets tab', () => {
     apiMocks.eth.recaptureWallet.mockResolvedValue({ started: true, annotations_preserved: true });
     await openEthereumTab([wallet(report())]);
 
-    const buttons = await screen.findAllByRole('button', { name: /recapture full history for main/i });
+    await openWalletMenu();
+    const buttons = await screen.findAllByRole('menuitem', { name: /recapture full history for main/i });
     fireEvent.click(buttons[0]);
     expect(await screen.findByText(/transaction notes, address notes, labels, category overrides/i)).toBeInTheDocument();
     expect(apiMocks.eth.recaptureWallet).not.toHaveBeenCalled();

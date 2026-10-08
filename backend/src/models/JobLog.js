@@ -141,6 +141,22 @@ class JobLog {
     return result.rows;
   }
 
+  // Which of these jobs hold a live claim: running, with a heartbeat inside
+  // the lease. A dead worker's row stays 'running' until something expires it,
+  // and reporting that as live would show "Syncing" forever.
+  static async liveRunningNames(jobNames, staleAfterMs) {
+    if (!jobNames.length) return new Set();
+    const result = await pool.query(
+      `SELECT job_name FROM job_logs
+        WHERE job_name = ANY($1::text[])
+          AND status = 'running'
+          AND COALESCE(heartbeat_at, started_at)
+              >= CURRENT_TIMESTAMP - make_interval(secs => $2::double precision / 1000)`,
+      [jobNames, staleAfterMs]
+    );
+    return new Set(result.rows.map((row) => row.job_name));
+  }
+
   static async isRunning(jobName) {
     const result = await pool.query(
       "SELECT COUNT(*) as count FROM job_logs WHERE job_name = $1 AND status = 'running'",

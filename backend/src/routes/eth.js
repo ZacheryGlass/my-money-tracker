@@ -347,11 +347,12 @@ router.get('/wallets', async (req, res) => {
     // The balance audit rides along on the wallet status API, batched for the
     // same reason the chain rows are: a summary fetched per wallet inside the
     // map below is the N+1 this route already went out of its way to avoid.
-    const [reconciliationByWallet, reconciliationIssues, allAdjustments, latestAudits] = await Promise.all([
+    const [reconciliationByWallet, reconciliationIssues, allAdjustments, latestAudits, syncingIds] = await Promise.all([
       EthReconciliation.summaryForWallets(req.user.id, walletIds),
       EthReconciliation.openIssuesForWallets(req.user.id, walletIds),
       EthReconciliationAdjustment.findForUser(req.user.id),
       EvmAudit.latestForWallets(req.user.id, walletIds),
+      EthWalletService.runningSyncWalletIds(req.user.id, walletIds),
     ]);
     const adjustmentsByWallet = new Map();
     for (const adjustment of allAdjustments) {
@@ -393,6 +394,9 @@ router.get('/wallets', async (req, res) => {
             adjustmentsByWallet.get(wallet.id)
           ),
           history_audit: latestAudits.get(wallet.id) || null,
+          // Background work in flight, so the row says so after a reload too.
+          sync_running: syncingIds.has(wallet.id),
+          recapture_running: EthWalletService.isRecaptureRunning(wallet.id),
         };
       })
     );

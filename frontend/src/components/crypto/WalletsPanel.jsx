@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { useReactTable, getCoreRowModel, getSortedRowModel } from '@tanstack/react-table';
-import { AlertTriangle, ChevronDown, ChevronRight, Download, FileCheck2, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileCheck2, History, Plus, RefreshCw, Unlink, Wallet } from 'lucide-react';
 import { eth as ethAPI } from '../../utils/api';
 import { formatExactUnits, formatRelativeTime, shortEthAddress as shortEthAddressOrUnknown } from '../../utils/format';
 import { getAccountDisplayName } from '../../utils/accountDisplay';
@@ -10,6 +10,7 @@ import { DEFERRED_SYNC_CODES, LIMITED_SYNC_CODES } from '../../utils/walletSync'
 import DataTable from '../DataTable';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import LoadFailed from '../../features/crypto/LoadFailed';
+import RowMenu from '../../features/crypto/RowMenu';
 
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 // Deferred jobs are durable retry points, not active work. Poll them too so a
@@ -336,7 +337,10 @@ const chainIssueTone = (chain) => {
   return 'neutral';
 };
 
-const walletStatus = (wallet) => {
+const walletStatus = (wallet, { syncing = false } = {}) => {
+  // Work in flight outranks the last verdict: it is about to replace it.
+  if (wallet.recapture_running) return { label: 'Recapturing history', tone: 'text-amber-400' };
+  if (syncing || wallet.sync_running) return { label: 'Syncing', tone: 'text-amber-400' };
   if (DEFERRED_SYNC_CODES.has(wallet.error_code)) {
     return { label: 'Sync deferred', tone: 'text-amber-400' };
   }
@@ -349,9 +353,6 @@ const walletStatus = (wallet) => {
   }
   if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'deferred')) {
     return { label: 'Sync deferred', tone: 'text-amber-400' };
-  }
-  if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'running')) {
-    return { label: 'Syncing', tone: 'text-amber-400' };
   }
   if (wallet.chains?.some((chain) => chainIssueTone(chain) === 'limited')) {
     return { label: 'Limited coverage', tone: 'text-amber-400' };
@@ -398,7 +399,9 @@ function WalletsPanel({
   const [formError, setFormError] = useState(null);
   const [bulkResults, setBulkResults] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [syncingId, setSyncingId] = useState(null);
+  // A Set, not one id: two rows can sync at once, and the first to finish
+  // must not clear the other's spinner.
+  const [syncingIds, setSyncingIds] = useState(() => new Set());
   const [auditStartingId, setAuditStartingId] = useState(null);
   const [auditByWallet, setAuditByWallet] = useState({});
   const [recapturing, setRecapturing] = useState(null);
@@ -515,7 +518,7 @@ function WalletsPanel({
   };
 
   const handleSync = async (id) => {
-    setSyncingId(id);
+    setSyncingIds((ids) => new Set(ids).add(id));
     onError(null);
     try {
       const result = await ethAPI.syncWallet(id);
@@ -532,7 +535,11 @@ function WalletsPanel({
     } catch (err) {
       onError(err.response?.data?.error || 'Failed to sync wallet');
     } finally {
-      setSyncingId(null);
+      setSyncingIds((ids) => {
+        const next = new Set(ids);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -641,72 +648,67 @@ function WalletsPanel({
   // Every action sits inside a row that expands on click, so each one stops
   // the click reaching the row -- syncing a wallet and opening its audit are
   // different intentions.
-  const rowActions = (wallet) => (
-    <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
-      {/* One address, several chains: the wallet has no single chain to link
-          against, and an address page exists on every explorer anyway. */}
-      <a
-        href={explorerAddressUrl(wallet.address)}
-        target="_blank"
-        rel="noreferrer"
-        className={ROW_ACTION_CLASS}
-      >
-        Explorer
-      </a>
-      <button
-        type="button"
-        onClick={() => handleHistoryAudit(wallet)}
-        disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
-        aria-label={`Audit mined history for ${walletName(wallet)}`}
-        className={ROW_ACTION_CLASS}
-        title="Independently audit configured EVM history without blocking ordinary Sync"
-      >
-        <FileCheck2 size={10} />
-        Audit
-      </button>
-      <button
-        type="button"
-        onClick={() => handleHistoryAudit(wallet, 'incremental')}
-        disabled={auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id])}
-        aria-label={`Incrementally verify ${walletName(wallet)}`}
-        className={ROW_ACTION_CLASS}
-        title="Verify new history from the last proven boundary without replaying genesis"
-      >
-        <FileCheck2 size={10} />
-        Verify
-      </button>
-      <button
-        type="button"
-        onClick={() => handleSync(wallet.id)}
-        disabled={syncingId === wallet.id}
-        aria-label={`Sync ${walletName(wallet)}`}
-        className={ROW_ACTION_CLASS}
-      >
-        <RefreshCw size={10} className={syncingId === wallet.id ? 'animate-spin' : ''} />
-        Sync
-      </button>
-      <button
-        type="button"
-        onClick={() => setRecapturing(wallet)}
-        disabled={syncingId === wallet.id || recaptureStartingId === wallet.id}
-        aria-label={`Recapture full history for ${walletName(wallet)}`}
-        className={ROW_ACTION_CLASS}
-        title="Re-fetch every chain from genesis while preserving notes and review decisions"
-      >
-        <History size={10} />
-        Recapture
-      </button>
-      <button
-        type="button"
-        onClick={() => { setRemoveData(true); setDisconnecting(wallet); }}
-        aria-label={`Disconnect ${walletName(wallet)}`}
-        className="rounded border border-transparent p-1.5 text-tertiary transition-all hover:bg-loss/10 hover:text-loss"
-        title="Disconnect Wallet"
-      >
-        <Unlink size={14} />
-      </button>
-    </div>
-  );
+  const rowActions = (wallet) => {
+    const syncing = syncingIds.has(wallet.id) || wallet.sync_running;
+    const auditBusy = auditStartingId === wallet.id || auditIsPending(visibleAudits[wallet.id]);
+    return (
+      <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+        <button
+          type="button"
+          onClick={() => handleSync(wallet.id)}
+          disabled={syncing}
+          aria-label={`Sync ${walletName(wallet)}`}
+          className={ROW_ACTION_CLASS}
+        >
+          <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} />
+          Sync
+        </button>
+        <RowMenu
+          label={`More actions for ${walletName(wallet)}`}
+          items={[
+            // One address, several chains: the wallet has no single chain to
+            // link against, and an address page exists on every explorer anyway.
+            { key: 'explorer', label: 'Open in explorer', icon: ExternalLink, href: explorerAddressUrl(wallet.address) },
+            {
+              key: 'audit',
+              label: 'Audit full history',
+              ariaLabel: `Audit mined history for ${walletName(wallet)}`,
+              title: 'Independently audit configured EVM history without blocking ordinary Sync',
+              icon: FileCheck2,
+              disabled: auditBusy,
+              onSelect: () => handleHistoryAudit(wallet),
+            },
+            {
+              key: 'verify',
+              label: 'Verify new history',
+              ariaLabel: `Incrementally verify ${walletName(wallet)}`,
+              title: 'Verify new history from the last proven boundary without replaying genesis',
+              icon: FileCheck2,
+              disabled: auditBusy,
+              onSelect: () => handleHistoryAudit(wallet, 'incremental'),
+            },
+            {
+              key: 'recapture',
+              label: 'Recapture full history',
+              ariaLabel: `Recapture full history for ${walletName(wallet)}`,
+              title: 'Re-fetch every chain from genesis while preserving notes and review decisions',
+              icon: History,
+              disabled: syncing || wallet.recapture_running || recaptureStartingId === wallet.id,
+              onSelect: () => setRecapturing(wallet),
+            },
+            {
+              key: 'disconnect',
+              label: 'Disconnect',
+              ariaLabel: `Disconnect ${walletName(wallet)}`,
+              icon: Unlink,
+              danger: true,
+              onSelect: () => { setRemoveData(true); setDisconnecting(wallet); },
+            },
+          ]}
+        />
+      </div>
+    );
+  };
 
   const columns = useMemo(() => [
     {
@@ -771,7 +773,7 @@ function WalletsPanel({
       header: 'Status',
       meta: { width: '11rem', cellClassName: 'whitespace-nowrap' },
       cell: ({ row }) => {
-        const status = walletStatus(row.original);
+        const status = walletStatus(row.original, { syncing: syncingIds.has(row.original.id) });
         return <span className={`text-caption ${status.tone}`}>{status.label}</span>;
       },
     },
@@ -779,11 +781,11 @@ function WalletsPanel({
       id: 'actions',
       header: '',
       enableSorting: false,
-      meta: { width: '13rem', headerClassName: 'text-right', cellClassName: 'text-right' },
+      meta: { width: '7rem', headerClassName: 'text-right', cellClassName: 'text-right' },
       cell: ({ row }) => rowActions(row.original),
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [auditStartingId, expandedId, syncingId, visibleAudits]);
+  ], [auditStartingId, expandedId, syncingIds, recaptureStartingId, visibleAudits]);
 
   const table = useReactTable({
     data: wallets,
@@ -959,7 +961,7 @@ function WalletsPanel({
             : null)}
           renderMobileRow={(row) => {
             const wallet = row.original;
-            const status = walletStatus(wallet);
+            const status = walletStatus(wallet, { syncing: syncingIds.has(wallet.id) });
             const open = expandedId === wallet.id;
             return (
               <div key={row.id} className="bg-surface p-3" onClick={() => toggleRow(wallet)}>

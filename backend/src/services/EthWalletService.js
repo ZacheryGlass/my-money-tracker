@@ -774,6 +774,20 @@ class EthWalletService {
   // The HTTP route returns before a genesis replay can hit a proxy timeout.
   // Returning `started=false` makes duplicate requests honest without exposing
   // or cancelling the in-flight promise.
+  // The wallets whose durable sync job is live right now, so a reload still
+  // says "Syncing" rather than the last finished verdict.
+  static async runningSyncWalletIds(userId, walletIds) {
+    const names = new Map(walletIds.map((id) => [walletSyncJobName(userId, id), id]));
+    const live = await JobLog.liveRunningNames([...names.keys()], WALLET_SYNC_STALE_MS);
+    return new Set([...live].map((name) => names.get(name)));
+  }
+
+  // In-process, like the guard it reads: a restart forgets a queued replay, and
+  // the zero cursors it left are then the recovery state, resumed by Sync.
+  static isRecaptureRunning(walletId) {
+    return recaptureRuns.has(walletId);
+  }
+
   static queueRecaptureWallet(walletId, options = {}) {
     if (recaptureRuns.has(walletId)) return { started: false };
     const run = this.recaptureWallet(walletId, options)
