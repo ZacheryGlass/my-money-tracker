@@ -285,10 +285,12 @@ class EthTransactionMirrorService {
   // Rebuild all wallet mirrors after the user-wide bridge matcher has produced
   // links. This single database-only pass publishes confirmed bridge links to
   // the legacy transactions table and retains each wallet's result/error so
-  // sync receipts and failure handling stay wallet-scoped.
-  static async rebuildForUser(userId, { context = null } = {}) {
+  // sync receipts and failure handling stay wallet-scoped. `walletIds` limits
+  // the pass to those wallets (a scoped label refresh); null means all.
+  static async rebuildForUser(userId, { context = null, walletIds = null } = {}) {
     if (!userId) throw new Error('EthTransactionMirrorService.rebuildForUser requires a userId');
-    const wallets = await EthWallet.findAllByUser(userId);
+    const owned = await EthWallet.findAllByUser(userId);
+    const wallets = walletIds ? owned.filter((wallet) => walletIds.includes(wallet.id)) : owned;
     const resultsByWallet = new Map();
     for (const wallet of wallets) {
       try {

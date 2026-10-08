@@ -381,6 +381,72 @@ function token(hash, from, to, value, date, { block = 100, contract = USDC, symb
   ok("an 'own' verdict removes protocol identity", owned?.category === 'self_transfer' && owned?.protocol == null, owned);
   await q('DELETE FROM eth_address_labels WHERE user_id = 1 AND address = $1', [etherDelta.address]);
 
+  // --- scenario: a scoped label refresh lands on the full refresh's answer --
+  // STRANGER only deals with wallet A; WALLET_B is a tracked wallet A paid.
+  const EthAddressLabel = require('../src/models/EthAddressLabel');
+  const EthActivityLink = require('../src/models/EthActivityLink');
+  const EthActivityService = require('../src/services/EthActivityService');
+  const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+  await EthDerivedPipeline.runForUser(1, { reclassify: true, revalue: false, context: 'harness scoped baseline' });
+  const scopedBaseline = await snapshot(1);
+  const touched = {
+    stranger: await EthTransfer.walletIdsTouchingAddress(1, STRANGER),
+    walletB: await EthTransfer.walletIdsTouchingAddress(1, WALLET_B),
+    otherUser: await EthTransfer.walletIdsTouchingAddress(2, STRANGER),
+  };
+  ok('touched wallets: a counterparty, a tracked wallet, and nothing across users',
+    same(touched, { stranger: [walletA], walletB: [walletA, walletB].sort((x, y) => x - y), otherUser: [] }), touched);
+  const { rows: [{ links: foldsOnA }] } = await q(
+    `SELECT COUNT(*)::int AS links FROM eth_activity_links l JOIN eth_activity a ON a.id = l.out_activity_id WHERE a.wallet_id = $1`,
+    [walletA]
+  );
+  const partners = { a: await EthActivityLink.partnerWalletIds(1, [walletA]), b: await EthActivityLink.partnerWalletIds(1, [walletB]) };
+  ok("bridge partners: wallet A's confirmed fold pairs it with itself, wallet B has none",
+    foldsOnA > 0 && same(partners, { a: [walletA], b: [] }), { foldsOnA, partners });
+
+  const rebuiltWallets = [];
+  const realActivityRebuild = EthActivityService.rebuildForWallet;
+  EthActivityService.rebuildForWallet = async (walletId, ...rest) => {
+    rebuiltWallets.push(walletId);
+    return realActivityRebuild.call(EthActivityService, walletId, ...rest);
+  };
+  const scopedVersusFull = async (title, address, write, expectedWallets) => {
+    rebuiltWallets.length = 0;
+    const kinds = await write();
+    await EthWalletService.refreshClassificationsForAddress(1, address, { kinds });
+    const scopedWallets = [...rebuiltWallets].sort((x, y) => x - y);
+    const scoped = await snapshot(1);
+    await EthDerivedPipeline.runForUser(1, { reclassify: true, revalue: false, context: 'harness full refresh' });
+    const full = await snapshot(1);
+    ok(`${title}: scoped refresh rebuilds only ${expectedWallets.length} wallet(s) and equals the full refresh`,
+      same(scopedWallets, expectedWallets) && scoped.derived_sha256 === full.derived_sha256,
+      { scopedWallets, diff: require('./lib/derivedDigest').diffDigests(scoped, full).derived });
+    return scoped;
+  };
+  const relabelScoped = (address, name, kind) => async () => {
+    const previous = await EthAddressLabel.findByAddress(1, address);
+    const label = await EthAddressLabel.upsert(1, address, name, null, kind);
+    return [previous?.kind, label.kind];
+  };
+  const unlabelScoped = (address) => async () => [(await EthAddressLabel.delete(1, address)).kind];
+  try {
+    const asExchange = await scopedVersusFull("an 'exchange' label", STRANGER, relabelScoped(STRANGER, 'Harness desk', 'exchange'), [walletA]);
+    ok('the scoped label actually reclassified something', asExchange.derived_sha256 !== scopedBaseline.derived_sha256);
+    await scopedVersusFull("a 'service' relabel", STRANGER, relabelScoped(STRANGER, 'Swap service', 'service'), [walletA]);
+    await scopedVersusFull("a 'bridge' relabel", STRANGER, relabelScoped(STRANGER, 'Some bridge', 'bridge'), [walletA]);
+    await scopedVersusFull('removing the label', STRANGER, unlabelScoped(STRANGER), [walletA]);
+    await scopedVersusFull('a label on a tracked wallet', WALLET_B, relabelScoped(WALLET_B, 'Savings desk', 'exchange'),
+      [walletA, walletB].sort((x, y) => x - y));
+    await scopedVersusFull("an 'own' label takes the full refresh", STRANGER, relabelScoped(STRANGER, 'Mine', 'own'),
+      [walletA, walletB].sort((x, y) => x - y));
+    await scopedVersusFull("losing 'own' takes the full refresh", STRANGER, unlabelScoped(STRANGER),
+      [walletA, walletB].sort((x, y) => x - y));
+    await scopedVersusFull('removing the tracked-wallet label', WALLET_B, unlabelScoped(WALLET_B),
+      [walletA, walletB].sort((x, y) => x - y));
+  } finally {
+    EthActivityService.rebuildForWallet = realActivityRebuild;
+  }
+
   // --- scenario: the ignore toggle refreshes holdings from the database ------
   // Last: it adds token holdings the earlier digest comparisons never had.
   let balanceCalls = 0;

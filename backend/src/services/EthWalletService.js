@@ -2085,6 +2085,23 @@ class EthWalletService {
     }));
   }
 
+  // A label write, re-deriving only what the label can reach: the wallets with
+  // a leg to or from its address (labels are address-keyed with no chain), and
+  // their bridge partners' mirror rows. `kinds` are the label's verdicts
+  // before and after the write. An `own` verdict gained or lost changes the
+  // owner's declared-address set, which address-poisoning detection reads on
+  // every wallet, so it takes the full refresh.
+  static refreshClassificationsForAddress(userId, address, { kinds = [] } = {}) {
+    if (kinds.includes('own')) return this.refreshClassificationsForUser(userId);
+    return EthDerivedPipeline.serializedForUser(userId, async () => EthDerivedPipeline.runForUser(userId, {
+      reclassify: true,
+      revalue: false,
+      walletIds: await EthTransfer.walletIdsTouchingAddress(userId, address),
+      context: 'classification refresh',
+      matchReason: 'classification-refresh',
+    }));
+  }
+
   // Ignore lists are per-user, so this re-derives only the owner's wallets.
   // Fanning out over every wallet would spend other owners' Etherscan and
   // CoinGecko quota (refreshHoldings resolves the wallet owner's key) and

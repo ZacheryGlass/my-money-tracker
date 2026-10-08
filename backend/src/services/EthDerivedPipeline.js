@@ -40,6 +40,7 @@ const EthActivityService = require('./EthActivityService');
 const ExchangeMatchService = require('./ExchangeMatchService');
 const BridgeMatchingService = require('./BridgeMatchingService');
 const TransactionClassificationService = require('./TransactionClassificationService');
+const EthActivityLink = require('../models/EthActivityLink');
 const providerCalls = require('../crypto/infra/providerCalls');
 
 // Wall-clock per step, summed across wallets, so a slow label write can be
@@ -241,6 +242,10 @@ async function finishUser(userId, {
   // completion acquire them; label, ignore, price and verdict refreshes
   // re-derive from stored receipts only, so a click never waits on a network.
   acquireReceipts = true,
+  // A scoped refresh: { rebuilt, partnersBefore } wallet ids. The mirror then
+  // covers the rebuilt wallets and their bridge partners from before and after
+  // the bridge pass; null mirrors every wallet.
+  scope = null,
 } = {}) {
   // rebuildForUserSafely never throws; a failed match pass logs itself and
   // returns null.
@@ -267,10 +272,22 @@ async function finishUser(userId, {
   // The mirror itself isolates wallets so one broken projection cannot skip
   // the rest. Interactive syncs and audits still fail when their requested
   // wallet is the one that broke; batch callers consume the error map.
+  let mirrorWalletIds = null;
+  if (scope?.partnersBefore) {
+    try {
+      const partnersAfter = await EthActivityLink.partnerWalletIds(userId, scope.rebuilt);
+      mirrorWalletIds = [...new Set([...scope.rebuilt, ...scope.partnersBefore, ...partnersAfter])];
+    } catch (err) {
+      // Unknown partners: mirroring every wallet is the safe answer.
+      logger.warn({ userId, err }, `Bridge partner lookup failed during ${context}; mirroring every wallet`);
+    }
+  }
+
   let mirror = null;
   try {
     mirror = await timed(timings, 'Mirror',
-      () => EthTransactionMirrorService.rebuildForUser(userId, { context }));
+      () => EthTransactionMirrorService.rebuildForUser(userId,
+        mirrorWalletIds ? { context, walletIds: mirrorWalletIds } : { context }));
   } catch (err) {
     if (context) logger.warn({ userId, err }, `Transaction mirror rebuild failed during ${context}`);
     else logger.warn({ walletId, err }, 'Transaction mirror rebuild failed');
@@ -303,25 +320,44 @@ async function runForUser(userId, {
   context = null,
   matchReason = null,
   revalue = true,
+  // Rebuild only these wallets' activity (a label write reaches only the
+  // wallets with a leg to or from its address); null rebuilds every wallet.
+  // The user-wide steps -- reclassify, matching, classification -- still run.
+  walletIds = null,
 } = {}) {
   // Always inside the user's lane: the lane is re-entrant, so the callers that
   // already hold it run directly, and a caller that forgot cannot race a
   // rebuild or a match pass for the same user.
   return serializedForUser(userId, () => runForUserInLane(userId, {
-    reclassify, holdings, context, matchReason, revalue,
+    reclassify, holdings, context, matchReason, revalue, walletIds,
   }));
 }
 
-async function runForUserInLane(userId, { reclassify, holdings, context, matchReason, revalue }) {
+async function runForUserInLane(userId, { reclassify, holdings, context, matchReason, revalue, walletIds }) {
   const timings = {};
   const started = Date.now();
+  let rebuiltCount = 0;
   const { result, calls } = await providerCalls.measure(async () => {
     // Propagates, like the sync site: classification is what the caller's click
     // was for, so a reclassify that did not land is a failure, not a warning.
     if (reclassify) {
       await timed(timings, 'Reclassify', () => EthTransfer.reclassifyCounterparties(userId));
     }
-    const wallets = await EthWallet.findAllByUser(userId);
+    const owned = await EthWallet.findAllByUser(userId);
+    const wallets = walletIds ? owned.filter((wallet) => walletIds.includes(wallet.id)) : owned;
+    rebuiltCount = wallets.length;
+    let scope = null;
+    if (walletIds) {
+      const rebuilt = wallets.map((wallet) => wallet.id);
+      // Read BEFORE the rebuild: the activity DELETE cascades these links away.
+      let partnersBefore = null;
+      try {
+        partnersBefore = await EthActivityLink.partnerWalletIds(userId, rebuilt);
+      } catch (err) {
+        logger.warn({ userId, err }, `Bridge partner lookup failed during ${context}; mirroring every wallet`);
+      }
+      scope = { rebuilt, partnersBefore };
+    }
     for (const wallet of wallets) {
       await rebuildWallet(wallet.id, {
         holdings, isolateSteps: true, context, timings, revalue,
@@ -329,11 +365,12 @@ async function runForUserInLane(userId, { reclassify, holdings, context, matchRe
     }
     return finishUser(userId, {
       matchContext: { reason: matchReason }, context, isolateMirror: true, timings,
-      acquireReceipts: false,
+      acquireReceipts: false, scope,
     });
   });
   logger.info({
-    userId, context, totalMs: Date.now() - started, stepMs: timings, providerCalls: calls,
+    userId, context, wallets: rebuiltCount, scoped: walletIds != null,
+    totalMs: Date.now() - started, stepMs: timings, providerCalls: calls,
   }, 'Derived rebuild finished');
   return result;
 }

@@ -129,6 +129,28 @@ class EthActivityLink {
     );
     return result.rowCount;
   }
+
+  // Wallets holding the far side of a bridge fold whose near side sits on
+  // `walletIds`. A scoped rebuild re-mirrors them too: the mirror names a
+  // bridge leg from its link, and rebuilding one wallet's activity can drop or
+  // re-project a link while the partner's own activity rows stay untouched.
+  static async partnerWalletIds(userId, walletIds, client = pool) {
+    if (!userId) throw new Error('EthActivityLink.partnerWalletIds requires a userId');
+    if (!walletIds.length) return [];
+    const { rows } = await client.query(
+      `SELECT DISTINCT pair.wallet_id
+         FROM eth_activity a
+         JOIN eth_wallets w ON w.id = a.wallet_id AND w.user_id = $1
+         JOIN eth_activity_links l ON l.out_activity_id = a.id OR l.in_activity_id = a.id
+         JOIN eth_activity pair
+           ON pair.id = CASE WHEN l.out_activity_id = a.id THEN l.in_activity_id ELSE l.out_activity_id END
+         JOIN eth_wallets pw ON pw.id = pair.wallet_id AND pw.user_id = $1
+        WHERE a.wallet_id = ANY($2::int[])
+        ORDER BY pair.wallet_id`,
+      [userId, walletIds]
+    );
+    return rows.map((row) => row.wallet_id);
+  }
 }
 
 module.exports = EthActivityLink;

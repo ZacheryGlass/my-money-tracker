@@ -176,6 +176,48 @@ for (const kind of ['external', 'own', 'bridge']) {
   });
 }
 
+// A label write refreshes only what its address reaches, and hands the
+// service the verdict before AND after: losing an `own` verdict needs the
+// full refresh as much as gaining one.
+test('POST /api/eth/address-labels refreshes by address with the old and new verdicts', async (t) => {
+  const EthAddressLabel = require('../src/models/EthAddressLabel');
+  const EthWalletService = require('../src/services/EthWalletService');
+  const saved = ['findByAddress', 'upsert'].map((key) => [EthAddressLabel, key, EthAddressLabel[key]]);
+  saved.push([EthWalletService, 'refreshClassificationsForAddress', EthWalletService.refreshClassificationsForAddress]);
+  t.after(() => { for (const [obj, key, fn] of saved) obj[key] = fn; });
+  const refreshes = [];
+  EthAddressLabel.findByAddress = async () => ({ kind: 'own' });
+  EthAddressLabel.upsert = async (userId, address, name, note, kind) => ({ address, name, kind });
+  EthWalletService.refreshClassificationsForAddress = async (...args) => { refreshes.push(args); };
+
+  const response = await request(app)
+    .post('/api/eth/address-labels')
+    .send({ address: '0xAAAA111111111111111111111111111111111111', name: 'Shop', kind: 'external' })
+    .set('Content-Type', 'application/json');
+
+  assert.equal(response.status, 201);
+  assert.equal(refreshes.length, 1);
+  assert.equal(refreshes[0][1], '0xaaaa111111111111111111111111111111111111');
+  assert.deepEqual(refreshes[0][2], { kinds: ['own', 'external'] });
+});
+
+test('DELETE /api/eth/address-labels/:address refreshes by address with the removed verdict', async (t) => {
+  const EthAddressLabel = require('../src/models/EthAddressLabel');
+  const EthWalletService = require('../src/services/EthWalletService');
+  const saved = [[EthAddressLabel, 'delete', EthAddressLabel.delete],
+    [EthWalletService, 'refreshClassificationsForAddress', EthWalletService.refreshClassificationsForAddress]];
+  t.after(() => { for (const [obj, key, fn] of saved) obj[key] = fn; });
+  const refreshes = [];
+  EthAddressLabel.delete = async (userId, address) => ({ address: address.toLowerCase(), kind: 'bridge' });
+  EthWalletService.refreshClassificationsForAddress = async (...args) => { refreshes.push(args); };
+
+  const response = await request(app).delete('/api/eth/address-labels/0xAAAA111111111111111111111111111111111111');
+
+  assert.equal(response.status, 200);
+  assert.equal(refreshes[0][1], '0xaaaa111111111111111111111111111111111111');
+  assert.deepEqual(refreshes[0][2], { kinds: ['bridge'] });
+});
+
 // The balance audit (#62). Its filter is fail-closed for the same reason the
 // activity route's category is: `?status=drift` silently returning every row,
 // matched ones included, reads as "nothing drifted" -- the exact opposite of

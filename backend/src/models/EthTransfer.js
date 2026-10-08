@@ -648,6 +648,25 @@ class EthTransfer {
       params
     );
   }
+
+  // The owner's wallets a label on `address` can reclassify: every wallet with
+  // a leg to or from it on any chain (labels are address-keyed with no chain
+  // column), plus a tracked wallet AT that address. Each probe is served by
+  // 045's (wallet_id, from_address) / (wallet_id, to_address) indexes.
+  static async walletIdsTouchingAddress(userId, address) {
+    if (!userId) throw new Error('EthTransfer.walletIdsTouchingAddress requires a userId');
+    const { rows } = await pool.query(
+      `SELECT w.id
+         FROM eth_wallets w
+        WHERE w.user_id = $1
+          AND (w.address = $2
+               OR EXISTS (SELECT 1 FROM eth_transfers t WHERE t.wallet_id = w.id AND t.from_address = $2)
+               OR EXISTS (SELECT 1 FROM eth_transfers t WHERE t.wallet_id = w.id AND t.to_address = $2))
+        ORDER BY w.id`,
+      [userId, String(address).toLowerCase()]
+    );
+    return rows.map((row) => row.id);
+  }
 }
 
 module.exports = EthTransfer;

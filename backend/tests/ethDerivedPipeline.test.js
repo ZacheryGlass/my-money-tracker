@@ -46,6 +46,7 @@ const EthActivityService = require('../src/services/EthActivityService');
 const ExchangeMatchService = require('../src/services/ExchangeMatchService');
 const BridgeMatchingService = require('../src/services/BridgeMatchingService');
 const TransactionClassificationService = require('../src/services/TransactionClassificationService');
+const EthActivityLink = require('../src/models/EthActivityLink');
 
 // Records every step as a tuple, in call order. `failures[name]` throws that
 // step: `true` always, a number only when the step's first argument matches --
@@ -111,6 +112,10 @@ function harness(t, { wallets = [{ id: 7 }, { id: 8 }], failures = {} } = {}) {
     calls.push(['backfill', userId]); maybeFail('backfill', userId);
   });
   stub(EthWallet, 'findAllByUser', async () => wallets);
+  stub(EthActivityLink, 'partnerWalletIds', async (userId, walletIds) => {
+    calls.push(['partners', walletIds]); maybeFail('partners', userId);
+    return [];
+  });
 
   return { calls, mirrorOptions, bridgeOptions, stub };
 }
@@ -326,6 +331,58 @@ test("the ignore toggle's holdings refresh is the database-only ledger path", as
   const { calls } = harness(t, { wallets: [{ id: 7 }] });
   await EthDerivedPipeline.runForUser(1, { holdings: 'ledger', context: 'derived-data refresh' });
   assert.deepEqual(calls.map(([name]) => name), ['value', 'ledgerHoldings', 'activity', 'matches', 'bridge', 'mirror', 'backfill']);
+});
+
+test('a scoped refresh rebuilds only its wallets and mirrors them with their bridge partners', async (t) => {
+  const { calls, mirrorOptions, stub } = harness(t, { wallets: [{ id: 7 }, { id: 8 }, { id: 9 }] });
+  // Before the rebuild wallet 8's fold pairs with 9; after it, with 10.
+  const partners = [[9], [10]];
+  stub(EthActivityLink, 'partnerWalletIds', async (userId, walletIds) => {
+    calls.push(['partners', walletIds]);
+    return partners.shift();
+  });
+  await EthDerivedPipeline.runForUser(1, {
+    reclassify: true, revalue: false, walletIds: [8], context: 'classification refresh',
+  });
+  assert.deepEqual(calls.map(([name, arg]) => (name === 'activity' || name === 'partners' ? [name, arg] : name)), [
+    'reclassify', ['partners', [8]], ['activity', 8], 'matches', 'bridge', ['partners', [8]], 'mirror', 'backfill',
+  ]);
+  assert.deepEqual(mirrorOptions, [{ context: 'classification refresh', walletIds: [8, 9, 10] }]);
+});
+
+test('a scoped refresh touching no wallet still runs the user-wide steps and mirrors nothing', async (t) => {
+  const { calls, mirrorOptions } = harness(t);
+  await EthDerivedPipeline.runForUser(1, { reclassify: true, revalue: false, walletIds: [] });
+  assert.deepEqual(calls.map(([name]) => name), ['reclassify', 'partners', 'matches', 'bridge', 'partners', 'mirror', 'backfill']);
+  assert.deepEqual(mirrorOptions, [{ context: null, walletIds: [] }]);
+});
+
+test('a failed bridge-partner lookup mirrors every wallet', async (t) => {
+  const { calls, mirrorOptions } = harness(t, { failures: { partners: 1 } });
+  await EthDerivedPipeline.runForUser(1, { reclassify: true, revalue: false, walletIds: [7], context: 'classification refresh' });
+  assert.deepEqual(calls.filter(([name]) => name === 'activity'), [['activity', 7]]);
+  assert.deepEqual(mirrorOptions, [{ context: 'classification refresh' }]);
+});
+
+test('a label write rebuilds the wallets touching its address; an own verdict rebuilds all', async (t) => {
+  const { calls, stub } = harness(t);
+  const lookups = [];
+  stub(EthTransfer, 'walletIdsTouchingAddress', async (userId, address) => {
+    lookups.push([userId, address]);
+    return [8];
+  });
+  const rebuilt = () => calls.filter(([name]) => name === 'activity').map(([, id]) => id);
+
+  await EthWalletService.refreshClassificationsForAddress(1, '0xabc', { kinds: [undefined, 'exchange'] });
+  assert.deepEqual(lookups, [[1, '0xabc']]);
+  assert.deepEqual(rebuilt(), [8]);
+
+  for (const kinds of [['own', 'external'], ['external', 'own'], ['own']]) {
+    calls.length = 0;
+    await EthWalletService.refreshClassificationsForAddress(1, '0xabc', { kinds });
+    assert.deepEqual(rebuilt(), [7, 8], JSON.stringify(kinds));
+  }
+  assert.equal(lookups.length, 1, 'the full refresh does not look up touched wallets');
 });
 
 test('the sync tail acquires bridge receipts by default', async (t) => {

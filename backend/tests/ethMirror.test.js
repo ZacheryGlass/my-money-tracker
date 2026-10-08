@@ -267,3 +267,24 @@ test('user mirror refresh isolates one wallet and preserves wallet-local receipt
     receipt: { mirrored: 3, unpricedSkipped: 2 }, error: null,
   });
 });
+
+test('a scoped user mirror refresh rebuilds only the named wallets the user owns', async (t) => {
+  const originalFind = EthWallet.findAllByUser;
+  const originalRebuild = EthTransactionMirrorService.rebuildForWallet;
+  t.after(() => {
+    EthWallet.findAllByUser = originalFind;
+    EthTransactionMirrorService.rebuildForWallet = originalRebuild;
+  });
+
+  EthWallet.findAllByUser = async () => [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const attempted = [];
+  EthTransactionMirrorService.rebuildForWallet = async (walletId) => {
+    attempted.push(walletId);
+    return { mirrored: 1, unpricedSkipped: 0 };
+  };
+
+  // 99 is not the user's wallet and must never be mirrored.
+  const result = await EthTransactionMirrorService.rebuildForUser(7, { walletIds: [3, 1, 99] });
+  assert.deepEqual(attempted, [1, 3]);
+  assert.equal(result.summary.wallets, 2);
+});
