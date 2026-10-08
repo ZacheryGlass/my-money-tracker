@@ -2,19 +2,18 @@
 
 const { parseCsv, isBlankRow } = require('../../utils/csv');
 const { ImportFormatError } = require('./shared');
-const coinbaseRetail = require('./coinbaseRetail');
-const coinbasePro = require('./coinbasePro');
-const kraken = require('./kraken');
-const binanceUs = require('./binanceUs');
-const generic = require('./generic');
+const { VENUE_MODULES } = require('../../crypto/exchanges/venues');
 
-// Order matters only in that the specific importers get first refusal; their
-// header signatures are disjoint (Coinbase retail alone has "Quantity
-// Transacted", Coinbase Pro alone has "amount/balance unit", Kraken alone has
-// txid+refid, Binance.US alone has "Realized Amount For Base Asset"), so at
-// most one can claim a file.
-const IMPORTERS = [coinbaseRetail, coinbasePro, kraken, binanceUs];
-const BY_FORMAT = new Map([...IMPORTERS, generic].map((importer) => [importer.FORMAT, importer]));
+// Every venue's CSV readers (crypto/exchanges/venues), in venue order. The
+// specific readers get first refusal; their header signatures are disjoint
+// (Coinbase retail alone has "Quantity Transacted", Coinbase Pro alone has
+// "amount/balance unit", Kraken alone has txid+refid, Binance.US alone has
+// "Realized Amount For Base Asset"), so at most one can claim a file. The
+// fallback reader (generic column mapping) is tried last.
+const IMPORTERS = VENUE_MODULES.filter((venue) => !venue.csvFallback).flatMap((venue) => venue.csv);
+const FALLBACKS = VENUE_MODULES.filter((venue) => venue.csvFallback).flatMap((venue) => venue.csv);
+const generic = FALLBACKS[0];
+const BY_FORMAT = new Map([...IMPORTERS, ...FALLBACKS].map((importer) => [importer.FORMAT, importer]));
 
 const FORMATS = [...BY_FORMAT.keys()];
 

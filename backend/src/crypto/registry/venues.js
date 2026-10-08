@@ -1,8 +1,9 @@
 'use strict';
 
 // Exchange venue facts, one entry per venue id (the exchange_accounts CHECK
-// values). Each venue's code lists (error codes, bank descriptors, labels)
-// derive from here instead of being retyped in services and routes.
+// values), read from each venue folder's metadata. Each venue's code lists
+// (error codes, bank descriptors, labels) derive from here instead of being
+// retyped in services and routes.
 //
 //   label          display name; also the managed holdings account prefix
 //   errorPrefix    the venue client's error-code prefix: <PREFIX>_RATE_LIMITED,
@@ -12,28 +13,17 @@
 //                  statement line ('binance_us' never appears on one; 'BAM
 //                  Trading' does) -- read by the fiat matcher
 
-const VENUES = Object.freeze({
-  coinbase: Object.freeze({
-    id: 'coinbase', label: 'Coinbase', errorPrefix: 'COINBASE', apiSync: true,
-    extraAuthCodes: Object.freeze(['COINBASE_KEY_FORMAT']),
-    bankDescriptors: Object.freeze(['coinbase']),
-  }),
-  kraken: Object.freeze({
-    id: 'kraken', label: 'Kraken', errorPrefix: 'KRAKEN', apiSync: true,
-    extraAuthCodes: Object.freeze([]),
-    bankDescriptors: Object.freeze(['kraken', 'payward']),
-  }),
-  binance_us: Object.freeze({
-    id: 'binance_us', label: 'Binance.US', errorPrefix: 'BINANCE_US', apiSync: true,
-    extraAuthCodes: Object.freeze([]),
-    bankDescriptors: Object.freeze(['binance', 'bam trading']),
-  }),
-  other: Object.freeze({
-    id: 'other', label: 'Other', errorPrefix: null, apiSync: false,
-    extraAuthCodes: Object.freeze([]),
-    bankDescriptors: Object.freeze([]),
-  }),
-});
+// Built from the venue folders (crypto/exchanges/venues/<id>/index.js).
+const { VENUE_MODULES } = require('../exchanges/venues');
+
+const VENUES = Object.freeze(Object.fromEntries(VENUE_MODULES.map((venue) => [venue.id, Object.freeze({
+  id: venue.id,
+  label: venue.metadata.label,
+  errorPrefix: venue.metadata.errorPrefix || null,
+  apiSync: Boolean(venue.hasConnector),
+  extraAuthCodes: Object.freeze([...(venue.metadata.extraAuthCodes || [])]),
+  bankDescriptors: Object.freeze([...(venue.metadata.bankDescriptors || [])]),
+})])));
 
 const VENUE_IDS = Object.freeze(Object.keys(VENUES));
 
