@@ -47,8 +47,8 @@
 // asset_price_history key for every native/internal/gas leg on the chain, and
 // it is the holding's ticker. Changing an existing chain's would strand both.
 //
-// Explorer links live on the client (frontend/src/utils/chains.js): they are
-// presentation derived from a chain id the API already sends.
+// Explorer links are data in each network file and reach the client through
+// GET /api/crypto/meta; frontend/src/utils/chains.js renders them.
 function configuredRpcUrl(name, fallback) {
   const value = process.env[name];
   return value && value.trim() ? value.trim() : fallback;
