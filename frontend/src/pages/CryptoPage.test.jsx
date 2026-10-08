@@ -140,6 +140,19 @@ describe('CryptoPage', () => {
     expect(apiMocks.history.getAccounts).toHaveBeenCalledWith(expect.objectContaining({ type: 'crypto' }));
   });
 
+  it('lights neither ledger option while the raw transfer legs are open', async () => {
+    apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
+    apiMocks.eth.getWallets.mockResolvedValue({
+      wallets: [{ id: 1, address: '0xaaaa000000000000000000000000000000000001', label: 'Main', eth_quantity: '1' }],
+    });
+    render(<CryptoPage tab="crypto-transactions" onTabChange={vi.fn()} />);
+
+    await showTransferLegs();
+
+    expect(screen.getByRole('button', { name: 'All crypto activity' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'ETH running balance' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('renders Activity as a standalone Crypto page without a local tab strip', async () => {
     apiMocks.accounts.getAll.mockResolvedValue({ accounts: [CRYPTO_ACCOUNT] });
     apiMocks.eth.getWallets.mockResolvedValue({

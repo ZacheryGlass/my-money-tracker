@@ -126,6 +126,13 @@ describe('unknown counterparty triage', () => {
     await screen.findByText('Needs Review');
   };
 
+  it('links the counterparty on each network it was met on, not always mainnet', async () => {
+    await openReviewTab({ data: [{ ...MATERIAL, chain_ids: [1, 42161] }], summary: { count: 1, dust_count: 0, usd_volume: 12403 } });
+
+    expect((await screen.findByText('Ethereum ↗')).closest('a')).toHaveAttribute('href', expect.stringContaining('etherscan.io/address/'));
+    expect(screen.getByText('Arbitrum One ↗').closest('a')).toHaveAttribute('href', expect.stringContaining('arbiscan.io/address/'));
+  });
+
   it('renders an unreviewed counterparty with its volume and a You sent pill', async () => {
     await openReviewTab();
     expect(await screen.findByText('0xbbbb…0002')).toBeInTheDocument();

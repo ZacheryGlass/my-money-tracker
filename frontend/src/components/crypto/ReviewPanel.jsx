@@ -5,7 +5,7 @@ import {
   formatCompactCurrency, formatDateDisplay, formatRelativeTime,
   shortEthAddress as shortEthAddressOrUnknown,
 } from '../../utils/format';
-import { explorerAddressUrl, explorerTxUrl } from '../../utils/chains';
+import { explorerAddressUrl, explorerTxUrl, networkName } from '../../utils/chains';
 import { spamReasonLabel } from '../../utils/dataLabels';
 import ExchangeBalanceExceptionQueue from './ExchangeBalanceExceptionQueue';
 
@@ -102,17 +102,24 @@ export function CounterpartyRow({
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="font-mono text-body-sm font-semibold text-primary" title={counterparty.address}>{short}</span>
-            {/* Counterparties are chain-agnostic (one verdict covers every
-                chain the address is reached on), so there is no chain here to
-                key the explorer on: mainnet it is. */}
-            <a
-              href={explorerAddressUrl(counterparty.address)}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[10px] text-tertiary transition-colors hover:text-accent"
-            >
-              Etherscan
-            </a>
+            {/* One verdict covers every chain the address is met on, but its
+                history lives on each chain's own explorer: one link per
+                network it was seen on (mainnet when the row predates that). */}
+            {(counterparty.chain_ids?.length ? counterparty.chain_ids : [1]).slice(0, 4).map((chainId) => {
+              const href = explorerAddressUrl(counterparty.address, chainId);
+              return href ? (
+                <a
+                  key={chainId}
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-tertiary transition-colors hover:text-accent"
+                  title={`${counterparty.address} on ${networkName(chainId)}`}
+                >
+                  {networkName(chainId)} ↗
+                </a>
+              ) : null;
+            })}
             {counterparty.sent_count > 0 && (
               // The single most decision-relevant fact on the row: you cannot
               // receive a scam airdrop that you sent.

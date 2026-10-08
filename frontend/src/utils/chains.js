@@ -20,6 +20,13 @@ export function nativeSymbol(chainId) {
   return networkFor(chainId)?.nativeAsset || 'ETH';
 }
 
+// A network as a person names it ("Arbitrum One"), never "chain 42161". An
+// unknown id still says what it is rather than rendering blank.
+export function networkName(chainId) {
+  const network = networkFor(chainId);
+  return network?.name || `Network ${chainId}`;
+}
+
 // An unknown network has no explorer: callers render the hash or address
 // without a link rather than send the user to the wrong chain's explorer.
 export function explorerBase(chainId) {

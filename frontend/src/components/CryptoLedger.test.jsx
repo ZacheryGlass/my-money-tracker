@@ -154,6 +154,27 @@ describe('CryptoLedger', () => {
     expect((await screen.findAllByText(/< 0\.00000001 POL/)).length).toBeGreaterThan(0);
   });
 
+  it('puts a stored reason code into words, and does not call an explained row flagged', async () => {
+    setLedger([onchain({
+      category: 'exchange_deposit', needs_review: false, review_reason: 'exchange_records_unavailable',
+    })]);
+
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USDC'))[0]);
+
+    expect(await screen.findByText('How it was explained')).toBeInTheDocument();
+    expect(screen.getByText(/marked as having no recoverable records/)).toBeInTheDocument();
+    expect(screen.queryByText('Why flagged')).toBeNull();
+    expect(screen.queryByText('exchange_records_unavailable')).toBeNull();
+  });
+
+  it('offers no Source filter on one wallet, where only on-chain rows exist', async () => {
+    render(<CryptoLedger walletId={1} />);
+    await screen.findAllByText('No ledger entries match these filters.');
+
+    expect(screen.queryByLabelText('Ledger source')).toBeNull();
+  });
+
   it('renders a real dust receipt rather than shrugging at it', async () => {
     // 0.00000042 ETH is a row the user has to explain; "<0.000001" throws away
     // the one fact that identifies it.
@@ -1212,15 +1233,22 @@ describe('CryptoLedger', () => {
 
   it('exports the ledger under the filters currently on screen', async () => {
     setLedger([onchain()]);
-    render(<CryptoLedger walletId={4} />);
+    const { unmount } = render(<CryptoLedger />);
     await screen.findAllByText('Arbitrum One');
 
     fireEvent.change(screen.getByLabelText('Ledger source'), { target: { value: 'exchange' } });
 
     await vi.waitFor(() => {
       expect(apiMocks.crypto.ledgerExportUrl).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'exchange', wallet_id: 4 })
+        expect.objectContaining({ source: 'exchange' })
       );
     });
+    unmount();
+
+    render(<CryptoLedger walletId={4} />);
+    await screen.findAllByText('Arbitrum One');
+    expect(apiMocks.crypto.ledgerExportUrl).toHaveBeenLastCalledWith(
+      expect.objectContaining({ source: undefined, wallet_id: 4 })
+    );
   });
 });

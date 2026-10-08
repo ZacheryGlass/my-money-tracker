@@ -49,6 +49,8 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
       CASE WHEN t.from_address = w.address THEN t.to_address ELSE t.from_address END AS counterparty,
       t.id, t.tx_hash, t.block_time, t.token_symbol, t.token_contract,
       t.transfer_type,
+      -- Pre-039 rows carry NULL, and every one of them is mainnet's.
+      COALESCE(t.chain_id, 1) AS chain_id,
       w.address AS wallet_address,
       (t.from_address = w.address) AS outgoing,
       tx.amount
@@ -133,6 +135,9 @@ const UNREVIEWED_COUNTERPARTIES_CTE = `
       MIN(block_time) AS first_seen,
       MAX(block_time) AS last_seen,
       ARRAY_AGG(DISTINCT token_symbol) FILTER (WHERE token_symbol IS NOT NULL) AS token_symbols,
+      -- Where the address was met: a verdict is chain-agnostic, but the
+      -- explorer page that shows its history is not.
+      ARRAY_AGG(DISTINCT chain_id ORDER BY chain_id) AS chain_ids,
       -- Non-null only when every transfer with this counterparty is the same
       -- token. Note this says nothing about whether the user holds that token
       -- elsewhere, so ignoring it is NOT safe without confirmation -- the ignore

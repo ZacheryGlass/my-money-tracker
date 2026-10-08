@@ -227,6 +227,14 @@ const isLabelable = (row) => row.source === 'onchain'
   && Boolean(row.counterparty_address)
   && row.counterparty_address !== ZERO_ADDRESS;
 
+// Most review reasons arrive as prose; a few are stored as codes the server
+// reads back (the unavailable-records marker is how the matcher finds its own
+// writes), so they are put into words here rather than renamed there.
+const REVIEW_REASON_TEXT = {
+  exchange_records_unavailable:
+    'Exchange custody: this exchange account is marked as having no recoverable records, so its side of the movement cannot be shown.',
+};
+
 const Chip = ({ className = '', children, title }) => (
   <span
     title={title}
@@ -293,15 +301,18 @@ const CryptoLedger = ({
   // stacked rows read better than a description squeezed to a few characters.
   const isMobile = useMediaQuery('(max-width: 1023px)');
 
+  // A source picked on the all-wallets ledger does not carry into one
+  // wallet's, where the control is hidden and "exchange" can match nothing.
+  const effectiveSource = walletId == null ? source : '';
   const filters = useMemo(() => ({
-    ...(source ? { source } : {}),
+    ...(effectiveSource ? { source: effectiveSource } : {}),
     ...(category ? { category } : {}),
     ...(status ? { needsReview: status } : {}),
     // Omitted when empty, so the server's own default ('exclude') is what
     // answers -- the client never has to restate it.
     ...(spam ? { spam } : {}),
     ...(walletId != null ? { walletId } : {}),
-  }), [source, category, status, spam, walletId]);
+  }), [effectiveSource, category, status, spam, walletId]);
 
   // Guards a Load More response that arrives after the filters moved on.
   const filtersRef = useRef(filters);
@@ -546,7 +557,7 @@ const CryptoLedger = ({
   };
 
   const exportHref = cryptoAPI.ledgerExportUrl({
-    source: source || undefined,
+    source: effectiveSource || undefined,
     category: category || undefined,
     needs_review: status || undefined,
     spam: spam || undefined,
@@ -597,7 +608,7 @@ const CryptoLedger = ({
               {entry.description}
             </span>
             {entry.needs_review && (
-              <Chip className="border-orange-500/30 bg-orange-500/10 text-orange-400" title={entry.review_reason || 'Flagged on import'}>
+              <Chip className="border-orange-500/30 bg-orange-500/10 text-orange-400" title={REVIEW_REASON_TEXT[entry.review_reason] || entry.review_reason || 'Flagged on import'}>
                 <AlertTriangle size={9} />
                 Review
               </Chip>
@@ -1055,19 +1066,23 @@ const CryptoLedger = ({
           }))}
         />
 
-        <label className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">Source</span>
-          <select
-            value={source}
-            onChange={(event) => { setSource(event.target.value); setExpandedId(null); }}
-            aria-label="Ledger source"
-            className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
-          >
-            {SOURCE_OPTIONS.map((option) => (
-              <option key={option.value || 'all'} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
+        {/* One wallet's ledger is on-chain by definition: offering
+            "Exchange" there only leads to an empty table. */}
+        {walletId == null && (
+          <label className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">Source</span>
+            <select
+              value={source}
+              onChange={(event) => { setSource(event.target.value); setExpandedId(null); }}
+              aria-label="Ledger source"
+              className="h-8 min-w-0 rounded border border-input-border bg-surface-2 px-2 text-body-sm text-primary"
+            >
+              {SOURCE_OPTIONS.map((option) => (
+                <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-tertiary">Category</span>
@@ -1440,7 +1455,11 @@ const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
             </p>
           </div>
         )}
-        {row.review_reason && <DetailField label="Why flagged">{row.review_reason}</DetailField>}
+        {row.review_reason && (
+          <DetailField label={row.needs_review ? 'Why flagged' : 'How it was explained'}>
+            {REVIEW_REASON_TEXT[row.review_reason] || row.review_reason}
+          </DetailField>
+        )}
         {addressNote && <DetailField label="Address note">{addressNote}</DetailField>}
         {row.override_note && <DetailField label="Transaction note">{row.override_note}</DetailField>}
       </div>

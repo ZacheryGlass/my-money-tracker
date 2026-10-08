@@ -850,7 +850,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
               )}
 
               <div className="mb-4">
-                <SegmentedControl label="Ledger" value={txView === 'eth' ? 'eth' : LEDGER_VIEW}
+                {/* The raw transfer legs are a drill-down with their own Back
+                    button, not a third ledger: neither option is lit there. */}
+                <SegmentedControl label="Ledger" value={txView}
                   onChange={setTxView} options={[
                     { value: LEDGER_VIEW, label: 'All crypto activity' },
                     { value: 'eth', label: 'ETH running balance' },
