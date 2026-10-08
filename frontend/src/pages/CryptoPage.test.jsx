@@ -501,6 +501,15 @@ describe('CryptoPage', () => {
     });
   });
 
+  it('claims nothing on the Overview when the portfolio read failed', async () => {
+    apiMocks.holdings.getAll.mockRejectedValue(new Error('boom'));
+    render(<CryptoPage tab="crypto" onTabChange={vi.fn()} />);
+
+    expect(await screen.findByText('Failed to load crypto data')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing needs your attention.')).toBeNull();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+
   it('reports unknown as null, never zero, for a half that failed to fetch', async () => {
     // A red badge downgrading to all-clear because the wallets request
     // happened to fail is the lossy direction for an attention signal; the

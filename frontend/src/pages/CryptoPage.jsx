@@ -797,7 +797,9 @@ const CryptoPage = ({ tab = OVERVIEW_TAB, onTabChange, onAttentionChange }) => {
       )}
 
       <>
-          {tabBody(OVERVIEW_TAB, isEmpty ? (
+          {/* After a failed portfolio read the Overview says nothing at all
+              rather than "Nothing needs your attention" over empty data. */}
+          {tabBody(OVERVIEW_TAB, loadError ? null : isEmpty ? (
             <div className="card p-12 text-center border-dashed border-2 border-border bg-transparent">
               <Wallet size={40} className="mx-auto text-tertiary mb-4 opacity-20" />
               <h3 className="text-lg font-bold text-primary mb-2 uppercase tracking-tight">No Crypto Tracked</h3>
