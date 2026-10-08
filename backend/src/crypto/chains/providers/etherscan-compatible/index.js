@@ -10,8 +10,13 @@
 // a crowded block that fills the provider maximum, or a walk past the page
 // budget freezes the cursor instead of skipping data.
 
+const { EXPLORER_CREDENTIAL } = require('../credentials');
+
 module.exports = {
   id: 'etherscan-compatible',
+  // Needed only when the network's accountApi does not declare requiresApiKey:
+  // false (Etherscan V2 itself).
+  credential: EXPLORER_CREDENTIAL,
 
   async *pages({ service, internals, action, address, startBlock, endBlock, apiKey, chainId, accountApi }) {
     const { apiError, PAGE_SIZE, MAX_ACCOUNT_PAGES } = internals;

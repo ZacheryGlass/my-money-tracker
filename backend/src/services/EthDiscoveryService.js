@@ -4,7 +4,7 @@ const EthDiscoveryCandidate = require('../models/EthDiscoveryCandidate');
 const EthAddressLabel = require('../models/EthAddressLabel');
 const EthWalletService = require('./EthWalletService');
 const EtherscanService = require('./EtherscanService');
-const SecretsService = require('./SecretsService');
+const { explorerKeyFor } = require('../crypto/chains/providers/credentials');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
 
@@ -37,7 +37,7 @@ class EthDiscoveryService {
   // killed before they can turn a service address into a personal wallet.
   static async expand(userId, { maxCalls = 25, maxDepth = 3, maxRows = 200 } = {}) {
     const frontier = await EthDiscoveryCandidate.pendingFrontier(userId, maxCalls, maxDepth);
-    const apiKey = await SecretsService.getUserKey(userId, 'etherscan');
+    const apiKey = await explorerKeyFor(userId);
     let calls = 0;
     let rows = 0;
     let completed = 0;

@@ -5,6 +5,7 @@ const EvmAudit = require('../models/EvmAudit');
 const EthWallet = require('../models/EthWallet');
 const database = require('../config/database');
 const SecretsService = require('./SecretsService');
+const { explorerKeyFor } = require('../crypto/chains/providers/credentials');
 const EthDerivedPipeline = require('./EthDerivedPipeline');
 const EtherscanService = require('./EtherscanService');
 const chains = require('../config/chains');
@@ -477,7 +478,7 @@ class EvmAuditService {
     // Resolve without logging or returning the credential. Moralis key
     // changes are detected from the encrypted row's generation above; only
     // Etherscan needs a direct presence check for its legacy deferral code.
-    const etherscanKey = await SecretsService.getUserKey(userId, 'etherscan');
+    const etherscanKey = await explorerKeyFor(userId);
     const etherscanConfigured = Boolean(etherscanKey);
     const rpcConfigurationReady = selected
       .filter((chainId) => !AUDIT_CHAINS.get(chainId).unsupported)
@@ -695,7 +696,7 @@ class EvmAuditService {
       }
       const explorerApiKey = explorerRequested.some((chainId) =>
         chains.accountApiRequiresKey(chainId))
-        ? await SecretsService.getUserKey(job.user_id, 'etherscan') : null;
+        ? await explorerKeyFor(job.user_id) : null;
       const runnable = [];
       const unavailable = [];
       for (const chainId of requested.filter((id) => !unsupportedRequested.includes(id))) {

@@ -22,7 +22,7 @@ const EthReconciliationService = require('../services/EthReconciliationService')
 const EthDerivedPipeline = require('../services/EthDerivedPipeline');
 const EthDiscoveryService = require('../services/EthDiscoveryService');
 const ExchangeAccount = require('../models/ExchangeAccount');
-const SecretsService = require('../services/SecretsService');
+const { explorerKeyFor } = require('../crypto/chains/providers/credentials');
 const vocabulary = require('../crypto/registry/vocabulary');
 const { CATEGORIES } = vocabulary;
 const logger = require('../config/logger');
@@ -267,7 +267,7 @@ router.post('/wallets/bulk', async (req, res) => {
     // The key is a property of the USER, not of any one address, so it is a
     // verdict on the whole request when the enabled provider set requires it.
     // A keyless-only set (for example ETH_CHAINS=324) may proceed without one.
-    const apiKey = await SecretsService.getUserKey(req.user.id, 'etherscan');
+    const apiKey = await explorerKeyFor(req.user.id);
     if (!apiKey && chains.enabledChainsRequireApiKey()) {
       return res.status(503).json({
         error: 'Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.',

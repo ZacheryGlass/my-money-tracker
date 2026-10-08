@@ -3,7 +3,7 @@
 const pool = require('../config/database');
 const EtherscanService = require('./EtherscanService');
 const ZkSyncLiteService = require('./ZkSyncLiteService');
-const SecretsService = require('./SecretsService');
+const { explorerKeyFor } = require('../crypto/chains/providers/credentials');
 const EthDerivedPipeline = require('./EthDerivedPipeline');
 const EthReconciliationService = require('./EthReconciliationService');
 const MethodSignatureService = require('./MethodSignatureService');
@@ -1136,7 +1136,7 @@ class EthWalletService {
     // context). Missing credentials are handled by the same per-chain/per-feed
     // failure isolation as provider limitations: healthy keyless feeds still
     // land and the keyed feed keeps its cursor frozen with a visible gap.
-    const apiKey = await SecretsService.getUserKey(wallet.user_id, 'etherscan');
+    const apiKey = await explorerKeyFor(wallet.user_id);
 
     try {
       // Only enabled chains are touched. A chain switched off keeps its
@@ -1631,7 +1631,7 @@ class EthWalletService {
     }
     // Fail fast only when the enabled provider set needs a key. A keyless-only
     // chain set can create and sync the wallet without Etherscan credentials.
-    const apiKey = await SecretsService.getUserKey(userId, 'etherscan');
+    const apiKey = await explorerKeyFor(userId);
     if (!apiKey && chains.enabledChainsRequireApiKey()) {
       const error = new Error('Etherscan is not configured. Add your Etherscan key under Settings -> API Keys.');
       error.code = 'ETHERSCAN_NOT_CONFIGURED';
@@ -1763,7 +1763,7 @@ class EthWalletService {
     const account = await EthWallet.getAccountForWallet(walletId);
     if (!account) return { skipped: true };
 
-    const apiKey = await SecretsService.getUserKey(wallet.user_id, 'etherscan');
+    const apiKey = await explorerKeyFor(wallet.user_id);
 
     const existingResult = await pool.query(
       'SELECT id, name FROM holdings WHERE account_id = $1',

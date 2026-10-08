@@ -3,7 +3,7 @@
 const pool = require('../config/database');
 const chains = require('../config/chains');
 const logger = require('../config/logger');
-const SecretsService = require('./SecretsService');
+const { explorerKeyFor } = require('../crypto/chains/providers/credentials');
 const EtherscanService = require('./EtherscanService');
 const EthBridgeEndpoint = require('../models/EthBridgeEndpoint');
 const EthBridgeReceipt = require('../models/EthBridgeReceipt');
@@ -234,7 +234,7 @@ class BridgeMatchingService {
       receipt,
     ]));
     const apiKey = acquireReceipts
-      ? await SecretsService.getUserKey(userId, 'etherscan')
+      ? await explorerKeyFor(userId)
       : null;
     const envelopes = [];
     const acquisition = { reused: 0, fetched: 0, deferred: 0, backedOff: 0 };
