@@ -2,6 +2,9 @@
 
 const crypto = require('node:crypto');
 const pool = require('../config/database');
+const {
+  nativeBalanceExpression, tokenBalanceExpression, erc20BalanceFilter,
+} = require('../crypto/chains/families/evm/balanceSql');
 const { sha256 } = require('../services/evmAudit/normalizer');
 const {
   matchesLegacyTransfer,
@@ -1480,15 +1483,7 @@ class EvmAudit {
 
   static async nativeDerivedAt(userId, subjectId, chainId, throughBlock) {
     const { rows } = await pool.query(
-      `SELECT (
-          COALESCE(SUM(CASE WHEN t.transfer_type IN ('native', 'internal')
-                             AND t.is_error = FALSE AND t.to_address = w.address
-                            THEN t.value_wei ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN t.transfer_type IN ('native', 'internal')
-                             AND t.is_error = FALSE AND t.from_address = w.address
-                            THEN t.value_wei ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN t.transfer_type = 'gas' THEN t.value_wei ELSE 0 END), 0)
-        )::text AS balance_wei
+      `SELECT ${nativeBalanceExpression({ coalesce: true })}::text AS balance_wei
          FROM evm_subjects s
          LEFT JOIN eth_wallets w ON w.user_id = s.user_id AND w.address = s.address
          LEFT JOIN eth_transfers t ON t.wallet_id = w.id
@@ -1505,23 +1500,15 @@ class EvmAudit {
     const { rows } = await pool.query(
       `SELECT t.token_contract,
               MAX(COALESCE(t.token_decimals, 18)) AS token_decimals,
-              (COALESCE(SUM(CASE WHEN t.is_error = FALSE AND t.to_address = w.address
-                                  THEN t.value_wei ELSE 0 END), 0)
-               - COALESCE(SUM(CASE WHEN t.is_error = FALSE AND t.from_address = w.address
-                                   THEN t.value_wei ELSE 0 END), 0))::text AS balance_units
+              ${tokenBalanceExpression({ coalesce: true, requireSuccess: true })}::text AS balance_units
          FROM evm_subjects s
          JOIN eth_wallets w ON w.user_id = s.user_id AND w.address = s.address
          JOIN eth_transfers t ON t.wallet_id = w.id
         WHERE s.id = $2 AND s.user_id = $1 AND t.chain_id = $3
-          AND t.block_number <= $4 AND t.transfer_type = 'token'
-          -- The same guards as EthTransfer.tokenBalanceDeltas, so the audit
-          -- compares the chain against the balance the ledger actually
-          -- derives: ERC-20 only, and an ignored token is out of both.
-          AND t.token_standard = 'erc20'
-          AND t.token_contract IS NOT NULL
-          AND t.token_contract NOT IN (
-            SELECT i.contract_address FROM eth_ignored_tokens i WHERE i.user_id = s.user_id
-          )
+          AND t.block_number <= $4
+          -- The ledger's own filter (EthTransfer.tokenBalanceDeltas), so the
+          -- audit compares the chain against the balance the ledger derives.
+          AND ${erc20BalanceFilter('s.user_id')}
         GROUP BY t.token_contract
         ORDER BY t.token_contract`,
       [userId, subjectId, chainId, throughBlock]

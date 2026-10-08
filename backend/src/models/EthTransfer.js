@@ -1,6 +1,9 @@
 'use strict';
 
 const pool = require('../config/database');
+const {
+  nativeBalanceExpression, tokenBalanceExpression, erc20BalanceFilter,
+} = require('../crypto/chains/families/evm/balanceSql');
 const { DEFAULT_CHAIN_ID } = require('../config/chains');
 
 // Dollar floor below which a receive-only counterparty is treated as dust.
@@ -419,16 +422,12 @@ class EthTransfer {
               t.token_contract,
               MAX(t.token_symbol) AS token_symbol,
               MAX(t.token_decimals) AS token_decimals,
-              SUM(CASE WHEN t.to_address = w.address THEN t.value_wei ELSE 0 END) -
-              SUM(CASE WHEN t.from_address = w.address THEN t.value_wei ELSE 0 END) AS balance_units
+              ${tokenBalanceExpression()} AS balance_units
        FROM eth_transfers t
        JOIN eth_wallets w ON w.id = t.wallet_id
        WHERE t.wallet_id = $1
-         AND t.transfer_type = 'token'
-         AND t.token_standard = 'erc20'
+         AND ${erc20BalanceFilter('w.user_id')}
          AND t.is_error = FALSE
-         AND t.token_contract IS NOT NULL
-         AND t.token_contract NOT IN (SELECT contract_address FROM eth_ignored_tokens WHERE user_id = w.user_id)
        GROUP BY t.chain_id, t.token_contract
        ORDER BY t.chain_id, t.token_contract`,
       [walletId]
@@ -484,13 +483,7 @@ class EthTransfer {
   static async nativeBalanceDeltas(walletId) {
     const result = await pool.query(
       `SELECT t.chain_id,
-              (SUM(CASE WHEN t.transfer_type IN ('native', 'internal')
-                         AND t.is_error = FALSE AND t.to_address = w.address
-                        THEN t.value_wei ELSE 0 END)
-             - SUM(CASE WHEN t.transfer_type IN ('native', 'internal')
-                         AND t.is_error = FALSE AND t.from_address = w.address
-                        THEN t.value_wei ELSE 0 END)
-             - SUM(CASE WHEN t.transfer_type = 'gas' THEN t.value_wei ELSE 0 END))::text AS balance_wei
+              ${nativeBalanceExpression()}::text AS balance_wei
        FROM eth_transfers t
        JOIN eth_wallets w ON w.id = t.wallet_id
        WHERE t.wallet_id = $1
