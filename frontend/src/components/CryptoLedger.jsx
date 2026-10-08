@@ -9,7 +9,7 @@ import { crypto as cryptoAPI, eth as ethAPI, exchanges as exchangesAPI } from '.
 import {
   formatDateDisplay, formatExactUnits, formatTokenUnits, formatUsdAtTime, shortEthAddress,
 } from '../utils/format';
-import { useIsMobile } from '../hooks/useMediaQuery';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
 import { describeExchangeMatchEvidence } from '../utils/exchangeMatchEvidence';
 import {
@@ -121,9 +121,25 @@ const shortTokenId = (id) => {
 // is no padding to hide, and any cap turns the smallest legs -- a 1-wei dust
 // receipt, exactly the row a user has to explain -- into "0 ETH", which is the
 // one thing they are not.
+// Fiat is the exception: a venue quotes "141.7322484123 USD" to its internal
+// precision, but a dollar amount past the cent is noise, not evidence.
+const FIAT_ASSETS = new Set(['USD', 'ZUSD', 'EUR', 'GBP', 'CAD', 'AUD', 'CHF', 'JPY']);
+
+// Truncated to `digits`, but never to a bare "0": a nonzero amount that cuts
+// away entirely says how small it is instead of claiming nothing moved.
+const formatCapped = (units, decimals, digits) => {
+  const text = formatTokenUnits(units, decimals, { maxFractionDigits: digits });
+  if (text == null) return null;
+  const nonzero = /[1-9]/.test(String(units));
+  if (nonzero && !/[1-9]/.test(text)) return `< 0.${'0'.repeat(Math.max(digits - 1, 0))}1`;
+  return text;
+};
+
 const legText = (leg) => {
   const id = leg.token_id != null ? ` #${shortTokenId(leg.token_id)}` : '';
-  const amount = formatExactUnits(leg.units, leg.decimals) ?? String(leg.amount ?? '');
+  const amount = (FIAT_ASSETS.has(String(leg.asset).toUpperCase())
+    ? formatCapped(leg.units, leg.decimals, 2)
+    : formatExactUnits(leg.units, leg.decimals)) ?? String(leg.amount ?? '');
   return `${amount} ${leg.asset}${id}`;
 };
 
@@ -273,7 +289,9 @@ const CryptoLedger = ({
     [addressNotes]
   );
   const [reload, setReload] = useState(0);
-  const isMobile = useIsMobile();
+  // The table needs lg width once the sidebar takes its share; below that the
+  // stacked rows read better than a description squeezed to a few characters.
+  const isMobile = useMediaQuery('(max-width: 1023px)');
 
   const filters = useMemo(() => ({
     ...(source ? { source } : {}),
@@ -556,7 +574,7 @@ const CryptoLedger = ({
       id: 'date',
       accessorFn: (row) => row.occurred_at,
       header: 'Date',
-      meta: { width: '7.5rem', cellClassName: 'whitespace-nowrap font-mono text-caption' },
+      meta: { width: '8rem', cellClassName: 'whitespace-nowrap font-mono text-caption' },
       cell: ({ row }) => (
         <span className="flex items-center gap-1">
           {expandedId === row.original.id
@@ -669,7 +687,7 @@ const CryptoLedger = ({
       id: 'where',
       accessorFn: (row) => row.source_label || '',
       header: 'Where',
-      meta: { width: '9rem' },
+      meta: { width: '8rem' },
       cell: ({ row }) => (
         <span
           className={`flex items-center gap-1 ${row.original.source === 'onchain' ? 'text-crypto' : 'text-teal-400'}`}
@@ -686,7 +704,9 @@ const CryptoLedger = ({
       id: 'counterparty',
       accessorFn: (row) => row.counterparty,
       header: 'Counterparty',
-      meta: { width: '10rem', cellClassName: 'truncate' },
+      // Below xl the description needs the room; the row detail still names
+      // the counterparty, and the mobile row never had this column.
+      meta: { width: '8rem', headerClassName: 'hidden xl:table-cell', cellClassName: 'hidden truncate xl:table-cell' },
       cell: ({ row }) => (
         <span title={row.original.counterparty_address || row.original.counterparty}>
           {row.original.counterparty}
@@ -697,7 +717,7 @@ const CryptoLedger = ({
       id: 'usd',
       accessorFn: (row) => row.usd_value || '',
       header: 'Value',
-      meta: { width: '7.5rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+      meta: { width: '7rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
       // Dollars AT THE TIME (#73), not today's price: a 2017 half-ETH send was
       // ~$150, and pricing it at today's ~$1,800 is a different transaction.
       // An unpriced row says so instead of showing a blank a reader would
@@ -732,7 +752,12 @@ const CryptoLedger = ({
       id: 'fee',
       accessorFn: (row) => row.fee_amount || '',
       header: 'Fee',
-      meta: { width: '8rem', align: 'right', headerClassName: 'text-right', cellClassName: 'whitespace-nowrap text-right' },
+      meta: {
+        width: '7.5rem',
+        align: 'right',
+        headerClassName: 'hidden text-right xl:table-cell',
+        cellClassName: 'hidden truncate whitespace-nowrap text-right xl:table-cell',
+      },
       cell: ({ row }) => {
         const entry = row.original;
         if (!entry.fee_amount || Number.parseFloat(entry.fee_amount) === 0) {
@@ -740,7 +765,7 @@ const CryptoLedger = ({
         }
         return (
           <span className="font-money text-tertiary" title={entry.usd_fee ? `${formatUsdAtTime(entry.usd_fee)} at the time` : undefined}>
-            {formatTokenUnits(entry.fee_units, entry.fee_decimals, { maxFractionDigits: 8 }) ?? entry.fee_amount} {entry.fee_asset}
+            {formatCapped(entry.fee_units, entry.fee_decimals, 8) ?? entry.fee_amount} {entry.fee_asset}
           </span>
         );
       },
@@ -1141,7 +1166,7 @@ const CryptoLedger = ({
       ) : (
         <DataTable
           table={table}
-          breakpoint="md"
+          breakpoint="lg"
           emptyMessage={spam === 'only'
             ? 'Nothing has been quarantined.'
             : 'No ledger entries match these filters.'}
@@ -1195,9 +1220,17 @@ const CryptoLedger = ({
                       <span>{entry.source_label}</span>
                     </div>
                   </div>
-                  <Chip className={categoryChipClass(entry.category)}>
-                    {formatLedgerCategory(entry.category)}
-                  </Chip>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <Chip className={categoryChipClass(entry.category)}>
+                      {formatLedgerCategory(entry.category)}
+                    </Chip>
+                    {formatUsdAtTime(entry.usd_value, entry.usd_basis) && (
+                      <span className={`font-money text-body-sm ${entry.usd_value == null ? 'text-tertiary' : 'text-primary'}`}>
+                        {formatUsdAtTime(entry.usd_value, entry.usd_basis)}
+                        {entry.usd_basis === 'carried' && <span className="ml-0.5 text-tertiary">~</span>}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {entry.needs_review && (
                   <p className="mt-2 text-[10px] uppercase tracking-wider text-orange-400">Needs review</p>

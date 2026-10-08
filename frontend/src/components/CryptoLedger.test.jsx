@@ -131,6 +131,29 @@ describe('CryptoLedger', () => {
     apiMocks.exchanges.getAll.mockResolvedValue({ accounts: [] });
   });
 
+  it('shows a venue dollar leg to the cent, not to its internal precision', async () => {
+    setLedger([exchange({
+      legs: [
+        { asset: 'ETH', direction: 'out', amount: '0.06123957', units: '6123957', decimals: 8 },
+        { asset: 'USD', direction: 'in', amount: '141.7322484123', units: '1417322484123', decimals: 10 },
+      ],
+    })]);
+
+    render(<CryptoLedger />);
+
+    expect((await screen.findAllByText('0.06123957 ETH → 141.73 USD')).length).toBeGreaterThan(0);
+  });
+
+  it('says a fee is tiny rather than printing a nonzero fee as 0', async () => {
+    setLedger([onchain({
+      fee_amount: '0.0000000008', fee_units: '8', fee_decimals: 10, fee_asset: 'POL',
+    })]);
+
+    render(<CryptoLedger />);
+
+    expect((await screen.findAllByText(/< 0\.00000001 POL/)).length).toBeGreaterThan(0);
+  });
+
   it('renders a real dust receipt rather than shrugging at it', async () => {
     // 0.00000042 ETH is a row the user has to explain; "<0.000001" throws away
     // the one fact that identifies it.
