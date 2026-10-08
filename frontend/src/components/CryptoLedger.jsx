@@ -10,7 +10,7 @@ import {
   formatDateDisplay, formatTokenUnits, formatUsdAtTime, shortEthAddress,
 } from '../utils/format';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { explorerTxUrl, explorerAddressUrl } from '../utils/chains';
+import { explorerTxUrl, explorerAddressUrl, nativeSymbol } from '../utils/chains';
 import { describeExchangeMatchEvidence } from '../utils/exchangeMatchEvidence';
 import {
   ledgerCategories,
@@ -509,17 +509,27 @@ const CryptoLedger = ({
       accessorFn: (row) => row.source_label || '',
       header: 'Where',
       meta: { width: '8rem' },
-      cell: ({ row }) => (
-        <span
-          className={`flex items-center gap-1 ${row.original.source === 'onchain' ? 'text-crypto' : 'text-teal-400'}`}
-          title={row.original.wallet_label || row.original.source_label}
-        >
-          {row.original.source === 'onchain'
-            ? <Wallet size={10} className="shrink-0" />
-            : <Landmark size={10} className="shrink-0" />}
-          <span className="truncate">{row.original.source_label}</span>
-        </span>
-      ),
+      // Which wallet, then which network: the network alone ("Ethereum") does
+      // not say whose money moved when thirty wallets share it.
+      cell: ({ row }) => {
+        const entry = row.original;
+        const onChain = entry.source === 'onchain';
+        const primary = onChain ? entry.wallet_label || shortEthAddress(entry.wallet_address) : entry.source_label;
+        return (
+          <span
+            className={`flex min-w-0 items-start gap-1 ${onChain ? 'text-crypto' : 'text-teal-400'}`}
+            title={onChain ? `${primary} on ${entry.source_label}` : entry.source_label}
+          >
+            {onChain
+              ? <Wallet size={10} className="mt-1 shrink-0" />
+              : <Landmark size={10} className="mt-1 shrink-0" />}
+            <span className="min-w-0">
+              <span className="block truncate">{primary}</span>
+              {onChain && <span className="block truncate text-[10px] text-tertiary">{entry.source_label}</span>}
+            </span>
+          </span>
+        );
+      },
     },
     {
       id: 'counterparty',
@@ -969,7 +979,9 @@ const CryptoLedger = ({
                     <p className="truncate font-money text-sm font-semibold text-primary">{entry.description}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-tertiary">
                       <span>{formatDateDisplay(entry.occurred_at)}</span>
-                      <span>{entry.source_label}</span>
+                      <span className="truncate">
+                        {entry.source === 'onchain' && entry.wallet_label ? `${entry.wallet_label} · ` : ''}{entry.source_label}
+                      </span>
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
@@ -1012,6 +1024,22 @@ const CryptoLedger = ({
 // it. Every action calls an endpoint that already exists -- an override on the
 // on-chain side, a counterparty label (which reclassifies ALL history for that
 // address, so one label can drain many rows), and a resolve on the venue side.
+// The raw eth_transfers legs behind a transaction, with what each moved. An
+// NFT leg's value_wei is a unit COUNT (033), never wei, so it never scales.
+const RAW_LEG_TYPE = {
+  native: 'transfer', internal: 'internal', token: 'token', gas: 'network fee', nft: 'NFT', nft1155: 'NFT',
+};
+const rawLegAmount = (leg, chainId) => {
+  if (leg.transfer_type === 'nft' || leg.transfer_type === 'nft1155') {
+    const id = leg.token_id != null ? ` #${String(leg.token_id).slice(0, 8)}${String(leg.token_id).length > 8 ? '…' : ''}` : '';
+    return `${leg.value_wei || 1} × ${leg.token_symbol || 'NFT'}${id}`;
+  }
+  if (leg.transfer_type === 'token') {
+    return `${formatCapped(leg.value_wei, leg.token_decimals ?? 18, 8) ?? '?'} ${leg.token_symbol || 'tokens'}`;
+  }
+  return `${formatCapped(leg.value_wei, 18, 8) ?? '?'} ${nativeSymbol(leg.chain_id ?? chainId)}`;
+};
+
 export const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) => {
   const onChain = row.source === 'onchain';
   const [category, setCategory] = useState(row.category);
@@ -1033,12 +1061,21 @@ export const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) =
     return () => { cancelled = true; };
   }, [onChain, row.tx_hash, row.wallet_id, row.chain_id]);
 
+  // "Saved", beside the action that did it: a review that only shows itself
+  // by the row moving (or not) leaves the user unsure anything happened.
+  const [saved, setSaved] = useState(null);
+  const savedTimer = useRef(null);
+  useEffect(() => () => clearTimeout(savedTimer.current), []);
   const run = async (key, action) => {
     if (saving) return;
     setSaving(key);
+    setSaved(null);
     onError(null);
     try {
       await action();
+      setSaved(key);
+      clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setSaved(null), 3000);
       await onChanged();
     } catch (err) {
       onError(err.response?.data?.error || 'That action failed');
@@ -1047,11 +1084,15 @@ export const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) =
     }
   };
 
+  // A changed note rides along with a category correction in the same write;
+  // the API takes both, and two writes could leave one half saved.
+  const noteChanged = note !== (row.override_note || '');
   const saveOverride = () => run('override', () => ethAPI.setActivityOverride({
     walletId: row.wallet_id,
     txHash: row.tx_hash,
     chainId: row.chain_id,
     category,
+    ...(noteChanged ? { note } : {}),
   }));
 
   const saveNote = () => run('note', () => ethAPI.setActivityNote({
@@ -1402,7 +1443,9 @@ export const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) =
           <ul className="mt-1 space-y-0.5">
             {legs.map((leg) => (
               <li key={leg.id} className="font-mono text-caption text-tertiary">
-                {leg.transfer_type}
+                <span className="text-secondary">{rawLegAmount(leg, row.chain_id)}</span>
+                {' · '}
+                {RAW_LEG_TYPE[leg.transfer_type] || leg.transfer_type}
                 {' · '}
                 {shortEthAddress(leg.from_address)} → {leg.to_address ? shortEthAddress(leg.to_address) : 'contract creation'}
                 {leg.is_error ? ' · failed' : ''}
@@ -1533,6 +1576,11 @@ export const LedgerRowDetail = ({ row, onError, onChanged, addressNote = '' }) =
           <p className="text-caption text-tertiary">
             Imported from {row.account_name}. Exchange records are corrected by re-importing a fuller export.
           </p>
+        )}
+        {saved && (
+          <span role="status" className="inline-flex h-8 items-center gap-1 text-caption font-semibold text-gain">
+            <Check size={12} /> Saved
+          </span>
         )}
       </div>
 

@@ -946,6 +946,38 @@ describe('CryptoLedger', () => {
     });
   });
 
+  it('says what each raw leg moved, not only who it moved between', async () => {
+    setLedger([onchain()]);
+    apiMocks.eth.getTransfers.mockResolvedValue({ data: [
+      { id: 1, transfer_type: 'token', value_wei: '1832400000', token_decimals: 6, token_symbol: 'USDC', from_address: COUNTERPARTY, to_address: WALLET, chain_id: 42161 },
+      { id: 2, transfer_type: 'gas', value_wei: '840000000000000', from_address: WALLET, to_address: COUNTERPARTY, chain_id: 42161 },
+    ] });
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USDC'))[0]);
+
+    expect(await screen.findByText('1,832.4 USDC')).toBeInTheDocument();
+    // The fee also shows in the row's own Fee field, so the leg is found by its line.
+    expect(screen.getByText((content, element) => element?.tagName === 'LI'
+      && /0\.00084 ETH · network fee/.test(element.textContent))).toBeInTheDocument();
+  });
+
+  it('saves a changed note with the category correction in one write, and says Saved', async () => {
+    setLedger([onchain({ category: 'send', needs_review: true })]);
+    apiMocks.eth.setActivityOverride.mockResolvedValue({ override: {} });
+    render(<CryptoLedger />);
+    fireEvent.click((await screen.findAllByText('0.5 ETH → 1,832.4 USDC'))[0]);
+
+    fireEvent.change((await screen.findAllByLabelText('Set category'))[0], { target: { value: 'spend' } });
+    fireEvent.change(screen.getAllByPlaceholderText(/what this transaction did/i)[0], { target: { value: 'Rent' } });
+    fireEvent.click(screen.getAllByRole('button', { name: /save correction/i })[0]);
+
+    await vi.waitFor(() => expect(apiMocks.eth.setActivityOverride).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'spend', note: 'Rent' })
+    ));
+    expect(apiMocks.eth.setActivityNote).not.toHaveBeenCalled();
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+  });
+
   it('warns when a source is behind, so "everything explained" is not overclaimed', async () => {
     apiMocks.exchanges.getAll.mockResolvedValue({
       accounts: [
