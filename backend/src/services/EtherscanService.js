@@ -1,5 +1,7 @@
 'use strict';
 
+const { withKind } = require('../crypto/infra/http/providerError');
+
 const axios = require('axios');
 const crypto = require('node:crypto');
 const etherscan = require('../config/etherscan');
@@ -287,7 +289,7 @@ function attachProviderIdentity(error, provider, auditProvider = null) {
   error.provider ||= provider.name;
   error.providerKey ||= provider.key;
   error.auditProvider ||= auditProvider || String(provider.name || '').toLowerCase();
-  return error;
+  return withKind(error);
 }
 
 // Consensus-sensitive reads must use the operator's declared consensus

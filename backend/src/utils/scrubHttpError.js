@@ -1,6 +1,7 @@
 'use strict';
 
 const { redactUrl } = require('../crypto/infra/http/redact');
+const { withKind } = require('../crypto/infra/http/providerError');
 
 /**
  * Strip the request context off an axios error before it propagates.
@@ -41,7 +42,7 @@ function scrubHttpError(err) {
   if (method || url || status !== null) {
     err.request_summary = { method, url, status };
   }
-  return err;
+  return withKind(err);
 }
 
 module.exports = scrubHttpError;

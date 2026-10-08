@@ -15,11 +15,7 @@ const BASE_BACKOFF_MS = 5000;
 const PUMP_DELAY_MS = 250;
 const TRANSIENT_RETRY_LIMIT = 5;
 const TRANSIENT_CODES = venueErrorCodes('API_ERROR');
-const TRANSPORT_CODES = new Set([
-  'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN', 'ECONNREFUSED',
-  'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EPIPE', 'ERR_NETWORK',
-  'ERR_BAD_RESPONSE', 'UND_ERR_CONNECT_TIMEOUT',
-]);
+const { TRANSPORT_CODES } = require('../crypto/infra/http/providerError');
 
 let pumpPromise = null;
 let pumpAgain = false;
